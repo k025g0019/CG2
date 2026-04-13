@@ -1,1 +1,11 @@
 
+WinMain
+WindowProc
+DirectX
+DirectXGameClass
+WNDCLASS
+RegisterClass
+OutputDebugStringW
+wParam
+lParam
+hwnd

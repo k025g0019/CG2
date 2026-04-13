@@ -1,2 +1,2 @@
-﻿[*.{cpp.h}]
+﻿[*.{cpp,h}]
 charset = utf-8

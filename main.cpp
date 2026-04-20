@@ -24,7 +24,7 @@ LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPAR
 void log(std::ostream& os, const std::string& message) {
 	os << message << std::endl;
 	OutputDebugStringA(message.c_str());
-	OutputDebugStringA("\n");
+
 }
 // Windowsアプリケーションのエントリポイント
 int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
@@ -49,8 +49,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	if (!logStream) {
 		return 1;
 	}
-	log(logStream, "application started");
-	log(logStream, std::format("log file: {}", logFilePath));
+
 	// ウィンドウクラスを登録する
 	WNDCLASS windowClass{};
 	// ウィンドウプロシージャ

@@ -22,3 +22,10 @@ int32_t
 wParam
 lParam
 hwnd
+Log
+ConvertString
+wstring
+string
+MultiByteToWideChar
+WideCharToMultiByte
+CP_UTF8

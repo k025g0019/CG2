@@ -6,6 +6,14 @@
 #include <filesystem>
 #include <fstream>
 #include <chrono>
+
+#include <d3d12.h>
+#include <dxgi1_6.h>
+#include <cassert>
+
+#pragma comment(lib, "d3d12.lib")
+#pragma comment(lib, "dxgi.lib")
+
 #pragma warning(pop)
 
 namespace {
@@ -21,10 +29,10 @@ namespace {
 LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPARAM lParam);
 
 
-void log(std::ostream& os, const std::string& message) {
+void Log(std::ostream& os, const std::string& message) {
 	os << message << std::endl;
 	OutputDebugStringA(message.c_str());
-	OutputDebugStringA("\n");
+
 }
 // Windowsアプリケーションのエントリポイント
 int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
@@ -43,14 +51,13 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	//formatを使って
 	std::string dateString = std::format("{:%Y%m%d_%H%M%S}", localTime);
 	//時刻を使ってファイル名を決定
-	std::string logFilePath = std::string("logs/" + dateString + ".log");
+	std::string logFilePath = std::string("logs/" + dateString + ".Log");
 	//ファイルを使って書き込む
 	std::ofstream logStream(logFilePath);
 	if (!logStream) {
 		return 1;
 	}
-	log(logStream, "application started");
-	log(logStream, std::format("log file: {}", logFilePath));
+
 	// ウィンドウクラスを登録する
 	WNDCLASS windowClass{};
 	// ウィンドウプロシージャ
@@ -64,19 +71,19 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 
 	// ウィンドウクラスの登録
 	if (RegisterClass(&windowClass) == 0) {
-		log(logStream, "RegisterClass failed");
+		Log(logStream, "RegisterClass failed");
 		return 1;
 	}
-	log(logStream, "window class registered");
+	Log(logStream, "window class registered");
 
 	// クライアント領域のサイズ
 	RECT windowRect{ 0, 0, kClientWidth, kClientHeight };
 	// クライアント領域を実際のウィンドウサイズに変換する
 	if (AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE) == 0) {
-		log(logStream, "AdjustWindowRect failed");
+		Log(logStream, "AdjustWindowRect failed");
 		return 1;
 	}
-	log(logStream, "window rect adjusted");
+	Log(logStream, "window rect adjusted");
 
 	// ウィンドウの生成
 	HWND windowHandle = CreateWindow(
@@ -93,19 +100,49 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		nullptr);                            // 追加パラメータ
 
 	if (windowHandle == nullptr) {
-		log(logStream, "CreateWindow failed");
+		Log(logStream, "CreateWindow failed");
 		return 1;
 	}
-	log(logStream, "window created");
+	Log(logStream, "window created");
 
 	// ウィンドウを表示する
 	ShowWindow(windowHandle, SW_SHOW);
 	UpdateWindow(windowHandle);
-	log(logStream, "window shown");
+	Log(logStream, "window shown");
 
 	// ウィンドウの×ボタンが押されるまでループ
 	MSG message{};
-	log(logStream, "main loop started");
+	Log(logStream, "main loop started");
+
+	// DXGI Factoryを作成する
+	IDXGIFactory7 * dxgiFactory = nullptr;
+
+	// HRESULTはWindows系のエラーコードであり
+	// 関数が成功したかどうかをSUCCEEDEDマクロで判定すること
+	HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&dxgiFactory));
+
+	// 初期化の根本的な部分でエラーが出た場合はプログラムが間違っているか、土井にもできない場合が多いのでassertにしておく
+	assert(SUCCEEDED(hr));
+
+
+	// 使用するアダプタ用の変数、最初にnullptrを入れておく
+	IDXGIAdapter4* useAdapter = nullptr;
+	// いいもの順にアダプタを頼む
+	for (UINT i = 0;dxgiFactory->EnumAdapterByGpuPreference(i,DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,IID_PPV_ARGS(&useAdapter))!=DXGI_ERROR_NOT_FOUND;i++) {
+		//アダプターの情報を取得する
+		DXGI_ADAPTER_DESC3 adapterDesc{};
+		hr = useAdapter->GetDesc3(&adapterDesc);
+		assert(SUCCEEDED(hr));
+		//ソフトウェアアダプタはスキップする
+		if (adapterDesc.Flags & DXGI_ADAPTER_FLAG3_SOFTWARE) {
+		
+			Log(std::format(L"USE adapater:{}\n", adapterDesc.Description));
+			break;
+		}
+		useAdapter = nullptr;
+
+	}
+	assert(useAdapter != nullptr);
 	while (message.message != WM_QUIT) {
 		// Windowにメッセージが来てたら最優先で処理させる
 		if (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE) != FALSE) {
@@ -117,7 +154,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		}
 	}
 
-	log(logStream, "application finished");
+	Log(logStream, "application finished");
 	return static_cast<int>(message.wParam);
 }
 

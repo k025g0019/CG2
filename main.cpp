@@ -114,35 +114,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	MSG message{};
 	Log(logStream, "main loop started");
 
-	// DXGI Factoryを作成する
-	IDXGIFactory7 * dxgiFactory = nullptr;
-
-	// HRESULTはWindows系のエラーコードであり
-	// 関数が成功したかどうかをSUCCEEDEDマクロで判定すること
-	HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&dxgiFactory));
-
-	// 初期化の根本的な部分でエラーが出た場合はプログラムが間違っているか、土井にもできない場合が多いのでassertにしておく
-	assert(SUCCEEDED(hr));
-
-
-	// 使用するアダプタ用の変数、最初にnullptrを入れておく
-	IDXGIAdapter4* useAdapter = nullptr;
-	// いいもの順にアダプタを頼む
-	for (UINT i = 0;dxgiFactory->EnumAdapterByGpuPreference(i,DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,IID_PPV_ARGS(&useAdapter))!=DXGI_ERROR_NOT_FOUND;i++) {
-		//アダプターの情報を取得する
-		DXGI_ADAPTER_DESC3 adapterDesc{};
-		hr = useAdapter->GetDesc3(&adapterDesc);
-		assert(SUCCEEDED(hr));
-		//ソフトウェアアダプタはスキップする
-		if (adapterDesc.Flags & DXGI_ADAPTER_FLAG3_SOFTWARE) {
-		
-			Log(std::format(L"USE adapater:{}\n", adapterDesc.Description));
-			break;
-		}
-		useAdapter = nullptr;
-
-	}
-	assert(useAdapter != nullptr);
 	while (message.message != WM_QUIT) {
 		// Windowにメッセージが来てたら最優先で処理させる
 		if (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE) != FALSE) {

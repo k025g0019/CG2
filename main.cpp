@@ -11,7 +11,10 @@
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <cassert>
+#pragma warning(push)
+#pragma warning(disable : 5045)
 #include <strsafe.h>
+#pragma warning(pop)
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -31,13 +34,13 @@ namespace {
 LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPARAM lParam);
 
 
-static LONG WINAPI ExportDump(EXCEPTION_POINTERS* exception) {
+static LONG WINAPI ExportDump(EXCEPTION_POINTERS* exception) noexcept {
 	// ダンプファイルのパスを決定する
 	SYSTEMTIME time;
 	GetLocalTime(&time);
 	wchar_t filePath[MAX_PATH] = {0};
-	CreateDirectory(L"./Dump", nullptr);
-	StringCchPrintfW(filePath, MAX_PATH, L"./Dump/%04d%02d%02d_%02d%02d%02d.dmp", time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond);
+	CreateDirectory(L"./Dumps", nullptr);
+	StringCchPrintfW(filePath, MAX_PATH, L"./Dumps/%04d%02d%02d_%02d%02d%02d.dmp", time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond);
 	// ダンプファイルを作成する
 	HANDLE dumpFileHandle = CreateFileW(filePath, GENERIC_READ|GENERIC_WRITE,FILE_SHARE_WRITE|FILE_SHARE_READ,0,CREATE_ALWAYS,0,0);
 
@@ -48,7 +51,7 @@ static LONG WINAPI ExportDump(EXCEPTION_POINTERS* exception) {
 	minidumpInformation.ExceptionPointers = exception;
 	minidumpInformation.ClientPointers = TRUE;
 
-	MiniDumpWriteDump(GetCurrentProcess(), processId, dumpFileHandle, MiniDumpWithFullMemory, &minidumpInformation, nullptr, nullptr);
+	MiniDumpWriteDump(GetCurrentProcess(), processId, dumpFileHandle, MiniDumpNormal, &minidumpInformation, nullptr, nullptr);
 	return EXCEPTION_EXECUTE_HANDLER;
 }
 // string->wstring

@@ -233,8 +233,9 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	Log(logStream, "Complete create D3D12Device!!!");
 
 
-	uint32_t* p = nullptr;
-	*p = 100;
+	//uint32_t* p = nullptr;
+	//*p = 100;
+
 	while (message.message != WM_QUIT) {
 		// Windowにメッセージが来てたら最優先で処理させる
 		if (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE) != FALSE) {

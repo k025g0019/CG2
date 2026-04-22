@@ -7,14 +7,15 @@
 #include <fstream>
 #include <chrono>
 #include <format>
-
+#include <dbghelp.h>
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <cassert>
+#include <strsafe.h>
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
-
+#pragma comment(lib, "dbghelp.lib")
 #pragma warning(pop)
 
 namespace {
@@ -29,6 +30,27 @@ namespace {
 
 LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPARAM lParam);
 
+
+static LONG WINAPI ExportDump(EXCEPTION_POINTERS* exception) {
+	// ダンプファイルのパスを決定する
+	SYSTEMTIME time;
+	GetLocalTime(&time);
+	wchar_t filePath[MAX_PATH] = {0};
+	CreateDirectory(L"./Dump", nullptr);
+	StringCchPrintfW(filePath, MAX_PATH, L"./Dump/%04d%02d%02d_%02d%02d%02d.dmp", time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond);
+	// ダンプファイルを作成する
+	HANDLE dumpFileHandle = CreateFileW(filePath, GENERIC_READ|GENERIC_WRITE,FILE_SHARE_WRITE|FILE_SHARE_READ,0,CREATE_ALWAYS,0,0);
+
+	DWORD processId = GetCurrentProcessId();
+	DWORD threadId = GetCurrentThreadId();
+	MINIDUMP_EXCEPTION_INFORMATION minidumpInformation{0};
+	minidumpInformation.ThreadId = threadId;
+	minidumpInformation.ExceptionPointers = exception;
+	minidumpInformation.ClientPointers = TRUE;
+
+	MiniDumpWriteDump(GetCurrentProcess(), processId, dumpFileHandle, MiniDumpWithFullMemory, &minidumpInformation, nullptr, nullptr);
+	return EXCEPTION_EXECUTE_HANDLER;
+}
 // string->wstring
 std::wstring ConvertString(const std::string& str) {
 	if (str.empty()) {
@@ -75,6 +97,7 @@ void Log(std::ostream& os, const std::string& message) {
 }
 // Windowsアプリケーションのエントリポイント
 int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
+	SetUnhandledExceptionFilter(ExportDump);
 
 	// ログのディレクトリを用意
 	std::filesystem::create_directory("logs");
@@ -172,6 +195,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		if (dxgiFactory->EnumAdapterByGpuPreference(adapterIndex, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&candidateAdapter)) == DXGI_ERROR_NOT_FOUND) {
 			break;
 		}
+		
 		//アダプターの情報を取得する
 		DXGI_ADAPTER_DESC3 adapterDesc{};
 		hr = candidateAdapter->GetDesc3(&adapterDesc);
@@ -208,6 +232,9 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	assert(device != nullptr);
 	Log(logStream, "Complete create D3D12Device!!!");
 
+
+	uint32_t* p = nullptr;
+	*p = 100;
 	while (message.message != WM_QUIT) {
 		// Windowにメッセージが来てたら最優先で処理させる
 		if (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE) != FALSE) {

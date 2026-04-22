@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <chrono>
+#include <format>
 
 #include <d3d12.h>
 #include <dxgi1_6.h>
@@ -28,11 +29,49 @@ namespace {
 
 LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPARAM lParam);
 
+// string->wstring
+std::wstring ConvertString(const std::string& str) {
+	if (str.empty()) {
+		return {};
+	}
 
+	const int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, nullptr, 0);
+	if (sizeNeeded == 0) {
+		return {};
+	}
+
+	std::wstring result(static_cast<size_t>(sizeNeeded), L'\0');
+	MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, result.data(), sizeNeeded);
+	result.pop_back();
+	return result;
+}
+
+// wstring->string
+std::string ConvertString(const std::wstring& str) {
+	if (str.empty()) {
+		return {};
+	}
+
+	const int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, str.c_str(), -1, nullptr, 0, nullptr, nullptr);
+	if (sizeNeeded == 0) {
+		return {};
+	}
+
+	std::string result(static_cast<size_t>(sizeNeeded), '\0');
+	WideCharToMultiByte(CP_UTF8, 0, str.c_str(), -1, result.data(), sizeNeeded, nullptr, nullptr);
+	result.pop_back();
+	return result;
+}
+
+// 出力ウィンドウに文字を出す
+void Log(const std::string& message) {
+	OutputDebugStringA(message.c_str());
+}
+
+// ログファイルと出力ウィンドウの両方に文字を出す
 void Log(std::ostream& os, const std::string& message) {
 	os << message << std::endl;
-	OutputDebugStringA(message.c_str());
-
+	Log(message + "\n");
 }
 // Windowsアプリケーションのエントリポイント
 int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
@@ -128,21 +167,47 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	// 使用するアダプタ用の変数、最初にnullptrを入れておく
 	IDXGIAdapter4* useAdapter = nullptr;
 	// いいもの順にアダプタを頼む
-	for (UINT i = 0;dxgiFactory->EnumAdapterByGpuPreference(i,DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,IID_PPV_ARGS(&useAdapter))!=DXGI_ERROR_NOT_FOUND;i++) {
+	for (UINT adapterIndex = 0; ; ++adapterIndex) {
+		IDXGIAdapter4* candidateAdapter = nullptr;
+		if (dxgiFactory->EnumAdapterByGpuPreference(adapterIndex, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&candidateAdapter)) == DXGI_ERROR_NOT_FOUND) {
+			break;
+		}
 		//アダプターの情報を取得する
 		DXGI_ADAPTER_DESC3 adapterDesc{};
-		hr = useAdapter->GetDesc3(&adapterDesc);
+		hr = candidateAdapter->GetDesc3(&adapterDesc);
 		assert(SUCCEEDED(hr));
 		//ソフトウェアアダプタはスキップする
 		if (adapterDesc.Flags & DXGI_ADAPTER_FLAG3_SOFTWARE) {
-		
-			Log(std::format(L"USE adapater:{}\n", adapterDesc.Description));
-			break;
+			candidateAdapter->Release();
+			continue;
 		}
-		useAdapter = nullptr;
 
+		useAdapter = candidateAdapter;
+		Log(logStream, std::format("Use Adapter:{}", ConvertString(std::wstring{adapterDesc.Description})));
+		break;
 	}
 	assert(useAdapter != nullptr);
+	
+	ID3D12Device* device = nullptr;
+
+	hr = D3D12CreateDevice(useAdapter, D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(&device));
+	if (SUCCEEDED(hr)) {
+		Log(logStream, "FeatureLevel:12.2");
+	} else {
+		hr = D3D12CreateDevice(useAdapter, D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS(&device));
+		if (SUCCEEDED(hr)) {
+			Log(logStream, "FeatureLevel:12.1");
+		} else {
+			hr = D3D12CreateDevice(useAdapter, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&device));
+			if (SUCCEEDED(hr)) {
+				Log(logStream, "FeatureLevel:12.0");
+			}
+		}
+	}
+
+	assert(device != nullptr);
+	Log(logStream, "Complete create D3D12Device!!!");
+
 	while (message.message != WM_QUIT) {
 		// Windowにメッセージが来てたら最優先で処理させる
 		if (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE) != FALSE) {

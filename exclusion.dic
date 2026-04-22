@@ -22,3 +22,13 @@ int32_t
 wParam
 lParam
 hwnd
+Log
+ConvertString
+wstring
+MultiByteToWideChar
+WideCharToMultiByte
+CP_UTF8
+DXGIFactory
+IDXGIAdapter4
+D3D12CreateDevice
+FeatureLevel

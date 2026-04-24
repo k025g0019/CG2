@@ -94,7 +94,17 @@
     <None Include=".editorconfig" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="ApplicationWindow.cpp" />
+    <ClCompile Include="CrashHandler.cpp" />
+    <ClCompile Include="Log.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="StringUtility.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="ApplicationWindow.h" />
+    <ClInclude Include="CrashHandler.h" />
+    <ClInclude Include="Log.h" />
+    <ClInclude Include="StringUtility.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

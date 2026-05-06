@@ -7,6 +7,7 @@
 #include <format>
 #include <d3d12.h>
 #include <dxgi1_6.h>
+#include <dxgidebug.h>
 #include <cassert>
 #pragma warning(pop)
 
@@ -17,7 +18,10 @@
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
+#pragma comment(lib, "dxguid.lib")
 
+#pragma warning(push)
+#pragma warning(disable : 5045)
 // Windowsアプリケーションのエントリポイント
 int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	InstallCrashHandler();
@@ -56,7 +60,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		debugController->EnableDebugLayer();
 		// さらにGPU側でもチェックを行えるようにする
 		debugController->SetEnableGPUBasedValidation(TRUE);
-		debugController->Release();
 	}
 #endif
 
@@ -124,8 +127,8 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, true);
 		// エラーなら止まる
 		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, true);
-		// 警告なら止まる
-		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, true);
+		// 警告で止まる設定はいったん外して、詳細をログに出せるようにする
+		// infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, true);
 
 		// 抑制するメッセージのID
 		D3D12_MESSAGE_ID denyIds[] = {
@@ -243,23 +246,23 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 
 	ID3D12Fence* fence = nullptr;
 	uint64_t fenceValue = 0;
-	hr = device->CreateFence(fenceValue, D3D12_FENCE_FLAG_NONE
-		, IID_PPV_ARGS(&fence));
+	hr = device->CreateFence(fenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
 	assert(SUCCEEDED(hr));
 
 	HANDLE fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 	assert(fenceEvent != nullptr);
 
 	fenceValue++;
-
 	commandQueue->Signal(fence, fenceValue);
 
+#pragma warning(push)
+#pragma warning(disable : 5045)
 	if (fence->GetCompletedValue() < fenceValue) {
 		fence->SetEventOnCompletion(fenceValue, fenceEvent);
-
 		WaitForSingleObject(fenceEvent, INFINITE);
-
 	}
+#pragma warning(pop)
+
 	while (message.message != WM_QUIT) {
 		// Windowにメッセージが来ていたら最優先で処理する
 		if (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE) != FALSE) {
@@ -272,5 +275,37 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	}
 
 	Log(logStream, "application finished");
+
+#ifdef _DEBUG
+	// リソースリークチェック
+	IDXGIDebug1* debug = nullptr;
+	if (SUCCEEDED(DXGIGetDebugInterface1(0, IID_PPV_ARGS(&debug)))) {
+		debug->ReportLiveObjects(DXGI_DEBUG_ALL, DXGI_DEBUG_RLO_ALL);
+		debug->ReportLiveObjects(DXGI_DEBUG_APP, DXGI_DEBUG_RLO_ALL);
+		debug->ReportLiveObjects(DXGI_DEBUG_D3D12, DXGI_DEBUG_RLO_ALL);
+		debug->Release();
+	}
+#endif
+
+	CloseHandle(fenceEvent);
+	fence->Release();
+	rtvDescriptorHeap->Release();
+	swapChainResources[0]->Release();
+	swapChainResources[1]->Release();
+	swapChain->Release();
+	commandList->Release();
+	commandAllocator->Release();
+	commandQueue->Release();
+	device->Release();
+	useAdapter->Release();
+	dxgiFactory->Release();
+#ifdef _DEBUG
+	if (debugController != nullptr) {
+		debugController->Release();
+	}
+#endif
+	CloseWindow(windowHandle);
+
 	return static_cast<int>(message.wParam);
 }
+#pragma warning(pop)

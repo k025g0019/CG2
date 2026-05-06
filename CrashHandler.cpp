@@ -15,7 +15,8 @@ LONG WINAPI ExportDump(EXCEPTION_POINTERS* exception) noexcept {
 	GetLocalTime(&time);
 	wchar_t filePath[MAX_PATH] = { 0 };
 	CreateDirectory(L"./Dumps", nullptr);
-	StringCchPrintfW(filePath, MAX_PATH, L"./Dumps/%04d%02d%02d_%02d%02d%02d.dmp",
+	StringCchPrintfW(
+		filePath, MAX_PATH, L"./Dumps/%04d%02d%02d_%02d%02d%02d.dmp",
 		time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond);
 
 	// ダンプファイルを作成する

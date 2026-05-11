@@ -5,9 +5,11 @@
 #include <fstream>
 #include <chrono>
 #include <format>
+#include <string>
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <dxgidebug.h>
+#include <dxcapi.h>
 #include <cassert>
 #pragma warning(pop)
 
@@ -19,6 +21,83 @@
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "dxguid.lib")
+#pragma comment(lib, "dxcompiler.lib")
+
+namespace {
+
+	struct Vector4 {
+		float x;
+		float y;
+		float z;
+		float w;
+	};
+
+	struct VertexData {
+		Vector4 position;
+	};
+
+	IDxcBlob* CompileShader(
+		const std::wstring& filePath,
+		const wchar_t* profile,
+		IDxcUtils* dxcUtils,
+		IDxcCompiler3* dxcCompiler,
+		IDxcIncludeHandler* includeHandler,
+		std::ofstream& logStream) {
+		Log(logStream, std::format("Begin CompileShader, path:{}, profile:{}",
+			ConvertString(filePath), ConvertString(std::wstring{ profile })));
+
+		IDxcBlobEncoding* shaderSource = nullptr;
+		HRESULT hr = dxcUtils->LoadFile(filePath.c_str(), nullptr, &shaderSource);
+		assert(SUCCEEDED(hr));
+
+		DxcBuffer shaderSourceBuffer{};
+		shaderSourceBuffer.Ptr = shaderSource->GetBufferPointer();
+		shaderSourceBuffer.Size = shaderSource->GetBufferSize();
+		shaderSourceBuffer.Encoding = DXC_CP_UTF8;
+
+		LPCWSTR arguments[] = {
+			filePath.c_str(),
+			L"-E", L"main",
+			L"-T", profile,
+			L"-Zi", L"-Qembed_debug",
+			L"-Od",
+			L"-Zpr"
+		};
+
+		IDxcResult* shaderResult = nullptr;
+		hr = dxcCompiler->Compile(
+			&shaderSourceBuffer,
+			arguments,
+			_countof(arguments),
+			includeHandler,
+			IID_PPV_ARGS(&shaderResult));
+		assert(SUCCEEDED(hr));
+
+		// 警告・エラーが出たらログに出して止める
+		IDxcBlobUtf8* shaderError = nullptr;
+		shaderResult->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(&shaderError), nullptr);
+		if (shaderError != nullptr && shaderError->GetStringLength() != 0) {
+			Log(shaderError->GetStringPointer());
+			assert(false);
+		}
+
+		IDxcBlob* shaderBlob = nullptr;
+		hr = shaderResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&shaderBlob), nullptr);
+		assert(SUCCEEDED(hr));
+
+		Log(logStream, std::format("Compile Succeeded, path:{}, profile:{}",
+			ConvertString(filePath), ConvertString(std::wstring{ profile })));
+
+		if (shaderError != nullptr) {
+			shaderError->Release();
+		}
+		shaderResult->Release();
+		shaderSource->Release();
+
+		return shaderBlob;
+	}
+
+}
 
 #pragma warning(push)
 #pragma warning(disable : 5045)
@@ -26,44 +105,24 @@
 int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	InstallCrashHandler();
 
-	// ログ出力用のディレクトリを作成する
+	// ログのディレクトリを用意
 	std::filesystem::create_directory("logs");
-
-	// 現在時刻を取得する
 	std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
 	std::chrono::time_point<std::chrono::system_clock, std::chrono::seconds> nowSeconds =
 		std::chrono::time_point_cast<std::chrono::seconds>(now);
-
-	// 日本時間に変換する
 	std::chrono::zoned_time localTime{ std::chrono::current_zone(), nowSeconds };
-
-	// 現在時刻を使ってログファイル名を作る
 	std::string dateString = std::format("{:%Y%m%d_%H%M%S}", localTime);
 	std::string logFilePath = std::string("logs/" + dateString + ".Log");
-
-	// ログファイルを開く
 	std::ofstream logStream(logFilePath);
 	if (!logStream) {
 		return 1;
 	}
 
-	// ウィンドウを作成する
 	HWND windowHandle = CreateMainWindow(instanceHandle, logStream);
 	if (windowHandle == nullptr) {
 		return 1;
 	}
 
-#ifdef _DEBUG
-	ID3D12Debug1* debugController = nullptr;
-	if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController)))) {
-		// デバッグレイヤーを有効にする
-		debugController->EnableDebugLayer();
-		// さらにGPU側でもチェックを行えるようにする
-		debugController->SetEnableGPUBasedValidation(TRUE);
-	}
-#endif
-
-	// ウィンドウのボタンが押されるまでループ
 	MSG message{};
 	Log(logStream, "main loop started");
 
@@ -77,17 +136,14 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	for (UINT adapterIndex = 0;; ++adapterIndex) {
 		IDXGIAdapter4* candidateAdapter = nullptr;
 		if (dxgiFactory->EnumAdapterByGpuPreference(
-			adapterIndex, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&candidateAdapter)) ==
-			DXGI_ERROR_NOT_FOUND) {
+			adapterIndex, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&candidateAdapter)) == DXGI_ERROR_NOT_FOUND) {
 			break;
 		}
 
-		// アダプタの情報を取得する
 		DXGI_ADAPTER_DESC3 adapterDesc{};
 		hr = candidateAdapter->GetDesc3(&adapterDesc);
 		assert(SUCCEEDED(hr));
 
-		// ソフトウェアアダプタはスキップする
 		if (adapterDesc.Flags & DXGI_ADAPTER_FLAG3_SOFTWARE) {
 			candidateAdapter->Release();
 			continue;
@@ -120,38 +176,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	assert(device != nullptr);
 	Log(logStream, "Complete create D3D12Device!!!");
 
-#ifdef _DEBUG
-	ID3D12InfoQueue* infoQueue = nullptr;
-	if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&infoQueue)))) {
-		// ヤバイエラーなら止まる
-		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, true);
-		// エラーなら止まる
-		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, true);
-		// 警告で止まる設定はいったん外して、詳細をログに出せるようにする
-		// infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, true);
-
-		// 抑制するメッセージのID
-		D3D12_MESSAGE_ID denyIds[] = {
-			// Windows11でのDXGIデバッグレイヤーの既知の偽陽性バグによるエラーメッセージ
-			// https://stackoverflow.com/questions/69805245/directx-12-application-is-crashing-in-windows-11
-			D3D12_MESSAGE_ID_RESOURCE_BARRIER_MISMATCHING_COMMAND_LIST_TYPE
-		};
-
-		// 抑制するレベル
-		D3D12_MESSAGE_SEVERITY severities[] = { D3D12_MESSAGE_SEVERITY_INFO };
-
-		D3D12_INFO_QUEUE_FILTER filter{};
-		filter.DenyList.NumIDs = _countof(denyIds);
-		filter.DenyList.pIDList = denyIds;
-		filter.DenyList.NumSeverities = _countof(severities);
-		filter.DenyList.pSeverityList = severities;
-
-		// 指定したメッセージの表示を抑制する
-		infoQueue->PushStorageFilter(&filter);
-		infoQueue->Release();
-	}
-#endif
-
 	// コマンドキューを生成する
 	ID3D12CommandQueue* commandQueue = nullptr;
 	D3D12_COMMAND_QUEUE_DESC commandQueueDesc{};
@@ -168,6 +192,8 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	hr = device->CreateCommandList(
 		0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator, nullptr, IID_PPV_ARGS(&commandList));
 	assert(SUCCEEDED(hr));
+	hr = commandList->Close();
+	assert(SUCCEEDED(hr));
 
 	// スワップチェーンを生成する
 	IDXGISwapChain4* swapChain = nullptr;
@@ -179,10 +205,8 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
 	swapChainDesc.BufferCount = 2;
 	swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-
 	hr = dxgiFactory->CreateSwapChainForHwnd(
-		commandQueue, windowHandle, &swapChainDesc, nullptr, nullptr,
-		reinterpret_cast<IDXGISwapChain1**>(&swapChain));
+		commandQueue, windowHandle, &swapChainDesc, nullptr, nullptr, reinterpret_cast<IDXGISwapChain1**>(&swapChain));
 	assert(SUCCEEDED(hr));
 
 	// ディスクリプタヒープを生成する
@@ -199,51 +223,147 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	hr = swapChain->GetBuffer(1, IID_PPV_ARGS(&swapChainResources[1]));
 	assert(SUCCEEDED(hr));
 
-	// RTVを設定する
+	// RTVの設定
 	D3D12_RENDER_TARGET_VIEW_DESC rtvDesc{};
 	rtvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 	rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
 
 	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = rtvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
 	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandles[2];
-
 	rtvHandles[0] = rtvHandle;
 	device->CreateRenderTargetView(swapChainResources[0], &rtvDesc, rtvHandles[0]);
-
 	rtvHandles[1].ptr =
 		rtvHandles[0].ptr + device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 	device->CreateRenderTargetView(swapChainResources[1], &rtvDesc, rtvHandles[1]);
 
-	UINT backBufferIndex = swapChain->GetCurrentBackBufferIndex();
-
-	// Present用のリソースを描画用に遷移する
-	D3D12_RESOURCE_BARRIER barrier{};
-	barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-	barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-	barrier.Transition.pResource = swapChainResources[backBufferIndex];
-	barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-	barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
-	barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-	commandList->ResourceBarrier(1, &barrier);
-
-	commandList->OMSetRenderTargets(1, &rtvHandles[backBufferIndex], FALSE, nullptr);
-
-	float clearColor[] = { 0.1f, 0.25f, 0.5f, 1.0f };
-	commandList->ClearRenderTargetView(rtvHandles[backBufferIndex], clearColor, 0, nullptr);
-
-	// 描画後は再びPresent用に戻す
-	barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-	barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-	commandList->ResourceBarrier(1, &barrier);
-
-	hr = commandList->Close();
+	// DXC関係の初期化
+	IDxcUtils* dxcUtils = nullptr;
+	IDxcCompiler3* dxcCompiler = nullptr;
+	IDxcIncludeHandler* includeHandler = nullptr;
+	hr = DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&dxcUtils));
+	assert(SUCCEEDED(hr));
+	hr = DxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(&dxcCompiler));
+	assert(SUCCEEDED(hr));
+	hr = dxcUtils->CreateDefaultIncludeHandler(&includeHandler);
 	assert(SUCCEEDED(hr));
 
-	ID3D12CommandList* commandLists[] = { commandList };
-	commandQueue->ExecuteCommandLists(1, commandLists);
+	// Shaderをコンパイルする
+	IDxcBlob* vertexShaderBlob = CompileShader(L"Object3d.VS.hlsl", L"vs_6_0", dxcUtils, dxcCompiler, includeHandler, logStream);
+	IDxcBlob* pixelShaderBlob = CompileShader(L"Object3d.PS.hlsl", L"ps_6_0", dxcUtils, dxcCompiler, includeHandler, logStream);
 
-	swapChain->Present(1, 0);
+	// RootSignature作成
+	D3D12_ROOT_SIGNATURE_DESC descriptionRootSignature{};
+	descriptionRootSignature.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
+	ID3DBlob* signatureBlob = nullptr;
+	ID3DBlob* errorBlob = nullptr;
+	hr = D3D12SerializeRootSignature(
+		&descriptionRootSignature, D3D_ROOT_SIGNATURE_VERSION_1, &signatureBlob, &errorBlob);
+	if (FAILED(hr)) {
+		if (errorBlob != nullptr) {
+			Log(reinterpret_cast<char*>(errorBlob->GetBufferPointer()));
+		}
+		assert(false);
+	}
+
+	ID3D12RootSignature* rootSignature = nullptr;
+	hr = device->CreateRootSignature(
+		0, signatureBlob->GetBufferPointer(), signatureBlob->GetBufferSize(), IID_PPV_ARGS(&rootSignature));
+	assert(SUCCEEDED(hr));
+
+	// InputLayout
+	D3D12_INPUT_ELEMENT_DESC inputElementDescs[1] = {};
+	inputElementDescs[0].SemanticName = "POSITION";
+	inputElementDescs[0].SemanticIndex = 0;
+	inputElementDescs[0].Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+	inputElementDescs[0].AlignedByteOffset = D3D12_APPEND_ALIGNED_ELEMENT;
+
+	// BlendState
+	D3D12_BLEND_DESC blendDesc{};
+	blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+	// RasterizerState
+	D3D12_RASTERIZER_DESC rasterizerDesc{};
+	rasterizerDesc.FillMode = D3D12_FILL_MODE_SOLID;
+	rasterizerDesc.CullMode = D3D12_CULL_MODE_NONE;
+	rasterizerDesc.DepthClipEnable = TRUE;
+
+	// PSO
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC graphicsPipelineStateDesc{};
+	graphicsPipelineStateDesc.pRootSignature = rootSignature;
+	graphicsPipelineStateDesc.InputLayout.pInputElementDescs = inputElementDescs;
+	graphicsPipelineStateDesc.InputLayout.NumElements = _countof(inputElementDescs);
+	graphicsPipelineStateDesc.VS = {
+		vertexShaderBlob->GetBufferPointer(),
+		vertexShaderBlob->GetBufferSize()
+	};
+	graphicsPipelineStateDesc.PS = {
+		pixelShaderBlob->GetBufferPointer(),
+		pixelShaderBlob->GetBufferSize()
+	};
+	graphicsPipelineStateDesc.BlendState = blendDesc;
+	graphicsPipelineStateDesc.RasterizerState = rasterizerDesc;
+	graphicsPipelineStateDesc.NumRenderTargets = 1;
+	graphicsPipelineStateDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+	graphicsPipelineStateDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	graphicsPipelineStateDesc.SampleDesc.Count = 1;
+	graphicsPipelineStateDesc.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
+
+	ID3D12PipelineState* graphicsPipelineState = nullptr;
+	hr = device->CreateGraphicsPipelineState(&graphicsPipelineStateDesc, IID_PPV_ARGS(&graphicsPipelineState));
+	assert(SUCCEEDED(hr));
+
+	// 頂点データ
+	VertexData vertices[3] = {
+		{{ 0.0f, 0.5f, 0.0f, 1.0f }},
+		{{ 0.5f, -0.5f, 0.0f, 1.0f }},
+		{{ -0.5f, -0.5f, 0.0f, 1.0f }}
+	};
+
+	// VertexBuffer用のResourceを作る
+	ID3D12Resource* vertexResource = nullptr;
+	D3D12_HEAP_PROPERTIES uploadHeapProperties{};
+	uploadHeapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
+
+	D3D12_RESOURCE_DESC vertexResourceDesc{};
+	vertexResourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+	vertexResourceDesc.Width = sizeof(vertices);
+	vertexResourceDesc.Height = 1;
+	vertexResourceDesc.DepthOrArraySize = 1;
+	vertexResourceDesc.MipLevels = 1;
+	vertexResourceDesc.SampleDesc.Count = 1;
+	vertexResourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+	hr = device->CreateCommittedResource(
+		&uploadHeapProperties,
+		D3D12_HEAP_FLAG_NONE,
+		&vertexResourceDesc,
+		D3D12_RESOURCE_STATE_GENERIC_READ,
+		nullptr,
+		IID_PPV_ARGS(&vertexResource));
+	assert(SUCCEEDED(hr));
+
+	// 頂点データを書き込む
+	VertexData* mappedVertexData = nullptr;
+	hr = vertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedVertexData));
+	assert(SUCCEEDED(hr));
+	std::memcpy(mappedVertexData, vertices, sizeof(vertices));
+
+	D3D12_VERTEX_BUFFER_VIEW vertexBufferView{};
+	vertexBufferView.BufferLocation = vertexResource->GetGPUVirtualAddress();
+	vertexBufferView.SizeInBytes = sizeof(vertices);
+	vertexBufferView.StrideInBytes = sizeof(VertexData);
+
+	D3D12_VIEWPORT viewport{};
+	viewport.Width = static_cast<float>(kClientWidth);
+	viewport.Height = static_cast<float>(kClientHeight);
+	viewport.MaxDepth = 1.0f;
+
+	D3D12_RECT scissorRect{};
+	scissorRect.right = kClientWidth;
+	scissorRect.bottom = kClientHeight;
+
+	// GPUとの同期に使うフェンス
 	ID3D12Fence* fence = nullptr;
 	uint64_t fenceValue = 0;
 	hr = device->CreateFence(fenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
@@ -252,43 +372,81 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	HANDLE fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 	assert(fenceEvent != nullptr);
 
-	fenceValue++;
-	commandQueue->Signal(fence, fenceValue);
-
-#pragma warning(push)
-#pragma warning(disable : 5045)
-	if (fence->GetCompletedValue() < fenceValue) {
-		fence->SetEventOnCompletion(fenceValue, fenceEvent);
-		WaitForSingleObject(fenceEvent, INFINITE);
-	}
-#pragma warning(pop)
-
 	while (message.message != WM_QUIT) {
-		// Windowにメッセージが来ていたら最優先で処理する
 		if (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE) != FALSE) {
 			TranslateMessage(&message);
 			DispatchMessage(&message);
 		}
 		else {
-			// ゲームの処理
+			hr = commandAllocator->Reset();
+			assert(SUCCEEDED(hr));
+			hr = commandList->Reset(commandAllocator, graphicsPipelineState);
+			assert(SUCCEEDED(hr));
+
+			UINT backBufferIndex = swapChain->GetCurrentBackBufferIndex();
+
+			D3D12_RESOURCE_BARRIER barrier{};
+			barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			barrier.Transition.pResource = swapChainResources[backBufferIndex];
+			barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+			commandList->ResourceBarrier(1, &barrier);
+
+			commandList->RSSetViewports(1, &viewport);
+			commandList->RSSetScissorRects(1, &scissorRect);
+			// RootSignatureを設定。PSOに設定しているけど別途設定が必要
+			commandList->SetGraphicsRootSignature(rootSignature);
+			commandList->SetPipelineState(graphicsPipelineState);
+			commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			commandList->IASetVertexBuffers(0, 1, &vertexBufferView);
+			commandList->OMSetRenderTargets(1, &rtvHandles[backBufferIndex], FALSE, nullptr);
+
+			float clearColor[] = { 0.1f, 0.25f, 0.5f, 1.0f };
+			commandList->ClearRenderTargetView(rtvHandles[backBufferIndex], clearColor, 0, nullptr);
+			commandList->DrawInstanced(3, 1, 0, 0);
+
+			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+			commandList->ResourceBarrier(1, &barrier);
+
+			hr = commandList->Close();
+			assert(SUCCEEDED(hr));
+
+			ID3D12CommandList* commandLists[] = { commandList };
+			commandQueue->ExecuteCommandLists(1, commandLists);
+
+			hr = swapChain->Present(1, 0);
+			assert(SUCCEEDED(hr));
+
+			fenceValue++;
+			hr = commandQueue->Signal(fence, fenceValue);
+			assert(SUCCEEDED(hr));
+
+			if (fence->GetCompletedValue() < fenceValue) {
+				hr = fence->SetEventOnCompletion(fenceValue, fenceEvent);
+				assert(SUCCEEDED(hr));
+				WaitForSingleObject(fenceEvent, INFINITE);
+			}
 		}
 	}
 
 	Log(logStream, "application finished");
 
-#ifdef _DEBUG
-	// リソースリークチェック
-	IDXGIDebug1* debug = nullptr;
-	if (SUCCEEDED(DXGIGetDebugInterface1(0, IID_PPV_ARGS(&debug)))) {
-		debug->ReportLiveObjects(DXGI_DEBUG_ALL, DXGI_DEBUG_RLO_ALL);
-		debug->ReportLiveObjects(DXGI_DEBUG_APP, DXGI_DEBUG_RLO_ALL);
-		debug->ReportLiveObjects(DXGI_DEBUG_D3D12, DXGI_DEBUG_RLO_ALL);
-		debug->Release();
-	}
-#endif
-
 	CloseHandle(fenceEvent);
 	fence->Release();
+	vertexResource->Release();
+	graphicsPipelineState->Release();
+	rootSignature->Release();
+	signatureBlob->Release();
+	if (errorBlob != nullptr) {
+		errorBlob->Release();
+	}
+	vertexShaderBlob->Release();
+	pixelShaderBlob->Release();
+	includeHandler->Release();
+	dxcCompiler->Release();
+	dxcUtils->Release();
 	rtvDescriptorHeap->Release();
 	swapChainResources[0]->Release();
 	swapChainResources[1]->Release();
@@ -299,12 +457,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	device->Release();
 	useAdapter->Release();
 	dxgiFactory->Release();
-#ifdef _DEBUG
-	if (debugController != nullptr) {
-		debugController->Release();
-	}
-#endif
-	CloseWindow(windowHandle);
 
 	return static_cast<int>(message.wParam);
 }

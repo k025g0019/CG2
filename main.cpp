@@ -1,13 +1,13 @@
 #pragma warning(push, 0)
-#include <sdkddkver.h>
 #include <Windows.h>
-#include <filesystem>
-#include <fstream>
+#include <cassert>
 #include <chrono>
-#include <format>
 #include <d3d12.h>
 #include <dxgi1_6.h>
-#include <cassert>
+#include <filesystem>
+#include <format>
+#include <fstream>
+#include <sdkddkver.h>
 #pragma warning(pop)
 
 #include "ApplicationWindow.h"
@@ -17,6 +17,8 @@
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
+#pragma warning(push)
+#pragma warning(disable : 5045)
 
 // Windowsアプリケーションのエントリポイント
 int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
@@ -31,11 +33,11 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		std::chrono::time_point_cast<std::chrono::seconds>(now);
 
 	// 日本時間に変換する
-	std::chrono::zoned_time localTime{ std::chrono::current_zone(), nowSeconds };
+	std::chrono::zoned_time localTime{std::chrono::current_zone(), nowSeconds};
 
 	// 現在時刻を使ってログファイル名を作る
 	std::string dateString = std::format("{:%Y%m%d_%H%M%S}", localTime);
-	std::string logFilePath = std::string("logs/" + dateString + ".Log");
+	auto logFilePath = std::string("logs/" + dateString + ".Log");
 
 	// ログファイルを開く
 	std::ofstream logStream(logFilePath);
@@ -74,7 +76,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	for (UINT adapterIndex = 0;; ++adapterIndex) {
 		IDXGIAdapter4* candidateAdapter = nullptr;
 		if (dxgiFactory->EnumAdapterByGpuPreference(
-			adapterIndex, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&candidateAdapter)) ==
+				adapterIndex, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&candidateAdapter)) ==
 			DXGI_ERROR_NOT_FOUND) {
 			break;
 		}
@@ -91,7 +93,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		}
 
 		useAdapter = candidateAdapter;
-		Log(logStream, std::format("Use Adapter:{}", ConvertString(std::wstring{ adapterDesc.Description })));
+		Log(logStream, std::format("Use Adapter:{}", ConvertString(std::wstring{adapterDesc.Description})));
 		break;
 	}
 	assert(useAdapter != nullptr);
@@ -135,7 +137,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		};
 
 		// 抑制するレベル
-		D3D12_MESSAGE_SEVERITY severities[] = { D3D12_MESSAGE_SEVERITY_INFO };
+		D3D12_MESSAGE_SEVERITY severities[] = {D3D12_MESSAGE_SEVERITY_INFO};
 
 		D3D12_INFO_QUEUE_FILTER filter{};
 		filter.DenyList.NumIDs = _countof(denyIds);
@@ -190,7 +192,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	hr = device->CreateDescriptorHeap(&rtvDescriptorHeapDesc, IID_PPV_ARGS(&rtvDescriptorHeap));
 	assert(SUCCEEDED(hr));
 
-	ID3D12Resource* swapChainResources[2] = { nullptr };
+	ID3D12Resource* swapChainResources[2] = {nullptr};
 	hr = swapChain->GetBuffer(0, IID_PPV_ARGS(&swapChainResources[0]));
 	assert(SUCCEEDED(hr));
 	hr = swapChain->GetBuffer(1, IID_PPV_ARGS(&swapChainResources[1]));
@@ -225,7 +227,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 
 	commandList->OMSetRenderTargets(1, &rtvHandles[backBufferIndex], FALSE, nullptr);
 
-	float clearColor[] = { 0.1f, 0.25f, 0.5f, 1.0f };
+	float clearColor[] = {0.1f, 0.25f, 0.5f, 1.0f};
 	commandList->ClearRenderTargetView(rtvHandles[backBufferIndex], clearColor, 0, nullptr);
 
 	// 描画後は再びPresent用に戻す
@@ -236,30 +238,20 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	hr = commandList->Close();
 	assert(SUCCEEDED(hr));
 
-	ID3D12CommandList* commandLists[] = { commandList };
+	ID3D12CommandList* commandLists[] = {commandList};
 	commandQueue->ExecuteCommandLists(1, commandLists);
 
-	swapChain->Present(1, 0);
 
 	ID3D12Fence* fence = nullptr;
 	uint64_t fenceValue = 0;
 	hr = device->CreateFence(fenceValue, D3D12_FENCE_FLAG_NONE
-		, IID_PPV_ARGS(&fence));
+	                         , IID_PPV_ARGS(&fence));
 	assert(SUCCEEDED(hr));
 
 	HANDLE fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 	assert(fenceEvent != nullptr);
 
-	fenceValue++;
 
-	commandQueue->Signal(fence, fenceValue);
-
-	if (fence->GetCompletedValue() < fenceValue) {
-		fence->SetEventOnCompletion(fenceValue, fenceEvent);
-
-		WaitForSingleObject(fenceEvent, INFINITE);
-
-	}
 	while (message.message != WM_QUIT) {
 		// Windowにメッセージが来ていたら最優先で処理する
 		if (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE) != FALSE) {
@@ -269,8 +261,19 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		else {
 			// ゲームの処理
 		}
+
+		fenceValue++;
+		swapChain->Present(1, 0);
+		commandQueue->Signal(fence, fenceValue);
+
+		if (fence->GetCompletedValue() < fenceValue) {
+			fence->SetEventOnCompletion(fenceValue, fenceEvent);
+
+			WaitForSingleObject(fenceEvent, INFINITE);
+		}
 	}
 
-	Log(logStream, "application finished");
-	return static_cast<int>(message.wParam);
+Log(logStream, "application finished");
+return static_cast<int>(message.wParam);
 }
+#pragma warning(pop)

@@ -1,22 +1,27 @@
 #pragma warning(push, 0)
-#include <sdkddkver.h>
 #include <Windows.h>
-#include <filesystem>
-#include <fstream>
+#include <cassert>
 #include <chrono>
-#include <format>
-#include <string>
+#include <cstring>
+#include <ctime>
 #include <d3d12.h>
+#include <dxcapi.h>
 #include <dxgi1_6.h>
 #include <dxgidebug.h>
-#include <dxcapi.h>
-#include <cassert>
+#include <filesystem>
+#include <format>
+#include <fstream>
+#include <sdkddkver.h>
+#include <string>
 #pragma warning(pop)
 
 #include "ApplicationWindow.h"
 #include "CrashHandler.h"
 #include "Log.h"
+#include "Matrix.h"
 #include "StringUtility.h"
+#include "Vector&Matrix.h"
+#include "Vector.h"
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -24,12 +29,17 @@
 #pragma comment(lib, "dxcompiler.lib")
 
 namespace {
-
 	struct Vector4 {
 		float x;
 		float y;
 		float z;
 		float w;
+	};
+
+	struct Transforms {
+		Vector3 scale;
+		Vector3 rotate;
+		Vector3 translate;
 	};
 
 	struct VertexData {
@@ -70,7 +80,7 @@ namespace {
 		IDxcIncludeHandler* includeHandler,
 		std::ofstream& logStream) {
 		Log(logStream, std::format("Begin CompileShader, path:{}, profile:{}",
-			ConvertString(filePath), ConvertString(std::wstring{ profile })));
+		                           ConvertString(filePath), ConvertString(std::wstring{profile})));
 
 		IDxcBlobEncoding* shaderSource = nullptr;
 		HRESULT hr = dxcUtils->LoadFile(filePath.c_str(), nullptr, &shaderSource);
@@ -112,7 +122,7 @@ namespace {
 		assert(SUCCEEDED(hr));
 
 		Log(logStream, std::format("Compile Succeeded, path:{}, profile:{}",
-			ConvertString(filePath), ConvertString(std::wstring{ profile })));
+		                           ConvertString(filePath), ConvertString(std::wstring{profile})));
 
 		if (shaderError != nullptr) {
 			shaderError->Release();
@@ -122,7 +132,6 @@ namespace {
 
 		return shaderBlob;
 	}
-
 }
 
 #pragma warning(push)
@@ -133,12 +142,18 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 
 	// ログのディレクトリを用意
 	std::filesystem::create_directory("logs");
-	std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
-	std::chrono::time_point<std::chrono::system_clock, std::chrono::seconds> nowSeconds =
-		std::chrono::time_point_cast<std::chrono::seconds>(now);
-	std::chrono::zoned_time localTime{ std::chrono::current_zone(), nowSeconds };
-	std::string dateString = std::format("{:%Y%m%d_%H%M%S}", localTime);
-	std::string logFilePath = std::string("logs/" + dateString + ".Log");
+	std::time_t now = std::time(nullptr);
+	std::tm localTime{};
+	localtime_s(&localTime, &now);
+	std::string dateString = std::format(
+		"{:04}{:02}{:02}_{:02}{:02}{:02}",
+		localTime.tm_year + 1900,
+		localTime.tm_mon + 1,
+		localTime.tm_mday,
+		localTime.tm_hour,
+		localTime.tm_min,
+		localTime.tm_sec);
+	auto logFilePath = std::string("logs/" + dateString + ".Log");
 	std::ofstream logStream(logFilePath);
 	if (!logStream) {
 		return 1;
@@ -152,6 +167,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	MSG message{};
 	Log(logStream, "main loop started");
 
+
 	// DXGI Factoryを生成する
 	IDXGIFactory7* dxgiFactory = nullptr;
 	HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&dxgiFactory));
@@ -162,7 +178,8 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	for (UINT adapterIndex = 0;; ++adapterIndex) {
 		IDXGIAdapter4* candidateAdapter = nullptr;
 		if (dxgiFactory->EnumAdapterByGpuPreference(
-			adapterIndex, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&candidateAdapter)) == DXGI_ERROR_NOT_FOUND) {
+			adapterIndex, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+			IID_PPV_ARGS(&candidateAdapter)) == DXGI_ERROR_NOT_FOUND) {
 			break;
 		}
 
@@ -176,7 +193,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		}
 
 		useAdapter = candidateAdapter;
-		Log(logStream, std::format("Use Adapter:{}", ConvertString(std::wstring{ adapterDesc.Description })));
+		Log(logStream, std::format("Use Adapter:{}", ConvertString(std::wstring{adapterDesc.Description})));
 		break;
 	}
 	assert(useAdapter != nullptr);
@@ -207,17 +224,26 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	D3D12_COMMAND_QUEUE_DESC commandQueueDesc{};
 	hr = device->CreateCommandQueue(&commandQueueDesc, IID_PPV_ARGS(&commandQueue));
 	assert(SUCCEEDED(hr));
+	if (FAILED(hr) || commandQueue == nullptr) {
+		return 1;
+	}
 
 	// コマンドアロケータを生成する
 	ID3D12CommandAllocator* commandAllocator = nullptr;
 	hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator));
 	assert(SUCCEEDED(hr));
+	if (FAILED(hr) || commandAllocator == nullptr) {
+		return 1;
+	}
 
 	// コマンドリストを生成する
 	ID3D12GraphicsCommandList* commandList = nullptr;
 	hr = device->CreateCommandList(
 		0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator, nullptr, IID_PPV_ARGS(&commandList));
 	assert(SUCCEEDED(hr));
+	if (FAILED(hr) || commandList == nullptr) {
+		return 1;
+	}
 	hr = commandList->Close();
 	assert(SUCCEEDED(hr));
 
@@ -234,6 +260,9 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	hr = dxgiFactory->CreateSwapChainForHwnd(
 		commandQueue, windowHandle, &swapChainDesc, nullptr, nullptr, reinterpret_cast<IDXGISwapChain1**>(&swapChain));
 	assert(SUCCEEDED(hr));
+	if (FAILED(hr) || swapChain == nullptr) {
+		return 1;
+	}
 
 	// ディスクリプタヒープを生成する
 	ID3D12DescriptorHeap* rtvDescriptorHeap = nullptr;
@@ -243,7 +272,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	hr = device->CreateDescriptorHeap(&rtvDescriptorHeapDesc, IID_PPV_ARGS(&rtvDescriptorHeap));
 	assert(SUCCEEDED(hr));
 
-	ID3D12Resource* swapChainResources[2] = { nullptr };
+	ID3D12Resource* swapChainResources[2] = {nullptr};
 	hr = swapChain->GetBuffer(0, IID_PPV_ARGS(&swapChainResources[0]));
 	assert(SUCCEEDED(hr));
 	hr = swapChain->GetBuffer(1, IID_PPV_ARGS(&swapChainResources[1]));
@@ -274,8 +303,10 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	assert(SUCCEEDED(hr));
 
 	// Shaderをコンパイルする
-	IDxcBlob* vertexShaderBlob = CompileShader(L"Object3d.VS.hlsl", L"vs_6_0", dxcUtils, dxcCompiler, includeHandler, logStream);
-	IDxcBlob* pixelShaderBlob = CompileShader(L"Object3d.PS.hlsl", L"ps_6_0", dxcUtils, dxcCompiler, includeHandler, logStream);
+	IDxcBlob* vertexShaderBlob = CompileShader(L"Object3d.VS.hlsl", L"vs_6_0", dxcUtils, dxcCompiler, includeHandler,
+	                                           logStream);
+	IDxcBlob* pixelShaderBlob = CompileShader(L"Object3d.PS.hlsl", L"ps_6_0", dxcUtils, dxcCompiler, includeHandler,
+	                                          logStream);
 
 	// RootSignature作成
 	D3D12_ROOT_SIGNATURE_DESC descriptionRootSignature{};
@@ -287,20 +318,21 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 	rootParameters[0].Descriptor.ShaderRegister = 0;
 	rootParameters[0].Descriptor.RegisterSpace = 0;
-	
+
+
 	descriptionRootSignature.pParameters = rootParameters;
 	descriptionRootSignature.NumParameters = _countof(rootParameters);
 
 	ID3DBlob* signatureBlob = nullptr;
 	ID3DBlob* errorBlob = nullptr;
 
-	ID3D12Resource* materialResource = CreateBufferResource(device, sizeof(Vector4) * 4);
-	Vector4* materialData = nullptr;
+	ID3D12Resource* wvpResource = CreateBufferResource(device, sizeof(Matrix4x4));
+	Matrix4x4* wvpData = nullptr;
 
-	
-	materialResource->Map(0, nullptr, reinterpret_cast<void**>(&materialData));
 
-	*materialData = { 1.0f, 0.0f, 0.0f, 1.0f };
+	wvpResource->Map(0, nullptr, reinterpret_cast<void**>(&wvpData));
+
+	*wvpData = MakeIdentity4x4();
 
 	hr = D3D12SerializeRootSignature(
 		&descriptionRootSignature, D3D_ROOT_SIGNATURE_VERSION_1, &signatureBlob, &errorBlob);
@@ -357,14 +389,22 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	ID3D12PipelineState* graphicsPipelineState = nullptr;
 	hr = device->CreateGraphicsPipelineState(&graphicsPipelineStateDesc, IID_PPV_ARGS(&graphicsPipelineState));
 	assert(SUCCEEDED(hr));
+	if (FAILED(hr) || graphicsPipelineState == nullptr) {
+		return 1;
+	}
 
 	// 頂点データ
 	VertexData vertices[3] = {
-		{{ 0.0f, 0.5f, 0.0f, 1.0f }},
-		{{ 0.5f, -0.5f, 0.0f, 1.0f }},
-		{{ -0.5f, -0.5f, 0.0f, 1.0f }}
+		{{0.0f, 0.5f, 0.0f, 1.0f}},
+		{{0.5f, -0.5f, 0.0f, 1.0f}},
+		{{-0.5f, -0.5f, 0.0f, 1.0f}}
 	};
 
+	Transforms transform{
+		.scale = {1.0f, 1.0f, 1.0f},
+		.rotate = {0.0f, 0.0f, 0.0f},
+		.translate = {0.0f, 0.0f, 0.0f}
+	};
 	// VertexBuffer用のResourceを作る
 	ID3D12Resource* vertexResource = CreateBufferResource(device, sizeof(vertices));
 
@@ -396,6 +436,9 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 
 	HANDLE fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 	assert(fenceEvent != nullptr);
+	if (fenceEvent == nullptr) {
+		return 1;
+	}
 
 	while (message.message != WM_QUIT) {
 		if (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE) != FALSE) {
@@ -423,12 +466,12 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			// RootSignatureを設定。PSOに設定しているけど別途設定が必要
 			commandList->SetGraphicsRootSignature(rootSignature);
 			commandList->SetPipelineState(graphicsPipelineState);
-			commandList->SetGraphicsRootConstantBufferView(0, materialResource->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootConstantBufferView(0, wvpResource->GetGPUVirtualAddress());
 			commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			commandList->IASetVertexBuffers(0, 1, &vertexBufferView);
 			commandList->OMSetRenderTargets(1, &rtvHandles[backBufferIndex], FALSE, nullptr);
 
-			float clearColor[] = { 0.1f, 0.25f, 0.5f, 1.0f };
+			float clearColor[] = {0.1f, 0.25f, 0.5f, 1.0f};
 			commandList->ClearRenderTargetView(rtvHandles[backBufferIndex], clearColor, 0, nullptr);
 			commandList->DrawInstanced(3, 1, 0, 0);
 
@@ -439,7 +482,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			hr = commandList->Close();
 			assert(SUCCEEDED(hr));
 
-			ID3D12CommandList* commandLists[] = { commandList };
+			ID3D12CommandList* commandLists[] = {commandList};
 			commandQueue->ExecuteCommandLists(1, commandLists);
 
 			hr = swapChain->Present(1, 0);
@@ -452,16 +495,20 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			if (fence->GetCompletedValue() < fenceValue) {
 				hr = fence->SetEventOnCompletion(fenceValue, fenceEvent);
 				assert(SUCCEEDED(hr));
-				WaitForSingleObject(fenceEvent, INFINITE);
+				if (fenceEvent != nullptr) {
+					WaitForSingleObject(fenceEvent, INFINITE);
+				}
 			}
 		}
 	}
 
 	Log(logStream, "application finished");
 
-	CloseHandle(fenceEvent);
+	if (fenceEvent != nullptr) {
+		CloseHandle(fenceEvent);
+	}
 	fence->Release();
-	materialResource->Release();
+	wvpResource->Release();
 	vertexResource->Release();
 	graphicsPipelineState->Release();
 	rootSignature->Release();

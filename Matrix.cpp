@@ -17,8 +17,6 @@ Matrix4x4 Add(const Matrix4x4& matrix1, const Matrix4x4& matrix2) {
 	}
 	return result;
 }
-#pragma warning(pop)
-
 Matrix4x4 Subtract(const Matrix4x4& matrix1, const Matrix4x4& matrix2) {
 	Matrix4x4 result;
 	for (int i = 0; i < 4; ++i) {
@@ -103,6 +101,7 @@ Matrix4x4 Inverse(const Matrix4x4& matrix) {
 
 	return result;
 }
+#pragma warning(pop)
 
 Matrix4x4 Transpose(const Matrix4x4& matrix) {
 	Matrix4x4 result;

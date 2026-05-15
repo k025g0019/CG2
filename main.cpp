@@ -46,6 +46,10 @@ namespace {
 		Vector4 position;
 	};
 
+	struct Material {
+		Vector4 color;
+	};
+
 	ID3D12Resource* CreateBufferResource(ID3D12Device* device, size_t sizeInBytes) {
 		D3D12_HEAP_PROPERTIES uploadHeapProperties{};
 		uploadHeapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
@@ -313,12 +317,16 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	descriptionRootSignature.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
 
-	D3D12_ROOT_PARAMETER rootParameters[1] = {};
+	D3D12_ROOT_PARAMETER rootParameters[2] = {};
 	rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-	rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+	rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	rootParameters[0].Descriptor.ShaderRegister = 0;
 	rootParameters[0].Descriptor.RegisterSpace = 0;
 
+	rootParameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+	rootParameters[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+	rootParameters[1].Descriptor.ShaderRegister = 0;
+	rootParameters[1].Descriptor.RegisterSpace = 0;
 
 	descriptionRootSignature.pParameters = rootParameters;
 	descriptionRootSignature.NumParameters = _countof(rootParameters);
@@ -326,12 +334,18 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	ID3DBlob* signatureBlob = nullptr;
 	ID3DBlob* errorBlob = nullptr;
 
+	ID3D12Resource* materialResource = CreateBufferResource(device, sizeof(Material));
+	Material* materialData = nullptr;
+
+
+	materialResource->Map(0, nullptr, reinterpret_cast<void**>(&materialData));
+
+	materialData->color = {1.0f, 0.0f, 0.0f, 1.0f};
+
+
 	ID3D12Resource* wvpResource = CreateBufferResource(device, sizeof(Matrix4x4));
 	Matrix4x4* wvpData = nullptr;
-
-
 	wvpResource->Map(0, nullptr, reinterpret_cast<void**>(&wvpData));
-
 	*wvpData = MakeIdentity4x4();
 
 	hr = D3D12SerializeRootSignature(
@@ -395,15 +409,20 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 
 	// 頂点データ
 	VertexData vertices[3] = {
+		{{-0.5f, -0.5f, 0.0f, 1.0f}},
 		{{0.0f, 0.5f, 0.0f, 1.0f}},
-		{{0.5f, -0.5f, 0.0f, 1.0f}},
-		{{-0.5f, -0.5f, 0.0f, 1.0f}}
+		{{0.5f, -0.5f, 0.0f, 1.0f}}
 	};
 
 	Transforms transform{
 		.scale = {1.0f, 1.0f, 1.0f},
 		.rotate = {0.0f, 0.0f, 0.0f},
 		.translate = {0.0f, 0.0f, 0.0f}
+	};
+	Transforms cameraTransform{
+		.scale = {1.0f, 1.0f, 1.0f},
+		.rotate = {0.0f, 0.0f, 0.0f},
+		.translate = {0.0f, 0.0f, -5.0f}
 	};
 	// VertexBuffer用のResourceを作る
 	ID3D12Resource* vertexResource = CreateBufferResource(device, sizeof(vertices));
@@ -428,6 +447,15 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	scissorRect.right = kClientWidth;
 	scissorRect.bottom = kClientHeight;
 
+	Matrix4x4 cameraMatrix = MakeAffineMatrix(
+		cameraTransform.scale, cameraTransform.rotate, cameraTransform.translate);
+	Matrix4x4 viewMatrix = Inverse(cameraMatrix);
+	Matrix4x4 projectionMatrix = MakePerspectiveFovMatrix(
+		0.45f,
+		static_cast<float>(kClientWidth) / static_cast<float>(kClientHeight),
+		0.1f,
+		100.0f);
+
 	// GPUとの同期に使うフェンス
 	ID3D12Fence* fence = nullptr;
 	uint64_t fenceValue = 0;
@@ -446,6 +474,10 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			DispatchMessage(&message);
 		}
 		else {
+			transform.rotate.y += 0.03f;
+			Matrix4x4 worldMatrix = MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
+			Matrix4x4 worldViewProjectionMatrix = Multiply(worldMatrix, Multiply(viewMatrix, projectionMatrix));
+			*wvpData = worldViewProjectionMatrix;
 			hr = commandAllocator->Reset();
 			assert(SUCCEEDED(hr));
 			hr = commandList->Reset(commandAllocator, graphicsPipelineState);
@@ -466,7 +498,8 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			// RootSignatureを設定。PSOに設定しているけど別途設定が必要
 			commandList->SetGraphicsRootSignature(rootSignature);
 			commandList->SetPipelineState(graphicsPipelineState);
-			commandList->SetGraphicsRootConstantBufferView(0, wvpResource->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootConstantBufferView(0, materialResource->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootConstantBufferView(1, wvpResource->GetGPUVirtualAddress());
 			commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			commandList->IASetVertexBuffers(0, 1, &vertexBufferView);
 			commandList->OMSetRenderTargets(1, &rtvHandles[backBufferIndex], FALSE, nullptr);
@@ -508,7 +541,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		CloseHandle(fenceEvent);
 	}
 	fence->Release();
-	wvpResource->Release();
+	materialResource->Release();
 	vertexResource->Release();
 	graphicsPipelineState->Release();
 	rootSignature->Release();

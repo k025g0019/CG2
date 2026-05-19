@@ -22,11 +22,21 @@
 #include "StringUtility.h"
 #include "Vector&Matrix.h"
 #include "Vector.h"
+#include "Imgui.h"
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "dxguid.lib")
 #pragma comment(lib, "dxcompiler.lib")
+
+
+#ifdef USE_IMGUI
+#pragma warning(push, 0)
+#include "externals/imgui/imgui.h"
+#include "externals/imgui/imgui_impl_dx12.h"
+#include "externals/imgui/imgui_impl_win32.h"
+#pragma warning(pop)
+#endif
 
 namespace {
 	struct Vector4 {
@@ -269,12 +279,12 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	}
 
 	// ディスクリプタヒープを生成する
-	ID3D12DescriptorHeap* rtvDescriptorHeap = nullptr;
-	D3D12_DESCRIPTOR_HEAP_DESC rtvDescriptorHeapDesc{};
-	rtvDescriptorHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-	rtvDescriptorHeapDesc.NumDescriptors = 2;
-	hr = device->CreateDescriptorHeap(&rtvDescriptorHeapDesc, IID_PPV_ARGS(&rtvDescriptorHeap));
-	assert(SUCCEEDED(hr));
+	ID3D12DescriptorHeap* rtvDescriptorHeap =
+		CreateDescriptorHeap(device, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 2, false);
+#ifdef USE_IMGUI
+	ID3D12DescriptorHeap* srvDescriptorHeap =
+		CreateDescriptorHeap(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 128, true);
+#endif
 
 	ID3D12Resource* swapChainResources[2] = {nullptr};
 	hr = swapChain->GetBuffer(0, IID_PPV_ARGS(&swapChainResources[0]));
@@ -468,12 +478,35 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		return 1;
 	}
 
+	// ImGuiの初期化
+#ifdef USE_IMGUI
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGui::StyleColorsDark();
+	ImGui_ImplWin32_Init(windowHandle);
+	ImGui_ImplDX12_Init(
+		device,
+		static_cast<int>(swapChainDesc.BufferCount),
+		rtvDesc.Format,
+		srvDescriptorHeap,
+		srvDescriptorHeap->GetCPUDescriptorHandleForHeapStart(),
+		srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+	ImGuiIO& io = ImGui::GetIO();
+	io.Fonts->Build();
+#endif
 	while (message.message != WM_QUIT) {
 		if (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE) != FALSE) {
 			TranslateMessage(&message);
 			DispatchMessage(&message);
 		}
 		else {
+#ifdef USE_IMGUI
+			ImGui_ImplDX12_NewFrame();
+			ImGui_ImplWin32_NewFrame();
+			ImGui::NewFrame();
+			ImGui::ShowDemoWindow();
+			ImGui::Render();
+#endif
 			transform.rotate.y += 0.03f;
 			Matrix4x4 worldMatrix = MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
 			Matrix4x4 worldViewProjectionMatrix = Multiply(worldMatrix, Multiply(viewMatrix, projectionMatrix));
@@ -507,6 +540,11 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			float clearColor[] = {0.1f, 0.25f, 0.5f, 1.0f};
 			commandList->ClearRenderTargetView(rtvHandles[backBufferIndex], clearColor, 0, nullptr);
 			commandList->DrawInstanced(3, 1, 0, 0);
+#ifdef USE_IMGUI
+			ID3D12DescriptorHeap* descriptorHeaps[] = {srvDescriptorHeap};
+			commandList->SetDescriptorHeaps(1, descriptorHeaps);
+			ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList);
+#endif
 
 			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
@@ -536,6 +574,13 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	}
 
 	Log(logStream, "application finished");
+
+#ifdef USE_IMGUI
+	ImGui_ImplDX12_Shutdown();
+	ImGui_ImplWin32_Shutdown();
+	ImGui::DestroyContext();
+	srvDescriptorHeap->Release();
+#endif
 
 	if (fenceEvent != nullptr) {
 		CloseHandle(fenceEvent);

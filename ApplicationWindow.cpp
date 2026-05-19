@@ -2,6 +2,14 @@
 
 #include "Log.h"
 
+#ifdef USE_IMGUI
+#pragma warning(push, 0)
+#include "externals/imgui/imgui.h"
+#include "externals/imgui/imgui_impl_win32.h"
+#pragma warning(pop)
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+#endif
+
 HWND CreateMainWindow(HINSTANCE instanceHandle, std::ostream& logStream) {
 	// ウィンドウクラスを登録する
 	WNDCLASS windowClass{};
@@ -59,6 +67,12 @@ HWND CreateMainWindow(HINSTANCE instanceHandle, std::ostream& logStream) {
 }
 
 LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPARAM lParam) {
+#ifdef USE_IMGUI
+	if (ImGui_ImplWin32_WndProcHandler(windowHandle, message, wParam, lParam)) {
+		return true;
+	}
+#endif
+
 	switch (message) {
 	case WM_DESTROY:
 		// OSにアプリケーションの終了を伝える

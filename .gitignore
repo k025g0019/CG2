@@ -365,3 +365,5 @@ FodyWeavers.xsd
 # Crash dump files
 *.dmp
 Dumps/
+
+imgui.ini

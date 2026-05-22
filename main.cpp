@@ -1,4 +1,4 @@
-#pragma warning(push, 0)
+﻿#pragma warning(push, 0)
 #include <Windows.h>
 #include <cassert>
 #include <chrono>
@@ -72,8 +72,12 @@ namespace {
 		Vector4 color;
 	};
 
+	struct Sprite {
+		Vector2 position;
+		Vector2 size;
+	};
+
 	ID3D12Resource* CreateBufferResource(ID3D12Device* device, size_t sizeInBytes);
-	ID3D12Resource* CreateDepthStencilTextureResource(ID3D12Device* device, int32_t width, int32_t height);
 
 	DirectX::ScratchImage LoadTexture(const std::wstring& filePath) {
 		DirectX::TexMetadata metadata{};
@@ -179,37 +183,6 @@ namespace {
 			&resourceDesc,
 			D3D12_RESOURCE_STATE_GENERIC_READ,
 			nullptr,
-			IID_PPV_ARGS(&resource));
-		assert(SUCCEEDED(hr));
-
-		return resource;
-	}
-
-	ID3D12Resource* CreateDepthStencilTextureResource(ID3D12Device* device, int32_t width, int32_t height) {
-		D3D12_RESOURCE_DESC resourceDesc{};
-		resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-		resourceDesc.Width = static_cast<UINT64>(width);
-		resourceDesc.Height = static_cast<UINT>(height);
-		resourceDesc.DepthOrArraySize = 1;
-		resourceDesc.MipLevels = 1;
-		resourceDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
-		resourceDesc.SampleDesc.Count = 1;
-		resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
-
-		D3D12_HEAP_PROPERTIES heapProperties{};
-		heapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
-
-		D3D12_CLEAR_VALUE depthClearValue{};
-		depthClearValue.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
-		depthClearValue.DepthStencil.Depth = 1.0f;
-
-		ID3D12Resource* resource = nullptr;
-		HRESULT hr = device->CreateCommittedResource(
-			&heapProperties,
-			D3D12_HEAP_FLAG_NONE,
-			&resourceDesc,
-			D3D12_RESOURCE_STATE_DEPTH_WRITE,
-			&depthClearValue,
 			IID_PPV_ARGS(&resource));
 		assert(SUCCEEDED(hr));
 
@@ -413,8 +386,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		CreateDescriptorHeap(device, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 2, false);
 	ID3D12DescriptorHeap* srvDescriptorHeap =
 		CreateDescriptorHeap(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 128, true);
-	ID3D12DescriptorHeap* dsvDescriptorHeap =
-		CreateDescriptorHeap(device, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 1, false);
 
 	ID3D12Resource* swapChainResources[2] = {nullptr};
 	hr = swapChain->GetBuffer(0, IID_PPV_ARGS(&swapChainResources[0]));
@@ -434,16 +405,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	rtvHandles[1].ptr =
 		rtvHandles[0].ptr + device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 	device->CreateRenderTargetView(swapChainResources[1], &rtvDesc, rtvHandles[1]);
-
-	// 深度バッファ用のリソースと DSV を作成する
-	ID3D12Resource* depthStencilResource = CreateDepthStencilTextureResource(device, kClientWidth, kClientHeight);
-	D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
-	dsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
-	dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
-	device->CreateDepthStencilView(
-		depthStencilResource,
-		&dsvDesc,
-		dsvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
 
 	// HLSL コンパイルに使う DXC 関連オブジェクトを初期化する
 	IDxcUtils* dxcUtils = nullptr;
@@ -574,13 +535,9 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	graphicsPipelineStateDesc.RasterizerState = rasterizerDesc;
 	graphicsPipelineStateDesc.NumRenderTargets = 1;
 	graphicsPipelineStateDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
-	graphicsPipelineStateDesc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
 	graphicsPipelineStateDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
 	graphicsPipelineStateDesc.SampleDesc.Count = 1;
 	graphicsPipelineStateDesc.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
-	graphicsPipelineStateDesc.DepthStencilState.DepthEnable = true;
-	graphicsPipelineStateDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
-	graphicsPipelineStateDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
 
 	ID3D12PipelineState* graphicsPipelineState = nullptr;
 	hr = device->CreateGraphicsPipelineState(&graphicsPipelineStateDesc, IID_PPV_ARGS(&graphicsPipelineState));
@@ -589,25 +546,27 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		return 1;
 	}
 
-	// 前後関係を確認するため、交差する三角形 2 枚分の頂点データを用意する
+	// スプライト 1 枚を 2 枚の三角形で描画するため、6 頂点を用意する
 	VertexData vertices[6] = {
-		{{-0.5f, -0.5f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-		{{0.0f, 0.5f, 0.0f, 1.0f}, {0.5f, 0.0f}},
-		{{0.5f, -0.5f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-		{{-0.5f, -0.5f, 0.5f, 1.0f}, {0.0f, 1.0f}},
-		{{0.0f, 0.5f, 0.0f, 1.0f}, {0.5f, 0.0f}},
-		{{0.5f, -0.5f, -0.5f, 1.0f}, {1.0f, 1.0f}}
+		{{0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}},
+		{{640.0f, 0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}},
+		{{0.0f, 360.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+		{{0.0f, 360.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+		{{640.0f, 0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}},
+		{{640.0f, 360.0f, 0.0f, 1.0f}, {1.0f, 1.0f}}
 	};
 
-	Transforms transform{
-		.scale = {1.0f, 1.0f, 1.0f},
-		.rotate = {0.0f, 0.0f, 0.0f},
-		.translate = {0.0f, 0.0f, 0.0f}
+	// スプライトの表示位置とサイズ
+	Sprite sprite{
+		.position = {100.0f, 50.0f},
+		.size = {640.0f, 360.0f}
 	};
-	Transforms cameraTransform{
-		.scale = {1.0f, 1.0f, 1.0f},
+
+	// スプライトは頂点をローカル座標で持ち、translate で画面上へ移動する
+	Transforms transform{
+		.scale = {sprite.size.x / 640.0f, sprite.size.y / 360.0f, 1.0f},
 		.rotate = {0.0f, 0.0f, 0.0f},
-		.translate = {0.0f, 0.0f, -5.0f}
+		.translate = {sprite.position.x, sprite.position.y, 0.0f}
 	};
 	// 頂点バッファ用のリソースを作成する
 	ID3D12Resource* vertexResource = CreateBufferResource(device, sizeof(vertices));
@@ -640,14 +599,13 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	const DirectX::TexMetadata& metadata = mipImages.GetMetadata();
 	ID3D12Resource* textureResource = CreateTextureResource(device, metadata);
 
-	// カメラ行列と射影行列を作成し、3D 空間から画面へ投影する準備を行う
-	Matrix4x4 cameraMatrix = MakeAffineMatrix(
-		cameraTransform.scale, cameraTransform.rotate, cameraTransform.translate);
-	Matrix4x4 viewMatrix = Inverse(cameraMatrix);
-	Matrix4x4 projectionMatrix = MakePerspectiveFovMatrix(
-		0.45f,
-		static_cast<float>(kClientWidth) / static_cast<float>(kClientHeight),
-		0.1f,
+	// スプライトは画面座標系で扱いたいので正射影行列を使う
+	Matrix4x4 projectionMatrix = MakeOrthographicMatrix(
+		0.0f,
+		0.0f,
+		static_cast<float>(kClientWidth),
+		static_cast<float>(kClientHeight),
+		0.0f,
 		100.0f);
 
 	// GPU 完了待ちに使う Fence とイベントを作成する
@@ -729,10 +687,9 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			ImGui::Render();
 #endif
 
-			// 毎フレーム Y 軸回転を進め、World と WVP の行列を更新する
-			transform.rotate.y += 0.03f;
+			// スプライト用のワールド行列と正射影行列を掛け合わせて WVP を作る
 			Matrix4x4 worldMatrix = MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
-			Matrix4x4 worldViewProjectionMatrix = Multiply(worldMatrix, Multiply(viewMatrix, projectionMatrix));
+			Matrix4x4 worldViewProjectionMatrix = Multiply(worldMatrix, projectionMatrix);
 			*wvpData = worldViewProjectionMatrix;
 			hr = commandAllocator->Reset();
 			assert(SUCCEEDED(hr));
@@ -763,13 +720,11 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			commandList->SetGraphicsRootDescriptorTable(2, textureSrvHandleGPU);
 			commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			commandList->IASetVertexBuffers(0, 1, &vertexBufferView);
-			D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = dsvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
-			commandList->OMSetRenderTargets(1, &rtvHandles[backBufferIndex], FALSE, &dsvHandle);
+			commandList->OMSetRenderTargets(1, &rtvHandles[backBufferIndex], FALSE, nullptr);
 
-			// まずは画面を青系の色でクリアしてから三角形を描画する
+			// まずは画面を青系の色でクリアしてからスプライトを描画する
 			float clearColor[] = {0.1f, 0.25f, 0.5f, 1.0f};
 			commandList->ClearRenderTargetView(rtvHandles[backBufferIndex], clearColor, 0, nullptr);
-			commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 			commandList->DrawInstanced(6, 1, 0, 0);
 #ifdef USE_IMGUI
 			ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList);
@@ -822,7 +777,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	textureResource->Release();
 	materialResource->Release();
 	vertexResource->Release();
-	depthStencilResource->Release();
 	graphicsPipelineState->Release();
 	rootSignature->Release();
 	signatureBlob->Release();
@@ -836,7 +790,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	dxcUtils->Release();
 	srvDescriptorHeap->Release();
 	rtvDescriptorHeap->Release();
-	dsvDescriptorHeap->Release();
 	swapChainResources[0]->Release();
 	swapChainResources[1]->Release();
 	swapChain->Release();

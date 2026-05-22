@@ -1,5 +1,4 @@
-#include "Matrix.h"
-
+﻿#include "Matrix.h"
 
 #include <cmath>
 
@@ -17,6 +16,7 @@ Matrix4x4 Add(const Matrix4x4& matrix1, const Matrix4x4& matrix2) {
 	}
 	return result;
 }
+
 Matrix4x4 Subtract(const Matrix4x4& matrix1, const Matrix4x4& matrix2) {
 	Matrix4x4 result;
 	for (int i = 0; i < 4; ++i) {
@@ -123,7 +123,6 @@ Matrix4x4 MakeIdentity4x4() {
 	return result;
 }
 
-
 Matrix4x4 MakeRotateXMatrix(float radian) {
 	Matrix4x4 result = {0};
 	float cosTheta = std::cos(radian);
@@ -150,7 +149,6 @@ Matrix4x4 MakeRotateYMatrix(float radian) {
 	return result;
 }
 
-
 Matrix4x4 MakeRotateZMatrix(float radian) {
 	Matrix4x4 result = {0};
 	float cosTheta = std::cos(radian);
@@ -176,7 +174,6 @@ Matrix4x4 MakePerspectiveFovMatrix(float fovY, float aspect, float nearZ, float 
 	return result;
 }
 
-//正射影行列
 // 正射影行列
 Matrix4x4 MakeOrthographicMatrix(
 	float left,
@@ -199,7 +196,6 @@ Matrix4x4 MakeOrthographicMatrix(
 	return result;
 }
 
-// ビューポート行列
 // ビューポート行列
 Matrix4x4 MakeViewportMatrix(
 	float left,

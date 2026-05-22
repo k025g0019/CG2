@@ -1,4 +1,4 @@
-#include "ApplicationWindow.h"
+﻿#include "ApplicationWindow.h"
 
 #include "Log.h"
 
@@ -13,32 +13,32 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 HWND CreateMainWindow(HINSTANCE instanceHandle, std::ostream& logStream) {
 	// ウィンドウクラスを登録する
 	WNDCLASS windowClass{};
-	// ウィンドウプロシージャ
+	// メッセージを処理する関数
 	windowClass.lpfnWndProc = WindowProc;
 	// クラス名
 	windowClass.lpszClassName = kWindowClassName;
 	// インスタンスハンドル
 	windowClass.hInstance = instanceHandle;
-	// カーソル
+	// 標準の矢印カーソル
 	windowClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
 
-	// ウィンドウクラスの登録
+	// ウィンドウクラスを OS へ登録する
 	if (RegisterClass(&windowClass) == 0) {
 		Log(logStream, "RegisterClass failed");
 		return nullptr;
 	}
 	Log(logStream, "window class registered");
 
-	// クライアント領域のサイズ
-	RECT windowRect{ 0, 0, kClientWidth, kClientHeight };
-	// クライアント領域を元に実際のウィンドウサイズに調整する
+	// クライアント領域の希望サイズ
+	RECT windowRect{0, 0, kClientWidth, kClientHeight};
+	// タイトルバーなどを含めた実際のウィンドウサイズへ調整する
 	if (AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE) == 0) {
 		Log(logStream, "AdjustWindowRect failed");
 		return nullptr;
 	}
 	Log(logStream, "window rect adjusted");
 
-	// ウィンドウの生成
+	// ウィンドウ本体を生成する
 	HWND windowHandle = CreateWindow(
 		windowClass.lpszClassName,
 		kWindowTitle,
@@ -58,7 +58,7 @@ HWND CreateMainWindow(HINSTANCE instanceHandle, std::ostream& logStream) {
 	}
 	Log(logStream, "window created");
 
-	// ウィンドウを表示する
+	// 生成したウィンドウを画面へ表示する
 	ShowWindow(windowHandle, SW_SHOW);
 	UpdateWindow(windowHandle);
 	Log(logStream, "window shown");
@@ -68,6 +68,7 @@ HWND CreateMainWindow(HINSTANCE instanceHandle, std::ostream& logStream) {
 
 LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPARAM lParam) {
 #ifdef USE_IMGUI
+	// ImGui が処理したメッセージはここで打ち切る
 	if (ImGui_ImplWin32_WndProcHandler(windowHandle, message, wParam, lParam)) {
 		return true;
 	}
@@ -75,7 +76,7 @@ LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPAR
 
 	switch (message) {
 	case WM_DESTROY:
-		// OSにアプリケーションの終了を伝える
+		// ウィンドウが閉じられたらアプリケーション終了を通知する
 		PostQuitMessage(0);
 		return 0;
 	default:

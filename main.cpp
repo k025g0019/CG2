@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <numbers>
 #include <sdkddkver.h>
 #include <string>
 #include <vector>
@@ -584,41 +585,77 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		return 1;
 	}
 
-	// スプライト 1 枚を 2 枚の三角形で描画するため、6 頂点を用意する
-	VertexData vertices[6] = {
-		{{0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}},
-		{{640.0f, 0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}},
-		{{0.0f, 360.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-		{{0.0f, 360.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-		{{640.0f, 0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}},
-		{{640.0f, 360.0f, 0.0f, 1.0f}, {1.0f, 1.0f}}
-	};
+	// 球は分割数を増やすほど滑らかになる
+	const uint32_t kSubdivision = 16;
+	const float kLonEvery = 2.0f * std::numbers::pi_v<float> / static_cast<float>(kSubdivision);
+	const float kLatEvery = std::numbers::pi_v<float> / static_cast<float>(kSubdivision);
 
-	// スプライトの表示位置とサイズ
-	Sprite sprite{
-		.position = {100.0f, 50.0f},
-		.size = {640.0f, 360.0f}
-	};
+	// 球は 1 マスごとに 2 三角形、つまり 6 頂点を使って組み立てる
+	std::vector<VertexData> vertices;
+	vertices.reserve(kSubdivision * kSubdivision * 6);
+	for (uint32_t latIndex = 0; latIndex < kSubdivision; ++latIndex) {
+		float lat = -std::numbers::pi_v<float> / 2.0f + kLatEvery * static_cast<float>(latIndex);
+		float latNext = lat + kLatEvery;
 
-	// スプライトは頂点をローカル座標で持ち、translate で画面上へ移動する
+		for (uint32_t lonIndex = 0; lonIndex < kSubdivision; ++lonIndex) {
+			float lon = kLonEvery * static_cast<float>(lonIndex);
+			float lonNext = lon + kLonEvery;
+
+			float u0 = static_cast<float>(lonIndex) / static_cast<float>(kSubdivision);
+			float u1 = static_cast<float>(lonIndex + 1) / static_cast<float>(kSubdivision);
+			float v0 = 1.0f - static_cast<float>(latIndex) / static_cast<float>(kSubdivision);
+			float v1 = 1.0f - static_cast<float>(latIndex + 1) / static_cast<float>(kSubdivision);
+
+			VertexData a{
+				{std::cos(lat) * std::cos(lon), std::sin(lat), std::cos(lat) * std::sin(lon), 1.0f},
+				{u0, v0}
+			};
+			VertexData b{
+				{std::cos(latNext) * std::cos(lon), std::sin(latNext), std::cos(latNext) * std::sin(lon), 1.0f},
+				{u0, v1}
+			};
+			VertexData c{
+				{std::cos(lat) * std::cos(lonNext), std::sin(lat), std::cos(lat) * std::sin(lonNext), 1.0f},
+				{u1, v0}
+			};
+			VertexData d{
+				{std::cos(latNext) * std::cos(lonNext), std::sin(latNext), std::cos(latNext) * std::sin(lonNext), 1.0f},
+				{u1, v1}
+			};
+
+			vertices.push_back(a);
+			vertices.push_back(b);
+			vertices.push_back(c);
+			vertices.push_back(c);
+			vertices.push_back(b);
+			vertices.push_back(d);
+		}
+	}
+
+	// 球は原点付近に置き、カメラ側から眺める
 	Transforms transform{
-		.scale = {sprite.size.x / 640.0f, sprite.size.y / 360.0f, 1.0f},
+		.scale = {1.0f, 1.0f, 1.0f},
 		.rotate = {0.0f, 0.0f, 0.0f},
-		.translate = {sprite.position.x, sprite.position.y, 0.0f}
+		.translate = {0.0f, 0.0f, 0.0f}
+	};
+	Transforms cameraTransform{
+		.scale = {1.0f, 1.0f, 1.0f},
+		.rotate = {0.0f, 0.0f, 0.0f},
+		.translate = {0.0f, 0.0f, -5.0f}
 	};
 	// 頂点バッファ用のリソースを作成する
-	ID3D12Resource* vertexResource = CreateBufferResource(device, sizeof(vertices));
+	ID3D12Resource* vertexResource = CreateBufferResource(device, sizeof(VertexData) * vertices.size());
 
 	// CPU 側から頂点データを書き込めるようにマップする
 	VertexData* mappedVertexData = nullptr;
 	hr = vertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedVertexData));
 	assert(SUCCEEDED(hr));
-	std::memcpy(mappedVertexData, vertices, sizeof(vertices));
+	std::memcpy(mappedVertexData, vertices.data(), sizeof(VertexData) * vertices.size());
 
 	// 頂点バッファの見え方を GPU に伝えるための View を設定する
 	D3D12_VERTEX_BUFFER_VIEW vertexBufferView{};
 	vertexBufferView.BufferLocation = vertexResource->GetGPUVirtualAddress();
-	vertexBufferView.SizeInBytes = sizeof(vertices);
+	vertexBufferView.SizeInBytes = static_cast<UINT>(sizeof(VertexData) * vertices.size());
 	vertexBufferView.StrideInBytes = sizeof(VertexData);
 
 	// 画面全体を描画対象にする Viewport を設定する
@@ -637,13 +674,14 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	const DirectX::TexMetadata& metadata = mipImages.GetMetadata();
 	ID3D12Resource* textureResource = CreateTextureResource(device, metadata);
 
-	// スプライトは画面座標系で扱いたいので正射影行列を使う
-	Matrix4x4 projectionMatrix = MakeOrthographicMatrix(
-		0.0f,
-		0.0f,
-		static_cast<float>(kClientWidth),
-		static_cast<float>(kClientHeight),
-		0.0f,
+	// 球は透視投影で立体的に見せる
+	Matrix4x4 cameraMatrix = MakeAffineMatrix(
+		cameraTransform.scale, cameraTransform.rotate, cameraTransform.translate);
+	Matrix4x4 viewMatrix = Inverse(cameraMatrix);
+	Matrix4x4 projectionMatrix = MakePerspectiveFovMatrix(
+		0.45f,
+		static_cast<float>(kClientWidth) / static_cast<float>(kClientHeight),
+		0.1f,
 		100.0f);
 
 	// GPU 完了待ちに使う Fence とイベントを作成する
@@ -725,9 +763,9 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			ImGui::Render();
 #endif
 
-			// スプライト用のワールド行列と正射影行列を掛け合わせて WVP を作る
+			// 球用のワールド行列と ViewProjection を掛け合わせて WVP を作る
 			Matrix4x4 worldMatrix = MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
-			Matrix4x4 worldViewProjectionMatrix = Multiply(worldMatrix, projectionMatrix);
+			Matrix4x4 worldViewProjectionMatrix = Multiply(worldMatrix, Multiply(viewMatrix, projectionMatrix));
 			*wvpData = worldViewProjectionMatrix;
 			hr = commandAllocator->Reset();
 			assert(SUCCEEDED(hr));
@@ -760,10 +798,10 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			commandList->IASetVertexBuffers(0, 1, &vertexBufferView);
 			commandList->OMSetRenderTargets(1, &rtvHandles[backBufferIndex], FALSE, nullptr);
 
-			// まずは画面を青系の色でクリアしてからスプライトを描画する
+			// まずは画面を青系の色でクリアしてから球を描画する
 			float clearColor[] = {0.1f, 0.25f, 0.5f, 1.0f};
 			commandList->ClearRenderTargetView(rtvHandles[backBufferIndex], clearColor, 0, nullptr);
-			commandList->DrawInstanced(6, 1, 0, 0);
+			commandList->DrawInstanced(static_cast<UINT>(vertices.size()), 1, 0, 0);
 #ifdef USE_IMGUI
 			ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList);
 #endif

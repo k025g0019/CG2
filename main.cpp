@@ -281,6 +281,17 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		return 1;
 	}
 
+#ifdef _DEBUG
+	// DebugLayer は DX12 初期化より前に有効化する必要がある
+	ID3D12Debug1* debugController = nullptr;
+	if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController)))) {
+		// CPU 側で不正な API 呼び出しを検出しやすくする
+		debugController->EnableDebugLayer();
+		// GPU 実行時の不正も拾いやすくする
+		debugController->SetEnableGPUBasedValidation(TRUE);
+	}
+#endif
+
 	MSG message{};
 	Log(logStream, "main loop started");
 
@@ -335,6 +346,33 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	}
 	assert(device != nullptr);
 	Log(logStream, "Complete create D3D12Device!!!");
+
+#ifdef _DEBUG
+	// Device 作成直後に InfoQueue を取得し、重大な問題で停止するようにする
+	ID3D12InfoQueue* infoQueue = nullptr;
+	if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&infoQueue)))) {
+		// GPU が壊れる可能性のある致命的エラーは即停止する
+		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, true);
+		// API の使い方を間違えたエラーも即停止する
+		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, true);
+		// Warning も見逃さないように停止対象にする
+		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, true);
+
+		// Windows 側の既知ノイズと、確認不要な INFO メッセージは抑制する
+		D3D12_MESSAGE_ID denyIds[] = {
+			D3D12_MESSAGE_ID_RESOURCE_BARRIER_MISMATCHING_COMMAND_LIST_TYPE,
+		};
+		D3D12_MESSAGE_SEVERITY severities[] = {D3D12_MESSAGE_SEVERITY_INFO};
+		D3D12_INFO_QUEUE_FILTER filter{};
+		filter.DenyList.NumIDs = _countof(denyIds);
+		filter.DenyList.pIDList = denyIds;
+		filter.DenyList.NumSeverities = _countof(severities);
+		filter.DenyList.pSeverityList = severities;
+		infoQueue->PushStorageFilter(&filter);
+
+		infoQueue->Release();
+	}
+#endif
 
 	// 描画コマンドを GPU へ送るためのコマンドキューを作成する
 	ID3D12CommandQueue* commandQueue = nullptr;
@@ -799,6 +837,21 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	device->Release();
 	useAdapter->Release();
 	dxgiFactory->Release();
+
+#ifdef _DEBUG
+	// すべて解放したあとに、残っている DX12 オブジェクトがないかを確認する
+	IDXGIDebug1* debug = nullptr;
+	if (SUCCEEDED(DXGIGetDebugInterface1(0, IID_PPV_ARGS(&debug)))) {
+		debug->ReportLiveObjects(DXGI_DEBUG_ALL, DXGI_DEBUG_RLO_ALL);
+		debug->ReportLiveObjects(DXGI_DEBUG_APP, DXGI_DEBUG_RLO_ALL);
+		debug->ReportLiveObjects(DXGI_DEBUG_D3D12, DXGI_DEBUG_RLO_ALL);
+		debug->Release();
+	}
+
+	if (debugController != nullptr) {
+		debugController->Release();
+	}
+#endif
 
 	return static_cast<int>(message.wParam);
 }

@@ -1,4 +1,4 @@
-﻿#pragma warning(push, 0)
+#pragma warning(push, 0)
 #include <Windows.h>
 #include <cassert>
 #include <chrono>
@@ -590,13 +590,21 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	}
 
 	// 前後関係を確認するため、交差する三角形 2 枚分の頂点データを用意する
-	VertexData vertices[6] = {
-		{{-0.5f, -0.5f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-		{{0.0f, 0.5f, 0.0f, 1.0f}, {0.5f, 0.0f}},
-		{{0.5f, -0.5f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-		{{-0.5f, -0.5f, 0.5f, 1.0f}, {0.0f, 1.0f}},
-		{{0.0f, 0.5f, 0.0f, 1.0f}, {0.5f, 0.0f}},
-		{{0.5f, -0.5f, -0.5f, 1.0f}, {1.0f, 1.0f}}
+	VertexData vertices[9] = {
+		// 面1
+		{{-0.5f, -0.5f, 0.0f, 1.0f}, {0, 0}},
+		{{0.0f, 0.0f, -1.0f, 1.0f}, {0, 0}},
+		{{0.5f, -0.5f, 0.0f, 1.0f}, {0, 0}},
+
+		// 面2
+		{{0.5f, -0.5f, 0.0f, 1.0f}, {0, 0}},
+		{{0.0f, 0.0f, -1.0f, 1.0f}, {0, 0}},
+		{{0.0f, 0.5f, 0.0f, 1.0f}, {0, 0}},
+
+		// 面3
+		{{0.0f, 0.5f, 0.0f, 1.0f}, {0, 0}},
+		{{0.0f, 0.0f, -1.0f, 1.0f}, {0, 0}},
+		{{-0.5f, -0.5f, 0.0f, 1.0f}, {0, 0}},
 	};
 
 	Transforms transform{
@@ -770,7 +778,14 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			float clearColor[] = {0.1f, 0.25f, 0.5f, 1.0f};
 			commandList->ClearRenderTargetView(rtvHandles[backBufferIndex], clearColor, 0, nullptr);
 			commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-			commandList->DrawInstanced(6, 1, 0, 0);
+			materialData->color = {1, 0, 0, 1};
+			commandList->DrawInstanced(3, 1, 0, 0);
+
+			materialData->color = {0, 1, 0, 1};
+			commandList->DrawInstanced(3, 1, 3, 0);
+
+			materialData->color = {0, 0, 1, 1};
+			commandList->DrawInstanced(3, 1, 6, 0);
 #ifdef USE_IMGUI
 			ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList);
 #endif

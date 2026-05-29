@@ -72,6 +72,7 @@ namespace {
 		Vector4 color;
 	};
 
+	float speed = 0.2f;
 	ID3D12Resource* CreateBufferResource(ID3D12Device* device, size_t sizeInBytes);
 	ID3D12Resource* CreateDepthStencilTextureResource(ID3D12Device* device, int32_t width, int32_t height);
 
@@ -514,6 +515,13 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	materialResource->Map(0, nullptr, reinterpret_cast<void**>(&materialData));
 
 	materialData->color = {1.0f, 1.0f, 1.0f, 1.0f};
+	ID3D12Resource* materialResources[3] = {};
+	Material* materialDatas[3] = {};
+
+	for (int i = 0; i < 3; ++i) {
+		materialResources[i] = CreateBufferResource(device, sizeof(Material));
+		materialResources[i]->Map(0, nullptr, reinterpret_cast<void**>(&materialDatas[i]));
+	}
 
 
 	// WVP 定数バッファには座標変換行列を書き込む
@@ -609,8 +617,8 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 
 	Transforms transform{
 		.scale = {1.0f, 1.0f, 1.0f},
-		.rotate = {0.0f, 0.0f, 0.0f},
-		.translate = {0.0f, 0.0f, 0.0f}
+		.rotate = {-0.0f, 0.0f, -1.5708f},
+		.translate = {0.0f, 0.0f, 100.0f}
 	};
 	Transforms cameraTransform{
 		.scale = {1.0f, 1.0f, 1.0f},
@@ -738,7 +746,17 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 #endif
 
 			// 毎フレーム Y 軸回転を進め、World と WVP の行列を更新する
-			transform.rotate.y += 0.03f;
+
+			if (transform.translate.z > -5.0f) {
+				speed *= 1.03f;
+				transform.translate.z += -speed;
+			}
+			else {
+				transform.translate.z = 0;
+				transform.rotate.z += 0.01f;
+				transform.rotate.x += 0.005f;
+			}
+
 			Matrix4x4 worldMatrix = MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
 			Matrix4x4 worldViewProjectionMatrix = Multiply(worldMatrix, Multiply(viewMatrix, projectionMatrix));
 			*wvpData = worldViewProjectionMatrix;
@@ -778,13 +796,27 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			float clearColor[] = {0.1f, 0.25f, 0.5f, 1.0f};
 			commandList->ClearRenderTargetView(rtvHandles[backBufferIndex], clearColor, 0, nullptr);
 			commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-			materialData->color = {1, 0, 0, 1};
+
+			materialDatas[0]->color = {1.0f, 0.0f, 0.0f, 1.0f};
+			materialDatas[1]->color = {0.0f, 1.0f, 0.0f, 1.0f};
+			materialDatas[2]->color = {0.0f, 0.0f, 1.0f, 1.0f};
+
+			commandList->SetGraphicsRootConstantBufferView(
+				0,
+				materialResources[0]->GetGPUVirtualAddress()
+			);
 			commandList->DrawInstanced(3, 1, 0, 0);
 
-			materialData->color = {0, 1, 0, 1};
+			commandList->SetGraphicsRootConstantBufferView(
+				0,
+				materialResources[1]->GetGPUVirtualAddress()
+			);
 			commandList->DrawInstanced(3, 1, 3, 0);
 
-			materialData->color = {0, 0, 1, 1};
+			commandList->SetGraphicsRootConstantBufferView(
+				0,
+				materialResources[2]->GetGPUVirtualAddress()
+			);
 			commandList->DrawInstanced(3, 1, 6, 0);
 #ifdef USE_IMGUI
 			ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList);

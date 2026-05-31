@@ -1,14 +1,24 @@
-struct Material {
+﻿struct Material {
     float4 color;
+    int enableLighting;
+    float3 padding;
+};
+
+struct DirectionalLight {
+    float4 color;
+    float3 direction;
+    float intensity;
 };
 
 ConstantBuffer<Material> gMaterial : register(b0);
+ConstantBuffer<DirectionalLight> gDirectionalLight : register(b1);
 Texture2D<float4> gTexture : register(t0);
 SamplerState gSampler : register(s0);
 
 struct PixelShaderInput {
     float4 position : SV_POSITION;
     float2 texcoord : TEXCOORD0;
+    float3 normal : NORMAL0;
 };
 
 struct PixelShaderOutput {
@@ -17,7 +27,18 @@ struct PixelShaderOutput {
 
 PixelShaderOutput main(PixelShaderInput input) {
     PixelShaderOutput output;
-    output.color = gMaterial.color * gTexture.Sample(gSampler, input.texcoord);
+    float4 textureColor = gTexture.Sample(gSampler, input.texcoord);
+    output.color = gMaterial.color * textureColor;
+
+    if (gMaterial.enableLighting != 0) {
+        float3 normalizedNormal = normalize(input.normal);
+        float3 normalizedLightDirection = normalize(gDirectionalLight.direction);
+        float cosine = saturate(dot(normalizedNormal, -normalizedLightDirection));
+        float brightness = max(0.2f, cosine);
+
+        output.color.rgb *= gDirectionalLight.color.rgb * brightness * gDirectionalLight.intensity;
+    }
+
     return output;
 }
 

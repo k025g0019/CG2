@@ -67,10 +67,24 @@ namespace {
 	struct VertexData {
 		Vector4 position;
 		Vector2 texcoord;
+		Vector3 normal;
 	};
 
 	struct Material {
 		Vector4 color;
+		int32_t enableLighting;
+		float padding[3];
+	};
+
+	struct DirectionalLight {
+		Vector4 color;
+		Vector3 direction;
+		float intensity;
+	};
+
+	struct TransformationMatrix {
+		Matrix4x4 WVP;
+		Matrix4x4 World;
 	};
 
 	struct Sprite {
@@ -439,6 +453,8 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		CreateDescriptorHeap(device, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 2, false);
 	ID3D12DescriptorHeap* srvDescriptorHeap =
 		CreateDescriptorHeap(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 128, true);
+	ID3D12DescriptorHeap* dsvDescriptorHeap =
+		CreateDescriptorHeap(device, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 1, false);
 
 	ID3D12Resource* swapChainResources[2] = {nullptr};
 	hr = swapChain->GetBuffer(0, IID_PPV_ARGS(&swapChainResources[0]));
@@ -458,6 +474,41 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	rtvHandles[1] = GetCPUDescriptorHandle(
 		rtvDescriptorHeap, device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV), 1);
 	device->CreateRenderTargetView(swapChainResources[1], &rtvDesc, rtvHandles[1]);
+
+	D3D12_RESOURCE_DESC depthStencilResourceDesc{};
+	depthStencilResourceDesc.Width = kClientWidth;
+	depthStencilResourceDesc.Height = kClientHeight;
+	depthStencilResourceDesc.MipLevels = 1;
+	depthStencilResourceDesc.DepthOrArraySize = 1;
+	depthStencilResourceDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	depthStencilResourceDesc.SampleDesc.Count = 1;
+	depthStencilResourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+	depthStencilResourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+	D3D12_HEAP_PROPERTIES depthStencilHeapProperties{};
+	depthStencilHeapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+	D3D12_CLEAR_VALUE depthClearValue{};
+	depthClearValue.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	depthClearValue.DepthStencil.Depth = 1.0f;
+	depthClearValue.DepthStencil.Stencil = 0;
+
+	ID3D12Resource* depthStencilResource = nullptr;
+	hr = device->CreateCommittedResource(
+		&depthStencilHeapProperties,
+		D3D12_HEAP_FLAG_NONE,
+		&depthStencilResourceDesc,
+		D3D12_RESOURCE_STATE_DEPTH_WRITE,
+		&depthClearValue,
+		IID_PPV_ARGS(&depthStencilResource));
+	assert(SUCCEEDED(hr));
+
+	D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
+	dsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+
+	D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = dsvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
+	device->CreateDepthStencilView(depthStencilResource, &dsvDesc, dsvHandle);
 
 	// HLSL コンパイルに使う DXC 関連オブジェクトを初期化する
 	IDxcUtils* dxcUtils = nullptr;
@@ -486,7 +537,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	D3D12_ROOT_SIGNATURE_DESC descriptionRootSignature{};
 	descriptionRootSignature.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
-	D3D12_ROOT_PARAMETER rootParameters[3] = {};
+	D3D12_ROOT_PARAMETER rootParameters[4] = {};
 	rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 	rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	rootParameters[0].Descriptor.ShaderRegister = 0;
@@ -497,10 +548,15 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	rootParameters[1].Descriptor.ShaderRegister = 0;
 	rootParameters[1].Descriptor.RegisterSpace = 0;
 
-	rootParameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	rootParameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 	rootParameters[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-	rootParameters[2].DescriptorTable.pDescriptorRanges = descriptorRange;
-	rootParameters[2].DescriptorTable.NumDescriptorRanges = _countof(descriptorRange);
+	rootParameters[2].Descriptor.ShaderRegister = 1;
+	rootParameters[2].Descriptor.RegisterSpace = 0;
+
+	rootParameters[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	rootParameters[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	rootParameters[3].DescriptorTable.pDescriptorRanges = descriptorRange;
+	rootParameters[3].DescriptorTable.NumDescriptorRanges = _countof(descriptorRange);
 
 	descriptionRootSignature.pParameters = rootParameters;
 	descriptionRootSignature.NumParameters = _countof(rootParameters);
@@ -521,24 +577,45 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	ID3DBlob* errorBlob = nullptr;
 
 	// マテリアル定数バッファには三角形に掛ける色を入れる
-	ID3D12Resource* materialResource = CreateBufferResource(device, sizeof(Material));
-	Material* materialData = nullptr;
+	ID3D12Resource* spriteMaterialResource = CreateBufferResource(device, sizeof(Material));
+	Material* spriteMaterialData = nullptr;
+	spriteMaterialResource->Map(0, nullptr, reinterpret_cast<void**>(&spriteMaterialData));
+	spriteMaterialData->color = {1.0f, 1.0f, 1.0f, 1.0f};
+	spriteMaterialData->enableLighting = FALSE;
+	spriteMaterialData->padding[0] = 0.0f;
+	spriteMaterialData->padding[1] = 0.0f;
+	spriteMaterialData->padding[2] = 0.0f;
 
+	ID3D12Resource* sphereMaterialResource = CreateBufferResource(device, sizeof(Material));
+	Material* sphereMaterialData = nullptr;
+	sphereMaterialResource->Map(0, nullptr, reinterpret_cast<void**>(&sphereMaterialData));
+	sphereMaterialData->color = {1.0f, 1.0f, 1.0f, 1.0f};
+	sphereMaterialData->enableLighting = TRUE;
+	sphereMaterialData->padding[0] = 0.0f;
+	sphereMaterialData->padding[1] = 0.0f;
+	sphereMaterialData->padding[2] = 0.0f;
 
-	materialResource->Map(0, nullptr, reinterpret_cast<void**>(&materialData));
-
-	materialData->color = {1.0f, 1.0f, 1.0f, 1.0f};
+	ID3D12Resource* directionalLightResource = CreateBufferResource(device, sizeof(DirectionalLight));
+	DirectionalLight* directionalLightData = nullptr;
+	directionalLightResource->Map(0, nullptr, reinterpret_cast<void**>(&directionalLightData));
+	directionalLightData->color = {1.0f, 1.0f, 1.0f, 1.0f};
+	directionalLightData->direction = {0.0f, -1.0f, 0.0f};
+	directionalLightData->intensity = 1.0f;
 
 
 	// WVP 定数バッファには座標変換行列を書き込む
-	ID3D12Resource* spriteWvpResource = CreateBufferResource(device, sizeof(Matrix4x4));
-	Matrix4x4* spriteWvpData = nullptr;
-	spriteWvpResource->Map(0, nullptr, reinterpret_cast<void**>(&spriteWvpData));
-	*spriteWvpData = MakeIdentity4x4();
-	ID3D12Resource* sphereWvpResource = CreateBufferResource(device, sizeof(Matrix4x4));
-	Matrix4x4* sphereWvpData = nullptr;
-	sphereWvpResource->Map(0, nullptr, reinterpret_cast<void**>(&sphereWvpData));
-	*sphereWvpData = MakeIdentity4x4();
+	ID3D12Resource* spriteTransformationMatrixResource = CreateBufferResource(device, sizeof(TransformationMatrix));
+	TransformationMatrix* spriteTransformationMatrixData = nullptr;
+	spriteTransformationMatrixResource->Map(
+		0, nullptr, reinterpret_cast<void**>(&spriteTransformationMatrixData));
+	spriteTransformationMatrixData->WVP = MakeIdentity4x4();
+	spriteTransformationMatrixData->World = MakeIdentity4x4();
+	ID3D12Resource* sphereTransformationMatrixResource = CreateBufferResource(device, sizeof(TransformationMatrix));
+	TransformationMatrix* sphereTransformationMatrixData = nullptr;
+	sphereTransformationMatrixResource->Map(
+		0, nullptr, reinterpret_cast<void**>(&sphereTransformationMatrixData));
+	sphereTransformationMatrixData->WVP = MakeIdentity4x4();
+	sphereTransformationMatrixData->World = MakeIdentity4x4();
 
 	hr = D3D12SerializeRootSignature(
 		&descriptionRootSignature, D3D_ROOT_SIGNATURE_VERSION_1, &signatureBlob, &errorBlob);
@@ -555,7 +632,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	assert(SUCCEEDED(hr));
 
 	// 頂点レイアウトを GPU に伝える InputLayout を設定する
-	D3D12_INPUT_ELEMENT_DESC inputElementDescs[2] = {};
+	D3D12_INPUT_ELEMENT_DESC inputElementDescs[3] = {};
 	inputElementDescs[0].SemanticName = "POSITION";
 	inputElementDescs[0].SemanticIndex = 0;
 	inputElementDescs[0].Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
@@ -564,6 +641,10 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	inputElementDescs[1].SemanticIndex = 0;
 	inputElementDescs[1].Format = DXGI_FORMAT_R32G32_FLOAT;
 	inputElementDescs[1].AlignedByteOffset = D3D12_APPEND_ALIGNED_ELEMENT;
+	inputElementDescs[2].SemanticName = "NORMAL";
+	inputElementDescs[2].SemanticIndex = 0;
+	inputElementDescs[2].Format = DXGI_FORMAT_R32G32B32_FLOAT;
+	inputElementDescs[2].AlignedByteOffset = D3D12_APPEND_ALIGNED_ELEMENT;
 
 	// 描画結果をそのまま書き込む BlendState を設定する
 	D3D12_BLEND_DESC blendDesc{};
@@ -574,6 +655,11 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	rasterizerDesc.FillMode = D3D12_FILL_MODE_SOLID;
 	rasterizerDesc.CullMode = D3D12_CULL_MODE_NONE;
 	rasterizerDesc.DepthClipEnable = TRUE;
+
+	D3D12_DEPTH_STENCIL_DESC depthStencilDesc{};
+	depthStencilDesc.DepthEnable = TRUE;
+	depthStencilDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+	depthStencilDesc.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
 
 	// ここまでの設定をまとめて PSO を作成する
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC graphicsPipelineStateDesc{};
@@ -590,8 +676,10 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	};
 	graphicsPipelineStateDesc.BlendState = blendDesc;
 	graphicsPipelineStateDesc.RasterizerState = rasterizerDesc;
+	graphicsPipelineStateDesc.DepthStencilState = depthStencilDesc;
 	graphicsPipelineStateDesc.NumRenderTargets = 1;
 	graphicsPipelineStateDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+	graphicsPipelineStateDesc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
 	graphicsPipelineStateDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
 	graphicsPipelineStateDesc.SampleDesc.Count = 1;
 	graphicsPipelineStateDesc.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
@@ -604,7 +692,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	}
 
 	// 球は分割数を増やすほど滑らかになる
-	constexpr uint32_t kSubdivision = 16;
+	constexpr uint32_t kSubdivision = 64;
 	constexpr float kLonEvery = 2.0f * std::numbers::pi_v<float> / static_cast<float>(kSubdivision);
 	constexpr float kLatEvery = std::numbers::pi_v<float> / static_cast<float>(kSubdivision);
 
@@ -616,7 +704,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		float latNext = lat + kLatEvery;
 
 		for (uint32_t lonIndex = 0; lonIndex < kSubdivision; ++lonIndex) {
-			float lon = kLonEvery * static_cast<float>(lonIndex);
+			float lon = kLonEvery * static_cast<float>(lonIndex) + std::numbers::pi_v<float>;
 			float lonNext = lon + kLonEvery;
 
 			float u0 = static_cast<float>(lonIndex) / static_cast<float>(kSubdivision);
@@ -626,19 +714,24 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 
 			VertexData a{
 				{std::cos(lat) * std::cos(lon), std::sin(lat), std::cos(lat) * std::sin(lon), 1.0f},
-				{u0, v0}
+				{u0, v0},
+				Normalize({std::cos(lat) * std::cos(lon), std::sin(lat), std::cos(lat) * std::sin(lon)})
 			};
 			VertexData b{
 				{std::cos(latNext) * std::cos(lon), std::sin(latNext), std::cos(latNext) * std::sin(lon), 1.0f},
-				{u0, v1}
+				{u0, v1},
+				Normalize({std::cos(latNext) * std::cos(lon), std::sin(latNext), std::cos(latNext) * std::sin(lon)})
 			};
 			VertexData c{
 				{std::cos(lat) * std::cos(lonNext), std::sin(lat), std::cos(lat) * std::sin(lonNext), 1.0f},
-				{u1, v0}
+				{u1, v0},
+				Normalize({std::cos(lat) * std::cos(lonNext), std::sin(lat), std::cos(lat) * std::sin(lonNext)})
 			};
 			VertexData d{
 				{std::cos(latNext) * std::cos(lonNext), std::sin(latNext), std::cos(latNext) * std::sin(lonNext), 1.0f},
-				{u1, v1}
+				{u1, v1},
+				Normalize(
+					{std::cos(latNext) * std::cos(lonNext), std::sin(latNext), std::cos(latNext) * std::sin(lonNext)})
 			};
 
 			vertices.push_back(a);
@@ -656,19 +749,19 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		.size = {256.0f, 256.0f}
 	};
 	VertexData spriteVertices[] = {
-		{{-0.5f, -0.5f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-		{{-0.5f, 0.5f, 0.0f, 1.0f}, {0.0f, 0.0f}},
-		{{0.5f, -0.5f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-		{{0.5f, -0.5f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-		{{-0.5f, 0.5f, 0.0f, 1.0f}, {0.0f, 0.0f}},
-		{{0.5f, 0.5f, 0.0f, 1.0f}, {1.0f, 0.0f}},
+		{{-0.5f, -0.5f, 0.0f, 1.0f}, {0.0f, 1.0f}, {0.0f, 0.0f, -1.0f}},
+		{{-0.5f, 0.5f, 0.0f, 1.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, -1.0f}},
+		{{0.5f, -0.5f, 0.0f, 1.0f}, {1.0f, 1.0f}, {0.0f, 0.0f, -1.0f}},
+		{{0.5f, -0.5f, 0.0f, 1.0f}, {1.0f, 1.0f}, {0.0f, 0.0f, -1.0f}},
+		{{-0.5f, 0.5f, 0.0f, 1.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, -1.0f}},
+		{{0.5f, 0.5f, 0.0f, 1.0f}, {1.0f, 0.0f}, {0.0f, 0.0f, -1.0f}},
 	};
 
 	// 球は原点付近に置き、カメラ側から眺める
 	Transforms transform{
-		.scale = {1.0f, 1.0f, 1.0f},
+		.scale = {0.55f, 0.55f, 0.55f},
 		.rotate = {0.0f, 0.0f, 0.0f},
-		.translate = {1.0f, 0.0f, 0.0f}
+		.translate = {0.0f, 0.0f, 0.0f}
 	};
 	Transforms spriteTransform{
 		.scale = {sprite.size.x, sprite.size.y, 1.0f},
@@ -832,6 +925,18 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			ImGui_ImplDX12_NewFrame();
 			ImGui_ImplWin32_NewFrame();
 			ImGui::NewFrame();
+			ImGui::SetNextWindowPos(ImVec2(980.0f, 20.0f), ImGuiCond_Once);
+			ImGui::SetNextWindowSize(ImVec2(280.0f, 180.0f), ImGuiCond_Once);
+			ImGui::Begin("Lighting");
+			bool isLighting = sphereMaterialData->enableLighting != FALSE;
+			ImGui::Checkbox("EnableLighting", &isLighting);
+			sphereMaterialData->enableLighting = isLighting ? TRUE : FALSE;
+			ImGui::ColorEdit4("MaterialColor", &sphereMaterialData->color.x);
+			ImGui::ColorEdit4("LightColor", &directionalLightData->color.x);
+			ImGui::SliderFloat3("LightDirection", &directionalLightData->direction.x, -1.0f, 1.0f);
+			ImGui::SliderFloat("LightIntensity", &directionalLightData->intensity, 0.0f, 2.0f);
+			ImGui::SliderFloat3("Rotate", &transform.rotate.x, -3.14f, 3.14f);
+			ImGui::End();
 			ImGui::Render();
 #endif
 
@@ -841,8 +946,10 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			Matrix4x4 spriteWorldViewProjectionMatrix = Multiply(spriteWorldMatrix, spriteProjectionMatrix);
 			Matrix4x4 worldMatrix = MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
 			Matrix4x4 worldViewProjectionMatrix = Multiply(worldMatrix, Multiply(viewMatrix, projectionMatrix));
-			*spriteWvpData = spriteWorldViewProjectionMatrix;
-			*sphereWvpData = worldViewProjectionMatrix;
+			spriteTransformationMatrixData->WVP = spriteWorldViewProjectionMatrix;
+			spriteTransformationMatrixData->World = spriteWorldMatrix;
+			sphereTransformationMatrixData->WVP = worldViewProjectionMatrix;
+			sphereTransformationMatrixData->World = worldMatrix;
 			hr = commandAllocator->Reset();
 			assert(SUCCEEDED(hr));
 			hr = commandList->Reset(commandAllocator, graphicsPipelineState);
@@ -865,25 +972,31 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			// 描画に必要な状態を順にコマンドリストへ設定する
 			commandList->SetGraphicsRootSignature(rootSignature);
 			commandList->SetPipelineState(graphicsPipelineState);
-			commandList->SetGraphicsRootConstantBufferView(0, materialResource->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
 			ID3D12DescriptorHeap* descriptorHeaps[] = {srvDescriptorHeap};
 			commandList->SetDescriptorHeaps(1, descriptorHeaps);
 			commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-			commandList->OMSetRenderTargets(1, &rtvHandles[backBufferIndex], FALSE, nullptr);
+			commandList->OMSetRenderTargets(1, &rtvHandles[backBufferIndex], FALSE, &dsvHandle);
 
 			// まずは画面を青系の色でクリアする
 			float clearColor[] = {0.1f, 0.25f, 0.5f, 1.0f};
 			commandList->ClearRenderTargetView(rtvHandles[backBufferIndex], clearColor, 0, nullptr);
+			commandList->ClearDepthStencilView(
+				dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
 			// Sprite は常に uvChecker の SRV を使って左側へ表示する
-			commandList->SetGraphicsRootConstantBufferView(1, spriteWvpResource->GetGPUVirtualAddress());
-			commandList->SetGraphicsRootDescriptorTable(2, textureSrvHandlesGPU[0]);
+			commandList->SetGraphicsRootConstantBufferView(0, spriteMaterialResource->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootConstantBufferView(
+				1, spriteTransformationMatrixResource->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootDescriptorTable(3, textureSrvHandlesGPU[0]);
 			commandList->IASetVertexBuffers(0, 1, &spriteVertexBufferView);
 			commandList->DrawInstanced(_countof(spriteVertices), 1, 0, 0);
 
 			// 球は新しく作った ball の SRV を使って右側へ表示する
-			commandList->SetGraphicsRootConstantBufferView(1, sphereWvpResource->GetGPUVirtualAddress());
-			commandList->SetGraphicsRootDescriptorTable(2, textureSrvHandlesGPU[1]);
+			commandList->SetGraphicsRootConstantBufferView(0, sphereMaterialResource->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootConstantBufferView(
+				1, sphereTransformationMatrixResource->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootDescriptorTable(3, textureSrvHandlesGPU[1]);
 			commandList->IASetVertexBuffers(0, 1, &vertexBufferView);
 			commandList->DrawInstanced(static_cast<UINT>(vertices.size()), 1, 0, 0);
 #ifdef USE_IMGUI
@@ -940,9 +1053,11 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	for (ID3D12Resource* textureResource : textureResources) {
 		textureResource->Release();
 	}
-	materialResource->Release();
-	spriteWvpResource->Release();
-	sphereWvpResource->Release();
+	spriteMaterialResource->Release();
+	sphereMaterialResource->Release();
+	directionalLightResource->Release();
+	spriteTransformationMatrixResource->Release();
+	sphereTransformationMatrixResource->Release();
 	spriteVertexResource->Release();
 	vertexResource->Release();
 	graphicsPipelineState->Release();
@@ -957,7 +1072,9 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	dxcCompiler->Release();
 	dxcUtils->Release();
 	srvDescriptorHeap->Release();
+	dsvDescriptorHeap->Release();
 	rtvDescriptorHeap->Release();
+	depthStencilResource->Release();
 	swapChainResources[0]->Release();
 	swapChainResources[1]->Release();
 	swapChain->Release();

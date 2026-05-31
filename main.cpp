@@ -455,11 +455,9 @@ namespace {
 
 #pragma warning(push)
 #pragma warning(disable : 5045)
-// Windows 繧｢繝励Μ繧ｱ繝ｼ繧ｷ繝ｧ繝ｳ縺ｮ繧ｨ繝ｳ繝医Μ繝ｼ繝昴う繝ｳ繝・
 int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	InstallCrashHandler();
 
-	// 螳溯｡後Ο繧ｰ繧剃ｿ晏ｭ倥☆繧九◆繧√↓ logs 繝輔か繝ｫ繝縺ｨ繝ｭ繧ｰ繝輔ぃ繧､繝ｫ繧剃ｽ懈・縺吶ｋ
 	std::filesystem::create_directory("logs");
 	std::time_t now = std::time(nullptr);
 	std::tm localTime{};
@@ -484,12 +482,9 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	}
 
 #ifdef _DEBUG
-	// DebugLayer 縺ｯ DX12 蛻晄悄蛹悶ｈ繧雁燕縺ｫ譛牙柑蛹悶☆繧句ｿ・ｦ√′縺ゅｋ
 	ComPtr<ID3D12Debug1> debugController;
 	if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(debugController.GetAddressOf())))) {
-		// CPU 蛛ｴ縺ｧ荳肴ｭ｣縺ｪ API 蜻ｼ縺ｳ蜃ｺ縺励ｒ讀懷・縺励ｄ縺吶￥縺吶ｋ
 		debugController->EnableDebugLayer();
-		// GPU 螳溯｡梧凾縺ｮ荳肴ｭ｣繧よ鏡縺・ｄ縺吶￥縺吶ｋ
 		debugController->SetEnableGPUBasedValidation(TRUE);
 	}
 #endif
@@ -534,12 +529,10 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	assert(SUCCEEDED(hr));
 
 
-	// DXGI Factory 繧堤函謌舌☆繧・
 	ComPtr<IDXGIFactory7> dxgiFactory;
 	hr = CreateDXGIFactory1(IID_PPV_ARGS(dxgiFactory.GetAddressOf()));
 	assert(SUCCEEDED(hr));
 
-	// 蛻ｩ逕ｨ縺吶ｋ GPU 繧｢繝繝励ち繝ｼ繧帝ｫ俶ｧ閭ｽ蜆ｪ蜈医〒 1 縺､驕ｸ謚槭☆繧・
 	ComPtr<IDXGIAdapter4> useAdapter;
 	for (UINT adapterIndex = 0;; ++adapterIndex) {
 		ComPtr<IDXGIAdapter4> candidateAdapter;
@@ -563,7 +556,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	}
 	assert(useAdapter != nullptr);
 
-	// Direct3D 12 縺ｮ繝・ヰ繧､繧ｹ繧堤函謌舌☆繧・
 	ComPtr<ID3D12Device> device;
 	hr = D3D12CreateDevice(useAdapter.Get(), D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(device.GetAddressOf()));
 	if (SUCCEEDED(hr)) {
@@ -585,17 +577,12 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	Log(logStream, "Complete create D3D12Device!!!");
 
 #ifdef _DEBUG
-	// Device 菴懈・逶ｴ蠕後↓ InfoQueue 繧貞叙蠕励＠縲・㍾螟ｧ縺ｪ蝠城｡後〒蛛懈ｭ｢縺吶ｋ繧医≧縺ｫ縺吶ｋ
 	ComPtr<ID3D12InfoQueue> infoQueue;
 	if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(infoQueue.GetAddressOf())))) {
-		// GPU 縺悟｣翫ｌ繧句庄閭ｽ諤ｧ縺ｮ縺ゅｋ閾ｴ蜻ｽ逧・お繝ｩ繝ｼ縺ｯ蜊ｳ蛛懈ｭ｢縺吶ｋ
 		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, true);
-		// API 縺ｮ菴ｿ縺・婿繧帝俣驕輔∴縺溘お繝ｩ繝ｼ繧ょ叉蛛懈ｭ｢縺吶ｋ
 		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, true);
-		// Warning 繧りｦ矩・＆縺ｪ縺・ｈ縺・↓蛛懈ｭ｢蟇ｾ雎｡縺ｫ縺吶ｋ
 		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, true);
 
-		// Windows 蛛ｴ縺ｮ譌｢遏･繝弱う繧ｺ縺ｨ縲∫｢ｺ隱堺ｸ崎ｦ√↑ INFO 繝｡繝・そ繝ｼ繧ｸ縺ｯ謚大宛縺吶ｋ
 		D3D12_MESSAGE_ID denyIds[] = {
 			D3D12_MESSAGE_ID_RESOURCE_BARRIER_MISMATCHING_COMMAND_LIST_TYPE,
 		};
@@ -609,7 +596,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	}
 #endif
 
-	// 謠冗判繧ｳ繝槭Φ繝峨ｒ GPU 縺ｸ騾√ｋ縺溘ａ縺ｮ繧ｳ繝槭Φ繝峨く繝･繝ｼ繧剃ｽ懈・縺吶ｋ
 	ComPtr<ID3D12CommandQueue> commandQueue;
 	D3D12_COMMAND_QUEUE_DESC commandQueueDesc{};
 	hr = device->CreateCommandQueue(&commandQueueDesc, IID_PPV_ARGS(commandQueue.GetAddressOf()));
@@ -618,7 +604,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		return 1;
 	}
 
-	// 繧ｳ繝槭Φ繝峨Μ繧ｹ繝医′菴ｿ逕ｨ縺吶ｋ繝｡繝｢繝ｪ邂｡逅・畑縺ｮ繧｢繝ｭ繧ｱ繝ｼ繧ｿ繧剃ｽ懈・縺吶ｋ
+
 	ComPtr<ID3D12CommandAllocator> commandAllocator;
 	hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(commandAllocator.GetAddressOf()));
 	assert(SUCCEEDED(hr));
@@ -626,7 +612,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		return 1;
 	}
 
-	// 螳滄圀縺ｮ謠冗判蜻ｽ莉､繧定ｨ倬鹸縺吶ｋ繧ｳ繝槭Φ繝峨Μ繧ｹ繝医ｒ菴懈・縺吶ｋ
 	ComPtr<ID3D12GraphicsCommandList> commandList;
 	hr = device->CreateCommandList(
 		0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator.Get(), nullptr, IID_PPV_ARGS(commandList.GetAddressOf()));
@@ -637,7 +622,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	hr = commandList->Close();
 	assert(SUCCEEDED(hr));
 
-	// 逕ｻ髱｢陦ｨ遉ｺ縺ｫ菴ｿ縺・せ繝ｯ繝・・繝√ぉ繝ｼ繝ｳ繧剃ｽ懈・縺吶ｋ
 	ComPtr<IDXGISwapChain4> swapChain;
 	DXGI_SWAP_CHAIN_DESC1 swapChainDesc{};
 	swapChainDesc.Width = kClientWidth;
@@ -655,7 +639,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		return 1;
 	}
 
-	// RTV 逕ｨ繝偵・繝励→ SRV 逕ｨ繝偵・繝励ｒ菴懈・縺吶ｋ
 	ID3D12DescriptorHeap* rtvDescriptorHeap =
 		CreateDescriptorHeap(device.Get(), D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 2, false);
 	ID3D12DescriptorHeap* srvDescriptorHeap =
@@ -669,7 +652,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	hr = swapChain->GetBuffer(1, IID_PPV_ARGS(&swapChainResources[1]));
 	assert(SUCCEEDED(hr));
 
-	// 繧ｹ繝ｯ繝・・繝√ぉ繝ｼ繝ｳ縺ｮ繝舌ャ繧ｯ繝舌ャ繝輔ぃ縺斐→縺ｫ RTV 繧剃ｽ懈・縺吶ｋ
 	D3D12_RENDER_TARGET_VIEW_DESC rtvDesc{};
 	rtvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 	rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
@@ -717,7 +699,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = dsvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
 	device->CreateDepthStencilView(depthStencilResource, &dsvDesc, dsvHandle);
 
-	// HLSL 繧ｳ繝ｳ繝代う繝ｫ縺ｫ菴ｿ縺・DXC 髢｢騾｣繧ｪ繝悶ず繧ｧ繧ｯ繝医ｒ蛻晄悄蛹悶☆繧・
 	ComPtr<IDxcUtils> dxcUtils;
 	ComPtr<IDxcCompiler3> dxcCompiler;
 	ComPtr<IDxcIncludeHandler> includeHandler;
@@ -728,7 +709,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	hr = dxcUtils->CreateDefaultIncludeHandler(includeHandler.GetAddressOf());
 	assert(SUCCEEDED(hr));
 
-	// 鬆らせ繧ｷ繧ｧ繝ｼ繝繝ｼ縺ｨ繝斐け繧ｻ繝ｫ繧ｷ繧ｧ繝ｼ繝繝ｼ繧偵さ繝ｳ繝代う繝ｫ縺吶ｋ
 	ComPtr<IDxcBlob> vertexShaderBlob = CompileShader(
 		L"Object3d.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
@@ -736,7 +716,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		L"Object3d.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
 
-	// RootSignature 繧堤ｵ・∩遶九※繧・
 	D3D12_DESCRIPTOR_RANGE descriptorRange[1] = {};
 	descriptorRange[0].BaseShaderRegister = 0;
 	descriptorRange[0].NumDescriptors = 1;
@@ -785,7 +764,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	ComPtr<ID3DBlob> signatureBlob;
 	ComPtr<ID3DBlob> errorBlob;
 
-	// 繝槭ユ繝ｪ繧｢繝ｫ螳壽焚繝舌ャ繝輔ぃ縺ｫ縺ｯ荳芽ｧ貞ｽ｢縺ｫ謗帙￠繧玖牡繧貞・繧後ｋ
 	ID3D12Resource* spriteMaterialResource = CreateBufferResource(device.Get(), sizeof(Material));
 	Material* spriteMaterialData = nullptr;
 	spriteMaterialResource->Map(0, nullptr, reinterpret_cast<void**>(&spriteMaterialData));
@@ -814,7 +792,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	directionalLightData->intensity = 1.0f;
 
 
-	// WVP 螳壽焚繝舌ャ繝輔ぃ縺ｫ縺ｯ蠎ｧ讓吝､画鋤陦悟・繧呈嶌縺崎ｾｼ繧
 	ID3D12Resource* spriteTransformationMatrixResource = CreateBufferResource(
 		device.Get(), sizeof(TransformationMatrix));
 	TransformationMatrix* spriteTransformationMatrixData = nullptr;
@@ -846,7 +823,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		IID_PPV_ARGS(rootSignature.GetAddressOf()));
 	assert(SUCCEEDED(hr));
 
-	// 鬆らせ繝ｬ繧､繧｢繧ｦ繝医ｒ GPU 縺ｫ莨昴∴繧・InputLayout 繧定ｨｭ螳壹☆繧・
 	D3D12_INPUT_ELEMENT_DESC inputElementDescs[3] = {};
 	inputElementDescs[0].SemanticName = "POSITION";
 	inputElementDescs[0].SemanticIndex = 0;
@@ -861,11 +837,9 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	inputElementDescs[2].Format = DXGI_FORMAT_R32G32B32_FLOAT;
 	inputElementDescs[2].AlignedByteOffset = D3D12_APPEND_ALIGNED_ELEMENT;
 
-	// 謠冗判邨先棡繧偵◎縺ｮ縺ｾ縺ｾ譖ｸ縺崎ｾｼ繧 BlendState 繧定ｨｭ螳壹☆繧・
 	D3D12_BLEND_DESC blendDesc{};
 	blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
 
-	// 陬剰｡ｨ縺ｮ謇ｱ縺・ｄ蝪励ｊ縺､縺ｶ縺玲婿豕輔ｒ豎ｺ繧√ｋ RasterizerState 繧定ｨｭ螳壹☆繧・
 	D3D12_RASTERIZER_DESC rasterizerDesc{};
 	rasterizerDesc.FillMode = D3D12_FILL_MODE_SOLID;
 	rasterizerDesc.CullMode = D3D12_CULL_MODE_NONE;
@@ -876,7 +850,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	depthStencilDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
 	depthStencilDesc.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
 
-	// 縺薙％縺ｾ縺ｧ縺ｮ險ｭ螳壹ｒ縺ｾ縺ｨ繧√※ PSO 繧剃ｽ懈・縺吶ｋ
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC graphicsPipelineStateDesc{};
 	graphicsPipelineStateDesc.pRootSignature = rootSignature.Get();
 	graphicsPipelineStateDesc.InputLayout.pInputElementDescs = inputElementDescs;
@@ -907,14 +880,12 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		return 1;
 	}
 
-	// 逅・・蛻・牡謨ｰ繧貞｢励ｄ縺吶⊇縺ｩ貊代ｉ縺九↓縺ｪ繧・
 	ModelData modelData = LoadObjFile("resources", "plane.obj");
 
 	constexpr uint32_t kSubdivision = 64;
 	constexpr float kLonEvery = 2.0f * std::numbers::pi_v<float> / static_cast<float>(kSubdivision);
 	constexpr float kLatEvery = std::numbers::pi_v<float> / static_cast<float>(kSubdivision);
 
-	// 逅・・ 1 繝槭せ縺斐→縺ｫ 2 荳芽ｧ貞ｽ｢縲√▽縺ｾ繧・6 鬆らせ繧剃ｽｿ縺｣縺ｦ邨・∩遶九※繧・
 	std::vector<VertexData> vertices;
 	vertices.reserve(kSubdivision * kSubdivision * 6);
 	for (uint32_t latIndex = 0; latIndex < kSubdivision; ++latIndex) {
@@ -961,7 +932,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		}
 	}
 
-	// Sprite 縺ｯ繝ｭ繝ｼ繧ｫ繝ｫ蠎ｧ讓吶・蝗幄ｧ貞ｽ｢繧剃ｽ懊ｊ縲∵ｭ｣蟆・ｽｱ縺ｧ逕ｻ髱｢蟾ｦ蛛ｴ縺ｸ陦ｨ遉ｺ縺吶ｋ
 	Sprite sprite{
 		.position = {128.0f, 128.0f},
 		.size = {256.0f, 256.0f}
@@ -977,7 +947,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		2, 1, 3,
 	};
 
-	// 逅・・蜴溽せ莉倩ｿ代↓鄂ｮ縺阪√き繝｡繝ｩ蛛ｴ縺九ｉ逵ｺ繧√ｋ
 	Transforms transform{
 		.scale = {0.55f, 0.55f, 0.55f},
 		.rotate = {0.0f, 0.0f, 0.0f},
@@ -998,16 +967,13 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		.rotate = {0.0f, 0.0f, 0.0f},
 		.translate = {0.0f, 0.0f, 0.0f}
 	};
-	// 鬆らせ繝舌ャ繝輔ぃ逕ｨ縺ｮ繝ｪ繧ｽ繝ｼ繧ｹ繧剃ｽ懈・縺吶ｋ
 	ID3D12Resource* vertexResource = CreateBufferResource(device.Get(), sizeof(VertexData) * vertices.size());
 
-	// CPU 蛛ｴ縺九ｉ鬆らせ繝・・繧ｿ繧呈嶌縺崎ｾｼ繧√ｋ繧医≧縺ｫ繝槭ャ繝励☆繧・
 	VertexData* mappedVertexData = nullptr;
 	hr = vertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedVertexData));
 	assert(SUCCEEDED(hr));
 	std::memcpy(mappedVertexData, vertices.data(), sizeof(VertexData) * vertices.size());
 
-	// 鬆らせ繝舌ャ繝輔ぃ縺ｮ隕九∴譁ｹ繧・GPU 縺ｫ莨昴∴繧九◆繧√・ View 繧定ｨｭ螳壹☆繧・
 	D3D12_VERTEX_BUFFER_VIEW vertexBufferView{};
 	vertexBufferView.BufferLocation = vertexResource->GetGPUVirtualAddress();
 	vertexBufferView.SizeInBytes = static_cast<UINT>(sizeof(VertexData) * vertices.size());
@@ -1025,7 +991,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	modelVertexBufferView.SizeInBytes = static_cast<UINT>(sizeof(VertexData) * modelData.vertices.size());
 	modelVertexBufferView.StrideInBytes = sizeof(VertexData);
 
-	// Sprite 逕ｨ縺ｮ鬆らせ繝舌ャ繝輔ぃ繧ょ挨騾比ｽ懈・縺励※縺翫￥
 	ID3D12Resource* spriteVertexResource = CreateBufferResource(device.Get(), sizeof(spriteVertices));
 	VertexData* mappedSpriteVertexData = nullptr;
 	hr = spriteVertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedSpriteVertexData));
@@ -1048,18 +1013,15 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	spriteIndexBufferView.SizeInBytes = sizeof(spriteIndices);
 	spriteIndexBufferView.Format = DXGI_FORMAT_R32_UINT;
 
-	// 逕ｻ髱｢蜈ｨ菴薙ｒ謠冗判蟇ｾ雎｡縺ｫ縺吶ｋ Viewport 繧定ｨｭ螳壹☆繧・
 	D3D12_VIEWPORT viewport{};
 	viewport.Width = static_cast<float>(kClientWidth);
 	viewport.Height = static_cast<float>(kClientHeight);
 	viewport.MaxDepth = 1.0f;
 
-	// Viewport 縺ｨ蜷後§遽・峇繧呈緒逕ｻ縺吶ｋ ScissorRect 繧定ｨｭ螳壹☆繧・
 	D3D12_RECT scissorRect{};
 	scissorRect.right = kClientWidth;
 	scissorRect.bottom = kClientHeight;
 
-	// 莉雁屓縺ｯ 2 譫壹・繝・け繧ｹ繝√Ε繧偵Ο繝ｼ繝峨＠縺ｦ縲ヾRV 繝偵・繝怜・縺ｧ蛻・ｊ譖ｿ縺医ｉ繧後ｋ繧医≧縺ｫ縺吶ｋ
 	std::wstring textureFilePaths[] = {
 		L"resources/uvChecker.png",
 		L"resources/monsterBall.png",
@@ -1074,7 +1036,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		textureResources[textureIndex] = CreateTextureResource(device.Get(), textureMetadatas[textureIndex]);
 	}
 
-	// 逅・・騾剰ｦ匁兜蠖ｱ縺ｧ遶倶ｽ鍋噪縺ｫ隕九○繧・
 	Matrix4x4 cameraMatrix = MakeAffineMatrix(
 		cameraTransform.scale, cameraTransform.rotate, cameraTransform.translate);
 	Matrix4x4 viewMatrix = Inverse(cameraMatrix);
@@ -1091,7 +1052,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		0.0f,
 		100.0f);
 
-	// GPU 螳御ｺ・ｾ・■縺ｫ菴ｿ縺・Fence 縺ｨ繧､繝吶Φ繝医ｒ菴懈・縺吶ｋ
 	ComPtr<ID3D12Fence> fence;
 	uint64_t fenceValue = 0;
 	hr = device->CreateFence(fenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(fence.GetAddressOf()));
@@ -1103,7 +1063,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		return 1;
 	}
 
-	// 繝・け繧ｹ繝√Ε繧・GPU 縺ｸ霆｢騾√☆繧九◆繧√・荳譎ゅさ繝槭Φ繝峨ｒ險倬鹸縺吶ｋ
 	hr = commandAllocator->Reset();
 	assert(SUCCEEDED(hr));
 	hr = commandList->Reset(commandAllocator.Get(), nullptr);
@@ -1115,7 +1074,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			device.Get(), commandList.Get(), textureResources[textureIndex], mipImages[textureIndex]);
 	}
 
-	// SRV 繝偵・繝励・ 0 逡ｪ縺ｯ ImGui 縺御ｽｿ縺・◆繧√√ご繝ｼ繝逕ｨ繝・け繧ｹ繝√Ε縺ｯ 1 逡ｪ莉･髯阪∈荳ｦ縺ｹ繧・
 	UINT srvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 	D3D12_CPU_DESCRIPTOR_HANDLE textureSrvHandlesCPU[_countof(textureFilePaths)];
 	D3D12_GPU_DESCRIPTOR_HANDLE textureSrvHandlesGPU[_countof(textureFilePaths)];
@@ -1148,7 +1106,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	}
 
 #ifdef USE_IMGUI
-	// ImGui 縺ｯ繝｡繧､繝ｳ繝ｫ繝ｼ繝励∈蜈･繧句燕縺ｫ蛻晄悄蛹悶＠縺ｦ縺翫￥
+	
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 	ImGui::StyleColorsDark();
@@ -1170,7 +1128,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		}
 		else {
 #ifdef USE_IMGUI
-			// ImGui 縺ｫ譁ｰ縺励＞繝輔Ξ繝ｼ繝縺ｮ髢句ｧ九ｒ騾夂衍縺励√ョ繝｢繧ｦ繧｣繝ｳ繝峨え繧呈緒逕ｻ蟇ｾ雎｡縺ｸ霑ｽ蜉縺吶ｋ
 			ImGui_ImplDX12_NewFrame();
 			ImGui_ImplWin32_NewFrame();
 			ImGui::NewFrame();
@@ -1199,7 +1156,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			ImGui::Render();
 #endif
 
-			// Sprite 逕ｨ縺ｨ逅・畑縺ｧ蛻･縲・・ WVP 繧剃ｽｿ縺・◆繧√∵緒逕ｻ逶ｴ蜑阪↓縺昴・驛ｽ蠎ｦ譖ｸ縺肴鋤縺医ｋ
 			Matrix4x4 spriteWorldMatrix = MakeAffineMatrix(
 				spriteTransform.scale, spriteTransform.rotate, spriteTransform.translate);
 			Matrix4x4 spriteWorldViewProjectionMatrix = Multiply(spriteWorldMatrix, spriteProjectionMatrix);
@@ -1220,7 +1176,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 
 			UINT backBufferIndex = swapChain->GetCurrentBackBufferIndex();
 
-			// Present 迥ｶ諷九・繝舌ャ繧ｯ繝舌ャ繝輔ぃ繧偵Ξ繝ｳ繝繝ｼ繧ｿ繝ｼ繧ｲ繝・ヨ縺ｨ縺励※菴ｿ縺医ｋ迥ｶ諷九∈驕ｷ遘ｻ縺吶ｋ
 			D3D12_RESOURCE_BARRIER barrier{};
 			barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 			barrier.Transition.pResource = swapChainResources[backBufferIndex];
@@ -1232,7 +1187,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			commandList->RSSetViewports(1, &viewport);
 			commandList->RSSetScissorRects(1, &scissorRect);
 
-			// 謠冗判縺ｫ蠢・ｦ√↑迥ｶ諷九ｒ鬆・↓繧ｳ繝槭Φ繝峨Μ繧ｹ繝医∈險ｭ螳壹☆繧・
 			commandList->SetGraphicsRootSignature(rootSignature.Get());
 			commandList->SetPipelineState(graphicsPipelineState.Get());
 			commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
@@ -1241,13 +1195,12 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			commandList->OMSetRenderTargets(1, &rtvHandles[backBufferIndex], FALSE, &dsvHandle);
 
-			// 縺ｾ縺壹・逕ｻ髱｢繧帝搨邉ｻ縺ｮ濶ｲ縺ｧ繧ｯ繝ｪ繧｢縺吶ｋ
 			float clearColor[] = {0.1f, 0.25f, 0.5f, 1.0f};
 			commandList->ClearRenderTargetView(rtvHandles[backBufferIndex], clearColor, 0, nullptr);
 			commandList->ClearDepthStencilView(
 				dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
-			// Sprite 縺ｯ蟶ｸ縺ｫ uvChecker 縺ｮ SRV 繧剃ｽｿ縺｣縺ｦ蟾ｦ蛛ｴ縺ｸ陦ｨ遉ｺ縺吶ｋ
+
 			commandList->SetGraphicsRootConstantBufferView(0, spriteMaterialResource->GetGPUVirtualAddress());
 			commandList->SetGraphicsRootConstantBufferView(
 				1, spriteTransformationMatrixResource->GetGPUVirtualAddress());
@@ -1256,7 +1209,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			commandList->IASetIndexBuffer(&spriteIndexBufferView);
 			commandList->DrawIndexedInstanced(_countof(spriteIndices), 1, 0, 0, 0);
 
-			// 逅・・譁ｰ縺励￥菴懊▲縺・ball 縺ｮ SRV 繧剃ｽｿ縺｣縺ｦ蜿ｳ蛛ｴ縺ｸ陦ｨ遉ｺ縺吶ｋ
 			commandList->SetGraphicsRootConstantBufferView(0, sphereMaterialResource->GetGPUVirtualAddress());
 			commandList->SetGraphicsRootConstantBufferView(
 				1, sphereTransformationMatrixResource->GetGPUVirtualAddress());
@@ -1313,18 +1265,15 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	Log(logStream, "application finished");
 
 #ifdef USE_IMGUI
-	// ImGui 縺ｯ蛻晄悄蛹悶→騾・・〒邨ゆｺ・・逅・ｒ陦後≧
 	ImGui_ImplDX12_Shutdown();
 	ImGui_ImplWin32_Shutdown();
 	ImGui::DestroyContext();
 #endif
 
-	// 逕滓・鬆・ｒ諢剰ｭ倥＠縺ｦ蠕悟ｧ区忰縺吶ｋ縺ｨ縲∬ｧ｣謾ｾ貍上ｌ繧定ｿｽ縺・ｄ縺吶＞
 	if (fenceEvent != nullptr) {
 		CloseHandle(fenceEvent);
 	}
 
-	// 菴懈・縺励◆ DirectX 髢｢騾｣繧ｪ繝悶ず繧ｧ繧ｯ繝医ｒ譛蠕後↓縺吶∋縺ｦ隗｣謾ｾ縺吶ｋ
 	for (ID3D12Resource* intermediateResource : intermediateResources) {
 		intermediateResource->Release();
 	}
@@ -1348,7 +1297,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	swapChainResources[1]->Release();
 
 #ifdef _DEBUG
-	// 縺吶∋縺ｦ隗｣謾ｾ縺励◆縺ゅ→縺ｫ縲∵ｮ九▲縺ｦ縺・ｋ DX12 繧ｪ繝悶ず繧ｧ繧ｯ繝医′縺ｪ縺・°繧堤｢ｺ隱阪☆繧・
 	ComPtr<IDXGIDebug1> debug;
 	if (SUCCEEDED(DXGIGetDebugInterface1(0, IID_PPV_ARGS(debug.GetAddressOf())))) {
 		debug->ReportLiveObjects(DXGI_DEBUG_ALL, DXGI_DEBUG_RLO_ALL);

@@ -669,10 +669,19 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	scissorRect.right = kClientWidth;
 	scissorRect.bottom = kClientHeight;
 
-	// テクスチャ画像を読み込み、GPU リソースを作成する
-	DirectX::ScratchImage mipImages = LoadTexture(L"resources/uvChecker.png");
-	const DirectX::TexMetadata& metadata = mipImages.GetMetadata();
-	ID3D12Resource* textureResource = CreateTextureResource(device, metadata);
+	// 今回は 2 枚のテクスチャをロードして、SRV ヒープ内で切り替えられるようにする
+	const std::wstring textureFilePaths[] = {
+		L"resources/uvChecker.png",
+		L"resources/ball.png",
+	};
+	DirectX::ScratchImage mipImages[_countof(textureFilePaths)];
+	DirectX::TexMetadata textureMetadatas[_countof(textureFilePaths)];
+	ID3D12Resource* textureResources[_countof(textureFilePaths)] = {nullptr};
+	for (uint32_t textureIndex = 0; textureIndex < _countof(textureFilePaths); ++textureIndex) {
+		mipImages[textureIndex] = LoadTexture(textureFilePaths[textureIndex]);
+		textureMetadatas[textureIndex] = mipImages[textureIndex].GetMetadata();
+		textureResources[textureIndex] = CreateTextureResource(device, textureMetadatas[textureIndex]);
+	}
 
 	// 球は透視投影で立体的に見せる
 	Matrix4x4 cameraMatrix = MakeAffineMatrix(
@@ -702,21 +711,29 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	hr = commandList->Reset(commandAllocator, nullptr);
 	assert(SUCCEEDED(hr));
 
-	ID3D12Resource* intermediateResource = UploadTextureData(device, commandList, textureResource, mipImages);
+	ID3D12Resource* intermediateResources[_countof(textureFilePaths)] = {nullptr};
+	for (uint32_t textureIndex = 0; textureIndex < _countof(textureFilePaths); ++textureIndex) {
+		intermediateResources[textureIndex] = UploadTextureData(
+			device, commandList, textureResources[textureIndex], mipImages[textureIndex]);
+	}
 
-	// SRV ヒープの 0 番は ImGui が使うため、1 番にテクスチャ SRV を配置する
-	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-	srvDesc.Format = metadata.format;
-	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-	srvDesc.Texture2D.MipLevels = static_cast<UINT>(metadata.mipLevels);
-
+	// SRV ヒープの 0 番は ImGui が使うため、ゲーム用テクスチャは 1 番以降へ並べる
 	UINT srvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-	D3D12_CPU_DESCRIPTOR_HANDLE textureSrvHandleCPU = srvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
-	textureSrvHandleCPU.ptr += srvDescriptorSize;
-	D3D12_GPU_DESCRIPTOR_HANDLE textureSrvHandleGPU = srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
-	textureSrvHandleGPU.ptr += srvDescriptorSize;
-	device->CreateShaderResourceView(textureResource, &srvDesc, textureSrvHandleCPU);
+	D3D12_CPU_DESCRIPTOR_HANDLE textureSrvHandlesCPU[_countof(textureFilePaths)];
+	D3D12_GPU_DESCRIPTOR_HANDLE textureSrvHandlesGPU[_countof(textureFilePaths)];
+	for (uint32_t textureIndex = 0; textureIndex < _countof(textureFilePaths); ++textureIndex) {
+		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+		srvDesc.Format = textureMetadatas[textureIndex].format;
+		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MipLevels = static_cast<UINT>(textureMetadatas[textureIndex].mipLevels);
+
+		textureSrvHandlesCPU[textureIndex] = srvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
+		textureSrvHandlesCPU[textureIndex].ptr += srvDescriptorSize * (textureIndex + 1);
+		textureSrvHandlesGPU[textureIndex] = srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
+		textureSrvHandlesGPU[textureIndex].ptr += srvDescriptorSize * (textureIndex + 1);
+		device->CreateShaderResourceView(textureResources[textureIndex], &srvDesc, textureSrvHandlesCPU[textureIndex]);
+	}
 
 	hr = commandList->Close();
 	assert(SUCCEEDED(hr));
@@ -747,6 +764,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 	ImGuiIO& io = ImGui::GetIO();
 	io.Fonts->Build();
+	int currentTextureIndex = 0;
 #endif
 	while (message.message != WM_QUIT) {
 		if (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE) != FALSE) {
@@ -759,7 +777,12 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			ImGui_ImplDX12_NewFrame();
 			ImGui_ImplWin32_NewFrame();
 			ImGui::NewFrame();
-			ImGui::ShowDemoWindow();
+			// どの SRV を使って描画するかを ImGui から切り替えられるようにする
+			ImGui::Begin("Texture");
+			ImGui::SliderInt("TextureIndex", &currentTextureIndex, 0, static_cast<int>(_countof(textureFilePaths) - 1));
+			ImGui::Text("0: uvChecker");
+			ImGui::Text("1: ball");
+			ImGui::End();
 			ImGui::Render();
 #endif
 
@@ -793,7 +816,11 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			commandList->SetGraphicsRootConstantBufferView(1, wvpResource->GetGPUVirtualAddress());
 			ID3D12DescriptorHeap* descriptorHeaps[] = {srvDescriptorHeap};
 			commandList->SetDescriptorHeaps(1, descriptorHeaps);
-			commandList->SetGraphicsRootDescriptorTable(2, textureSrvHandleGPU);
+			uint32_t drawTextureIndex = 0;
+#ifdef USE_IMGUI
+			drawTextureIndex = static_cast<uint32_t>(currentTextureIndex);
+#endif
+			commandList->SetGraphicsRootDescriptorTable(2, textureSrvHandlesGPU[drawTextureIndex]);
 			commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			commandList->IASetVertexBuffers(0, 1, &vertexBufferView);
 			commandList->OMSetRenderTargets(1, &rtvHandles[backBufferIndex], FALSE, nullptr);
@@ -850,8 +877,12 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 
 	// 作成した DirectX 関連オブジェクトを最後にすべて解放する
 	fence->Release();
-	intermediateResource->Release();
-	textureResource->Release();
+	for (ID3D12Resource* intermediateResource : intermediateResources) {
+		intermediateResource->Release();
+	}
+	for (ID3D12Resource* textureResource : textureResources) {
+		textureResource->Release();
+	}
 	materialResource->Release();
 	vertexResource->Release();
 	graphicsPipelineState->Release();

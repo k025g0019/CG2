@@ -499,7 +499,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		filter.DenyList.NumSeverities = _countof(severities);
 		filter.DenyList.pSeverityList = severities;
 		infoQueue->PushStorageFilter(&filter);
-
 	}
 #endif
 
@@ -625,10 +624,10 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	// 頂点シェーダーとピクセルシェーダーをコンパイルする
 	ComPtr<IDxcBlob> vertexShaderBlob = CompileShader(
 		L"Object3d.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
-	                                           logStream);
+		logStream);
 	ComPtr<IDxcBlob> pixelShaderBlob = CompileShader(
 		L"Object3d.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
-	                                          logStream);
+		logStream);
 
 	// RootSignature を組み立てる
 	D3D12_DESCRIPTOR_RANGE descriptorRange[1] = {};
@@ -709,13 +708,15 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 
 
 	// WVP 定数バッファには座標変換行列を書き込む
-	ID3D12Resource* spriteTransformationMatrixResource = CreateBufferResource(device.Get(), sizeof(TransformationMatrix));
+	ID3D12Resource* spriteTransformationMatrixResource = CreateBufferResource(
+		device.Get(), sizeof(TransformationMatrix));
 	TransformationMatrix* spriteTransformationMatrixData = nullptr;
 	spriteTransformationMatrixResource->Map(
 		0, nullptr, reinterpret_cast<void**>(&spriteTransformationMatrixData));
 	spriteTransformationMatrixData->WVP = MakeIdentity4x4();
 	spriteTransformationMatrixData->World = MakeIdentity4x4();
-	ID3D12Resource* sphereTransformationMatrixResource = CreateBufferResource(device.Get(), sizeof(TransformationMatrix));
+	ID3D12Resource* sphereTransformationMatrixResource = CreateBufferResource(
+		device.Get(), sizeof(TransformationMatrix));
 	TransformationMatrix* sphereTransformationMatrixData = nullptr;
 	sphereTransformationMatrixResource->Map(
 		0, nullptr, reinterpret_cast<void**>(&sphereTransformationMatrixData));
@@ -723,7 +724,8 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	sphereTransformationMatrixData->World = MakeIdentity4x4();
 
 	hr = D3D12SerializeRootSignature(
-		&descriptionRootSignature, D3D_ROOT_SIGNATURE_VERSION_1, signatureBlob.GetAddressOf(), errorBlob.GetAddressOf());
+		&descriptionRootSignature, D3D_ROOT_SIGNATURE_VERSION_1, signatureBlob.GetAddressOf(),
+		errorBlob.GetAddressOf());
 	if (FAILED(hr)) {
 		if (errorBlob != nullptr) {
 			Log(reinterpret_cast<char*>(errorBlob->GetBufferPointer()));
@@ -733,7 +735,8 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 
 	ComPtr<ID3D12RootSignature> rootSignature;
 	hr = device->CreateRootSignature(
-		0, signatureBlob->GetBufferPointer(), signatureBlob->GetBufferSize(), IID_PPV_ARGS(rootSignature.GetAddressOf()));
+		0, signatureBlob->GetBufferPointer(), signatureBlob->GetBufferSize(),
+		IID_PPV_ARGS(rootSignature.GetAddressOf()));
 	assert(SUCCEEDED(hr));
 
 	// 頂点レイアウトを GPU に伝える InputLayout を設定する
@@ -790,7 +793,8 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	graphicsPipelineStateDesc.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
 
 	ComPtr<ID3D12PipelineState> graphicsPipelineState;
-	hr = device->CreateGraphicsPipelineState(&graphicsPipelineStateDesc, IID_PPV_ARGS(graphicsPipelineState.GetAddressOf()));
+	hr = device->CreateGraphicsPipelineState(&graphicsPipelineStateDesc,
+	                                         IID_PPV_ARGS(graphicsPipelineState.GetAddressOf()));
 	assert(SUCCEEDED(hr));
 	if (FAILED(hr) || graphicsPipelineState == nullptr) {
 		return 1;
@@ -902,7 +906,8 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	vertexBufferView.SizeInBytes = static_cast<UINT>(sizeof(VertexData) * vertices.size());
 	vertexBufferView.StrideInBytes = sizeof(VertexData);
 
-	ID3D12Resource* modelVertexResource = CreateBufferResource(device.Get(), sizeof(VertexData) * modelData.vertices.size());
+	ID3D12Resource* modelVertexResource = CreateBufferResource(device.Get(),
+	                                                           sizeof(VertexData) * modelData.vertices.size());
 	VertexData* mappedModelVertexData = nullptr;
 	hr = modelVertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedModelVertexData));
 	assert(SUCCEEDED(hr));

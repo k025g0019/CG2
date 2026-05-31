@@ -752,9 +752,11 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		{{-0.5f, -0.5f, 0.0f, 1.0f}, {0.0f, 1.0f}, {0.0f, 0.0f, -1.0f}},
 		{{-0.5f, 0.5f, 0.0f, 1.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, -1.0f}},
 		{{0.5f, -0.5f, 0.0f, 1.0f}, {1.0f, 1.0f}, {0.0f, 0.0f, -1.0f}},
-		{{0.5f, -0.5f, 0.0f, 1.0f}, {1.0f, 1.0f}, {0.0f, 0.0f, -1.0f}},
-		{{-0.5f, 0.5f, 0.0f, 1.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, -1.0f}},
 		{{0.5f, 0.5f, 0.0f, 1.0f}, {1.0f, 0.0f}, {0.0f, 0.0f, -1.0f}},
+	};
+	uint32_t spriteIndices[] = {
+		0, 1, 2,
+		2, 1, 3,
 	};
 
 	// 球は原点付近に置き、カメラ側から眺める
@@ -799,6 +801,17 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	spriteVertexBufferView.BufferLocation = spriteVertexResource->GetGPUVirtualAddress();
 	spriteVertexBufferView.SizeInBytes = sizeof(spriteVertices);
 	spriteVertexBufferView.StrideInBytes = sizeof(VertexData);
+
+	ID3D12Resource* spriteIndexResource = CreateBufferResource(device, sizeof(spriteIndices));
+	uint32_t* mappedSpriteIndexData = nullptr;
+	hr = spriteIndexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedSpriteIndexData));
+	assert(SUCCEEDED(hr));
+	std::memcpy(mappedSpriteIndexData, spriteIndices, sizeof(spriteIndices));
+
+	D3D12_INDEX_BUFFER_VIEW spriteIndexBufferView{};
+	spriteIndexBufferView.BufferLocation = spriteIndexResource->GetGPUVirtualAddress();
+	spriteIndexBufferView.SizeInBytes = sizeof(spriteIndices);
+	spriteIndexBufferView.Format = DXGI_FORMAT_R32_UINT;
 
 	// 画面全体を描画対象にする Viewport を設定する
 	D3D12_VIEWPORT viewport{};
@@ -990,7 +1003,8 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 				1, spriteTransformationMatrixResource->GetGPUVirtualAddress());
 			commandList->SetGraphicsRootDescriptorTable(3, textureSrvHandlesGPU[0]);
 			commandList->IASetVertexBuffers(0, 1, &spriteVertexBufferView);
-			commandList->DrawInstanced(_countof(spriteVertices), 1, 0, 0);
+			commandList->IASetIndexBuffer(&spriteIndexBufferView);
+			commandList->DrawIndexedInstanced(_countof(spriteIndices), 1, 0, 0, 0);
 
 			// 球は新しく作った ball の SRV を使って右側へ表示する
 			commandList->SetGraphicsRootConstantBufferView(0, sphereMaterialResource->GetGPUVirtualAddress());
@@ -1058,6 +1072,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	directionalLightResource->Release();
 	spriteTransformationMatrixResource->Release();
 	sphereTransformationMatrixResource->Release();
+	spriteIndexResource->Release();
 	spriteVertexResource->Release();
 	vertexResource->Release();
 	graphicsPipelineState->Release();

@@ -454,13 +454,13 @@ namespace {
 		return soundData;
 	}
 
-		void SoundUnload(SoundData* soundData) {
-			// [Small] Free wave memory buffer
-			assert(soundData != nullptr);
-			delete[] soundData->pBuffer;
-			soundData->pBuffer = nullptr;
-			soundData->bufferSize = 0u;
-		}
+	void SoundUnload(SoundData* soundData) {
+		// [Small] Free wave memory buffer
+		assert(soundData != nullptr);
+		delete[] soundData->pBuffer;
+		soundData->pBuffer = nullptr;
+		soundData->bufferSize = 0u;
+	}
 }
 
 #pragma warning(push)

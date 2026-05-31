@@ -18,6 +18,7 @@
 #include <fstream>
 #include <numbers>
 #include <sdkddkver.h>
+#include <sstream>
 #include <string>
 #include <vector>
 #pragma warning(pop)
@@ -93,7 +94,18 @@ namespace {
 		Vector2 size;
 	};
 
+	struct MaterialData {
+		std::string textureFilePath;
+	};
+
+	struct ModelData {
+		std::vector<VertexData> vertices;
+		MaterialData material;
+	};
+
 	ID3D12Resource* CreateBufferResource(ID3D12Device* device, size_t sizeInBytes);
+	MaterialData LoadMaterialTemplateFile(const std::string& directoryPath, const std::string& filename);
+	ModelData LoadObjFile(const std::string& directoryPath, const std::string& filename);
 
 	D3D12_CPU_DESCRIPTOR_HANDLE GetCPUDescriptorHandle(
 		ID3D12DescriptorHeap* descriptorHeap, UINT descriptorSize, UINT index) {
@@ -278,6 +290,98 @@ namespace {
 		shaderSource->Release();
 
 		return shaderBlob;
+	}
+
+	MaterialData LoadMaterialTemplateFile(const std::string& directoryPath, const std::string& filename) {
+		MaterialData materialData{};
+
+		std::ifstream file(directoryPath + "/" + filename);
+		assert(file.is_open());
+
+		std::string line;
+		while (std::getline(file, line)) {
+			std::string identifier;
+			std::istringstream lineStream(line);
+			lineStream >> identifier;
+
+			if (identifier == "map_Kd") {
+				lineStream >> materialData.textureFilePath;
+				materialData.textureFilePath = directoryPath + "/" + materialData.textureFilePath;
+			}
+		}
+
+		return materialData;
+	}
+
+	ModelData LoadObjFile(const std::string& directoryPath, const std::string& filename) {
+		ModelData modelData{};
+		std::ifstream file(directoryPath + "/" + filename);
+		assert(file.is_open());
+
+		std::vector<Vector4> positions;
+		std::vector<Vector2> texcoords;
+		std::vector<Vector3> normals;
+		std::string line;
+
+		while (std::getline(file, line)) {
+			std::string identifier;
+			std::istringstream lineStream(line);
+			lineStream >> identifier;
+
+			if (identifier == "v") {
+				Vector4 position{};
+				lineStream >> position.x >> position.y >> position.z;
+				position.x *= -1.0f;
+				position.w = 1.0f;
+				positions.push_back(position);
+			}
+			else if (identifier == "vt") {
+				Vector2 texcoord{};
+				lineStream >> texcoord.x >> texcoord.y;
+				texcoord.y = 1.0f - texcoord.y;
+				texcoords.push_back(texcoord);
+			}
+			else if (identifier == "vn") {
+				Vector3 normal{};
+				lineStream >> normal.x >> normal.y >> normal.z;
+				normal.x *= -1.0f;
+				normals.push_back(normal);
+			}
+			else if (identifier == "f") {
+				VertexData triangle[3]{};
+				for (int32_t faceVertex = 0; faceVertex < 3; ++faceVertex) {
+					std::string vertexDefinition;
+					lineStream >> vertexDefinition;
+
+					std::istringstream vertexStream(vertexDefinition);
+					std::string positionIndexString;
+					std::string texcoordIndexString;
+					std::string normalIndexString;
+					std::getline(vertexStream, positionIndexString, '/');
+					std::getline(vertexStream, texcoordIndexString, '/');
+					std::getline(vertexStream, normalIndexString, '/');
+
+					uint32_t positionIndex = static_cast<uint32_t>(std::stoi(positionIndexString)) - 1;
+					uint32_t texcoordIndex = static_cast<uint32_t>(std::stoi(texcoordIndexString)) - 1;
+					uint32_t normalIndex = static_cast<uint32_t>(std::stoi(normalIndexString)) - 1;
+
+					triangle[faceVertex].position = positions[positionIndex];
+					triangle[faceVertex].texcoord = texcoords[texcoordIndex];
+					triangle[faceVertex].normal = normals[normalIndex];
+				}
+
+				modelData.vertices.push_back(triangle[2]);
+				modelData.vertices.push_back(triangle[1]);
+				modelData.vertices.push_back(triangle[0]);
+			}
+			else if (identifier == "mtllib") {
+				std::string materialFilename;
+				lineStream >> materialFilename;
+				modelData.material = LoadMaterialTemplateFile(directoryPath, materialFilename);
+			}
+		}
+
+		return modelData;
 	}
 }
 
@@ -695,6 +799,8 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	}
 
 	// 球は分割数を増やすほど滑らかになる
+	ModelData modelData = LoadObjFile("resources", "plane.obj");
+
 	constexpr uint32_t kSubdivision = 64;
 	constexpr float kLonEvery = 2.0f * std::numbers::pi_v<float> / static_cast<float>(kSubdivision);
 	constexpr float kLatEvery = std::numbers::pi_v<float> / static_cast<float>(kSubdivision);
@@ -798,6 +904,17 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	vertexBufferView.SizeInBytes = static_cast<UINT>(sizeof(VertexData) * vertices.size());
 	vertexBufferView.StrideInBytes = sizeof(VertexData);
 
+	ID3D12Resource* modelVertexResource = CreateBufferResource(device, sizeof(VertexData) * modelData.vertices.size());
+	VertexData* mappedModelVertexData = nullptr;
+	hr = modelVertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedModelVertexData));
+	assert(SUCCEEDED(hr));
+	std::memcpy(mappedModelVertexData, modelData.vertices.data(), sizeof(VertexData) * modelData.vertices.size());
+
+	D3D12_VERTEX_BUFFER_VIEW modelVertexBufferView{};
+	modelVertexBufferView.BufferLocation = modelVertexResource->GetGPUVirtualAddress();
+	modelVertexBufferView.SizeInBytes = static_cast<UINT>(sizeof(VertexData) * modelData.vertices.size());
+	modelVertexBufferView.StrideInBytes = sizeof(VertexData);
+
 	// Sprite 用の頂点バッファも別途作成しておく
 	ID3D12Resource* spriteVertexResource = CreateBufferResource(device, sizeof(spriteVertices));
 	VertexData* mappedSpriteVertexData = nullptr;
@@ -833,9 +950,10 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	scissorRect.bottom = kClientHeight;
 
 	// 今回は 2 枚のテクスチャをロードして、SRV ヒープ内で切り替えられるようにする
-	static constexpr const wchar_t* textureFilePaths[] = {
+	std::wstring textureFilePaths[] = {
 		L"resources/uvChecker.png",
 		L"resources/monsterBall.png",
+		ConvertString(modelData.material.textureFilePath),
 	};
 	DirectX::ScratchImage mipImages[_countof(textureFilePaths)];
 	DirectX::TexMetadata textureMetadatas[_countof(textureFilePaths)];
@@ -1032,9 +1150,9 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			commandList->SetGraphicsRootConstantBufferView(0, sphereMaterialResource->GetGPUVirtualAddress());
 			commandList->SetGraphicsRootConstantBufferView(
 				1, sphereTransformationMatrixResource->GetGPUVirtualAddress());
-			commandList->SetGraphicsRootDescriptorTable(3, textureSrvHandlesGPU[1]);
-			commandList->IASetVertexBuffers(0, 1, &vertexBufferView);
-			commandList->DrawInstanced(static_cast<UINT>(vertices.size()), 1, 0, 0);
+			commandList->SetGraphicsRootDescriptorTable(3, textureSrvHandlesGPU[2]);
+			commandList->IASetVertexBuffers(0, 1, &modelVertexBufferView);
+			commandList->DrawInstanced(static_cast<UINT>(modelData.vertices.size()), 1, 0, 0);
 #ifdef USE_IMGUI
 			ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList);
 
@@ -1096,6 +1214,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	sphereTransformationMatrixResource->Release();
 	spriteIndexResource->Release();
 	spriteVertexResource->Release();
+	modelVertexResource->Release();
 	vertexResource->Release();
 	graphicsPipelineState->Release();
 	rootSignature->Release();

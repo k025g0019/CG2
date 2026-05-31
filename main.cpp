@@ -55,6 +55,9 @@ using Microsoft::WRL::ComPtr;
 #endif
 
 namespace {
+	// ================================
+	// [Large] Core data structures
+	// ================================
 	struct Vector4 {
 		float x;
 		float y;
@@ -111,6 +114,9 @@ namespace {
 		MaterialData material;
 	};
 
+	// ================================
+	// [Large] Sound data structures
+	// ================================
 	struct ChunkHeader {
 		char id[4];
 		int32_t size;
@@ -132,9 +138,12 @@ namespace {
 		uint32_t bufferSize;
 	};
 
+	// [Middle] File and model helpers
 	ID3D12Resource* CreateBufferResource(ID3D12Device* device, size_t sizeInBytes);
 	MaterialData LoadMaterialTemplateFile(const std::string& directoryPath, const std::string& filename);
 	ModelData LoadObjFile(const std::string& directoryPath, const std::string& filename);
+
+	// [Middle] Sound helpers
 	SoundData SoundLoadWave(const char* filePath);
 	void SoundUnload(SoundData* soundData);
 
@@ -445,19 +454,24 @@ namespace {
 		return soundData;
 	}
 
-	void SoundUnload(SoundData* soundData) {
-		assert(soundData != nullptr);
-		delete[] soundData->pBuffer;
-		soundData->pBuffer = nullptr;
-		soundData->bufferSize = 0u;
-	}
+		void SoundUnload(SoundData* soundData) {
+			// [Small] Free wave memory buffer
+			assert(soundData != nullptr);
+			delete[] soundData->pBuffer;
+			soundData->pBuffer = nullptr;
+			soundData->bufferSize = 0u;
+		}
 }
 
 #pragma warning(push)
 #pragma warning(disable : 5045)
+// ================================
+// [Large] WinMain entry
+// ================================
 int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	InstallCrashHandler();
 
+	// [Middle] Create log file
 	std::filesystem::create_directory("logs");
 	std::time_t now = std::time(nullptr);
 	std::tm localTime{};
@@ -482,6 +496,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	}
 
 #ifdef _DEBUG
+	// [Middle] Enable D3D12 debug layer
 	ComPtr<ID3D12Debug1> debugController;
 	if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(debugController.GetAddressOf())))) {
 		debugController->EnableDebugLayer();
@@ -493,6 +508,9 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	Log(logStream, "main loop started");
 	HRESULT hr = S_OK;
 
+	// ================================
+	// [Large] Audio setup and playback
+	// ================================
 	IXAudio2* xAudio2 = nullptr;
 	hr = XAudio2Create(&xAudio2, 0, XAUDIO2_DEFAULT_PROCESSOR);
 	assert(SUCCEEDED(hr));
@@ -528,6 +546,9 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	hr = sourceVoice->Start(0);
 	assert(SUCCEEDED(hr));
 
+	// ================================
+	// [Large] DirectX12 setup
+	// ================================
 
 	ComPtr<IDXGIFactory7> dxgiFactory;
 	hr = CreateDXGIFactory1(IID_PPV_ARGS(dxgiFactory.GetAddressOf()));

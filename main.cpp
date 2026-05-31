@@ -1,4 +1,4 @@
-﻿#pragma warning(push, 0)
+#pragma warning(push, 0)
 #include <Windows.h>
 #include <cassert>
 #include <chrono>
@@ -79,6 +79,20 @@ namespace {
 	};
 
 	ID3D12Resource* CreateBufferResource(ID3D12Device* device, size_t sizeInBytes);
+
+	D3D12_CPU_DESCRIPTOR_HANDLE GetCPUDescriptorHandle(
+		ID3D12DescriptorHeap* descriptorHeap, UINT descriptorSize, UINT index) {
+		D3D12_CPU_DESCRIPTOR_HANDLE handle = descriptorHeap->GetCPUDescriptorHandleForHeapStart();
+		handle.ptr += descriptorSize * index;
+		return handle;
+	}
+
+	D3D12_GPU_DESCRIPTOR_HANDLE GetGPUDescriptorHandle(
+		ID3D12DescriptorHeap* descriptorHeap, UINT descriptorSize, UINT index) {
+		D3D12_GPU_DESCRIPTOR_HANDLE handle = descriptorHeap->GetGPUDescriptorHandleForHeapStart();
+		handle.ptr += descriptorSize * index;
+		return handle;
+	}
 
 	DirectX::ScratchImage LoadTexture(const std::wstring& filePath) {
 		DirectX::TexMetadata metadata{};
@@ -437,12 +451,12 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	rtvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 	rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
 
-	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = rtvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
 	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandles[2];
-	rtvHandles[0] = rtvHandle;
+	rtvHandles[0] = GetCPUDescriptorHandle(
+		rtvDescriptorHeap, device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV), 0);
 	device->CreateRenderTargetView(swapChainResources[0], &rtvDesc, rtvHandles[0]);
-	rtvHandles[1].ptr =
-		rtvHandles[0].ptr + device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+	rtvHandles[1] = GetCPUDescriptorHandle(
+		rtvDescriptorHeap, device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV), 1);
 	device->CreateRenderTargetView(swapChainResources[1], &rtvDesc, rtvHandles[1]);
 
 	// HLSL コンパイルに使う DXC 関連オブジェクトを初期化する
@@ -517,10 +531,14 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 
 
 	// WVP 定数バッファには座標変換行列を書き込む
-	ID3D12Resource* wvpResource = CreateBufferResource(device, sizeof(Matrix4x4));
-	Matrix4x4* wvpData = nullptr;
-	wvpResource->Map(0, nullptr, reinterpret_cast<void**>(&wvpData));
-	*wvpData = MakeIdentity4x4();
+	ID3D12Resource* spriteWvpResource = CreateBufferResource(device, sizeof(Matrix4x4));
+	Matrix4x4* spriteWvpData = nullptr;
+	spriteWvpResource->Map(0, nullptr, reinterpret_cast<void**>(&spriteWvpData));
+	*spriteWvpData = MakeIdentity4x4();
+	ID3D12Resource* sphereWvpResource = CreateBufferResource(device, sizeof(Matrix4x4));
+	Matrix4x4* sphereWvpData = nullptr;
+	sphereWvpResource->Map(0, nullptr, reinterpret_cast<void**>(&sphereWvpData));
+	*sphereWvpData = MakeIdentity4x4();
 
 	hr = D3D12SerializeRootSignature(
 		&descriptionRootSignature, D3D_ROOT_SIGNATURE_VERSION_1, &signatureBlob, &errorBlob);
@@ -586,9 +604,9 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	}
 
 	// 球は分割数を増やすほど滑らかになる
-	const uint32_t kSubdivision = 16;
-	const float kLonEvery = 2.0f * std::numbers::pi_v<float> / static_cast<float>(kSubdivision);
-	const float kLatEvery = std::numbers::pi_v<float> / static_cast<float>(kSubdivision);
+	constexpr uint32_t kSubdivision = 16;
+	constexpr float kLonEvery = 2.0f * std::numbers::pi_v<float> / static_cast<float>(kSubdivision);
+	constexpr float kLatEvery = std::numbers::pi_v<float> / static_cast<float>(kSubdivision);
 
 	// 球は 1 マスごとに 2 三角形、つまり 6 頂点を使って組み立てる
 	std::vector<VertexData> vertices;
@@ -632,11 +650,30 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		}
 	}
 
+	// Sprite はローカル座標の四角形を作り、正射影で画面左側へ表示する
+	Sprite sprite{
+		.position = {128.0f, 128.0f},
+		.size = {256.0f, 256.0f}
+	};
+	VertexData spriteVertices[] = {
+		{{-0.5f, -0.5f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+		{{-0.5f, 0.5f, 0.0f, 1.0f}, {0.0f, 0.0f}},
+		{{0.5f, -0.5f, 0.0f, 1.0f}, {1.0f, 1.0f}},
+		{{0.5f, -0.5f, 0.0f, 1.0f}, {1.0f, 1.0f}},
+		{{-0.5f, 0.5f, 0.0f, 1.0f}, {0.0f, 0.0f}},
+		{{0.5f, 0.5f, 0.0f, 1.0f}, {1.0f, 0.0f}},
+	};
+
 	// 球は原点付近に置き、カメラ側から眺める
 	Transforms transform{
 		.scale = {1.0f, 1.0f, 1.0f},
 		.rotate = {0.0f, 0.0f, 0.0f},
-		.translate = {0.0f, 0.0f, 0.0f}
+		.translate = {1.0f, 0.0f, 0.0f}
+	};
+	Transforms spriteTransform{
+		.scale = {sprite.size.x, sprite.size.y, 1.0f},
+		.rotate = {0.0f, 0.0f, 0.0f},
+		.translate = {sprite.position.x, sprite.position.y, 0.0f}
 	};
 	Transforms cameraTransform{
 		.scale = {1.0f, 1.0f, 1.0f},
@@ -658,6 +695,18 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	vertexBufferView.SizeInBytes = static_cast<UINT>(sizeof(VertexData) * vertices.size());
 	vertexBufferView.StrideInBytes = sizeof(VertexData);
 
+	// Sprite 用の頂点バッファも別途作成しておく
+	ID3D12Resource* spriteVertexResource = CreateBufferResource(device, sizeof(spriteVertices));
+	VertexData* mappedSpriteVertexData = nullptr;
+	hr = spriteVertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedSpriteVertexData));
+	assert(SUCCEEDED(hr));
+	std::memcpy(mappedSpriteVertexData, spriteVertices, sizeof(spriteVertices));
+
+	D3D12_VERTEX_BUFFER_VIEW spriteVertexBufferView{};
+	spriteVertexBufferView.BufferLocation = spriteVertexResource->GetGPUVirtualAddress();
+	spriteVertexBufferView.SizeInBytes = sizeof(spriteVertices);
+	spriteVertexBufferView.StrideInBytes = sizeof(VertexData);
+
 	// 画面全体を描画対象にする Viewport を設定する
 	D3D12_VIEWPORT viewport{};
 	viewport.Width = static_cast<float>(kClientWidth);
@@ -670,9 +719,9 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	scissorRect.bottom = kClientHeight;
 
 	// 今回は 2 枚のテクスチャをロードして、SRV ヒープ内で切り替えられるようにする
-	const std::wstring textureFilePaths[] = {
+	static constexpr const wchar_t* textureFilePaths[] = {
 		L"resources/uvChecker.png",
-		L"resources/ball.png",
+		L"resources/monsterBall.png",
 	};
 	DirectX::ScratchImage mipImages[_countof(textureFilePaths)];
 	DirectX::TexMetadata textureMetadatas[_countof(textureFilePaths)];
@@ -691,6 +740,13 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		0.45f,
 		static_cast<float>(kClientWidth) / static_cast<float>(kClientHeight),
 		0.1f,
+		100.0f);
+	Matrix4x4 spriteProjectionMatrix = MakeOrthographicMatrix(
+		0.0f,
+		0.0f,
+		static_cast<float>(kClientWidth),
+		static_cast<float>(kClientHeight),
+		0.0f,
 		100.0f);
 
 	// GPU 完了待ちに使う Fence とイベントを作成する
@@ -728,10 +784,10 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		srvDesc.Texture2D.MipLevels = static_cast<UINT>(textureMetadatas[textureIndex].mipLevels);
 
-		textureSrvHandlesCPU[textureIndex] = srvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
-		textureSrvHandlesCPU[textureIndex].ptr += srvDescriptorSize * (textureIndex + 1);
-		textureSrvHandlesGPU[textureIndex] = srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
-		textureSrvHandlesGPU[textureIndex].ptr += srvDescriptorSize * (textureIndex + 1);
+		textureSrvHandlesCPU[textureIndex] = GetCPUDescriptorHandle(srvDescriptorHeap, srvDescriptorSize,
+		                                                            textureIndex + 1);
+		textureSrvHandlesGPU[textureIndex] = GetGPUDescriptorHandle(srvDescriptorHeap, srvDescriptorSize,
+		                                                            textureIndex + 1);
 		device->CreateShaderResourceView(textureResources[textureIndex], &srvDesc, textureSrvHandlesCPU[textureIndex]);
 	}
 
@@ -760,11 +816,10 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		static_cast<int>(swapChainDesc.BufferCount),
 		rtvDesc.Format,
 		srvDescriptorHeap,
-		srvDescriptorHeap->GetCPUDescriptorHandleForHeapStart(),
-		srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+		GetCPUDescriptorHandle(srvDescriptorHeap, srvDescriptorSize, 0),
+		GetGPUDescriptorHandle(srvDescriptorHeap, srvDescriptorSize, 0));
 	ImGuiIO& io = ImGui::GetIO();
 	io.Fonts->Build();
-	int currentTextureIndex = 0;
 #endif
 	while (message.message != WM_QUIT) {
 		if (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE) != FALSE) {
@@ -777,19 +832,17 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			ImGui_ImplDX12_NewFrame();
 			ImGui_ImplWin32_NewFrame();
 			ImGui::NewFrame();
-			// どの SRV を使って描画するかを ImGui から切り替えられるようにする
-			ImGui::Begin("Texture");
-			ImGui::SliderInt("TextureIndex", &currentTextureIndex, 0, static_cast<int>(_countof(textureFilePaths) - 1));
-			ImGui::Text("0: uvChecker");
-			ImGui::Text("1: ball");
-			ImGui::End();
 			ImGui::Render();
 #endif
 
-			// 球用のワールド行列と ViewProjection を掛け合わせて WVP を作る
+			// Sprite 用と球用で別々の WVP を使うため、描画直前にその都度書き換える
+			Matrix4x4 spriteWorldMatrix = MakeAffineMatrix(
+				spriteTransform.scale, spriteTransform.rotate, spriteTransform.translate);
+			Matrix4x4 spriteWorldViewProjectionMatrix = Multiply(spriteWorldMatrix, spriteProjectionMatrix);
 			Matrix4x4 worldMatrix = MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
 			Matrix4x4 worldViewProjectionMatrix = Multiply(worldMatrix, Multiply(viewMatrix, projectionMatrix));
-			*wvpData = worldViewProjectionMatrix;
+			*spriteWvpData = spriteWorldViewProjectionMatrix;
+			*sphereWvpData = worldViewProjectionMatrix;
 			hr = commandAllocator->Reset();
 			assert(SUCCEEDED(hr));
 			hr = commandList->Reset(commandAllocator, graphicsPipelineState);
@@ -813,21 +866,25 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			commandList->SetGraphicsRootSignature(rootSignature);
 			commandList->SetPipelineState(graphicsPipelineState);
 			commandList->SetGraphicsRootConstantBufferView(0, materialResource->GetGPUVirtualAddress());
-			commandList->SetGraphicsRootConstantBufferView(1, wvpResource->GetGPUVirtualAddress());
 			ID3D12DescriptorHeap* descriptorHeaps[] = {srvDescriptorHeap};
 			commandList->SetDescriptorHeaps(1, descriptorHeaps);
-			uint32_t drawTextureIndex = 0;
-#ifdef USE_IMGUI
-			drawTextureIndex = static_cast<uint32_t>(currentTextureIndex);
-#endif
-			commandList->SetGraphicsRootDescriptorTable(2, textureSrvHandlesGPU[drawTextureIndex]);
 			commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-			commandList->IASetVertexBuffers(0, 1, &vertexBufferView);
 			commandList->OMSetRenderTargets(1, &rtvHandles[backBufferIndex], FALSE, nullptr);
 
-			// まずは画面を青系の色でクリアしてから球を描画する
+			// まずは画面を青系の色でクリアする
 			float clearColor[] = {0.1f, 0.25f, 0.5f, 1.0f};
 			commandList->ClearRenderTargetView(rtvHandles[backBufferIndex], clearColor, 0, nullptr);
+
+			// Sprite は常に uvChecker の SRV を使って左側へ表示する
+			commandList->SetGraphicsRootConstantBufferView(1, spriteWvpResource->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootDescriptorTable(2, textureSrvHandlesGPU[0]);
+			commandList->IASetVertexBuffers(0, 1, &spriteVertexBufferView);
+			commandList->DrawInstanced(_countof(spriteVertices), 1, 0, 0);
+
+			// 球は新しく作った ball の SRV を使って右側へ表示する
+			commandList->SetGraphicsRootConstantBufferView(1, sphereWvpResource->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootDescriptorTable(2, textureSrvHandlesGPU[1]);
+			commandList->IASetVertexBuffers(0, 1, &vertexBufferView);
 			commandList->DrawInstanced(static_cast<UINT>(vertices.size()), 1, 0, 0);
 #ifdef USE_IMGUI
 			ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList);
@@ -884,6 +941,9 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		textureResource->Release();
 	}
 	materialResource->Release();
+	spriteWvpResource->Release();
+	sphereWvpResource->Release();
+	spriteVertexResource->Release();
 	vertexResource->Release();
 	graphicsPipelineState->Release();
 	rootSignature->Release();

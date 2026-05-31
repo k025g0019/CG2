@@ -33,10 +33,10 @@ PixelShaderOutput main(PixelShaderInput input) {
     if (gMaterial.enableLighting != 0) {
         float3 normalizedNormal = normalize(input.normal);
         float3 normalizedLightDirection = normalize(gDirectionalLight.direction);
-        float cosine = saturate(dot(normalizedNormal, -normalizedLightDirection));
-        float brightness = max(0.2f, cosine);
+        float cosine = dot(normalizedNormal, -normalizedLightDirection);
+        float halfLambert = pow(saturate(cosine * 0.5f + 0.5f), 2.0f);
 
-        output.color.rgb *= gDirectionalLight.color.rgb * brightness * gDirectionalLight.intensity;
+        output.color.rgb *= gDirectionalLight.color.rgb * halfLambert * gDirectionalLight.intensity;
     }
 
     return output;

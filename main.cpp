@@ -1100,6 +1100,8 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		static_cast<float>(kClientHeight),
 		0.0f,
 		100.0f);
+	constexpr float cameraMoveSpeed = 0.1f;
+	constexpr float cameraRotateSpeed = 0.02f;
 
 	ComPtr<ID3D12Fence> fence;
 	uint64_t fenceValue = 0;
@@ -1189,22 +1191,43 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			}
 
 			if (key[DIK_LEFT]) {
-				transform.rotate.y -= 0.02f;
+				cameraTransform.rotate.y -= cameraRotateSpeed;
 			}
 			if (key[DIK_RIGHT]) {
-				transform.rotate.y += 0.02f;
+				cameraTransform.rotate.y += cameraRotateSpeed;
 			}
 			if (key[DIK_UP]) {
-				transform.rotate.x -= 0.02f;
+				cameraTransform.rotate.x -= cameraRotateSpeed;
 			}
 			if (key[DIK_DOWN]) {
-				transform.rotate.x += 0.02f;
+				cameraTransform.rotate.x += cameraRotateSpeed;
+			}
+
+			if (key[DIK_A]) {
+				cameraTransform.translate.x -= cameraMoveSpeed;
+			}
+			if (key[DIK_D]) {
+				cameraTransform.translate.x += cameraMoveSpeed;
+			}
+			if (key[DIK_Q]) {
+				cameraTransform.translate.y += cameraMoveSpeed;
+			}
+			if (key[DIK_E]) {
+				cameraTransform.translate.y -= cameraMoveSpeed;
+			}
+			if (key[DIK_W]) {
+				cameraTransform.translate.z += cameraMoveSpeed;
+			}
+			if (key[DIK_S]) {
+				cameraTransform.translate.z -= cameraMoveSpeed;
 			}
 
 			bool isReturnTrigger =
 				((key[DIK_RETURN] != 0) && (preKey[DIK_RETURN] == 0));
 			if (isReturnTrigger) {
 				uvTransform.translate = {0.0f, 0.0f, 0.0f};
+				cameraTransform.rotate = {0.0f, 0.0f, 0.0f};
+				cameraTransform.translate = {0.0f, 0.0f, -5.0f};
 			}
 
 #ifdef USE_IMGUI
@@ -1231,11 +1254,18 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			ImGui::Separator();
 			ImGui::Text("Object");
 			ImGui::SliderFloat3("Rotate", &transform.rotate.x, -3.14f, 3.14f);
+			ImGui::Separator();
+			ImGui::Text("DebugCamera");
+			ImGui::SliderFloat3("CamRotate", &cameraTransform.rotate.x, -3.14f, 3.14f);
+			ImGui::SliderFloat3("CamTranslate", &cameraTransform.translate.x, -20.0f, 20.0f);
 			sphereMaterialData->enableLighting = isLighting ? TRUE : FALSE;
 			ImGui::End();
 			ImGui::Render();
 #endif
 
+			cameraMatrix = MakeAffineMatrix(
+				cameraTransform.scale, cameraTransform.rotate, cameraTransform.translate);
+			viewMatrix = Inverse(cameraMatrix);
 			Matrix4x4 spriteWorldMatrix = MakeAffineMatrix(
 				spriteTransform.scale, spriteTransform.rotate, spriteTransform.translate);
 			Matrix4x4 spriteWorldViewProjectionMatrix = Multiply(spriteWorldMatrix, spriteProjectionMatrix);

@@ -1,7 +1,9 @@
 #pragma warning(push, 0)
 #include <Windows.h>
+#include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <ctime>
@@ -29,6 +31,7 @@
 #include <wrl.h>
 #pragma warning(pop)
 #pragma warning(disable : 4820)
+#pragma warning(disable : 5045)
 
 #include "ApplicationWindow.h"
 #include "CrashHandler.h"
@@ -571,8 +574,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	soundBuffer.Flags = XAUDIO2_END_OF_STREAM;
 	hr = sourceVoice->SubmitSourceBuffer(&soundBuffer);
 	assert(SUCCEEDED(hr));
-	hr = sourceVoice->Start(0);
-	assert(SUCCEEDED(hr));
 
 	// ================================
 	// [Large] DirectX12 setup
@@ -671,10 +672,15 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	hr = commandList->Close();
 	assert(SUCCEEDED(hr));
 
+	RECT clientRect{};
+	GetClientRect(windowHandle, &clientRect);
+	uint32_t renderWidth = (std::max)(1u, static_cast<uint32_t>(clientRect.right - clientRect.left));
+	uint32_t renderHeight = (std::max)(1u, static_cast<uint32_t>(clientRect.bottom - clientRect.top));
+
 	ComPtr<IDXGISwapChain4> swapChain;
 	DXGI_SWAP_CHAIN_DESC1 swapChainDesc{};
-	swapChainDesc.Width = kClientWidth;
-	swapChainDesc.Height = kClientHeight;
+	swapChainDesc.Width = renderWidth;
+	swapChainDesc.Height = renderHeight;
 	swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 	swapChainDesc.SampleDesc.Count = 1;
 	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
@@ -713,39 +719,45 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		rtvDescriptorHeap, device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV), 1);
 	device->CreateRenderTargetView(swapChainResources[1], &rtvDesc, rtvHandles[1]);
 
-	D3D12_RESOURCE_DESC depthStencilResourceDesc{};
-	depthStencilResourceDesc.Width = kClientWidth;
-	depthStencilResourceDesc.Height = kClientHeight;
-	depthStencilResourceDesc.MipLevels = 1;
-	depthStencilResourceDesc.DepthOrArraySize = 1;
-	depthStencilResourceDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
-	depthStencilResourceDesc.SampleDesc.Count = 1;
-	depthStencilResourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-	depthStencilResourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
-
-	D3D12_HEAP_PROPERTIES depthStencilHeapProperties{};
-	depthStencilHeapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
-
 	D3D12_CLEAR_VALUE depthClearValue{};
 	depthClearValue.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
 	depthClearValue.DepthStencil.Depth = 1.0f;
 	depthClearValue.DepthStencil.Stencil = 0;
-
-	ID3D12Resource* depthStencilResource = nullptr;
-	hr = device->CreateCommittedResource(
-		&depthStencilHeapProperties,
-		D3D12_HEAP_FLAG_NONE,
-		&depthStencilResourceDesc,
-		D3D12_RESOURCE_STATE_DEPTH_WRITE,
-		&depthClearValue,
-		IID_PPV_ARGS(&depthStencilResource));
-	assert(SUCCEEDED(hr));
 
 	D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
 	dsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
 	dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
 
 	D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = dsvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
+
+	auto createDepthStencilResource = [&](uint32_t width, uint32_t height) -> ID3D12Resource* {
+		D3D12_RESOURCE_DESC depthStencilResourceDesc{};
+		depthStencilResourceDesc.Width = width;
+		depthStencilResourceDesc.Height = height;
+		depthStencilResourceDesc.MipLevels = 1;
+		depthStencilResourceDesc.DepthOrArraySize = 1;
+		depthStencilResourceDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+		depthStencilResourceDesc.SampleDesc.Count = 1;
+		depthStencilResourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		depthStencilResourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+		D3D12_HEAP_PROPERTIES depthStencilHeapProperties{};
+		depthStencilHeapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+		ID3D12Resource* newDepthStencilResource = nullptr;
+		HRESULT createDepthResult = device->CreateCommittedResource(
+			&depthStencilHeapProperties,
+			D3D12_HEAP_FLAG_NONE,
+			&depthStencilResourceDesc,
+			D3D12_RESOURCE_STATE_DEPTH_WRITE,
+			&depthClearValue,
+			IID_PPV_ARGS(&newDepthStencilResource));
+		assert(SUCCEEDED(createDepthResult));
+
+		return newDepthStencilResource;
+	};
+
+	ID3D12Resource* depthStencilResource = createDepthStencilResource(renderWidth, renderHeight);
 	device->CreateDepthStencilView(depthStencilResource, &dsvDesc, dsvHandle);
 
 	ComPtr<IDxcUtils> dxcUtils;
@@ -1062,20 +1074,63 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	spriteIndexBufferView.SizeInBytes = sizeof(spriteIndices);
 	spriteIndexBufferView.Format = DXGI_FORMAT_R32_UINT;
 
+	constexpr float editorMenuHeight = 20.0f;
+	constexpr float editorSceneHeaderHeight = 24.0f;
+	float editorWindowWidth = static_cast<float>(renderWidth);
+	float editorWindowHeight = static_cast<float>(renderHeight);
+	float editorLeftWidth = 250.0f;
+	float editorRightWidth = 320.0f;
+	float editorBottomHeight = 190.0f;
+	float editorProjectWidth = 570.0f;
+	float editorSceneX = editorLeftWidth;
+	float editorSceneY = editorMenuHeight + editorSceneHeaderHeight;
+	float editorSceneWidth =
+		editorWindowWidth - editorLeftWidth - editorRightWidth;
+	float editorSceneHeight =
+		editorWindowHeight - editorSceneY - editorBottomHeight;
+	int32_t spriteTextureIndex = 0;
+
+	auto updateEditorLayout = [&]() {
+		editorLeftWidth = (std::clamp)(editorLeftWidth, 160.0f, 420.0f);
+		editorRightWidth = (std::clamp)(editorRightWidth, 220.0f, 520.0f);
+		editorBottomHeight = (std::clamp)(editorBottomHeight, 120.0f, 320.0f);
+		editorSceneX = editorLeftWidth;
+		editorSceneY = editorMenuHeight + editorSceneHeaderHeight;
+		editorSceneWidth = editorWindowWidth - editorLeftWidth - editorRightWidth;
+		editorSceneHeight = editorWindowHeight - editorSceneY - editorBottomHeight;
+		editorSceneWidth = (std::max)(editorSceneWidth, 240.0f);
+		editorSceneHeight = (std::max)(editorSceneHeight, 180.0f);
+		float bottomPanelWidth = editorWindowWidth - editorRightWidth;
+		float maxProjectWidth = (std::max)(240.0f, bottomPanelWidth - 240.0f);
+		editorProjectWidth = (std::clamp)(editorProjectWidth, 240.0f, maxProjectWidth);
+	};
+	updateEditorLayout();
+
 	D3D12_VIEWPORT viewport{};
-	viewport.Width = static_cast<float>(kClientWidth);
-	viewport.Height = static_cast<float>(kClientHeight);
+	viewport.TopLeftX = editorSceneX;
+	viewport.TopLeftY = editorSceneY;
+	viewport.Width = editorWindowWidth;
+	viewport.Height = editorWindowHeight;
 	viewport.MaxDepth = 1.0f;
+	viewport.Width = editorSceneWidth;
+	viewport.Height = editorSceneHeight;
 
 	D3D12_RECT scissorRect{};
-	scissorRect.right = kClientWidth;
-	scissorRect.bottom = kClientHeight;
+	scissorRect.left = static_cast<LONG>(editorSceneX);
+	scissorRect.top = static_cast<LONG>(editorSceneY);
+	scissorRect.right = static_cast<LONG>(editorSceneX + editorSceneWidth);
+	scissorRect.bottom = static_cast<LONG>(editorSceneY + editorSceneHeight);
 
 	std::wstring textureFilePaths[] = {
 		L"resources/uvChecker.png",
 		L"resources/monsterBall.png",
 		ConvertString(modelData.material.textureFilePath),
+		L"resources/ball.png",
 	};
+	std::string textureFilePathStrings[_countof(textureFilePaths)];
+	for (uint32_t textureIndex = 0; textureIndex < _countof(textureFilePaths); ++textureIndex) {
+		textureFilePathStrings[textureIndex] = ConvertString(textureFilePaths[textureIndex]);
+	}
 	DirectX::ScratchImage mipImages[_countof(textureFilePaths)];
 	DirectX::TexMetadata textureMetadatas[_countof(textureFilePaths)];
 	ID3D12Resource* textureResources[_countof(textureFilePaths)] = {nullptr};
@@ -1090,18 +1145,65 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	Matrix4x4 viewMatrix = Inverse(cameraMatrix);
 	Matrix4x4 projectionMatrix = MakePerspectiveFovMatrix(
 		0.45f,
-		static_cast<float>(kClientWidth) / static_cast<float>(kClientHeight),
+		editorSceneWidth / editorSceneHeight,
 		0.1f,
 		100.0f);
 	Matrix4x4 spriteProjectionMatrix = MakeOrthographicMatrix(
 		0.0f,
 		0.0f,
-		static_cast<float>(kClientWidth),
-		static_cast<float>(kClientHeight),
+		editorWindowWidth,
+		editorWindowHeight,
 		0.0f,
 		100.0f);
-	constexpr float cameraMoveSpeed = 0.1f;
-	constexpr float cameraRotateSpeed = 0.02f;
+	float editorCameraMoveSpeed = 0.12f;
+	float editorCameraRotateSpeed = 0.006f;
+	float editorCameraWheelMoveSpeed = 0.5f;
+	float editorCameraPanSpeed = 0.01f;
+	float editorCameraFastRate = 4.0f;
+	float sceneClearColor[4] = {0.1f, 0.25f, 0.5f, 1.0f};
+	bool isSceneGizmoVisible = true;
+	bool isLightGizmoVisible = true;
+	bool isCameraGizmoVisible = true;
+	Vector3 directionalLightIconPosition = {-1.8f, 1.4f, 0.0f};
+
+	//============================================================
+	// エディタ用シーンオブジェクト
+	//============================================================
+
+	enum class EditorSceneObjectType {
+		Model,
+		Sprite,
+	};
+
+	struct EditorSceneObject {
+		EditorSceneObjectType type;
+		int32_t textureIndex;
+		Transforms transform;
+		std::string name;
+		ID3D12Resource* transformationResource;
+		TransformationMatrix* transformationData;
+	};
+
+	std::vector<EditorSceneObject> editorSceneObjects;
+	int32_t selectedPlacedSceneObjectIndex = -1;
+
+	auto createEditorSceneObject = [&](EditorSceneObjectType type, int32_t textureIndex,
+	                                   const Transforms& initialTransform,
+	                                   const std::string& name) -> int32_t {
+		EditorSceneObject editorSceneObject{};
+		editorSceneObject.type = type;
+		editorSceneObject.textureIndex = textureIndex;
+		editorSceneObject.transform = initialTransform;
+		editorSceneObject.name = name;
+		editorSceneObject.transformationResource = CreateBufferResource(device.Get(), sizeof(TransformationMatrix));
+		editorSceneObject.transformationResource->Map(
+			0, nullptr, reinterpret_cast<void**>(&editorSceneObject.transformationData));
+		editorSceneObject.transformationData->WVP = MakeIdentity4x4();
+		editorSceneObject.transformationData->World = MakeIdentity4x4();
+
+		editorSceneObjects.push_back(editorSceneObject);
+		return static_cast<int32_t>(editorSceneObjects.size() - 1);
+	};
 
 	ComPtr<ID3D12Fence> fence;
 	uint64_t fenceValue = 0;
@@ -1113,6 +1215,59 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	if (fenceEvent == nullptr) {
 		return 1;
 	}
+
+	auto waitForGpu = [&]() {
+		fenceValue++;
+		HRESULT signalResult = commandQueue->Signal(fence.Get(), fenceValue);
+		assert(SUCCEEDED(signalResult));
+
+		if (fence->GetCompletedValue() < fenceValue) {
+			HRESULT eventResult = fence->SetEventOnCompletion(fenceValue, fenceEvent);
+			assert(SUCCEEDED(eventResult));
+			WaitForSingleObject(fenceEvent, INFINITE);
+		}
+	};
+
+	auto resizeRenderTargets = [&](uint32_t width, uint32_t height) {
+		if (renderWidth == width && renderHeight == height) {
+			return;
+		}
+
+		waitForGpu();
+
+		for (ID3D12Resource*& swapChainResource : swapChainResources) {
+			if (swapChainResource != nullptr) {
+				swapChainResource->Release();
+				swapChainResource = nullptr;
+			}
+		}
+
+		if (depthStencilResource != nullptr) {
+			depthStencilResource->Release();
+			depthStencilResource = nullptr;
+		}
+
+		renderWidth = width;
+		renderHeight = height;
+
+		HRESULT resizeResult = swapChain->ResizeBuffers(
+			swapChainDesc.BufferCount,
+			renderWidth,
+			renderHeight,
+			swapChainDesc.Format,
+			0);
+		assert(SUCCEEDED(resizeResult));
+
+		for (uint32_t bufferIndex = 0; bufferIndex < swapChainDesc.BufferCount; ++bufferIndex) {
+			HRESULT getBufferResult =
+				swapChain->GetBuffer(bufferIndex, IID_PPV_ARGS(&swapChainResources[bufferIndex]));
+			assert(SUCCEEDED(getBufferResult));
+			device->CreateRenderTargetView(swapChainResources[bufferIndex], &rtvDesc, rtvHandles[bufferIndex]);
+		}
+
+		depthStencilResource = createDepthStencilResource(renderWidth, renderHeight);
+		device->CreateDepthStencilView(depthStencilResource, &dsvDesc, dsvHandle);
+	};
 
 	hr = commandAllocator->Reset();
 	assert(SUCCEEDED(hr));
@@ -1170,6 +1325,10 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		GetCPUDescriptorHandle(srvDescriptorHeap, srvDescriptorSize, 0),
 		GetGPUDescriptorHandle(srvDescriptorHeap, srvDescriptorSize, 0));
 	ImGuiIO& io = ImGui::GetIO();
+	if (std::filesystem::exists("C:/Windows/Fonts/meiryo.ttc")) {
+		io.Fonts->AddFontFromFileTTF(
+			"C:/Windows/Fonts/meiryo.ttc", 16.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
+	}
 	io.Fonts->Build();
 #endif
 	while (message.message != WM_QUIT) {
@@ -1190,36 +1349,60 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 				PostQuitMessage(0);
 			}
 
-			if (key[DIK_LEFT]) {
-				cameraTransform.rotate.y -= cameraRotateSpeed;
-			}
-			if (key[DIK_RIGHT]) {
-				cameraTransform.rotate.y += cameraRotateSpeed;
-			}
-			if (key[DIK_UP]) {
-				cameraTransform.rotate.x -= cameraRotateSpeed;
-			}
-			if (key[DIK_DOWN]) {
-				cameraTransform.rotate.x += cameraRotateSpeed;
+			float cameraPitchCos = std::cos(cameraTransform.rotate.x);
+			Vector3 cameraForward{
+				std::sin(cameraTransform.rotate.y) * cameraPitchCos,
+				-std::sin(cameraTransform.rotate.x),
+				std::cos(cameraTransform.rotate.y) * cameraPitchCos
+			};
+			Vector3 cameraRight{
+				std::cos(cameraTransform.rotate.y),
+				0.0f,
+				-std::sin(cameraTransform.rotate.y)
+			};
+			float currentCameraMoveSpeed = editorCameraMoveSpeed;
+			bool isCameraFastMove = key[DIK_LSHIFT] != 0 || key[DIK_RSHIFT] != 0;
+			if (isCameraFastMove) {
+				currentCameraMoveSpeed *= editorCameraFastRate;
 			}
 
+			if (key[DIK_LEFT]) {
+				cameraTransform.rotate.y -= editorCameraRotateSpeed * 3.0f;
+			}
+			if (key[DIK_RIGHT]) {
+				cameraTransform.rotate.y += editorCameraRotateSpeed * 3.0f;
+			}
+			if (key[DIK_UP]) {
+				cameraTransform.rotate.x -= editorCameraRotateSpeed * 3.0f;
+			}
+			if (key[DIK_DOWN]) {
+				cameraTransform.rotate.x += editorCameraRotateSpeed * 3.0f;
+			}
+			cameraTransform.rotate.x = (std::clamp)(cameraTransform.rotate.x, -1.5f, 1.5f);
+
 			if (key[DIK_A]) {
-				cameraTransform.translate.x -= cameraMoveSpeed;
+				cameraTransform.translate.x -= cameraRight.x * currentCameraMoveSpeed;
+				cameraTransform.translate.z -= cameraRight.z * currentCameraMoveSpeed;
 			}
 			if (key[DIK_D]) {
-				cameraTransform.translate.x += cameraMoveSpeed;
+				cameraTransform.translate.x += cameraRight.x * currentCameraMoveSpeed;
+				cameraTransform.translate.z += cameraRight.z * currentCameraMoveSpeed;
 			}
 			if (key[DIK_Q]) {
-				cameraTransform.translate.y += cameraMoveSpeed;
+				cameraTransform.translate.y += currentCameraMoveSpeed;
 			}
 			if (key[DIK_E]) {
-				cameraTransform.translate.y -= cameraMoveSpeed;
+				cameraTransform.translate.y -= currentCameraMoveSpeed;
 			}
 			if (key[DIK_W]) {
-				cameraTransform.translate.z += cameraMoveSpeed;
+				cameraTransform.translate.x += cameraForward.x * currentCameraMoveSpeed;
+				cameraTransform.translate.y += cameraForward.y * currentCameraMoveSpeed;
+				cameraTransform.translate.z += cameraForward.z * currentCameraMoveSpeed;
 			}
 			if (key[DIK_S]) {
-				cameraTransform.translate.z -= cameraMoveSpeed;
+				cameraTransform.translate.x -= cameraForward.x * currentCameraMoveSpeed;
+				cameraTransform.translate.y -= cameraForward.y * currentCameraMoveSpeed;
+				cameraTransform.translate.z -= cameraForward.z * currentCameraMoveSpeed;
 			}
 
 			bool isReturnTrigger =
@@ -1230,35 +1413,908 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 				cameraTransform.translate = {0.0f, 0.0f, -5.0f};
 			}
 
+			RECT currentClientRect{};
+			GetClientRect(windowHandle, &currentClientRect);
+			uint32_t nextRenderWidth =
+				(std::max)(1u, static_cast<uint32_t>(currentClientRect.right - currentClientRect.left));
+			uint32_t nextRenderHeight =
+				(std::max)(1u, static_cast<uint32_t>(currentClientRect.bottom - currentClientRect.top));
+			resizeRenderTargets(nextRenderWidth, nextRenderHeight);
+			editorWindowWidth = static_cast<float>(renderWidth);
+			editorWindowHeight = static_cast<float>(renderHeight);
+
 #ifdef USE_IMGUI
 			ImGui_ImplDX12_NewFrame();
 			ImGui_ImplWin32_NewFrame();
 			ImGui::NewFrame();
-			ImGui::SetNextWindowPos(ImVec2(960.0f, 20.0f), ImGuiCond_Once);
-			ImGui::SetNextWindowSize(ImVec2(300.0f, 260.0f), ImGuiCond_Once);
-			ImGui::Begin("UVTransform");
-			ImGui::Text("UV Transform");
-			ImGui::SliderFloat2("Scale", &uvTransform.scale.x, 0.1f, 4.0f);
-			ImGui::SliderFloat("RotateZ", &uvTransform.rotate.z, -3.14f, 3.14f);
-			ImGui::SliderFloat2("Translate", &uvTransform.translate.x, -2.0f, 2.0f);
+
+			static int selectedSceneObject = 0;
+			static int activeEditorTool = 1;
+			static std::string selectedAssetPath = "resources/uvChecker.png";
+			static char hierarchyFilter[64] = {};
+			static char assetFilter[64] = {};
+			static bool isConsoleCleared = false;
+			static bool isSceneRangeSelecting = false;
+			static bool isSceneMiddleCameraDragging = false;
+			static bool isSceneRightCameraDragging = false;
+			static auto sceneRangeStart = ImVec2(0.0f, 0.0f);
+			static auto sceneRangeEnd = ImVec2(0.0f, 0.0f);
+
+			auto getTextureIndex = [&](const std::string& path) -> int32_t {
+				for (uint32_t textureIndex = 0; textureIndex < _countof(textureFilePaths); ++textureIndex) {
+					if (textureFilePathStrings[textureIndex] == path) {
+						return static_cast<int32_t>(textureIndex);
+					}
+				}
+				return -1;
+			};
+
+			auto getFilename = [](const std::string& path) -> std::string {
+				size_t separator = path.find_last_of("/\\");
+				if (separator == std::string::npos) {
+					return path;
+				}
+				return path.substr(separator + 1);
+			};
+
+			auto hasExtension = [](const std::string& path, const char* extension) -> bool {
+				size_t extensionLength = std::strlen(extension);
+				if (path.size() < extensionLength) {
+					return false;
+				}
+				return path.compare(path.size() - extensionLength, extensionLength, extension) == 0;
+			};
+
+			auto hasFilterText = [](const char* filterText) -> bool {
+				return filterText != nullptr && filterText[0] != '\0';
+			};
+
+			auto matchesFilter = [](const std::string& text, const char* filterText) -> bool {
+				if (filterText == nullptr || filterText[0] == '\0') {
+					return true;
+				}
+				return text.find(filterText) != std::string::npos;
+			};
+
+			constexpr ImGuiWindowFlags fixedWindowFlags =
+				ImGuiWindowFlags_NoMove |
+				ImGuiWindowFlags_NoResize |
+				ImGuiWindowFlags_NoCollapse;
+
+			if (ImGui::BeginMainMenuBar()) {
+				if (ImGui::BeginMenu("ファイル")) {
+					ImGui::MenuItem("保存", nullptr, false, false);
+					ImGui::MenuItem("終了", nullptr, false, false);
+					ImGui::EndMenu();
+				}
+				if (ImGui::BeginMenu("編集")) {
+					ImGui::MenuItem("元に戻す", nullptr, false, false);
+					ImGui::MenuItem("やり直し", nullptr, false, false);
+					ImGui::EndMenu();
+				}
+				if (ImGui::BeginMenu("アセット")) {
+					ImGui::MenuItem("再読み込み", nullptr, false, false);
+					ImGui::EndMenu();
+				}
+				if (ImGui::BeginMenu("ゲームオブジェクト")) {
+					ImGui::MenuItem("空のオブジェクト", nullptr, false, false);
+					ImGui::EndMenu();
+				}
+				if (ImGui::BeginMenu("コンポーネント")) {
+					ImGui::MenuItem("Mesh Renderer", nullptr, false, false);
+					ImGui::MenuItem("Directional Light", nullptr, false, false);
+					ImGui::EndMenu();
+				}
+				if (ImGui::BeginMenu("ウィンドウ")) {
+					ImGui::MenuItem("レイアウト初期化", nullptr, false, false);
+					ImGui::EndMenu();
+				}
+				ImGui::EndMainMenuBar();
+			}
+
+			updateEditorLayout();
+			constexpr ImGuiWindowFlags splitterFlags =
+				ImGuiWindowFlags_NoDecoration |
+				ImGuiWindowFlags_NoMove |
+				ImGuiWindowFlags_NoResize |
+				ImGuiWindowFlags_NoSavedSettings |
+				ImGuiWindowFlags_NoBackground;
+			ImGui::SetNextWindowPos(ImVec2(editorLeftWidth - 3.0f, editorMenuHeight), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(
+				ImVec2(6.0f, editorWindowHeight - editorMenuHeight), ImGuiCond_Always);
+			ImGui::Begin("LeftSplitter", nullptr, splitterFlags);
+			ImGui::InvisibleButton("LeftSplitterButton", ImGui::GetContentRegionAvail());
+			if (ImGui::IsItemActive()) {
+				editorLeftWidth += ImGui::GetIO().MouseDelta.x;
+			}
+			ImGui::End();
+
+			ImGui::SetNextWindowPos(
+				ImVec2(editorWindowWidth - editorRightWidth - 3.0f, editorMenuHeight),
+				ImGuiCond_Always);
+			ImGui::SetNextWindowSize(
+				ImVec2(6.0f, editorWindowHeight - editorMenuHeight), ImGuiCond_Always);
+			ImGui::Begin("RightSplitter", nullptr, splitterFlags);
+			ImGui::InvisibleButton("RightSplitterButton", ImGui::GetContentRegionAvail());
+			if (ImGui::IsItemActive()) {
+				editorRightWidth -= ImGui::GetIO().MouseDelta.x;
+			}
+			ImGui::End();
+
+			ImGui::SetNextWindowPos(
+				ImVec2(0.0f, editorWindowHeight - editorBottomHeight - 3.0f), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(
+				ImVec2(editorWindowWidth - editorRightWidth, 6.0f), ImGuiCond_Always);
+			ImGui::Begin("BottomSplitter", nullptr, splitterFlags);
+			ImGui::InvisibleButton("BottomSplitterButton", ImGui::GetContentRegionAvail());
+			if (ImGui::IsItemActive()) {
+				editorBottomHeight -= ImGui::GetIO().MouseDelta.y;
+			}
+			ImGui::End();
+
+			updateEditorLayout();
+			viewport.TopLeftX = editorSceneX;
+			viewport.TopLeftY = editorSceneY;
+			viewport.Width = editorSceneWidth;
+			viewport.Height = editorSceneHeight;
+			scissorRect.left = static_cast<LONG>(editorSceneX);
+			scissorRect.top = static_cast<LONG>(editorSceneY);
+			scissorRect.right = static_cast<LONG>(editorSceneX + editorSceneWidth);
+			scissorRect.bottom = static_cast<LONG>(editorSceneY + editorSceneHeight);
+			projectionMatrix = MakePerspectiveFovMatrix(0.45f, editorSceneWidth / editorSceneHeight, 0.1f, 100.0f);
+			spriteProjectionMatrix = MakeOrthographicMatrix(
+				0.0f,
+				0.0f,
+				editorWindowWidth,
+				editorWindowHeight,
+				0.0f,
+				100.0f);
+			cameraMatrix = MakeAffineMatrix(
+				cameraTransform.scale, cameraTransform.rotate, cameraTransform.translate);
+			viewMatrix = Inverse(cameraMatrix);
+
+			ImDrawList* foregroundDrawList = ImGui::GetForegroundDrawList();
+			ImVec2 sceneHeaderMin{editorSceneX, editorMenuHeight};
+			ImVec2 sceneHeaderMax{editorSceneX + editorSceneWidth, editorSceneY};
+			ImVec2 sceneViewMax{editorSceneX + editorSceneWidth, editorSceneY + editorSceneHeight};
+			foregroundDrawList->AddRectFilled(sceneHeaderMin, sceneHeaderMax, IM_COL32(37, 37, 37, 255));
+			foregroundDrawList->AddRect(sceneHeaderMin, sceneViewMax, IM_COL32(75, 75, 75, 255));
+			foregroundDrawList->AddText(
+				ImVec2(sceneHeaderMin.x + 10.0f, sceneHeaderMin.y + 5.0f), IM_COL32(230, 230, 230, 255), "シーン");
+			foregroundDrawList->AddText(
+				ImVec2(sceneHeaderMax.x - 115.0f, sceneHeaderMin.y + 5.0f), IM_COL32(180, 220, 255, 255),
+				"Perspective");
+
+			constexpr ImGuiWindowFlags sceneOverlayFlags =
+				ImGuiWindowFlags_NoDecoration |
+				ImGuiWindowFlags_NoMove |
+				ImGuiWindowFlags_NoResize |
+				ImGuiWindowFlags_NoSavedSettings |
+				ImGuiWindowFlags_NoBackground;
+			ImGui::SetNextWindowPos(ImVec2(editorSceneX, editorSceneY), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(editorSceneWidth, editorSceneHeight), ImGuiCond_Always);
+			ImGui::Begin("SceneOverlay", nullptr, sceneOverlayFlags);
+
+			auto getModelDropPosition = [&]() -> Vector3 {
+				ImVec2 mousePosition = ImGui::GetIO().MousePos;
+				float sceneRateX = (mousePosition.x - editorSceneX) / editorSceneWidth;
+				float sceneRateY = (mousePosition.y - editorSceneY) / editorSceneHeight;
+				return Vector3{
+					(sceneRateX - 0.5f) * 4.0f,
+					(0.5f - sceneRateY) * 3.0f,
+					0.0f
+				};
+			};
+
+			auto getSpriteDropPosition = [&]() -> Vector3 {
+				ImVec2 mousePosition = ImGui::GetIO().MousePos;
+				float sceneRateX = (mousePosition.x - editorSceneX) / editorSceneWidth;
+				float sceneRateY = (mousePosition.y - editorSceneY) / editorSceneHeight;
+				return Vector3{
+					sceneRateX * editorWindowWidth,
+					sceneRateY * editorWindowHeight,
+					0.0f
+				};
+			};
+
+			ImVec2 sceneInteractionMin{editorSceneX + 42.0f, editorSceneY};
+			ImVec2 sceneInteractionMax{editorSceneX + editorSceneWidth, editorSceneY + editorSceneHeight};
+			ImGui::SetCursorScreenPos(sceneInteractionMin);
+			ImGui::InvisibleButton(
+				"SceneDropTarget",
+				ImVec2(editorSceneWidth - 42.0f, editorSceneHeight),
+				ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle | ImGuiButtonFlags_AllowOverlap);
+			bool isSceneHovered = ImGui::IsMouseHoveringRect(sceneInteractionMin, sceneInteractionMax);
+			if (ImGui::BeginDragDropTarget()) {
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+					std::string droppedAsset(
+						static_cast<const char*>(payload->Data), static_cast<size_t>(payload->DataSize - 1));
+					selectedAssetPath = droppedAsset;
+					int32_t droppedTextureIndex = getTextureIndex(droppedAsset);
+					if (droppedTextureIndex >= 0) {
+						Transforms droppedSpriteTransform{
+							.scale = {128.0f, 128.0f, 1.0f},
+							.rotate = {0.0f, 0.0f, 0.0f},
+							.translate = getSpriteDropPosition()
+						};
+						selectedPlacedSceneObjectIndex = createEditorSceneObject(
+							EditorSceneObjectType::Sprite,
+							droppedTextureIndex,
+							droppedSpriteTransform,
+							getFilename(droppedAsset));
+						selectedSceneObject = 1;
+					}
+					else if (hasExtension(droppedAsset, ".obj")) {
+						Transforms droppedModelTransform{
+							.scale = {0.55f, 0.55f, 0.55f},
+							.rotate = {0.0f, 0.0f, 0.0f},
+							.translate = getModelDropPosition()
+						};
+						selectedPlacedSceneObjectIndex = createEditorSceneObject(
+							EditorSceneObjectType::Model,
+							2,
+							droppedModelTransform,
+							getFilename(droppedAsset));
+						selectedSceneObject = 0;
+					}
+				}
+				ImGui::EndDragDropTarget();
+			}
+
+			//============================================================
+			// シーン操作
+			//============================================================
+
+			if (isSceneHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
+				isSceneMiddleCameraDragging = true;
+			}
+
+			if (!ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
+				isSceneMiddleCameraDragging = false;
+			}
+
+			if (isSceneHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+				isSceneRightCameraDragging = true;
+			}
+
+			if (!ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+				isSceneRightCameraDragging = false;
+			}
+
+			Vector3 cameraUp{
+				cameraForward.y * cameraRight.z - cameraForward.z * cameraRight.y,
+				cameraForward.z * cameraRight.x - cameraForward.x * cameraRight.z,
+				cameraForward.x * cameraRight.y - cameraForward.y * cameraRight.x
+			};
+
+			if (isSceneMiddleCameraDragging) {
+				ImVec2 mouseDelta = ImGui::GetIO().MouseDelta;
+				cameraTransform.translate.x -= cameraRight.x * mouseDelta.x * editorCameraPanSpeed;
+				cameraTransform.translate.y -= cameraRight.y * mouseDelta.x * editorCameraPanSpeed;
+				cameraTransform.translate.z -= cameraRight.z * mouseDelta.x * editorCameraPanSpeed;
+				cameraTransform.translate.x += cameraUp.x * mouseDelta.y * editorCameraPanSpeed;
+				cameraTransform.translate.y += cameraUp.y * mouseDelta.y * editorCameraPanSpeed;
+				cameraTransform.translate.z += cameraUp.z * mouseDelta.y * editorCameraPanSpeed;
+			}
+
+			if (isSceneRightCameraDragging) {
+				ImVec2 mouseDelta = ImGui::GetIO().MouseDelta;
+				cameraTransform.rotate.y += mouseDelta.x * editorCameraRotateSpeed;
+				cameraTransform.rotate.x += mouseDelta.y * editorCameraRotateSpeed;
+				cameraTransform.rotate.x =
+					(std::clamp)(cameraTransform.rotate.x, -1.5f, 1.5f);
+			}
+
+			if (isSceneHovered && ImGui::GetIO().MouseWheel != 0.0f) {
+				float pitchCos = std::cos(cameraTransform.rotate.x);
+				Vector3 wheelCameraForward{
+					std::sin(cameraTransform.rotate.y) * pitchCos,
+					-std::sin(cameraTransform.rotate.x),
+					std::cos(cameraTransform.rotate.y) * pitchCos
+				};
+				cameraTransform.translate.x +=
+					wheelCameraForward.x * ImGui::GetIO().MouseWheel * editorCameraWheelMoveSpeed;
+				cameraTransform.translate.y +=
+					wheelCameraForward.y * ImGui::GetIO().MouseWheel * editorCameraWheelMoveSpeed;
+				cameraTransform.translate.z +=
+					wheelCameraForward.z * ImGui::GetIO().MouseWheel * editorCameraWheelMoveSpeed;
+			}
+
+			auto projectWorldPosition = [&](const Vector3& worldPosition) -> ImVec2 {
+				Matrix4x4 viewProjectionMatrix = Multiply(viewMatrix, projectionMatrix);
+				Vector3 ndcPosition = Transform(worldPosition, viewProjectionMatrix);
+				return ImVec2(
+					editorSceneX + (ndcPosition.x + 1.0f) * 0.5f * editorSceneWidth,
+					editorSceneY + (1.0f - ndcPosition.y) * 0.5f * editorSceneHeight);
+			};
+
+			auto projectSpritePosition = [&](const Vector3& spritePosition) -> ImVec2 {
+				return ImVec2(
+					editorSceneX + spritePosition.x / editorWindowWidth * editorSceneWidth,
+					editorSceneY + spritePosition.y / editorWindowHeight * editorSceneHeight);
+			};
+
+			ImDrawList* sceneDrawList = ImGui::GetWindowDrawList();
+			bool isGizmoHovered = false;
+			bool isGizmoActive = false;
+			Transforms* selectedModelTransform = &transform;
+			bool hasSelectedModelTransform = selectedSceneObject == 0;
+
+			if (selectedPlacedSceneObjectIndex >= 0 &&
+				selectedPlacedSceneObjectIndex < static_cast<int32_t>(editorSceneObjects.size())) {
+				EditorSceneObject& selectedPlacedSceneObject =
+					editorSceneObjects[static_cast<size_t>(selectedPlacedSceneObjectIndex)];
+				if (selectedPlacedSceneObject.type == EditorSceneObjectType::Model) {
+					selectedModelTransform = &selectedPlacedSceneObject.transform;
+					hasSelectedModelTransform = true;
+				}
+				else {
+					hasSelectedModelTransform = false;
+				}
+			}
+
+			auto updateGizmoState = [&]() {
+				isGizmoHovered = isGizmoHovered || ImGui::IsItemHovered();
+				isGizmoActive = isGizmoActive || ImGui::IsItemActive();
+			};
+
+			auto getAxisDragAmount = [&](float dragSpeed) -> float {
+				ImVec2 mouseDelta = ImGui::GetIO().MouseDelta;
+				return (std::fabs(mouseDelta.x) >= std::fabs(mouseDelta.y))
+					       ? mouseDelta.x * dragSpeed
+					       : -mouseDelta.y * dragSpeed;
+			};
+
+			auto applyMoveAxis = [&](int32_t axisIndex, float amount) {
+				if (axisIndex == 0) {
+					selectedModelTransform->translate.x += amount;
+				}
+				else if (axisIndex == 1) {
+					selectedModelTransform->translate.y += amount;
+				}
+				else {
+					selectedModelTransform->translate.z += amount;
+				}
+			};
+
+			auto applyScaleAxis = [&](int32_t axisIndex, float amount) {
+				if (axisIndex == 0) {
+					selectedModelTransform->scale.x = (std::max)(0.01f, selectedModelTransform->scale.x + amount);
+				}
+				else if (axisIndex == 1) {
+					selectedModelTransform->scale.y = (std::max)(0.01f, selectedModelTransform->scale.y + amount);
+				}
+				else {
+					selectedModelTransform->scale.z = (std::max)(0.01f, selectedModelTransform->scale.z + amount);
+				}
+			};
+
+			auto drawMoveAxisGizmo = [&](const char* id, const ImVec2& origin, const ImVec2& end, ImU32 color,
+			                             int32_t axisIndex) {
+				sceneDrawList->AddLine(origin, end, color, 3.0f);
+
+				ImVec2 axisVector{end.x - origin.x, end.y - origin.y};
+				float axisLengthSquared = axisVector.x * axisVector.x + axisVector.y * axisVector.y;
+				if (axisLengthSquared > 0.0001f) {
+					float inverseLength = 1.0f / std::sqrt(axisLengthSquared);
+					ImVec2 normal{axisVector.x * inverseLength, axisVector.y * inverseLength};
+					ImVec2 tangent{-normal.y, normal.x};
+					ImVec2 arrowLeft{
+						end.x - normal.x * 14.0f + tangent.x * 6.0f,
+						end.y - normal.y * 14.0f + tangent.y * 6.0f
+					};
+					ImVec2 arrowRight{
+						end.x - normal.x * 14.0f - tangent.x * 6.0f,
+						end.y - normal.y * 14.0f - tangent.y * 6.0f
+					};
+					sceneDrawList->AddTriangleFilled(end, arrowLeft, arrowRight, color);
+				}
+
+				ImVec2 buttonMin{
+					(std::min)(origin.x, end.x) - 14.0f,
+					(std::min)(origin.y, end.y) - 14.0f
+				};
+				ImVec2 buttonSize{
+					(std::max)(std::fabs(end.x - origin.x) + 28.0f, 28.0f),
+					(std::max)(std::fabs(end.y - origin.y) + 28.0f, 28.0f)
+				};
+				ImGui::SetCursorScreenPos(buttonMin);
+				ImGui::InvisibleButton(id, buttonSize);
+				updateGizmoState();
+
+				if (ImGui::IsItemActive()) {
+					applyMoveAxis(axisIndex, getAxisDragAmount(0.02f));
+				}
+			};
+
+			auto drawScaleAxisGizmo = [&](const char* id, const ImVec2& origin, const ImVec2& end, ImU32 color,
+			                              int32_t axisIndex) {
+				sceneDrawList->AddLine(origin, end, color, 2.0f);
+				sceneDrawList->AddRectFilled(
+					ImVec2(end.x - 5.0f, end.y - 5.0f),
+					ImVec2(end.x + 5.0f, end.y + 5.0f),
+					color);
+
+				ImVec2 buttonMin{
+					(std::min)(origin.x, end.x) - 12.0f,
+					(std::min)(origin.y, end.y) - 12.0f
+				};
+				ImVec2 buttonSize{
+					(std::max)(std::fabs(end.x - origin.x) + 24.0f, 24.0f),
+					(std::max)(std::fabs(end.y - origin.y) + 24.0f, 24.0f)
+				};
+				ImGui::SetCursorScreenPos(buttonMin);
+				ImGui::InvisibleButton(id, buttonSize);
+				updateGizmoState();
+
+				if (ImGui::IsItemActive()) {
+					applyScaleAxis(axisIndex, getAxisDragAmount(0.01f));
+				}
+			};
+
+			auto drawEllipse = [&](const ImVec2& center, float radiusX, float radiusY, ImU32 color) {
+				constexpr int32_t segmentCount = 72;
+				ImVec2 previousPoint{
+					center.x + radiusX,
+					center.y
+				};
+				for (int32_t segmentIndex = 1; segmentIndex <= segmentCount; ++segmentIndex) {
+					float angle = std::numbers::pi_v<float> * 2.0f *
+						static_cast<float>(segmentIndex) / static_cast<float>(segmentCount);
+					ImVec2 currentPoint{
+						center.x + std::cos(angle) * radiusX,
+						center.y + std::sin(angle) * radiusY
+					};
+					sceneDrawList->AddLine(previousPoint, currentPoint, color, 2.0f);
+					previousPoint = currentPoint;
+				}
+			};
+
+			auto drawRotateGizmo = [&](const ImVec2& center) {
+				drawEllipse(center, 58.0f, 58.0f, IM_COL32(80, 220, 90, 220));
+				drawEllipse(center, 28.0f, 58.0f, IM_COL32(230, 70, 70, 220));
+				drawEllipse(center, 58.0f, 28.0f, IM_COL32(80, 120, 240, 220));
+
+				ImGui::SetCursorScreenPos(ImVec2(center.x - 66.0f, center.y - 66.0f));
+				ImGui::InvisibleButton("RotateGizmo", ImVec2(132.0f, 132.0f));
+				updateGizmoState();
+
+				if (ImGui::IsItemActive()) {
+					ImVec2 mouseDelta = ImGui::GetIO().MouseDelta;
+					selectedModelTransform->rotate.y += mouseDelta.x * 0.01f;
+					selectedModelTransform->rotate.x += mouseDelta.y * 0.01f;
+				}
+			};
+
+			if (hasSelectedModelTransform) {
+				ImVec2 gizmoOrigin = projectWorldPosition(selectedModelTransform->translate);
+				constexpr float gizmoWorldLength = 1.1f;
+				ImVec2 gizmoX = projectWorldPosition(
+					{
+						selectedModelTransform->translate.x + gizmoWorldLength,
+						selectedModelTransform->translate.y,
+						selectedModelTransform->translate.z
+					});
+				ImVec2 gizmoY = projectWorldPosition(
+					{
+						selectedModelTransform->translate.x,
+						selectedModelTransform->translate.y + gizmoWorldLength,
+						selectedModelTransform->translate.z
+					});
+				ImVec2 gizmoZ = projectWorldPosition(
+					{
+						selectedModelTransform->translate.x,
+						selectedModelTransform->translate.y,
+						selectedModelTransform->translate.z + gizmoWorldLength
+					});
+				sceneDrawList->AddCircleFilled(gizmoOrigin, 5.0f, IM_COL32(255, 255, 255, 255));
+
+				if (activeEditorTool == 1) {
+					drawMoveAxisGizmo("MoveGizmoX", gizmoOrigin, gizmoX, IM_COL32(230, 70, 70, 255), 0);
+					drawMoveAxisGizmo("MoveGizmoY", gizmoOrigin, gizmoY, IM_COL32(80, 220, 90, 255), 1);
+					drawMoveAxisGizmo("MoveGizmoZ", gizmoOrigin, gizmoZ, IM_COL32(80, 120, 240, 255), 2);
+				}
+				else if (activeEditorTool == 2) {
+					drawRotateGizmo(gizmoOrigin);
+				}
+				else if (activeEditorTool == 3) {
+					drawScaleAxisGizmo("ScaleGizmoX", gizmoOrigin, gizmoX, IM_COL32(230, 70, 70, 255), 0);
+					drawScaleAxisGizmo("ScaleGizmoY", gizmoOrigin, gizmoY, IM_COL32(80, 220, 90, 255), 1);
+					drawScaleAxisGizmo("ScaleGizmoZ", gizmoOrigin, gizmoZ, IM_COL32(80, 120, 240, 255), 2);
+				}
+			}
+
+			//============================================================
+			// 不可視オブジェクト用ギズモ
+			//============================================================
+
+			if (isSceneGizmoVisible && isLightGizmoVisible) {
+				ImVec2 lightIconPosition = projectWorldPosition(directionalLightIconPosition);
+				ImU32 lightIconColor = IM_COL32(255, 220, 80, 255);
+				sceneDrawList->AddCircleFilled(lightIconPosition, 8.0f, lightIconColor);
+				for (int32_t rayIndex = 0; rayIndex < 8; ++rayIndex) {
+					float angle = std::numbers::pi_v<float> * 2.0f *
+						static_cast<float>(rayIndex) / 8.0f;
+					ImVec2 rayStart{
+						lightIconPosition.x + std::cos(angle) * 12.0f,
+						lightIconPosition.y + std::sin(angle) * 12.0f
+					};
+					ImVec2 rayEnd{
+						lightIconPosition.x + std::cos(angle) * 18.0f,
+						lightIconPosition.y + std::sin(angle) * 18.0f
+					};
+					sceneDrawList->AddLine(rayStart, rayEnd, lightIconColor, 2.0f);
+				}
+				sceneDrawList->AddText(
+					ImVec2(lightIconPosition.x + 14.0f, lightIconPosition.y - 8.0f),
+					IM_COL32(255, 245, 180, 255),
+					"Light");
+				ImGui::SetCursorScreenPos(ImVec2(lightIconPosition.x - 20.0f, lightIconPosition.y - 20.0f));
+				ImGui::InvisibleButton("DirectionalLightIcon", ImVec2(80.0f, 40.0f));
+				updateGizmoState();
+				if (ImGui::IsItemClicked()) {
+					selectedPlacedSceneObjectIndex = -1;
+					selectedSceneObject = 2;
+				}
+			}
+
+			if (isSceneGizmoVisible && isCameraGizmoVisible) {
+				ImVec2 cameraIconPosition{
+					editorSceneX + editorSceneWidth - 86.0f,
+					editorSceneY + 54.0f
+				};
+				sceneDrawList->AddRect(
+					ImVec2(cameraIconPosition.x, cameraIconPosition.y),
+					ImVec2(cameraIconPosition.x + 30.0f, cameraIconPosition.y + 18.0f),
+					IM_COL32(180, 220, 255, 255),
+					2.0f,
+					0,
+					2.0f);
+				sceneDrawList->AddTriangleFilled(
+					ImVec2(cameraIconPosition.x + 30.0f, cameraIconPosition.y + 4.0f),
+					ImVec2(cameraIconPosition.x + 42.0f, cameraIconPosition.y),
+					ImVec2(cameraIconPosition.x + 42.0f, cameraIconPosition.y + 22.0f),
+					IM_COL32(180, 220, 255, 210));
+				sceneDrawList->AddText(
+					ImVec2(cameraIconPosition.x - 6.0f, cameraIconPosition.y + 24.0f),
+					IM_COL32(180, 220, 255, 255),
+					"Camera");
+				ImGui::SetCursorScreenPos(ImVec2(cameraIconPosition.x - 8.0f, cameraIconPosition.y - 8.0f));
+				ImGui::InvisibleButton("DebugCameraIcon", ImVec2(68.0f, 54.0f));
+				updateGizmoState();
+				if (ImGui::IsItemClicked()) {
+					selectedPlacedSceneObjectIndex = -1;
+					selectedSceneObject = 3;
+				}
+			}
+
+			//============================================================
+			// 範囲選択
+			//============================================================
+
+			if (isSceneHovered && !isGizmoHovered && !isGizmoActive && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+				isSceneRangeSelecting = true;
+				sceneRangeStart = ImGui::GetIO().MousePos;
+				sceneRangeEnd = sceneRangeStart;
+			}
+
+			if (isSceneRangeSelecting) {
+				sceneRangeEnd = ImGui::GetIO().MousePos;
+				ImVec2 rangeMin{
+					(std::min)(sceneRangeStart.x, sceneRangeEnd.x),
+					(std::min)(sceneRangeStart.y, sceneRangeEnd.y)
+				};
+				ImVec2 rangeMax{
+					(std::max)(sceneRangeStart.x, sceneRangeEnd.x),
+					(std::max)(sceneRangeStart.y, sceneRangeEnd.y)
+				};
+				sceneDrawList->AddRectFilled(rangeMin, rangeMax, IM_COL32(80, 150, 255, 40));
+				sceneDrawList->AddRect(rangeMin, rangeMax, IM_COL32(80, 150, 255, 220), 0.0f, 0, 2.0f);
+
+				if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+					float rangeWidth = rangeMax.x - rangeMin.x;
+					float rangeHeight = rangeMax.y - rangeMin.y;
+					bool hasRangeArea = rangeWidth >= 4.0f && rangeHeight >= 4.0f;
+					ImVec2 modelScreenPosition = projectWorldPosition(transform.translate);
+					bool isModelInRange =
+						modelScreenPosition.x >= rangeMin.x &&
+						modelScreenPosition.x <= rangeMax.x &&
+						modelScreenPosition.y >= rangeMin.y &&
+						modelScreenPosition.y <= rangeMax.y;
+
+					if (hasRangeArea && isModelInRange) {
+						selectedPlacedSceneObjectIndex = -1;
+						selectedSceneObject = 0;
+					}
+
+					if (hasRangeArea && !isModelInRange) {
+						for (int32_t sceneObjectIndex = 0;
+						     sceneObjectIndex < static_cast<int32_t>(editorSceneObjects.size());
+						     ++sceneObjectIndex) {
+							EditorSceneObject& sceneObject = editorSceneObjects[static_cast<size_t>(sceneObjectIndex)];
+							ImVec2 sceneObjectScreenPosition =
+								sceneObject.type == EditorSceneObjectType::Model
+									? projectWorldPosition(sceneObject.transform.translate)
+									: projectSpritePosition(sceneObject.transform.translate);
+							bool isSceneObjectInRange =
+								sceneObjectScreenPosition.x >= rangeMin.x &&
+								sceneObjectScreenPosition.x <= rangeMax.x &&
+								sceneObjectScreenPosition.y >= rangeMin.y &&
+								sceneObjectScreenPosition.y <= rangeMax.y;
+
+							if (isSceneObjectInRange) {
+								selectedPlacedSceneObjectIndex = sceneObjectIndex;
+								selectedSceneObject = sceneObject.type == EditorSceneObjectType::Model ? 0 : 1;
+								break;
+							}
+						}
+					}
+
+					isSceneRangeSelecting = false;
+				}
+			}
+			ImGui::End();
+
+			ImGui::SetNextWindowPos(ImVec2(0.0f, editorMenuHeight), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(
+				ImVec2(editorLeftWidth, editorWindowHeight - editorMenuHeight - editorBottomHeight),
+				ImGuiCond_Always);
+			ImGui::Begin("ヒエラルキー###Hierarchy", nullptr, fixedWindowFlags);
+			ImGui::InputText("検索", hierarchyFilter, _countof(hierarchyFilter));
+			const char* objectNames[] = {
+				"モデル",
+				"スプライト",
+				"ライト",
+				"デバッグカメラ",
+			};
+			for (int32_t objectIndex = 0; objectIndex < static_cast<int32_t>(_countof(objectNames)); ++objectIndex) {
+				if (!matchesFilter(objectNames[objectIndex], hierarchyFilter)) {
+					continue;
+				}
+				bool isSelected = selectedPlacedSceneObjectIndex < 0 && selectedSceneObject == objectIndex;
+				if (ImGui::Selectable(objectNames[objectIndex], isSelected)) {
+					selectedPlacedSceneObjectIndex = -1;
+					selectedSceneObject = objectIndex;
+				}
+			}
+			for (int32_t sceneObjectIndex = 0;
+			     sceneObjectIndex < static_cast<int32_t>(editorSceneObjects.size());
+			     ++sceneObjectIndex) {
+				EditorSceneObject& sceneObject = editorSceneObjects[static_cast<size_t>(sceneObjectIndex)];
+				if (!matchesFilter(sceneObject.name, hierarchyFilter)) {
+					continue;
+				}
+				bool isSelected = selectedPlacedSceneObjectIndex == sceneObjectIndex;
+				if (ImGui::Selectable(sceneObject.name.c_str(), isSelected)) {
+					selectedPlacedSceneObjectIndex = sceneObjectIndex;
+					selectedSceneObject = sceneObject.type == EditorSceneObjectType::Model ? 0 : 1;
+				}
+			}
+			ImGui::End();
+
+			ImGui::SetNextWindowPos(
+				ImVec2(editorSceneX + editorSceneWidth, editorMenuHeight),
+				ImGuiCond_Always);
+			ImGui::SetNextWindowSize(
+				ImVec2(editorRightWidth, editorWindowHeight - editorMenuHeight),
+				ImGuiCond_Always);
+			ImGui::Begin("インスペクター###Inspector", nullptr, fixedWindowFlags);
+			const char* selectedObjectLabel = objectNames[selectedSceneObject];
+			Transforms* inspectedModelTransform = &transform;
+			Transforms* inspectedSpriteTransform = &spriteTransform;
+
+			if (selectedPlacedSceneObjectIndex >= 0 &&
+				selectedPlacedSceneObjectIndex < static_cast<int32_t>(editorSceneObjects.size())) {
+				EditorSceneObject& selectedPlacedSceneObject =
+					editorSceneObjects[static_cast<size_t>(selectedPlacedSceneObjectIndex)];
+				selectedObjectLabel = selectedPlacedSceneObject.name.c_str();
+
+				if (selectedPlacedSceneObject.type == EditorSceneObjectType::Model) {
+					inspectedModelTransform = &selectedPlacedSceneObject.transform;
+				}
+				else {
+					inspectedSpriteTransform = &selectedPlacedSceneObject.transform;
+				}
+			}
+
+			ImGui::Text("選択: %s", selectedObjectLabel);
 			ImGui::Separator();
-			ImGui::Text("Material");
-			bool isLighting = sphereMaterialData->enableLighting != FALSE;
-			ImGui::Checkbox("EnableLighting", &isLighting);
-			ImGui::ColorEdit4("MaterialColor", &sphereMaterialData->color.x);
+			if (ImGui::CollapsingHeader("環境 / 背景", ImGuiTreeNodeFlags_DefaultOpen)) {
+				ImGui::ColorEdit4("背景色", sceneClearColor);
+				ImGui::Checkbox("ギズモ表示", &isSceneGizmoVisible);
+				ImGui::Checkbox("ライトアイコン", &isLightGizmoVisible);
+				ImGui::Checkbox("カメラアイコン", &isCameraGizmoVisible);
+			}
+			if (ImGui::CollapsingHeader("モデル / マテリアル", ImGuiTreeNodeFlags_DefaultOpen)) {
+				bool isLighting = sphereMaterialData->enableLighting != FALSE;
+				ImGui::Checkbox("ライティング", &isLighting);
+				ImGui::ColorEdit4("マテリアル色", &sphereMaterialData->color.x);
+				sphereMaterialData->enableLighting = isLighting ? TRUE : FALSE;
+			}
+			if (ImGui::CollapsingHeader("操作ツール", ImGuiTreeNodeFlags_DefaultOpen)) {
+				ImGui::RadioButton("移動", &activeEditorTool, 1);
+				ImGui::SameLine();
+				ImGui::RadioButton("回転", &activeEditorTool, 2);
+				ImGui::SameLine();
+				ImGui::RadioButton("拡縮", &activeEditorTool, 3);
+			}
+			if (ImGui::CollapsingHeader("シーンカメラ操作", ImGuiTreeNodeFlags_DefaultOpen)) {
+				ImGui::DragFloat("移動速度", &editorCameraMoveSpeed, 0.01f, 0.01f, 2.0f);
+				ImGui::DragFloat("回転感度", &editorCameraRotateSpeed, 0.001f, 0.001f, 0.05f);
+				ImGui::DragFloat("ホイール速度", &editorCameraWheelMoveSpeed, 0.01f, 0.05f, 5.0f);
+				ImGui::DragFloat("中ボタン移動", &editorCameraPanSpeed, 0.001f, 0.001f, 0.1f);
+				ImGui::DragFloat("Shift倍率", &editorCameraFastRate, 0.1f, 1.0f, 10.0f);
+				ImGui::TextDisabled("右ドラッグ: 回転 / 中ドラッグ: 平行移動 / ホイール: 前後");
+				ImGui::TextDisabled("WASD: 視点基準移動 / Q,E: 上下 / Shift: 高速");
+			}
 			ImGui::Separator();
-			ImGui::Text("Light");
-			ImGui::ColorEdit4("Color", &directionalLightData->color.x);
-			ImGui::SliderFloat3("Direction", &directionalLightData->direction.x, -1.0f, 1.0f);
-			ImGui::SliderFloat("Intensity", &directionalLightData->intensity, 0.0f, 2.0f);
+			if (selectedSceneObject == 0) {
+				if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+					ImGui::DragFloat3("位置", &inspectedModelTransform->translate.x, 0.01f);
+					ImGui::DragFloat3("回転", &inspectedModelTransform->rotate.x, 0.01f);
+					ImGui::DragFloat3("拡縮", &inspectedModelTransform->scale.x, 0.01f, 0.01f, 10.0f);
+				}
+				if (ImGui::CollapsingHeader("UV Transform")) {
+					ImGui::DragFloat2("UV拡縮", &uvTransform.scale.x, 0.01f, 0.1f, 4.0f);
+					ImGui::DragFloat("UV回転", &uvTransform.rotate.z, 0.01f, -3.14f, 3.14f);
+					ImGui::DragFloat2("UV移動", &uvTransform.translate.x, 0.01f, -2.0f, 2.0f);
+				}
+			}
+			else if (selectedSceneObject == 1) {
+				if (ImGui::CollapsingHeader("Sprite", ImGuiTreeNodeFlags_DefaultOpen)) {
+					ImGui::DragFloat3("位置", &inspectedSpriteTransform->translate.x, 1.0f);
+					ImGui::DragFloat3("回転", &inspectedSpriteTransform->rotate.x, 0.01f);
+					ImGui::DragFloat3("拡縮", &inspectedSpriteTransform->scale.x, 1.0f, 1.0f, 1024.0f);
+				}
+				if (ImGui::CollapsingHeader("Sprite Material", ImGuiTreeNodeFlags_DefaultOpen)) {
+					ImGui::ColorEdit4("色", &spriteMaterialData->color.x);
+				}
+			}
+			else if (selectedSceneObject == 2) {
+				if (ImGui::CollapsingHeader("Directional Light", ImGuiTreeNodeFlags_DefaultOpen)) {
+					ImGui::ColorEdit4("色", &directionalLightData->color.x);
+					ImGui::DragFloat3("方向", &directionalLightData->direction.x, 0.01f, -1.0f, 1.0f);
+					ImGui::DragFloat("強さ", &directionalLightData->intensity, 0.01f, 0.0f, 4.0f);
+					ImGui::DragFloat3("アイコン位置", &directionalLightIconPosition.x, 0.01f);
+				}
+			}
+			else {
+				if (ImGui::CollapsingHeader("Debug Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
+					ImGui::DragFloat3("位置", &cameraTransform.translate.x, 0.1f);
+					ImGui::DragFloat3("回転", &cameraTransform.rotate.x, 0.01f);
+					if (ImGui::Button("カメラを初期化")) {
+						cameraTransform.rotate = {0.0f, 0.0f, 0.0f};
+						cameraTransform.translate = {0.0f, 0.0f, -5.0f};
+					}
+				}
+			}
 			ImGui::Separator();
-			ImGui::Text("Object");
-			ImGui::SliderFloat3("Rotate", &transform.rotate.x, -3.14f, 3.14f);
+			ImGui::Text("選択アセット");
+			if (!selectedAssetPath.empty()) {
+				ImGui::TextWrapped("%s", selectedAssetPath.c_str());
+				int32_t textureIndex = getTextureIndex(selectedAssetPath);
+				if (textureIndex >= 0) {
+					ImGui::Image(
+						ImTextureRef(textureSrvHandlesGPU[textureIndex].ptr),
+						ImVec2(160.0f, 160.0f));
+				}
+			}
+			ImGui::End();
+
+			float bottomY = editorWindowHeight - editorBottomHeight;
+			float projectWidth = editorProjectWidth;
+			float consoleX = projectWidth;
+			float consoleWidth = editorWindowWidth - editorRightWidth - consoleX;
+
+			ImGui::SetNextWindowPos(ImVec2(0.0f, bottomY), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(projectWidth, editorBottomHeight), ImGuiCond_Always);
+			ImGui::Begin("プロジェクト###Project", nullptr, fixedWindowFlags);
+			ImGui::InputText("検索", assetFilter, _countof(assetFilter));
+			ImGui::BeginChild("Folders", ImVec2(180.0f, 0.0f), ImGuiChildFlags_Borders);
+			ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+			if (ImGui::TreeNode("resources")) {
+				ImGui::TreeNodeEx("sound", ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
+				ImGui::TreePop();
+			}
+			ImGui::EndChild();
+			ImGui::SameLine();
+			ImGui::BeginChild("Assets", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
+			if (ImGui::BeginTable("AssetGrid", 4, ImGuiTableFlags_SizingStretchSame)) {
+				const char* assetPaths[] = {
+					"resources/ball.png",
+					"resources/monsterBall.png",
+					"resources/uvChecker.png",
+					"resources/plane.obj",
+					"resources/plane.mtl",
+					"resources/sound/maou_19_12345.wav",
+				};
+				for (const char* assetPath : assetPaths) {
+					std::string relativePath = assetPath;
+					if (!matchesFilter(relativePath, assetFilter)) {
+						continue;
+					}
+					ImGui::TableNextColumn();
+					ImGui::PushID(relativePath.c_str());
+					bool isPng = hasExtension(relativePath, ".png") || hasExtension(relativePath, ".PNG");
+					int32_t textureIndex = getTextureIndex(relativePath);
+					if (isPng && textureIndex >= 0) {
+						ImGui::Image(
+							ImTextureRef(textureSrvHandlesGPU[textureIndex].ptr),
+							ImVec2(48.0f, 48.0f));
+						if (ImGui::IsItemClicked()) {
+							selectedAssetPath = relativePath;
+						}
+						if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+							ImGui::SetDragDropPayload("ASSET_PATH", relativePath.c_str(), relativePath.size() + 1);
+							ImGui::Text("%s", relativePath.c_str());
+							ImGui::EndDragDropSource();
+						}
+						std::string filename = getFilename(relativePath);
+						ImGui::TextWrapped("%s", filename.c_str());
+					}
+					else {
+						bool isSelected = selectedAssetPath == relativePath;
+						auto assetIcon = "FILE";
+						if (hasExtension(relativePath, ".wav")) {
+							assetIcon = "WAV";
+						}
+						else if (hasExtension(relativePath, ".obj")) {
+							assetIcon = "OBJ";
+						}
+						else if (hasExtension(relativePath, ".mtl")) {
+							assetIcon = "MTL";
+						}
+						if (ImGui::Button(assetIcon, ImVec2(58.0f, 48.0f))) {
+							selectedAssetPath = relativePath;
+						}
+						if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+							ImGui::SetDragDropPayload("ASSET_PATH", relativePath.c_str(), relativePath.size() + 1);
+							ImGui::Text("%s", relativePath.c_str());
+							ImGui::EndDragDropSource();
+						}
+						if (isSelected) {
+							ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "%s", getFilename(relativePath).c_str());
+						}
+						else {
+							ImGui::TextWrapped("%s", getFilename(relativePath).c_str());
+						}
+					}
+					ImGui::PopID();
+				}
+				ImGui::EndTable();
+			}
+			if (hasFilterText(assetFilter)) {
+				ImGui::TextDisabled("検索中: %s", assetFilter);
+			}
+			ImGui::EndChild();
+			ImGui::End();
+
+			ImGui::SetNextWindowPos(ImVec2(consoleX, bottomY), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(consoleWidth, editorBottomHeight), ImGuiCond_Always);
+			ImGui::Begin("コンソール###Console", nullptr, fixedWindowFlags);
+			if (ImGui::Button("ログ消去")) {
+				isConsoleCleared = true;
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("ログ表示")) {
+				isConsoleCleared = false;
+			}
 			ImGui::Separator();
-			ImGui::Text("DebugCamera");
-			ImGui::SliderFloat3("CamRotate", &cameraTransform.rotate.x, -3.14f, 3.14f);
-			ImGui::SliderFloat3("CamTranslate", &cameraTransform.translate.x, -20.0f, 20.0f);
-			sphereMaterialData->enableLighting = isLighting ? TRUE : FALSE;
+			if (!isConsoleCleared) {
+				ImGui::Text("DirectX12: 初期化済み");
+				ImGui::Text("入力: DirectInput キーボード");
+				ImGui::Text("音声: XAudio2 wav待機");
+				ImGui::Text("Scene: %.0f x %.0f", editorSceneWidth, editorSceneHeight);
+			}
+			ImGui::End();
+
+			ImGui::SetNextWindowPos(ImVec2(projectWidth - 3.0f, bottomY), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(6.0f, editorBottomHeight), ImGuiCond_Always);
+			ImGui::Begin("ProjectConsoleSplitter", nullptr, splitterFlags);
+			ImGui::InvisibleButton("ProjectConsoleSplitterButton", ImGui::GetContentRegionAvail());
+			if (ImGui::IsItemActive()) {
+				editorProjectWidth += ImGui::GetIO().MouseDelta.x;
+			}
 			ImGui::End();
 			ImGui::Render();
 #endif
@@ -1279,6 +2335,18 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			sphereTransformationMatrixData->World = worldMatrix;
 			spriteMaterialData->uvTransform = uvTransformMatrix;
 			sphereMaterialData->uvTransform = uvTransformMatrix;
+			for (EditorSceneObject& sceneObject : editorSceneObjects) {
+				Matrix4x4 sceneObjectWorldMatrix = MakeAffineMatrix(
+					sceneObject.transform.scale,
+					sceneObject.transform.rotate,
+					sceneObject.transform.translate);
+				Matrix4x4 sceneObjectProjectionMatrix =
+					sceneObject.type == EditorSceneObjectType::Sprite
+						? spriteProjectionMatrix
+						: Multiply(viewMatrix, projectionMatrix);
+				sceneObject.transformationData->WVP = Multiply(sceneObjectWorldMatrix, sceneObjectProjectionMatrix);
+				sceneObject.transformationData->World = sceneObjectWorldMatrix;
+			}
 			hr = commandAllocator->Reset();
 			assert(SUCCEEDED(hr));
 			hr = commandList->Reset(commandAllocator.Get(), graphicsPipelineState.Get());
@@ -1305,8 +2373,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			commandList->OMSetRenderTargets(1, &rtvHandles[backBufferIndex], FALSE, &dsvHandle);
 
-			float clearColor[] = {0.1f, 0.25f, 0.5f, 1.0f};
-			commandList->ClearRenderTargetView(rtvHandles[backBufferIndex], clearColor, 0, nullptr);
+			commandList->ClearRenderTargetView(rtvHandles[backBufferIndex], sceneClearColor, 0, nullptr);
 			commandList->ClearDepthStencilView(
 				dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
@@ -1314,7 +2381,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			commandList->SetGraphicsRootConstantBufferView(0, spriteMaterialResource->GetGPUVirtualAddress());
 			commandList->SetGraphicsRootConstantBufferView(
 				1, spriteTransformationMatrixResource->GetGPUVirtualAddress());
-			commandList->SetGraphicsRootDescriptorTable(3, textureSrvHandlesGPU[0]);
+			commandList->SetGraphicsRootDescriptorTable(3, textureSrvHandlesGPU[spriteTextureIndex]);
 			commandList->IASetVertexBuffers(0, 1, &spriteVertexBufferView);
 			commandList->IASetIndexBuffer(&spriteIndexBufferView);
 			commandList->DrawIndexedInstanced(_countof(spriteIndices), 1, 0, 0, 0);
@@ -1325,6 +2392,30 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			commandList->SetGraphicsRootDescriptorTable(3, textureSrvHandlesGPU[2]);
 			commandList->IASetVertexBuffers(0, 1, &modelVertexBufferView);
 			commandList->DrawInstanced(static_cast<UINT>(modelData.vertices.size()), 1, 0, 0);
+
+			for (const EditorSceneObject& sceneObject : editorSceneObjects) {
+				if (sceneObject.type == EditorSceneObjectType::Sprite) {
+					int32_t textureIndex =
+						(std::clamp)(sceneObject.textureIndex, 0, static_cast<int32_t>(_countof(textureFilePaths)) - 1);
+					commandList->SetGraphicsRootConstantBufferView(
+						0, spriteMaterialResource->GetGPUVirtualAddress());
+					commandList->SetGraphicsRootConstantBufferView(
+						1, sceneObject.transformationResource->GetGPUVirtualAddress());
+					commandList->SetGraphicsRootDescriptorTable(3, textureSrvHandlesGPU[textureIndex]);
+					commandList->IASetVertexBuffers(0, 1, &spriteVertexBufferView);
+					commandList->IASetIndexBuffer(&spriteIndexBufferView);
+					commandList->DrawIndexedInstanced(_countof(spriteIndices), 1, 0, 0, 0);
+				}
+				else {
+					commandList->SetGraphicsRootConstantBufferView(
+						0, sphereMaterialResource->GetGPUVirtualAddress());
+					commandList->SetGraphicsRootConstantBufferView(
+						1, sceneObject.transformationResource->GetGPUVirtualAddress());
+					commandList->SetGraphicsRootDescriptorTable(3, textureSrvHandlesGPU[2]);
+					commandList->IASetVertexBuffers(0, 1, &modelVertexBufferView);
+					commandList->DrawInstanced(static_cast<UINT>(modelData.vertices.size()), 1, 0, 0);
+				}
+			}
 #ifdef USE_IMGUI
 			ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList.Get());
 
@@ -1399,6 +2490,13 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	}
 	for (ID3D12Resource* textureResource : textureResources) {
 		textureResource->Release();
+	}
+	for (EditorSceneObject& sceneObject : editorSceneObjects) {
+		if (sceneObject.transformationResource != nullptr) {
+			sceneObject.transformationResource->Release();
+			sceneObject.transformationResource = nullptr;
+			sceneObject.transformationData = nullptr;
+		}
 	}
 	spriteMaterialResource->Release();
 	sphereMaterialResource->Release();

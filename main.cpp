@@ -74,6 +74,7 @@ namespace {
 		Vector4 color;
 		int32_t enableLighting;
 		float padding[3];
+		Matrix4x4 uvTransform;
 	};
 
 	struct DirectionalLight {
@@ -585,6 +586,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	spriteMaterialData->padding[0] = 0.0f;
 	spriteMaterialData->padding[1] = 0.0f;
 	spriteMaterialData->padding[2] = 0.0f;
+	spriteMaterialData->uvTransform = MakeIdentity4x4();
 
 	ID3D12Resource* sphereMaterialResource = CreateBufferResource(device, sizeof(Material));
 	Material* sphereMaterialData = nullptr;
@@ -594,6 +596,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	sphereMaterialData->padding[0] = 0.0f;
 	sphereMaterialData->padding[1] = 0.0f;
 	sphereMaterialData->padding[2] = 0.0f;
+	sphereMaterialData->uvTransform = MakeIdentity4x4();
 
 	ID3D12Resource* directionalLightResource = CreateBufferResource(device, sizeof(DirectionalLight));
 	DirectionalLight* directionalLightData = nullptr;
@@ -775,6 +778,11 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		.rotate = {0.0f, 0.0f, 0.0f},
 		.translate = {0.0f, 0.0f, -5.0f}
 	};
+	Transforms uvTransform{
+		.scale = {1.0f, 1.0f, 1.0f},
+		.rotate = {0.0f, 0.0f, 0.0f},
+		.translate = {0.0f, 0.0f, 0.0f}
+	};
 	// 頂点バッファ用のリソースを作成する
 	ID3D12Resource* vertexResource = CreateBufferResource(device, sizeof(VertexData) * vertices.size());
 
@@ -938,17 +946,27 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			ImGui_ImplDX12_NewFrame();
 			ImGui_ImplWin32_NewFrame();
 			ImGui::NewFrame();
-			ImGui::SetNextWindowPos(ImVec2(980.0f, 20.0f), ImGuiCond_Once);
-			ImGui::SetNextWindowSize(ImVec2(280.0f, 180.0f), ImGuiCond_Once);
-			ImGui::Begin("Lighting");
+			ImGui::SetNextWindowPos(ImVec2(960.0f, 20.0f), ImGuiCond_Once);
+			ImGui::SetNextWindowSize(ImVec2(300.0f, 260.0f), ImGuiCond_Once);
+			ImGui::Begin("UVTransform");
+			ImGui::Text("UV Transform");
+			ImGui::SliderFloat2("Scale", &uvTransform.scale.x, 0.1f, 4.0f);
+			ImGui::SliderFloat("RotateZ", &uvTransform.rotate.z, -3.14f, 3.14f);
+			ImGui::SliderFloat2("Translate", &uvTransform.translate.x, -2.0f, 2.0f);
+			ImGui::Separator();
+			ImGui::Text("Material");
 			bool isLighting = sphereMaterialData->enableLighting != FALSE;
 			ImGui::Checkbox("EnableLighting", &isLighting);
-			sphereMaterialData->enableLighting = isLighting ? TRUE : FALSE;
 			ImGui::ColorEdit4("MaterialColor", &sphereMaterialData->color.x);
-			ImGui::ColorEdit4("LightColor", &directionalLightData->color.x);
-			ImGui::SliderFloat3("LightDirection", &directionalLightData->direction.x, -1.0f, 1.0f);
-			ImGui::SliderFloat("LightIntensity", &directionalLightData->intensity, 0.0f, 2.0f);
+			ImGui::Separator();
+			ImGui::Text("Light");
+			ImGui::ColorEdit4("Color", &directionalLightData->color.x);
+			ImGui::SliderFloat3("Direction", &directionalLightData->direction.x, -1.0f, 1.0f);
+			ImGui::SliderFloat("Intensity", &directionalLightData->intensity, 0.0f, 2.0f);
+			ImGui::Separator();
+			ImGui::Text("Object");
 			ImGui::SliderFloat3("Rotate", &transform.rotate.x, -3.14f, 3.14f);
+			sphereMaterialData->enableLighting = isLighting ? TRUE : FALSE;
 			ImGui::End();
 			ImGui::Render();
 #endif
@@ -959,10 +977,14 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			Matrix4x4 spriteWorldViewProjectionMatrix = Multiply(spriteWorldMatrix, spriteProjectionMatrix);
 			Matrix4x4 worldMatrix = MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
 			Matrix4x4 worldViewProjectionMatrix = Multiply(worldMatrix, Multiply(viewMatrix, projectionMatrix));
+			Matrix4x4 uvTransformMatrix = MakeAffineMatrix(
+				uvTransform.scale, uvTransform.rotate, uvTransform.translate);
 			spriteTransformationMatrixData->WVP = spriteWorldViewProjectionMatrix;
 			spriteTransformationMatrixData->World = spriteWorldMatrix;
 			sphereTransformationMatrixData->WVP = worldViewProjectionMatrix;
 			sphereTransformationMatrixData->World = worldMatrix;
+			spriteMaterialData->uvTransform = uvTransformMatrix;
+			sphereMaterialData->uvTransform = uvTransformMatrix;
 			hr = commandAllocator->Reset();
 			assert(SUCCEEDED(hr));
 			hr = commandList->Reset(commandAllocator, graphicsPipelineState);

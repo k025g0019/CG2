@@ -6,6 +6,8 @@
 #include <cstring>
 #include <ctime>
 #include <d3d12.h>
+#define DIRECTINPUT_VERSION 0x0800
+#include <dinput.h>
 #include <dxcapi.h>
 #include <dxgi1_6.h>
 #include <dxgidebug.h>
@@ -41,6 +43,7 @@
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "dxguid.lib")
 #pragma comment(lib, "dxcompiler.lib")
+#pragma comment(lib, "dinput8.lib")
 #pragma comment(lib, "xaudio2.lib")
 
 using Microsoft::WRL::ComPtr;
@@ -495,6 +498,32 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		return 1;
 	}
 
+	HRESULT hr = S_OK;
+	IDirectInput8* directInput = nullptr;
+	hr = DirectInput8Create(
+		instanceHandle, DIRECTINPUT_VERSION, IID_IDirectInput8, reinterpret_cast<void**>(&directInput), nullptr);
+	assert(SUCCEEDED(hr));
+	if (FAILED(hr) || directInput == nullptr) {
+		return 1;
+	}
+
+	IDirectInputDevice8* keyboardDevice = nullptr;
+	hr = directInput->CreateDevice(GUID_SysKeyboard, &keyboardDevice, nullptr);
+	assert(SUCCEEDED(hr));
+	if (FAILED(hr) || keyboardDevice == nullptr) {
+		directInput->Release();
+		return 1;
+	}
+
+	hr = keyboardDevice->SetDataFormat(&c_dfDIKeyboard);
+	assert(SUCCEEDED(hr));
+	hr = keyboardDevice->SetCooperativeLevel(
+		windowHandle, DISCL_FOREGROUND | DISCL_NONEXCLUSIVE | DISCL_NOWINKEY);
+	assert(SUCCEEDED(hr));
+
+	BYTE key[256] = {};
+	BYTE preKey[256] = {};
+
 #ifdef _DEBUG
 	// [Middle] Enable D3D12 debug layer
 	ComPtr<ID3D12Debug1> debugController;
@@ -506,7 +535,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 
 	MSG message{};
 	Log(logStream, "main loop started");
-	HRESULT hr = S_OK;
 
 	// ================================
 	// [Large] Audio setup and playback
@@ -1148,6 +1176,37 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			DispatchMessage(&message);
 		}
 		else {
+			memcpy(preKey, key, sizeof(key));
+			hr = keyboardDevice->Acquire();
+			hr = keyboardDevice->GetDeviceState(sizeof(key), key);
+			if (FAILED(hr)) {
+				keyboardDevice->Acquire();
+				hr = keyboardDevice->GetDeviceState(sizeof(key), key);
+			}
+
+			if (key[DIK_ESCAPE]) {
+				PostQuitMessage(0);
+			}
+
+			if (key[DIK_LEFT]) {
+				transform.rotate.y -= 0.02f;
+			}
+			if (key[DIK_RIGHT]) {
+				transform.rotate.y += 0.02f;
+			}
+			if (key[DIK_UP]) {
+				transform.rotate.x -= 0.02f;
+			}
+			if (key[DIK_DOWN]) {
+				transform.rotate.x += 0.02f;
+			}
+
+			bool isReturnTrigger =
+				((key[DIK_RETURN] != 0) && (preKey[DIK_RETURN] == 0));
+			if (isReturnTrigger) {
+				uvTransform.translate = {0.0f, 0.0f, 0.0f};
+			}
+
 #ifdef USE_IMGUI
 			ImGui_ImplDX12_NewFrame();
 			ImGui_ImplWin32_NewFrame();
@@ -1281,6 +1340,16 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	if (xAudio2 != nullptr) {
 		xAudio2->Release();
 		xAudio2 = nullptr;
+	}
+
+	if (keyboardDevice != nullptr) {
+		keyboardDevice->Unacquire();
+		keyboardDevice->Release();
+		keyboardDevice = nullptr;
+	}
+	if (directInput != nullptr) {
+		directInput->Release();
+		directInput = nullptr;
 	}
 
 	Log(logStream, "application finished");

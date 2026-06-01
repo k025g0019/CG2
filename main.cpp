@@ -1016,6 +1016,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		.rotate = {0.0f, 0.0f, 0.0f},
 		.translate = {0.0f, 0.0f, 0.0f}
 	};
+	bool isMonsterBallTexture = true;
 	ID3D12Resource* vertexResource = CreateBufferResource(device.Get(), sizeof(VertexData) * vertices.size());
 
 	VertexData* mappedVertexData = nullptr;
@@ -1258,6 +1259,9 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			ImGui::Text("DebugCamera");
 			ImGui::SliderFloat3("CamRotate", &cameraTransform.rotate.x, -3.14f, 3.14f);
 			ImGui::SliderFloat3("CamTranslate", &cameraTransform.translate.x, -20.0f, 20.0f);
+			ImGui::Separator();
+			ImGui::Text("Texture Switch");
+			ImGui::Checkbox("monsterBall", &isMonsterBallTexture);
 			sphereMaterialData->enableLighting = isLighting ? TRUE : FALSE;
 			ImGui::End();
 			ImGui::Render();
@@ -1319,10 +1323,11 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			commandList->IASetIndexBuffer(&spriteIndexBufferView);
 			commandList->DrawIndexedInstanced(_countof(spriteIndices), 1, 0, 0, 0);
 
+			uint32_t sphereTextureIndex = isMonsterBallTexture ? 1u : 0u;
 			commandList->SetGraphicsRootConstantBufferView(0, sphereMaterialResource->GetGPUVirtualAddress());
 			commandList->SetGraphicsRootConstantBufferView(
 				1, sphereTransformationMatrixResource->GetGPUVirtualAddress());
-			commandList->SetGraphicsRootDescriptorTable(3, textureSrvHandlesGPU[2]);
+			commandList->SetGraphicsRootDescriptorTable(3, textureSrvHandlesGPU[sphereTextureIndex]);
 			commandList->IASetVertexBuffers(0, 1, &modelVertexBufferView);
 			commandList->DrawInstanced(static_cast<UINT>(modelData.vertices.size()), 1, 0, 0);
 #ifdef USE_IMGUI

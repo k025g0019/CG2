@@ -2268,9 +2268,11 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 					}
 
 					bool isGameObjectTransformChanged = false;
-					isGameObjectTransformChanged |= ImGui::DragFloat3("位置", &selectedEditorGameObject->translate.x, 0.01f);
+					isGameObjectTransformChanged |= ImGui::DragFloat3("位置", &selectedEditorGameObject->translate.x,
+					                                                  0.01f);
 					isGameObjectTransformChanged |= ImGui::DragFloat3("回転", &selectedEditorGameObject->rotate.x, 0.01f);
-					isGameObjectTransformChanged |= ImGui::DragFloat3("拡大", &selectedEditorGameObject->scale.x, 0.01f, 0.01f, 100.0f);
+					isGameObjectTransformChanged |= ImGui::DragFloat3("拡大", &selectedEditorGameObject->scale.x, 0.01f,
+					                                                  0.01f, 100.0f);
 					if (isGameObjectTransformChanged &&
 						selectedPlacedSceneObjectIndex >= 0 &&
 						selectedPlacedSceneObjectIndex < static_cast<int32_t>(editorSceneObjects.size())) {

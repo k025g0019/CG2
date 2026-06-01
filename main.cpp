@@ -680,6 +680,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		.rotate = {0.0f, 0.0f, 0.0f},
 		.translate = {0.0f, 0.0f, -5.0f}
 	};
+	bool isMonsterBallTexture = true;
 	// 頂点バッファ用のリソースを作成する
 	ID3D12Resource* vertexResource = CreateBufferResource(device, sizeof(VertexData) * vertices.size());
 
@@ -828,10 +829,13 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		}
 		else {
 #ifdef USE_IMGUI
-			// ImGui に新しいフレームの開始を通知し、デモウィンドウを描画対象へ追加する
+			// ImGui のチェックボックスで球のテクスチャを切り替える
 			ImGui_ImplDX12_NewFrame();
 			ImGui_ImplWin32_NewFrame();
 			ImGui::NewFrame();
+			ImGui::Begin("Texture Switch");
+			ImGui::Checkbox("monsterBall", &isMonsterBallTexture);
+			ImGui::End();
 			ImGui::Render();
 #endif
 
@@ -882,8 +886,9 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			commandList->DrawInstanced(_countof(spriteVertices), 1, 0, 0);
 
 			// 球は新しく作った ball の SRV を使って右側へ表示する
+			uint32_t sphereTextureIndex = isMonsterBallTexture ? 1u : 0u;
 			commandList->SetGraphicsRootConstantBufferView(1, sphereWvpResource->GetGPUVirtualAddress());
-			commandList->SetGraphicsRootDescriptorTable(2, textureSrvHandlesGPU[1]);
+			commandList->SetGraphicsRootDescriptorTable(2, textureSrvHandlesGPU[sphereTextureIndex]);
 			commandList->IASetVertexBuffers(0, 1, &vertexBufferView);
 			commandList->DrawInstanced(static_cast<UINT>(vertices.size()), 1, 0, 0);
 #ifdef USE_IMGUI

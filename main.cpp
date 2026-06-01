@@ -23,6 +23,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <functional>
 #include <numbers>
 #include <sdkddkver.h>
 #include <sstream>
@@ -35,6 +36,7 @@
 
 #include "ApplicationWindow.h"
 #include "CrashHandler.h"
+#include "EditorScene.h"
 #include "Imgui.h"
 #include "Log.h"
 #include "Matrix.h"
@@ -1088,8 +1090,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		editorWindowWidth - editorLeftWidth - editorRightWidth;
 	float editorSceneHeight =
 		editorWindowHeight - editorSceneY - editorBottomHeight;
-	int32_t spriteTextureIndex = 0;
-
 	auto updateEditorLayout = [&]() {
 		editorLeftWidth = (std::clamp)(editorLeftWidth, 160.0f, 420.0f);
 		editorRightWidth = (std::clamp)(editorRightWidth, 220.0f, 520.0f);
@@ -1177,6 +1177,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 
 	struct EditorSceneObject {
 		EditorSceneObjectType type;
+		int32_t gameObjectId;
 		int32_t textureIndex;
 		Transforms transform;
 		std::string name;
@@ -1192,6 +1193,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	                                   const std::string& name) -> int32_t {
 		EditorSceneObject editorSceneObject{};
 		editorSceneObject.type = type;
+		editorSceneObject.gameObjectId = -1;
 		editorSceneObject.textureIndex = textureIndex;
 		editorSceneObject.transform = initialTransform;
 		editorSceneObject.name = name;
@@ -1439,6 +1441,52 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			static bool isSceneRightCameraDragging = false;
 			static auto sceneRangeStart = ImVec2(0.0f, 0.0f);
 			static auto sceneRangeEnd = ImVec2(0.0f, 0.0f);
+			static EditorScene editorScene;
+			static bool isEditorSceneInitialized = false;
+			static int32_t selectedEditorGameObjectId = -1;
+			static int32_t previousSelectedEditorGameObjectId = -1;
+			static char selectedGameObjectName[128] = {};
+			static int32_t selectedAddComponentIndex = 0;
+
+			if (!isEditorSceneInitialized) {
+				editorScene.InitializeDefaultScene();
+				if (!editorScene.GetGameObjects().empty()) {
+					selectedEditorGameObjectId = editorScene.GetGameObjects()[0].id;
+				}
+				isEditorSceneInitialized = true;
+			}
+
+			auto syncLegacySelection = [&]() {
+				const EditorGameObject* gameObject = editorScene.FindGameObject(selectedEditorGameObjectId);
+				if (gameObject == nullptr) {
+					return;
+				}
+
+				selectedPlacedSceneObjectIndex = -1;
+				for (int32_t sceneObjectIndex = 0;
+				     sceneObjectIndex < static_cast<int32_t>(editorSceneObjects.size());
+				     ++sceneObjectIndex) {
+					const EditorSceneObject& sceneObject = editorSceneObjects[static_cast<size_t>(sceneObjectIndex)];
+					if (sceneObject.gameObjectId == gameObject->id) {
+						selectedPlacedSceneObjectIndex = sceneObjectIndex;
+						selectedSceneObject = sceneObject.type == EditorSceneObjectType::Model ? 0 : 1;
+						return;
+					}
+				}
+
+				if (editorScene.HasComponent(gameObject->id, EditorComponentType::ModelRenderer)) {
+					selectedSceneObject = 0;
+				}
+				else if (editorScene.HasComponent(gameObject->id, EditorComponentType::SpriteRenderer)) {
+					selectedSceneObject = 1;
+				}
+				else if (editorScene.HasComponent(gameObject->id, EditorComponentType::Light)) {
+					selectedSceneObject = 2;
+				}
+				else if (editorScene.HasComponent(gameObject->id, EditorComponentType::Camera)) {
+					selectedSceneObject = 3;
+				}
+			};
 
 			auto getTextureIndex = [&](const std::string& path) -> int32_t {
 				for (uint32_t textureIndex = 0; textureIndex < _countof(textureFilePaths); ++textureIndex) {
@@ -1519,38 +1567,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 				ImGuiWindowFlags_NoResize |
 				ImGuiWindowFlags_NoSavedSettings |
 				ImGuiWindowFlags_NoBackground;
-			ImGui::SetNextWindowPos(ImVec2(editorLeftWidth - 3.0f, editorMenuHeight), ImGuiCond_Always);
-			ImGui::SetNextWindowSize(
-				ImVec2(6.0f, editorWindowHeight - editorMenuHeight), ImGuiCond_Always);
-			ImGui::Begin("LeftSplitter", nullptr, splitterFlags);
-			ImGui::InvisibleButton("LeftSplitterButton", ImGui::GetContentRegionAvail());
-			if (ImGui::IsItemActive()) {
-				editorLeftWidth += ImGui::GetIO().MouseDelta.x;
-			}
-			ImGui::End();
-
-			ImGui::SetNextWindowPos(
-				ImVec2(editorWindowWidth - editorRightWidth - 3.0f, editorMenuHeight),
-				ImGuiCond_Always);
-			ImGui::SetNextWindowSize(
-				ImVec2(6.0f, editorWindowHeight - editorMenuHeight), ImGuiCond_Always);
-			ImGui::Begin("RightSplitter", nullptr, splitterFlags);
-			ImGui::InvisibleButton("RightSplitterButton", ImGui::GetContentRegionAvail());
-			if (ImGui::IsItemActive()) {
-				editorRightWidth -= ImGui::GetIO().MouseDelta.x;
-			}
-			ImGui::End();
-
-			ImGui::SetNextWindowPos(
-				ImVec2(0.0f, editorWindowHeight - editorBottomHeight - 3.0f), ImGuiCond_Always);
-			ImGui::SetNextWindowSize(
-				ImVec2(editorWindowWidth - editorRightWidth, 6.0f), ImGuiCond_Always);
-			ImGui::Begin("BottomSplitter", nullptr, splitterFlags);
-			ImGui::InvisibleButton("BottomSplitterButton", ImGui::GetContentRegionAvail());
-			if (ImGui::IsItemActive()) {
-				editorBottomHeight -= ImGui::GetIO().MouseDelta.y;
-			}
-			ImGui::End();
+			constexpr float splitterHitWidth = 12.0f;
 
 			updateEditorLayout();
 			viewport.TopLeftX = editorSceneX;
@@ -1643,6 +1660,23 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 							droppedSpriteTransform,
 							getFilename(droppedAsset));
 						selectedSceneObject = 1;
+
+						editorScene.PushUndo();
+						selectedEditorGameObjectId = editorScene.CreateGameObject(getFilename(droppedAsset));
+						editorSceneObjects[static_cast<size_t>(selectedPlacedSceneObjectIndex)].gameObjectId =
+							selectedEditorGameObjectId;
+						editorScene.AddComponent(selectedEditorGameObjectId, EditorComponentType::SpriteRenderer);
+						if (EditorGameObject* gameObject = editorScene.FindGameObject(selectedEditorGameObjectId)) {
+							gameObject->translate = droppedSpriteTransform.translate;
+							gameObject->rotate = droppedSpriteTransform.rotate;
+							gameObject->scale = droppedSpriteTransform.scale;
+							for (EditorComponent& component : gameObject->components) {
+								if (component.type == EditorComponentType::SpriteRenderer) {
+									component.assetPath = droppedAsset;
+								}
+							}
+						}
+						previousSelectedEditorGameObjectId = -1;
 					}
 					else if (hasExtension(droppedAsset, ".obj")) {
 						Transforms droppedModelTransform{
@@ -1656,6 +1690,23 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 							droppedModelTransform,
 							getFilename(droppedAsset));
 						selectedSceneObject = 0;
+
+						editorScene.PushUndo();
+						selectedEditorGameObjectId = editorScene.CreateGameObject(getFilename(droppedAsset));
+						editorSceneObjects[static_cast<size_t>(selectedPlacedSceneObjectIndex)].gameObjectId =
+							selectedEditorGameObjectId;
+						editorScene.AddComponent(selectedEditorGameObjectId, EditorComponentType::ModelRenderer);
+						if (EditorGameObject* gameObject = editorScene.FindGameObject(selectedEditorGameObjectId)) {
+							gameObject->translate = droppedModelTransform.translate;
+							gameObject->rotate = droppedModelTransform.rotate;
+							gameObject->scale = droppedModelTransform.scale;
+							for (EditorComponent& component : gameObject->components) {
+								if (component.type == EditorComponentType::ModelRenderer) {
+									component.assetPath = droppedAsset;
+								}
+							}
+						}
+						previousSelectedEditorGameObjectId = -1;
 					}
 				}
 				ImGui::EndDragDropTarget();
@@ -1753,6 +1804,24 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 				}
 			}
 
+			auto syncSelectedPlacedObjectToGameObject = [&]() {
+				if (selectedPlacedSceneObjectIndex < 0 ||
+					selectedPlacedSceneObjectIndex >= static_cast<int32_t>(editorSceneObjects.size())) {
+					return;
+				}
+
+				const EditorSceneObject& sceneObject =
+					editorSceneObjects[static_cast<size_t>(selectedPlacedSceneObjectIndex)];
+				EditorGameObject* gameObject = editorScene.FindGameObject(sceneObject.gameObjectId);
+				if (gameObject == nullptr) {
+					return;
+				}
+
+				gameObject->translate = sceneObject.transform.translate;
+				gameObject->rotate = sceneObject.transform.rotate;
+				gameObject->scale = sceneObject.transform.scale;
+			};
+
 			auto updateGizmoState = [&]() {
 				isGizmoHovered = isGizmoHovered || ImGui::IsItemHovered();
 				isGizmoActive = isGizmoActive || ImGui::IsItemActive();
@@ -1775,6 +1844,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 				else {
 					selectedModelTransform->translate.z += amount;
 				}
+				syncSelectedPlacedObjectToGameObject();
 			};
 
 			auto applyScaleAxis = [&](int32_t axisIndex, float amount) {
@@ -1787,6 +1857,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 				else {
 					selectedModelTransform->scale.z = (std::max)(0.01f, selectedModelTransform->scale.z + amount);
 				}
+				syncSelectedPlacedObjectToGameObject();
 			};
 
 			auto drawMoveAxisGizmo = [&](const char* id, const ImVec2& origin, const ImVec2& end, ImU32 color,
@@ -1883,6 +1954,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 					ImVec2 mouseDelta = ImGui::GetIO().MouseDelta;
 					selectedModelTransform->rotate.y += mouseDelta.x * 0.01f;
 					selectedModelTransform->rotate.x += mouseDelta.y * 0.01f;
+					syncSelectedPlacedObjectToGameObject();
 				}
 			};
 
@@ -2045,6 +2117,10 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 							if (isSceneObjectInRange) {
 								selectedPlacedSceneObjectIndex = sceneObjectIndex;
 								selectedSceneObject = sceneObject.type == EditorSceneObjectType::Model ? 0 : 1;
+								if (sceneObject.gameObjectId >= 0) {
+									selectedEditorGameObjectId = sceneObject.gameObjectId;
+									previousSelectedEditorGameObjectId = -1;
+								}
 								break;
 							}
 						}
@@ -2067,27 +2143,71 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 				"ライト",
 				"デバッグカメラ",
 			};
-			for (int32_t objectIndex = 0; objectIndex < static_cast<int32_t>(_countof(objectNames)); ++objectIndex) {
-				if (!matchesFilter(objectNames[objectIndex], hierarchyFilter)) {
-					continue;
-				}
-				bool isSelected = selectedPlacedSceneObjectIndex < 0 && selectedSceneObject == objectIndex;
-				if (ImGui::Selectable(objectNames[objectIndex], isSelected)) {
-					selectedPlacedSceneObjectIndex = -1;
-					selectedSceneObject = objectIndex;
-				}
+
+			if (ImGui::Button("空のGameObject")) {
+				editorScene.PushUndo();
+				selectedEditorGameObjectId = editorScene.CreateGameObject("GameObject");
+				selectedPlacedSceneObjectIndex = -1;
 			}
-			for (int32_t sceneObjectIndex = 0;
-			     sceneObjectIndex < static_cast<int32_t>(editorSceneObjects.size());
-			     ++sceneObjectIndex) {
-				EditorSceneObject& sceneObject = editorSceneObjects[static_cast<size_t>(sceneObjectIndex)];
-				if (!matchesFilter(sceneObject.name, hierarchyFilter)) {
-					continue;
+			ImGui::SameLine();
+			if (ImGui::Button("親解除")) {
+				editorScene.PushUndo();
+				editorScene.SetParent(selectedEditorGameObjectId, -1);
+			}
+			ImGui::Separator();
+
+			std::function<void(int32_t, int32_t)> drawGameObjectNode =
+				[&](int32_t gameObjectId, int32_t depth) {
+				EditorGameObject* gameObject = editorScene.FindGameObject(gameObjectId);
+				if (gameObject == nullptr) {
+					return;
 				}
-				bool isSelected = selectedPlacedSceneObjectIndex == sceneObjectIndex;
-				if (ImGui::Selectable(sceneObject.name.c_str(), isSelected)) {
-					selectedPlacedSceneObjectIndex = sceneObjectIndex;
-					selectedSceneObject = sceneObject.type == EditorSceneObjectType::Model ? 0 : 1;
+
+				if (!matchesFilter(gameObject->name, hierarchyFilter) && depth == 0) {
+					bool hasMatchedChild = false;
+					for (int32_t childId : gameObject->children) {
+						const EditorGameObject* child = editorScene.FindGameObject(childId);
+						hasMatchedChild = hasMatchedChild ||
+							(child != nullptr && matchesFilter(child->name, hierarchyFilter));
+					}
+
+					if (!hasMatchedChild) {
+						return;
+					}
+				}
+
+				ImGui::Indent(static_cast<float>(depth) * 14.0f);
+				std::string label = gameObject->children.empty() ? "  " : "v ";
+				label += gameObject->name;
+				bool isSelected = selectedEditorGameObjectId == gameObject->id;
+				if (ImGui::Selectable(label.c_str(), isSelected)) {
+					selectedEditorGameObjectId = gameObject->id;
+					selectedPlacedSceneObjectIndex = -1;
+					syncLegacySelection();
+				}
+				if (ImGui::BeginDragDropSource()) {
+					ImGui::SetDragDropPayload("GAME_OBJECT_ID", &gameObject->id, sizeof(gameObject->id));
+					ImGui::Text("%s", gameObject->name.c_str());
+					ImGui::EndDragDropSource();
+				}
+				if (ImGui::BeginDragDropTarget()) {
+					if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("GAME_OBJECT_ID")) {
+						int32_t childId = *static_cast<const int32_t*>(payload->Data);
+						editorScene.PushUndo();
+						editorScene.SetParent(childId, gameObject->id);
+					}
+					ImGui::EndDragDropTarget();
+				}
+				ImGui::Unindent(static_cast<float>(depth) * 14.0f);
+
+				for (int32_t childId : gameObject->children) {
+					drawGameObjectNode(childId, depth + 1);
+				}
+			};
+
+			for (const EditorGameObject& gameObject : editorScene.GetGameObjects()) {
+				if (gameObject.parentId == -1) {
+					drawGameObjectNode(gameObject.id, 0);
 				}
 			}
 			ImGui::End();
@@ -2117,8 +2237,167 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 				}
 			}
 
+			EditorGameObject* selectedEditorGameObject = editorScene.FindGameObject(selectedEditorGameObjectId);
+			if (selectedEditorGameObject != nullptr) {
+				selectedObjectLabel = selectedEditorGameObject->name.c_str();
+
+				if (previousSelectedEditorGameObjectId != selectedEditorGameObjectId) {
+					strncpy_s(
+						selectedGameObjectName,
+						sizeof(selectedGameObjectName),
+						selectedEditorGameObject->name.c_str(),
+						_TRUNCATE);
+					selectedGameObjectName[sizeof(selectedGameObjectName) - 1] = '\0';
+					previousSelectedEditorGameObjectId = selectedEditorGameObjectId;
+				}
+			}
+
 			ImGui::Text("選択: %s", selectedObjectLabel);
 			ImGui::Separator();
+			if (selectedEditorGameObject != nullptr) {
+				constexpr auto kEditorScenePath = "resources/editorScene.scene";
+				constexpr auto kEditorPrefabPath = "resources/editorPrefab.prefab";
+
+				if (ImGui::CollapsingHeader("GameObject", ImGuiTreeNodeFlags_DefaultOpen)) {
+					ImGui::Checkbox("有効", &selectedEditorGameObject->isActive);
+					ImGui::InputText("名前", selectedGameObjectName, _countof(selectedGameObjectName));
+
+					if (ImGui::IsItemDeactivatedAfterEdit()) {
+						editorScene.PushUndo();
+						editorScene.RenameGameObject(selectedEditorGameObject->id, selectedGameObjectName);
+					}
+
+					bool isGameObjectTransformChanged = false;
+					isGameObjectTransformChanged |= ImGui::DragFloat3("位置", &selectedEditorGameObject->translate.x, 0.01f);
+					isGameObjectTransformChanged |= ImGui::DragFloat3("回転", &selectedEditorGameObject->rotate.x, 0.01f);
+					isGameObjectTransformChanged |= ImGui::DragFloat3("拡大", &selectedEditorGameObject->scale.x, 0.01f, 0.01f, 100.0f);
+					if (isGameObjectTransformChanged &&
+						selectedPlacedSceneObjectIndex >= 0 &&
+						selectedPlacedSceneObjectIndex < static_cast<int32_t>(editorSceneObjects.size())) {
+						EditorSceneObject& sceneObject =
+							editorSceneObjects[static_cast<size_t>(selectedPlacedSceneObjectIndex)];
+						if (sceneObject.gameObjectId == selectedEditorGameObject->id) {
+							sceneObject.transform.translate = selectedEditorGameObject->translate;
+							sceneObject.transform.rotate = selectedEditorGameObject->rotate;
+							sceneObject.transform.scale = selectedEditorGameObject->scale;
+						}
+					}
+
+					if (ImGui::Button("複製")) {
+						editorScene.PushUndo();
+						selectedEditorGameObjectId = editorScene.DuplicateGameObject(selectedEditorGameObject->id);
+						previousSelectedEditorGameObjectId = -1;
+						syncLegacySelection();
+					}
+					ImGui::SameLine();
+					if (ImGui::Button("削除")) {
+						ImGui::OpenPopup("GameObject削除確認");
+					}
+					ImGui::SameLine();
+					if (ImGui::Button("Undo")) {
+						editorScene.Undo();
+						syncLegacySelection();
+					}
+					ImGui::SameLine();
+					if (ImGui::Button("Redo")) {
+						editorScene.Redo();
+						syncLegacySelection();
+					}
+
+					if (ImGui::BeginPopupModal("GameObject削除確認", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+						ImGui::Text("選択中のGameObjectを削除しますか？");
+						if (ImGui::Button("削除する")) {
+							editorScene.PushUndo();
+							editorScene.DeleteGameObject(selectedEditorGameObjectId);
+							selectedEditorGameObjectId = editorScene.GetGameObjects().empty()
+								                             ? -1
+								                             : editorScene.GetGameObjects()[0].id;
+							previousSelectedEditorGameObjectId = -1;
+							selectedEditorGameObject = editorScene.FindGameObject(selectedEditorGameObjectId);
+							ImGui::CloseCurrentPopup();
+						}
+						ImGui::SameLine();
+						if (ImGui::Button("キャンセル")) {
+							ImGui::CloseCurrentPopup();
+						}
+						ImGui::EndPopup();
+					}
+				}
+
+				if (ImGui::CollapsingHeader("Scene / Prefab", ImGuiTreeNodeFlags_DefaultOpen)) {
+					if (ImGui::Button("Scene保存")) {
+						editorScene.SaveScene(kEditorScenePath);
+					}
+					ImGui::SameLine();
+					if (ImGui::Button("Scene読込")) {
+						if (editorScene.LoadScene(kEditorScenePath) && !editorScene.GetGameObjects().empty()) {
+							selectedEditorGameObjectId = editorScene.GetGameObjects()[0].id;
+							previousSelectedEditorGameObjectId = -1;
+							syncLegacySelection();
+						}
+					}
+
+					if (ImGui::Button("Prefab保存")) {
+						editorScene.SavePrefab(selectedEditorGameObject->id, kEditorPrefabPath);
+					}
+					ImGui::SameLine();
+					if (ImGui::Button("Prefab生成")) {
+						editorScene.PushUndo();
+						int32_t prefabId = editorScene.InstantiatePrefab(kEditorPrefabPath);
+						if (prefabId >= 0) {
+							selectedEditorGameObjectId = prefabId;
+							previousSelectedEditorGameObjectId = -1;
+						}
+					}
+				}
+
+				if (ImGui::CollapsingHeader("Components", ImGuiTreeNodeFlags_DefaultOpen)) {
+					const char* componentNames[] = {
+						"ModelRenderer",
+						"SpriteRenderer",
+						"Light",
+						"Camera",
+						"AudioSource",
+					};
+					ImGui::Combo("追加するComponent", &selectedAddComponentIndex, componentNames, _countof(componentNames));
+					if (ImGui::Button("Component追加")) {
+						editorScene.PushUndo();
+						editorScene.AddComponent(selectedEditorGameObject->id,
+						                         ComponentTypeFromIndex(selectedAddComponentIndex));
+						syncLegacySelection();
+					}
+
+					int32_t removeComponentIndex = -1;
+					for (int32_t componentIndex = 0;
+					     componentIndex < static_cast<int32_t>(selectedEditorGameObject->components.size());
+					     ++componentIndex) {
+						EditorComponent& component = selectedEditorGameObject->components[static_cast<size_t>(
+							componentIndex)];
+						ImGui::PushID(componentIndex);
+						if (ImGui::TreeNodeEx(ToString(component.type).c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+							ImGui::Checkbox("有効", &component.isActive);
+							if (!component.assetPath.empty()) {
+								ImGui::TextWrapped("Asset: %s", component.assetPath.c_str());
+							}
+							ImGui::ColorEdit3("色", &component.color.x);
+							ImGui::DragFloat("強さ", &component.intensity, 0.01f, 0.0f, 10.0f);
+							if (component.type != EditorComponentType::Transform && ImGui::Button("Component削除")) {
+								removeComponentIndex = componentIndex;
+							}
+							ImGui::TreePop();
+						}
+						ImGui::PopID();
+					}
+
+					if (removeComponentIndex >= 0) {
+						editorScene.PushUndo();
+						EditorComponentType removeType = selectedEditorGameObject->components[static_cast<size_t>(
+							removeComponentIndex)].type;
+						editorScene.RemoveComponent(selectedEditorGameObject->id, removeType);
+						syncLegacySelection();
+					}
+				}
+			}
 			if (ImGui::CollapsingHeader("環境 / 背景", ImGuiTreeNodeFlags_DefaultOpen)) {
 				ImGui::ColorEdit4("背景色", sceneClearColor);
 				ImGui::Checkbox("ギズモ表示", &isSceneGizmoVisible);
@@ -2309,11 +2588,61 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			ImGui::End();
 
 			ImGui::SetNextWindowPos(ImVec2(projectWidth - 3.0f, bottomY), ImGuiCond_Always);
-			ImGui::SetNextWindowSize(ImVec2(6.0f, editorBottomHeight), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(splitterHitWidth, editorBottomHeight), ImGuiCond_Always);
 			ImGui::Begin("ProjectConsoleSplitter", nullptr, splitterFlags);
+			ImGui::GetWindowDrawList()->AddRectFilled(
+				ImVec2(projectWidth - 1.0f, bottomY),
+				ImVec2(projectWidth + 1.0f, bottomY + editorBottomHeight),
+				IM_COL32(95, 115, 140, 255));
 			ImGui::InvisibleButton("ProjectConsoleSplitterButton", ImGui::GetContentRegionAvail());
 			if (ImGui::IsItemActive()) {
 				editorProjectWidth += ImGui::GetIO().MouseDelta.x;
+			}
+			ImGui::End();
+
+			ImGui::SetNextWindowPos(ImVec2(editorLeftWidth - splitterHitWidth * 0.5f, editorMenuHeight),
+			                        ImGuiCond_Always);
+			ImGui::SetNextWindowSize(
+				ImVec2(splitterHitWidth, editorWindowHeight - editorMenuHeight), ImGuiCond_Always);
+			ImGui::Begin("LeftSplitter", nullptr, splitterFlags);
+			ImGui::GetWindowDrawList()->AddRectFilled(
+				ImVec2(editorLeftWidth - 1.0f, editorMenuHeight),
+				ImVec2(editorLeftWidth + 1.0f, editorWindowHeight),
+				IM_COL32(95, 115, 140, 255));
+			ImGui::InvisibleButton("LeftSplitterButton", ImGui::GetContentRegionAvail());
+			if (ImGui::IsItemActive()) {
+				editorLeftWidth += ImGui::GetIO().MouseDelta.x;
+			}
+			ImGui::End();
+
+			float rightSplitterX = editorWindowWidth - editorRightWidth;
+			ImGui::SetNextWindowPos(ImVec2(rightSplitterX - splitterHitWidth * 0.5f, editorMenuHeight),
+			                        ImGuiCond_Always);
+			ImGui::SetNextWindowSize(
+				ImVec2(splitterHitWidth, editorWindowHeight - editorMenuHeight), ImGuiCond_Always);
+			ImGui::Begin("RightSplitter", nullptr, splitterFlags);
+			ImGui::GetWindowDrawList()->AddRectFilled(
+				ImVec2(rightSplitterX - 1.0f, editorMenuHeight),
+				ImVec2(rightSplitterX + 1.0f, editorWindowHeight),
+				IM_COL32(95, 115, 140, 255));
+			ImGui::InvisibleButton("RightSplitterButton", ImGui::GetContentRegionAvail());
+			if (ImGui::IsItemActive()) {
+				editorRightWidth -= ImGui::GetIO().MouseDelta.x;
+			}
+			ImGui::End();
+
+			float bottomSplitterY = editorWindowHeight - editorBottomHeight;
+			ImGui::SetNextWindowPos(ImVec2(0.0f, bottomSplitterY - splitterHitWidth * 0.5f), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(
+				ImVec2(editorWindowWidth - editorRightWidth, splitterHitWidth), ImGuiCond_Always);
+			ImGui::Begin("BottomSplitter", nullptr, splitterFlags);
+			ImGui::GetWindowDrawList()->AddRectFilled(
+				ImVec2(0.0f, bottomSplitterY - 1.0f),
+				ImVec2(editorWindowWidth - editorRightWidth, bottomSplitterY + 1.0f),
+				IM_COL32(95, 115, 140, 255));
+			ImGui::InvisibleButton("BottomSplitterButton", ImGui::GetContentRegionAvail());
+			if (ImGui::IsItemActive()) {
+				editorBottomHeight -= ImGui::GetIO().MouseDelta.y;
 			}
 			ImGui::End();
 			ImGui::Render();
@@ -2377,14 +2706,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			commandList->ClearDepthStencilView(
 				dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
-
-			commandList->SetGraphicsRootConstantBufferView(0, spriteMaterialResource->GetGPUVirtualAddress());
-			commandList->SetGraphicsRootConstantBufferView(
-				1, spriteTransformationMatrixResource->GetGPUVirtualAddress());
-			commandList->SetGraphicsRootDescriptorTable(3, textureSrvHandlesGPU[spriteTextureIndex]);
-			commandList->IASetVertexBuffers(0, 1, &spriteVertexBufferView);
-			commandList->IASetIndexBuffer(&spriteIndexBufferView);
-			commandList->DrawIndexedInstanced(_countof(spriteIndices), 1, 0, 0, 0);
 
 			commandList->SetGraphicsRootConstantBufferView(0, sphereMaterialResource->GetGPUVirtualAddress());
 			commandList->SetGraphicsRootConstantBufferView(

@@ -1,9 +1,11 @@
-struct Material
+﻿struct Material
 {
     float4 color;
 };
 
 ConstantBuffer<Material> gMaterial : register(b0);
+Texture2D<float4> gTexture : register(t0);
+SamplerState gSampler : register(s0);
 
 struct PixelShaderInput
 {
@@ -19,6 +21,6 @@ struct PixelShaderOutput
 PixelShaderOutput main(PixelShaderInput input)
 {
     PixelShaderOutput output;
-    output.color = gMaterial.color;
+    output.color = gTexture.Sample(gSampler, input.texcoord) * gMaterial.color;
     return output;
 }

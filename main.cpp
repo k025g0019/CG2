@@ -1,7 +1,9 @@
 #pragma warning(push, 0)
 #include <Windows.h>
+#include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <ctime>
 #include <d3d12.h>
@@ -597,22 +599,22 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		return 1;
 	}
 
-	// 前後関係を確認するため、交差する三角形 2 枚分の頂点データを用意する
+	// 三角錐を構成する三角形を用意し、UV と DepthBuffer の確認に使う
 	VertexData vertices[9] = {
 		// 面1
-		{{-0.5f, -0.5f, 0.0f, 1.0f}, {0, 0}},
-		{{0.0f, 0.0f, -1.0f, 1.0f}, {0, 0}},
-		{{0.5f, -0.5f, 0.0f, 1.0f}, {0, 0}},
+		{{-0.5f, -0.5f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+		{{0.0f, 0.0f, -1.0f, 1.0f}, {0.5f, 0.0f}},
+		{{0.5f, -0.5f, 0.0f, 1.0f}, {1.0f, 1.0f}},
 
 		// 面2
-		{{0.5f, -0.5f, 0.0f, 1.0f}, {0, 0}},
-		{{0.0f, 0.0f, -1.0f, 1.0f}, {0, 0}},
-		{{0.0f, 0.5f, 0.0f, 1.0f}, {0, 0}},
+		{{0.5f, -0.5f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+		{{0.0f, 0.0f, -1.0f, 1.0f}, {0.5f, 0.0f}},
+		{{0.0f, 0.5f, 0.0f, 1.0f}, {1.0f, 1.0f}},
 
 		// 面3
-		{{0.0f, 0.5f, 0.0f, 1.0f}, {0, 0}},
-		{{0.0f, 0.0f, -1.0f, 1.0f}, {0, 0}},
-		{{-0.5f, -0.5f, 0.0f, 1.0f}, {0, 0}},
+		{{0.0f, 0.5f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+		{{0.0f, 0.0f, -1.0f, 1.0f}, {0.5f, 0.0f}},
+		{{-0.5f, -0.5f, 0.0f, 1.0f}, {1.0f, 1.0f}},
 	};
 
 	Transforms transform{
@@ -625,6 +627,14 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		.rotate = {0.0f, 0.0f, 0.0f},
 		.translate = {0.0f, 0.0f, -5.0f}
 	};
+	// ImGui から追加で操作する SRT。初期値は演出を変えない値にする
+	Transforms triangleSrt{
+		.scale = {1.0f, 1.0f, 1.0f},
+		.rotate = {0.0f, 0.0f, 0.0f},
+		.translate = {0.0f, 0.0f, 0.0f}
+	};
+	float triangleColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+	int32_t selectedTextureIndex = 0;
 	// 頂点バッファ用のリソースを作成する
 	ID3D12Resource* vertexResource = CreateBufferResource(device, sizeof(vertices));
 
@@ -651,10 +661,35 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	scissorRect.right = kClientWidth;
 	scissorRect.bottom = kClientHeight;
 
-	// テクスチャ画像を読み込み、GPU リソースを作成する
-	DirectX::ScratchImage mipImages = LoadTexture(L"resources/uvChecker.png");
-	const DirectX::TexMetadata& metadata = mipImages.GetMetadata();
-	ID3D12Resource* textureResource = CreateTextureResource(device, metadata);
+	// テクスチャ画像を読み込み、手動切り替え用の手作りテクスチャも用意する
+	DirectX::ScratchImage uvCheckerMipImages = LoadTexture(L"resources/uvChecker.png");
+	DirectX::ScratchImage redWhiteMipImages{};
+	hr = redWhiteMipImages.Initialize2D(DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, 64, 64, 1, 1);
+	assert(SUCCEEDED(hr));
+
+	const DirectX::Image* redWhiteImage = redWhiteMipImages.GetImage(0, 0, 0);
+	for (size_t y = 0; y < redWhiteImage->height; ++y) {
+		for (size_t x = 0; x < redWhiteImage->width; ++x) {
+			uint8_t* pixel = redWhiteImage->pixels + y * redWhiteImage->rowPitch + x * 4;
+			bool isUpper = y < redWhiteImage->height / 2;
+			pixel[0] = isUpper ? 255 : 255;
+			pixel[1] = isUpper ? 0 : 255;
+			pixel[2] = isUpper ? 0 : 255;
+			pixel[3] = 255;
+		}
+	}
+
+	const DirectX::ScratchImage* textureImages[] = {
+		&uvCheckerMipImages,
+		&redWhiteMipImages,
+	};
+	ID3D12Resource* textureResources[_countof(textureImages)] = {};
+	ID3D12Resource* intermediateResources[_countof(textureImages)] = {};
+	D3D12_GPU_DESCRIPTOR_HANDLE textureSrvHandlesGPU[_countof(textureImages)] = {};
+
+	for (uint32_t textureIndex = 0; textureIndex < _countof(textureImages); ++textureIndex) {
+		textureResources[textureIndex] = CreateTextureResource(device, textureImages[textureIndex]->GetMetadata());
+	}
 
 	// カメラ行列と射影行列を作成し、3D 空間から画面へ投影する準備を行う
 	Matrix4x4 cameraMatrix = MakeAffineMatrix(
@@ -684,21 +719,28 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	hr = commandList->Reset(commandAllocator, nullptr);
 	assert(SUCCEEDED(hr));
 
-	ID3D12Resource* intermediateResource = UploadTextureData(device, commandList, textureResource, mipImages);
+	for (uint32_t textureIndex = 0; textureIndex < _countof(textureImages); ++textureIndex) {
+		intermediateResources[textureIndex] =
+			UploadTextureData(device, commandList, textureResources[textureIndex], *textureImages[textureIndex]);
+	}
 
-	// SRV ヒープの 0 番は ImGui が使うため、1 番にテクスチャ SRV を配置する
-	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-	srvDesc.Format = metadata.format;
-	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-	srvDesc.Texture2D.MipLevels = static_cast<UINT>(metadata.mipLevels);
-
+	// SRV ヒープの 0 番は ImGui が使うため、1 番以降に描画用テクスチャを配置する
 	UINT srvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-	D3D12_CPU_DESCRIPTOR_HANDLE textureSrvHandleCPU = srvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
-	textureSrvHandleCPU.ptr += srvDescriptorSize;
-	D3D12_GPU_DESCRIPTOR_HANDLE textureSrvHandleGPU = srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
-	textureSrvHandleGPU.ptr += srvDescriptorSize;
-	device->CreateShaderResourceView(textureResource, &srvDesc, textureSrvHandleCPU);
+	for (uint32_t textureIndex = 0; textureIndex < _countof(textureImages); ++textureIndex) {
+		const DirectX::TexMetadata& metadata = textureImages[textureIndex]->GetMetadata();
+
+		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+		srvDesc.Format = metadata.format;
+		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MipLevels = static_cast<UINT>(metadata.mipLevels);
+
+		D3D12_CPU_DESCRIPTOR_HANDLE textureSrvHandleCPU = srvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
+		textureSrvHandleCPU.ptr += srvDescriptorSize * (textureIndex + 1);
+		textureSrvHandlesGPU[textureIndex] = srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
+		textureSrvHandlesGPU[textureIndex].ptr += srvDescriptorSize * (textureIndex + 1);
+		device->CreateShaderResourceView(textureResources[textureIndex], &srvDesc, textureSrvHandleCPU);
+	}
 
 	hr = commandList->Close();
 	assert(SUCCEEDED(hr));
@@ -719,6 +761,11 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 	ImGui::StyleColorsDark();
+	ImGuiIO& io = ImGui::GetIO();
+	auto japaneseFontPath = "C:/Windows/Fonts/meiryo.ttc";
+	if (std::filesystem::exists(japaneseFontPath)) {
+		io.Fonts->AddFontFromFileTTF(japaneseFontPath, 16.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
+	}
 	ImGui_ImplWin32_Init(windowHandle);
 	ImGui_ImplDX12_Init(
 		device,
@@ -727,7 +774,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		srvDescriptorHeap,
 		srvDescriptorHeap->GetCPUDescriptorHandleForHeapStart(),
 		srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
-	ImGuiIO& io = ImGui::GetIO();
 	io.Fonts->Build();
 #endif
 	while (message.message != WM_QUIT) {
@@ -737,16 +783,28 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		}
 		else {
 #ifdef USE_IMGUI
-			// ImGui に新しいフレームの開始を通知し、デモウィンドウを描画対象へ追加する
+			// ImGui で三角錐の見た目と SRT を操作する
 			ImGui_ImplDX12_NewFrame();
 			ImGui_ImplWin32_NewFrame();
 			ImGui::NewFrame();
-			ImGui::ShowDemoWindow();
+
+			ImGui::Begin("Triangle Settings");
+			ImGui::ColorEdit4("三角形の色", triangleColor);
+			ImGui::DragFloat3("Translate", &triangleSrt.translate.x, 0.01f);
+			ImGui::DragFloat3("Rotate", &triangleSrt.rotate.x, 0.01f);
+			ImGui::DragFloat3("Scale", &triangleSrt.scale.x, 0.01f, 0.01f, 10.0f);
+
+			const char* textureNames[] = {
+				"uvChecker",
+				"redWhite",
+			};
+			ImGui::Combo("Texture", &selectedTextureIndex, textureNames, _countof(textureNames));
+			ImGui::Text("DepthBuffer: 有効");
+			ImGui::End();
 			ImGui::Render();
 #endif
 
-			// 毎フレーム Y 軸回転を進め、World と WVP の行列を更新する
-
+			// 既存の接近演出を維持し、到達後だけ 0,0,0 で回転させる
 			if (transform.translate.z > -5.0f) {
 				speed *= 1.03f;
 				transform.translate.z += -speed;
@@ -757,7 +815,31 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 				transform.rotate.x += 0.005f;
 			}
 
-			Matrix4x4 worldMatrix = MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
+			selectedTextureIndex = (std::clamp)(
+				selectedTextureIndex,
+				0,
+				static_cast<int32_t>(_countof(textureImages)) - 1);
+
+			Transforms renderTransform{
+				.scale = {
+					transform.scale.x * triangleSrt.scale.x,
+					transform.scale.y * triangleSrt.scale.y,
+					transform.scale.z * triangleSrt.scale.z
+				},
+				.rotate = {
+					transform.rotate.x + triangleSrt.rotate.x,
+					transform.rotate.y + triangleSrt.rotate.y,
+					transform.rotate.z + triangleSrt.rotate.z
+				},
+				.translate = {
+					transform.translate.x + triangleSrt.translate.x,
+					transform.translate.y + triangleSrt.translate.y,
+					transform.translate.z + triangleSrt.translate.z
+				}
+			};
+
+			Matrix4x4 worldMatrix = MakeAffineMatrix(renderTransform.scale, renderTransform.rotate,
+			                                         renderTransform.translate);
 			Matrix4x4 worldViewProjectionMatrix = Multiply(worldMatrix, Multiply(viewMatrix, projectionMatrix));
 			*wvpData = worldViewProjectionMatrix;
 			hr = commandAllocator->Reset();
@@ -786,20 +868,31 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			commandList->SetGraphicsRootConstantBufferView(1, wvpResource->GetGPUVirtualAddress());
 			ID3D12DescriptorHeap* descriptorHeaps[] = {srvDescriptorHeap};
 			commandList->SetDescriptorHeaps(1, descriptorHeaps);
-			commandList->SetGraphicsRootDescriptorTable(2, textureSrvHandleGPU);
+			commandList->SetGraphicsRootDescriptorTable(
+				2, textureSrvHandlesGPU[static_cast<size_t>(selectedTextureIndex)]);
 			commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			commandList->IASetVertexBuffers(0, 1, &vertexBufferView);
 			D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = dsvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
 			commandList->OMSetRenderTargets(1, &rtvHandles[backBufferIndex], FALSE, &dsvHandle);
 
 			// まずは画面を青系の色でクリアしてから三角形を描画する
-			float clearColor[] = {0.1f, 0.25f, 0.5f, 1.0f};
+			float clearColor[] = {0.0f, 0.0f, 0.0f, 1.0f};
 			commandList->ClearRenderTargetView(rtvHandles[backBufferIndex], clearColor, 0, nullptr);
 			commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
-			materialDatas[0]->color = {1.0f, 0.0f, 0.0f, 1.0f};
-			materialDatas[1]->color = {0.0f, 1.0f, 0.0f, 1.0f};
-			materialDatas[2]->color = {0.0f, 0.0f, 1.0f, 1.0f};
+			materialDatas[0]->color = {triangleColor[0], triangleColor[1], triangleColor[2], triangleColor[3]};
+			materialDatas[1]->color = {
+				triangleColor[0] * 0.85f,
+				triangleColor[1] * 0.85f,
+				triangleColor[2] * 0.85f,
+				triangleColor[3]
+			};
+			materialDatas[2]->color = {
+				triangleColor[0] * 0.70f,
+				triangleColor[1] * 0.70f,
+				triangleColor[2] * 0.70f,
+				triangleColor[3]
+			};
 
 			commandList->SetGraphicsRootConstantBufferView(
 				0,
@@ -865,9 +958,16 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 
 	// 作成した DirectX 関連オブジェクトを最後にすべて解放する
 	fence->Release();
-	intermediateResource->Release();
-	textureResource->Release();
+	for (ID3D12Resource* intermediateResource : intermediateResources) {
+		intermediateResource->Release();
+	}
+	for (ID3D12Resource* textureResource : textureResources) {
+		textureResource->Release();
+	}
 	materialResource->Release();
+	for (ID3D12Resource* faceMaterialResource : materialResources) {
+		faceMaterialResource->Release();
+	}
 	vertexResource->Release();
 	depthStencilResource->Release();
 	graphicsPipelineState->Release();

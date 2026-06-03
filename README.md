@@ -1,1118 +1,235 @@
-﻿# CG2 README
+﻿# CG2 エディタ README
 
-この README は、**コードを読む前に「どこで何をしているか」をつかむための説明**です。  
-全部の処理を同じ重さで並べるのではなく、**実際に触ることが多いエディタ機能と描画処理の流れ**を中心にまとめています。
+CG2 エディタは、DirectX12、ImGui Docking、ImGuizmo、Jolt Physics を使った Unity 風の簡易ゲームエンジン / エディタです。  
+GameObject を Scene に置き、インスペクターから日本語名のコンポーネントを追加して、描画、入力、物理、保存、Prefab、Console 確認を行えます。
 
----
+## 機能レベルの見方
 
-## 全体像
+| レベル | 意味 |
+| --- | --- |
+| 実装済み | エディタ上で実際に使える段階です。 |
+| 一部実装 | 基本動作はありますが、Unity と同じ完成度ではありません。 |
+| 追加・表示 | コンポーネント追加や Inspector 表示はできますが、Play 中の本格動作はまだ弱い段階です。 |
+| 未対応 | 今後追加する必要がある機能です。 |
 
-このプログラムは、**DirectX12 と ImGui で作った簡易ゲームエディタの原型**です。
+## 全体機能
 
-- DirectX12 でモデルとスプライトを描画する
-- ImGui で Hierarchy / Scene / Inspector / Project / Console を表示する
-- Scene 上でカメラ操作、アセットのドラッグ追加、移動 / 回転 / 拡縮ギズモ操作を行う
-- GameObject と Component を `EditorScene` に持たせる
-- Scene 保存 / 読み込み、Prefab 保存 / 生成、Undo / Redo を行う
+| 機能 | レベル | 内容 |
+| --- | --- | --- |
+| Unity 風レイアウト | 実装済み | ヒエラルキー、シーン、ゲーム、インスペクター、Project、Console を表示します。 |
+| Docking UI | 実装済み | ImGui Docking により、各パネルをドラッグ移動、ドッキング、分離できます。 |
+| Scene View | 実装済み | 編集用カメラで GameObject、ライト、カメラ、ガイド線、当たり判定デバッグを見られます。 |
+| Game View | 一部実装 | Camera コンポーネントの視点で実行確認できます。Unity の Game View ほど描画設定は多くありません。 |
+| Project | 一部実装 | `resources` 内の PNG、JPG、OBJ、MTL、FBX、WAV を表示します。追加したファイルも自動で出ます。 |
+| Console | 一部実装 | 操作ログ、物理ログ、生成ログを画面に表示します。スタックトレースやクリック移動は未対応です。 |
+| Play / Stop | 一部実装 | Play で物理や入力を動かし、Stop で Play 前の Scene 状態へ戻します。 |
+| Undo / Redo | 一部実装 | 生成、削除、Transform など一部操作を戻せます。すべての Inspector 変更までは未対応です。 |
 
-大きな流れは次のとおりです。
+## Scene と GameObject
+
+| 機能 | レベル | 内容 |
+| --- | --- | --- |
+| GameObject 作成 | 実装済み | 空の GameObject、モデル、スプライト、ライト、カメラを Scene に追加できます。 |
+| GameObject 選択 | 実装済み | ヒエラルキーまたは Scene 上のオブジェクトから選択できます。 |
+| 名前編集 | 実装済み | インスペクターで GameObject 名を変更できます。 |
+| 有効 / 無効 | 実装済み | GameObject と各コンポーネントの有効フラグを切り替えられます。 |
+| タグ / レイヤー | 一部実装 | Inspector 表示、保存、物理レイヤー判定の入口があります。Unity の Tag Manager 相当はまだ弱いです。 |
+| 親子付け | 一部実装 | ヒエラルキーで階層を持てます。Prefab 差分や複雑な親子 Transform 制御は未完成です。 |
+| 複製 / 削除 | 一部実装 | GameObject の複製と削除ができます。削除時は描画側の見た目も同期します。 |
+| 複数選択 | 未対応 | 複数 GameObject の一括編集はまだありません。 |
+
+## Transform とギズモ
+
+| 機能 | レベル | 内容 |
+| --- | --- | --- |
+| 位置 | 実装済み | X / Y / Z を Inspector で同じ行に並べて編集できます。 |
+| 回転 | 実装済み | X / Y / Z 回転を編集できます。Scene ギズモは `E` で回転モードになります。 |
+| 拡縮 | 実装済み | X / Y / Z スケールを編集できます。Scene ギズモは `R` で拡縮モードになります。 |
+| 移動ギズモ | 実装済み | `W` で移動モードになり、Scene 上で引っ張って動かせます。 |
+| Local / World | 一部実装 | Local / World の切り替えがあります。Unity と同等の全操作感ではありません。 |
+| Snap | 一部実装 | Snap の状態表示があります。細かいグリッド吸着は今後強化が必要です。 |
+| Scene カメラ操作 | 実装済み | 右ドラッグ回転、中ドラッグ平行移動、ホイール前後移動、WASD 移動に対応しています。 |
+| ガイド線 | 実装済み | Scene 上に床グリッドの目安線を表示します。 |
+
+## アセット
+
+| 機能 | レベル | 内容 |
+| --- | --- | --- |
+| PNG | 一部実装 | Project にサムネイル表示し、スプライトとして Scene に配置できます。 |
+| JPG | 追加・表示 | Project に表示できます。Scene 配置用テクスチャ登録はまだ限定的です。 |
+| OBJ | 一部実装 | `plane.obj` などを 3D モデルとして配置できます。複雑な OBJ の完全な Material 読み込みは限定的です。 |
+| FBX 基本形 | 一部実装 | FBX ファイル名から内部プリミティブへ対応付けて表示します。 |
+| 球系 FBX | 一部実装 | `sphere.fbx`、`ball.fbx` などは球メッシュとして表示し、球の当たり判定を自動追加します。 |
+| WAV | 追加・表示 | Project に表示できます。AudioSource の本格再生設定はまだ限定的です。 |
+| Asset Database | 未対応 | GUID、meta、参照関係、参照切れ検出はまだありません。 |
+| Importer | 未対応 | Unity の Import Settings のような詳細変換設定はまだありません。 |
+
+## 基本形 3D オブジェクト
+
+| 基本形 | レベル | 内容 |
+| --- | --- | --- |
+| Cube | 実装済み | 1 x 1 x 1 の立方体を置けます。箱の当たり判定と Rigidbody を自動追加します。 |
+| Box | 実装済み | 横長の箱を置けます。箱の当たり判定と Rigidbody を自動追加します。 |
+| Cylinder | 実装済み | 円柱を置けます。初期当たり判定は箱近似です。 |
+| Cone | 実装済み | 円錐を置けます。初期当たり判定は箱近似です。 |
+| Torus | 実装済み | ドーナツ形状を置けます。初期当たり判定は箱近似です。 |
+| Ico | 実装済み | 低ポリゴンのダイヤ形に近い球風メッシュを置けます。滑らかな球ではありません。 |
+| Sphere | 実装済み | `sphere` / `ball` 系 FBX を滑らかな球として置けます。球の当たり判定を自動追加します。 |
+
+## 描画
+
+| 機能 | レベル | 内容 |
+| --- | --- | --- |
+| 3D モデル描画 | 一部実装 | DirectX12 で基本形メッシュ、OBJ、FBX 対応プリミティブを描画します。 |
+| 2D スプライト描画 | 一部実装 | 登録済み PNG を Scene にスプライトとして表示します。 |
+| Material 色 | 一部実装 | MeshRenderer / SpriteRenderer の色を Inspector から変更できます。初期値は白です。 |
+| Texture 表示 | 一部実装 | 登録済みテクスチャをモデルやスプライトに使います。任意テクスチャ割り当て UI は限定的です。 |
+| Directional Light | 一部実装 | 平行光源の色、向き、強さを持ちます。影や複数ライトは未対応です。 |
+| Camera | 一部実装 | Game View 用の視点として使えます。FOV や Culling Mask などは限定的です。 |
+| 背景色 | 実装済み | Inspector から Scene 背景色を変えられます。 |
+| Gizmo / Icon | 一部実装 | ライト、カメラ、当たり判定のデバッグ表示があります。 |
+| Shader 管理 | 未対応 | Unity の Shader Graph や Material Inspector 相当はありません。 |
+
+## 物理
+
+物理は Jolt Physics 5.5.0 を使っています。Play 中に固定時間ステップで 3D 物理を更新します。
+
+| 機能 | レベル | 内容 |
+| --- | --- | --- |
+| 3D 重力 | 実装済み | Rigidbody と Collider を持つ GameObject が、3 次元空間で重力により落下します。 |
+| Rigidbody | 一部実装 | 質量、重力使用、速度、角速度、線形減衰、角度減衰、反発、Freeze Position / Rotation を扱います。 |
+| Box Collider | 実装済み | 箱の当たり判定です。床、壁、箱同士の押し返しに使えます。 |
+| Sphere Collider | 実装済み | 球の当たり判定です。球 FBX や低ポリ球に自動で付きます。 |
+| Capsule Collider | 一部実装 | Jolt の Capsule Shape として扱います。キャラクター用の基礎形状に使えます。 |
+| Mesh Collider | 一部実装 | 静的形状の入口があります。Unity の複雑な Mesh Collider と同等ではありません。 |
+| Terrain Collider | 追加・表示 | コンポーネント追加と Inspector 表示はあります。本格 Terrain 衝突は未完成です。 |
+| Trigger | 一部実装 | 押し返さない当たり判定として区別します。イベントログの入口があります。 |
+| Collision | 一部実装 | 押し返す衝突として扱います。Jolt の接触結果を Play ランタイムへ渡し、OnCollision 系の元データとして使える段階です。 |
+| 物理イベント | 一部実装 | Enter / Stay / Exit を両オブジェクト向けイベント構造体へ変換し、FixedUpdate 前に Script 側へ渡します。ユーザー自作関数への最終ディスパッチは今後です。 |
+| Raycast | 一部実装 | Scene 内 Collider に Ray を飛ばし、命中 GameObject、位置、法線、距離を返す API 入口があります。 |
+| SphereCast | 一部実装 | 太さのある Raycast として Jolt に問い合わせる API 入口があります。 |
+| CapsuleCast | 一部実装 | カプセル形状を移動させる問い合わせ API 入口があります。 |
+| OverlapSphere | 一部実装 | 指定範囲に重なった GameObject 一覧を返す API 入口があります。 |
+| OverlapBox | 一部実装 | 指定ボックス範囲に重なった GameObject 一覧を返す API 入口があります。 |
+| AddForce / AddImpulse / SetVelocity | 一部実装 | Dynamic Rigidbody に力、瞬間力、速度を与えるランタイム API 入口があります。 |
+| Layer Collision Matrix | 一部実装 | レイヤー同士の衝突可否を物理処理で見る入口があります。専用 Project Settings UI は未完成です。 |
+| Physics Material | 一部実装 | 摩擦、静止摩擦、反発を Collider ごとに設定する入口があります。 |
+| FixedUpdate | 実装済み | Play 中の物理は固定時間ステップで進みます。 |
+| 連続衝突判定 | 一部実装 | 高速移動体向けの設定入口があります。Unity と同等の詳細設定は不足しています。 |
+| Character Controller | 一部実装 | Jolt CharacterVirtual を使い、重力、移動、接地の基礎処理があります。坂、段差の細かい調整は今後です。 |
+| Joint | 一部実装 | Fixed、Hinge、Spring、Character Joint を Jolt Constraint として作ります。細かい制限 UI はまだ少ないです。 |
+| Physics Debug | 一部実装 | Scene 上に Collider の形、Trigger 色、接触系ログを表示できます。接触点や法線の詳細表示は今後です。 |
+| Physics Settings | 一部実装 | 重力、固定更新時間、レイヤー判定の内部値があります。専用設定画面はまだありません。 |
+
+## 入力
+
+| 機能 | レベル | 内容 |
+| --- | --- | --- |
+| キーボード入力 | 一部実装 | 旧 Input コンポーネントに加え、PlayerInput で Actions アセットを読んで Move / Jump / Fire を扱えます。 |
+| Rigidbody 移動 | 一部実装 | Play 中は Transform 直書きではなく、Rigidbody / CharacterController の速度へ反映します。 |
+| マウス入力 | 一部実装 | Scene 操作と選択で使います。ゲーム入力としての設定 UI はまだ弱いです。 |
+| ゲームパッド | 未対応 | 統一 Input System とゲームパッド対応は今後です。 |
+| PlayerInput | 一部実装 | Actions、Default Map、Behavior、Move / Jump / Fire の Event 名を Inspector から設定できます。 |
+| Input Action | 一部実装 | `.inputactions` ファイルを作成し、Move / Jump / Fire の簡易 Action を読めます。 |
+
+## コンポーネント
+
+インスペクター下部の「コンポーネントを追加」から、日本語カテゴリで追加できます。  
+名前は、分かりやすいものは日本語、Unity 用語として認識しやすいものはカタカナ英語を使っています。
+
+| カテゴリ | レベル | 主な内容 |
+| --- | --- | --- |
+| 基本 | 実装済み | Transform、RectTransform、Canvas、GameObject、MonoBehaviour など。 |
+| 描画 | 一部実装 | MeshFilter、MeshRenderer、SpriteRenderer、LineRenderer、TrailRenderer など。 |
+| カメラ | 一部実装 | Camera、AudioListener、Cinemachine 風カメラなど。 |
+| ライト・環境 | 一部実装 | Light、Reflection Probe、Volume など。 |
+| 3D 物理 | 一部実装 | Rigidbody、箱 / 球 / カプセル / メッシュ当たり判定、CharacterController、Joint など。 |
+| 2D 物理 | 追加・表示 | Rigidbody2D、BoxCollider2D、CircleCollider2D、各種 Joint2D など。 |
+| アニメーション | 追加・表示 | Animator、Animation、各種 Constraint、PlayableDirector など。 |
+| オーディオ | 追加・表示 | AudioSource、AudioListener、各種 Audio Filter など。 |
+| UI | 追加・表示 | Button、Text、Image、Slider、Dropdown、Layout Group など。 |
+| 入力・イベント | 一部実装 | Input、EventSystem、PlayerInput など。 |
+| ナビゲーション・AI | 追加・表示 | NavMesh Agent、Obstacle、Surface など。 |
+| エフェクト | 追加・表示 | ParticleSystem、VisualEffect、Trail、Line、Lens Flare など。 |
+| 地形・タイルマップ | 追加・表示 | Terrain、Tilemap、Grid など。 |
+| FeelKit | 追加・表示 | FeelKit 触覚ソースをコンポーネントとして置く入口があります。 |
+
+## Script / MonoBehaviour 相当
+
+| 機能 | レベル | 内容 |
+| --- | --- | --- |
+| Start | 一部実装 | Play 開始時に呼ぶ入口があります。 |
+| Update | 一部実装 | 毎フレーム処理の入口があります。 |
+| FixedUpdate | 一部実装 | 物理固定更新と合わせる入口があります。 |
+| Stop | 一部実装 | Play 停止時に呼ぶ入口があります。 |
+| OnCollision / OnTrigger | 一部実装 | Jolt の Enter / Stay / Exit をイベント構造体として ScriptManager へ渡します。ユーザー自作 C++ 関数へ直接呼び分ける最終段は今後です。 |
+| ユーザー自作 C++ コンポーネント | 未対応 | エディタから新規 C++ クラスを作り、即追加する仕組みはまだありません。 |
+
+## PlayerInput の使い方
+
+1. Player 用 GameObject を選びます。
+2. `プレイヤー入力` コンポーネントを追加します。
+3. Inspector の `Create Actions...` を押します。
+4. `Actions` に作成された `.inputactions` が入っていることを確認します。
+5. `Default Map` は `Player` のまま使います。
+6. `Behavior` は `Invoke C++ Events` を使います。
+7. `Move / Jump / Fire` の Event 名を設定します。
+8. `Rigidbody + 当たり判定` または `CharacterController` を付けて `Play` を押します。
+
+作成される `.inputactions` の初期内容は次です。
 
 ```text
-WinMain()
-  ↓
-DirectInput / XAudio2 / DirectX12 を初期化
-  ↓
-Texture / Model / SRV / ImGui を準備
-  ↓
-毎フレーム入力を読む
-  ↓
-ImGui でエディタ UI を作る
-  ↓
-行列と定数バッファを更新する
-  ↓
-DirectX12 で Scene を描画する
-  ↓
-ImGui を重ねて表示する
+Action|Player|Move|Vector2|2DVector|W|S|A|D
+Action|Player|Jump|Button|Key|Space
+Action|Player|Fire|Button|Mouse|LeftButton
 ```
 
----
-
-## 起動と毎フレームの入口
-
-<details>
-<summary><strong>main.cpp:479: WinMain()</strong></summary>
-
-### コード
-
-```cpp
-// [Large] WinMain entry
-int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
-	CrashHandler crashHandler;
-	std::ofstream logStream("logs/application.log", std::ios::app);
-	Log(logStream, "application started");
-```
-
-### ここでやっていること
-
-- Windows アプリの入口です。
-- クラッシュハンドラとログ出力を準備します。
-- このあと DirectInput、XAudio2、DirectX12、ImGui の順で初期化します。
-
-### なぜここが重要か
-
-このファイルは `main.cpp` に処理が多いので、まず `WinMain()` の大きな区切りを見ると流れを追いやすくなります。  
-現在はエディタ UI、描画、入力、音声準備までこの関数内に集まっています。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:1336: メインループ</strong></summary>
-
-### コード
-
-```cpp
-while (message.message != WM_QUIT) {
-	if (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE) != FALSE) {
-		TranslateMessage(&message);
-		DispatchMessage(&message);
-	}
-	else {
-		memcpy(preKey, key, sizeof(key));
-		hr = keyboardDevice->Acquire();
-		hr = keyboardDevice->GetDeviceState(sizeof(key), key);
-```
-
-### ここでやっていること
-
-- Windows メッセージがあれば先に処理します。
-- メッセージがなければ 1 フレーム分の更新と描画を行います。
-- DirectInput でキーボード状態を読みます。
-
-### 処理の流れ
-
-```text
-OS メッセージ処理
-  ↓
-キーボード入力取得
-  ↓
-カメラ更新
-  ↓
-ImGui UI 作成
-  ↓
-行列更新
-  ↓
-DirectX12 描画
-  ↓
-Present
-```
-
-</details>
-
----
-
-## リソースとテクスチャ
-
-<details>
-<summary><strong>main.cpp:1124: 読み込むテクスチャ一覧</strong></summary>
-
-### コード
-
-```cpp
-std::wstring textureFilePaths[] = {
-	L"resources/uvChecker.png",
-	L"resources/monsterBall.png",
-	ConvertString(modelData.material.textureFilePath),
-	L"resources/ball.png",
-};
-```
-
-### ここでやっていること
-
-- エディタで使う画像を配列で管理します。
-- `uvChecker.png`、`monsterBall.png`、OBJ の material が指定する画像、`ball.png` を読み込み対象にしています。
-- Project パネルの PNG サムネイルや、Scene にドラッグした Sprite の表示に使われます。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:1137: Texture 読み込みと Resource 作成</strong></summary>
-
-### コード
-
-```cpp
-for (uint32_t textureIndex = 0; textureIndex < _countof(textureFilePaths); ++textureIndex) {
-	mipImages[textureIndex] = LoadTexture(textureFilePaths[textureIndex]);
-	textureMetadatas[textureIndex] = mipImages[textureIndex].GetMetadata();
-	textureResources[textureIndex] = CreateTextureResource(device.Get(), textureMetadatas[textureIndex]);
-}
-```
-
-### ここでやっていること
-
-- `LoadTexture()` で画像を読み込みます。
-- mipmap つきの `ScratchImage` を作ります。
-- DirectX12 の `ID3D12Resource` として GPU 用テクスチャを作ります。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:1285: SRV の作成</strong></summary>
-
-### コード
-
-```cpp
-UINT srvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-D3D12_CPU_DESCRIPTOR_HANDLE textureSrvHandlesCPU[_countof(textureFilePaths)];
-D3D12_GPU_DESCRIPTOR_HANDLE textureSrvHandlesGPU[_countof(textureFilePaths)];
-for (uint32_t textureIndex = 0; textureIndex < _countof(textureFilePaths); ++textureIndex) {
-	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-	srvDesc.Format = textureMetadatas[textureIndex].format;
-	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-	srvDesc.Texture2D.MipLevels = static_cast<UINT>(textureMetadatas[textureIndex].mipLevels);
-
-	textureSrvHandlesCPU[textureIndex] = GetCPUDescriptorHandle(srvDescriptorHeap, srvDescriptorSize,
-	                                                            textureIndex + 1);
-	textureSrvHandlesGPU[textureIndex] = GetGPUDescriptorHandle(srvDescriptorHeap, srvDescriptorSize,
-	                                                            textureIndex + 1);
-	device->CreateShaderResourceView(textureResources[textureIndex], &srvDesc, textureSrvHandlesCPU[textureIndex]);
-}
-```
-
-### ここでやっていること
-
-- テクスチャごとに SRV を作ります。
-- `textureIndex + 1` にしているのは、0 番を ImGui 用に空けるためです。
-- GPU ハンドルを `textureSrvHandlesGPU` に保存し、描画時と ImGui のサムネイル表示で使います。
-
-</details>
-
----
-
-## エディタ画面のレイアウト
-
-<details>
-<summary><strong>main.cpp:1083: パネル幅と高さ</strong></summary>
-
-### コード
-
-```cpp
-float editorLeftWidth = 250.0f;
-float editorRightWidth = 320.0f;
-float editorBottomHeight = 190.0f;
-float editorProjectWidth = 570.0f;
-```
-
-### ここでやっていること
-
-- 左の Hierarchy 幅を `editorLeftWidth` で持ちます。
-- 右の Inspector 幅を `editorRightWidth` で持ちます。
-- 下の Project / Console 高さを `editorBottomHeight` で持ちます。
-- Project と Console の境界を `editorProjectWidth` で持ちます。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:1093: レイアウト更新</strong></summary>
-
-### コード
-
-```cpp
-auto updateEditorLayout = [&]() {
-	editorLeftWidth = (std::clamp)(editorLeftWidth, 160.0f, 420.0f);
-	editorRightWidth = (std::clamp)(editorRightWidth, 220.0f, 520.0f);
-	editorBottomHeight = (std::clamp)(editorBottomHeight, 120.0f, 320.0f);
-	editorSceneX = editorLeftWidth;
-	editorSceneY = editorMenuHeight + editorSceneHeaderHeight;
-	editorSceneWidth = editorWindowWidth - editorLeftWidth - editorRightWidth;
-	editorSceneHeight = editorWindowHeight - editorSceneY - editorBottomHeight;
-	editorSceneWidth = (std::max)(editorSceneWidth, 240.0f);
-	editorSceneHeight = (std::max)(editorSceneHeight, 180.0f);
-	float bottomPanelWidth = editorWindowWidth - editorRightWidth;
-	float maxProjectWidth = (std::max)(240.0f, bottomPanelWidth - 240.0f);
-	editorProjectWidth = (std::clamp)(editorProjectWidth, 240.0f, maxProjectWidth);
-};
-```
-
-### ここでやっていること
-
-- パネルの最小 / 最大サイズを制限します。
-- Scene の表示領域を現在のウィンドウサイズから計算します。
-- Project / Console の幅も、ウィンドウに収まるように制限します。
-
-### なぜ必要か
-
-フルスクリーンやウィンドウリサイズ時に、Scene の当たり判定と描画範囲がずれないようにするためです。  
-Scene の矩形はこの関数で毎フレーム作り直されます。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:2592: パネルのリサイズ用 Splitter</strong></summary>
-
-### コード
-
-```cpp
-ImGui::SetNextWindowPos(ImVec2(projectWidth - 3.0f, bottomY), ImGuiCond_Always);
-ImGui::SetNextWindowSize(ImVec2(splitterHitWidth, editorBottomHeight), ImGuiCond_Always);
-ImGui::Begin("ProjectConsoleSplitter", nullptr, splitterFlags);
-ImGui::GetWindowDrawList()->AddRectFilled(
-	ImVec2(projectWidth - 1.0f, bottomY),
-	ImVec2(projectWidth + 1.0f, bottomY + editorBottomHeight),
-	IM_COL32(95, 115, 140, 255));
-ImGui::InvisibleButton("ProjectConsoleSplitterButton", ImGui::GetContentRegionAvail());
-if (ImGui::IsItemActive()) {
-	editorProjectWidth += ImGui::GetIO().MouseDelta.x;
-}
-ImGui::End();
-```
-
-### ここでやっていること
-
-- 見た目は細い線、当たり判定は `InvisibleButton` で作っています。
-- ドラッグ中の `MouseDelta` を幅へ加算します。
-- 同じ考え方で、左パネル、右パネル、下パネルもリサイズしています。
-
-</details>
-
----
-
-## シーンカメラ操作
-
-<details>
-<summary><strong>main.cpp:1719: マウス中ボタン / 右ボタンのドラッグ開始</strong></summary>
-
-### コード
-
-```cpp
-if (isSceneHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
-	isSceneMiddleCameraDragging = true;
-}
-
-if (!ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
-	isSceneMiddleCameraDragging = false;
-}
-
-if (isSceneHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-	isSceneRightCameraDragging = true;
-}
-
-if (!ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
-	isSceneRightCameraDragging = false;
-}
-```
-
-### ここでやっていること
-
-- Scene 上で中ボタンを押したら平行移動モードにします。
-- 中ボタンを離したら平行移動を終了します。
-- Scene 上で右ボタンを押したら回転モードにします。
-- 右ボタンを離したら回転を終了します。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:1741: 中ドラッグでカメラ平行移動</strong></summary>
-
-### コード
-
-```cpp
-if (isSceneMiddleCameraDragging) {
-	ImVec2 mouseDelta = ImGui::GetIO().MouseDelta;
-	cameraTransform.translate.x -= cameraRight.x * mouseDelta.x * editorCameraPanSpeed;
-	cameraTransform.translate.y -= cameraRight.y * mouseDelta.x * editorCameraPanSpeed;
-	cameraTransform.translate.z -= cameraRight.z * mouseDelta.x * editorCameraPanSpeed;
-	cameraTransform.translate.x += cameraUp.x * mouseDelta.y * editorCameraPanSpeed;
-	cameraTransform.translate.y += cameraUp.y * mouseDelta.y * editorCameraPanSpeed;
-	cameraTransform.translate.z += cameraUp.z * mouseDelta.y * editorCameraPanSpeed;
-}
-```
-
-### ここでやっていること
-
-- マウスの移動量をカメラの右方向と上方向へ変換します。
-- 画面上のドラッグ感覚に近い形で Scene を平行移動します。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:1751: 右ドラッグでカメラ回転</strong></summary>
-
-### コード
-
-```cpp
-if (isSceneRightCameraDragging) {
-	ImVec2 mouseDelta = ImGui::GetIO().MouseDelta;
-	cameraTransform.rotate.y += mouseDelta.x * editorCameraRotateSpeed;
-	cameraTransform.rotate.x += mouseDelta.y * editorCameraRotateSpeed;
-	cameraTransform.rotate.x =
-		(std::clamp)(cameraTransform.rotate.x, -1.5f, 1.5f);
-}
-```
-
-### ここでやっていること
-
-- 横移動で Y 回転を変えます。
-- 縦移動で X 回転を変えます。
-- X 回転は上下に回りすぎないよう `-1.5f` から `1.5f` に制限します。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:1759: ホイールで前後移動</strong></summary>
-
-### コード
-
-```cpp
-if (isSceneHovered && ImGui::GetIO().MouseWheel != 0.0f) {
-	float pitchCos = std::cos(cameraTransform.rotate.x);
-	Vector3 wheelCameraForward{
-		std::sin(cameraTransform.rotate.y) * pitchCos,
-		-std::sin(cameraTransform.rotate.x),
-		std::cos(cameraTransform.rotate.y) * pitchCos
-	};
-	cameraTransform.translate.x +=
-		wheelCameraForward.x * ImGui::GetIO().MouseWheel * editorCameraWheelMoveSpeed;
-	cameraTransform.translate.y +=
-		wheelCameraForward.y * ImGui::GetIO().MouseWheel * editorCameraWheelMoveSpeed;
-	cameraTransform.translate.z +=
-		wheelCameraForward.z * ImGui::GetIO().MouseWheel * editorCameraWheelMoveSpeed;
-}
-```
-
-### ここでやっていること
-
-- カメラの向いている方向を作ります。
-- ホイール量に合わせて、その方向へ前後移動します。
-
-</details>
-
----
-
-## アセットの表示とドラッグ追加
-
-<details>
-<summary><strong>main.cpp:2503: Project のアセット一覧</strong></summary>
-
-### コード
-
-```cpp
-const char* assetPaths[] = {
-	"resources/ball.png",
-	"resources/monsterBall.png",
-	"resources/uvChecker.png",
-	"resources/plane.obj",
-	"resources/plane.mtl",
-	"resources/sound/maou_19_12345.wav",
-};
-```
-
-### ここでやっていること
-
-- Project パネルに表示するアセットを配列で管理します。
-- `.png` は画像サムネイルとして表示します。
-- `.obj`、`.mtl`、`.wav` は文字アイコンで表示します。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:2521: PNG は画像として表示</strong></summary>
-
-### コード
-
-```cpp
-if (isPng && textureIndex >= 0) {
-	ImGui::Image(
-		ImTextureRef(textureSrvHandlesGPU[textureIndex].ptr),
-		ImVec2(48.0f, 48.0f));
-	if (ImGui::IsItemClicked()) {
-		selectedAssetPath = relativePath;
-	}
-	if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-		ImGui::SetDragDropPayload("ASSET_PATH", relativePath.c_str(), relativePath.size() + 1);
-		ImGui::Text("%s", relativePath.c_str());
-		ImGui::EndDragDropSource();
-	}
-```
-
-### ここでやっていること
-
-- PNG は `ImGui::Image()` でサムネイル表示します。
-- クリックすると Inspector の選択アセットへ反映します。
-- ドラッグすると `ASSET_PATH` として Scene へ渡せるようにします。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:2536: PNG 以外は種類別アイコン</strong></summary>
-
-### コード
-
-```cpp
-else {
-	bool isSelected = selectedAssetPath == relativePath;
-	auto assetIcon = "FILE";
-	if (hasExtension(relativePath, ".wav")) {
-		assetIcon = "WAV";
-	}
-	else if (hasExtension(relativePath, ".obj")) {
-		assetIcon = "OBJ";
-	}
-	else if (hasExtension(relativePath, ".mtl")) {
-		assetIcon = "MTL";
-	}
-	if (ImGui::Button(assetIcon, ImVec2(58.0f, 48.0f))) {
-		selectedAssetPath = relativePath;
-	}
-```
-
-### ここでやっていること
-
-- 画像化できないファイルは、拡張子に応じた文字アイコンで表示します。
-- `.wav` は `WAV`、`.obj` は `OBJ`、`.mtl` は `MTL` です。
-- 画像でないアセットもクリックとドラッグの対象にしています。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:1645: Scene へのドロップ受け取り</strong></summary>
-
-### コード
-
-```cpp
-if (ImGui::BeginDragDropTarget()) {
-	if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
-		std::string droppedAsset(
-			static_cast<const char*>(payload->Data), static_cast<size_t>(payload->DataSize - 1));
-		selectedAssetPath = droppedAsset;
-		int32_t droppedTextureIndex = getTextureIndex(droppedAsset);
-		if (droppedTextureIndex >= 0) {
-```
-
-### ここでやっていること
-
-- Project からドラッグされたアセットパスを受け取ります。
-- PNG なら TextureIndex を取って Sprite として追加します。
-- `.obj` なら Model として追加します。
-
-</details>
-
----
-
-## 移動 / 回転 / 拡縮ギズモ
-
-<details>
-<summary><strong>main.cpp:1837: 移動量を Transform に反映</strong></summary>
-
-### コード
-
-```cpp
-auto applyMoveAxis = [&](int32_t axisIndex, float amount) {
-	if (axisIndex == 0) {
-		selectedModelTransform->translate.x += amount;
-	}
-	else if (axisIndex == 1) {
-		selectedModelTransform->translate.y += amount;
-	}
-	else {
-		selectedModelTransform->translate.z += amount;
-	}
-	syncSelectedPlacedObjectToGameObject();
-};
-```
-
-### ここでやっていること
-
-- X / Y / Z のどの軸を動かしたかを `axisIndex` で判定します。
-- 選択中のモデルの `translate` を更新します。
-- 最後に `EditorScene` 側の GameObject へ同期します。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:1863: 移動ギズモの描画とドラッグ判定</strong></summary>
-
-### コード
-
-```cpp
-auto drawMoveAxisGizmo = [&](const char* id, const ImVec2& origin, const ImVec2& end, ImU32 color,
-                             int32_t axisIndex) {
-	sceneDrawList->AddLine(origin, end, color, 3.0f);
-
-	ImVec2 axisVector{end.x - origin.x, end.y - origin.y};
-	float axisLengthSquared = axisVector.x * axisVector.x + axisVector.y * axisVector.y;
-	if (axisLengthSquared > 0.0001f) {
-		float inverseLength = 1.0f / std::sqrt(axisLengthSquared);
-```
-
-### ここでやっていること
-
-- Scene 上に色付きの軸線を描きます。
-- 軸の先端には三角形の矢印を描きます。
-- `InvisibleButton` を重ねて、矢印をドラッグできるようにしています。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:1944: 回転ギズモ</strong></summary>
-
-### コード
-
-```cpp
-auto drawRotateGizmo = [&](const ImVec2& center) {
-	drawEllipse(center, 58.0f, 58.0f, IM_COL32(80, 220, 90, 220));
-	drawEllipse(center, 28.0f, 58.0f, IM_COL32(230, 70, 70, 220));
-	drawEllipse(center, 58.0f, 28.0f, IM_COL32(80, 120, 240, 220));
-
-	ImGui::SetCursorScreenPos(ImVec2(center.x - 66.0f, center.y - 66.0f));
-	ImGui::InvisibleButton("RotateGizmo", ImVec2(132.0f, 132.0f));
-```
-
-### ここでやっていること
-
-- 楕円を 3 つ重ねて、回転用ギズモの見た目を作ります。
-- 中心付近に当たり判定を作り、ドラッグで回転値を変えます。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:1984: 現在のツールで表示を切り替える</strong></summary>
-
-### コード
-
-```cpp
-if (activeEditorTool == 1) {
-	drawMoveAxisGizmo("MoveGizmoX", gizmoOrigin, gizmoX, IM_COL32(230, 70, 70, 255), 0);
-	drawMoveAxisGizmo("MoveGizmoY", gizmoOrigin, gizmoY, IM_COL32(80, 220, 90, 255), 1);
-	drawMoveAxisGizmo("MoveGizmoZ", gizmoOrigin, gizmoZ, IM_COL32(80, 120, 240, 255), 2);
-}
-else if (activeEditorTool == 2) {
-	drawRotateGizmo(gizmoOrigin);
-}
-else if (activeEditorTool == 3) {
-	drawScaleAxisGizmo("ScaleGizmoX", gizmoOrigin, gizmoX, IM_COL32(230, 70, 70, 255), 0);
-	drawScaleAxisGizmo("ScaleGizmoY", gizmoOrigin, gizmoY, IM_COL32(80, 220, 90, 255), 1);
-	drawScaleAxisGizmo("ScaleGizmoZ", gizmoOrigin, gizmoZ, IM_COL32(80, 120, 240, 255), 2);
-}
-```
-
-### ここでやっていること
-
-- `activeEditorTool` が 1 なら移動ギズモを出します。
-- 2 なら回転ギズモを出します。
-- 3 なら拡縮ギズモを出します。
-
-</details>
-
----
-
-## Hierarchy と Inspector
-
-<details>
-<summary><strong>EditorScene.h:13: Component 種類</strong></summary>
-
-### コード
-
-```cpp
-enum class EditorComponentType {
-	Transform,
-	ModelRenderer,
-	SpriteRenderer,
-	Light,
-	Camera,
-	AudioSource,
-};
-```
-
-### ここでやっていること
-
-- GameObject に付けられる Component の種類を定義しています。
-- `Transform` は基本 Component です。
-- `ModelRenderer`、`SpriteRenderer`、`Light`、`Camera`、`AudioSource` を追加できます。
-
-</details>
-
-<details>
-<summary><strong>EditorScene.h:21: GameObject の構造</strong></summary>
-
-### コード
-
-```cpp
-struct EditorGameObject {
-	int32_t id;
-	int32_t parentId;
-	bool isActive;
-	std::string name;
-	Vector3 translate;
-	Vector3 rotate;
-	Vector3 scale;
-	std::vector<int32_t> children;
-	std::vector<EditorComponent> components;
-};
-```
-
-### ここでやっていること
-
-- `id` で GameObject を識別します。
-- `parentId` と `children` で親子関係を持ちます。
-- `translate / rotate / scale` で Transform を持ちます。
-- `components` に Component 一覧を持ちます。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:2138: Hierarchy パネル</strong></summary>
-
-### コード
-
-```cpp
-ImGui::Begin("ヒエラルキー###Hierarchy", nullptr, fixedWindowFlags);
-ImGui::InputText("検索", hierarchyFilter, _countof(hierarchyFilter));
-const char* objectNames[] = {
-	"モデル",
-	"スプライト",
-	"ライト",
-	"デバッグカメラ",
-};
-```
-
-### ここでやっていること
-
-- 左側の Hierarchy パネルを作ります。
-- 検索欄を持ちます。
-- 基本表示名として、モデル、スプライト、ライト、デバッグカメラを持っています。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:2183: Hierarchy で選択</strong></summary>
-
-### コード
-
-```cpp
-bool isSelected = selectedEditorGameObjectId == gameObject->id;
-if (ImGui::Selectable(label.c_str(), isSelected)) {
-	selectedEditorGameObjectId = gameObject->id;
-	selectedPlacedSceneObjectIndex = -1;
-	syncLegacySelection();
-}
-```
-
-### ここでやっていること
-
-- Hierarchy の行をクリックしたら、その GameObject ID を選択中 ID に入れます。
-- `syncLegacySelection()` で Scene 側の選択と合わせます。
-- これにより、Inspector と Scene ギズモの対象をそろえます。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:2257: Inspector の GameObject 編集</strong></summary>
-
-### コード
-
-```cpp
-if (selectedEditorGameObject != nullptr) {
-	constexpr auto kEditorScenePath = "resources/editorScene.scene";
-	constexpr auto kEditorPrefabPath = "resources/editorPrefab.prefab";
-
-	if (ImGui::CollapsingHeader("GameObject", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Checkbox("有効", &selectedEditorGameObject->isActive);
-		ImGui::InputText("名前", selectedGameObjectName, _countof(selectedGameObjectName));
-```
-
-### ここでやっていること
-
-- 選択中 GameObject の有効フラグを編集します。
-- 名前を編集します。
-- Transform、複製、削除、Undo / Redo、Scene / Prefab、Component 操作へ続きます。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:2356: Component 追加 / 削除</strong></summary>
-
-### コード
-
-```cpp
-if (ImGui::CollapsingHeader("Components", ImGuiTreeNodeFlags_DefaultOpen)) {
-	const char* componentNames[] = {
-		"ModelRenderer",
-		"SpriteRenderer",
-		"Light",
-		"Camera",
-		"AudioSource",
-	};
-	ImGui::Combo("追加するComponent", &selectedAddComponentIndex, componentNames, _countof(componentNames));
-	if (ImGui::Button("Component追加")) {
-		editorScene.PushUndo();
-		editorScene.AddComponent(selectedEditorGameObject->id,
-		                         ComponentTypeFromIndex(selectedAddComponentIndex));
-```
-
-### ここでやっていること
-
-- 追加する Component を Combo で選びます。
-- ボタンを押したら Undo 用に履歴を積んでから Component を追加します。
-- 既存 Component は TreeNode で表示し、`Transform` 以外は削除できます。
-
-</details>
-
----
-
-## Scene / Prefab / Undo
-
-<details>
-<summary><strong>main.cpp:2329: Scene / Prefab ボタン</strong></summary>
-
-### コード
-
-```cpp
-if (ImGui::CollapsingHeader("Scene / Prefab", ImGuiTreeNodeFlags_DefaultOpen)) {
-	if (ImGui::Button("Scene保存")) {
-		editorScene.SaveScene(kEditorScenePath);
-	}
-	ImGui::SameLine();
-	if (ImGui::Button("Scene読込")) {
-		if (editorScene.LoadScene(kEditorScenePath) && !editorScene.GetGameObjects().empty()) {
-			selectedEditorGameObjectId = editorScene.GetGameObjects()[0].id;
-```
-
-### ここでやっていること
-
-- `resources/editorScene.scene` に Scene を保存します。
-- 保存済み Scene を読み込みます。
-- 読み込み後は先頭 GameObject を選択します。
-- Prefab 保存 / Prefab 生成も同じ場所にあります。
-
-</details>
-
-<details>
-<summary><strong>EditorScene.cpp:230: Scene 保存</strong></summary>
-
-### コード
-
-```cpp
-bool EditorScene::SaveScene(const std::string& filePath) const {
-	std::ofstream file(filePath);
-	if (!file.is_open()) {
-		return false;
-	}
-
-	for (const EditorGameObject& gameObject : gameObjects_) {
-		file << "GameObject|"
-		     << gameObject.id << "|"
-		     << gameObject.parentId << "|"
-		     << gameObject.name << "|"
-```
-
-### ここでやっていること
-
-- テキスト形式で Scene を保存します。
-- GameObject 行と Component 行を分けて出力します。
-- `|` 区切りなので、あとで読み込み時に分解しやすい形です。
-
-</details>
-
-<details>
-<summary><strong>EditorScene.cpp:267: Scene 読み込み</strong></summary>
-
-### コード
-
-```cpp
-bool EditorScene::LoadScene(const std::string& filePath) {
-	std::ifstream file(filePath);
-	if (!file.is_open()) {
-		return false;
-	}
-
-	std::vector<EditorGameObject> loadedGameObjects;
-	std::string line;
-
-	while (std::getline(file, line)) {
-		std::vector<std::string> elements = SplitLine(line, '|');
-```
-
-### ここでやっていること
-
-- 保存した Scene ファイルを 1 行ずつ読みます。
-- `SplitLine()` で `|` 区切りにします。
-- `GameObject` 行なら GameObject を復元し、`Component` 行なら対応する GameObject に Component を追加します。
-
-</details>
-
-<details>
-<summary><strong>EditorScene.cpp:360: Undo / Redo</strong></summary>
-
-### コード
-
-```cpp
-void EditorScene::PushUndo() {
-	undoStack_.push_back(gameObjects_);
-	redoStack_.clear();
-}
-
-bool EditorScene::Undo() {
-	if (undoStack_.empty()) {
-		return false;
-	}
-
-	redoStack_.push_back(gameObjects_);
-	gameObjects_ = undoStack_.back();
-```
-
-### ここでやっていること
-
-- `PushUndo()` は現在の GameObject 配列を保存します。
-- `Undo()` は保存していた状態へ戻します。
-- `Redo()` は Undo 前の状態へ戻します。
-
-この実装は、GameObject 配列全体をスナップショットとして持つ単純な方式です。
-
-</details>
-
----
-
-## 環境、マテリアル、不可視オブジェクト表示
-
-<details>
-<summary><strong>main.cpp:2403: 背景色とギズモ表示</strong></summary>
-
-### コード
-
-```cpp
-if (ImGui::CollapsingHeader("環境 / 背景", ImGuiTreeNodeFlags_DefaultOpen)) {
-	ImGui::ColorEdit4("背景色", sceneClearColor);
-	ImGui::Checkbox("ギズモ表示", &isSceneGizmoVisible);
-	ImGui::Checkbox("ライトアイコン", &isLightGizmoVisible);
-	ImGui::Checkbox("カメラアイコン", &isCameraGizmoVisible);
-}
-```
-
-### ここでやっていること
-
-- Scene のクリア色を Inspector から変えられます。
-- ライトやカメラなど、通常は形がないものの表示を切り替えます。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:2409: モデルのマテリアル色</strong></summary>
-
-### コード
-
-```cpp
-if (ImGui::CollapsingHeader("モデル / マテリアル", ImGuiTreeNodeFlags_DefaultOpen)) {
-	bool isLighting = sphereMaterialData->enableLighting != FALSE;
-	ImGui::Checkbox("ライティング", &isLighting);
-	ImGui::ColorEdit4("マテリアル色", &sphereMaterialData->color.x);
-	sphereMaterialData->enableLighting = isLighting ? TRUE : FALSE;
-}
-```
-
-### ここでやっていること
-
-- モデルのライティング有効 / 無効を切り替えます。
-- モデルのマテリアル色を `ColorEdit4` で編集します。
-- ImGui の bool を DirectX 側の `TRUE / FALSE` へ反映しています。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:2003: Light アイコン</strong></summary>
-
-### コード
-
-```cpp
-if (isSceneGizmoVisible && isLightGizmoVisible) {
-	ImVec2 lightIconPosition = projectWorldPosition(directionalLightIconPosition);
-	ImU32 lightIconColor = IM_COL32(255, 220, 80, 255);
-	sceneDrawList->AddCircleFilled(lightIconPosition, 8.0f, lightIconColor);
-	for (int32_t rayIndex = 0; rayIndex < 8; ++rayIndex) {
-```
-
-### ここでやっていること
-
-- ライトの位置を Scene 上にアイコンとして表示します。
-- 小さい円と放射状の線で、ライトだと分かる見た目にしています。
-- アイコンをクリックするとライトを選択できます。
-
-</details>
-
----
-
-## 行列更新と描画
-
-<details>
-<summary><strong>main.cpp:2653: 行列と定数バッファ更新</strong></summary>
-
-### コード
-
-```cpp
-cameraMatrix = MakeAffineMatrix(
-	cameraTransform.scale, cameraTransform.rotate, cameraTransform.translate);
-viewMatrix = Inverse(cameraMatrix);
-Matrix4x4 spriteWorldMatrix = MakeAffineMatrix(
-	spriteTransform.scale, spriteTransform.rotate, spriteTransform.translate);
-Matrix4x4 spriteWorldViewProjectionMatrix = Multiply(spriteWorldMatrix, spriteProjectionMatrix);
-Matrix4x4 worldMatrix = MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
-Matrix4x4 worldViewProjectionMatrix = Multiply(worldMatrix, Multiply(viewMatrix, projectionMatrix));
-```
-
-### ここでやっていること
-
-- カメラ行列から View 行列を作ります。
-- Sprite 用と Model 用で別々に WVP を作ります。
-- UI で変えた Transform が、ここで描画用の行列へ変換されます。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:2699: 描画前の DirectX12 設定</strong></summary>
-
-### コード
-
-```cpp
-commandList->SetGraphicsRootSignature(rootSignature.Get());
-commandList->SetPipelineState(graphicsPipelineState.Get());
-commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
-ID3D12DescriptorHeap* descriptorHeaps[] = {srvDescriptorHeap};
-commandList->SetDescriptorHeaps(1, descriptorHeaps);
-commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-commandList->OMSetRenderTargets(1, &rtvHandles[backBufferIndex], FALSE, &dsvHandle);
-```
-
-### ここでやっていること
-
-- RootSignature と PipelineState をセットします。
-- ライトの定数バッファを GPU へ渡します。
-- SRV DescriptorHeap をセットします。
-- 描画先の RTV と DSV を指定します。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:2707: 背景と DepthBuffer のクリア</strong></summary>
-
-### コード
-
-```cpp
-commandList->ClearRenderTargetView(rtvHandles[backBufferIndex], sceneClearColor, 0, nullptr);
-commandList->ClearDepthStencilView(
-	dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-```
-
-### ここでやっていること
-
-- `sceneClearColor` で Scene 背景を塗りつぶします。
-- DepthBuffer を `1.0f` でクリアします。
-- これにより、奥行きがあるモデル同士でも前後関係を判定できます。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:2719: 追加された Scene Object の描画</strong></summary>
-
-### コード
-
-```cpp
-for (const EditorSceneObject& sceneObject : editorSceneObjects) {
-	if (sceneObject.type == EditorSceneObjectType::Sprite) {
-		int32_t textureIndex =
-			(std::clamp)(sceneObject.textureIndex, 0, static_cast<int32_t>(_countof(textureFilePaths)) - 1);
-		commandList->SetGraphicsRootConstantBufferView(
-			0, spriteMaterialResource->GetGPUVirtualAddress());
-```
-
-### ここでやっていること
-
-- Scene に追加された Sprite / Model を順番に描画します。
-- Sprite は `sceneObject.textureIndex` を使って、ドラッグされた PNG のテクスチャを表示します。
-- Model は OBJ 用の頂点バッファとテクスチャを使って描画します。
-
-</details>
-
----
-
-## 音声
-
-<details>
-<summary><strong>main.cpp:562: wav 読み込み</strong></summary>
-
-### コード
-
-```cpp
-SoundData soundData = SoundLoadWave("resources/sound/maou_19_12345.wav");
-IXAudio2SourceVoice* sourceVoice = nullptr;
-hr = xAudio2->CreateSourceVoice(&sourceVoice, &soundData.wfex);
-```
-
-### ここでやっていること
-
-- `resources/sound/maou_19_12345.wav` を読み込みます。
-- XAudio2 の SourceVoice を作ります。
-
-</details>
-
-<details>
-<summary><strong>main.cpp:573: wav バッファ登録</strong></summary>
-
-### コード
-
-```cpp
-XAUDIO2_BUFFER soundBuffer{};
-soundBuffer.pAudioData = soundData.pBuffer;
-soundBuffer.AudioBytes = soundData.bufferSize;
-soundBuffer.Flags = XAUDIO2_END_OF_STREAM;
-hr = sourceVoice->SubmitSourceBuffer(&soundBuffer);
-```
-
-### ここでやっていること
-
-- wav のバッファを SourceVoice に渡します。
-- 現在のコードでは `SubmitSourceBuffer()` までで、`Start()` は呼んでいません。
-- そのため、起動直後に音が自動再生される形にはしていません。
-
-</details>
-
----
-
-## ビルド
-
-Visual Studio から `CG2.sln` を開いて、`Debug | x64` でビルドします。  
-PowerShell から確認する場合は、Visual Studio 2022 の MSBuild を使います。
-
-```powershell
-& "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\amd64\MSBuild.exe" CG2.sln /p:Configuration=Debug /p:Platform=x64
-```
-
----
-
-## 読む順番
-
-最初に読むなら、次の順番が分かりやすいです。
-
-1. `main.cpp:479` の `WinMain()`
-2. `main.cpp:1336` のメインループ
-3. `main.cpp:1083` からのエディタレイアウト
-4. `main.cpp:1645` のアセットドロップ
-5. `main.cpp:1837` からのギズモ処理
-6. `main.cpp:2138` からの Hierarchy / Inspector
-7. `EditorScene.h` と `EditorScene.cpp` の GameObject / Component / Save / Load
-8. `main.cpp:2653` からの行列更新と描画
-
----
-
-## 現在できること
-
-- Scene 上でモデルとスプライトを表示できます。
-- Project から PNG / OBJ を Scene へドラッグ追加できます。
-- PNG はサムネイル、PNG 以外は種類別アイコンで表示されます。
-- 選択中モデルに移動 / 回転 / 拡縮ギズモを表示できます。
-- 右ドラッグでカメラ回転、中ドラッグで平行移動、ホイールで前後移動できます。
-- 背景色、ライト、カメラアイコン表示を Inspector から変更できます。
-- GameObject の名前変更、複製、削除確認、Undo / Redo ができます。
-- Component の追加 / 削除ができます。
-- Hierarchy のドラッグで親子関係を作れます。
-- Scene 保存 / 読み込み、Prefab 保存 / 生成ができます。
-
+現状のランタイム対応は次です。
+
+- `Move` はカメラ相対移動として動きます。
+- `Jump` は床付近で上向き速度を与えます。
+- `Fire` は Console にイベントログを出します。
+- `Move / Jump / Fire` 以外の Action 名はまだ未対応です。
+- `Invoke C++ Events` は Inspector で関数名を持てますが、ユーザー自作 C++ 関数への完全ディスパッチは今後です。
+
+## 保存と Prefab
+
+| 機能 | レベル | 内容 |
+| --- | --- | --- |
+| Scene 保存 | 一部実装 | GameObject、Transform、コンポーネント値を保存します。 |
+| Scene 読み込み | 一部実装 | 保存した Scene を読み込めます。壊れたファイルの耐性はまだ弱いです。 |
+| Prefab 保存 | 一部実装 | 選択中 GameObject を Prefab として保存できます。 |
+| Prefab 生成 | 一部実装 | 保存した Prefab から GameObject を作れます。 |
+| Prefab 差分管理 | 未対応 | Apply / Revert、差分表示、ネスト Prefab は未対応です。 |
+| Play 状態復元 | 一部実装 | Play 前の Scene をバックアップし、Stop 時に戻します。完全な Unity Play Mode 復元ではありません。 |
+
+## 外部ライブラリ利用
+
+| ライブラリ | レベル | 用途 |
+| --- | --- | --- |
+| Jolt Physics 5.5.0 | 実装済み | 3D Rigidbody、Collider、Trigger、Raycast、Cast、Joint、CharacterController の物理処理に使います。 |
+| ImGui Docking | 実装済み | Unity 風のドッキング可能なエディタ UI に使います。 |
+| ImGuizmo | 実装済み | Scene 上の移動、回転、拡縮ギズモに使います。 |
+| DirectX12 | 実装済み | モデル、スプライト、Scene View、Game View の描画に使います。 |
+| XAudio2 | 一部実装 | WAV 読み込みと音声再生の土台に使います。 |
+| FeelKitHaptics | 追加・表示 | 触覚コンポーネントの入口として扱います。 |
+| GLM / Eigen | 未統合 | externals にはありますが、現状の主要実装では直接の中核依存にはしていません。 |
+
+## 今できる具体例
+
+- Cube を Scene に置き、Play を押すと 3D 重力で落下し、床や他 Collider に当たる挙動を確認できます。
+- `sphere.fbx` や `ball.fbx` を `resources` に置くと、Project に表示され、Scene に置くと球メッシュと球の当たり判定が付きます。
+- GameObject に Rigidbody、球の当たり判定、Physics Material を付けると、質量、摩擦、反発の基礎値を調整できます。
+- CharacterController と Input を付けると、Play 中に入力で移動する基礎キャラクターを作れます。
+- Camera を置くと、Game View でそのカメラからの見え方を確認できます。
+- Inspector からコンポーネントを追加し、下部 Console で操作ログや物理ログを確認できます。
+
+## まだ Unity と同じではないところ
+
+- FBX はファイル名から基本形へ割り当てる段階で、スキンメッシュ、ボーン、アニメーションクリップの完全読み込みは未対応です。
+- UI コンポーネントは追加と Inspector 表示が中心で、Button、Slider、EventSystem の本格実行は未完成です。
+- Audio Mixer、Particle System、NavMesh、Terrain、Tilemap は追加・表示段階です。
+- Prefab の Apply / Revert、差分管理、ネスト Prefab は未対応です。
+- Asset Database、GUID、meta、参照切れ検出は未対応です。
+- Console は画面表示できますが、Unity のようなスタックトレース、ログ種別フィルター、クリックジャンプは未完成です。
+- Build 機能、Package Manager、Profiler、Editor 拡張 API は未対応です。

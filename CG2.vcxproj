@@ -43,12 +43,21 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <IncludePath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;$(IncludePath)</IncludePath>
+    <LibraryPath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <IncludePath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;$(IncludePath)</IncludePath>
+    <ExternalIncludePath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;$(ExternalIncludePath)</ExternalIncludePath>
+    <LibraryPath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <WarningLevel>EnableAllWarnings</WarningLevel>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_WINDOWS;USE_IMGUI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>externals\imgui;C:\Users\shota\Documents\IMGUI\ImGuizmo-master\ImGuizmo-master\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>externals\imgui-docking\imgui-docking;externals\imgui-docking\imgui-docking\backends;externals\ImGuizmo-master\ImGuizmo-master\src;externals\FeelKitHaptics;externals\JoltPhysics-5.5.0;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 /external:anglebrackets /external:W0 %(AdditionalOptions)</AdditionalOptions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
@@ -63,13 +72,15 @@
       <EntryPointSymbol>WinMainCRTStartup</EntryPointSymbol>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <TreatLinkerWarningAsErrors>true</TreatLinkerWarningAsErrors>
+      <AdditionalDependencies>libfbxsdk.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <EnableDpiAwareness>PerMonitorHighDPIAware</EnableDpiAwareness>
     </Manifest>
     <PostBuildEvent>
       <Command>copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxcompiler.dll" "$(TargetDir)dxcompiler.dll"
-copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dxil.dll"</Command>
+copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dxil.dll"
+copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.dll" "$(TargetDir)libfbxsdk.dll"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -78,7 +89,8 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_WINDOWS;USE_IMGUI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>externals\imgui-docking\imgui-docking;externals\imgui-docking\imgui-docking\backends;externals\ImGuizmo-master\ImGuizmo-master\src;externals\FeelKitHaptics;externals\JoltPhysics-5.5.0;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 /external:anglebrackets /external:W0 %(AdditionalOptions)</AdditionalOptions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
@@ -90,51 +102,144 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
       <SubSystem>Windows</SubSystem>
       <EntryPointSymbol>WinMainCRTStartup</EntryPointSymbol>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>libfbxsdk.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <EnableDpiAwareness>PerMonitorHighDPIAware</EnableDpiAwareness>
     </Manifest>
     <PostBuildEvent>
       <Command>copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxcompiler.dll" "$(TargetDir)dxcompiler.dll"
-copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dxil.dll"</Command>
+copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dxil.dll"
+copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.dll" "$(TargetDir)libfbxsdk.dll"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <None Include=".editorconfig" />
-    <None Include="Object3d.PS.hlsl" />
-    <None Include="Object3d.VS.hlsl" />
+    <None Include="Assets\Input\InGameInputAction.json" />
+    <None Include="Object3d.PS.hlsl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="Object3d.VS.hlsl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ApplicationWindow.cpp" />
+    <ClCompile Include="BoxCollision.cpp" />
     <ClCompile Include="CrashHandler.cpp" />
+    <ClCompile Include="EditorAssetFactory.cpp" />
+    <ClCompile Include="EditorAssetUtility.cpp">
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="EditorBottomPanel.cpp" />
+    <ClCompile Include="EditorBottomPanelWindowManager.cpp" />
+    <ClCompile Include="EditorComponentUtility.cpp" />
+    <ClCompile Include="EditorDockingManager.cpp" />
+    <ClCompile Include="EditorFrameInputManager.cpp" />
+    <ClCompile Include="EditorGameViewManager.cpp" />
+    <ClCompile Include="EditorHierarchyPanel.cpp" />
+    <ClCompile Include="EditorHierarchyWindowManager.cpp" />
+    <ClCompile Include="EditorImguiFrameManager.cpp" />
+    <ClCompile Include="EditorInspectorPanel.cpp">
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="EditorInspectorWindowManager.cpp" />
+    <ClCompile Include="EditorInputManager.cpp" />
+    <ClCompile Include="EditorJoltPhysicsManager.cpp" />
+    <ClCompile Include="EditorMainMenuBar.cpp" />
+    <ClCompile Include="EditorMainMenuManager.cpp" />
+    <ClCompile Include="EditorNativeScriptAssetManager.cpp" />
+    <ClCompile Include="EditorPhysicsManager.cpp" />
+    <ClCompile Include="EditorRenderManager.cpp" />
+    <ClCompile Include="EditorRuntimeManager.cpp" />
     <ClCompile Include="EditorScene.cpp" />
-    <ClCompile Include="externals\imgui\imgui.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    <ClCompile Include="EditorSceneCameraController.cpp" />
+    <ClCompile Include="EditorSceneLifecycleManager.cpp" />
+    <ClCompile Include="EditorSceneObjectManager.cpp" />
+    <ClCompile Include="EditorSceneSynchronizer.cpp" />
+    <ClCompile Include="EditorSceneViewManager.cpp" />
+    <ClCompile Include="EditorSelectionManager.cpp" />
+    <ClCompile Include="EditorScriptManager.cpp" />
+    <ClCompile Include="EditorPlatformManager.cpp" />
+    <ClCompile Include="GameScene.cpp" />
+    <ClCompile Include="Engine\Input\InputAction.cpp" />
+    <ClCompile Include="Engine\Input\InputActionAsset.cpp" />
+    <ClCompile Include="Engine\Input\InputActionMap.cpp" />
+    <ClCompile Include="Engine\Input\InputSystem.cpp" />
+    <ClCompile Include="Engine\Input\KeyboardState.cpp" />
+    <ClCompile Include="externals\imgui-docking\imgui-docking\imgui.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
-    <ClCompile Include="externals\imgui\imgui_demo.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    <ClCompile Include="externals\imgui-docking\imgui-docking\imgui_demo.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
-    <ClCompile Include="externals\imgui\imgui_draw.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    <ClCompile Include="externals\imgui-docking\imgui-docking\imgui_draw.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
-    <ClCompile Include="externals\imgui\imgui_impl_dx12.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    <ClCompile Include="externals\imgui-docking\imgui-docking\backends\imgui_impl_dx12.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
-    <ClCompile Include="externals\imgui\imgui_impl_win32.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    <ClCompile Include="externals\imgui-docking\imgui-docking\backends\imgui_impl_win32.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
-    <ClCompile Include="externals\imgui\imgui_tables.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    <ClCompile Include="externals\imgui-docking\imgui-docking\imgui_tables.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
-    <ClCompile Include="externals\imgui\imgui_widgets.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    <ClCompile Include="externals\imgui-docking\imgui-docking\imgui_widgets.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\ImGuizmo-master\ImGuizmo-master\src\ImGuizmo.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\imgui-node-editor-master\imgui-node-editor-master\crude_json.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\FeelKitHaptics\FeelKit.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\FeelKitHaptics\FeelKitHaptics.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\FeelKitHaptics\haptics\FeelKitVibration.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\FeelKitHaptics\core\FeelKitCore.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\FeelKitHaptics\audio\FeelKitAudio.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\FeelKitHaptics\generation\FeelKitImpactGeneration.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\FeelKitHaptics\effects\FeelKitEffects.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\FeelKitHaptics\screen\FeelKitScreen.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="C:\Users\shota\Documents\IMGUI\ImGuizmo-master\ImGuizmo-master\src\ImGuizmo.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
@@ -146,32 +251,77 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClCompile Include="Log.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="Matrix.cpp" />
+    <ClCompile Include="SphereCollision.cpp" />
     <ClCompile Include="StringUtility.cpp" />
     <ClCompile Include="Vector&amp;Matrix.cpp" />
     <ClCompile Include="Vector.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ApplicationWindow.h" />
+    <ClInclude Include="BoxCollision.h" />
     <ClInclude Include="CrashHandler.h" />
+    <ClInclude Include="EditorAssetFactory.h" />
+    <ClInclude Include="EditorAssetUtility.h" />
+    <ClInclude Include="EditorBottomPanel.h" />
+    <ClInclude Include="EditorBottomPanelWindowManager.h" />
+    <ClInclude Include="EditorCommonTypes.h" />
+    <ClInclude Include="EditorComponentUtility.h" />
+    <ClInclude Include="EditorDockingManager.h" />
+    <ClInclude Include="EditorFrameInputManager.h" />
+    <ClInclude Include="EditorGameViewManager.h" />
+    <ClInclude Include="EditorSharedState.h" />
+    <ClInclude Include="EditorHierarchyPanel.h" />
+    <ClInclude Include="EditorHierarchyWindowManager.h" />
+    <ClInclude Include="EditorImguiFrameManager.h" />
+    <ClInclude Include="EditorInspectorPanel.h" />
+    <ClInclude Include="EditorInspectorWindowManager.h" />
+    <ClInclude Include="EditorInputManager.h" />
+    <ClInclude Include="EditorJoltPhysicsManager.h" />
+    <ClInclude Include="EditorMainMenuBar.h" />
+    <ClInclude Include="EditorMainMenuManager.h" />
+    <ClInclude Include="EditorNativeScriptAssetManager.h" />
+    <ClInclude Include="EditorPhysicsManager.h" />
+    <ClInclude Include="EditorRenderManager.h" />
+    <ClInclude Include="EditorRuntimeManager.h" />
     <ClInclude Include="EditorScene.h" />
-    <ClInclude Include="externals\imgui\imconfig.h" />
-    <ClInclude Include="externals\imgui\imgui.h" />
-    <ClInclude Include="externals\imgui\imgui_impl_dx12.h" />
-    <ClInclude Include="externals\imgui\imgui_impl_win32.h" />
-    <ClInclude Include="externals\imgui\imgui_internal.h" />
-    <ClInclude Include="externals\imgui\imstb_rectpack.h" />
-    <ClInclude Include="externals\imgui\imstb_textedit.h" />
-    <ClInclude Include="externals\imgui\imstb_truetype.h" />
-    <ClInclude Include="C:\Users\shota\Documents\IMGUI\ImGuizmo-master\ImGuizmo-master\src\ImGuizmo.h" />
+    <ClInclude Include="EditorSceneCameraController.h" />
+    <ClInclude Include="EditorSceneLifecycleManager.h" />
+    <ClInclude Include="EditorSceneObject.h" />
+    <ClInclude Include="EditorSceneObjectManager.h" />
+    <ClInclude Include="EditorSceneSynchronizer.h" />
+    <ClInclude Include="EditorSceneViewManager.h" />
+    <ClInclude Include="EditorSelectionManager.h" />
+    <ClInclude Include="EditorScriptManager.h" />
+    <ClInclude Include="EditorScriptApi.h" />
+    <ClInclude Include="EditorPlatformManager.h" />
+    <ClInclude Include="GameScene.h" />
+    <ClInclude Include="Engine\Input\InputAction.h" />
+    <ClInclude Include="Engine\Input\InputActionAsset.h" />
+    <ClInclude Include="Engine\Input\InputActionMap.h" />
+    <ClInclude Include="Engine\Input\InputBinding.h" />
+    <ClInclude Include="Engine\Input\InputContext.h" />
+    <ClInclude Include="Engine\Input\InputPhase.h" />
+    <ClInclude Include="Engine\Input\InputSystem.h" />
+    <ClInclude Include="Engine\Input\KeyboardState.h" />
+    <ClInclude Include="externals\imgui-docking\imgui-docking\imconfig.h" />
+    <ClInclude Include="externals\imgui-docking\imgui-docking\imgui.h" />
+    <ClInclude Include="externals\imgui-docking\imgui-docking\backends\imgui_impl_dx12.h" />
+    <ClInclude Include="externals\imgui-docking\imgui-docking\backends\imgui_impl_win32.h" />
+    <ClInclude Include="externals\imgui-docking\imgui-docking\imgui_internal.h" />
+    <ClInclude Include="externals\imgui-docking\imgui-docking\imstb_rectpack.h" />
+    <ClInclude Include="externals\imgui-docking\imgui-docking\imstb_textedit.h" />
+    <ClInclude Include="externals\imgui-docking\imgui-docking\imstb_truetype.h" />
+    <ClInclude Include="externals\ImGuizmo-master\ImGuizmo-master\src\ImGuizmo.h" />
     <ClInclude Include="Imgui.h" />
     <ClInclude Include="Log.h" />
     <ClInclude Include="Matrix.h" />
     <ClInclude Include="StringUtility.h" />
+    <ClInclude Include="SphereCollision.h" />
     <ClInclude Include="Vector&amp;Matrix.h" />
     <ClInclude Include="Vector.h" />
   </ItemGroup>
   <ItemGroup>
-    <Text Include="externals\imgui\LICENSE.txt" />
+    <Text Include="externals\imgui-docking\imgui-docking\LICENSE.txt" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="externals\DirectXTex\DirectXTex_Desktop_2022.vcxproj">

@@ -11,16 +11,12 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 #endif
 
 HWND CreateMainWindow(HINSTANCE instanceHandle, std::ostream& logStream) {
-	// ウィンドウクラスを登録する
+	// ウィンドウの作成ルールを Windows に登録するための設定
 	WNDCLASS windowClass{};
-	// メッセージを処理する関数
-	windowClass.lpfnWndProc = WindowProc;
-	// クラス名
-	windowClass.lpszClassName = kWindowClassName;
-	// インスタンスハンドル
-	windowClass.hInstance = instanceHandle;
-	// 標準の矢印カーソル
-	windowClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
+	windowClass.lpfnWndProc = WindowProc;  // メッセージを処理する関数
+	windowClass.lpszClassName = kWindowClassName;  // クラス名
+	windowClass.hInstance = instanceHandle;  // インスタンスハンドル
+	windowClass.hCursor = LoadCursor(nullptr, IDC_ARROW);  // 標準の矢印カーソル
 
 	// ウィンドウクラスを OS へ登録する
 	if (RegisterClass(&windowClass) == 0) {
@@ -29,7 +25,7 @@ HWND CreateMainWindow(HINSTANCE instanceHandle, std::ostream& logStream) {
 	}
 	Log(logStream, "window class registered");
 
-	// クライアント領域の希望サイズ
+	// 描画したいクライアント領域の左上と右下
 	RECT windowRect{0, 0, kClientWidth, kClientHeight};
 	// タイトルバーなどを含めた実際のウィンドウサイズへ調整する
 	if (AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE) == 0) {
@@ -38,7 +34,7 @@ HWND CreateMainWindow(HINSTANCE instanceHandle, std::ostream& logStream) {
 	}
 	Log(logStream, "window rect adjusted");
 
-	// ウィンドウ本体を生成する
+	// AdjustWindowRect 後のサイズを使い、描画領域が kClientWidth / kClientHeight になるように作る
 	HWND windowHandle = CreateWindow(
 		windowClass.lpszClassName,
 		kWindowTitle,
@@ -58,8 +54,7 @@ HWND CreateMainWindow(HINSTANCE instanceHandle, std::ostream& logStream) {
 	}
 	Log(logStream, "window created");
 
-	// 生成したウィンドウを画面へ表示する
-	ShowWindow(windowHandle, SW_SHOW);
+	ShowWindow(windowHandle, SW_SHOW);  // 生成したウィンドウを画面へ表示する
 	UpdateWindow(windowHandle);
 	Log(logStream, "window shown");
 
@@ -68,7 +63,7 @@ HWND CreateMainWindow(HINSTANCE instanceHandle, std::ostream& logStream) {
 
 LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPARAM lParam) {
 #ifdef USE_IMGUI
-	// ImGui が処理したメッセージはここで打ち切る
+	// ImGui の入力欄や Docking が使用するマウス / キーボードメッセージを先に処理する
 	if (ImGui_ImplWin32_WndProcHandler(windowHandle, message, wParam, lParam)) {
 		return true;
 	}
@@ -76,10 +71,10 @@ LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPAR
 
 	switch (message) {
 	case WM_DESTROY:
-		// ウィンドウが閉じられたらアプリケーション終了を通知する
-		PostQuitMessage(0);
+		PostQuitMessage(0);  // メインループ側の IsEndRequested を成立させるため、WM_QUIT をメッセージキューへ積む
 		return 0;
 	default:
+		// このアプリで処理しないメッセージは Windows 標準処理に渡す
 		return DefWindowProcW(windowHandle, message, wParam, lParam);
 	}
 }

@@ -71,6 +71,9 @@
     <ClCompile Include="externals\imgui\imgui_widgets.cpp">
       <Filter>imgui</Filter>
     </ClCompile>
+    <ClCompile Include="C:\Users\shota\Documents\IMGUI\ImGuizmo-master\ImGuizmo-master\src\ImGuizmo.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
     <ClCompile Include="Imgui.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
@@ -122,6 +125,9 @@
       <Filter>imgui</Filter>
     </ClInclude>
     <ClInclude Include="externals\imgui\imstb_truetype.h">
+      <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\shota\Documents\IMGUI\ImGuizmo-master\ImGuizmo-master\src\ImGuizmo.h">
       <Filter>imgui</Filter>
     </ClInclude>
     <ClInclude Include="Imgui.h">

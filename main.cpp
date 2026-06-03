@@ -1,9 +1,10 @@
-#pragma warning(push, 0)
+﻿#pragma warning(push, 0)
 #include <Windows.h>
 #include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <ctime>
@@ -59,6 +60,7 @@ using Microsoft::WRL::ComPtr;
 #include "externals/imgui/imgui.h"
 #include "externals/imgui/imgui_impl_dx12.h"
 #include "externals/imgui/imgui_impl_win32.h"
+#include "ImGuizmo.h"
 #pragma warning(pop)
 #endif
 
@@ -1083,7 +1085,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	float editorLeftWidth = 250.0f;
 	float editorRightWidth = 320.0f;
 	float editorBottomHeight = 190.0f;
-	float editorProjectWidth = 570.0f;
 	float editorSceneX = editorLeftWidth;
 	float editorSceneY = editorMenuHeight + editorSceneHeaderHeight;
 	float editorSceneWidth =
@@ -1100,9 +1101,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		editorSceneHeight = editorWindowHeight - editorSceneY - editorBottomHeight;
 		editorSceneWidth = (std::max)(editorSceneWidth, 240.0f);
 		editorSceneHeight = (std::max)(editorSceneHeight, 180.0f);
-		float bottomPanelWidth = editorWindowWidth - editorRightWidth;
-		float maxProjectWidth = (std::max)(240.0f, bottomPanelWidth - 240.0f);
-		editorProjectWidth = (std::clamp)(editorProjectWidth, 240.0f, maxProjectWidth);
 	};
 	updateEditorLayout();
 
@@ -1432,6 +1430,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 
 			static int selectedSceneObject = 0;
 			static int activeEditorTool = 1;
+			static int editorViewportTabIndex = 0;
 			static std::string selectedAssetPath = "resources/uvChecker.png";
 			static char hierarchyFilter[64] = {};
 			static char assetFilter[64] = {};
@@ -1439,6 +1438,10 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			static bool isSceneRangeSelecting = false;
 			static bool isSceneMiddleCameraDragging = false;
 			static bool isSceneRightCameraDragging = false;
+			static bool isGizmoLocalMode = true;
+			static bool isGizmoSnapEnabled = false;
+			static bool isSceneAssistVisible = true;
+			static float gizmoSnapValues[3] = {0.5f, 0.5f, 0.5f};
 			static auto sceneRangeStart = ImVec2(0.0f, 0.0f);
 			static auto sceneRangeEnd = ImVec2(0.0f, 0.0f);
 			static EditorScene editorScene;
@@ -1597,10 +1600,38 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			foregroundDrawList->AddRectFilled(sceneHeaderMin, sceneHeaderMax, IM_COL32(37, 37, 37, 255));
 			foregroundDrawList->AddRect(sceneHeaderMin, sceneViewMax, IM_COL32(75, 75, 75, 255));
 			foregroundDrawList->AddText(
-				ImVec2(sceneHeaderMin.x + 10.0f, sceneHeaderMin.y + 5.0f), IM_COL32(230, 230, 230, 255), "シーン");
-			foregroundDrawList->AddText(
 				ImVec2(sceneHeaderMax.x - 115.0f, sceneHeaderMin.y + 5.0f), IM_COL32(180, 220, 255, 255),
 				"Perspective");
+
+			constexpr ImGuiWindowFlags tabHostFlags =
+				ImGuiWindowFlags_NoDecoration |
+				ImGuiWindowFlags_NoMove |
+				ImGuiWindowFlags_NoResize |
+				ImGuiWindowFlags_NoSavedSettings |
+				ImGuiWindowFlags_NoScrollbar |
+				ImGuiWindowFlags_NoScrollWithMouse |
+				ImGuiWindowFlags_NoBackground;
+			ImGui::SetNextWindowPos(sceneHeaderMin, ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(editorSceneWidth - 120.0f, editorSceneHeaderHeight), ImGuiCond_Always);
+			ImGui::Begin("ViewportTabsHost", nullptr, tabHostFlags);
+			if (ImGui::BeginTabBar("ViewportTabs", ImGuiTabBarFlags_Reorderable)) {
+				if (ImGui::BeginTabItem("Scene")) {
+					editorViewportTabIndex = 0;
+					ImGui::EndTabItem();
+				}
+				if (ImGui::BeginTabItem("Game")) {
+					editorViewportTabIndex = 1;
+					ImGui::EndTabItem();
+				}
+				if (ImGui::BeginTabItem("Asset Store")) {
+					editorViewportTabIndex = 2;
+					ImGui::EndTabItem();
+				}
+				ImGui::EndTabBar();
+			}
+			ImGui::End();
+
+			bool isSceneTabActive = editorViewportTabIndex == 0;
 
 			constexpr ImGuiWindowFlags sceneOverlayFlags =
 				ImGuiWindowFlags_NoDecoration |
@@ -1641,8 +1672,8 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 				"SceneDropTarget",
 				ImVec2(editorSceneWidth - 42.0f, editorSceneHeight),
 				ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle | ImGuiButtonFlags_AllowOverlap);
-			bool isSceneHovered = ImGui::IsMouseHoveringRect(sceneInteractionMin, sceneInteractionMax);
-			if (ImGui::BeginDragDropTarget()) {
+			bool isSceneHovered = isSceneTabActive && ImGui::IsMouseHoveringRect(sceneInteractionMin, sceneInteractionMax);
+			if (isSceneTabActive && ImGui::BeginDragDropTarget()) {
 				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
 					std::string droppedAsset(
 						static_cast<const char*>(payload->Data), static_cast<size_t>(payload->DataSize - 1));
@@ -1786,6 +1817,22 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			};
 
 			ImDrawList* sceneDrawList = ImGui::GetWindowDrawList();
+			if (!isSceneTabActive) {
+				const char* tabMessage = editorViewportTabIndex == 1
+					                         ? "Game View は Scene と同じ描画結果を確認するためのタブです"
+					                         : "Asset Store は今後アセット取得をまとめるためのタブです";
+				ImVec2 messageSize = ImGui::CalcTextSize(tabMessage);
+				ImVec2 messagePosition{
+					editorSceneX + (editorSceneWidth - messageSize.x) * 0.5f,
+					editorSceneY + editorSceneHeight * 0.5f
+				};
+				sceneDrawList->AddRectFilled(
+					ImVec2(messagePosition.x - 16.0f, messagePosition.y - 12.0f),
+					ImVec2(messagePosition.x + messageSize.x + 16.0f, messagePosition.y + messageSize.y + 12.0f),
+					IM_COL32(20, 26, 34, 220),
+					6.0f);
+				sceneDrawList->AddText(messagePosition, IM_COL32(230, 235, 240, 255), tabMessage);
+			}
 			bool isGizmoHovered = false;
 			bool isGizmoActive = false;
 			Transforms* selectedModelTransform = &transform;
@@ -1827,172 +1874,156 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 				isGizmoActive = isGizmoActive || ImGui::IsItemActive();
 			};
 
-			auto getAxisDragAmount = [&](float dragSpeed) -> float {
-				ImVec2 mouseDelta = ImGui::GetIO().MouseDelta;
-				return (std::fabs(mouseDelta.x) >= std::fabs(mouseDelta.y))
-					       ? mouseDelta.x * dragSpeed
-					       : -mouseDelta.y * dragSpeed;
-			};
-
-			auto applyMoveAxis = [&](int32_t axisIndex, float amount) {
-				if (axisIndex == 0) {
-					selectedModelTransform->translate.x += amount;
-				}
-				else if (axisIndex == 1) {
-					selectedModelTransform->translate.y += amount;
-				}
-				else {
-					selectedModelTransform->translate.z += amount;
-				}
-				syncSelectedPlacedObjectToGameObject();
-			};
-
-			auto applyScaleAxis = [&](int32_t axisIndex, float amount) {
-				if (axisIndex == 0) {
-					selectedModelTransform->scale.x = (std::max)(0.01f, selectedModelTransform->scale.x + amount);
-				}
-				else if (axisIndex == 1) {
-					selectedModelTransform->scale.y = (std::max)(0.01f, selectedModelTransform->scale.y + amount);
-				}
-				else {
-					selectedModelTransform->scale.z = (std::max)(0.01f, selectedModelTransform->scale.z + amount);
-				}
-				syncSelectedPlacedObjectToGameObject();
-			};
-
-			auto drawMoveAxisGizmo = [&](const char* id, const ImVec2& origin, const ImVec2& end, ImU32 color,
-			                             int32_t axisIndex) {
-				sceneDrawList->AddLine(origin, end, color, 3.0f);
-
-				ImVec2 axisVector{end.x - origin.x, end.y - origin.y};
-				float axisLengthSquared = axisVector.x * axisVector.x + axisVector.y * axisVector.y;
-				if (axisLengthSquared > 0.0001f) {
-					float inverseLength = 1.0f / std::sqrt(axisLengthSquared);
-					ImVec2 normal{axisVector.x * inverseLength, axisVector.y * inverseLength};
-					ImVec2 tangent{-normal.y, normal.x};
-					ImVec2 arrowLeft{
-						end.x - normal.x * 14.0f + tangent.x * 6.0f,
-						end.y - normal.y * 14.0f + tangent.y * 6.0f
-					};
-					ImVec2 arrowRight{
-						end.x - normal.x * 14.0f - tangent.x * 6.0f,
-						end.y - normal.y * 14.0f - tangent.y * 6.0f
-					};
-					sceneDrawList->AddTriangleFilled(end, arrowLeft, arrowRight, color);
-				}
-
-				ImVec2 buttonMin{
-					(std::min)(origin.x, end.x) - 14.0f,
-					(std::min)(origin.y, end.y) - 14.0f
-				};
-				ImVec2 buttonSize{
-					(std::max)(std::fabs(end.x - origin.x) + 28.0f, 28.0f),
-					(std::max)(std::fabs(end.y - origin.y) + 28.0f, 28.0f)
-				};
-				ImGui::SetCursorScreenPos(buttonMin);
-				ImGui::InvisibleButton(id, buttonSize);
-				updateGizmoState();
-
-				if (ImGui::IsItemActive()) {
-					applyMoveAxis(axisIndex, getAxisDragAmount(0.02f));
-				}
-			};
-
-			auto drawScaleAxisGizmo = [&](const char* id, const ImVec2& origin, const ImVec2& end, ImU32 color,
-			                              int32_t axisIndex) {
-				sceneDrawList->AddLine(origin, end, color, 2.0f);
-				sceneDrawList->AddRectFilled(
-					ImVec2(end.x - 5.0f, end.y - 5.0f),
-					ImVec2(end.x + 5.0f, end.y + 5.0f),
-					color);
-
-				ImVec2 buttonMin{
-					(std::min)(origin.x, end.x) - 12.0f,
-					(std::min)(origin.y, end.y) - 12.0f
-				};
-				ImVec2 buttonSize{
-					(std::max)(std::fabs(end.x - origin.x) + 24.0f, 24.0f),
-					(std::max)(std::fabs(end.y - origin.y) + 24.0f, 24.0f)
-				};
-				ImGui::SetCursorScreenPos(buttonMin);
-				ImGui::InvisibleButton(id, buttonSize);
-				updateGizmoState();
-
-				if (ImGui::IsItemActive()) {
-					applyScaleAxis(axisIndex, getAxisDragAmount(0.01f));
-				}
-			};
-
-			auto drawEllipse = [&](const ImVec2& center, float radiusX, float radiusY, ImU32 color) {
-				constexpr int32_t segmentCount = 72;
-				ImVec2 previousPoint{
-					center.x + radiusX,
-					center.y
-				};
-				for (int32_t segmentIndex = 1; segmentIndex <= segmentCount; ++segmentIndex) {
-					float angle = std::numbers::pi_v<float> * 2.0f *
-						static_cast<float>(segmentIndex) / static_cast<float>(segmentCount);
-					ImVec2 currentPoint{
-						center.x + std::cos(angle) * radiusX,
-						center.y + std::sin(angle) * radiusY
-					};
-					sceneDrawList->AddLine(previousPoint, currentPoint, color, 2.0f);
-					previousPoint = currentPoint;
-				}
-			};
-
-			auto drawRotateGizmo = [&](const ImVec2& center) {
-				drawEllipse(center, 58.0f, 58.0f, IM_COL32(80, 220, 90, 220));
-				drawEllipse(center, 28.0f, 58.0f, IM_COL32(230, 70, 70, 220));
-				drawEllipse(center, 58.0f, 28.0f, IM_COL32(80, 120, 240, 220));
-
-				ImGui::SetCursorScreenPos(ImVec2(center.x - 66.0f, center.y - 66.0f));
-				ImGui::InvisibleButton("RotateGizmo", ImVec2(132.0f, 132.0f));
-				updateGizmoState();
-
-				if (ImGui::IsItemActive()) {
-					ImVec2 mouseDelta = ImGui::GetIO().MouseDelta;
-					selectedModelTransform->rotate.y += mouseDelta.x * 0.01f;
-					selectedModelTransform->rotate.x += mouseDelta.y * 0.01f;
-					syncSelectedPlacedObjectToGameObject();
-				}
-			};
-
-			if (hasSelectedModelTransform) {
-				ImVec2 gizmoOrigin = projectWorldPosition(selectedModelTransform->translate);
-				constexpr float gizmoWorldLength = 1.1f;
-				ImVec2 gizmoX = projectWorldPosition(
-					{
-						selectedModelTransform->translate.x + gizmoWorldLength,
-						selectedModelTransform->translate.y,
-						selectedModelTransform->translate.z
-					});
-				ImVec2 gizmoY = projectWorldPosition(
-					{
-						selectedModelTransform->translate.x,
-						selectedModelTransform->translate.y + gizmoWorldLength,
-						selectedModelTransform->translate.z
-					});
-				ImVec2 gizmoZ = projectWorldPosition(
-					{
-						selectedModelTransform->translate.x,
-						selectedModelTransform->translate.y,
-						selectedModelTransform->translate.z + gizmoWorldLength
-					});
-				sceneDrawList->AddCircleFilled(gizmoOrigin, 5.0f, IM_COL32(255, 255, 255, 255));
-
+			auto getActiveEditorToolName = [&]() -> const char* {
 				if (activeEditorTool == 1) {
-					drawMoveAxisGizmo("MoveGizmoX", gizmoOrigin, gizmoX, IM_COL32(230, 70, 70, 255), 0);
-					drawMoveAxisGizmo("MoveGizmoY", gizmoOrigin, gizmoY, IM_COL32(80, 220, 90, 255), 1);
-					drawMoveAxisGizmo("MoveGizmoZ", gizmoOrigin, gizmoZ, IM_COL32(80, 120, 240, 255), 2);
+					return "移動";
 				}
-				else if (activeEditorTool == 2) {
-					drawRotateGizmo(gizmoOrigin);
+
+				if (activeEditorTool == 2) {
+					return "回転";
 				}
-				else if (activeEditorTool == 3) {
-					drawScaleAxisGizmo("ScaleGizmoX", gizmoOrigin, gizmoX, IM_COL32(230, 70, 70, 255), 0);
-					drawScaleAxisGizmo("ScaleGizmoY", gizmoOrigin, gizmoY, IM_COL32(80, 220, 90, 255), 1);
-					drawScaleAxisGizmo("ScaleGizmoZ", gizmoOrigin, gizmoZ, IM_COL32(80, 120, 240, 255), 2);
+
+				if (activeEditorTool == 3) {
+					return "拡縮";
+				}
+
+				return "統合";
+			};
+
+			auto getActiveGizmoOperation = [&]() -> ImGuizmo::OPERATION {
+				if (activeEditorTool == 2) {
+					return ImGuizmo::ROTATE;
+				}
+
+				if (activeEditorTool == 3) {
+					return ImGuizmo::SCALE;
+				}
+
+				if (activeEditorTool == 4) {
+					return ImGuizmo::UNIVERSAL;
+				}
+
+				return ImGuizmo::TRANSLATE;
+			};
+
+			if (isSceneTabActive) {
+				ImGuizmo::SetOrthographic(false);
+				ImGuizmo::SetDrawlist(sceneDrawList);
+				ImGuizmo::SetRect(editorSceneX, editorSceneY, editorSceneWidth, editorSceneHeight);
+
+				if (hasSelectedModelTransform) {
+					ImGuizmo::OPERATION gizmoOperation = getActiveGizmoOperation();
+					Matrix4x4 selectedWorldMatrix = MakeAffineMatrix(
+						selectedModelTransform->scale,
+						selectedModelTransform->rotate,
+						selectedModelTransform->translate);
+					bool isManipulated = ImGuizmo::Manipulate(
+						&viewMatrix.matrix[0][0],
+						&projectionMatrix.matrix[0][0],
+						gizmoOperation,
+						isGizmoLocalMode ? ImGuizmo::LOCAL : ImGuizmo::WORLD,
+						&selectedWorldMatrix.matrix[0][0],
+						nullptr,
+						isGizmoSnapEnabled ? gizmoSnapValues : nullptr);
+					isGizmoHovered = isGizmoHovered || ImGuizmo::IsOver(gizmoOperation);
+					isGizmoActive = isGizmoActive || ImGuizmo::IsUsing();
+
+					if (isManipulated) {
+						float gizmoTranslation[3] = {};
+						float gizmoRotationDegrees[3] = {};
+						float gizmoScale[3] = {};
+						ImGuizmo::DecomposeMatrixToComponents(
+							&selectedWorldMatrix.matrix[0][0],
+							gizmoTranslation,
+							gizmoRotationDegrees,
+							gizmoScale);
+						constexpr float degreeToRadian = std::numbers::pi_v<float> / 180.0f;
+						selectedModelTransform->translate = {
+							gizmoTranslation[0],
+							gizmoTranslation[1],
+							gizmoTranslation[2]
+						};
+						selectedModelTransform->rotate = {
+							gizmoRotationDegrees[0] * degreeToRadian,
+							gizmoRotationDegrees[1] * degreeToRadian,
+							gizmoRotationDegrees[2] * degreeToRadian
+						};
+						selectedModelTransform->scale = {
+							(std::max)(0.01f, gizmoScale[0]),
+							(std::max)(0.01f, gizmoScale[1]),
+							(std::max)(0.01f, gizmoScale[2])
+						};
+						syncSelectedPlacedObjectToGameObject();
+					}
+				}
+
+				Matrix4x4 viewManipulateModelMatrix = MakeIdentity4x4();
+				Matrix4x4 viewManipulateViewMatrix = viewMatrix;
+				ImGuizmo::ViewManipulate(
+					&viewManipulateViewMatrix.matrix[0][0],
+					&projectionMatrix.matrix[0][0],
+					ImGuizmo::ROTATE,
+					ImGuizmo::LOCAL,
+					&viewManipulateModelMatrix.matrix[0][0],
+					4.0f,
+					ImVec2(editorSceneX + editorSceneWidth - 96.0f, editorSceneY + 12.0f),
+					ImVec2(78.0f, 78.0f),
+					IM_COL32(20, 26, 34, 190));
+
+				isGizmoHovered = isGizmoHovered || ImGuizmo::IsViewManipulateHovered();
+				isGizmoActive = isGizmoActive || ImGuizmo::IsUsingViewManipulate();
+
+				if (ImGuizmo::IsUsingViewManipulate()) {
+					Matrix4x4 viewManipulateCameraMatrix = Inverse(viewManipulateViewMatrix);
+					float cameraTranslation[3] = {};
+					float cameraRotationDegrees[3] = {};
+					float cameraScale[3] = {};
+					ImGuizmo::DecomposeMatrixToComponents(
+						&viewManipulateCameraMatrix.matrix[0][0],
+						cameraTranslation,
+						cameraRotationDegrees,
+						cameraScale);
+					constexpr float degreeToRadian = std::numbers::pi_v<float> / 180.0f;
+					cameraTransform.translate = {
+						cameraTranslation[0],
+						cameraTranslation[1],
+						cameraTranslation[2]
+					};
+					cameraTransform.rotate = {
+						cameraRotationDegrees[0] * degreeToRadian,
+						cameraRotationDegrees[1] * degreeToRadian,
+						cameraRotationDegrees[2] * degreeToRadian
+					};
+					cameraTransform.scale = {1.0f, 1.0f, 1.0f};
+					cameraMatrix = MakeAffineMatrix(cameraTransform.scale, cameraTransform.rotate, cameraTransform.translate);
+					viewMatrix = Inverse(cameraMatrix);
+				}
+
+				if (isSceneAssistVisible) {
+					ImVec2 assistMin{editorSceneX + 52.0f, editorSceneY + 10.0f};
+					ImVec2 assistMax{assistMin.x + 430.0f, assistMin.y + 66.0f};
+					sceneDrawList->AddRectFilled(assistMin, assistMax, IM_COL32(16, 22, 30, 185), 6.0f);
+					sceneDrawList->AddRect(assistMin, assistMax, IM_COL32(88, 105, 125, 180), 6.0f);
+					sceneDrawList->AddText(
+						ImVec2(assistMin.x + 10.0f, assistMin.y + 8.0f),
+						IM_COL32(235, 240, 245, 255),
+						"Scene操作: 右ドラッグ=回転 / 中ドラッグ=平行移動 / ホイール=前後");
+					sceneDrawList->AddText(
+						ImVec2(assistMin.x + 10.0f, assistMin.y + 30.0f),
+						IM_COL32(170, 215, 255, 255),
+						"オブジェクト: 左ドラッグ=範囲選択 / ギズモ軸=直接編集");
+					char gizmoAssistText[128] = {};
+					std::snprintf(
+						gizmoAssistText,
+						sizeof(gizmoAssistText),
+						"Tool: %s / Mode: %s / Snap: %s",
+						getActiveEditorToolName(),
+						isGizmoLocalMode ? "Local" : "World",
+						isGizmoSnapEnabled ? "On" : "Off");
+					sceneDrawList->AddText(
+						ImVec2(assistMin.x + 10.0f, assistMin.y + 50.0f),
+						IM_COL32(200, 210, 220, 255),
+						gizmoAssistText);
 				}
 			}
 
@@ -2000,7 +2031,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			// 不可視オブジェクト用ギズモ
 			//============================================================
 
-			if (isSceneGizmoVisible && isLightGizmoVisible) {
+			if (isSceneTabActive && isSceneGizmoVisible && isLightGizmoVisible) {
 				ImVec2 lightIconPosition = projectWorldPosition(directionalLightIconPosition);
 				ImU32 lightIconColor = IM_COL32(255, 220, 80, 255);
 				sceneDrawList->AddCircleFilled(lightIconPosition, 8.0f, lightIconColor);
@@ -2030,10 +2061,10 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 				}
 			}
 
-			if (isSceneGizmoVisible && isCameraGizmoVisible) {
+			if (isSceneTabActive && isSceneGizmoVisible && isCameraGizmoVisible) {
 				ImVec2 cameraIconPosition{
 					editorSceneX + editorSceneWidth - 86.0f,
-					editorSceneY + 54.0f
+					editorSceneY + 104.0f
 				};
 				sceneDrawList->AddRect(
 					ImVec2(cameraIconPosition.x, cameraIconPosition.y),
@@ -2413,11 +2444,18 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 				sphereMaterialData->enableLighting = isLighting ? TRUE : FALSE;
 			}
 			if (ImGui::CollapsingHeader("操作ツール", ImGuiTreeNodeFlags_DefaultOpen)) {
+				ImGui::Checkbox("ローカル座標", &isGizmoLocalMode);
+				ImGui::Checkbox("スナップ", &isGizmoSnapEnabled);
+				ImGui::DragFloat3("スナップ値", gizmoSnapValues, 0.01f, 0.01f, 10.0f);
 				ImGui::RadioButton("移動", &activeEditorTool, 1);
 				ImGui::SameLine();
 				ImGui::RadioButton("回転", &activeEditorTool, 2);
 				ImGui::SameLine();
 				ImGui::RadioButton("拡縮", &activeEditorTool, 3);
+				ImGui::SameLine();
+				ImGui::RadioButton("統合", &activeEditorTool, 4);
+				ImGui::Checkbox("Scene操作ヘルプ", &isSceneAssistVisible);
+				ImGui::TextDisabled("右上のViewCubeで視点方向を変更できます。");
 			}
 			if (ImGui::CollapsingHeader("シーンカメラ操作", ImGuiTreeNodeFlags_DefaultOpen)) {
 				ImGui::DragFloat("移動速度", &editorCameraMoveSpeed, 0.01f, 0.01f, 2.0f);
@@ -2483,122 +2521,113 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			ImGui::End();
 
 			float bottomY = editorWindowHeight - editorBottomHeight;
-			float projectWidth = editorProjectWidth;
-			float consoleX = projectWidth;
-			float consoleWidth = editorWindowWidth - editorRightWidth - consoleX;
+			float bottomPanelWidth = editorWindowWidth - editorRightWidth;
 
 			ImGui::SetNextWindowPos(ImVec2(0.0f, bottomY), ImGuiCond_Always);
-			ImGui::SetNextWindowSize(ImVec2(projectWidth, editorBottomHeight), ImGuiCond_Always);
-			ImGui::Begin("プロジェクト###Project", nullptr, fixedWindowFlags);
-			ImGui::InputText("検索", assetFilter, _countof(assetFilter));
-			ImGui::BeginChild("Folders", ImVec2(180.0f, 0.0f), ImGuiChildFlags_Borders);
-			ImGui::SetNextItemOpen(true, ImGuiCond_Once);
-			if (ImGui::TreeNode("resources")) {
-				ImGui::TreeNodeEx("sound", ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
-				ImGui::TreePop();
-			}
-			ImGui::EndChild();
-			ImGui::SameLine();
-			ImGui::BeginChild("Assets", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
-			if (ImGui::BeginTable("AssetGrid", 4, ImGuiTableFlags_SizingStretchSame)) {
-				const char* assetPaths[] = {
-					"resources/ball.png",
-					"resources/monsterBall.png",
-					"resources/uvChecker.png",
-					"resources/plane.obj",
-					"resources/plane.mtl",
-					"resources/sound/maou_19_12345.wav",
-				};
-				for (const char* assetPath : assetPaths) {
-					std::string relativePath = assetPath;
-					if (!matchesFilter(relativePath, assetFilter)) {
-						continue;
+			ImGui::SetNextWindowSize(ImVec2(bottomPanelWidth, editorBottomHeight), ImGuiCond_Always);
+			ImGui::Begin("下部パネル###BottomPanel", nullptr, fixedWindowFlags);
+			if (ImGui::BeginTabBar("BottomPanelTabs", ImGuiTabBarFlags_Reorderable)) {
+				if (ImGui::BeginTabItem("Project")) {
+					ImGui::InputText("検索", assetFilter, _countof(assetFilter));
+					ImGui::BeginChild("Folders", ImVec2(180.0f, 0.0f), ImGuiChildFlags_Borders);
+					ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+					if (ImGui::TreeNode("resources")) {
+						ImGui::TreeNodeEx("sound", ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
+						ImGui::TreePop();
 					}
-					ImGui::TableNextColumn();
-					ImGui::PushID(relativePath.c_str());
-					bool isPng = hasExtension(relativePath, ".png") || hasExtension(relativePath, ".PNG");
-					int32_t textureIndex = getTextureIndex(relativePath);
-					if (isPng && textureIndex >= 0) {
-						ImGui::Image(
-							ImTextureRef(textureSrvHandlesGPU[textureIndex].ptr),
-							ImVec2(48.0f, 48.0f));
-						if (ImGui::IsItemClicked()) {
-							selectedAssetPath = relativePath;
+					ImGui::EndChild();
+					ImGui::SameLine();
+					ImGui::BeginChild("Assets", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
+					if (ImGui::BeginTable("AssetGrid", 4, ImGuiTableFlags_SizingStretchSame)) {
+						const char* assetPaths[] = {
+							"resources/ball.png",
+							"resources/monsterBall.png",
+							"resources/uvChecker.png",
+							"resources/plane.obj",
+							"resources/plane.mtl",
+							"resources/sound/maou_19_12345.wav",
+						};
+						for (const char* assetPath : assetPaths) {
+							std::string relativePath = assetPath;
+							if (!matchesFilter(relativePath, assetFilter)) {
+								continue;
+							}
+							ImGui::TableNextColumn();
+							ImGui::PushID(relativePath.c_str());
+							bool isPng = hasExtension(relativePath, ".png") || hasExtension(relativePath, ".PNG");
+							int32_t textureIndex = getTextureIndex(relativePath);
+							if (isPng && textureIndex >= 0) {
+								ImGui::Image(
+									ImTextureRef(textureSrvHandlesGPU[textureIndex].ptr),
+									ImVec2(48.0f, 48.0f));
+								if (ImGui::IsItemClicked()) {
+									selectedAssetPath = relativePath;
+								}
+								if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+									ImGui::SetDragDropPayload("ASSET_PATH", relativePath.c_str(), relativePath.size() + 1);
+									ImGui::Text("%s", relativePath.c_str());
+									ImGui::EndDragDropSource();
+								}
+								std::string filename = getFilename(relativePath);
+								ImGui::TextWrapped("%s", filename.c_str());
+							}
+							else {
+								bool isSelected = selectedAssetPath == relativePath;
+								auto assetIcon = "FILE";
+								if (hasExtension(relativePath, ".wav")) {
+									assetIcon = "WAV";
+								}
+								else if (hasExtension(relativePath, ".obj")) {
+									assetIcon = "OBJ";
+								}
+								else if (hasExtension(relativePath, ".mtl")) {
+									assetIcon = "MTL";
+								}
+								if (ImGui::Button(assetIcon, ImVec2(58.0f, 48.0f))) {
+									selectedAssetPath = relativePath;
+								}
+								if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+									ImGui::SetDragDropPayload("ASSET_PATH", relativePath.c_str(), relativePath.size() + 1);
+									ImGui::Text("%s", relativePath.c_str());
+									ImGui::EndDragDropSource();
+								}
+								if (isSelected) {
+									ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "%s",
+									                   getFilename(relativePath).c_str());
+								}
+								else {
+									ImGui::TextWrapped("%s", getFilename(relativePath).c_str());
+								}
+							}
+							ImGui::PopID();
 						}
-						if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-							ImGui::SetDragDropPayload("ASSET_PATH", relativePath.c_str(), relativePath.size() + 1);
-							ImGui::Text("%s", relativePath.c_str());
-							ImGui::EndDragDropSource();
-						}
-						std::string filename = getFilename(relativePath);
-						ImGui::TextWrapped("%s", filename.c_str());
+						ImGui::EndTable();
 					}
-					else {
-						bool isSelected = selectedAssetPath == relativePath;
-						auto assetIcon = "FILE";
-						if (hasExtension(relativePath, ".wav")) {
-							assetIcon = "WAV";
-						}
-						else if (hasExtension(relativePath, ".obj")) {
-							assetIcon = "OBJ";
-						}
-						else if (hasExtension(relativePath, ".mtl")) {
-							assetIcon = "MTL";
-						}
-						if (ImGui::Button(assetIcon, ImVec2(58.0f, 48.0f))) {
-							selectedAssetPath = relativePath;
-						}
-						if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-							ImGui::SetDragDropPayload("ASSET_PATH", relativePath.c_str(), relativePath.size() + 1);
-							ImGui::Text("%s", relativePath.c_str());
-							ImGui::EndDragDropSource();
-						}
-						if (isSelected) {
-							ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "%s", getFilename(relativePath).c_str());
-						}
-						else {
-							ImGui::TextWrapped("%s", getFilename(relativePath).c_str());
-						}
+					if (hasFilterText(assetFilter)) {
+						ImGui::TextDisabled("検索中: %s", assetFilter);
 					}
-					ImGui::PopID();
+					ImGui::EndChild();
+					ImGui::EndTabItem();
 				}
-				ImGui::EndTable();
-			}
-			if (hasFilterText(assetFilter)) {
-				ImGui::TextDisabled("検索中: %s", assetFilter);
-			}
-			ImGui::EndChild();
-			ImGui::End();
 
-			ImGui::SetNextWindowPos(ImVec2(consoleX, bottomY), ImGuiCond_Always);
-			ImGui::SetNextWindowSize(ImVec2(consoleWidth, editorBottomHeight), ImGuiCond_Always);
-			ImGui::Begin("コンソール###Console", nullptr, fixedWindowFlags);
-			if (ImGui::Button("ログ消去")) {
-				isConsoleCleared = true;
-			}
-			ImGui::SameLine();
-			if (ImGui::Button("ログ表示")) {
-				isConsoleCleared = false;
-			}
-			ImGui::Separator();
-			if (!isConsoleCleared) {
-				ImGui::Text("DirectX12: 初期化済み");
-				ImGui::Text("入力: DirectInput キーボード");
-				ImGui::Text("音声: XAudio2 wav待機");
-				ImGui::Text("Scene: %.0f x %.0f", editorSceneWidth, editorSceneHeight);
-			}
-			ImGui::End();
-
-			ImGui::SetNextWindowPos(ImVec2(projectWidth - 3.0f, bottomY), ImGuiCond_Always);
-			ImGui::SetNextWindowSize(ImVec2(splitterHitWidth, editorBottomHeight), ImGuiCond_Always);
-			ImGui::Begin("ProjectConsoleSplitter", nullptr, splitterFlags);
-			ImGui::GetWindowDrawList()->AddRectFilled(
-				ImVec2(projectWidth - 1.0f, bottomY),
-				ImVec2(projectWidth + 1.0f, bottomY + editorBottomHeight),
-				IM_COL32(95, 115, 140, 255));
-			ImGui::InvisibleButton("ProjectConsoleSplitterButton", ImGui::GetContentRegionAvail());
-			if (ImGui::IsItemActive()) {
-				editorProjectWidth += ImGui::GetIO().MouseDelta.x;
+				if (ImGui::BeginTabItem("Console")) {
+					if (ImGui::Button("ログ消去")) {
+						isConsoleCleared = true;
+					}
+					ImGui::SameLine();
+					if (ImGui::Button("ログ表示")) {
+						isConsoleCleared = false;
+					}
+					ImGui::Separator();
+					if (!isConsoleCleared) {
+						ImGui::Text("DirectX12: 初期化済み");
+						ImGui::Text("入力: DirectInput キーボード");
+						ImGui::Text("音声: XAudio2 wav待機");
+						ImGui::Text("Scene: %.0f x %.0f", editorSceneWidth, editorSceneHeight);
+					}
+					ImGui::EndTabItem();
+				}
+				ImGui::EndTabBar();
 			}
 			ImGui::End();
 

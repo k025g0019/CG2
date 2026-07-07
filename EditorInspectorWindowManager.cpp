@@ -43,6 +43,7 @@ void EditorInspectorWindowManager::Draw() {
 		.editorScene = g_editorScene,
 		.selectionManager = g_editorSelectionManager,
 		.sceneSynchronizer = g_editorSceneSynchronizer,
+		.runtimeManager = g_editorRuntimeManager,
 		.textureFilePaths = g_editorTextureFilePaths,
 		.textureSrvHandlesGPU = g_textureSrvHandlesGPU,
 		.textureCount = _countof(g_textureFilePaths),

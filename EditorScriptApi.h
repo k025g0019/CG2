@@ -6,7 +6,7 @@
 // DLL Script と Editor 本体が共有する C 互換 API
 //================================================================
 
-constexpr uint32_t kEditorScriptApiVersion = 1U;  // DLL 側との互換性確認に使う固定バージョン。
+constexpr uint32_t kEditorScriptApiVersion = 5U;  // DLL 側との互換性確認に使う固定バージョン。
 
 enum EditorScriptPhysicsEventType : int32_t {
 	EditorScriptPhysicsEventTypeCollisionEnter = 0,
@@ -33,6 +33,15 @@ enum EditorScriptKeyCode : int32_t {
 	EditorScriptKeyCodeDown = 208,
 	EditorScriptKeyCodeLeft = 203,
 	EditorScriptKeyCodeRight = 205,
+};
+
+enum EditorScriptAiSensorKind : int32_t {
+	EditorScriptAiSensorKindVision = 0,
+	EditorScriptAiSensorKindObjectDetection = 1,
+	EditorScriptAiSensorKindColorTracking = 2,
+	EditorScriptAiSensorKindMotionDetection = 3,
+	EditorScriptAiSensorKindWhisperSpeech = 4,
+	EditorScriptAiSensorKindVoiceCommand = 5,
 };
 
 namespace Key {
@@ -82,6 +91,63 @@ struct EditorScriptPhysicsEvent {
 	uint8_t reservedPadding[3];
 };
 
+struct EditorScriptAiSensorState {
+	bool hasComponent;
+	bool isActive;
+	bool isDetected;
+	bool hasDetails;
+	int32_t connectedGameObjectId;
+	int32_t detectedGameObjectId;
+	int32_t commandId;
+	float range;
+	float angleDegrees;
+	float confidence;
+	float distance;
+	EditorScriptVector3 direction;
+	EditorScriptVector2 screenPosition;
+	EditorScriptVector2 boundsPosition;
+	EditorScriptVector2 boundsSize;
+	EditorScriptVector2 motion;
+	float motionMagnitude;
+	char label[64];
+	char text[256];
+	char command[64];
+};
+
+struct EditorScriptMaterialState {
+	bool hasComponent;
+	bool hasTexture;
+	bool hasUvLayoutTexture;
+	bool useLighting;
+	bool reservedPadding[3];
+	float intensity;
+	float metallic;
+	float roughness;
+	float ior;
+	float alpha;
+	float reflectionStrength;
+	EditorScriptVector3 color;
+	char rendererAssetPath[260];
+	char materialName[64];
+	char texturePath[260];
+	char uvLayoutTexturePath[260];
+};
+
+struct EditorScriptAnimationState {
+	bool hasComponent;
+	bool isPlaying;
+	bool isLoop;
+	bool playOnAwake;
+	int32_t animationType;
+	int32_t clipCount;
+	float animationSpeed;
+	float animationAmplitude;
+	float currentTime;
+	float currentClipDuration;
+	char assetPath[260];
+	char currentClipName[64];
+};
+
 struct EditorScriptRuntimeApi {
 	uint32_t apiVersion;
 	uint32_t reservedPadding;
@@ -96,8 +162,14 @@ struct EditorScriptRuntimeApi {
 	void (*SetTransform)(int32_t gameObjectId, const EditorScriptTransform* transform);
 	EditorScriptVector3 (*GetVelocity)(int32_t gameObjectId);
 	void (*SetVelocity)(int32_t gameObjectId, const EditorScriptVector3* velocity);
+	EditorScriptVector3 (*GetAngularVelocity)(int32_t gameObjectId);
+	void (*SetAngularVelocity)(int32_t gameObjectId, const EditorScriptVector3* angularVelocity);
 	bool (*AddForce)(int32_t gameObjectId, const EditorScriptVector3* force);
 	bool (*AddImpulse)(int32_t gameObjectId, const EditorScriptVector3* impulse);
+	bool (*AddTorque)(int32_t gameObjectId, const EditorScriptVector3* torque);
+	EditorScriptAiSensorState (*GetAiSensorState)(int32_t gameObjectId, int32_t sensorKind);
+	EditorScriptMaterialState (*GetMaterialState)(int32_t gameObjectId);
+	EditorScriptAnimationState (*GetAnimationState)(int32_t gameObjectId);
 };
 
 extern "C" {

@@ -11,7 +11,7 @@ namespace {
 	constexpr std::array<unsigned char, 3> kUtf8Bom{{0xEFu, 0xBBu, 0xBFu}};  // 保存時に先頭へ付ける UTF-8 BOM。
 }
 
-EditorNativeScriptAssetResult EditorNativeScriptAssetManager::CreateNativeScriptAsset(const std::string& requestedScriptName) {
+EditorNativeScriptAssetResult EditorNativeScriptAssetManager::CreateNativeScriptAsset(const std::string& requestedScriptName, bool isDebugBuild) {
 	EditorNativeScriptAssetResult result{};
 	result.sanitizedScriptName = SanitizeScriptName(requestedScriptName);
 
@@ -36,7 +36,7 @@ EditorNativeScriptAssetResult EditorNativeScriptAssetManager::CreateNativeScript
 	result.buildDebugFilePath = (scriptDirectoryPath / "build_debug.bat").generic_string();
 	result.buildReleaseFilePath = (scriptDirectoryPath / "build_release.bat").generic_string();
 	result.dllFilePath =
-		(scriptDirectoryPath / "x64" / "Debug" / (result.sanitizedScriptName + ".dll")).generic_string();
+		(scriptDirectoryPath / "x64" / (isDebugBuild ? "Debug" : "Release") / (result.sanitizedScriptName + ".dll")).generic_string();
 
 	if (!WriteUtf8BomFile(result.headerFilePath, MakeHeaderText(result.sanitizedScriptName)) ||
 		!WriteUtf8BomFile(result.sourceFilePath, MakeSourceText(result.sanitizedScriptName)) ||
@@ -47,7 +47,9 @@ EditorNativeScriptAssetResult EditorNativeScriptAssetManager::CreateNativeScript
 	}
 
 	result.isSucceeded = true;
-	result.message = "C++ スクリプトを生成しました。build_debug.bat を実行すると DLL が作られます。";
+	result.message = isDebugBuild
+		? "C++ スクリプトを生成しました。build_debug.bat を実行すると DLL が作られます。"
+		: "C++ スクリプトを生成しました。build_release.bat を実行すると DLL が作られます。";
 	return result;
 }
 
@@ -112,12 +114,6 @@ std::string EditorNativeScriptAssetManager::MakeSourceText(const std::string& sc
 		<< "\t" << scriptName << "& GetState(int32_t gameObjectId) {\r\n"
 		<< "\t\treturn scriptStates[gameObjectId];\r\n"
 		<< "\t}\r\n"
-		<< "\r\n"
-		<< "\tvoid LogActionPressed(int32_t gameObjectId, const char* actionMapName, const char* actionName) {\r\n"
-		<< "\t\tstd::string logText = \"" << scriptName << "::Action self=\" + std::to_string(gameObjectId) +\r\n"
-		<< "\t\t\t\" map=\" + actionMapName + \" action=\" + actionName;\r\n"
-		<< "\t\truntimeApi->Log(logText.c_str());  // 任意の Action が押された時の確認用ログ。\r\n"
-		<< "\t}\r\n"
 		<< "}\r\n"
 		<< "\r\n"
 		<< "extern \"C\" __declspec(dllexport) bool EditorScript_Load(uint32_t apiVersion, const EditorScriptRuntimeApi* api) {\r\n"
@@ -139,9 +135,8 @@ std::string EditorNativeScriptAssetManager::MakeSourceText(const std::string& sc
 		<< "\t\treturn;\r\n"
 		<< "\t}\r\n"
 		<< "\r\n"
-		<< "\t" << scriptName << "& state = GetState(gameObjectId);  // この GameObject 専用の設定を取り出す。\r\n"
+		<< "\t" << scriptName << "& state = GetState(gameObjectId);  // この GameObject 専用の状態を取り出す。\r\n"
 		<< "\tstate.isStarted = true;\r\n"
-		<< "\truntimeApi->Log(\"" << scriptName << "::Start\");\r\n"
 		<< "}\r\n"
 		<< "\r\n"
 		<< "extern \"C\" __declspec(dllexport) void EditorScript_Update(int32_t gameObjectId, float deltaTime) {\r\n"
@@ -155,30 +150,19 @@ std::string EditorNativeScriptAssetManager::MakeSourceText(const std::string& sc
 		<< "\r\n"
 		<< "\t//============================================================\r\n"
 		<< "\t// C++ で書き換える場所\r\n"
-		<< "\t// 例1: Player/Move を使って XZ 平面を移動する\r\n"
-		<< "\t// 例2: .inputactions に Action|Player|Dash|Button|Key|LeftShift を追加したら\r\n"
-		<< "\t//       runtimeApi->WasActionJustPressed(gameObjectId, \"Player\", \"Dash\") で受ける\r\n"
-		<< "\t// 例3: マウス座標が必要な時は runtimeApi->GetMousePosition() を使う\r\n"
+		<< "\t// ここには基礎だけ書いてあるので、詳細な API は component-reference.html を見ること\r\n"
+		<< "\t// 例: 追加 Action は WasActionJustPressed(gameObjectId, \"Player\", \"Jump\") のように読む\r\n"
+		<< "\t// 例: AI センサーは GetAiSensorState(gameObjectId, EditorScriptAiSensorKindVision) のように読む\r\n"
 		<< "\t//============================================================\r\n"
 		<< "\ttransform.position.x += moveInput.x * state.moveSpeed * deltaTime;\r\n"
 		<< "\ttransform.position.z += moveInput.y * state.moveSpeed * deltaTime;\r\n"
 		<< "\r\n"
 		<< "\tif (runtimeApi->WasActionJustPressed(gameObjectId, \"Player\", \"Jump\")) {\r\n"
-		<< "\t\tLogActionPressed(gameObjectId, \"Player\", \"Jump\");  // 既定で入る Jump の受け取り例。\r\n"
-		<< "\t}\r\n"
-		<< "\r\n"
-		<< "\tif (runtimeApi->WasActionJustPressed(gameObjectId, \"Player\", \"Fire\")) {\r\n"
-		<< "\t\tconst EditorScriptVector2 mousePosition = runtimeApi->GetMousePosition();  // 既定で入る Fire とマウス位置の利用例。\r\n"
-		<< "\t\tstd::string logText = \"" << scriptName << "::Fire mouse=(\" + std::to_string(mousePosition.x) + \", \" + std::to_string(mousePosition.y) + \")\";\r\n"
-		<< "\t\truntimeApi->Log(logText.c_str());\r\n"
+		<< "\t\t// ここへジャンプや発射処理を書く。\r\n"
 		<< "\t}\r\n"
 		<< "\r\n"
 		<< "\tif (runtimeApi->IsKeyDown(EditorScriptKeyCodeQ)) {\r\n"
-		<< "\t\ttransform.rotation.y -= state.rotateSpeed * deltaTime;  // 旧来のキー直書き入力も必要なら併用できる。\r\n"
-		<< "\t}\r\n"
-		<< "\r\n"
-		<< "\tif (runtimeApi->IsKeyDown(EditorScriptKeyCodeE)) {\r\n"
-		<< "\t\ttransform.rotation.y += state.rotateSpeed * deltaTime;\r\n"
+		<< "\t\ttransform.rotation.y -= state.rotateSpeed * deltaTime;  // 旧来のキー入力も必要なら併用できる。\r\n"
 		<< "\t}\r\n"
 		<< "\r\n"
 		<< "\truntimeApi->SetTransform(gameObjectId, &transform);  // 計算後の Transform を Editor 側へ戻す。\r\n"
@@ -199,8 +183,7 @@ std::string EditorNativeScriptAssetManager::MakeSourceText(const std::string& sc
 		<< "\t}\r\n"
 		<< "\r\n"
 		<< "\tif (physicsEvent->type == EditorScriptPhysicsEventTypeCollisionEnter) {\r\n"
-		<< "\t\tstd::string logText = \"" << scriptName << "::CollisionEnter self=\" + std::to_string(gameObjectId);\r\n"
-		<< "\t\truntimeApi->Log(logText.c_str());\r\n"
+		<< "\t\t(void)gameObjectId;  // 衝突相手 ID や法線を見て処理を分岐する場所。\r\n"
 		<< "\t}\r\n"
 		<< "}\r\n"
 		<< "\r\n"
@@ -221,18 +204,21 @@ std::string EditorNativeScriptAssetManager::MakeBuildScriptText(const std::strin
 		<< "@echo off\r\n"
 		<< "setlocal\r\n"
 		<< "\r\n"
-		<< "set SCRIPT_DIR=%~dp0\r\n"
-		<< "set VSWHERE=%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe\r\n"
+		<< "pushd \"%~dp0\"\r\n"
+		<< "set \"SCRIPT_DIR=%CD%\"\r\n"
+		<< "set \"PROJECT_ROOT=%SCRIPT_DIR%\\..\\..\\..\"\r\n"
+		<< "set \"VSWHERE=%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe\"\r\n"
 		<< "for /f \"usebackq delims=\" %%i in (`\"%VSWHERE%\" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VSINSTALL=%%i\r\n"
 		<< "if \"%VSINSTALL%\"==\"\" exit /b 1\r\n"
 		<< "call \"%VSINSTALL%\\Common7\\Tools\\VsDevCmd.bat\" -arch=x64\r\n"
 		<< "if errorlevel 1 exit /b 1\r\n"
 		<< "\r\n"
-		<< "if not exist \"%SCRIPT_DIR%x64\\" << configurationDirectory << "\" mkdir \"%SCRIPT_DIR%x64\\" << configurationDirectory << "\"\r\n"
+		<< "if not exist \"%SCRIPT_DIR%\\x64\\" << configurationDirectory << "\" mkdir \"%SCRIPT_DIR%\\x64\\" << configurationDirectory << "\"\r\n"
 		<< "\r\n"
-		<< "cl /nologo /std:c++20 /EHsc " << runtimeOption << " " << optimizationOption
-		<< " /LD /I \"%SCRIPT_DIR%..\\..\\..\" \"%SCRIPT_DIR%" << scriptName << ".cpp\" "
-		<< "/Fe:\"%SCRIPT_DIR%x64\\" << configurationDirectory << "\\" << scriptName << ".dll\"\r\n";
+		<< "cl /nologo /utf-8 /std:c++20 /EHsc " << runtimeOption << " " << optimizationOption
+		<< " /LD /I \"%PROJECT_ROOT%\" \"%SCRIPT_DIR%\\" << scriptName << ".cpp\" "
+		<< "/Fe:\"%SCRIPT_DIR%\\x64\\" << configurationDirectory << "\\" << scriptName << ".dll\"\r\n"
+		<< "popd\r\n";
 
 	return buildScriptText.str();
 }

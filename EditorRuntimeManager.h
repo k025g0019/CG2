@@ -1,7 +1,14 @@
 ﻿#pragma once
 
+#include "EditorAnimationManager.h"
+#include "EditorAIManager.h"
+#include "EditorAudioManager.h"
+#include "EditorConstraintManager.h"
 #include "EditorInputManager.h"
+#include "EditorLocalMoveManager.h"
+#include "EditorNavigationManager.h"
 #include "EditorPhysicsManager.h"
+#include "EditorRollingMoveManager.h"
 #include "EditorScene.h"
 #include "EditorScriptManager.h"
 
@@ -26,13 +33,24 @@ public:
 	void Draw();  // Play 中のデバッグ描画を呼ぶ
 	void TogglePlay();  // Play / Stop を切り替える
 	bool IsPlaying() const;  // 現在 Play 中かを返す
+	EditorScriptManager& GetScriptManager();  // Inspector から Script デバッグ状態を見るために返す
+	const EditorScriptManager& GetScriptManager() const;  // 読み取り専用版
+	EditorAnimationManager& GetAnimationManager();  // Inspector から Animation 状態を見るために返す
+	const EditorAnimationManager& GetAnimationManager() const;  // 読み取り専用版
 
 private:
 	EditorScene* editorScene_ = nullptr;  // Play 実行対象の Scene
 	std::vector<std::string>* consoleMessages_ = nullptr;  // Play 中の物理 / Script ログを出す Console
 	EditorScene sceneBackup_;  // Stop 時に編集前状態へ戻すための Scene バックアップ
+	EditorAnimationManager animationManager_;  // Animation Component の実行担当
+	EditorAIManager aiManager_;  // AI Component の実行担当
+	EditorAudioManager audioManager_;  // AudioSource Component の実行担当
+	EditorConstraintManager constraintManager_;  // Constraint 系 Component の実行担当
 	EditorScriptManager scriptManager_;  // Script / MonoBehaviour Component の実行入口
 	EditorInputManager inputManager_;  // Input Component の実行担当
+	EditorLocalMoveManager localMoveManager_;  // ローカル移動 Component の実行担当
+	EditorRollingMoveManager rollingMoveManager_;  // 転がり移動 Component の実行担当
+	EditorNavigationManager navigationManager_;  // NavigationAgent / NavMesh 系 Component の実行担当
 	EditorPhysicsManager physicsManager_;  // RigidBody / Collider の実行担当
 	bool isPlaying_ = false;  // Play 中なら true
 	bool hasSceneBackup_ = false;  // sceneBackup_ が有効なら true

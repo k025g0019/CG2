@@ -28,11 +28,14 @@ namespace {
 			rendererColor.x * rendererIntensity,
 			rendererColor.y * rendererIntensity,
 			rendererColor.z * rendererIntensity,
-			1.0f};
+			rendererComponent != nullptr ? rendererComponent->alpha : 1.0f};
 		sceneObject.materialData->enableLighting = isModelRenderer ? TRUE : FALSE;
 		sceneObject.materialData->useTexture = isModelRenderer ? FALSE : TRUE;  // Mesh は初期状態を白い面、Sprite は画像表示にする。
-		sceneObject.materialData->padding[0] = 0.0f;
-		sceneObject.materialData->padding[1] = 0.0f;
+		sceneObject.materialData->metallic = rendererComponent != nullptr ? rendererComponent->metallic : 0.0f;
+		sceneObject.materialData->roughness = rendererComponent != nullptr ? rendererComponent->roughness : 0.5f;
+		sceneObject.materialData->reflectance = rendererComponent != nullptr ? rendererComponent->reflectionStrength : 0.0f;
+		sceneObject.materialData->ior = rendererComponent != nullptr ? rendererComponent->ior : 1.0f;
+		sceneObject.materialData->emissionStrength = rendererComponent != nullptr ? rendererComponent->emissionStrength : 0.0f;
 	}
 }
 
@@ -176,6 +179,15 @@ void EditorSceneSynchronizer::Update(
 					sceneObject.textureIndex = foundTextureIndex;
 				}
 			}
+
+			if (spriteRenderer != nullptr &&
+				!spriteRenderer->textureAssetPath.empty()) {
+				sceneObjectManager_->SetCustomTexture(sceneObjectIndex, spriteRenderer->textureAssetPath);
+				sceneObject.materialData->useTexture = TRUE;
+			}
+			else {
+				sceneObjectManager_->ClearCustomTexture(sceneObjectIndex);
+			}
 		}
 		else {
 			const EditorComponent* modelRenderer =
@@ -183,8 +195,16 @@ void EditorSceneSynchronizer::Update(
 			const EditorComponent* meshFilter =
 				EditorComponentUtility::FindComponent(gameObject, EditorComponentType::MeshFilter);
 			std::string modelAssetPath;  // 実メッシュ描画に使うモデルパス。ModelRenderer を優先し、なければ MeshFilter を使う。
+			ModelData modelData{};  // FBX / OBJ が持つ元マテリアルやテクスチャ参照を取得する。
+			bool hasModelData = false;
 			ApplyRendererMaterial(sceneObject, modelRenderer, true);
 			sceneObject.textureIndex = 2;  // Shader には Texture SRV が必要なので渡すが、Model Material 側では Texture を無効化する。
+
+			std::string rendererTexturePath;
+			if (modelRenderer != nullptr && !modelRenderer->textureAssetPath.empty()) {
+				rendererTexturePath = modelRenderer->textureAssetPath;
+			}
+
 			if (modelRenderer != nullptr && !modelRenderer->assetPath.empty()) {
 				modelAssetPath = modelRenderer->assetPath;
 				sceneObject.meshType = EditorAssetUtility::GetModelMeshType(modelRenderer->assetPath);
@@ -197,11 +217,30 @@ void EditorSceneSynchronizer::Update(
 				sceneObject.meshType = EditorModelMeshType::Plane;
 			}
 
+			if (!modelAssetPath.empty()) {
+				hasModelData = EditorAssetUtility::LoadModelAsset(modelAssetPath, modelData);
+			}
+
+			// Renderer 側で画像未指定なら、FBX / OBJ が持つ元マテリアルの画像をそのまま使う。
+			if (rendererTexturePath.empty() &&
+				hasModelData &&
+				!modelData.material.textureFilePath.empty()) {
+				rendererTexturePath = modelData.material.textureFilePath;
+			}
+
+			if (!rendererTexturePath.empty() &&
+				sceneObjectManager_->SetCustomTexture(sceneObjectIndex, rendererTexturePath)) {
+				sceneObject.materialData->useTexture = TRUE;
+			}
+			else {
+				sceneObjectManager_->ClearCustomTexture(sceneObjectIndex);
+				sceneObject.materialData->useTexture = FALSE;
+			}
+
 			if (!modelAssetPath.empty() &&
 				!EditorAssetUtility::IsBuiltInPrimitiveAssetPath(modelAssetPath)) {
-				ModelData modelData{};
 				if (sceneObject.assetPath != modelAssetPath || !sceneObject.usesCustomMesh) {
-					if (EditorAssetUtility::LoadModelAsset(modelAssetPath, modelData)) {
+					if (hasModelData) {
 						sceneObjectManager_->SetCustomModelMesh(sceneObjectIndex, modelAssetPath, modelData);
 					}
 					else {

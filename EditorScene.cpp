@@ -123,6 +123,44 @@ namespace {
 		"NavMeshModifier",
 		"NavMeshModifierVolume",
 		"NavMeshLink",
+		"AIBehaviorTree",
+		"AIBehaviorBlackboard",
+		"AIBehaviorSelector",
+		"AIBehaviorSequence",
+		"AIBehaviorTask",
+		"AIBehaviorDecorator",
+		"AIStateMachine",
+		"AIState",
+		"AIStateTransition",
+		"AIGoapPlanner",
+		"AIGoapGoal",
+		"AIGoapAction",
+		"AIGoapWorldState",
+		"AIHtnPlanner",
+		"AIHtnDomain",
+		"AIHtnTask",
+		"AIHtnMethod",
+		"AIPathfindingAgent",
+		"AIMicroPatherGrid",
+		"AIRecastNavMeshBuilder",
+		"AIRecastCrowdAgent",
+		"AIPathRequest",
+		"AIDynamicObstacle",
+		"AISteeringAgent",
+		"AISeekSteering",
+		"AIFleeSteering",
+		"AIArriveSteering",
+		"AIPursuitSteering",
+		"AIWanderSteering",
+		"AIObstacleAvoidanceSteering",
+		"AIFlockSteering",
+		"AIVisionSensor",
+		"AIOpenCvCamera",
+		"AIOpenCvObjectDetector",
+		"AIOpenCvColorTracker",
+		"AIMotionSensor",
+		"AIWhisperSpeechRecognizer",
+		"AIVoiceCommand",
 		"ParticleSystem",
 		"VisualEffect",
 		"LensFlare",
@@ -132,6 +170,8 @@ namespace {
 		"Tilemap",
 		"TilemapRenderer",
 		"Grid",
+		"LocalMove",
+		"RollingMove",
 	};
 	constexpr int32_t kEditorComponentTypeCount =
 		static_cast<int32_t>(sizeof(kEditorComponentTypeNames) / sizeof(kEditorComponentTypeNames[0]));
@@ -427,6 +467,10 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 			     << component.hapticStrength << "|"
 			     << component.hapticDurationMs << "|"
 			     << component.hapticLoop << "|"
+			     << component.audioVolume << "|"
+			     << component.audioPitch << "|"
+			     << component.audioLoop << "|"
+			     << component.audioPlayOnAwake << "|"
 			     << component.angularVelocity.x << "|"
 			     << component.angularVelocity.y << "|"
 			     << component.angularVelocity.z << "|"
@@ -459,7 +503,53 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 				 << component.inputBehavior << "|"
 				 << component.inputMoveEventName << "|"
 				 << component.inputJumpEventName << "|"
-				 << component.inputFireEventName << "\n";
+				 << component.inputFireEventName << "|"
+				 << component.navAgentRadius << "|"
+				 << component.navAgentHeight << "|"
+				 << component.navMaxSpeed << "|"
+				 << component.navMaxAcceleration << "|"
+				 << component.navStoppingDistance << "|"
+				 << component.navAutoRepath << "|"
+				 << component.navCarve << "|"
+				 << component.navMaxSlope << "|"
+				 << component.navMaxClimb << "|"
+				 << component.navAreaOverride << "|"
+				 << component.navArea << "|"
+				 << component.navIgnoreFromBuild << "|"
+				 << component.navBidirectional << "|"
+				 << component.navCostModifier << "|"
+				 << component.rollingTorque << "|"
+				 << component.rollingHorsepower << "|"
+				 << component.constraintWeight << "|"
+				 << component.constraintPositionOffset.x << "|"
+				 << component.constraintPositionOffset.y << "|"
+				 << component.constraintPositionOffset.z << "|"
+				 << component.constraintRotationOffset.x << "|"
+				 << component.constraintRotationOffset.y << "|"
+				 << component.constraintRotationOffset.z << "|"
+				 << component.constraintAimAxis << "|"
+				 << component.constraintUpAxis << "|"
+				 << component.constraintRoll << "|"
+				 << component.constraintFreezeAxisX << "|"
+				 << component.constraintFreezeAxisY << "|"
+				 << component.constraintFreezeAxisZ << "|"
+				 << component.animationSpeed << "|"
+				 << component.animationLoop << "|"
+				 << component.animationPlayOnAwake << "|"
+				 << component.animationType << "|"
+				 << component.animationAmplitude << "|"
+				 << component.animatorState << "|"
+				 << component.particleRate << "|"
+				 << component.particleLifetime << "|"
+				 << component.particleSpeed << "|"
+			     << component.particleSize << "|"
+			     << component.metallic << "|"
+			     << component.roughness << "|"
+			     << component.ior << "|"
+			     << component.alpha << "|"
+			     << component.reflectionStrength << "|"
+			     << component.textureAssetPath << "|"
+			     << component.emissionStrength << "\n";
 		}
 	}
 
@@ -550,24 +640,28 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 					component.hapticStrength = ToFloat(elements[33]);
 					component.hapticDurationMs = ToInt(elements[34]);
 					component.hapticLoop = ToInt(elements[35]) != 0;
+					component.audioVolume = ToFloat(elements[36]);
+					component.audioPitch = ToFloat(elements[37]);
+					component.audioLoop = ToInt(elements[38]) != 0;
+					component.audioPlayOnAwake = ToInt(elements[39]) != 0;
 				}
-				if (elements.size() >= 54) {
-					component.angularVelocity = {ToFloat(elements[36]), ToFloat(elements[37]), ToFloat(elements[38])};
-					component.angularDrag = ToFloat(elements[39]);
-					component.freezePositionX = ToInt(elements[40]) != 0;
-					component.freezePositionY = ToInt(elements[41]) != 0;
-					component.freezePositionZ = ToInt(elements[42]) != 0;
-					component.freezeRotationX = ToInt(elements[43]) != 0;
-					component.freezeRotationY = ToInt(elements[44]) != 0;
-					component.freezeRotationZ = ToInt(elements[45]) != 0;
-					component.interpolationMode = ToInt(elements[46]);
-					component.collisionDetectionMode = ToInt(elements[47]);
-					component.dynamicFriction = ToFloat(elements[48]);
-					component.staticFriction = ToFloat(elements[49]);
-					component.frictionCombineMode = ToInt(elements[50]);
-					component.bouncinessCombineMode = ToInt(elements[51]);
-					component.physicsLayer = ToInt(elements[52]);
-					component.generateContactEvents = ToInt(elements[53]) != 0;
+				if (elements.size() >= 58) {
+					component.angularVelocity = {ToFloat(elements[40]), ToFloat(elements[41]), ToFloat(elements[42])};
+					component.angularDrag = ToFloat(elements[43]);
+					component.freezePositionX = ToInt(elements[44]) != 0;
+					component.freezePositionY = ToInt(elements[45]) != 0;
+					component.freezePositionZ = ToInt(elements[46]) != 0;
+					component.freezeRotationX = ToInt(elements[47]) != 0;
+					component.freezeRotationY = ToInt(elements[48]) != 0;
+					component.freezeRotationZ = ToInt(elements[49]) != 0;
+					component.interpolationMode = ToInt(elements[50]);
+					component.collisionDetectionMode = ToInt(elements[51]);
+					component.dynamicFriction = ToFloat(elements[52]);
+					component.staticFriction = ToFloat(elements[53]);
+					component.frictionCombineMode = ToInt(elements[54]);
+					component.bouncinessCombineMode = ToInt(elements[55]);
+					component.physicsLayer = ToInt(elements[56]);
+					component.generateContactEvents = ToInt(elements[57]) != 0;
 				}
 					if (elements.size() >= 64) {
 						component.connectedGameObjectId = ToInt(elements[54]);  // Joint の接続先 ID。Scene 内 GameObject と対応させる
@@ -585,6 +679,62 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 						component.inputMoveEventName = elements[66];
 						component.inputJumpEventName = elements[67];
 						component.inputFireEventName = elements[68];
+					}
+					if (elements.size() >= 83) {
+						component.navAgentRadius = ToFloat(elements[69]);
+						component.navAgentHeight = ToFloat(elements[70]);
+						component.navMaxSpeed = ToFloat(elements[71]);
+						component.navMaxAcceleration = ToFloat(elements[72]);
+						component.navStoppingDistance = ToFloat(elements[73]);
+						component.navAutoRepath = ToInt(elements[74]) != 0;
+						component.navCarve = ToInt(elements[75]) != 0;
+						component.navMaxSlope = ToFloat(elements[76]);
+						component.navMaxClimb = ToFloat(elements[77]);
+						component.navAreaOverride = ToInt(elements[78]) != 0;
+						component.navArea = ToInt(elements[79]);
+						component.navIgnoreFromBuild = ToInt(elements[80]) != 0;
+						component.navBidirectional = ToInt(elements[81]) != 0;
+						component.navCostModifier = ToFloat(elements[82]);
+					}
+					if (elements.size() >= 85) {
+						component.rollingTorque = ToFloat(elements[83]);
+						component.rollingHorsepower = ToFloat(elements[84]);
+					}
+					if (elements.size() >= 96) {
+						component.constraintWeight = ToFloat(elements[85]);
+						component.constraintPositionOffset = {ToFloat(elements[86]), ToFloat(elements[87]), ToFloat(elements[88])};
+						component.constraintRotationOffset = {ToFloat(elements[89]), ToFloat(elements[90]), ToFloat(elements[91])};
+						component.constraintAimAxis = ToInt(elements[92]);
+						component.constraintUpAxis = ToInt(elements[93]);
+						component.constraintRoll = ToFloat(elements[94]);
+						component.constraintFreezeAxisX = ToInt(elements[95]) != 0;
+						component.constraintFreezeAxisY = ToInt(elements[96]) != 0;
+						component.constraintFreezeAxisZ = ToInt(elements[97]) != 0;
+					}
+					if (elements.size() >= 103) {
+						component.animationSpeed = ToFloat(elements[98]);
+						component.animationLoop = ToInt(elements[99]) != 0;
+						component.animationPlayOnAwake = ToInt(elements[100]) != 0;
+						component.animationType = ToInt(elements[101]);
+						component.animationAmplitude = ToFloat(elements[102]);
+					}
+					if (elements.size() >= 108) {
+						component.animatorState = ToInt(elements[103]);
+						component.particleRate = ToFloat(elements[104]);
+						component.particleLifetime = ToFloat(elements[105]);
+						component.particleSpeed = ToFloat(elements[106]);
+						component.particleSize = ToFloat(elements[107]);
+					}
+					if (elements.size() >= 113) {
+						component.metallic = ToFloat(elements[108]);
+						component.roughness = ToFloat(elements[109]);
+						component.ior = ToFloat(elements[110]);
+						component.alpha = ToFloat(elements[111]);
+						component.reflectionStrength = ToFloat(elements[112]);
+					}
+					if (elements.size() >= 115) {
+						component.textureAssetPath = elements[113];
+						component.emissionStrength = ToFloat(elements[114]);
 					}
 					gameObject.components.push_back(component);
 					break;
@@ -724,8 +874,15 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 	component.type = type;
 	component.isActive = true;
 	component.assetPath = "";
+	component.textureAssetPath = "";
 	component.color = {1.0f, 1.0f, 1.0f};
 	component.intensity = 1.0f;
+	component.metallic = 0.0f;
+	component.roughness = 0.5f;
+	component.ior = 1.0f;
+	component.alpha = 1.0f;
+	component.reflectionStrength = 0.0f;
+	component.emissionStrength = 0.0f;
 	component.mass = 1.0f;
 	component.drag = 0.0f;
 	component.useGravity = true;
@@ -776,6 +933,45 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.hapticStrength = 1.0f;
 		component.hapticDurationMs = 120;
 		component.hapticLoop = false;
+		component.audioVolume = 1.0f;
+		component.audioPitch = 1.0f;
+		component.audioLoop = false;
+		component.audioPlayOnAwake = true;
+		component.navAgentRadius = 0.5f;
+		component.navAgentHeight = 2.0f;
+		component.navMaxSpeed = 3.5f;
+		component.navMaxAcceleration = 8.0f;
+		component.navStoppingDistance = 0.5f;
+		component.navAutoRepath = true;
+		component.navCarve = true;
+		component.navMaxSlope = 45.0f;
+		component.navMaxClimb = 0.5f;
+		component.navAreaOverride = false;
+		component.navArea = 0;
+		component.navIgnoreFromBuild = false;
+		component.navBidirectional = true;
+		component.navCostModifier = 1.0f;
+		component.rollingTorque = 50.0f;
+		component.rollingHorsepower = 5.0f;
+		component.constraintWeight = 1.0f;
+		component.constraintPositionOffset = {0.0f, 0.0f, 0.0f};
+		component.constraintRotationOffset = {0.0f, 0.0f, 0.0f};
+		component.constraintAimAxis = 2;
+		component.constraintUpAxis = 1;
+		component.constraintRoll = 0.0f;
+		component.constraintFreezeAxisX = false;
+		component.constraintFreezeAxisY = false;
+		component.constraintFreezeAxisZ = false;
+		component.animationSpeed = 1.0f;
+		component.animationLoop = true;
+		component.animationPlayOnAwake = true;
+		component.animationType = 0;
+		component.animationAmplitude = 1.0f;
+		component.animatorState = 0;
+		component.particleRate = 10.0f;
+		component.particleLifetime = 2.0f;
+		component.particleSpeed = 5.0f;
+		component.particleSize = 0.5f;
 
 	if (type == EditorComponentType::BoxCollider ||
 	    type == EditorComponentType::BoxCollider2D) {
@@ -802,6 +998,147 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 	         type == EditorComponentType::ParticleSystem ||
 	         type == EditorComponentType::VisualEffect) {
 		component.intensity = 1.0f;  // Effect 系の見た目の強さ
+	}
+	else if (type == EditorComponentType::NavigationAgent) {
+		component.navAgentRadius = 0.5f;
+		component.navAgentHeight = 2.0f;
+		component.navMaxSpeed = 3.5f;
+		component.navMaxAcceleration = 8.0f;
+		component.navStoppingDistance = 0.5f;
+		component.navAutoRepath = true;
+	}
+	else if (type == EditorComponentType::NavMeshObstacle) {
+		component.navCarve = true;
+		component.colliderRadius = 0.5f;
+		component.colliderSize = {1.0f, 2.0f, 1.0f};
+	}
+	else if (type == EditorComponentType::NavMeshSurface) {
+		component.navAgentRadius = 0.5f;
+		component.navAgentHeight = 2.0f;
+		component.navMaxSlope = 45.0f;
+		component.navMaxClimb = 0.5f;
+		component.colliderSize = {20.0f, 0.2f, 20.0f};
+	}
+	else if (type == EditorComponentType::NavMeshModifier) {
+		component.navAreaOverride = false;
+		component.navArea = 0;
+		component.navIgnoreFromBuild = false;
+	}
+	else if (type == EditorComponentType::NavMeshModifierVolume) {
+		component.navArea = 0;
+		component.colliderSize = {4.0f, 2.0f, 4.0f};
+	}
+	else if (type == EditorComponentType::NavMeshLink) {
+		component.navBidirectional = true;
+		component.navCostModifier = 1.0f;
+		component.colliderRadius = 0.5f;
+	}
+	else if (type == EditorComponentType::AIBehaviorTree ||
+	         type == EditorComponentType::AIStateMachine ||
+	         type == EditorComponentType::AIGoapPlanner ||
+	         type == EditorComponentType::AIHtnPlanner ||
+	         type == EditorComponentType::AIPathfindingAgent ||
+	         type == EditorComponentType::AIRecastCrowdAgent ||
+	         type == EditorComponentType::AISteeringAgent ||
+	         type == EditorComponentType::AISeekSteering ||
+	         type == EditorComponentType::AIFleeSteering ||
+	         type == EditorComponentType::AIArriveSteering ||
+	         type == EditorComponentType::AIPursuitSteering ||
+	         type == EditorComponentType::AIWanderSteering ||
+	         type == EditorComponentType::AIObstacleAvoidanceSteering ||
+	         type == EditorComponentType::AIFlockSteering) {
+		component.navMaxSpeed = 3.0f;
+		component.navMaxAcceleration = 8.0f;
+		component.navStoppingDistance = 0.5f;
+		component.navAgentRadius = 0.5f;
+		component.inputBehavior = 0;
+		component.colliderRadius = 5.0f;
+		if (type == EditorComponentType::AIFleeSteering) {
+			component.inputBehavior = 1;
+		}
+		else if (type == EditorComponentType::AIWanderSteering) {
+			component.inputBehavior = 2;
+		}
+	}
+	else if (type == EditorComponentType::AIVisionSensor ||
+	         type == EditorComponentType::AIOpenCvCamera ||
+	         type == EditorComponentType::AIOpenCvObjectDetector ||
+	         type == EditorComponentType::AIOpenCvColorTracker ||
+	         type == EditorComponentType::AIMotionSensor ||
+	         type == EditorComponentType::AIWhisperSpeechRecognizer ||
+	         type == EditorComponentType::AIVoiceCommand) {
+		component.colliderRadius = 8.0f;
+		component.colliderSize = {90.0f, 0.0f, 0.0f};
+	}
+	else if (type == EditorComponentType::AIBehaviorBlackboard ||
+	         type == EditorComponentType::AIBehaviorSelector ||
+	         type == EditorComponentType::AIBehaviorSequence ||
+	         type == EditorComponentType::AIBehaviorTask ||
+	         type == EditorComponentType::AIBehaviorDecorator ||
+	         type == EditorComponentType::AIState ||
+	         type == EditorComponentType::AIStateTransition ||
+	         type == EditorComponentType::AIGoapGoal ||
+	         type == EditorComponentType::AIGoapAction ||
+	         type == EditorComponentType::AIGoapWorldState ||
+	         type == EditorComponentType::AIHtnDomain ||
+	         type == EditorComponentType::AIHtnTask ||
+	         type == EditorComponentType::AIHtnMethod ||
+	         type == EditorComponentType::AIMicroPatherGrid ||
+	         type == EditorComponentType::AIRecastNavMeshBuilder ||
+	         type == EditorComponentType::AIPathRequest ||
+	         type == EditorComponentType::AIDynamicObstacle) {
+		component.navAgentRadius = 0.5f;
+		component.colliderRadius = 1.0f;
+		component.colliderSize = {1.0f, 1.0f, 1.0f};
+	}
+	else if (type == EditorComponentType::LocalMove) {
+		component.velocity = {1.0f, 0.0f, 0.0f};
+		component.inputMoveSpeed = 1.0f;
+	}
+	else if (type == EditorComponentType::RollingMove) {
+		component.velocity = {0.0f, 0.0f, 1.0f};
+		component.rollingTorque = 50.0f;
+		component.rollingHorsepower = 5.0f;
+		component.colliderRadius = 0.5f;
+	}
+	else if (type == EditorComponentType::ParentConstraint ||
+	         type == EditorComponentType::PositionConstraint ||
+	         type == EditorComponentType::RotationConstraint) {
+		component.constraintWeight = 1.0f;
+		component.constraintPositionOffset = {0.0f, 0.0f, 0.0f};
+		component.constraintRotationOffset = {0.0f, 0.0f, 0.0f};
+	}
+	else if (type == EditorComponentType::ScaleConstraint) {
+		component.constraintWeight = 1.0f;
+		component.constraintFreezeAxisX = false;
+		component.constraintFreezeAxisY = false;
+		component.constraintFreezeAxisZ = false;
+	}
+	else if (type == EditorComponentType::AimConstraint) {
+		component.constraintWeight = 1.0f;
+		component.constraintAimAxis = 2;
+	}
+	else if (type == EditorComponentType::LookAtConstraint) {
+		component.constraintWeight = 1.0f;
+		component.constraintUpAxis = 1;
+		component.constraintRoll = 0.0f;
+	}
+	else if (type == EditorComponentType::Animation) {
+		component.animationSpeed = 1.0f;
+		component.animationLoop = true;
+		component.animationPlayOnAwake = true;
+		component.animationType = 1;
+		component.animationAmplitude = 0.5f;
+	}
+	else if (type == EditorComponentType::Animator) {
+		component.animationSpeed = 1.0f;
+		component.animatorState = 0;
+	}
+	else if (type == EditorComponentType::ParticleSystem) {
+		component.particleRate = 10.0f;
+		component.particleLifetime = 2.0f;
+		component.particleSpeed = 5.0f;
+		component.particleSize = 0.5f;
 	}
 
 	return component;

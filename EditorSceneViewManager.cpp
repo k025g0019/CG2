@@ -386,7 +386,7 @@ void EditorSceneViewManager::Draw() {
 		0.45f,
 		g_editorSceneWidth / g_editorSceneHeight,
 		0.1f,
-		100.0f);
+		1000.0f);
 
 	// Sprite 用正射影。2D 座標をウィンドウサイズ基準で扱う。
 	g_spriteProjectionMatrix = MakeOrthographicMatrix(

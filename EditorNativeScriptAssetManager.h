@@ -19,7 +19,7 @@ struct EditorNativeScriptAssetResult {
 
 class EditorNativeScriptAssetManager {
 public:
-	static EditorNativeScriptAssetResult CreateNativeScriptAsset(const std::string& requestedScriptName);  // GUI から C++ Script 雛形をまとめて生成する。
+	static EditorNativeScriptAssetResult CreateNativeScriptAsset(const std::string& requestedScriptName, bool isDebugBuild);  // GUI から C++ Script 雛形をまとめて生成する。
 
 private:
 	static std::string SanitizeScriptName(const std::string& requestedScriptName);  // クラス名や DLL 名に使えない文字を除去する。

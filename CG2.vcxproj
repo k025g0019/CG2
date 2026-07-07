@@ -44,20 +44,20 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;$(IncludePath)</IncludePath>
-    <LibraryPath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release;$(LibraryPath)</LibraryPath>
+    <IncludePath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;C:\kogakuin\LE1\CG2\externals\onnxruntime-win-x64-gpu_cuda13-1.27.0\include;$(IncludePath)</IncludePath>
+    <LibraryPath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release;C:\kogakuin\LE1\CG2\externals\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;$(IncludePath)</IncludePath>
+    <IncludePath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;C:\kogakuin\LE1\CG2\externals\onnxruntime-win-x64-gpu_cuda13-1.27.0\include;$(IncludePath)</IncludePath>
     <ExternalIncludePath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;$(ExternalIncludePath)</ExternalIncludePath>
-    <LibraryPath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release;$(LibraryPath)</LibraryPath>
+    <LibraryPath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release;C:\kogakuin\LE1\CG2\externals\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <WarningLevel>EnableAllWarnings</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;_WINDOWS;USE_IMGUI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>externals\imgui-docking\imgui-docking;externals\imgui-docking\imgui-docking\backends;externals\ImGuizmo-master\ImGuizmo-master\src;externals\FeelKitHaptics;externals\JoltPhysics-5.5.0;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_DEBUG;_WINDOWS;USE_IMGUI;NOMINMAX;BTCPP_LIBRARY_VERSION=&quot;4.9.0&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>externals\imgui-docking\imgui-docking;externals\imgui-docking\imgui-docking\backends;externals\ImGuizmo-master\ImGuizmo-master\src;externals\FeelKitHaptics;externals\JoltPhysics-5.5.0;externals\AI\BehaviorTree.CPP-4.9.0\include;externals\AI\BehaviorTree.CPP-4.9.0\3rdparty\tinyxml2;externals\AI\BehaviorTree.CPP-4.9.0\3rdparty\minicoro;externals\AI\OpenSteer-master\include;externals\AI\recastnavigation-1.6.0\Detour\Include;externals\AI\recastnavigation-1.6.0\DetourCrowd\Include;externals\AI\recastnavigation-1.6.0\Recast\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 /external:anglebrackets /external:W0 %(AdditionalOptions)</AdditionalOptions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
@@ -72,7 +72,7 @@
       <EntryPointSymbol>WinMainCRTStartup</EntryPointSymbol>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <TreatLinkerWarningAsErrors>true</TreatLinkerWarningAsErrors>
-      <AdditionalDependencies>libfbxsdk.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>libfbxsdk.lib;onnxruntime.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <EnableDpiAwareness>PerMonitorHighDPIAware</EnableDpiAwareness>
@@ -80,7 +80,8 @@
     <PostBuildEvent>
       <Command>copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxcompiler.dll" "$(TargetDir)dxcompiler.dll"
 copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dxil.dll"
-copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.dll" "$(TargetDir)libfbxsdk.dll"</Command>
+copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.dll" "$(TargetDir)libfbxsdk.dll"
+copy "C:\kogakuin\LE1\CG2\externals\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib\onnxruntime.dll" "$(TargetDir)onnxruntime.dll"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -89,8 +90,8 @@ copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.d
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_WINDOWS;USE_IMGUI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>externals\imgui-docking\imgui-docking;externals\imgui-docking\imgui-docking\backends;externals\ImGuizmo-master\ImGuizmo-master\src;externals\FeelKitHaptics;externals\JoltPhysics-5.5.0;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>NDEBUG;_WINDOWS;USE_IMGUI;NOMINMAX;BTCPP_LIBRARY_VERSION=&quot;4.9.0&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>externals\imgui-docking\imgui-docking;externals\imgui-docking\imgui-docking\backends;externals\ImGuizmo-master\ImGuizmo-master\src;externals\FeelKitHaptics;externals\JoltPhysics-5.5.0;externals\AI\BehaviorTree.CPP-4.9.0\include;externals\AI\BehaviorTree.CPP-4.9.0\3rdparty\tinyxml2;externals\AI\BehaviorTree.CPP-4.9.0\3rdparty\minicoro;externals\AI\OpenSteer-master\include;externals\AI\recastnavigation-1.6.0\Detour\Include;externals\AI\recastnavigation-1.6.0\DetourCrowd\Include;externals\AI\recastnavigation-1.6.0\Recast\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 /external:anglebrackets /external:W0 %(AdditionalOptions)</AdditionalOptions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
@@ -102,7 +103,7 @@ copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.d
       <SubSystem>Windows</SubSystem>
       <EntryPointSymbol>WinMainCRTStartup</EntryPointSymbol>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>libfbxsdk.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>libfbxsdk.lib;onnxruntime.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <EnableDpiAwareness>PerMonitorHighDPIAware</EnableDpiAwareness>
@@ -110,7 +111,8 @@ copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.d
     <PostBuildEvent>
       <Command>copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxcompiler.dll" "$(TargetDir)dxcompiler.dll"
 copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dxil.dll"
-copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.dll" "$(TargetDir)libfbxsdk.dll"</Command>
+copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.dll" "$(TargetDir)libfbxsdk.dll"
+copy "C:\kogakuin\LE1\CG2\externals\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib\onnxruntime.dll" "$(TargetDir)onnxruntime.dll"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -120,6 +122,9 @@ copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.d
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Include="Object3d.VS.hlsl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="ShadowDepth.VS.hlsl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
@@ -148,12 +153,125 @@ copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.d
     <ClCompile Include="EditorInspectorWindowManager.cpp" />
     <ClCompile Include="EditorInputManager.cpp" />
     <ClCompile Include="EditorJoltPhysicsManager.cpp" />
+    <ClCompile Include="EditorLocalMoveManager.cpp" />
     <ClCompile Include="EditorMainMenuBar.cpp" />
     <ClCompile Include="EditorMainMenuManager.cpp" />
+    <ClCompile Include="EditorMeshCollision.cpp" />
     <ClCompile Include="EditorNativeScriptAssetManager.cpp" />
+    <ClCompile Include="EditorAIManager.cpp">
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="externals\AI\cppGOAP-develop\src\Action.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\cppGOAP-develop\src\Node.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\cppGOAP-develop\src\Planner.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\cppGOAP-develop\src\WorldState.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\MicroPather-master\micropather.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\BehaviorTree.CPP-4.9.0\3rdparty\tinyxml2\tinyxml2.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\BehaviorTree.CPP-4.9.0\src\action_node.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\BehaviorTree.CPP-4.9.0\src\basic_types.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\BehaviorTree.CPP-4.9.0\src\behavior_tree.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\BehaviorTree.CPP-4.9.0\src\blackboard.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\BehaviorTree.CPP-4.9.0\src\bt_factory.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\BehaviorTree.CPP-4.9.0\src\condition_node.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\BehaviorTree.CPP-4.9.0\src\control_node.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\BehaviorTree.CPP-4.9.0\src\decorator_node.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\BehaviorTree.CPP-4.9.0\src\json_export.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\BehaviorTree.CPP-4.9.0\src\script_parser.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\BehaviorTree.CPP-4.9.0\src\script_tokenizer.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\BehaviorTree.CPP-4.9.0\src\shared_library.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\BehaviorTree.CPP-4.9.0\src\shared_library_WIN.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\BehaviorTree.CPP-4.9.0\src\tree_node.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\BehaviorTree.CPP-4.9.0\src\xml_parsing.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\recastnavigation-1.6.0\Detour\Source\DetourAlloc.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\recastnavigation-1.6.0\Detour\Source\DetourAssert.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="externals\AI\recastnavigation-1.6.0\Detour\Source\DetourCommon.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="EditorAnimationManager.cpp" />
+    <ClCompile Include="EditorConstraintManager.cpp" />
+    <ClCompile Include="EditorNavigationManager.cpp">
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
     <ClCompile Include="EditorPhysicsManager.cpp" />
     <ClCompile Include="EditorRenderManager.cpp" />
+    <ClCompile Include="EditorRollingMoveManager.cpp">
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
     <ClCompile Include="EditorRuntimeManager.cpp" />
+    <ClCompile Include="EditorAudioManager.cpp" />
     <ClCompile Include="EditorScene.cpp" />
     <ClCompile Include="EditorSceneCameraController.cpp" />
     <ClCompile Include="EditorSceneLifecycleManager.cpp" />
@@ -241,10 +359,6 @@ copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.d
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
-    <ClCompile Include="C:\Users\shota\Documents\IMGUI\ImGuizmo-master\ImGuizmo-master\src\ImGuizmo.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
-      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
-    </ClCompile>
     <ClCompile Include="Imgui.cpp">
       <ObjectFileName>$(IntDir)imgui_helper.obj</ObjectFileName>
     </ClCompile>
@@ -262,6 +376,7 @@ copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.d
     <ClInclude Include="CrashHandler.h" />
     <ClInclude Include="EditorAssetFactory.h" />
     <ClInclude Include="EditorAssetUtility.h" />
+    <ClInclude Include="EditorAIManager.h" />
     <ClInclude Include="EditorBottomPanel.h" />
     <ClInclude Include="EditorBottomPanelWindowManager.h" />
     <ClInclude Include="EditorCommonTypes.h" />
@@ -277,11 +392,15 @@ copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.d
     <ClInclude Include="EditorInspectorWindowManager.h" />
     <ClInclude Include="EditorInputManager.h" />
     <ClInclude Include="EditorJoltPhysicsManager.h" />
+    <ClInclude Include="EditorLocalMoveManager.h" />
     <ClInclude Include="EditorMainMenuBar.h" />
     <ClInclude Include="EditorMainMenuManager.h" />
+    <ClInclude Include="EditorMeshCollision.h" />
     <ClInclude Include="EditorNativeScriptAssetManager.h" />
+    <ClInclude Include="EditorNavigationManager.h" />
     <ClInclude Include="EditorPhysicsManager.h" />
     <ClInclude Include="EditorRenderManager.h" />
+    <ClInclude Include="EditorRollingMoveManager.h" />
     <ClInclude Include="EditorRuntimeManager.h" />
     <ClInclude Include="EditorScene.h" />
     <ClInclude Include="EditorSceneCameraController.h" />
@@ -303,6 +422,11 @@ copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.d
     <ClInclude Include="Engine\Input\InputPhase.h" />
     <ClInclude Include="Engine\Input\InputSystem.h" />
     <ClInclude Include="Engine\Input\KeyboardState.h" />
+    <ClInclude Include="externals\AI\cppGOAP-develop\src\Action.h" />
+    <ClInclude Include="externals\AI\cppGOAP-develop\src\Node.h" />
+    <ClInclude Include="externals\AI\cppGOAP-develop\src\Planner.h" />
+    <ClInclude Include="externals\AI\cppGOAP-develop\src\WorldState.h" />
+    <ClInclude Include="externals\AI\MicroPather-master\micropather.h" />
     <ClInclude Include="externals\imgui-docking\imgui-docking\imconfig.h" />
     <ClInclude Include="externals\imgui-docking\imgui-docking\imgui.h" />
     <ClInclude Include="externals\imgui-docking\imgui-docking\backends\imgui_impl_dx12.h" />

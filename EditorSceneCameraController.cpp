@@ -1,4 +1,4 @@
-﻿#include "EditorSceneCameraController.h"
+#include "EditorSceneCameraController.h"
 
 #pragma warning(push, 0)
 #include "externals/imgui-docking/imgui-docking/imgui.h"
@@ -29,7 +29,7 @@ void EditorSceneCameraController::UpdateKeyboard(
 		return;
 	}
 
-	const ImGuiIO& imguiIo = ImGui::GetIO();  // Inspector の数値入力やメニュー操作中は、Scene カメラ用ショートカットを止める。
+	const ImGuiIO& imguiIo = ImGui::GetIO(); // Inspector の数値入力やメニュー操作中は、Scene カメラ用ショートカットを止める。
 	const bool isImGuiKeyboardEditing =
 		imguiIo.WantTextInput ||
 		imguiIo.WantCaptureKeyboard ||

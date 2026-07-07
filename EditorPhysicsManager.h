@@ -30,7 +30,9 @@ public:
 	bool OverlapBox(const Vector3& center, const Vector3& size, std::vector<int32_t>& hitGameObjectIds) const;  // Runtime から Physics.OverlapBox 相当を呼べる入口
 	bool AddForce(int32_t gameObjectId, const Vector3& force);  // Runtime から Rigidbody.AddForce 相当を呼べる入口
 	bool AddImpulse(int32_t gameObjectId, const Vector3& impulse);  // Runtime から Rigidbody.AddImpulse 相当を呼べる入口
+	bool AddTorque(int32_t gameObjectId, const Vector3& torque);  // Runtime から Rigidbody.AddTorque 相当を呼べる入口
 	bool SetVelocity(int32_t gameObjectId, const Vector3& velocity);  // Runtime から Rigidbody.velocity 相当を呼べる入口
+	bool SetAngularVelocity(int32_t gameObjectId, const Vector3& angularVelocity);  // Runtime から Rigidbody.angularVelocity 相当を呼べる入口
 	const std::vector<EditorJoltPhysicsManager::PhysicsEvent>& GetFrameEvents() const;  // 直近フレームの全固定更新で集めた接触イベント一覧
 	float GetFixedTimeStep() const;  // Script 側の FixedUpdate とそろえる固定時間
 

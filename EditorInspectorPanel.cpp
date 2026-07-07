@@ -2,6 +2,7 @@
 
 #pragma warning(disable : 5045)
 #include "EditorAssetUtility.h"
+#include "EditorComponentUtility.h"
 #include "EditorNativeScriptAssetManager.h"
 #include "EditorSharedState.h"
 
@@ -19,7 +20,25 @@ namespace {
 	constexpr float kPropertyLabelWidth = 118.0f;  // Unity 風に左側へ置く項目名の幅
 	constexpr float kAxisLabelWidth = 16.0f;  // X / Y / Z の軸名だけを表示する幅
 	constexpr float kWideButtonWidth = 230.0f;  // Inspector 下部の横長ボタン幅
+	constexpr float kRadianToDegree = 57.2957795f;  // 内部のラジアン値を Inspector 表示用の度数へ変換する係数。
+	constexpr float kDegreeToRadian = 0.0174532924f;  // Inspector で入力された度数を内部用ラジアンへ戻す係数。
 	constexpr unsigned char kUtf8Bom[] = {0xEFu, 0xBBu, 0xBFu};  // テキスト系アセットを UTF-8 BOM 付きで保存する。
+
+#ifdef _DEBUG
+	constexpr bool kIsDebugEditorBuild = true;  // 実行中エンジンが Debug なら Script も Debug DLL を基準にする。
+	constexpr const char* kCurrentScriptConfigName = "Debug";
+	constexpr const char* kCurrentBuildScriptName = "build_debug.bat";
+	constexpr const char* kCurrentBuildButtonLabel = "Debug DLL をビルド";
+	constexpr const char* kCurrentExpectedDllLabel = "想定 Debug DLL";
+	constexpr const char* kCurrentHowToText = "1. C++ スクリプトを作成 2. C++ を開く 3. build_debug.bat を実行 4. Play 中は DLL 更新で自動再読み込み";
+#else
+	constexpr bool kIsDebugEditorBuild = false;  // 実行中エンジンが Release なら Script も Release DLL を基準にする。
+	constexpr const char* kCurrentScriptConfigName = "Release";
+	constexpr const char* kCurrentBuildScriptName = "build_release.bat";
+	constexpr const char* kCurrentBuildButtonLabel = "Release DLL をビルド";
+	constexpr const char* kCurrentExpectedDllLabel = "想定 Release DLL";
+	constexpr const char* kCurrentHowToText = "1. C++ スクリプトを作成 2. C++ を開く 3. build_release.bat を実行 4. Play 中は DLL 更新で自動再読み込み";
+#endif
 
 #pragma warning(push)
 #pragma warning(disable : 4820)
@@ -322,12 +341,52 @@ namespace {
 		{"入力・イベント", "プレイヤー入力マネージャー", EditorComponentType::PlayerInputManager},
 		{"入力・イベント", "タッチ入力モジュール", EditorComponentType::TouchInputModule},
 		{"入力・イベント", "入力", EditorComponentType::Input},
-		{"ナビゲーション・AI", "NavMesh エージェント", EditorComponentType::NavigationAgent},
-		{"ナビゲーション・AI", "NavMesh 障害物", EditorComponentType::NavMeshObstacle},
-		{"ナビゲーション・AI", "NavMesh サーフェス", EditorComponentType::NavMeshSurface},
-		{"ナビゲーション・AI", "NavMesh モディファイア", EditorComponentType::NavMeshModifier},
-		{"ナビゲーション・AI", "NavMesh モディファイアボリューム", EditorComponentType::NavMeshModifierVolume},
-		{"ナビゲーション・AI", "NavMesh リンク", EditorComponentType::NavMeshLink},
+		{"ゲームプレイ", "ローカル移動", EditorComponentType::LocalMove},
+		{"ゲームプレイ", "ローリング移動", EditorComponentType::RollingMove},
+		{"ナビゲーション", "NavMesh エージェント", EditorComponentType::NavigationAgent},
+		{"ナビゲーション", "NavMesh 障害物", EditorComponentType::NavMeshObstacle},
+		{"ナビゲーション", "NavMesh サーフェス", EditorComponentType::NavMeshSurface},
+		{"ナビゲーション", "NavMesh モディファイア", EditorComponentType::NavMeshModifier},
+		{"ナビゲーション", "NavMesh モディファイアボリューム", EditorComponentType::NavMeshModifierVolume},
+		{"ナビゲーション", "NavMesh リンク", EditorComponentType::NavMeshLink},
+		{"AI", "行動ツリー", EditorComponentType::AIBehaviorTree},
+		{"AI", "共有データ（Blackboard）", EditorComponentType::AIBehaviorBlackboard},
+		{"AI", "条件分岐（Selector）", EditorComponentType::AIBehaviorSelector},
+		{"AI", "順番実行（Sequence）", EditorComponentType::AIBehaviorSequence},
+		{"AI", "実行処理（Task）", EditorComponentType::AIBehaviorTask},
+		{"AI", "条件装飾（Decorator）", EditorComponentType::AIBehaviorDecorator},
+		{"AI", "状態制御", EditorComponentType::AIStateMachine},
+		{"AI", "状態", EditorComponentType::AIState},
+		{"AI", "状態遷移", EditorComponentType::AIStateTransition},
+		{"AI", "目標計画", EditorComponentType::AIGoapPlanner},
+		{"AI", "目標条件", EditorComponentType::AIGoapGoal},
+		{"AI", "計画行動", EditorComponentType::AIGoapAction},
+		{"AI", "世界状態", EditorComponentType::AIGoapWorldState},
+		{"AI", "タスク計画", EditorComponentType::AIHtnPlanner},
+		{"AI", "タスク領域", EditorComponentType::AIHtnDomain},
+		{"AI", "タスク", EditorComponentType::AIHtnTask},
+		{"AI", "タスク分解", EditorComponentType::AIHtnMethod},
+		{"AI", "経路探索エージェント", EditorComponentType::AIPathfindingAgent},
+		{"AI", "グリッド経路", EditorComponentType::AIMicroPatherGrid},
+		{"AI", "ナビメッシュ生成", EditorComponentType::AIRecastNavMeshBuilder},
+		{"AI", "群衆エージェント", EditorComponentType::AIRecastCrowdAgent},
+		{"AI", "経路要求", EditorComponentType::AIPathRequest},
+		{"AI", "動的障害物", EditorComponentType::AIDynamicObstacle},
+		{"AI", "操舵エージェント", EditorComponentType::AISteeringAgent},
+		{"AI", "接近操舵", EditorComponentType::AISeekSteering},
+		{"AI", "逃走操舵", EditorComponentType::AIFleeSteering},
+		{"AI", "到着操舵", EditorComponentType::AIArriveSteering},
+		{"AI", "追跡操舵", EditorComponentType::AIPursuitSteering},
+		{"AI", "徘徊操舵", EditorComponentType::AIWanderSteering},
+		{"AI", "障害物回避操舵", EditorComponentType::AIObstacleAvoidanceSteering},
+		{"AI", "群れ操舵", EditorComponentType::AIFlockSteering},
+		{"AI", "視界センサー", EditorComponentType::AIVisionSensor},
+		{"AI", "画像入力カメラ", EditorComponentType::AIOpenCvCamera},
+		{"AI", "画像物体検出", EditorComponentType::AIOpenCvObjectDetector},
+		{"AI", "画像色追跡", EditorComponentType::AIOpenCvColorTracker},
+		{"AI", "動きセンサー", EditorComponentType::AIMotionSensor},
+		{"AI", "Whisper 音声認識", EditorComponentType::AIWhisperSpeechRecognizer},
+		{"AI", "音声コマンド", EditorComponentType::AIVoiceCommand},
 		{"エフェクト", "パーティクルシステム", EditorComponentType::ParticleSystem},
 		{"エフェクト", "ビジュアルエフェクト", EditorComponentType::VisualEffect},
 		{"エフェクト", "トレイルレンダラー", EditorComponentType::TrailRenderer},
@@ -371,6 +430,72 @@ namespace {
 		}
 
 		return textLower.find(filterLower) != std::string::npos;
+	}
+
+	const char* GetAiSubCategory(EditorComponentType type) {
+		if (type == EditorComponentType::AIBehaviorTree ||
+			type == EditorComponentType::AIBehaviorBlackboard ||
+			type == EditorComponentType::AIBehaviorSelector ||
+			type == EditorComponentType::AIBehaviorSequence ||
+			type == EditorComponentType::AIBehaviorTask ||
+			type == EditorComponentType::AIBehaviorDecorator) {
+			return "行動制御";
+		}
+
+		if (type == EditorComponentType::AIStateMachine ||
+			type == EditorComponentType::AIState ||
+			type == EditorComponentType::AIStateTransition) {
+			return "状態管理";
+		}
+
+		if (type == EditorComponentType::AIGoapPlanner ||
+			type == EditorComponentType::AIGoapGoal ||
+			type == EditorComponentType::AIGoapAction ||
+			type == EditorComponentType::AIGoapWorldState) {
+			return "目標計画";
+		}
+
+		if (type == EditorComponentType::AIHtnPlanner ||
+			type == EditorComponentType::AIHtnDomain ||
+			type == EditorComponentType::AIHtnTask ||
+			type == EditorComponentType::AIHtnMethod) {
+			return "タスク計画";
+		}
+
+		if (type == EditorComponentType::AIPathfindingAgent ||
+			type == EditorComponentType::AIMicroPatherGrid ||
+			type == EditorComponentType::AIRecastNavMeshBuilder ||
+			type == EditorComponentType::AIRecastCrowdAgent ||
+			type == EditorComponentType::AIPathRequest ||
+			type == EditorComponentType::AIDynamicObstacle) {
+			return "経路探索";
+		}
+
+		if (type == EditorComponentType::AISteeringAgent ||
+			type == EditorComponentType::AISeekSteering ||
+			type == EditorComponentType::AIFleeSteering ||
+			type == EditorComponentType::AIArriveSteering ||
+			type == EditorComponentType::AIPursuitSteering ||
+			type == EditorComponentType::AIWanderSteering ||
+			type == EditorComponentType::AIObstacleAvoidanceSteering ||
+			type == EditorComponentType::AIFlockSteering) {
+			return "移動操舵";
+		}
+
+		if (type == EditorComponentType::AIVisionSensor ||
+			type == EditorComponentType::AIOpenCvCamera ||
+			type == EditorComponentType::AIOpenCvObjectDetector ||
+			type == EditorComponentType::AIOpenCvColorTracker ||
+			type == EditorComponentType::AIMotionSensor) {
+			return "知覚";
+		}
+
+		if (type == EditorComponentType::AIWhisperSpeechRecognizer ||
+			type == EditorComponentType::AIVoiceCommand) {
+			return "音声";
+		}
+
+		return "";
 	}
 
 	void SyncEditorSelection(EditorInspectorPanelContext& context) {
@@ -727,6 +852,126 @@ namespace {
 		return isChanged;
 	}
 
+	bool DrawRotationDegreeRow(const char* label, Vector3& radianValue, float speedDegree) {
+		Vector3 degreeValue{
+			radianValue.x * kRadianToDegree,
+			radianValue.y * kRadianToDegree,
+			radianValue.z * kRadianToDegree
+		};  // UI には Unity と同じように度数で出す。
+
+		const bool isChanged = DrawVector3Row(label, degreeValue, speedDegree, 0.0f, 0.0f);
+		if (isChanged) {
+			radianValue.x = degreeValue.x * kDegreeToRadian;
+			radianValue.y = degreeValue.y * kDegreeToRadian;
+			radianValue.z = degreeValue.z * kDegreeToRadian;
+		}
+
+		return isChanged;
+	}
+
+	bool DrawAngleDegreeRow(const char* label, float& radianValue, float speedDegree, float minDegree, float maxDegree) {
+		float degreeValue = radianValue * kRadianToDegree;  // UI では角度を度数で編集する。
+		const bool isChanged = DrawFloatRow(label, degreeValue, speedDegree, minDegree, maxDegree);
+
+		if (isChanged) {
+			radianValue = degreeValue * kDegreeToRadian;
+		}
+
+		return isChanged;
+	}
+
+	std::string MakeGameObjectReferenceLabel(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		int32_t referencedGameObjectId,
+		const char* noneLabel) {
+		if (referencedGameObjectId < 0) {
+			return noneLabel;
+		}
+
+		const EditorGameObject* referencedGameObject = context.editorScene.FindGameObject(referencedGameObjectId);
+		if (referencedGameObject == nullptr) {
+			return "見つからない参照 (ID:" + std::to_string(referencedGameObjectId) + ")";
+		}
+
+		std::string displayName = referencedGameObject->name.empty() ? "GameObject" : referencedGameObject->name;
+		if (referencedGameObject->id == ownerGameObject.id) {
+			displayName += " (自分自身 / ID:" + std::to_string(referencedGameObject->id) + ")";
+		}
+		else {
+			displayName += " (ID:" + std::to_string(referencedGameObject->id) + ")";
+		}
+
+		if (!referencedGameObject->isActive) {
+			displayName += " / 無効";
+		}
+
+		return displayName;
+	}
+
+	bool DrawGameObjectReferenceRow(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		const char* label,
+		int32_t& referencedGameObjectId,
+		const char* noneLabel,
+		bool allowSelfReference) {
+		bool isChanged = false;  // 参照先の GameObject が変更されたか。
+		const std::string previewLabel = MakeGameObjectReferenceLabel(context, ownerGameObject, referencedGameObjectId, noneLabel);
+		ImGui::PushID(label);
+
+		if (BeginPropertyTable("GameObjectReferenceRow", 2)) {
+			SetupTwoColumnPropertyTable();
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted(label);
+			ImGui::TableNextColumn();
+			ImGui::SetNextItemWidth(-1.0f);
+
+			if (ImGui::BeginCombo("##Value", previewLabel.c_str())) {
+				const bool isNoneSelected = referencedGameObjectId < 0;
+				if (ImGui::Selectable(noneLabel, isNoneSelected)) {
+					referencedGameObjectId = -1;
+					isChanged = true;
+				}
+
+				if (isNoneSelected) {
+					ImGui::SetItemDefaultFocus();
+				}
+
+				for (const EditorGameObject& candidateGameObject : context.editorScene.GetGameObjects()) {
+					if (!allowSelfReference && candidateGameObject.id == ownerGameObject.id) {
+						continue;
+					}
+
+					std::string candidateLabel = candidateGameObject.name.empty() ? "GameObject" : candidateGameObject.name;
+					candidateLabel += " (ID:" + std::to_string(candidateGameObject.id) + ")";
+					if (!candidateGameObject.isActive) {
+						candidateLabel += " / 無効";
+					}
+
+					const bool isSelected = referencedGameObjectId == candidateGameObject.id;
+					if (ImGui::Selectable(candidateLabel.c_str(), isSelected)) {
+						referencedGameObjectId = candidateGameObject.id;
+						isChanged = true;
+					}
+
+					if (isSelected) {
+						ImGui::SetItemDefaultFocus();
+					}
+				}
+
+				ImGui::EndCombo();
+			}
+
+			ImGui::EndTable();
+		}
+
+		ImGui::PopID();
+		return isChanged;
+	}
+
 
 		void DrawReadOnlyFieldRow(const char* label, const char* text) {
 		// Material スロットのような読み取り専用フィールド
@@ -842,7 +1087,7 @@ namespace {
 
 		if (DrawComponentHeader("トランスフォーム", nullptr)) {
 			isTransformChanged |= DrawVector3Row("位置", gameObject.translate, 0.01f, 0.0f, 0.0f);
-			isTransformChanged |= DrawVector3Row("回転", gameObject.rotate, 0.01f, 0.0f, 0.0f);
+			isTransformChanged |= DrawRotationDegreeRow("回転", gameObject.rotate, 0.1f);
 			isTransformChanged |= DrawVector3Row("スケール", gameObject.scale, 0.01f, 0.01f, 100.0f);
 		}
 
@@ -860,6 +1105,159 @@ namespace {
 		DrawReadOnlyFieldRow("要素 0", materialName);
 		DrawColor3Row("色", component.color);
 		DrawFloatRow("強さ", component.intensity, 0.01f, 0.0f, 10.0f);
+
+		DrawSubHeader("ライティング");
+		DrawDisabledComboRow("投影", "オン");
+		DrawDisabledCheckboxRow("静的シャドウキャスター", false);
+		DrawDisabledCheckboxRow("グローバルイルミネーションに影響", false);
+		DrawDisabledComboRow("グローバルイルミネーションを受ける", "ライトプローブ");
+
+		DrawSubHeader("プローブ");
+		DrawDisabledComboRow("ライトプローブ", "プローブをブレンド");
+		DrawDisabledComboRow("アンカーオーバーライド", "なし (トランスフォーム)");
+
+		DrawSubHeader("Ray Tracing");
+		DrawDisabledComboRow("レイトレーシングモード", "Dynamic Transform");
+		DrawDisabledCheckboxRow("プロシージャルジオメトリ", false);
+		DrawDisabledCheckboxRow("加速構造構築フラグ", false);
+
+		DrawSubHeader("追加設定");
+		DrawDisabledComboRow("モーションベクトル", "オブジェクトモーションごと");
+		DrawDisabledCheckboxRow("動的オクルージョン", true);
+		DrawDisabledComboRow("レンダリングレイヤーマスク", "Default");
+	}
+
+	std::string GetRenderableModelAssetPath(const EditorGameObject& gameObject) {
+		const EditorComponent* modelRenderer =
+			EditorComponentUtility::FindComponent(gameObject, EditorComponentType::ModelRenderer);
+		if (modelRenderer != nullptr && !modelRenderer->assetPath.empty()) {
+			return modelRenderer->assetPath;
+		}
+
+		const EditorComponent* meshFilter =
+			EditorComponentUtility::FindComponent(gameObject, EditorComponentType::MeshFilter);
+		if (meshFilter != nullptr && !meshFilter->assetPath.empty()) {
+			return meshFilter->assetPath;
+		}
+
+		return "";
+	}
+
+	std::string GetModelAssetPathForComponent(const EditorGameObject& gameObject, const EditorComponent& component) {
+		if (!component.assetPath.empty()) {
+			return component.assetPath;
+		}
+
+		return GetRenderableModelAssetPath(gameObject);
+	}
+
+	bool TryLoadModelDataForComponent(
+		const EditorGameObject& gameObject,
+		const EditorComponent& component,
+		ModelData& modelData,
+		std::string& assetPath) {
+		assetPath = GetModelAssetPathForComponent(gameObject, component);
+		if (assetPath.empty()) {
+			return false;
+		}
+
+		return EditorAssetUtility::LoadModelAsset(assetPath, modelData);
+	}
+
+	void DrawTexturePreviewByPath(
+		const EditorInspectorPanelContext& context,
+		const char* label,
+		const std::string& texturePath) {
+		if (texturePath.empty() || context.textureSrvHandlesGPU == nullptr) {
+			return;
+		}
+
+		const int32_t textureIndex = EditorAssetUtility::GetTextureIndex(context.textureFilePaths, texturePath);
+		if (textureIndex < 0 || static_cast<size_t>(textureIndex) >= context.textureCount) {
+			return;
+		}
+
+		DrawSubHeader(label);
+		ImGui::Image(
+			ImTextureRef(context.textureSrvHandlesGPU[static_cast<size_t>(textureIndex)].ptr),
+			ImVec2(160.0f, 160.0f));
+	}
+
+	void DrawRendererComponent(
+		const EditorInspectorPanelContext& context,
+		const EditorGameObject& gameObject,
+		EditorComponent& component,
+		const char* fallbackMaterialName) {
+		ModelData modelData{};
+		std::string modelAssetPath;
+		const bool hasModelData = TryLoadModelDataForComponent(gameObject, component, modelData, modelAssetPath);
+		const std::string materialName =
+			hasModelData && !modelData.material.name.empty() ? modelData.material.name : fallbackMaterialName;
+		const std::string texturePath =
+			hasModelData && !modelData.material.textureFilePath.empty() ? modelData.material.textureFilePath : "なし";
+		const std::string uvLayoutTexturePath =
+			hasModelData && !modelData.material.uvLayoutTextureFilePath.empty() ? modelData.material.uvLayoutTextureFilePath : "なし";
+
+		DrawTextRow("アセット", modelAssetPath.empty() ? "未設定" : modelAssetPath.c_str());
+		DrawSubHeader("マテリアル");
+		DrawReadOnlyFieldRow("要素 0", materialName.c_str());
+		DrawTextRow("テクスチャ", texturePath.c_str());
+		DrawTextRow("UV確認画像", uvLayoutTexturePath.c_str());
+		DrawTextRow("設定画像", component.textureAssetPath.empty() ? "未設定" : component.textureAssetPath.c_str());
+		int32_t materialCount = static_cast<int32_t>(modelData.materials.size());
+		DrawIntRow("マテリアル数", materialCount);
+		DrawColor3Row("色", component.color);
+		DrawFloatRow("強さ", component.intensity, 0.01f, 0.0f, 10.0f);
+		DrawFloatRow("メタリック", component.metallic, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("粗さ", component.roughness, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("屈折率", component.ior, 0.01f, 1.0f, 3.0f);
+		DrawFloatRow("アルファ", component.alpha, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("反射", component.reflectionStrength, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("放射", component.emissionStrength, 0.01f, 0.0f, 10.0f);
+		DrawStringInputRow("画像パス", component.textureAssetPath);
+		if (!context.selectedAssetPath.empty() &&
+			(EditorAssetUtility::HasExtension(context.selectedAssetPath, ".png") ||
+			 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".jpg") ||
+			 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".jpeg"))) {
+			if (ImGui::Button("選択中画像を設定", ImVec2(-1.0f, 0.0f))) {
+				component.textureAssetPath = context.selectedAssetPath;
+			}
+		}
+		if (!component.textureAssetPath.empty()) {
+			DrawTexturePreviewByPath(context, "設定画像プレビュー", component.textureAssetPath);
+		}
+
+		if (hasModelData) {
+			const std::string baseColorText =
+				std::to_string(modelData.material.baseColor.x) + ", " +
+				std::to_string(modelData.material.baseColor.y) + ", " +
+				std::to_string(modelData.material.baseColor.z);
+			DrawTextRow("元ベースカラー", baseColorText.c_str());
+			const std::string alphaText = std::to_string(modelData.material.alpha);
+			const std::string metallicText = std::to_string(modelData.material.metallic);
+			const std::string roughnessText = std::to_string(modelData.material.roughness);
+			const std::string iorText = std::to_string(modelData.material.ior);
+			const std::string reflectionText = std::to_string(modelData.material.reflectance);
+			DrawTextRow("元アルファ", alphaText.c_str());
+			DrawTextRow("元メタリック", metallicText.c_str());
+			DrawTextRow("元粗さ", roughnessText.c_str());
+			DrawTextRow("元屈折率", iorText.c_str());
+			DrawTextRow("元反射", reflectionText.c_str());
+		}
+
+		if (hasModelData && !modelData.material.textureFilePath.empty()) {
+			DrawTexturePreviewByPath(context, "テクスチャプレビュー", modelData.material.textureFilePath);
+		}
+
+		if (hasModelData && !modelData.material.uvLayoutTextureFilePath.empty()) {
+			DrawTexturePreviewByPath(context, "UV確認画像プレビュー", modelData.material.uvLayoutTextureFilePath);
+		}
+
+		DrawSubHeader("モデル情報");
+		int32_t vertexCount = static_cast<int32_t>(modelData.vertices.size());
+		int32_t animationClipCount = static_cast<int32_t>(modelData.animationClips.size());
+		DrawIntRow("頂点数", vertexCount);
+		DrawIntRow("アニメーションクリップ数", animationClipCount);
 
 		DrawSubHeader("ライティング");
 		DrawDisabledComboRow("投影", "オン");
@@ -1109,7 +1507,17 @@ namespace {
 		static char requestedScriptName[128] = "NewNativeScript";  // GUI から生成する C++ クラス名の入力欄。
 		static std::string generationMessage;  // 直前の生成結果をそのまま Inspector に表示する。
 		auto openWithShell = [](const std::filesystem::path& filePath) {
-			const std::string command = "start \"\" \"" + filePath.string() + "\"";
+			const std::filesystem::path absolutePath = std::filesystem::absolute(filePath);
+			std::string commandPath = absolutePath.string();
+			std::replace(commandPath.begin(), commandPath.end(), '/', '\\');
+
+			if (absolutePath.extension() == ".bat") {
+				const std::string command = "cmd /c \"\"" + commandPath + "\"\"";
+				std::system(command.c_str());
+				return;
+			}
+
+			const std::string command = "start \"\" \"" + commandPath + "\"";
 			std::system(command.c_str());
 		};
 
@@ -1144,12 +1552,23 @@ namespace {
 			}
 		}
 
+		{
+			const EditorScriptManager::ScriptDebugInfo debugInfo =
+				context.runtimeManager.GetScriptManager().GetDebugInfo(gameObject.id);
+
+			DrawSubHeader("デバッグ");
+			DrawTextRow("DLL 状態", debugInfo.isLoaded ? "読込成功" : "未読込 / 失敗");
+			DrawTextRow("DLL 実在", debugInfo.sourceDllExists ? "あり" : "なし");
+			DrawTextRow("実行中 DLL", debugInfo.loadedDllPath.empty() ? "未作成" : debugInfo.loadedDllPath.c_str());
+			DrawTextRow("状態メッセージ", debugInfo.lastStatusMessage.empty() ? "なし" : debugInfo.lastStatusMessage.c_str());
+		}
+
 		DrawSubHeader("C++ スクリプト生成");
 		ImGui::InputText("クラス名", requestedScriptName, sizeof(requestedScriptName));
 
 		if (ImGui::Button("C++ スクリプトを作成", ImVec2(-1.0f, 0.0f))) {
 			const EditorNativeScriptAssetResult result =
-				EditorNativeScriptAssetManager::CreateNativeScriptAsset(requestedScriptName);
+				EditorNativeScriptAssetManager::CreateNativeScriptAsset(requestedScriptName, kIsDebugEditorBuild);
 			generationMessage = result.message;
 
 			if (result.isSucceeded) {
@@ -1173,13 +1592,15 @@ namespace {
 		}
 
 		if (!component.assetPath.empty()) {
-			DrawTextRow("想定 Debug DLL", component.assetPath.c_str());
+			DrawTextRow(kCurrentExpectedDllLabel, component.assetPath.c_str());
 		}
 
 		if (!component.assetPath.empty()) {
 			const std::filesystem::path dllPath = std::filesystem::path(component.assetPath);
 			const std::filesystem::path scriptSourcePath = dllPath.parent_path().parent_path().parent_path() / (dllPath.stem().generic_string() + ".cpp");
-			const std::filesystem::path buildScriptPath = dllPath.parent_path().parent_path().parent_path() / "build_debug.bat";
+			const std::filesystem::path buildScriptPath = dllPath.parent_path().parent_path().parent_path() / kCurrentBuildScriptName;
+			const std::filesystem::path expectedDllPath =
+				dllPath.parent_path().parent_path().parent_path() / "x64" / kCurrentScriptConfigName / dllPath.filename();
 
 			if (std::filesystem::exists(scriptSourcePath)) {
 				if (ImGui::Button("C++ を開く", ImVec2(-1.0f, 0.0f))) {
@@ -1188,20 +1609,22 @@ namespace {
 			}
 
 			if (std::filesystem::exists(buildScriptPath)) {
-				if (ImGui::Button("Debug DLL をビルド", ImVec2(-1.0f, 0.0f))) {
+				if (ImGui::Button(kCurrentBuildButtonLabel, ImVec2(-1.0f, 0.0f))) {
 					openWithShell(buildScriptPath);
 				}
 				DrawTextRow("ビルド", buildScriptPath.generic_string().c_str());
 			}
+
+			DrawTextRow("実行中構成 DLL", expectedDllPath.generic_string().c_str());
 		}
 
-		DrawTextRow("使い方", "1. C++ スクリプトを作成 2. C++ を開く 3. build_debug.bat を実行 4. Play 中は DLL 更新で自動再読み込み");
+		DrawTextRow("使い方", kCurrentHowToText);
 	}
 
-	void DrawGenericComponent(EditorComponent& component, const char* description) {
+	[[maybe_unused]] void DrawGenericComponent(EditorComponent& component, const char* description) {
 		DrawTextRow("状態", component.isActive ? "有効" : "無効");
 		DrawTextRow("説明", description);
-		DrawTextRow("アセット", component.assetPath.empty() ? "未設定" : component.assetPath.c_str());
+		DrawTextRow("アセット", component.assetPath.empty() ? "未使用" : component.assetPath.c_str());
 	}
 
 	void DrawConstantForceComponent(EditorComponent& component) {
@@ -1209,17 +1632,21 @@ namespace {
 		DrawVector3Row("力", component.velocity, 0.01f, 0.0f, 0.0f);
 	}
 
-	void DrawJointComponent(EditorComponent& component, const char* description) {
+	void DrawJointComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		EditorComponent& component,
+		const char* description) {
 		DrawTextRow("説明", description);
-		DrawIntRow("接続先ID", component.connectedGameObjectId);
+		DrawGameObjectReferenceRow(context, ownerGameObject, "接続先", component.connectedGameObjectId, "未設定", false);
 		DrawVector3Row("アンカー", component.colliderCenter, 0.01f, 0.0f, 0.0f);
 		DrawVector3Row("回転軸", component.jointAxis, 0.01f, 0.0f, 0.0f);
 
 		// Hinge は回転角度の制限を Jolt の HingeConstraint へ渡す。
 		if (component.type == EditorComponentType::HingeJoint ||
 		    component.type == EditorComponentType::CharacterJoint) {
-			DrawFloatRow("最小角度", component.jointMinLimit, 0.01f, -3.1415926f, 0.0f);
-			DrawFloatRow("最大角度", component.jointMaxLimit, 0.01f, 0.0f, 3.1415926f);
+			DrawAngleDegreeRow("最小角度", component.jointMinLimit, 0.1f, -180.0f, 0.0f);
+			DrawAngleDegreeRow("最大角度", component.jointMaxLimit, 0.1f, 0.0f, 180.0f);
 		}
 
 		// Spring は 2 点間の距離制限を Jolt の DistanceConstraint へ渡す。
@@ -1244,7 +1671,426 @@ namespace {
 		DrawFloatRow("透明度", component.intensity, 0.01f, 0.0f, 1.0f);
 	}
 
-		void DrawComponentBody(EditorInspectorPanelContext& context, EditorGameObject& gameObject, EditorComponent& component) {
+	void DrawNavMeshAgentComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		EditorComponent& component) {
+		DrawTextRow("説明", "NavMesh 上を移動する AI Agent 設定です。");
+		DrawGameObjectReferenceRow(context, ownerGameObject, "目的地", component.connectedGameObjectId, "未設定", false);
+		DrawFloatRow("半径", component.navAgentRadius, 0.01f, 0.1f, 10.0f);
+		DrawFloatRow("高さ", component.navAgentHeight, 0.01f, 0.1f, 10.0f);
+		DrawFloatRow("最大速度", component.navMaxSpeed, 0.1f, 0.1f, 50.0f);
+		DrawFloatRow("最大加速度", component.navMaxAcceleration, 0.1f, 0.1f, 100.0f);
+		DrawFloatRow("停止距離", component.navStoppingDistance, 0.1f, 0.0f, 10.0f);
+		DrawCheckboxRow("自動再経路", component.navAutoRepath);
+	}
+
+	void DrawNavMeshObstacleComponent(EditorComponent& component) {
+		DrawTextRow("説明", "NavMesh Agent の経路上に置く障害物コンポーネントです。");
+		DrawFloatRow("半径", component.colliderRadius, 0.01f, 0.1f, 10.0f);
+		DrawFloatRow("高さ", component.colliderSize.y, 0.01f, 0.1f, 10.0f);
+		DrawCheckboxRow("移動中も NavMesh を更新", component.navCarve);
+	}
+
+	void DrawNavMeshSurfaceComponent(EditorComponent& component) {
+		DrawTextRow("説明", "NavMesh を生成する面を指定するコンポーネントです。");
+		DrawFloatRow("Agent 半径", component.navAgentRadius, 0.01f, 0.1f, 10.0f);
+		DrawFloatRow("Agent 高さ", component.navAgentHeight, 0.01f, 0.1f, 10.0f);
+		DrawFloatRow("最大傾斜角度", component.navMaxSlope, 1.0f, 0.0f, 90.0f);
+		DrawFloatRow("最大段差", component.navMaxClimb, 0.01f, 0.0f, 10.0f);
+		DrawIntRow("レイヤーマスク", component.physicsLayer);
+	}
+
+	void DrawNavMeshModifierComponent(EditorComponent& component) {
+		DrawTextRow("説明", "NavMesh 生成ルールを GameObject 単位で変更するコンポーネントです。");
+		DrawCheckboxRow("Area を上書き", component.navAreaOverride);
+		DrawIntRow("Area", component.navArea);
+		DrawCheckboxRow("ビルドから除外", component.navIgnoreFromBuild);
+	}
+
+	void DrawNavMeshModifierVolumeComponent(EditorComponent& component) {
+		DrawTextRow("説明", "指定範囲だけ NavMesh 生成ルールを変更するコンポーネントです。");
+		DrawVector3Row("中心", component.colliderCenter, 0.01f, 0.0f, 0.0f);
+		DrawVector3Row("サイズ", component.colliderSize, 0.01f, 0.01f, 100.0f);
+		DrawIntRow("Area", component.navArea);
+	}
+
+	void DrawNavMeshLinkComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		EditorComponent& component) {
+		DrawTextRow("説明", "離れた NavMesh 同士を接続するコンポーネントです。");
+		DrawGameObjectReferenceRow(context, ownerGameObject, "接続先", component.connectedGameObjectId, "未設定", false);
+		DrawCheckboxRow("双方向", component.navBidirectional);
+		DrawFloatRow("コスト倍率", component.navCostModifier, 0.01f, 0.0f, 100.0f);
+		DrawFloatRow("幅", component.colliderRadius, 0.01f, 0.1f, 10.0f);
+	}
+
+	void DrawAiAgentComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		EditorComponent& component,
+		const char* description,
+		const char* libraryName) {
+		const char* behaviorModes[] = {"追跡", "逃走", "巡回", "待機"};
+
+		DrawTextRow("説明", description);
+		DrawTextRow("意味", "この GameObject を AI として動かす実行用コンポーネントです。");
+		DrawTextRow("使い方", "対象を設定し、動作と速度を決めて Play すると移動します。Rigidbody があれば速度を物理へ渡します。");
+		DrawTextRow("外部ライブラリ", libraryName);
+		DrawGameObjectReferenceRow(context, ownerGameObject, "対象", component.connectedGameObjectId, "未設定", false);
+		DrawComboRow("動作", component.inputBehavior, behaviorModes, static_cast<int32_t>(_countof(behaviorModes)));
+		DrawFloatRow("最大速度", component.navMaxSpeed, 0.1f, 0.0f, 100.0f);
+		DrawFloatRow("最大加速度", component.navMaxAcceleration, 0.1f, 0.0f, 200.0f);
+		DrawFloatRow("停止距離", component.navStoppingDistance, 0.01f, 0.0f, 100.0f);
+		DrawFloatRow("回避半径", component.navAgentRadius, 0.01f, 0.0f, 20.0f);
+		DrawTextRow("AI アセット", component.assetPath.empty() ? "未設定" : component.assetPath.c_str());
+		DrawStringInputRow("AI アセットパス", component.assetPath);
+		if (!context.selectedAssetPath.empty() &&
+			(EditorAssetUtility::HasExtension(context.selectedAssetPath, ".py") ||
+			 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".json") ||
+			 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".onnx") ||
+			 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".xml"))) {
+			if (ImGui::Button("選択中 AI アセットを設定", ImVec2(-1.0f, 0.0f))) {
+				component.assetPath = context.selectedAssetPath;  // Project で選んだ AI 用アセットを、この AI Component に割り当てる。
+			}
+		}
+	}
+
+	void DrawAiDataComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		EditorComponent& component,
+		const char* description,
+		const char* libraryName) {
+		DrawTextRow("説明", description);
+		DrawTextRow("意味", "AI の判断材料や設定を持つ部品です。単体では基本的に移動しません。");
+		DrawTextRow("使い方", "Planner / Agent / Sensor などの実行用 AI から接続先として参照して使います。");
+		DrawTextRow("外部ライブラリ", libraryName);
+		DrawGameObjectReferenceRow(context, ownerGameObject, "接続先", component.connectedGameObjectId, "未設定", false);
+		DrawTextRow("AI アセット", component.assetPath.empty() ? "未設定" : component.assetPath.c_str());
+		DrawStringInputRow("AI アセットパス", component.assetPath);
+		if (!context.selectedAssetPath.empty() &&
+			(EditorAssetUtility::HasExtension(context.selectedAssetPath, ".py") ||
+			 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".json") ||
+			 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".onnx") ||
+			 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".xml"))) {
+			if (ImGui::Button("選択中 AI アセットを設定", ImVec2(-1.0f, 0.0f))) {
+				component.assetPath = context.selectedAssetPath;  // Project で選んだ AI 用アセットを、この AI Data に割り当てる。
+			}
+		}
+		DrawFloatRow("判定半径", component.colliderRadius, 0.01f, 0.0f, 1000.0f);
+		DrawVector3Row("判定サイズ", component.colliderSize, 0.01f, 0.0f, 0.0f);
+	}
+
+	void DrawAiVisionSensorComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		EditorComponent& component) {
+		DrawTextRow("説明", "対象が視界範囲に入っているかを見る AI センサーです。");
+		DrawTextRow("意味", "敵の発見、索敵範囲、クリック/画像検出などの知覚判定に使います。");
+		DrawTextRow("使い方", "対象を設定し、視界距離と視野角を調整して Play します。範囲内に入ると内部状態と Console ログが更新されます。");
+		DrawTextRow("外部ライブラリ", "OpenCV / MediaPipe 連携用の入口");
+		DrawGameObjectReferenceRow(context, ownerGameObject, "対象", component.connectedGameObjectId, "未設定", false);
+		DrawTextRow("AI アセット", component.assetPath.empty() ? "未設定" : component.assetPath.c_str());
+		DrawStringInputRow("AI アセットパス", component.assetPath);
+		if (!context.selectedAssetPath.empty() &&
+			(EditorAssetUtility::HasExtension(context.selectedAssetPath, ".py") ||
+			 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".json") ||
+			 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".onnx") ||
+			 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".xml"))) {
+			if (ImGui::Button("選択中 AI アセットを設定", ImVec2(-1.0f, 0.0f))) {
+				component.assetPath = context.selectedAssetPath;  // Project で選んだ AI 用アセットを、Sensor に割り当てる。
+			}
+		}
+		DrawFloatRow("視界距離", component.colliderRadius, 0.1f, 0.0f, 1000.0f);
+		DrawFloatRow("視野角", component.colliderSize.x, 1.0f, 0.0f, 360.0f);
+	}
+
+	void DrawLocalMoveComponent(EditorComponent& component) {
+		DrawTextRow("説明", "自身のローカル軸方向へ毎フレーム移動し続けるコンポーネントです。");
+		DrawVector3Row("ローカル方向", component.velocity, 0.01f, 0.0f, 0.0f);
+		DrawFloatRow("速度", component.inputMoveSpeed, 0.01f, 0.0f, 100.0f);
+		DrawTextRow("例", "X=1 でローカル右、Z=1 でローカル前、Y=1 でローカル上へ移動します。");
+	}
+
+	void DrawRollingMoveComponent(EditorComponent& component) {
+		DrawTextRow("説明", "Rigidbody へ回転トルクを加え、摩擦で前進させる球やタイヤ向けの物理移動コンポーネントです。");
+		DrawVector3Row("進行方向", component.velocity, 0.01f, 0.0f, 0.0f);
+		DrawFloatRow("トルク", component.rollingTorque, 0.1f, 0.0f, 10000.0f);
+		DrawFloatRow("馬力", component.rollingHorsepower, 0.1f, 0.0f, 1000.0f);
+		DrawFloatRow("半径", component.colliderRadius, 0.01f, 0.01f, 100.0f);
+		DrawTextRow("条件", "Dynamic の Rigidbody と十分な摩擦が必要です。SphereCollider の半径を見た目とそろえると自然に転がります。");
+	}
+
+	void DrawAimConstraintComponent(EditorComponent& component) {
+		DrawTextRow("説明", "指定対象へ向きを合わせる Constraint です。");
+		DrawIntRow("ターゲット ID", component.connectedGameObjectId);
+		DrawFloatRow("重み", component.constraintWeight, 0.01f, 0.0f, 1.0f);
+		const char* axisNames[] = {"+X", "-X", "+Y", "-Y", "+Z", "-Z"};
+		int32_t clampedAxis = (std::max)(0, (std::min)(component.constraintAimAxis, 5));
+		DrawIntRow("ターゲット方向軸", component.constraintAimAxis);
+		DrawTextRow("軸の意味", axisNames[clampedAxis]);
+	}
+
+	void DrawLookAtConstraintComponent(EditorComponent& component) {
+		DrawTextRow("説明", "指定対象を見るように回転する Constraint です。");
+		DrawIntRow("ターゲット ID", component.connectedGameObjectId);
+		DrawFloatRow("重み", component.constraintWeight, 0.01f, 0.0f, 1.0f);
+		const char* axisNames[] = {"+X", "-X", "+Y", "-Y", "+Z", "-Z"};
+		int32_t clampedUp = (std::max)(0, (std::min)(component.constraintUpAxis, 5));
+		DrawIntRow("上方向軸", component.constraintUpAxis);
+		DrawTextRow("軸の意味", axisNames[clampedUp]);
+		DrawFloatRow("ロール角", component.constraintRoll, 0.1f, -180.0f, 180.0f);
+	}
+
+	void DrawParentConstraintComponent(EditorComponent& component) {
+		DrawTextRow("説明", "Transform 全体を別オブジェクトへ追従させる Constraint です。");
+		DrawIntRow("ターゲット ID", component.connectedGameObjectId);
+		DrawFloatRow("重み", component.constraintWeight, 0.01f, 0.0f, 1.0f);
+		DrawVector3Row("位置オフセット", component.constraintPositionOffset, 0.01f, 0.0f, 0.0f);
+		DrawRotationDegreeRow("回転オフセット", component.constraintRotationOffset, 0.1f);
+	}
+
+	void DrawPositionConstraintComponent(EditorComponent& component) {
+		DrawTextRow("説明", "位置だけを別オブジェクトへ追従させる Constraint です。");
+		DrawIntRow("ターゲット ID", component.connectedGameObjectId);
+		DrawFloatRow("重み", component.constraintWeight, 0.01f, 0.0f, 1.0f);
+		DrawVector3Row("オフセット", component.constraintPositionOffset, 0.01f, 0.0f, 0.0f);
+	}
+
+	void DrawRotationConstraintComponent(EditorComponent& component) {
+		DrawTextRow("説明", "回転だけを別オブジェクトへ追従させる Constraint です。");
+		DrawIntRow("ターゲット ID", component.connectedGameObjectId);
+		DrawFloatRow("重み", component.constraintWeight, 0.01f, 0.0f, 1.0f);
+		DrawRotationDegreeRow("回転オフセット", component.constraintRotationOffset, 0.1f);
+	}
+
+	void DrawScaleConstraintComponent(EditorComponent& component) {
+		DrawTextRow("説明", "拡縮だけを別オブジェクトへ追従させる Constraint です。");
+		DrawIntRow("ターゲット ID", component.connectedGameObjectId);
+		DrawFloatRow("重み", component.constraintWeight, 0.01f, 0.0f, 1.0f);
+		DrawCheckboxRow("X 軸フリーズ", component.constraintFreezeAxisX);
+		DrawCheckboxRow("Y 軸フリーズ", component.constraintFreezeAxisY);
+		DrawCheckboxRow("Z 軸フリーズ", component.constraintFreezeAxisZ);
+	}
+
+	void DrawMeshColliderComponent(const EditorGameObject& gameObject, EditorComponent& component) {
+		ModelData modelData{};
+		std::string collisionAssetPath;
+		const bool hasModelData = TryLoadModelDataForComponent(gameObject, component, modelData, collisionAssetPath);
+		const std::string renderAssetPath = GetRenderableModelAssetPath(gameObject);
+		const char* meshSourceLabel =
+			component.assetPath.empty() ? "描画メッシュを流用" : "当たり判定メッシュを個別使用";
+
+		DrawTextRow("メッシュ", collisionAssetPath.empty() ? "未設定" : collisionAssetPath.c_str());
+		DrawTextRow("参照元", meshSourceLabel);
+		if (!component.assetPath.empty() && !renderAssetPath.empty()) {
+			DrawTextRow("描画メッシュ", renderAssetPath.c_str());
+		}
+
+		DrawColliderCommonRows(component);
+		DrawVector3Row("中心", component.colliderCenter, 0.01f, 0.0f, 0.0f);
+		DrawVector3Row("サイズ", component.colliderSize, 0.01f, 0.01f, 100.0f);
+
+		DrawSubHeader("BVH / メッシュ");
+		int32_t vertexCount = static_cast<int32_t>(modelData.vertices.size());
+		int32_t triangleCount = static_cast<int32_t>(modelData.vertices.size() / 3u);
+		DrawIntRow("頂点数", vertexCount);
+		DrawIntRow("三角形数", triangleCount);
+		DrawTextRow("BVH", hasModelData ? "生成対象" : "未生成");
+	}
+
+	void DrawAnimationComponent(EditorInspectorPanelContext& context, const EditorGameObject& gameObject, EditorComponent& component) {
+		ModelData modelData{};
+		std::string animationAssetPath;
+		const bool hasModelData = TryLoadModelDataForComponent(gameObject, component, modelData, animationAssetPath);
+		const EditorAnimationManager& animationManager = context.runtimeManager.GetAnimationManager();
+
+		DrawTextRow("説明", "Animation Clip の再生設定です。");
+		DrawTextRow("アセット", animationAssetPath.empty() ? "未設定 (プロシージャル)" : animationAssetPath.c_str());
+		DrawFloatRow("速度", component.animationSpeed, 0.1f, 0.0f, 10.0f);
+		DrawCheckboxRow("ループ", component.animationLoop);
+		DrawCheckboxRow("自動再生", component.animationPlayOnAwake);
+		const char* animTypes[] = {"FBX Clip", "Float", "Rotate", "Pulse", "Bob"};
+		int32_t clamped = (std::max)(0, (std::min)(component.animationType, 4));
+		DrawIntRow("種類", component.animationType);
+		DrawTextRow("種類の意味", animTypes[clamped]);
+		if (component.animationType >= 1) {
+			DrawFloatRow("振幅", component.animationAmplitude, 0.01f, 0.0f, 10.0f);
+		}
+
+		DrawSubHeader("再生状態");
+		bool isPlaying = animationManager.IsAnimationPlaying(gameObject.id);
+		DrawDisabledCheckboxRow("再生中", isPlaying);
+		const float currentTime = animationManager.GetAnimationTime(gameObject.id);
+		const std::string currentTimeText = std::to_string(currentTime);
+		DrawTextRow("現在時間", currentTimeText.c_str());
+
+		DrawSubHeader("クリップ");
+		int32_t clipCount = static_cast<int32_t>(modelData.animationClips.size());
+		DrawIntRow("クリップ数", clipCount);
+		if (hasModelData && !modelData.animationClips.empty()) {
+			DrawTextRow("先頭クリップ", modelData.animationClips.front().name.c_str());
+			const std::string clipDurationText = std::to_string(modelData.animationClips.front().durationSeconds);
+			DrawTextRow("先頭クリップ長さ", clipDurationText.c_str());
+		}
+	}
+
+	void DrawAnimatorComponent(EditorComponent& component) {
+		DrawTextRow("説明", "Animator Controller の状態管理です。");
+		DrawFloatRow("速度", component.animationSpeed, 0.1f, 0.0f, 10.0f);
+		DrawIntRow("状態", component.animatorState);
+		DrawTextRow("注", "状態 = 0:Float / 1:Rotate / 2:Pulse / 3:Bob");
+	}
+
+	void DrawAvatarMaskComponent(EditorComponent& component) {
+		DrawTextRow("説明", "アニメーションを適用する体の範囲を制御するコンポーネントです。");
+		DrawTextRow("アセット", component.assetPath.empty() ? "未設定" : component.assetPath.c_str());
+	}
+
+	void DrawAudioListenerComponent(EditorComponent& component) {
+		DrawTextRow("説明", "Scene 内の音を聞く位置です。");
+		DrawTextRow("状態", component.isActive ? "アクティブ (聞こえています)" : "無効");
+		DrawTextRow("注", "AudioSource + AudioReverbZone の距離判定に使われます。");
+	}
+
+	void DrawPlayableDirectorComponent(EditorComponent& component) {
+		DrawTextRow("説明", "Timeline / Playable を再生するコンポーネントです。");
+		DrawTextRow("アセット", component.assetPath.empty() ? "未設定" : component.assetPath.c_str());
+		DrawCheckboxRow("自動再生", component.animationPlayOnAwake);
+		DrawFloatRow("速度", component.animationSpeed, 0.1f, 0.0f, 10.0f);
+		DrawCheckboxRow("ループ", component.animationLoop);
+	}
+
+	void DrawEventSystemComponent(EditorComponent& component) {
+		DrawTextRow("説明", "UI や入力イベントを扱うコンポーネントです。");
+		DrawIntRow("優先度", component.physicsLayer);
+	}
+
+	void DrawStandaloneInputModuleComponent(EditorComponent& component) {
+		DrawTextRow("説明", "旧 Input 用の UI 入力モジュールです。");
+		DrawTextRow("状態", component.isActive ? "有効" : "無効");
+	}
+
+	void DrawInputSystemUIInputModuleComponent(EditorComponent& component) {
+		DrawTextRow("説明", "新 Input System 用の UI 入力モジュールです。");
+		DrawTextRow("状態", component.isActive ? "有効" : "無効");
+	}
+
+	void DrawPlayerInputManagerComponent(EditorComponent& component) {
+		DrawTextRow("説明", "複数プレイヤーの参加と入力を管理するコンポーネントです。");
+		DrawTextRow("状態", component.isActive ? "有効" : "無効");
+	}
+
+	void DrawTouchInputModuleComponent(EditorComponent& component) {
+		DrawTextRow("説明", "タッチ操作を UI イベントへ渡すモジュールです。");
+		DrawTextRow("状態", component.isActive ? "有効" : "無効");
+	}
+
+	void DrawParticleSystemComponent(EditorComponent& component) {
+		DrawTextRow("説明", "パーティクルを発生させるエフェクトコンポーネントです。");
+		DrawFloatRow("発生レート", component.particleRate, 1.0f, 0.0f, 1000.0f);
+		DrawFloatRow("寿命", component.particleLifetime, 0.1f, 0.1f, 60.0f);
+		DrawFloatRow("速度", component.particleSpeed, 0.1f, 0.0f, 100.0f);
+		DrawFloatRow("サイズ", component.particleSize, 0.01f, 0.01f, 10.0f);
+		DrawColor3Row("色", component.color);
+		DrawCheckboxRow("自動再生", component.animationPlayOnAwake);
+	}
+
+	void DrawVisualEffectComponent(EditorComponent& component) {
+		DrawTextRow("説明", "VFX Graph 相当のエフェクトコンポーネントです。");
+		DrawTextRow("アセット", component.assetPath.empty() ? "未設定" : component.assetPath.c_str());
+	}
+
+	void DrawFlareLayerComponent(EditorComponent& component) {
+		DrawTextRow("説明", "カメラにレンズフレアを重ねるための設定です。");
+		DrawTextRow("状態", component.isActive ? "有効" : "無効");
+	}
+
+	void DrawReflectionProbeComponent(EditorComponent& component) {
+		DrawTextRow("説明", "周囲の反射情報を取得する環境コンポーネントです。");
+		DrawVector3Row("中心", component.colliderCenter, 0.01f, 0.0f, 0.0f);
+		DrawVector3Row("サイズ", component.colliderSize, 0.01f, 0.01f, 1000.0f);
+	}
+
+	void DrawLightProbeGroupComponent(EditorComponent& component) {
+		DrawTextRow("説明", "ライトプローブの配置をまとめるコンポーネントです。");
+		DrawTextRow("状態", component.isActive ? "有効" : "無効");
+	}
+
+	void DrawLightProbeProxyVolumeComponent(EditorComponent& component) {
+		DrawTextRow("説明", "大きな動的物体向けにライトプローブを補間するコンポーネントです。");
+		DrawVector3Row("サイズ", component.colliderSize, 0.01f, 0.01f, 1000.0f);
+	}
+
+	void DrawVolumeComponent(EditorComponent& component) {
+		DrawTextRow("説明", "URP / HDRP のポストプロセスや環境設定を持つコンポーネントです。");
+		DrawFloatRow("重み", component.intensity, 0.01f, 0.0f, 1.0f);
+	}
+
+	void DrawPlatformEffector2DComponent(EditorComponent& component) {
+		DrawTextRow("説明", "2D の片方向床を作る Effector です。");
+		DrawCheckboxRow("片面", component.isTrigger);
+	}
+
+	void DrawSurfaceEffector2DComponent(EditorComponent& component) {
+		DrawTextRow("説明", "2D 当たり判定の表面に沿って移動力を与えるエフェクターです。");
+		DrawFloatRow("力", component.intensity, 0.1f, 0.0f, 100.0f);
+	}
+
+	void DrawAreaEffector2DComponent(EditorComponent& component) {
+		DrawTextRow("説明", "2D の範囲内に力を加える Effector です。");
+		DrawFloatRow("力", component.intensity, 0.1f, 0.0f, 100.0f);
+		DrawVector3Row("方向", component.velocity, 0.01f, 0.0f, 0.0f);
+	}
+
+	void DrawPointEffector2DComponent(EditorComponent& component) {
+		DrawTextRow("説明", "2D の点へ向かう力、または離れる力を加える Effector です。");
+		DrawFloatRow("力", component.intensity, 0.1f, 0.0f, 100.0f);
+	}
+
+	void DrawBuoyancyEffector2DComponent(EditorComponent& component) {
+		DrawTextRow("説明", "2D の浮力を加える Effector です。");
+		DrawFloatRow("浮力", component.intensity, 0.01f, 0.0f, 10.0f);
+	}
+
+	void DrawLensFlareComponent(EditorComponent& component) {
+		DrawTextRow("説明", "光源やカメラにフレア表現を足すコンポーネントです。");
+		DrawTextRow("アセット", component.assetPath.empty() ? "未設定" : component.assetPath.c_str());
+		DrawFloatRow("明るさ", component.intensity, 0.01f, 0.0f, 10.0f);
+		DrawColor3Row("色", component.color);
+	}
+
+	void DrawProjectorComponent(EditorComponent& component) {
+		DrawTextRow("説明", "Texture や影を Scene に投影するコンポーネントです。");
+		DrawTextRow("アセット", component.assetPath.empty() ? "未設定" : component.assetPath.c_str());
+		DrawFloatRow("視野角", component.intensity, 1.0f, 1.0f, 180.0f);
+	}
+
+	void DrawDecalProjectorComponent(EditorComponent& component) {
+		DrawTextRow("説明", "URP / HDRP の Decal を投影するコンポーネントです。");
+		DrawTextRow("アセット", component.assetPath.empty() ? "未設定" : component.assetPath.c_str());
+		DrawVector3Row("サイズ", component.colliderSize, 0.01f, 0.01f, 100.0f);
+	}
+
+	void DrawTerrainComponent(EditorComponent& component) {
+		DrawTextRow("説明", "地形を扱うコンポーネントです。");
+		DrawVector3Row("サイズ", component.colliderSize, 1.0f, 1.0f, 10000.0f);
+	}
+
+	void DrawTilemapComponent(EditorComponent& component) {
+		DrawTextRow("説明", "2D Tile を配置するコンポーネントです。");
+		DrawTextRow("アセット", component.assetPath.empty() ? "未設定" : component.assetPath.c_str());
+		DrawVector3Row("サイズ", component.colliderSize, 1.0f, 1.0f, 1000.0f);
+	}
+
+	void DrawGridComponent(EditorComponent& component) {
+		DrawTextRow("説明", "Tilemap の親になる Grid コンポーネントです。");
+		DrawVector3Row("セルサイズ", component.colliderSize, 0.01f, 0.01f, 100.0f);
+	}
+
+	void DrawComponentBody(EditorInspectorPanelContext& context, EditorGameObject& gameObject, EditorComponent& component) {
 		// Component 種類ごとに Inspector の中身を分ける
 		switch (component.type) {
 		case EditorComponentType::MeshFilter:
@@ -1252,7 +2098,7 @@ namespace {
 			break;
 		case EditorComponentType::ModelRenderer:
 		case EditorComponentType::SkinnedMeshRenderer:
-			DrawRendererComponent(component, "Lit");
+			DrawRendererComponent(context, gameObject, component, "Lit");
 			break;
 		case EditorComponentType::SpriteRenderer:
 			DrawRendererComponent(component, "Sprite Lit");
@@ -1271,33 +2117,44 @@ namespace {
 			DrawLightComponent(component);
 			break;
 		case EditorComponentType::Camera:
+			DrawTextRow("説明", "GameView に描く実行カメラです。追従対象IDを設定すると、その GameObject へ簡易追従します。");
 			DrawTextRow("投影", "Perspective");
 			DrawDisabledComboRow("描画順", "Main Camera");
+			DrawGameObjectReferenceRow(context, gameObject, "追従対象", component.connectedGameObjectId, "未設定", false);
+			DrawTextRow("追従オフセット", "この GameObject の位置をオフセットとして使います。0,0,0 なら 0,2,-6 を使います。");
 			break;
 		case EditorComponentType::FlareLayer:
-			DrawGenericComponent(component, "カメラにレンズフレアを重ねるための設定です。");
+			DrawFlareLayerComponent(component);
 			break;
 		case EditorComponentType::CinemachineCamera:
-			DrawGenericComponent(component, "Cinemachine 用のカメラ制御コンポーネントです。");
+			DrawTextRow("状態", component.isActive ? "有効" : "無効");
+			DrawTextRow("説明", "簡易追従カメラです。追従対象IDを設定すると、その GameObject へオフセット追従します。");
+			DrawGameObjectReferenceRow(context, gameObject, "追従対象", component.connectedGameObjectId, "未設定", false);
+			DrawTextRow("追従オフセット", "この GameObject の位置をオフセットとして使います。0,0,0 なら 0,2,-6 を使います。");
 			break;
 		case EditorComponentType::ReflectionProbe:
-			DrawGenericComponent(component, "周囲の反射情報を取得する環境コンポーネントです。");
+			DrawReflectionProbeComponent(component);
 			break;
 		case EditorComponentType::LightProbeGroup:
-			DrawGenericComponent(component, "ライトプローブの配置をまとめるコンポーネントです。");
+			DrawLightProbeGroupComponent(component);
 			break;
 		case EditorComponentType::LightProbeProxyVolume:
-			DrawGenericComponent(component, "大きな動的物体向けにライトプローブを補間するコンポーネントです。");
+			DrawLightProbeProxyVolumeComponent(component);
 			break;
 		case EditorComponentType::Volume:
-			DrawGenericComponent(component, "URP / HDRP のポストプロセスや環境設定を持つコンポーネントです。");
+			DrawVolumeComponent(component);
 			break;
 		case EditorComponentType::AudioSource:
 			DrawTextRow("音声アセット", component.assetPath.empty() ? "未設定" : component.assetPath.c_str());
-			DrawFloatRow("音量", component.intensity, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("音量", component.audioVolume, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("ピッチ", component.audioPitch, 0.01f, 0.0f, 3.0f);
+			DrawCheckboxRow("ループ", component.audioLoop);
+			DrawCheckboxRow("自動再生", component.audioPlayOnAwake);
 			break;
 		case EditorComponentType::AudioReverbZone:
 			DrawAudioFilterComponent(component, "範囲内の音へリバーブを加えるコンポーネントです。");
+			DrawFloatRow("最小距離", component.colliderRadius, 0.01f, 0.0f, 100.0f);
+			DrawFloatRow("最大距離", component.colliderSize.x, 0.01f, 0.0f, 500.0f);
 			break;
 		case EditorComponentType::AudioLowPassFilter:
 			DrawAudioFilterComponent(component, "高音を抑えて低音を通すオーディオフィルターです。");
@@ -1341,10 +2198,7 @@ namespace {
 		case EditorComponentType::CompositeCollider2D:
 		case EditorComponentType::TilemapCollider2D:
 		case EditorComponentType::CustomCollider2D:
-			DrawTextRow("メッシュ", component.assetPath.empty() ? "未設定" : component.assetPath.c_str());
-			DrawColliderCommonRows(component);
-			DrawVector3Row("中心", component.colliderCenter, 0.01f, 0.0f, 0.0f);
-			DrawVector3Row("サイズ", component.colliderSize, 0.01f, 0.01f, 100.0f);
+			DrawMeshColliderComponent(gameObject, component);
 			break;
 		case EditorComponentType::WheelCollider:
 			DrawTextRow("説明", "車輪用の 3D 当たり判定です。");
@@ -1355,118 +2209,244 @@ namespace {
 			DrawConstantForceComponent(component);
 			break;
 		case EditorComponentType::HingeJoint:
-			DrawJointComponent(component, "ちょうつがいのように回転軸を固定する Joint です。");
+			DrawJointComponent(context, gameObject, component, "ちょうつがいのように回転軸を固定する Joint です。");
 			break;
 		case EditorComponentType::FixedJoint:
-			DrawJointComponent(component, "2 つの Rigidbody を固定接続する Joint です。");
+			DrawJointComponent(context, gameObject, component, "2 つの Rigidbody を固定接続する Joint です。");
 			break;
 		case EditorComponentType::SpringJoint:
-			DrawJointComponent(component, "バネのように距離を保つ Joint です。");
+			DrawJointComponent(context, gameObject, component, "バネのように距離を保つ Joint です。");
 			break;
 		case EditorComponentType::ConfigurableJoint:
-			DrawJointComponent(component, "移動軸や回転軸を細かく制限する Joint です。");
+			DrawJointComponent(context, gameObject, component, "移動軸や回転軸を細かく制限する Joint です。");
 			break;
 		case EditorComponentType::CharacterJoint:
-			DrawJointComponent(component, "ラグドール向けの回転制限 Joint です。");
+			DrawJointComponent(context, gameObject, component, "ラグドール向けの回転制限 Joint です。");
 			break;
 		case EditorComponentType::DistanceJoint2D:
-			DrawJointComponent(component, "2D の距離制約 Joint です。");
+			DrawJointComponent(context, gameObject, component, "2D の距離制約 Joint です。");
 			break;
 		case EditorComponentType::HingeJoint2D:
-			DrawJointComponent(component, "2D の回転接続 Joint です。");
+			DrawJointComponent(context, gameObject, component, "2D の回転接続 Joint です。");
 			break;
 		case EditorComponentType::SpringJoint2D:
-			DrawJointComponent(component, "2D のバネ接続 Joint です。");
+			DrawJointComponent(context, gameObject, component, "2D のバネ接続 Joint です。");
 			break;
 		case EditorComponentType::FixedJoint2D:
-			DrawJointComponent(component, "2D の固定接続 Joint です。");
+			DrawJointComponent(context, gameObject, component, "2D の固定接続 Joint です。");
 			break;
 		case EditorComponentType::SliderJoint2D:
-			DrawJointComponent(component, "2D のスライド制約 Joint です。");
+			DrawJointComponent(context, gameObject, component, "2D のスライド制約 Joint です。");
 			break;
 		case EditorComponentType::WheelJoint2D:
-			DrawJointComponent(component, "2D の車輪用 Joint です。");
+			DrawJointComponent(context, gameObject, component, "2D の車輪用 Joint です。");
 			break;
 		case EditorComponentType::PlatformEffector2D:
-			DrawGenericComponent(component, "2D の片方向床を作る Effector です。");
+			DrawPlatformEffector2DComponent(component);
 			break;
 		case EditorComponentType::SurfaceEffector2D:
-			DrawGenericComponent(component, "2D 当たり判定の表面に沿って移動力を与えるエフェクターです。");
+			DrawSurfaceEffector2DComponent(component);
 			break;
 		case EditorComponentType::AreaEffector2D:
-			DrawGenericComponent(component, "2D の範囲内に力を加える Effector です。");
+			DrawAreaEffector2DComponent(component);
 			break;
 		case EditorComponentType::PointEffector2D:
-			DrawGenericComponent(component, "2D の点へ向かう力、または離れる力を加える Effector です。");
+			DrawPointEffector2DComponent(component);
 			break;
 		case EditorComponentType::BuoyancyEffector2D:
-			DrawGenericComponent(component, "2D の浮力を加える Effector です。");
+			DrawBuoyancyEffector2DComponent(component);
 			break;
 		case EditorComponentType::Input:
 			DrawInputComponent(component);
 			break;
 		case EditorComponentType::Animation:
-			DrawGenericComponent(component, "Animation Clip の再生設定です。");
+			DrawAnimationComponent(context, gameObject, component);
 			break;
 		case EditorComponentType::Animator:
-			DrawGenericComponent(component, "Animator Controller の状態管理です。");
+			DrawAnimatorComponent(component);
 			break;
 		case EditorComponentType::AvatarMask:
-			DrawGenericComponent(component, "アニメーションを適用する体の範囲を制御するコンポーネントです。");
+			DrawAvatarMaskComponent(component);
 			break;
 		case EditorComponentType::AudioListener:
-			DrawGenericComponent(component, "Scene 内の音を聞く位置です。");
+			DrawAudioListenerComponent(component);
 			break;
 		case EditorComponentType::AimConstraint:
-			DrawGenericComponent(component, "指定対象へ向きを合わせる Constraint です。");
+			DrawAimConstraintComponent(component);
 			break;
 		case EditorComponentType::LookAtConstraint:
-			DrawGenericComponent(component, "指定対象を見るように回転する Constraint です。");
+			DrawLookAtConstraintComponent(component);
 			break;
 		case EditorComponentType::ParentConstraint:
+			DrawParentConstraintComponent(component);
+			break;
 		case EditorComponentType::PositionConstraint:
+			DrawPositionConstraintComponent(component);
+			break;
 		case EditorComponentType::RotationConstraint:
+			DrawRotationConstraintComponent(component);
+			break;
 		case EditorComponentType::ScaleConstraint:
-			DrawGenericComponent(component, "Transform を別オブジェクトへ追従させる Constraint です。");
+			DrawScaleConstraintComponent(component);
 			break;
 		case EditorComponentType::EventSystem:
-			DrawGenericComponent(component, "UI や入力イベントを扱うコンポーネントです。");
+			DrawEventSystemComponent(component);
 			break;
 		case EditorComponentType::StandaloneInputModule:
-			DrawGenericComponent(component, "旧 Input 用の UI 入力モジュールです。");
+			DrawStandaloneInputModuleComponent(component);
 			break;
 		case EditorComponentType::InputSystemUIInputModule:
-			DrawGenericComponent(component, "新 Input System 用の UI 入力モジュールです。");
+			DrawInputSystemUIInputModuleComponent(component);
 			break;
 			case EditorComponentType::PlayerInput:
 				DrawPlayerInputComponent(context, component);
 				break;
 		case EditorComponentType::PlayerInputManager:
-			DrawGenericComponent(component, "複数プレイヤーの参加と入力を管理するコンポーネントです。");
+			DrawPlayerInputManagerComponent(component);
 			break;
 		case EditorComponentType::TouchInputModule:
-			DrawGenericComponent(component, "タッチ操作を UI イベントへ渡すモジュールです。");
+			DrawTouchInputModuleComponent(component);
 			break;
 		case EditorComponentType::NavigationAgent:
-			DrawGenericComponent(component, "NavMesh 上を移動する AI Agent 設定です。");
+			DrawNavMeshAgentComponent(context, gameObject, component);
 			break;
 		case EditorComponentType::NavMeshObstacle:
-			DrawGenericComponent(component, "NavMesh Agent の経路上に置く障害物コンポーネントです。");
+			DrawNavMeshObstacleComponent(component);
 			break;
 		case EditorComponentType::NavMeshSurface:
-			DrawGenericComponent(component, "NavMesh を生成する面を指定するコンポーネントです。");
+			DrawNavMeshSurfaceComponent(component);
 			break;
 		case EditorComponentType::NavMeshModifier:
-			DrawGenericComponent(component, "NavMesh 生成ルールを GameObject 単位で変更するコンポーネントです。");
+			DrawNavMeshModifierComponent(component);
 			break;
 		case EditorComponentType::NavMeshModifierVolume:
-			DrawGenericComponent(component, "指定範囲だけ NavMesh 生成ルールを変更するコンポーネントです。");
+			DrawNavMeshModifierVolumeComponent(component);
 			break;
 		case EditorComponentType::NavMeshLink:
-			DrawGenericComponent(component, "離れた NavMesh 同士を接続するコンポーネントです。");
+			DrawNavMeshLinkComponent(context, gameObject, component);
+			break;
+		case EditorComponentType::AIBehaviorTree:
+			DrawAiAgentComponent(context, gameObject, component, "条件を上から評価して、移動・攻撃・待機などの行動を選ぶ AI です。", "BehaviorTree.CPP 4.9.0");
+			break;
+		case EditorComponentType::AIBehaviorBlackboard:
+			DrawAiDataComponent(context, gameObject, component, "AI が見る変数や状態をまとめる共有データです。", "BehaviorTree.CPP 4.9.0");
+			break;
+		case EditorComponentType::AIBehaviorSelector:
+			DrawAiDataComponent(context, gameObject, component, "複数の行動候補から、成功したものを 1 つ選ぶ分岐です。", "BehaviorTree.CPP 4.9.0");
+			break;
+		case EditorComponentType::AIBehaviorSequence:
+			DrawAiDataComponent(context, gameObject, component, "複数の処理を上から順番に実行する流れです。", "BehaviorTree.CPP 4.9.0");
+			break;
+		case EditorComponentType::AIBehaviorTask:
+			DrawAiDataComponent(context, gameObject, component, "移動、攻撃、待機など実際の処理を呼ぶ末端行動です。", "BehaviorTree.CPP 4.9.0");
+			break;
+		case EditorComponentType::AIBehaviorDecorator:
+			DrawAiDataComponent(context, gameObject, component, "距離や HP などの条件で、行動を実行するか止める制御です。", "BehaviorTree.CPP 4.9.0");
+			break;
+		case EditorComponentType::AIStateMachine:
+			DrawAiAgentComponent(context, gameObject, component, "待機中、追跡中、攻撃中のような状態を切り替える AI です。", "HFSM2 2.12.1");
+			break;
+		case EditorComponentType::AIState:
+			DrawAiDataComponent(context, gameObject, component, "HFSM2 の 1 つの状態を表す部品です。", "HFSM2 2.12.1");
+			break;
+		case EditorComponentType::AIStateTransition:
+			DrawAiDataComponent(context, gameObject, component, "状態を切り替える条件と接続先を持つ部品です。", "HFSM2 2.12.1");
+			break;
+		case EditorComponentType::AIGoapPlanner:
+			DrawAiAgentComponent(context, gameObject, component, "目標を達成するために必要な行動順を自動で選ぶ AI です。", "cppGOAP");
+			break;
+		case EditorComponentType::AIGoapGoal:
+			DrawAiDataComponent(context, gameObject, component, "GOAP が達成したい目標条件です。", "cppGOAP");
+			break;
+		case EditorComponentType::AIGoapAction:
+			DrawAiDataComponent(context, gameObject, component, "GOAP が選択する行動と前提条件です。", "cppGOAP");
+			break;
+		case EditorComponentType::AIGoapWorldState:
+			DrawAiDataComponent(context, gameObject, component, "GOAP の世界状態を表すデータです。", "cppGOAP");
+			break;
+		case EditorComponentType::AIHtnPlanner:
+			DrawAiAgentComponent(context, gameObject, component, "大きな目的を小さなタスクへ分解して行動する AI です。", "Fluid HTN 0.4.1");
+			break;
+		case EditorComponentType::AIHtnDomain:
+			DrawAiDataComponent(context, gameObject, component, "HTN のタスク体系全体を表す Domain です。", "Fluid HTN 0.4.1");
+			break;
+		case EditorComponentType::AIHtnTask:
+			DrawAiDataComponent(context, gameObject, component, "HTN の実行単位になる Task です。", "Fluid HTN 0.4.1");
+			break;
+		case EditorComponentType::AIHtnMethod:
+			DrawAiDataComponent(context, gameObject, component, "HTN の Task を分解する Method です。", "Fluid HTN 0.4.1");
+			break;
+		case EditorComponentType::AIPathfindingAgent:
+			DrawAiAgentComponent(context, gameObject, component, "障害物を避けながら目的地へ向かう移動 AI です。", "MicroPather / RecastNavigation");
+			break;
+		case EditorComponentType::AIMicroPatherGrid:
+			DrawAiDataComponent(context, gameObject, component, "MicroPather で使う Grid 探索設定です。", "MicroPather");
+			break;
+		case EditorComponentType::AIRecastNavMeshBuilder:
+			DrawAiDataComponent(context, gameObject, component, "RecastNavigation で NavMesh を生成する設定です。", "RecastNavigation 1.6.0");
+			break;
+		case EditorComponentType::AIRecastCrowdAgent:
+			DrawAiAgentComponent(context, gameObject, component, "Recast DetourCrowd を想定した群衆 Agent です。", "RecastNavigation 1.6.0");
+			break;
+		case EditorComponentType::AIPathRequest:
+			DrawAiDataComponent(context, gameObject, component, "目的地までの経路要求を表す部品です。", "MicroPather / RecastNavigation");
+			break;
+		case EditorComponentType::AIDynamicObstacle:
+			DrawAiDataComponent(context, gameObject, component, "AI 経路探索へ渡す動的障害物です。", "RecastNavigation 1.6.0");
+			break;
+		case EditorComponentType::AISteeringAgent:
+			DrawAiAgentComponent(context, gameObject, component, "向きや速度をなめらかに変えて動かす操舵 AI です。", "OpenSteer");
+			break;
+		case EditorComponentType::AISeekSteering:
+			DrawAiAgentComponent(context, gameObject, component, "対象へ向かう Seek 操舵です。", "OpenSteer");
+			break;
+		case EditorComponentType::AIFleeSteering:
+			DrawAiAgentComponent(context, gameObject, component, "対象から離れる Flee 操舵です。", "OpenSteer");
+			break;
+		case EditorComponentType::AIArriveSteering:
+			DrawAiAgentComponent(context, gameObject, component, "目的地の近くで減速する Arrive 操舵です。", "OpenSteer");
+			break;
+		case EditorComponentType::AIPursuitSteering:
+			DrawAiAgentComponent(context, gameObject, component, "移動する対象を先読みして追う Pursuit 操舵です。", "OpenSteer");
+			break;
+		case EditorComponentType::AIWanderSteering:
+			DrawAiAgentComponent(context, gameObject, component, "ランダムに歩き回る Wander 操舵です。", "OpenSteer");
+			break;
+		case EditorComponentType::AIObstacleAvoidanceSteering:
+			DrawAiAgentComponent(context, gameObject, component, "前方の Collider を避ける障害物回避操舵です。", "OpenSteer");
+			break;
+		case EditorComponentType::AIFlockSteering:
+			DrawAiAgentComponent(context, gameObject, component, "分離・整列・結合をまとめた群れ操舵です。", "OpenSteer");
+			break;
+		case EditorComponentType::AIVisionSensor:
+			DrawAiVisionSensorComponent(context, gameObject, component);
+			break;
+		case EditorComponentType::AIOpenCvCamera:
+			DrawAiDataComponent(context, gameObject, component, "OpenCV へ渡すカメラ入力の入口です。", "OpenCV");
+			break;
+		case EditorComponentType::AIOpenCvObjectDetector:
+			DrawAiDataComponent(context, gameObject, component, "OpenCV で画像内の対象を検出する入口です。", "OpenCV");
+			break;
+		case EditorComponentType::AIOpenCvColorTracker:
+			DrawAiDataComponent(context, gameObject, component, "OpenCV で指定色を追跡する入口です。", "OpenCV");
+			break;
+		case EditorComponentType::AIMotionSensor:
+			DrawAiVisionSensorComponent(context, gameObject, component);
+			break;
+		case EditorComponentType::AIWhisperSpeechRecognizer:
+			DrawAiDataComponent(context, gameObject, component, "Whisper で音声を文字列へ変換する入口です。", "Whisper");
+			break;
+		case EditorComponentType::AIVoiceCommand:
+			DrawAiDataComponent(context, gameObject, component, "音声認識結果からゲーム内コマンドを発火する入口です。", "Whisper");
+			break;
+		case EditorComponentType::LocalMove:
+			DrawLocalMoveComponent(component);
+			break;
+		case EditorComponentType::RollingMove:
+			DrawRollingMoveComponent(component);
 			break;
 		case EditorComponentType::PlayableDirector:
-			DrawGenericComponent(component, "Timeline / Playable を再生するコンポーネントです。");
+			DrawPlayableDirectorComponent(component);
 			break;
 		case EditorComponentType::Script:
 			DrawNativeScriptComponent(context, gameObject, component, "C++ DLL を Play 中に読み込み、更新で差し替えられるユーザースクリプトです。");
@@ -1478,28 +2458,28 @@ namespace {
 			DrawHapticSourceComponent(component);
 			break;
 		case EditorComponentType::ParticleSystem:
-			DrawGenericComponent(component, "パーティクルを発生させるエフェクトコンポーネントです。");
+			DrawParticleSystemComponent(component);
 			break;
 		case EditorComponentType::VisualEffect:
-			DrawGenericComponent(component, "VFX Graph 相当のエフェクトコンポーネントです。");
+			DrawVisualEffectComponent(component);
 			break;
 		case EditorComponentType::LensFlare:
-			DrawGenericComponent(component, "光源やカメラにフレア表現を足すコンポーネントです。");
+			DrawLensFlareComponent(component);
 			break;
 		case EditorComponentType::Projector:
-			DrawGenericComponent(component, "Texture や影を Scene に投影するコンポーネントです。");
+			DrawProjectorComponent(component);
 			break;
 		case EditorComponentType::DecalProjector:
-			DrawGenericComponent(component, "URP / HDRP の Decal を投影するコンポーネントです。");
+			DrawDecalProjectorComponent(component);
 			break;
 		case EditorComponentType::Terrain:
-			DrawGenericComponent(component, "地形を扱うコンポーネントです。");
+			DrawTerrainComponent(component);
 			break;
 		case EditorComponentType::Tilemap:
-			DrawGenericComponent(component, "2D Tile を配置するコンポーネントです。");
+			DrawTilemapComponent(component);
 			break;
 		case EditorComponentType::Grid:
-			DrawGenericComponent(component, "Tilemap の親になる Grid コンポーネントです。");
+			DrawGridComponent(component);
 			break;
 		case EditorComponentType::Canvas:
 		case EditorComponentType::Image:
@@ -1552,7 +2532,8 @@ namespace {
 				"オーディオ",
 				"UI",
 				"入力・イベント",
-				"ナビゲーション・AI",
+				"ナビゲーション",
+				"AI",
 				"エフェクト",
 				"地形・タイルマップ",
 				"FeelKit",
@@ -1569,6 +2550,42 @@ namespace {
 				bool hasComponent = context.editorScene.HasComponent(gameObject.id, entry.type);
 				if (ImGui::MenuItem(entry.displayName, nullptr, false, !hasComponent)) {
 					addComponent(entry);
+				}
+			};
+
+			auto drawAiEntries = [&]() {
+				const char* subCategoryNames[] = {
+					"行動制御",
+					"状態管理",
+					"目標計画",
+					"タスク計画",
+					"経路探索",
+					"移動操舵",
+					"知覚",
+					"音声",
+				};
+
+				for (const char* subCategoryName : subCategoryNames) {
+					if (!ImGui::BeginMenu(subCategoryName)) {
+						continue;
+					}
+
+					bool hasAnyEntry = false;  // AI の中を用途別に分けるため、該当 Component だけを表示する。
+					for (const ComponentAddEntry& entry : kComponentAddEntries) {
+						if (std::strcmp(entry.categoryName, "AI") != 0 ||
+							std::strcmp(GetAiSubCategory(entry.type), subCategoryName) != 0) {
+							continue;
+						}
+
+						hasAnyEntry = true;
+						drawEntry(entry);
+					}
+
+					if (!hasAnyEntry) {
+						ImGui::MenuItem("未登録", nullptr, false, false);
+					}
+
+					ImGui::EndMenu();
 				}
 			};
 
@@ -1609,8 +2626,16 @@ namespace {
 					if (ImGui::BeginMenu(categoryName)) {
 						bool hasAnyEntry = false;  // 空カテゴリでも Unity の項目数に近い見た目を残すための判定
 
+						if (std::strcmp(categoryName, "AI") == 0) {
+							drawAiEntries();
+							hasAnyEntry = true;
+						}
+
 						for (const ComponentAddEntry& entry : kComponentAddEntries) {
 							if (std::strcmp(entry.categoryName, categoryName) != 0) {
+								continue;
+							}
+							if (std::strcmp(categoryName, "AI") == 0) {
 								continue;
 							}
 
@@ -1735,6 +2760,19 @@ namespace {
 	void DrawEnvironmentPanel(EditorInspectorPanelContext& context) {
 		if (ImGui::CollapsingHeader("環境 / 背景")) {
 			ImGui::ColorEdit4("背景色", context.sceneClearColor);
+
+			if (context.directionalLightData != nullptr) {
+				ImGui::Separator();
+				ImGui::TextUnformatted("天球 / ビューポートシェーディング");
+				ImGui::ColorEdit3("天球上色", &context.directionalLightData->skyUpperColor.x);
+				ImGui::ColorEdit3("天球下色", &context.directionalLightData->skyLowerColor.x);
+				ImGui::DragFloat("天球明るさ", &context.directionalLightData->skyIntensity, 0.01f, 0.0f, 8.0f);
+				ImGui::DragFloat("天球放射", &context.directionalLightData->skyEmission, 0.01f, 0.0f, 8.0f);
+				ImGui::DragFloat("環境光", &context.directionalLightData->ambientIntensity, 0.01f, 0.0f, 8.0f);
+				ImGui::DragFloat("反射寄与", &context.directionalLightData->reflectionIntensity, 0.01f, 0.0f, 8.0f);
+				ImGui::DragFloat("空の切替", &context.directionalLightData->horizonSharpness, 0.01f, 0.01f, 8.0f);
+			}
+
 			ImGui::Checkbox("ギズモ表示", &context.isSceneGizmoVisible);
 			ImGui::Checkbox("ライトアイコン", &context.isLightGizmoVisible);
 			ImGui::Checkbox("カメラアイコン", &context.isCameraGizmoVisible);
@@ -1870,20 +2908,23 @@ namespace {
 		if (context.selectedSceneObject == 0) {
 			if (DrawComponentHeader("モデル プレビュー", nullptr)) {
 				DrawVector3Row("位置", modelTransform.translate, 0.01f, 0.0f, 0.0f);
-				DrawVector3Row("回転", modelTransform.rotate, 0.01f, 0.0f, 0.0f);
+				DrawRotationDegreeRow("回転", modelTransform.rotate, 0.1f);
 				DrawVector3Row("スケール", modelTransform.scale, 0.01f, 0.01f, 10.0f);
 			}
 
 			if (ImGui::CollapsingHeader("UV Transform")) {
 				ImGui::DragFloat2("UVスケール", &context.uvTransform.scale.x, 0.01f, 0.1f, 4.0f);
-				ImGui::DragFloat("UV回転", &context.uvTransform.rotate.z, 0.01f, -3.14f, 3.14f);
+				float uvRotationDegree = context.uvTransform.rotate.z * kRadianToDegree;
+				if (ImGui::DragFloat("UV回転", &uvRotationDegree, 0.1f, -180.0f, 180.0f, "%.1f")) {
+					context.uvTransform.rotate.z = uvRotationDegree * kDegreeToRadian;
+				}
 				ImGui::DragFloat2("UV移動", &context.uvTransform.translate.x, 0.01f, -2.0f, 2.0f);
 			}
 		}
 		else if (context.selectedSceneObject == 1) {
 			if (DrawComponentHeader("スプライト プレビュー", nullptr)) {
 				DrawVector3Row("位置", spriteTransform.translate, 1.0f, 0.0f, 0.0f);
-				DrawVector3Row("回転", spriteTransform.rotate, 0.01f, 0.0f, 0.0f);
+				DrawRotationDegreeRow("回転", spriteTransform.rotate, 0.1f);
 				DrawVector3Row("スケール", spriteTransform.scale, 1.0f, 1.0f, 1024.0f);
 			}
 
@@ -1898,13 +2939,22 @@ namespace {
 				ImGui::ColorEdit4("色", &context.directionalLightData->color.x);
 				ImGui::DragFloat3("方向", &context.directionalLightData->direction.x, 0.01f, -1.0f, 1.0f);
 				ImGui::DragFloat("強さ", &context.directionalLightData->intensity, 0.01f, 0.0f, 4.0f);
+				ImGui::Separator();
+				ImGui::TextUnformatted("天球");
+				ImGui::ColorEdit3("上空色", &context.directionalLightData->skyUpperColor.x);
+				ImGui::ColorEdit3("下側色", &context.directionalLightData->skyLowerColor.x);
+				ImGui::DragFloat("明るさ", &context.directionalLightData->skyIntensity, 0.01f, 0.0f, 8.0f);
+				ImGui::DragFloat("放射", &context.directionalLightData->skyEmission, 0.01f, 0.0f, 8.0f);
+				ImGui::DragFloat("環境光", &context.directionalLightData->ambientIntensity, 0.01f, 0.0f, 8.0f);
+				ImGui::DragFloat("反射", &context.directionalLightData->reflectionIntensity, 0.01f, 0.0f, 8.0f);
+				ImGui::DragFloat("切替の鋭さ", &context.directionalLightData->horizonSharpness, 0.01f, 0.01f, 8.0f);
 				ImGui::DragFloat3("アイコン位置", &context.directionalLightIconPosition.x, 0.01f);
 			}
 		}
 		else {
 			if (ImGui::CollapsingHeader("デバッグ カメラ", ImGuiTreeNodeFlags_DefaultOpen)) {
 				ImGui::DragFloat3("位置", &context.cameraTransform.translate.x, 0.1f);
-				ImGui::DragFloat3("回転", &context.cameraTransform.rotate.x, 0.01f);
+				DrawRotationDegreeRow("回転", context.cameraTransform.rotate, 0.1f);
 
 				if (ImGui::Button("カメラを初期化")) {
 					context.cameraTransform.rotate = {0.0f, 0.0f, 0.0f};
@@ -2189,7 +3239,3 @@ void EditorInspectorPanel::SyncSelection(EditorInspectorPanelContext& context) c
 		context.selectedSceneObject,
 		context.selectedPlacedSceneObjectIndex);
 }
-		auto openWithShell = [](const std::filesystem::path& filePath) {
-			const std::string command = "start \"\" \"" + filePath.string() + "\"";
-			std::system(command.c_str());
-		};

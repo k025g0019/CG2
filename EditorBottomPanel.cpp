@@ -53,18 +53,6 @@ namespace {
 		SelectGameObject(g_editorScene.GetGameObjects()[0].id);
 	}
 
-	void AddBuiltInPrimitiveAsset(std::vector<std::string>& assetPaths, const char* assetPath) {
-		// 実ファイルがなくても、内部プリミティブとして置けるアセットは Project に出しておく。
-		if (assetPath == nullptr) {
-			return;
-		}
-
-		const std::string builtInAssetPath = assetPath;
-		if (std::find(assetPaths.begin(), assetPaths.end(), builtInAssetPath) == assetPaths.end()) {
-			assetPaths.push_back(builtInAssetPath);
-		}
-	}
-
 	bool IsProjectAssetFile(const std::string& assetPath) {
 		// Project に並べる対象は、Scene 配置や Inspector 確認に使う素材だけに絞る。
 		return EditorAssetUtility::HasExtension(assetPath, ".png") ||
@@ -78,6 +66,11 @@ namespace {
 			EditorAssetUtility::HasExtension(assetPath, ".cpp") ||
 			EditorAssetUtility::HasExtension(assetPath, ".h") ||
 			EditorAssetUtility::HasExtension(assetPath, ".bat") ||
+			EditorAssetUtility::HasExtension(assetPath, ".py") ||
+			EditorAssetUtility::HasExtension(assetPath, ".onnx") ||
+			EditorAssetUtility::HasExtension(assetPath, ".xml") ||
+			EditorAssetUtility::HasExtension(assetPath, ".yaml") ||
+			EditorAssetUtility::HasExtension(assetPath, ".yml") ||
 			EditorAssetUtility::HasExtension(assetPath, ".json") ||
 			EditorAssetUtility::HasExtension(assetPath, ".scene") ||
 			EditorAssetUtility::HasExtension(assetPath, ".prefab") ||
@@ -94,9 +87,12 @@ namespace {
 	}
 
 	std::string GetProjectAssetCreateDirectory(const std::string& selectedAssetPath) {
-		// Project で Assets 配下のファイルを選択している時は、そのフォルダへ新規アセットを作る。
+		// Project で Assets / resources 配下のファイルやフォルダを選択している時は、その場所へ新規アセットを作る。
 		if (!selectedAssetPath.empty() &&
-			selectedAssetPath.rfind("Assets/", 0) == 0) {
+			(selectedAssetPath.rfind("Assets/", 0) == 0 ||
+			 selectedAssetPath == "Assets" ||
+			 selectedAssetPath.rfind("resources/", 0) == 0 ||
+			 selectedAssetPath == "resources")) {
 			std::filesystem::path selectedPath(selectedAssetPath);
 			if (std::filesystem::is_directory(selectedPath)) {
 				return selectedPath.generic_string();
@@ -128,6 +124,23 @@ namespace {
 		}
 
 		return (baseDirectoryPath / "InGameInputAction.inputactions").generic_string();
+	}
+
+	std::string MakeUniqueFolderPath(const std::string& directoryPath, const std::string& baseFolderName) {
+		const std::filesystem::path baseDirectoryPath(directoryPath);
+		for (int32_t folderIndex = 0; folderIndex < 1000; ++folderIndex) {
+			std::string candidateFolderName = baseFolderName;
+			if (folderIndex > 0) {
+				candidateFolderName += std::to_string(folderIndex);
+			}
+
+			const std::filesystem::path candidatePath = baseDirectoryPath / candidateFolderName;
+			if (!std::filesystem::exists(candidatePath)) {
+				return candidatePath.generic_string();
+			}
+		}
+
+		return (baseDirectoryPath / baseFolderName).generic_string();
 	}
 
 	bool WriteUtf8BomTextFile(const std::string& filePath, const std::string& fileText) {
@@ -243,18 +256,101 @@ namespace {
 				}
 
 				std::string assetPath = entry.path().generic_string();
-				if (IsProjectAssetFile(assetPath)) {
+				if (IsProjectAssetFile(assetPath) &&
+					!EditorAssetUtility::IsBuiltInPrimitiveAssetPath(assetPath)) {
 					assetPaths.push_back(assetPath);
 				}
 			}
 		}
 
-		// Sphere は内部メッシュで生成するので、resources に実ファイルがなくても一覧へ出す。
-		AddBuiltInPrimitiveAsset(assetPaths, "resources/sphere.fbx");
-
 		std::sort(assetPaths.begin(), assetPaths.end());
 		assetPaths.erase(std::unique(assetPaths.begin(), assetPaths.end()), assetPaths.end());
 		return assetPaths;
+	}
+
+	bool IsAssetInSelectedProjectFolder(const std::string& assetPath, const std::string& selectedAssetPath) {
+		// 左ツリーでフォルダーを選んでいる時だけ、その配下アセットに Project グリッドを絞る。
+		if (selectedAssetPath.empty()) {
+			return true;
+		}
+
+		std::error_code fileError;
+		const std::filesystem::path selectedPath(selectedAssetPath);
+		if (!std::filesystem::exists(selectedPath, fileError) ||
+			!std::filesystem::is_directory(selectedPath, fileError)) {
+			return true;
+		}
+
+		const std::string folderPrefix = selectedPath.generic_string() + "/";
+		return assetPath == selectedPath.generic_string() ||
+			assetPath.rfind(folderPrefix, 0) == 0;
+	}
+
+	void DrawProjectFolderNode(const std::filesystem::path& folderPath, std::string& selectedAssetPath) {
+		std::error_code fileError;
+		if (!std::filesystem::exists(folderPath, fileError) ||
+			!std::filesystem::is_directory(folderPath, fileError)) {
+			return;
+		}
+
+		const std::string folderPathText = folderPath.generic_string();
+		const bool isSelected = selectedAssetPath == folderPathText;
+		ImGuiTreeNodeFlags treeNodeFlags =
+			ImGuiTreeNodeFlags_OpenOnArrow |
+			ImGuiTreeNodeFlags_OpenOnDoubleClick |
+			(isSelected ? ImGuiTreeNodeFlags_Selected : 0);
+
+		bool hasChildDirectory = false;
+		for (const std::filesystem::directory_entry& childEntry :
+		     std::filesystem::directory_iterator(
+			     folderPath,
+			     std::filesystem::directory_options::skip_permission_denied,
+			     fileError)) {
+			if (fileError) {
+				break;
+			}
+
+			if (childEntry.is_directory(fileError)) {
+				hasChildDirectory = true;
+				break;
+			}
+		}
+
+		if (!hasChildDirectory) {
+			treeNodeFlags |= ImGuiTreeNodeFlags_Leaf;
+		}
+
+		const bool isOpened = ImGui::TreeNodeEx(folderPathText.c_str(), treeNodeFlags, "%s", folderPath.filename().generic_string().c_str());
+		if (ImGui::IsItemClicked()) {
+			selectedAssetPath = folderPathText;
+			g_selectedAssetPath = folderPathText;
+		}
+
+		if (isOpened) {
+			if (hasChildDirectory) {
+				std::vector<std::filesystem::path> childDirectories;
+				for (const std::filesystem::directory_entry& childEntry :
+				     std::filesystem::directory_iterator(
+					     folderPath,
+					     std::filesystem::directory_options::skip_permission_denied,
+					     fileError)) {
+					if (fileError) {
+						break;
+					}
+
+					if (childEntry.is_directory(fileError)) {
+						childDirectories.push_back(childEntry.path());
+					}
+				}
+
+				std::sort(childDirectories.begin(), childDirectories.end());
+				for (const std::filesystem::path& childDirectoryPath : childDirectories) {
+					DrawProjectFolderNode(childDirectoryPath, selectedAssetPath);
+				}
+			}
+
+			ImGui::TreePop();
+		}
 	}
 }
 
@@ -288,6 +384,8 @@ void EditorBottomPanel::Draw(
 		if (ImGui::BeginTabItem("Project")) {
 			const bool isProjectWindowFocused =
 				ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);  // Project タブ全体がアクティブな時だけ Delete を受け付ける。
+			static char newFolderName[128] = "NewFolder";  // Project の新規フォルダー名入力欄。
+			bool isOpenFolderPopupRequested = false;  // メニューを閉じた後にフォルダー作成モーダルを開く要求。
 
 			ImGui::InputText("検索", assetFilter, assetFilterSize);  // Project 内アセット名検索
 			ImGui::SameLine();
@@ -295,6 +393,13 @@ void EditorBottomPanel::Draw(
 				ImGui::OpenPopup("ProjectCreateAssetPopup");
 			}
 			if (ImGui::BeginPopup("ProjectCreateAssetPopup")) {
+				if (ImGui::MenuItem("フォルダー")) {
+					std::memset(newFolderName, 0, sizeof(newFolderName));
+					const char* defaultFolderName = "NewFolder";
+					std::memcpy(newFolderName, defaultFolderName, std::strlen(defaultFolderName));
+					isOpenFolderPopupRequested = true;
+				}
+
 				if (ImGui::MenuItem("Input Actions")) {
 					const std::string createDirectoryPath = GetProjectAssetCreateDirectory(selectedAssetPath);
 					std::filesystem::create_directories(createDirectoryPath);
@@ -310,15 +415,49 @@ void EditorBottomPanel::Draw(
 				}
 				ImGui::EndPopup();
 			}
+
+			if (isOpenFolderPopupRequested) {
+				ImGui::OpenPopup("ProjectCreateFolderPopup");
+			}
+
+			if (ImGui::BeginPopupModal("ProjectCreateFolderPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+				ImGui::InputText("フォルダー名", newFolderName, sizeof(newFolderName));
+
+				if (ImGui::Button("作成", ImVec2(120.0f, 0.0f))) {
+					const std::string createDirectoryPath = GetProjectAssetCreateDirectory(selectedAssetPath);
+					std::filesystem::create_directories(createDirectoryPath);
+
+					std::string folderName = newFolderName;
+					if (folderName.empty()) {
+						folderName = "NewFolder";
+					}
+
+					const std::string folderPath = MakeUniqueFolderPath(createDirectoryPath, folderName);
+					std::error_code fileError;
+					const bool isCreated = std::filesystem::create_directories(folderPath, fileError);
+					if (isCreated && !fileError) {
+						selectedAssetPath = folderPath;
+						g_selectedAssetPath = folderPath;
+						consoleMessages.push_back("Asset: Folder created " + folderPath);
+					}
+					else {
+						consoleMessages.push_back("Asset: Failed to create folder " + folderPath);
+					}
+
+					ImGui::CloseCurrentPopup();
+				}
+
+				ImGui::SameLine();
+				if (ImGui::Button("キャンセル", ImVec2(120.0f, 0.0f))) {
+					ImGui::CloseCurrentPopup();
+				}
+
+				ImGui::EndPopup();
+			}
+
 			ImGui::BeginChild("Folders", ImVec2(180.0f, 0.0f), ImGuiChildFlags_Borders);  // 左側の簡易フォルダツリー
-			ImGui::SetNextItemOpen(true, ImGuiCond_Once);
-			if (ImGui::TreeNode("Assets")) {
-				ImGui::TreePop();
-			}
-			if (ImGui::TreeNode("resources(内部)")) {
-				ImGui::TreeNodeEx("sound", ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
-				ImGui::TreePop();
-			}
+			DrawProjectFolderNode(std::filesystem::path("Assets"), selectedAssetPath);
+			DrawProjectFolderNode(std::filesystem::path("resources"), selectedAssetPath);
 			ImGui::EndChild();
 			ImGui::SameLine();
 			ImGui::BeginChild("Assets", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);  // 右側のアセットグリッド
@@ -326,6 +465,10 @@ void EditorBottomPanel::Draw(
 				std::vector<std::string> assetPaths = CollectProjectAssetPaths();
 
 				for (const std::string& relativePath : assetPaths) {
+					if (!IsAssetInSelectedProjectFolder(relativePath, selectedAssetPath)) {
+						continue;
+					}
+
 					// 検索文字に一致しないアセットは表示しない
 					if (!EditorAssetUtility::MatchesFilter(relativePath, assetFilter)) {
 						continue;
@@ -389,6 +532,12 @@ void EditorBottomPanel::Draw(
 						}
 						else if (EditorAssetUtility::HasExtension(relativePath, ".h")) {
 							assetIcon = "HDR";
+						}
+						else if (EditorAssetUtility::HasExtension(relativePath, ".py")) {
+							assetIcon = "PY";
+						}
+						else if (EditorAssetUtility::HasExtension(relativePath, ".onnx")) {
+							assetIcon = "ONNX";
 						}
 						else if (EditorAssetUtility::HasExtension(relativePath, ".inputactions")) {
 							assetIcon = "INPUT";

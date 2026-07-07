@@ -5,9 +5,87 @@
 #include "EditorComponentUtility.h"
 #include "EditorSharedState.h"
 
+#include <cmath>
+
 using namespace EditorSharedState;
 
 namespace {
+	Vector3 AddVector3(const Vector3& firstValue, const Vector3& secondValue) {
+		return Vector3{
+			firstValue.x + secondValue.x,
+			firstValue.y + secondValue.y,
+			firstValue.z + secondValue.z};
+	}
+
+	bool IsNearlyZeroVector3(const Vector3& value) {
+		return
+			std::fabs(value.x) <= 0.001f &&
+			std::fabs(value.y) <= 0.001f &&
+			std::fabs(value.z) <= 0.001f;
+	}
+
+	Transforms ResolveWorldTransform(const EditorGameObject& gameObject) {
+		Transforms worldTransform{
+			gameObject.scale,
+			gameObject.rotate,
+			gameObject.translate};
+
+		const EditorGameObject* currentParent = g_editorScene.FindGameObject(gameObject.parentId);
+		while (currentParent != nullptr) {
+			worldTransform.translate = AddVector3(currentParent->translate, worldTransform.translate);
+			worldTransform.rotate = AddVector3(currentParent->rotate, worldTransform.rotate);
+			worldTransform.scale = {
+				worldTransform.scale.x * currentParent->scale.x,
+				worldTransform.scale.y * currentParent->scale.y,
+				worldTransform.scale.z * currentParent->scale.z};
+			currentParent = g_editorScene.FindGameObject(currentParent->parentId);
+		}
+
+		return worldTransform;
+	}
+
+	const EditorComponent* FindRuntimeCameraComponent(const EditorGameObject& gameObject) {
+		const EditorComponent* cameraComponent =
+			EditorComponentUtility::FindComponent(gameObject, EditorComponentType::Camera);
+		if (cameraComponent != nullptr && cameraComponent->isActive) {
+			return cameraComponent;
+		}
+
+		const EditorComponent* cinemachineCameraComponent =
+			EditorComponentUtility::FindComponent(gameObject, EditorComponentType::CinemachineCamera);
+		if (cinemachineCameraComponent != nullptr && cinemachineCameraComponent->isActive) {
+			return cinemachineCameraComponent;
+		}
+
+		return nullptr;
+	}
+
+	Transforms BuildFollowCameraTransform(
+		const EditorGameObject& cameraGameObject,
+		const EditorComponent& cameraComponent) {
+		Transforms gameCameraTransform = ResolveWorldTransform(cameraGameObject);
+		if (cameraComponent.connectedGameObjectId < 0 ||
+			cameraComponent.connectedGameObjectId == cameraGameObject.id) {
+			return gameCameraTransform;
+		}
+
+		const EditorGameObject* targetGameObject =
+			g_editorScene.FindGameObject(cameraComponent.connectedGameObjectId);
+		if (targetGameObject == nullptr || !targetGameObject->isActive) {
+			return gameCameraTransform;
+		}
+
+		constexpr Vector3 defaultFollowOffset = {0.0f, 2.0f, -6.0f};
+		Vector3 followOffset = cameraGameObject.translate;
+		if (IsNearlyZeroVector3(followOffset)) {
+			followOffset = defaultFollowOffset;
+		}
+
+		const Transforms targetWorldTransform = ResolveWorldTransform(*targetGameObject);
+		gameCameraTransform.translate = AddVector3(targetWorldTransform.translate, followOffset);
+		return gameCameraTransform;
+	}
+
 	Transforms GetGameCameraTransform() {
 		g_isGameViewUsingSceneCamera = true;  // Camera Component が見つからない場合は Scene カメラを使う。
 
@@ -16,18 +94,13 @@ namespace {
 				continue;
 			}
 
-			const EditorComponent* cameraComponent =
-				EditorComponentUtility::FindComponent(gameObject, EditorComponentType::Camera);
-			if (cameraComponent == nullptr || !cameraComponent->isActive) {
+			const EditorComponent* cameraComponent = FindRuntimeCameraComponent(gameObject);
+			if (cameraComponent == nullptr) {
 				continue;
 			}
 
 			g_isGameViewUsingSceneCamera = false;
-			return Transforms{
-				gameObject.scale,
-				gameObject.rotate,
-				gameObject.translate
-			};
+			return BuildFollowCameraTransform(gameObject, *cameraComponent);
 		}
 
 		return g_cameraTransform;
@@ -44,7 +117,7 @@ namespace {
 			0.45f,
 			g_editorGameWidth / g_editorGameHeight,
 			0.1f,
-			100.0f);
+			1000.0f);
 	}
 }
 

@@ -6,6 +6,146 @@
 
 using namespace EditorSharedState;
 
+namespace {
+	float GetMaxAbsScale(const Vector3& scale) {
+		float maxScale = (std::max)(std::fabs(scale.x), std::fabs(scale.y));
+		maxScale = (std::max)(maxScale, std::fabs(scale.z));
+		return (std::max)(maxScale, 0.01f);
+	}
+
+	float GetObjectShadowRadius(const EditorSceneObject& sceneObject) {
+		float meshRadius = sceneObject.usesCustomMesh ? 4.0f : 1.5f;  // FBX は頂点境界をまだ持たないため、基本形より少し広く見る。
+		return GetMaxAbsScale(sceneObject.transform.scale) * meshRadius;
+	}
+
+	Vector3 GetSafeLightDirection(const DirectionalLight* directionalLightData) {
+		Vector3 lightDirection = {0.35f, -1.0f, 0.25f};  // ライト未生成時でも斜め上から照らす既定方向。
+		if (directionalLightData != nullptr) {
+			lightDirection = directionalLightData->direction;
+		}
+
+		if (Length(lightDirection) <= 0.0001f) {
+			return Normalize(Vector3{0.35f, -1.0f, 0.25f});
+		}
+
+		return Normalize(lightDirection);
+	}
+
+	Vector3 CalculateShadowCenter(
+		const std::vector<EditorSceneObject>& editorSceneObjects,
+		const Transforms& legacyTransform,
+		bool isLegacyPreviewVisible) {
+		Vector3 center{};  // center はライトの正射影を向ける Scene の中心位置。
+		int32_t modelCount = 0;
+
+		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
+			if (sceneObject.type != EditorSceneObjectType::Model) {
+				continue;
+			}
+
+			center = Add(center, sceneObject.transform.translate);
+			modelCount++;
+		}
+
+		if (isLegacyPreviewVisible) {
+			center = Add(center, legacyTransform.translate);
+			modelCount++;
+		}
+
+		if (modelCount <= 0) {
+			return {0.0f, 0.0f, 0.0f};
+		}
+
+		float inverseModelCount = 1.0f / static_cast<float>(modelCount);
+		return Multiply(inverseModelCount, center);
+	}
+
+	float CalculateShadowRadius(
+		const std::vector<EditorSceneObject>& editorSceneObjects,
+		const Transforms& legacyTransform,
+		const Vector3& shadowCenter,
+		bool isLegacyPreviewVisible) {
+		float shadowRadius = 20.0f;  // 何もない Scene でも床と基本形が収まる最低範囲。
+
+		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
+			if (sceneObject.type != EditorSceneObjectType::Model) {
+				continue;
+			}
+
+			float distanceFromCenter = Length(Subtract(sceneObject.transform.translate, shadowCenter));
+			shadowRadius = (std::max)(shadowRadius, distanceFromCenter + GetObjectShadowRadius(sceneObject));
+		}
+
+		if (isLegacyPreviewVisible) {
+			float legacyRadius = GetMaxAbsScale(legacyTransform.scale) * 2.0f;
+			float distanceFromCenter = Length(Subtract(legacyTransform.translate, shadowCenter));
+			shadowRadius = (std::max)(shadowRadius, distanceFromCenter + legacyRadius);
+		}
+
+		// 広すぎる影範囲は解像度を潰すため、SceneView の描画限界に合わせて上限を持たせる。
+		return (std::clamp)(shadowRadius + 8.0f, 20.0f, 1000.0f);
+	}
+
+	Matrix4x4 MakeLookAtMatrix(const Vector3& eye, const Vector3& target, const Vector3& up) {
+		Vector3 zAxis = Normalize(Subtract(target, eye));  // zAxis はライトカメラが向く前方向。
+		if (Length(zAxis) <= 0.0001f) {
+			zAxis = {0.0f, 0.0f, 1.0f};
+		}
+
+		Vector3 xAxis = Normalize(Cross(up, zAxis));  // xAxis は画面右方向。up と平行なら代替 up を使う。
+		if (Length(xAxis) <= 0.0001f) {
+			xAxis = Normalize(Cross(Vector3{1.0f, 0.0f, 0.0f}, zAxis));
+		}
+
+		Vector3 yAxis = Cross(zAxis, xAxis);  // yAxis は前方向と右方向から作る上方向。
+
+		Matrix4x4 viewMatrix{};
+		viewMatrix.matrix[0][0] = xAxis.x;
+		viewMatrix.matrix[0][1] = yAxis.x;
+		viewMatrix.matrix[0][2] = zAxis.x;
+		viewMatrix.matrix[0][3] = 0.0f;
+		viewMatrix.matrix[1][0] = xAxis.y;
+		viewMatrix.matrix[1][1] = yAxis.y;
+		viewMatrix.matrix[1][2] = zAxis.y;
+		viewMatrix.matrix[1][3] = 0.0f;
+		viewMatrix.matrix[2][0] = xAxis.z;
+		viewMatrix.matrix[2][1] = yAxis.z;
+		viewMatrix.matrix[2][2] = zAxis.z;
+		viewMatrix.matrix[2][3] = 0.0f;
+		viewMatrix.matrix[3][0] = -Dot(xAxis, eye);
+		viewMatrix.matrix[3][1] = -Dot(yAxis, eye);
+		viewMatrix.matrix[3][2] = -Dot(zAxis, eye);
+		viewMatrix.matrix[3][3] = 1.0f;
+
+		return viewMatrix;
+	}
+
+	Matrix4x4 MakeLightViewProjectionMatrix(
+		const std::vector<EditorSceneObject>& editorSceneObjects,
+		const Transforms& legacyTransform,
+		const DirectionalLight* directionalLightData,
+		bool isLegacyPreviewVisible) {
+		Vector3 shadowCenter = CalculateShadowCenter(editorSceneObjects, legacyTransform, isLegacyPreviewVisible);
+		float shadowRadius = CalculateShadowRadius(
+			editorSceneObjects,
+			legacyTransform,
+			shadowCenter,
+			isLegacyPreviewVisible);
+		Vector3 lightDirection = GetSafeLightDirection(directionalLightData);
+		Vector3 lightEye = Subtract(shadowCenter, Multiply(shadowRadius * 2.0f, lightDirection));
+		Matrix4x4 lightViewMatrix = MakeLookAtMatrix(lightEye, shadowCenter, Vector3{0.0f, 1.0f, 0.0f});
+		Matrix4x4 lightProjectionMatrix = MakeOrthographicMatrix(
+			-shadowRadius,
+			shadowRadius,
+			shadowRadius,
+			-shadowRadius,
+			0.1f,
+			shadowRadius * 4.0f + 50.0f);
+
+		return Multiply(lightViewMatrix, lightProjectionMatrix);
+	}
+}
+
 void EditorRenderManager::Initialize() {
 }
 
@@ -27,6 +167,10 @@ void EditorRenderManager::Draw() {
 
 	auto& rootSignature = g_rootSignature;  // rootSignature / graphicsPipelineState は Shader と RenderState の固定設定。
 	auto& graphicsPipelineState = g_graphicsPipelineState;
+	auto& shadowPipelineState = g_shadowPipelineState;  // shadowPipelineState はライト視点の DepthTexture を作る専用 PSO。
+	auto& shadowMapResource = g_shadowMapResource;
+	auto& shadowDsvHandle = g_shadowDsvHandle;
+	auto& shadowMapSrvGpuHandle = g_shadowMapSrvGpuHandle;
 
 	auto& spriteMaterialResource = g_spriteMaterialResource;  // spriteMaterialResource / sphereMaterialResource は PixelShader の Material CBV。
 	auto& spriteMaterialData = g_spriteMaterialData;
@@ -34,6 +178,7 @@ void EditorRenderManager::Draw() {
 	auto& sphereMaterialData = g_sphereMaterialData;
 
 	auto& directionalLightResource = g_directionalLightResource;  // directionalLightResource は PixelShader の平行光源 CBV。
+	auto& directionalLightData = g_directionalLightData;  // directionalLightData は影行列をライト方向へ合わせるためにも使う。
 	auto& spriteTransformationMatrixData = g_spriteTransformationMatrixData;  // spriteTransformationMatrixData は旧 Sprite プレビュー用 WVP / World の書き込み先。
 	auto& sphereTransformationMatrixResource = g_sphereTransformationMatrixResource;  // sphereTransformationMatrixResource / Data は旧 3D プレビュー用 WVP / World。
 	auto& sphereTransformationMatrixData = g_sphereTransformationMatrixData;
@@ -86,11 +231,18 @@ void EditorRenderManager::Draw() {
 	Matrix4x4 spriteWorldViewProjectionMatrix = Multiply(spriteWorldMatrix, spriteProjectionMatrix);  // spriteWorldViewProjectionMatrix は Sprite の World と 2D 正射影を合成した WVP。
 	Matrix4x4 worldMatrix = MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);  // worldMatrix は旧 3D モデルプレビューの Transform を行列化したもの。
 	Matrix4x4 worldViewProjectionMatrix = Multiply(worldMatrix, Multiply(viewMatrix, projectionMatrix));  // worldViewProjectionMatrix は 3D モデルを SceneView へ投影する WVP。
+	Matrix4x4 lightViewProjectionMatrix = MakeLightViewProjectionMatrix(
+		editorSceneObjects,
+		transform,
+		directionalLightData,
+		isLegacyPreviewVisible);  // lightViewProjectionMatrix は影用 DepthTexture へ描くためのライト視点行列。
 	Matrix4x4 uvTransformMatrix = MakeAffineMatrix(uvTransform.scale, uvTransform.rotate, uvTransform.translate);  // uvTransformMatrix は Material へ渡す UV 変換行列。
 	spriteTransformationMatrixData->WVP = spriteWorldViewProjectionMatrix;  // 旧プレビュー用の定数バッファへ今フレームの行列を書き込む。
 	spriteTransformationMatrixData->World = spriteWorldMatrix;
+	spriteTransformationMatrixData->lightWVP = Multiply(spriteWorldMatrix, lightViewProjectionMatrix);
 	sphereTransformationMatrixData->WVP = worldViewProjectionMatrix;
 	sphereTransformationMatrixData->World = worldMatrix;
+	sphereTransformationMatrixData->lightWVP = Multiply(worldMatrix, lightViewProjectionMatrix);
 
 	spriteMaterialData->uvTransform = uvTransformMatrix;  // Sprite と 3D モデルの Material に同じ UV 変換を反映する。
 	sphereMaterialData->uvTransform = uvTransformMatrix;
@@ -111,6 +263,7 @@ void EditorRenderManager::Draw() {
 		if (sceneObject.transformationData != nullptr) {
 			sceneObject.transformationData->WVP = Multiply(sceneObjectWorldMatrix, sceneObjectProjectionMatrix);  // SceneView 用定数バッファへ WVP と World を書き込む。
 			sceneObject.transformationData->World = sceneObjectWorldMatrix;
+			sceneObject.transformationData->lightWVP = Multiply(sceneObjectWorldMatrix, lightViewProjectionMatrix);
 		}
 
 		// GameView は Camera Component の ViewProjection を使う。Sprite は画面座標表示なので同じ正射影を使う。
@@ -122,6 +275,7 @@ void EditorRenderManager::Draw() {
 		if (sceneObject.gameTransformationData != nullptr) {
 			sceneObject.gameTransformationData->WVP = Multiply(sceneObjectWorldMatrix, gameObjectProjectionMatrix);
 			sceneObject.gameTransformationData->World = sceneObjectWorldMatrix;
+			sceneObject.gameTransformationData->lightWVP = Multiply(sceneObjectWorldMatrix, lightViewProjectionMatrix);
 		}
 
 		if (sceneObject.materialData != nullptr) {
@@ -135,6 +289,78 @@ void EditorRenderManager::Draw() {
 	assert(SUCCEEDED(hr));
 
 	UINT backBufferIndex = swapChain->GetCurrentBackBufferIndex();  // backBufferIndex は今回描画する SwapChain buffer の番号。
+
+	auto drawShadowObjects = [&]() {
+		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
+			if (sceneObject.type != EditorSceneObjectType::Model ||
+				sceneObject.transformationResource == nullptr) {
+				continue;
+			}
+
+			size_t meshTypeIndex = static_cast<size_t>(sceneObject.meshType);  // meshTypeIndex は影に描く基本形の VertexBuffer 番号。
+			if (meshTypeIndex >= kEditorModelMeshTypeCount ||
+				primitiveVertexCounts[meshTypeIndex] == 0u) {
+				meshTypeIndex = static_cast<size_t>(EditorModelMeshType::Plane);
+			}
+
+			commandList->SetGraphicsRootConstantBufferView(
+				1,
+				sceneObject.transformationResource->GetGPUVirtualAddress());
+
+			if (sceneObject.usesCustomMesh &&
+				sceneObject.customMeshVertexResource != nullptr &&
+				sceneObject.customMeshVertexCount > 0u) {
+				commandList->IASetVertexBuffers(0, 1, &sceneObject.customMeshVertexBufferView);
+				commandList->DrawInstanced(sceneObject.customMeshVertexCount, 1, 0, 0);
+			}
+			else {
+				commandList->IASetVertexBuffers(0, 1, &primitiveVertexBufferViews[meshTypeIndex]);
+				commandList->DrawInstanced(primitiveVertexCounts[meshTypeIndex], 1, 0, 0);
+			}
+		}
+
+		if (isLegacyPreviewVisible) {
+			commandList->SetGraphicsRootConstantBufferView(
+				1,
+				sphereTransformationMatrixResource->GetGPUVirtualAddress());
+			commandList->IASetVertexBuffers(0, 1, &modelVertexBufferView);
+			commandList->DrawInstanced(static_cast<UINT>(modelData.vertices.size()), 1, 0, 0);
+		}
+	};
+
+	if (shadowMapResource != nullptr && shadowPipelineState != nullptr) {
+		// 影パスは color を書かず、ライト視点の depth だけを shadowMapResource に記録する。
+		D3D12_RESOURCE_BARRIER shadowBarrier{};
+		shadowBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		shadowBarrier.Transition.pResource = shadowMapResource;
+		shadowBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		shadowBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		shadowBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+		commandList->ResourceBarrier(1, &shadowBarrier);
+
+		D3D12_VIEWPORT shadowViewport{};
+		shadowViewport.Width = static_cast<float>(kRuntimeShadowMapSize);
+		shadowViewport.Height = static_cast<float>(kRuntimeShadowMapSize);
+		shadowViewport.MinDepth = 0.0f;
+		shadowViewport.MaxDepth = 1.0f;
+
+		D3D12_RECT shadowScissorRect{};
+		shadowScissorRect.right = static_cast<LONG>(kRuntimeShadowMapSize);
+		shadowScissorRect.bottom = static_cast<LONG>(kRuntimeShadowMapSize);
+
+		commandList->SetGraphicsRootSignature(rootSignature.Get());
+		commandList->SetPipelineState(shadowPipelineState.Get());
+		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		commandList->RSSetViewports(1, &shadowViewport);
+		commandList->RSSetScissorRects(1, &shadowScissorRect);
+		commandList->OMSetRenderTargets(0, nullptr, FALSE, &shadowDsvHandle);
+		commandList->ClearDepthStencilView(shadowDsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+		drawShadowObjects();
+
+		shadowBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+		shadowBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		commandList->ResourceBarrier(1, &shadowBarrier);
+	}
 
 	// barrier は back buffer を Present 状態から RenderTarget 状態へ切り替える命令。
 	D3D12_RESOURCE_BARRIER barrier{};
@@ -150,6 +376,7 @@ void EditorRenderManager::Draw() {
 	commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
 	ID3D12DescriptorHeap* descriptorHeaps[] = {srvDescriptorHeap};
 	commandList->SetDescriptorHeaps(1, descriptorHeaps);
+	commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);  // t1 に影用 DepthTexture を渡し、PixelShader 側で影を判定する。
 	commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
 	commandList->OMSetRenderTargets(1, &rtvHandles[backBufferIndex], FALSE, &dsvHandle);  // back buffer と DepthStencil を今回の描画先として設定する。
@@ -177,11 +404,15 @@ void EditorRenderManager::Draw() {
 				// textureIndex は不正値が来ても SRV 配列外を読まないように範囲内へ丸める。
 				int32_t textureIndex =
 					(std::clamp)(sceneObject.textureIndex, 0, static_cast<int32_t>(_countof(textureFilePaths)) - 1);
+				D3D12_GPU_DESCRIPTOR_HANDLE textureHandle =
+					sceneObject.customTextureSrvGpuHandle.ptr != 0u
+						? sceneObject.customTextureSrvGpuHandle
+						: textureSrvHandlesGPU[textureIndex];
 				commandList->SetGraphicsRootConstantBufferView(0, materialResource->GetGPUVirtualAddress());
 				commandList->SetGraphicsRootConstantBufferView(
 					1,
 					transformationResource->GetGPUVirtualAddress());
-				commandList->SetGraphicsRootDescriptorTable(3, textureSrvHandlesGPU[textureIndex]);
+				commandList->SetGraphicsRootDescriptorTable(3, textureHandle);
 				commandList->IASetVertexBuffers(0, 1, &spriteVertexBufferView);
 				commandList->IASetIndexBuffer(&spriteIndexBufferView);
 				commandList->DrawIndexedInstanced(_countof(spriteIndices), 1, 0, 0, 0);
@@ -196,7 +427,11 @@ void EditorRenderManager::Draw() {
 				commandList->SetGraphicsRootConstantBufferView(
 					1,
 					transformationResource->GetGPUVirtualAddress());
-				commandList->SetGraphicsRootDescriptorTable(3, textureSrvHandlesGPU[2]);
+				D3D12_GPU_DESCRIPTOR_HANDLE textureHandle =
+					sceneObject.customTextureSrvGpuHandle.ptr != 0u
+						? sceneObject.customTextureSrvGpuHandle
+						: textureSrvHandlesGPU[2];
+				commandList->SetGraphicsRootDescriptorTable(3, textureHandle);
 				if (sceneObject.usesCustomMesh &&
 					sceneObject.customMeshVertexResource != nullptr &&
 					sceneObject.customMeshVertexCount > 0u) {

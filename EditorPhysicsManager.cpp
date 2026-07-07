@@ -98,8 +98,16 @@ bool EditorPhysicsManager::AddImpulse(int32_t gameObjectId, const Vector3& impul
 	return joltPhysicsManager_.AddImpulse(gameObjectId, impulse);
 }
 
+bool EditorPhysicsManager::AddTorque(int32_t gameObjectId, const Vector3& torque) {
+	return joltPhysicsManager_.AddTorque(gameObjectId, torque);
+}
+
 bool EditorPhysicsManager::SetVelocity(int32_t gameObjectId, const Vector3& velocity) {
 	return joltPhysicsManager_.SetVelocity(gameObjectId, velocity);
+}
+
+bool EditorPhysicsManager::SetAngularVelocity(int32_t gameObjectId, const Vector3& angularVelocity) {
+	return joltPhysicsManager_.SetAngularVelocity(gameObjectId, angularVelocity);
 }
 
 const std::vector<EditorJoltPhysicsManager::PhysicsEvent>& EditorPhysicsManager::GetFrameEvents() const {

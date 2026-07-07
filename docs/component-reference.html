@@ -1,0 +1,1232 @@
+﻿<!doctype html>
+<html lang="ja">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>CG2 Component Reference</title>
+	<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+	<header class="topbar">
+		<div class="brand">
+			<a href="index.html" class="brand-mark">CG2</a>
+			<div>
+				<p class="eyebrow">CG2 Editor Documentation</p>
+				<h1>Component Reference</h1>
+			</div>
+		</div>
+		<div class="top-actions">
+			<button class="menu-button" type="button" id="menuToggle">Menu</button>
+			<a class="ghost-button" href="index.html">Docs Home</a>
+			<button class="ghost-button" type="button" id="themeToggle">Theme</button>
+		</div>
+	</header>
+
+	<main class="layout">
+		<aside class="sidebar">
+			<div class="search-panel">
+				<label for="apiSearch">検索</label>
+				<div class="search-row">
+					<input id="apiSearch" type="search" placeholder="例: Rigidbody / AI / 当たり判定 / 入力">
+					<button id="clearSearch" type="button">Clear</button>
+				</div>
+				<p class="search-count"><span id="visibleCount">0</span> 件表示</p>
+			</div>
+
+			<nav class="nav-list" aria-label="Component navigation">
+				<details class="nav-group" open>
+					<summary>最初に読む <span>4</span></summary>
+					<div class="nav-group-list">
+						<a class="nav-item" href="#overview">リファレンスの見方</a>
+						<a class="nav-item" href="#workflow">基本ワークフロー</a>
+						<a class="nav-item" href="#levels">実装レベル</a>
+						<a class="nav-item" href="#play-mode">Play の考え方</a>
+					</div>
+				</details>
+
+				<details class="nav-group" open>
+					<summary>基本・描画 <span>5</span></summary>
+					<div class="nav-group-list">
+						<a class="nav-item" href="#gameobject-transform">GameObject / Transform</a>
+						<a class="nav-item" href="#rendering-components">描画コンポーネント</a>
+						<a class="nav-item" href="#camera-light">カメラ / ライト</a>
+						<a class="nav-item" href="#asset-components">アセット配置</a>
+						<a class="nav-item" href="#scene-save">Scene / Prefab 保存</a>
+					</div>
+				</details>
+
+				<details class="nav-group" open>
+					<summary>実行系 <span>6</span></summary>
+					<div class="nav-group-list">
+						<a class="nav-item" href="#physics-3d">3D 物理</a>
+						<a class="nav-item" href="#mesh-collision">メッシュ当たり判定</a>
+						<a class="nav-item" href="#input-system">入力</a>
+						<a class="nav-item" href="#script-component">C++ スクリプト</a>
+						<a class="nav-item" href="#navigation">ナビゲーション</a>
+						<a class="nav-item" href="#ai-components">AI</a>
+					</div>
+				</details>
+
+				<details class="nav-group" open>
+					<summary>Unity 風カテゴリ <span>6</span></summary>
+					<div class="nav-group-list">
+						<a class="nav-item" href="#animation-constraint">アニメーション / Constraint</a>
+						<a class="nav-item" href="#audio-components">オーディオ</a>
+						<a class="nav-item" href="#ui-components">UI</a>
+						<a class="nav-item" href="#effects-components">エフェクト</a>
+						<a class="nav-item" href="#terrain-tilemap">地形 / タイルマップ</a>
+						<a class="nav-item" href="#feelkit">FeelKit</a>
+					</div>
+				</details>
+
+				<details class="nav-group" open>
+					<summary>AI 種類分け <span>8</span></summary>
+					<div class="nav-group-list">
+						<a class="nav-item" href="#ai-behavior">行動制御</a>
+						<a class="nav-item" href="#ai-state">状態管理</a>
+						<a class="nav-item" href="#ai-goal">目標計画</a>
+						<a class="nav-item" href="#ai-task">タスク計画</a>
+						<a class="nav-item" href="#ai-path">経路探索</a>
+						<a class="nav-item" href="#ai-steering">移動操舵</a>
+						<a class="nav-item" href="#ai-sense">知覚</a>
+						<a class="nav-item" href="#ai-voice">音声</a>
+					</div>
+				</details>
+			</nav>
+		</aside>
+
+		<section class="content reference-body">
+			<section class="hero small-hero searchable-section" id="overview">
+				<p class="eyebrow">How To Read</p>
+				<h2>このリファレンスの見方</h2>
+				<p>
+					CG2 は GameObject にコンポーネントを追加して機能を増やすエディタです。
+					各項目は「意味」「使い方」「実装レベル」を先に書き、内部ライブラリ名は必要な場合だけ補足します。
+					そのため、AI も「BehaviorTree.CPP」ではなく「行動制御」「状態管理」「経路探索」のように用途から探します。
+				</p>
+			</section>
+
+			<article class="api-card searchable-section" id="workflow">
+				<div class="api-card-head">
+					<h2>基本ワークフロー</h2>
+					<a class="anchor-link" href="#workflow">#</a>
+				</div>
+				<ol class="step-list">
+					<li>Hierarchy または GameObject メニューから GameObject を作ります。</li>
+					<li>Inspector の一番下にある「コンポーネントを追加」から必要な機能を足します。</li>
+					<li>Transform、描画、当たり判定、Rigidbody、入力、AI などの値を設定します。</li>
+					<li>Play を押すと、物理、入力、スクリプト、AI の実行系が動きます。</li>
+					<li>Stop を押すと、Play 前の Scene 状態へ戻します。</li>
+				</ol>
+				<div class="note-box">
+					<strong>重要:</strong> 描画だけのコンポーネントは見た目を出すものです。物理で動かしたい場合は Rigidbody と当たり判定も必要です。
+				</div>
+			</article>
+
+			<article class="api-card searchable-section" id="levels">
+				<div class="api-card-head">
+					<h2>実装レベル</h2>
+					<a class="anchor-link" href="#levels">#</a>
+				</div>
+				<table class="data-table">
+					<thead>
+						<tr><th>表記</th><th>意味</th></tr>
+					</thead>
+					<tbody>
+						<tr><td><span class="badge ready">実装済み</span></td><td>エディタ上で実際に使える段階です。</td></tr>
+						<tr><td><span class="badge partial">一部実装</span></td><td>基本動作はありますが、Unity と同じ完成度ではありません。</td></tr>
+						<tr><td><span class="badge display">表示段階</span></td><td>コンポーネント追加と Inspector 表示が中心です。Play 中の本格処理は弱いです。</td></tr>
+						<tr><td><span class="badge todo">未対応</span></td><td>今後実装が必要です。</td></tr>
+					</tbody>
+				</table>
+			</article>
+
+			<article class="api-card searchable-section" id="play-mode">
+				<div class="api-card-head">
+					<h2>Play の考え方</h2>
+					<a class="anchor-link" href="#play-mode">#</a>
+				</div>
+				<p>
+					Play は編集状態の Scene を実行状態へ切り替えます。Play 中は Jolt Physics の固定更新、入力、AI、Navigation、Script の入口が動きます。
+					Stop 時は Play 前の Scene に戻すため、実行中に落下した Rigidbody や移動した AI の位置は編集状態へ復元されます。
+				</p>
+				<div class="code-block">
+					<button class="copy-button" type="button">Copy</button>
+					<pre><code>Play を押す
+  ↓
+Scene のバックアップを作る
+  ↓
+FixedUpdate で物理を進める
+  ↓
+Update で入力 / AI / Script を進める
+  ↓
+Draw で Scene View / Game View を描画する
+  ↓
+Stop でバックアップへ戻す</code></pre>
+				</div>
+			</article>
+
+			<article class="api-card searchable-section" id="gameobject-transform">
+				<div class="api-card-head">
+					<h2>GameObject / Transform</h2>
+					<a class="anchor-link" href="#gameobject-transform">#</a>
+				</div>
+				<div class="component-grid">
+					<section class="component-card">
+						<h3>GameObject</h3>
+						<p><span class="badge ready">実装済み</span></p>
+						<p><strong>意味:</strong> Scene 上に置く基本単位です。名前、有効状態、タグ、レイヤー、コンポーネント一覧を持ちます。</p>
+						<p><strong>使い方:</strong> Hierarchy で選択し、Inspector から必要なコンポーネントを追加します。</p>
+					</section>
+					<section class="component-card">
+						<h3>Transform</h3>
+						<p><span class="badge ready">実装済み</span></p>
+						<p><strong>意味:</strong> 位置、回転、拡縮を表します。すべての 3D / 2D 表示と物理の基準です。</p>
+						<p><strong>使い方:</strong> Inspector の X / Y / Z 数値、または Scene ギズモで編集します。</p>
+					</section>
+					<section class="component-card">
+						<h3>RectTransform / Canvas</h3>
+						<p><span class="badge display">表示段階</span></p>
+						<p><strong>意味:</strong> UI 用の座標と描画範囲です。</p>
+						<p><strong>使い方:</strong> UI コンポーネントを置く土台として追加します。Unity 同等の UI レイアウト実行は未完成です。</p>
+					</section>
+				</div>
+			</article>
+
+			<article class="api-card searchable-section" id="rendering-components">
+				<div class="api-card-head">
+					<h2>描画コンポーネント</h2>
+					<a class="anchor-link" href="#rendering-components">#</a>
+				</div>
+				<table class="data-table">
+					<thead>
+						<tr><th>コンポーネント</th><th>意味</th><th>使い方</th><th>レベル</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>MeshFilter</td><td>表示するメッシュ資産を持ちます。</td><td>FBX / OBJ / 基本形モデルを割り当てます。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>MeshRenderer</td><td>3D メッシュを描画します。</td><td>色、強さ、表示有効を設定します。初期色は白です。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>ModelRenderer</td><td>モデル表示用の簡易 Renderer です。</td><td>Project のモデルを Scene に置いた時に使います。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>SpriteRenderer</td><td>2D スプライトを表示します。</td><td>PNG を Scene に置く時に使います。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>LineRenderer</td><td>線を描画します。</td><td>経路、Ray、デバッグ線の表示に使う入口です。</td><td><span class="badge display">表示段階</span></td></tr>
+						<tr><td>TrailRenderer</td><td>軌跡を描画します。</td><td>弾、移動物体、エフェクトの残像に使う入口です。</td><td><span class="badge display">表示段階</span></td></tr>
+						<tr><td>BillboardRenderer</td><td>カメラ方向を向く板表示です。</td><td>アイコン、簡易エフェクト、名前表示に使う入口です。</td><td><span class="badge display">表示段階</span></td></tr>
+					</tbody>
+				</table>
+			</article>
+
+			<article class="api-card searchable-section" id="camera-light">
+				<div class="api-card-head">
+					<h2>カメラ / ライト</h2>
+					<a class="anchor-link" href="#camera-light">#</a>
+				</div>
+				<div class="component-grid">
+					<section class="component-card">
+						<h3>Camera</h3>
+						<p><span class="badge partial">一部実装</span></p>
+						<p><strong>意味:</strong> Game View の視点です。Scene View の編集カメラとは別です。</p>
+						<p><strong>使い方:</strong> GameObject に追加し、Transform で位置と向きを調整します。追従カメラは追従対象が原点にないか確認します。</p>
+					</section>
+					<section class="component-card">
+						<h3>Light</h3>
+						<p><span class="badge partial">一部実装</span></p>
+						<p><strong>意味:</strong> Scene の明るさと色に関係するライトです。</p>
+						<p><strong>使い方:</strong> 色、強さ、向きを設定します。Unity の複数ライト、影、Probe と同等ではありません。</p>
+					</section>
+					<section class="component-card">
+						<h3>ReflectionProbe / Volume / LightProbe</h3>
+						<p><span class="badge display">表示段階</span></p>
+						<p><strong>意味:</strong> Unity 風の環境表現の入口です。</p>
+						<p><strong>使い方:</strong> Scene 構造として置けます。描画結果への本格反映は限定的です。</p>
+					</section>
+				</div>
+			</article>
+
+			<article class="api-card searchable-section" id="asset-components">
+				<div class="api-card-head">
+					<h2>アセット配置</h2>
+					<a class="anchor-link" href="#asset-components">#</a>
+				</div>
+				<p>
+					Project には `resources` 配下の画像、音声、OBJ、FBX などが表示されます。基本形は GameObject メニューから作るものなので、Project へ余計に並べる必要はありません。
+				</p>
+				<table class="data-table">
+					<thead>
+						<tr><th>種類</th><th>意味</th><th>注意</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>PNG / JPG</td><td>スプライトやテクスチャの元データです。</td><td>任意 Material 割り当てはまだ限定的です。</td></tr>
+						<tr><td>OBJ</td><td>静的モデルの読み込みに使います。</td><td>複雑な Material は限定対応です。</td></tr>
+						<tr><td>FBX</td><td>Blender などから出したモデルの読み込みに使います。</td><td>FBX SDK の読み込み入口があります。スキン、ボーン、Animation Clip はまだ限定的です。</td></tr>
+						<tr><td>WAV</td><td>AudioSource の音源候補です。</td><td>Audio Mixer ほどの管理は未対応です。</td></tr>
+					</tbody>
+				</table>
+			</article>
+
+			<article class="api-card searchable-section" id="scene-save">
+				<div class="api-card-head">
+					<h2>Scene / Prefab 保存</h2>
+					<a class="anchor-link" href="#scene-save">#</a>
+				</div>
+				<ul>
+					<li><strong>保存:</strong> 現在開いている Scene に上書き保存します。</li>
+					<li><strong>名前を付けて保存:</strong> 保存先と Scene 名を選んで保存します。</li>
+					<li><strong>読み込み:</strong> ファイル選択で Scene を読み込みます。</li>
+					<li><strong>Prefab:</strong> 選択 GameObject を再利用できるデータとして保存します。</li>
+				</ul>
+				<p>
+					Unity の Prefab Apply / Revert、ネスト Prefab、差分表示までは未対応です。
+				</p>
+			</article>
+
+			<article class="api-card searchable-section" id="physics-3d">
+				<div class="api-card-head">
+					<h2>3D 物理</h2>
+					<a class="anchor-link" href="#physics-3d">#</a>
+				</div>
+				<p>
+					3D 物理は Jolt Physics 5.5.0 を使います。GameObject に Rigidbody と当たり判定を付けると、Play 中に重力、速度、衝突、反発、摩擦の基礎処理が動きます。
+				</p>
+				<table class="data-table">
+					<thead>
+						<tr><th>コンポーネント</th><th>意味</th><th>使い方</th><th>レベル</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>Rigidbody</td><td>質量、速度、重力、減衰、固定軸を持つ物理本体です。</td><td>落下、押し返し、力、トルクで動かしたい物体に付けます。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>Box Collider</td><td>箱の当たり判定です。</td><td>床、壁、箱に使います。Center / Size を見た目に合わせます。</td><td><span class="badge ready">実装済み</span></td></tr>
+						<tr><td>Sphere Collider</td><td>球の当たり判定です。</td><td>球、ボール、丸い敵に使います。Radius を見た目に合わせます。</td><td><span class="badge ready">実装済み</span></td></tr>
+						<tr><td>Capsule Collider</td><td>カプセルの当たり判定です。</td><td>キャラクター、柱、丸みのある物体に使います。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>Mesh Collider</td><td>モデルの三角形に近い形で当たり判定を取る入口です。</td><td>FBX / OBJ の穴や複雑形状を使う場合に選びます。重いモデルは頂点削減が必要です。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>Physics Material</td><td>摩擦、静止摩擦、反発を決める設定です。</td><td>氷、ゴム、金属床、跳ねる球などの差を作る時に使います。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>Character Controller</td><td>Rigidbody 任せではないキャラクター用移動です。</td><td>プレイヤーや敵を安定して歩かせたい場合に使います。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>Joint</td><td>物体同士を制約でつなぎます。</td><td>扉、ばね、固定接続、振り子の入口です。</td><td><span class="badge partial">一部実装</span></td></tr>
+					</tbody>
+				</table>
+				<div class="note-box">
+					<strong>使い分け:</strong> 動く物体には Rigidbody + Collider。動かない床や壁は Collider だけ、または Static 扱いで置きます。
+				</div>
+			</article>
+
+			<article class="api-card searchable-section" id="mesh-collision">
+				<div class="api-card-head">
+					<h2>メッシュ当たり判定</h2>
+					<a class="anchor-link" href="#mesh-collision">#</a>
+				</div>
+				<p>
+					円やドーナツのように、箱では形が合わないモデルは Mesh Collider を使います。
+					モデルの頂点と三角形を使って当たり判定を作るため、穴のある形状は穴として扱えます。
+				</p>
+				<ul>
+					<li><strong>静的メッシュ:</strong> 床、壁、ステージ、障害物に向いています。</li>
+					<li><strong>動的メッシュ:</strong> 動かすと重くなりやすく、貫通や震えが出やすいため頂点削減が必要です。</li>
+					<li><strong>NavMesh 障害物:</strong> MeshFilter / MeshCollider の見た目サイズを使って経路探索の障害物にします。</li>
+				</ul>
+			</article>
+
+			<article class="api-card searchable-section" id="input-system">
+				<div class="api-card-head">
+					<h2>入力</h2>
+					<a class="anchor-link" href="#input-system">#</a>
+				</div>
+				<div class="component-grid">
+					<section class="component-card">
+						<h3>Input</h3>
+						<p><span class="badge partial">一部実装</span></p>
+						<p><strong>意味:</strong> 簡易的な移動入力設定です。</p>
+						<p><strong>使い方:</strong> 移動速度、前後左右、ジャンプキーなどを設定して Play します。</p>
+					</section>
+					<section class="component-card">
+						<h3>PlayerInput</h3>
+						<p><span class="badge partial">一部実装</span></p>
+						<p><strong>意味:</strong> ActionMap / Action / Binding を使う Unity Input System 風の入力です。</p>
+						<p><strong>使い方:</strong> <code>Create Actions...</code> で <code>.inputactions</code> を作り、Actions に割り当て、Default Map と Event 名を設定します。</p>
+					</section>
+					<section class="component-card">
+						<h3>EventSystem</h3>
+						<p><span class="badge display">表示段階</span></p>
+						<p><strong>意味:</strong> UI のクリック、選択、ホバーなどの入力イベントの入口です。</p>
+						<p><strong>使い方:</strong> UI を実行する Scene に置きます。本格 UI イベント実行は未完成です。</p>
+					</section>
+				</div>
+				<div class="code-block">
+					<button class="copy-button" type="button">Copy</button>
+					<pre><code>例: W で前進させる最低構成
+
+1. Player の GameObject を作る
+2. Rigidbody を追加する
+3. Box Collider または Capsule Collider を追加する
+4. PlayerInput を追加する
+5. Create Actions... で InputActionAsset を作る
+6. Player / Move に W/S/A/D を割り当てる
+7. Play を押す
+
+Move はキーそのものではなく「移動という行動」として扱う。</code></pre>
+				</div>
+			</article>
+
+			<article class="api-card searchable-section" id="script-component">
+				<div class="api-card-head">
+					<h2>C++ スクリプト</h2>
+					<a class="anchor-link" href="#script-component">#</a>
+				</div>
+				<p>
+					C++ スクリプトは GameObject に処理を追加するための入口です。
+					Unity の MonoBehaviour と同じ考え方で、Start / Update / FixedUpdate / OnDestroy / OnCollision / OnTrigger のような呼び出し口を作る対象です。
+				</p>
+				<div class="subnav">
+					<a href="#script-overview">概要</a>
+					<a href="#script-flow">作成手順</a>
+					<a href="#script-api">API 一覧</a>
+					<a href="#script-struct">構造体の使い方</a>
+					<a href="#script-input">入力</a>
+					<a href="#script-physics">物理</a>
+					<a href="#script-ai">AI センサー</a>
+					<a href="#script-examples">コード例</a>
+				</div>
+				<details class="doc-fold" id="script-overview" open>
+					<summary>概要と DLL の役割</summary>
+				<table class="data-table">
+					<thead>
+						<tr><th>項目</th><th>意味</th><th>現状</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>Start</td><td>Play 開始時に 1 回だけ呼びます。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>Update</td><td>毎フレームの通常更新です。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>FixedUpdate</td><td>物理用の固定更新です。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>OnCollision / OnTrigger</td><td>当たり判定イベントです。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>DLL リロード</td><td>外部 C++ をビルドして差し替える入口です。</td><td><span class="badge partial">一部実装</span></td></tr>
+					</tbody>
+				</table>
+				<div class="note-box">
+					<strong>生成場所:</strong> C++ スクリプトを新規作成すると、<code>resources/scripts/スクリプト名/</code> に
+					<code>.h</code> / <code>.cpp</code> / <code>build_debug.bat</code> / <code>build_release.bat</code> が UTF-8 BOM 付きで生成されます。
+					DLL は通常 <code>x64/Debug/スクリプト名.dll</code> に出ます。
+				</div>
+				</details>
+				<details class="doc-fold" id="script-flow" open>
+					<summary>作成手順</summary>
+				<ol class="step-list">
+					<li>Project で <code>C++ Script</code> を作り、名前を決めます。</li>
+					<li>生成された <code>.cpp</code> を開き、<code>EditorScript_Start</code> と <code>EditorScript_Update</code> などを書きます。</li>
+					<li><code>build_debug.bat</code> を実行して DLL をビルドします。</li>
+					<li>GameObject を選び、Inspector の一番下から <code>Script</code> または <code>MonoBehaviour</code> を追加します。</li>
+					<li>そのコンポーネントのアセット欄へ、生成された <code>.dll</code> を割り当てます。</li>
+					<li>Play を押すと、DLL が読み込まれ、Start / Update / FixedUpdate / PhysicsEvent が実行されます。</li>
+				</ol>
+				</details>
+				<details class="doc-fold" id="script-api" open>
+					<summary>関数一覧</summary>
+				<table class="data-table">
+					<thead>
+						<tr><th>関数名</th><th>意味</th><th>用途</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>EditorScript_Load</td><td>DLL 読み込み時に 1 回呼ばれます。</td><td>API バージョン確認と <code>runtimeApi</code> 保持に使います。</td></tr>
+						<tr><td>EditorScript_Start</td><td>その GameObject の Play 開始時に 1 回呼ばれます。</td><td>初期化、ログ、初期速度設定に使います。</td></tr>
+						<tr><td>EditorScript_Update</td><td>毎フレーム呼ばれます。</td><td>入力、AI 判定、Transform 更新に使います。</td></tr>
+						<tr><td>EditorScript_FixedUpdate</td><td>固定時間で呼ばれます。</td><td>力、速度、物理ベース移動に使います。</td></tr>
+						<tr><td>EditorScript_OnPhysicsEvent</td><td>衝突 / Trigger のたびに呼ばれます。</td><td>接触相手 ID、法線、相対速度の利用に使います。</td></tr>
+						<tr><td>EditorScript_Stop</td><td>Play 停止時に呼ばれます。</td><td>GameObject 単位の一時状態破棄に使います。</td></tr>
+					</tbody>
+				</table>
+				</details>
+				<details class="doc-fold" id="script-api-list" open>
+					<summary>runtimeApi の API 一覧</summary>
+				<table class="data-table">
+					<thead>
+						<tr><th>API</th><th>意味</th><th>例</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>GetActionVector2()</td><td><code>Player/Move</code> のような 2D 移動入力を取ります。</td><td>WASD / 十字入力で XZ 移動。</td></tr>
+						<tr><td>WasActionJustPressed()</td><td><code>Player/Jump</code> のような押した瞬間を取ります。</td><td>ジャンプ、発射、決定。</td></tr>
+						<tr><td>IsActionPressed()</td><td>Action が押され続けているかを見ます。</td><td>長押し移動、溜め。</td></tr>
+						<tr><td>GetTransform() / SetTransform()</td><td>GameObject の位置、回転、拡縮を読み書きします。</td><td>通常更新での移動。</td></tr>
+						<tr><td>GetVelocity() / SetVelocity()</td><td>Rigidbody の速度を読み書きします。</td><td>物理移動、停止、加速。</td></tr>
+						<tr><td>GetAngularVelocity() / SetAngularVelocity()</td><td>Rigidbody の角速度を読み書きします。</td><td>物理回転、転がり、向きの変更。</td></tr>
+						<tr><td>AddForce() / AddImpulse() / AddTorque()</td><td>Jolt Physics へ力や回転力を加えます。</td><td>ジャンプ、爆風、押し返し、回転。</td></tr>
+						<tr><td>GetAiSensorState()</td><td>視界、顔 / 物体検出、色追跡、動き検出、音声の検出結果を取ります。</td><td>対象 ID、ラベル、音声文字列、コマンド、動き量を Script で読む。</td></tr>
+						<tr><td>IsKeyDown() / IsKeyPressed()</td><td>低レベルな直接キー入力です。</td><td>Action を使わずにキー状態だけを直接読む。</td></tr>
+					</tbody>
+				</table>
+				</details>
+				<details class="doc-fold" id="script-struct" open>
+					<summary>構造体の受け取り方と渡し方</summary>
+				<table class="data-table">
+					<thead>
+						<tr><th>関数</th><th>引数</th><th>戻り値</th><th>補足</th></tr>
+					</thead>
+					<tbody>
+						<tr><td><code>GetState(gameObjectId)</code></td><td><code>gameObjectId</code>: 今実行中の GameObject ID</td><td>その GameObject 専用の C++ 状態</td><td><code>std::unordered_map&lt;int32_t, ScriptClass&gt;</code> から取り出します。</td></tr>
+						<tr><td><code>runtimeApi-&gt;GetTransform(gameObjectId)</code></td><td><code>gameObjectId</code>: Transform を読みたい GameObject ID</td><td><code>EditorScriptTransform</code></td><td><code>position / rotation / scale</code> の 3 要素が入ります。</td></tr>
+						<tr><td><code>runtimeApi-&gt;SetTransform(gameObjectId, &amp;transform)</code></td><td><code>gameObjectId</code>, <code>transform</code>: 書き戻す Transform</td><td>なし</td><td>Update 内で計算した位置、回転、拡縮を Editor 本体へ戻します。</td></tr>
+						<tr><td><code>runtimeApi-&gt;GetVelocity(gameObjectId)</code></td><td><code>gameObjectId</code>: Rigidbody 速度を読みたい GameObject ID</td><td><code>EditorScriptVector3</code></td><td><code>x / y / z</code> に現在の速度が入ります。Rigidbody がなければ 0 です。</td></tr>
+						<tr><td><code>runtimeApi-&gt;SetVelocity(gameObjectId, &amp;velocity)</code></td><td><code>gameObjectId</code>, <code>velocity</code>: 設定したい速度</td><td>なし</td><td>Inspector の Rigidbody 速度と Jolt 側の速度を両方更新します。</td></tr>
+						<tr><td><code>runtimeApi-&gt;GetAngularVelocity(gameObjectId)</code></td><td><code>gameObjectId</code>: Rigidbody 角速度を読みたい GameObject ID</td><td><code>EditorScriptVector3</code></td><td><code>x / y / z</code> に現在の角速度が入ります。Rigidbody がなければ 0 です。</td></tr>
+						<tr><td><code>runtimeApi-&gt;SetAngularVelocity(gameObjectId, &amp;angularVelocity)</code></td><td><code>gameObjectId</code>, <code>angularVelocity</code>: 設定したい角速度</td><td>なし</td><td>Inspector の Rigidbody 角速度と Jolt 側の角速度を両方更新します。</td></tr>
+						<tr><td><code>runtimeApi-&gt;AddForce(gameObjectId, &amp;force)</code></td><td><code>gameObjectId</code>, <code>force</code>: 継続力</td><td><code>bool</code></td><td>Rigidbody があり、力を加えられた時だけ <code>true</code> です。</td></tr>
+						<tr><td><code>runtimeApi-&gt;AddImpulse(gameObjectId, &amp;impulse)</code></td><td><code>gameObjectId</code>, <code>impulse</code>: 瞬間力</td><td><code>bool</code></td><td>ジャンプ、爆風、弾の反動のような瞬間的な押し出し向けです。</td></tr>
+						<tr><td><code>runtimeApi-&gt;AddTorque(gameObjectId, &amp;torque)</code></td><td><code>gameObjectId</code>, <code>torque</code>: 回転力</td><td><code>bool</code></td><td>Rigidbody を物理挙動として回転させます。</td></tr>
+						<tr><td><code>runtimeApi-&gt;GetActionVector2(gameObjectId, "Player", "Move")</code></td><td><code>gameObjectId</code>, <code>ActionMap 名</code>, <code>Action 名</code></td><td><code>EditorScriptVector2</code></td><td><code>x</code> が左右、<code>y</code> が前後です。</td></tr>
+						<tr><td><code>runtimeApi-&gt;IsActionPressed(gameObjectId, "Player", "Move")</code></td><td><code>gameObjectId</code>, <code>ActionMap 名</code>, <code>Action 名</code></td><td><code>bool</code></td><td>押している間ずっと <code>true</code> です。</td></tr>
+						<tr><td><code>runtimeApi-&gt;WasActionJustPressed(gameObjectId, "Player", "Jump")</code></td><td><code>gameObjectId</code>, <code>ActionMap 名</code>, <code>Action 名</code></td><td><code>bool</code></td><td>押した瞬間だけ <code>true</code> です。</td></tr>
+						<tr><td><code>runtimeApi-&gt;GetMousePosition()</code></td><td>なし</td><td><code>EditorScriptVector2</code></td><td>現在のマウス座標です。<code>x</code> が横、<code>y</code> が縦です。</td></tr>
+						<tr><td><code>runtimeApi-&gt;IsKeyDown(EditorScriptKeyCodeW)</code></td><td><code>EditorScriptKeyCode</code></td><td><code>bool</code></td><td>キーを押している間ずっと <code>true</code> です。</td></tr>
+						<tr><td><code>runtimeApi-&gt;IsKeyPressed(EditorScriptKeyCodeSpace)</code></td><td><code>EditorScriptKeyCode</code></td><td><code>bool</code></td><td>キーを押した瞬間だけ <code>true</code> です。</td></tr>
+						<tr><td><code>runtimeApi-&gt;GetAiSensorState(gameObjectId, EditorScriptAiSensorKindVision)</code></td><td><code>gameObjectId</code>: センサーを持つ GameObject ID<br><code>sensorKind</code>: 取得したいセンサー種類</td><td><code>EditorScriptAiSensorState</code></td><td>視界、顔 / 物体検出、色追跡、動き、音声の現在状態を返します。</td></tr>
+					</tbody>
+				</table>
+				<table class="data-table">
+					<thead>
+						<tr><th>構造体</th><th>値</th><th>意味</th></tr>
+					</thead>
+					<tbody>
+						<tr><td><code>EditorScriptVector2</code></td><td><code>x</code>, <code>y</code></td><td>2 次元値です。移動入力やマウス座標に使います。</td></tr>
+						<tr><td><code>EditorScriptVector3</code></td><td><code>x</code>, <code>y</code>, <code>z</code></td><td>3 次元値です。位置、回転、速度、力に使います。</td></tr>
+						<tr><td><code>EditorScriptTransform</code></td><td><code>position</code>, <code>rotation</code>, <code>scale</code></td><td>GameObject の Transform 一式です。</td></tr>
+					</tbody>
+				</table>
+				<table class="data-table">
+					<thead>
+						<tr><th>書き方</th><th>例</th><th>意味</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>受け取る</td><td><code>EditorScriptVector2 moveInput = runtimeApi-&gt;GetActionVector2(...);</code></td><td>関数の戻り値をローカル変数へそのまま入れます。</td></tr>
+						<tr><td>中身を読む</td><td><code>moveInput.x</code>, <code>moveInput.y</code></td><td>構造体メンバーは <code>.</code> で読みます。</td></tr>
+						<tr><td>値を入れる</td><td><code>force.y = 30.0f;</code></td><td>自分で作った構造体へ成分を書き込みます。</td></tr>
+						<tr><td>ポインタで渡す</td><td><code>runtimeApi-&gt;SetVelocity(gameObjectId, &amp;velocity);</code></td><td><code>Set*</code> や <code>Add*</code> は <code>&amp;</code> を付けてアドレスを渡します。</td></tr>
+						<tr><td>Transform を戻す</td><td><code>runtimeApi-&gt;SetTransform(gameObjectId, &amp;transform);</code></td><td>書き換えた Transform は最後に必ず戻します。</td></tr>
+						<tr><td>受け取ったポインタを読む</td><td><code>physicsEvent-&gt;type</code></td><td>ポインタで渡された構造体は <code>-&gt;</code> で読みます。</td></tr>
+					</tbody>
+				</table>
+				<table class="data-table">
+					<thead>
+						<tr><th>EditorScriptTransform の値</th><th>意味</th></tr>
+					</thead>
+					<tbody>
+						<tr><td><code>position</code></td><td>GameObject の位置です。<code>position.x / y / z</code> で使います。</td></tr>
+						<tr><td><code>rotation</code></td><td>GameObject の回転です。<code>rotation.x / y / z</code> で使います。</td></tr>
+						<tr><td><code>scale</code></td><td>GameObject の拡縮です。<code>scale.x / y / z</code> で使います。</td></tr>
+					</tbody>
+				</table>
+				</details>
+				<details class="doc-fold" id="script-input" open>
+					<summary>入力の考え方</summary>
+				<div class="note-box">
+					<strong>重要:</strong> 操作キーは C++ 側で固定されていません。基本は <code>.inputactions</code> と <code>PlayerInput</code> で
+					ActionMap / Action / Path をユーザーが自由に決めます。<code>EditorScriptKeyCodeW</code> などは、
+					Action を使わずに直接キー状態を取りたい時だけ使う低レベル API です。
+				</div>
+				<table class="data-table">
+					<thead>
+						<tr><th>入力方法</th><th>どこで決めるか</th><th>Script 側の読み方</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>Action ベース入力</td><td>Project の <code>.inputactions</code> と PlayerInput</td><td><code>GetActionVector2()</code> / <code>IsActionPressed()</code> / <code>WasActionJustPressed()</code></td></tr>
+						<tr><td>直キー入力</td><td>C++ Script 内で列挙体を直接指定</td><td><code>IsKeyDown(EditorScriptKeyCodeW)</code> / <code>IsKeyPressed(EditorScriptKeyCodeSpace)</code></td></tr>
+					</tbody>
+				</table>
+				<table class="data-table">
+					<thead>
+						<tr><th>直キー列挙体</th><th>渡す値</th><th>用途</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>移動キー群</td><td><code>EditorScriptKeyCodeW / A / S / D</code></td><td>Action を使わない簡易移動入力に使います。</td></tr>
+						<tr><td>回転キー群</td><td><code>EditorScriptKeyCodeQ / E</code></td><td>デバッグ回転や補助操作に使います。</td></tr>
+						<tr><td>操作キー群</td><td><code>EditorScriptKeyCodeSpace / LeftShift / LeftCtrl</code></td><td>ジャンプ、ダッシュ、しゃがみなどの直入力に使います。</td></tr>
+						<tr><td>矢印キー群</td><td><code>EditorScriptKeyCodeUp / Down / Left / Right</code></td><td>UI テストや別系統入力に使います。</td></tr>
+					</tbody>
+				</table>
+				</details>
+				<details class="doc-fold" id="script-physics" open>
+					<summary>物理 API と OnPhysicsEvent</summary>
+				<table class="data-table">
+					<thead>
+						<tr><th>物理 API</th><th>渡す値</th><th>使い方</th></tr>
+					</thead>
+					<tbody>
+						<tr><td><code>EditorScriptVector3 velocity</code></td><td><code>x</code>, <code>y</code>, <code>z</code> に速度を入れる</td><td><code>SetVelocity()</code> へ渡して即座に速度を書き換えます。</td></tr>
+						<tr><td><code>EditorScriptVector3 angularVelocity</code></td><td><code>x</code>, <code>y</code>, <code>z</code> に角速度を入れる</td><td><code>SetAngularVelocity()</code> へ渡して物理回転を書き換えます。</td></tr>
+						<tr><td><code>EditorScriptVector3 force</code></td><td><code>x</code>, <code>y</code>, <code>z</code> に力の方向と大きさを入れる</td><td><code>AddForce()</code> へ渡して継続的に押します。</td></tr>
+						<tr><td><code>EditorScriptVector3 impulse</code></td><td><code>x</code>, <code>y</code>, <code>z</code> に瞬間的な押し出し量を入れる</td><td><code>AddImpulse()</code> へ渡して一度だけ大きく動かします。</td></tr>
+						<tr><td><code>EditorScriptVector3 torque</code></td><td><code>x</code>, <code>y</code>, <code>z</code> に回転力を入れる</td><td><code>AddTorque()</code> へ渡して物理的に回します。</td></tr>
+					</tbody>
+				</table>
+				<table class="data-table">
+					<thead>
+						<tr><th>OnPhysicsEvent</th><th>引数</th><th>意味</th></tr>
+					</thead>
+					<tbody>
+						<tr><td><code>gameObjectId</code></td><td>今イベントを受けている自分の GameObject ID</td><td>どの GameObject の Script に対する通知かを表します。</td></tr>
+						<tr><td><code>physicsEvent</code></td><td><code>const EditorScriptPhysicsEvent*</code></td><td>接触相手、接触点、法線、相対速度などが入ったイベント構造体です。</td></tr>
+					</tbody>
+				</table>
+				<table class="data-table">
+					<thead>
+						<tr><th>EditorScriptPhysicsEventType</th><th>値</th><th>意味</th></tr>
+					</thead>
+					<tbody>
+						<tr><td><code>EditorScriptPhysicsEventTypeCollisionEnter</code></td><td><code>0</code></td><td>衝突が始まった瞬間です。</td></tr>
+						<tr><td><code>EditorScriptPhysicsEventTypeCollisionStay</code></td><td><code>1</code></td><td>衝突中のフレームです。</td></tr>
+						<tr><td><code>EditorScriptPhysicsEventTypeCollisionExit</code></td><td><code>2</code></td><td>衝突が終わった瞬間です。</td></tr>
+						<tr><td><code>EditorScriptPhysicsEventTypeTriggerEnter</code></td><td><code>3</code></td><td>Trigger に入った瞬間です。</td></tr>
+						<tr><td><code>EditorScriptPhysicsEventTypeTriggerStay</code></td><td><code>4</code></td><td>Trigger 内にいる間です。</td></tr>
+						<tr><td><code>EditorScriptPhysicsEventTypeTriggerExit</code></td><td><code>5</code></td><td>Trigger から出た瞬間です。</td></tr>
+					</tbody>
+				</table>
+				<table class="data-table">
+					<thead>
+						<tr><th>EditorScriptPhysicsEvent の値</th><th>意味</th></tr>
+					</thead>
+					<tbody>
+						<tr><td><code>type</code></td><td>衝突か Trigger か、Enter / Stay / Exit のどれかを表します。</td></tr>
+						<tr><td><code>selfGameObjectId</code></td><td>自分側の GameObject ID です。</td></tr>
+						<tr><td><code>otherGameObjectId</code></td><td>相手側の GameObject ID です。</td></tr>
+						<tr><td><code>point</code></td><td>接触した位置です。<code>x / y / z</code> で取れます。</td></tr>
+						<tr><td><code>normal</code></td><td>接触面の法線方向です。押し返しや着地判定の向きに使います。</td></tr>
+						<tr><td><code>relativeVelocity</code></td><td>相手との相対速度です。ぶつかった強さの参考に使います。</td></tr>
+						<tr><td><code>separation</code></td><td>めり込み補正量に近い値です。接触の深さ確認に使います。</td></tr>
+						<tr><td><code>isTrigger</code></td><td>押し返しのない Trigger 判定なら <code>true</code> です。</td></tr>
+					</tbody>
+				</table>
+				<div class="note-box">
+					<strong>重要:</strong> Rigidbody が付いている GameObject は、<code>Update</code> で <code>SetTransform()</code> を使っても
+					後段の Jolt 物理結果で位置が上書きされます。物理付きオブジェクトは <code>FixedUpdate</code> で
+					<code>SetVelocity()</code> / <code>SetAngularVelocity()</code> / <code>AddForce()</code> / <code>AddImpulse()</code> / <code>AddTorque()</code> を使います。
+				</div>
+				</details>
+				<details class="doc-fold" id="script-ai" open>
+					<summary>AI センサーの種類と必要設定</summary>
+				<table class="data-table">
+					<thead>
+						<tr><th>種類</th><th>渡す値</th><th>必要コンポーネント</th><th>追加で見る値</th><th>使いどころ</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>視界</td><td><code>EditorScriptAiSensorKindVision</code></td><td>AI &gt; 視界センサー</td><td><code>isDetected / detectedGameObjectId / distance / direction / confidence</code></td><td>見つけた対象へ向く、追跡対象 ID を保存する</td></tr>
+						<tr><td>顔 / 物体検出</td><td><code>EditorScriptAiSensorKindObjectDetection</code></td><td>AI &gt; 画像物体検出</td><td><code>label / confidence / screenPosition / boundsPosition / boundsSize</code></td><td><code>label == "person"</code> なら追跡する、検出枠の中心へ向く</td></tr>
+						<tr><td>色追跡</td><td><code>EditorScriptAiSensorKindColorTracking</code></td><td>AI &gt; 画像色追跡</td><td><code>label / confidence / screenPosition / boundsPosition / boundsSize</code></td><td><code>label == "red"</code> なら赤い目標として扱う</td></tr>
+						<tr><td>動き検出</td><td><code>EditorScriptAiSensorKindMotionDetection</code></td><td>AI &gt; 動きセンサー</td><td><code>motion.x / motion.y / motionMagnitude / confidence</code></td><td><code>motionMagnitude</code> がしきい値以上なら反応する</td></tr>
+						<tr><td>Whisper 音声認識</td><td><code>EditorScriptAiSensorKindWhisperSpeech</code></td><td>AI &gt; Whisper 音声認識</td><td><code>text / confidence</code></td><td><code>text</code> に入った認識文字列を C++ 側で比較する</td></tr>
+						<tr><td>音声コマンド</td><td><code>EditorScriptAiSensorKindVoiceCommand</code></td><td>AI &gt; 音声コマンド</td><td><code>command / commandId / text / confidence</code></td><td><code>command == "Move"</code> のように分岐する</td></tr>
+					</tbody>
+				</table>
+				<table class="data-table">
+					<thead>
+						<tr><th>共通で最初に見る値</th><th>使う場面</th><th>意味</th></tr>
+					</thead>
+					<tbody>
+						<tr><td><code>hasComponent</code></td><td>全センサー</td><td>その GameObject に対象センサーが付いていれば <code>true</code> です。</td></tr>
+						<tr><td><code>isActive</code></td><td>全センサー</td><td>Inspector 上でコンポーネントが有効なら <code>true</code> です。</td></tr>
+						<tr><td><code>isDetected</code></td><td>全センサー</td><td>今フレームで検知中なら <code>true</code> です。</td></tr>
+						<tr><td><code>hasDetails</code></td><td>Python / 画像 / 音声 / 動き</td><td><code>label</code>、<code>text</code>、<code>motion</code> などの詳細値が有効なら <code>true</code> です。</td></tr>
+						<tr><td><code>confidence</code></td><td>検出結果の強さを見たい時</td><td>検出の信頼度です。<code>0.0f</code> から <code>1.0f</code> で扱います。</td></tr>
+					</tbody>
+				</table>
+				<table class="data-table">
+					<thead>
+						<tr><th>視界 / 接続対象で見る値</th><th>使うセンサー</th><th>意味</th></tr>
+					</thead>
+					<tbody>
+						<tr><td><code>connectedGameObjectId</code></td><td>視界、動き検出、接続対象があるセンサー</td><td>Inspector で接続した対象 GameObject ID です。</td></tr>
+						<tr><td><code>detectedGameObjectId</code></td><td>視界、接続対象ベースの検出</td><td>実際に検出した GameObject ID です。外部 Python / 画像 / 音声結果だけの場合は <code>-1</code> のままです。</td></tr>
+						<tr><td><code>range</code></td><td>視界、距離判定、範囲判定</td><td>距離、半径系の設定値です。</td></tr>
+						<tr><td><code>angleDegrees</code></td><td>視界</td><td>視野角です。</td></tr>
+						<tr><td><code>distance</code></td><td>視界、接続対象があるセンサー</td><td>対象までの距離です。</td></tr>
+						<tr><td><code>direction</code></td><td>視界、対象へ向く処理</td><td>対象へ向かう方向です。<code>x / y / z</code> を読みます。</td></tr>
+					</tbody>
+				</table>
+				<table class="data-table">
+					<thead>
+						<tr><th>画像 / 物体検出で見る値</th><th>使うセンサー</th><th>意味</th></tr>
+					</thead>
+					<tbody>
+						<tr><td><code>label</code></td><td>画像物体検出、色追跡、Python 検出</td><td>物体名、顔、色名などの検出ラベルです。例: <code>person</code>、<code>red</code>。</td></tr>
+						<tr><td><code>screenPosition</code></td><td>画像物体検出、色追跡</td><td>画面上の中心座標です。Python 出力の <code>x</code> / <code>y</code> から入ります。</td></tr>
+						<tr><td><code>boundsPosition</code></td><td>画像物体検出</td><td>検出枠の左上座標です。Python 出力の <code>boundsX</code> / <code>boundsY</code> から入ります。</td></tr>
+						<tr><td><code>boundsSize</code></td><td>画像物体検出</td><td>検出枠の幅と高さです。Python 出力の <code>w</code> / <code>h</code> から入ります。</td></tr>
+					</tbody>
+				</table>
+				<table class="data-table">
+					<thead>
+						<tr><th>動き検出で見る値</th><th>使うセンサー</th><th>意味</th></tr>
+					</thead>
+					<tbody>
+						<tr><td><code>motion</code></td><td>動き検出</td><td>動きの方向です。<code>x</code> は横方向、<code>y</code> は縦方向またはワールド Z 差分です。</td></tr>
+						<tr><td><code>motionMagnitude</code></td><td>動き検出</td><td>動きの大きさです。この値がしきい値以上なら「動いた」と判断します。</td></tr>
+					</tbody>
+				</table>
+				<table class="data-table">
+					<thead>
+						<tr><th>音声で見る値</th><th>使うセンサー</th><th>意味</th></tr>
+					</thead>
+					<tbody>
+						<tr><td><code>text</code></td><td>Whisper 音声認識</td><td>音声認識文字列です。例: <code>進め</code>、<code>止まれ</code>。</td></tr>
+						<tr><td><code>command</code></td><td>音声コマンド</td><td>ゲーム用に正規化したコマンド名です。例: <code>Move</code>、<code>Stop</code>、<code>Attack</code>。</td></tr>
+						<tr><td><code>commandId</code></td><td>音声コマンド</td><td>文字列比較を避けたい時のコマンド番号です。Python 出力の <code>commandId</code> から入ります。</td></tr>
+					</tbody>
+				</table>
+				<div class="note-box">
+					<strong>読み方:</strong> <code>isDetected</code> だけ見れば最低限動きます。
+					ただし、何が付いていないのか切り分ける時は <code>hasComponent</code>、
+					Inspector で無効になっていないか見る時は <code>isActive</code>、
+					誰を見ている想定か確認する時は <code>connectedGameObjectId</code> を使います。
+				</div>
+				<div class="code-block">
+					<button class="copy-button" type="button">Copy</button>
+					<pre><code>Python センサー出力形式
+
+古い形式:
+0
+1
+
+詳細形式:
+1|label=person|confidence=0.92|x=120|y=80|w=50|h=60
+1|text=進め|command=Move|commandId=1|confidence=0.95
+1|motionX=0.4|motionY=0.0|motionMagnitude=0.4|confidence=0.8
+
+C++ で音声コマンドを見る例:
+
+#include &lt;cstring&gt;
+
+const EditorScriptAiSensorState voiceSensor =
+	runtimeApi-&gt;GetAiSensorState(gameObjectId, EditorScriptAiSensorKindVoiceCommand);
+
+if (voiceSensor.isDetected &amp;&amp; std::strcmp(voiceSensor.command, "Move") == 0) {
+	EditorScriptTransform transform = runtimeApi-&gt;GetTransform(gameObjectId);
+	transform.position.z += 5.0f * deltaTime;
+	runtimeApi-&gt;SetTransform(gameObjectId, &amp;transform);
+}
+
+C++ で動き検出を見る例:
+
+const EditorScriptAiSensorState motionSensor =
+	runtimeApi-&gt;GetAiSensorState(gameObjectId, EditorScriptAiSensorKindMotionDetection);
+
+if (motionSensor.isDetected &amp;&amp; motionSensor.motionMagnitude &gt;= 0.2f) {
+	runtimeApi-&gt;Log("Motion Detected");
+}</code></pre>
+				</div>
+				</details>
+				<details class="doc-fold" id="script-examples" open>
+					<summary>コード例</summary>
+				<div class="code-block">
+					<button class="copy-button" type="button">Copy</button>
+					<pre><code>ひな型の基礎コード
+
+EditorScript_Load
+	DLL 読み込み時に 1 回呼ばれます。
+	API バージョン確認と runtimeApi 保持に使います。
+
+EditorScript_Start
+	その GameObject の Play 開始時に 1 回呼ばれます。
+	初期化、ログ、初期速度設定に使います。
+
+EditorScript_Update
+	毎フレーム呼ばれます。
+	移動、回転、入力、AI 判定の基本更新に使います。
+
+NewNativeScript& state = GetState(gameObjectId);  // Update 内で使う速度などを持つ状態。
+EditorScriptTransform transform = runtimeApi->GetTransform(gameObjectId);  // Editor 側の Transform を取得する。
+const EditorScriptVector2 moveInput = runtimeApi->GetActionVector2(gameObjectId, "Player", "Move");
+
+transform.position.x += moveInput.x * state.moveSpeed * deltaTime;
+transform.position.z += moveInput.y * state.moveSpeed * deltaTime;
+
+runtimeApi->SetTransform(gameObjectId, &transform);</code></pre>
+				</div>
+				<div class="code-block">
+					<button class="copy-button" type="button">Copy</button>
+					<pre><code>Vector / Transform の受け取り方と渡し方
+
+// 1. 関数から構造体を受け取る
+EditorScriptVector2 moveInput = runtimeApi->GetActionVector2(gameObjectId, "Player", "Move");
+EditorScriptTransform transform = runtimeApi->GetTransform(gameObjectId);
+
+// 2. メンバーを読む
+float moveX = moveInput.x;
+float moveY = moveInput.y;
+float positionX = transform.position.x;
+
+// 3. メンバーへ値を書く
+transform.position.x = positionX + moveX * state.moveSpeed * deltaTime;
+transform.position.z += moveY * state.moveSpeed * deltaTime;
+transform.rotation.y += 1.0f * deltaTime;
+
+// 4. 書き換えた Transform を戻す
+runtimeApi->SetTransform(gameObjectId, &transform);
+
+// 5. 力や速度は自分で構造体を作ってから & で渡す
+EditorScriptVector3 velocity{};
+velocity.x = 0.0f;
+velocity.y = 5.0f;
+velocity.z = 0.0f;
+runtimeApi->SetVelocity(gameObjectId, &velocity);
+
+EditorScriptVector3 force{};
+force.x = 0.0f;
+force.y = 30.0f;
+force.z = 0.0f;
+runtimeApi->AddForce(gameObjectId, &force);</code></pre>
+				</div>
+				<div class="code-block">
+					<button class="copy-button" type="button">Copy</button>
+					<pre><code>OnPhysicsEvent の構造体の読み方
+
+extern "C" __declspec(dllexport) void EditorScript_OnPhysicsEvent(
+	int32_t gameObjectId,
+	const EditorScriptPhysicsEvent* physicsEvent) {
+	if (runtimeApi == nullptr || physicsEvent == nullptr) {
+		return;
+	}
+
+	if (physicsEvent->type == EditorScriptPhysicsEventTypeCollisionEnter) {
+		int32_t otherId = physicsEvent->otherGameObjectId;
+		float hitX = physicsEvent->point.x;
+		float hitY = physicsEvent->point.y;
+		float hitZ = physicsEvent->point.z;
+		float normalY = physicsEvent->normal.y;
+
+		(void)gameObjectId;
+		(void)otherId;
+		(void)hitX;
+		(void)hitY;
+		(void)hitZ;
+		(void)normalY;
+	}
+}</code></pre>
+				</div>
+				<div class="code-block">
+					<button class="copy-button" type="button">Copy</button>
+					<pre><code>例: 物理速度を書き換える
+
+EditorScriptVector3 velocity = runtimeApi->GetVelocity(gameObjectId);
+velocity.y = 5.0f;
+runtimeApi->SetVelocity(gameObjectId, &velocity);
+
+例: 上方向へ力を加える
+
+EditorScriptVector3 force{};
+force.x = 0.0f;
+force.y = 30.0f;
+force.z = 0.0f;
+runtimeApi->AddForce(gameObjectId, &force);
+
+例: Rigidbody を Y 軸で回転させる
+
+EditorScriptVector3 angularVelocity = runtimeApi->GetAngularVelocity(gameObjectId);
+angularVelocity.y = 3.0f;
+runtimeApi->SetAngularVelocity(gameObjectId, &angularVelocity);
+
+例: 回転力を加える
+
+EditorScriptVector3 torque{};
+torque.x = 0.0f;
+torque.y = 10.0f;
+torque.z = 0.0f;
+runtimeApi->AddTorque(gameObjectId, &torque);
+
+例: 衝突時に相手 ID を確認する
+
+if (physicsEvent->type == EditorScriptPhysicsEventTypeCollisionEnter) {
+	runtimeApi->Log("Collision Enter");
+}</code></pre>
+				</div>
+				<div class="code-block">
+					<button class="copy-button" type="button">Copy</button>
+					<pre><code>例: Player/Move で前進し、視界センサーが反応したら追跡開始する
+
+1. PlayerInput を付ける
+2. .inputactions で Player / Move を作る
+3. Binding で W/S/A/D を割り当てる
+4. 視界センサーを同じ GameObject に付ける
+5. Script を付けて DLL を割り当てる
+6. Update で GetActionVector2() と GetAiSensorState() を読む
+
+const EditorScriptVector2 moveInput =
+	runtimeApi->GetActionVector2(gameObjectId, "Player", "Move");
+
+const EditorScriptAiSensorState visionSensor =
+	runtimeApi->GetAiSensorState(gameObjectId, EditorScriptAiSensorKindVision);
+
+transform.position.x += moveInput.x * state.moveSpeed * deltaTime;
+transform.position.z += moveInput.y * state.moveSpeed * deltaTime;
+
+if (visionSensor.hasComponent && visionSensor.isDetected) {
+	runtimeApi->Log("Target Detected");
+}</code></pre>
+				</div>
+				<div class="code-block">
+					<button class="copy-button" type="button">Copy</button>
+					<pre><code>例: 音声コマンドで止める / 顔検出で向きを変える
+
+const EditorScriptAiSensorState objectSensor =
+	runtimeApi->GetAiSensorState(gameObjectId, EditorScriptAiSensorKindObjectDetection);
+
+const EditorScriptAiSensorState voiceSensor =
+	runtimeApi->GetAiSensorState(gameObjectId, EditorScriptAiSensorKindVoiceCommand);
+
+if (objectSensor.hasComponent && objectSensor.isDetected) {
+	transform.rotation.y += state.rotateSpeed * deltaTime;
+}
+
+if (voiceSensor.hasComponent && voiceSensor.isDetected) {
+	state.moveSpeed = 0.0f;
+}</code></pre>
+				</div>
+				</details>
+			</article>
+
+			<article class="api-card searchable-section" id="navigation">
+				<div class="api-card-head">
+					<h2>ナビゲーション</h2>
+					<a class="anchor-link" href="#navigation">#</a>
+				</div>
+				<p>
+					ナビゲーションは目的地へ移動するための経路探索です。メッシュや Collider を障害物として扱い、Agent が目標へ向かうための入口を持ちます。
+				</p>
+				<table class="data-table">
+					<thead>
+						<tr><th>コンポーネント</th><th>意味</th><th>使い方</th><th>レベル</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>NavMesh Agent</td><td>目的地へ移動する実行体です。</td><td>速度、加速度、停止距離を設定します。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>NavMesh Obstacle</td><td>経路探索で避ける障害物です。</td><td>Mesh / Collider の形を元に障害物化します。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>NavMesh Surface</td><td>NavMesh を作る面です。</td><td>床やステージに付けます。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>NavMesh Modifier</td><td>経路コストや除外を変更します。</td><td>通れる場所、通りにくい場所を分ける入口です。</td><td><span class="badge display">表示段階</span></td></tr>
+						<tr><td>NavMesh Link</td><td>離れた場所を接続します。</td><td>ジャンプ台、段差、橋のような接続に使う入口です。</td><td><span class="badge display">表示段階</span></td></tr>
+					</tbody>
+				</table>
+			</article>
+
+			<article class="api-card searchable-section" id="ai-components">
+				<div class="api-card-head">
+					<h2>AI コンポーネント全体</h2>
+					<a class="anchor-link" href="#ai-components">#</a>
+				</div>
+				<p>
+					AI は「ライブラリ名」ではなく「何をする AI か」で選びます。
+					実行用は Agent / Planner / Sensor です。Blackboard、Goal、Action、Task などは設定や判断材料として使います。
+				</p>
+				<div class="note-box">
+					<strong>選び方:</strong> 追跡や待機など単純な動きは「行動制御」か「状態管理」。目的から行動順を決めたい時は「目標計画」。経路が必要なら「経路探索」。なめらかな移動方向を作りたい時は「移動操舵」です。
+				</div>
+				<div class="note-box">
+					<strong>AI アセット設定:</strong> Project で `.py` / `.xml` / `.json` / `.onnx` を選び、Inspector の `AI アセットパス` または `選択中 AI アセットを設定` を使います。
+					`.py` は方向 AI なら `x y z`、センサーなら `0` または `1` を標準出力へ返します。
+				</div>
+				<div class="note-box">
+					<strong>C++ スクリプト連携:</strong> AI コンポーネント単体で完結するものと、C++ Script から反応を読む前提のものがあります。
+					視界、画像物体検出、画像色追跡、動き検出、Whisper 音声認識、音声コマンドは
+					<code>runtimeApi-&gt;GetAiSensorState()</code> で現在の反応状態を取得できます。
+				</div>
+			</article>
+
+			<article class="api-card searchable-section" id="ai-behavior">
+				<div class="api-card-head">
+					<h2>AI: 行動制御</h2>
+					<a class="anchor-link" href="#ai-behavior">#</a>
+				</div>
+				<table class="data-table">
+					<thead>
+						<tr><th>コンポーネント</th><th>意味</th><th>使い方</th><th>レベル</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>行動ツリー</td><td>条件を上から評価して、移動、攻撃、待機などを選ぶ AI です。</td><td>敵 AI の大枠に付けます。対象、速度、動作を設定します。`AI アセットパス` に `.xml` を設定すると BehaviorTree.CPP 4.9.0 で読みます。未設定時は「見えていれば追跡、見えていなければ巡回」の内蔵ツリーで動きます。</td><td><span class="badge ready">実装済み</span></td></tr>
+						<tr><td>共有データ</td><td>AI が見る変数や状態を置くデータ置き場です。</td><td>見つけた敵、HP、目的地、警戒状態などを保持する想定です。現状は Inspector 設定と AI アセット割り当ての入口です。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>条件分岐</td><td>成功した行動候補を 1 つ選ぶ分岐です。</td><td>「敵が近いなら攻撃、遠いなら追跡」のような分岐に使います。</td><td><span class="badge display">表示段階</span></td></tr>
+						<tr><td>順番実行</td><td>複数の処理を上から順番に実行します。</td><td>「見つける → 近づく → 攻撃」のような流れに使います。</td><td><span class="badge display">表示段階</span></td></tr>
+						<tr><td>実行処理</td><td>移動、攻撃、待機などの末端処理です。</td><td>実際のゲーム処理に接続するノードとして使います。</td><td><span class="badge display">表示段階</span></td></tr>
+						<tr><td>条件装飾</td><td>行動を実行するか止める条件です。</td><td>距離、HP、視界内かどうかの条件に使います。</td><td><span class="badge display">表示段階</span></td></tr>
+					</tbody>
+				</table>
+			</article>
+
+			<article class="api-card searchable-section" id="ai-state">
+				<div class="api-card-head">
+					<h2>AI: 状態管理</h2>
+					<a class="anchor-link" href="#ai-state">#</a>
+				</div>
+				<table class="data-table">
+					<thead>
+						<tr><th>コンポーネント</th><th>意味</th><th>使い方</th><th>レベル</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>状態制御</td><td>待機中、追跡中、攻撃中などを切り替える AI です。</td><td>敵や NPC の状態遷移の大枠に使います。現状は `巡回 / 追跡 / 射程内停止` の基本状態を HFSM 風に切り替えて移動します。</td><td><span class="badge ready">実装済み</span></td></tr>
+						<tr><td>状態</td><td>1 つの状態を表します。</td><td>Idle、Patrol、Chase、Attack のような状態に使います。</td><td><span class="badge display">表示段階</span></td></tr>
+						<tr><td>状態遷移</td><td>状態から状態へ移る条件です。</td><td>「敵を見つけたら追跡」「距離が近いなら攻撃」のような条件に使います。</td><td><span class="badge display">表示段階</span></td></tr>
+					</tbody>
+				</table>
+			</article>
+
+			<article class="api-card searchable-section" id="ai-goal">
+				<div class="api-card-head">
+					<h2>AI: 目標計画</h2>
+					<a class="anchor-link" href="#ai-goal">#</a>
+				</div>
+				<table class="data-table">
+					<thead>
+						<tr><th>コンポーネント</th><th>意味</th><th>使い方</th><th>レベル</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>目標計画</td><td>目標を達成するための行動順を選ぶ AI です。</td><td>「武器を取る → 敵へ近づく → 攻撃」のような計画に使います。現状は cppGOAP を使い、`対象がいる / 経路がある / 射程内` を見て `FindPath / MoveToTarget` を選びます。</td><td><span class="badge ready">実装済み</span></td></tr>
+						<tr><td>目標条件</td><td>AI が達成したい結果です。</td><td>敵を倒す、アイテムを取る、安全地帯へ行くなどを表します。現状は Planner の判断材料としての設定入口です。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>計画行動</td><td>目標達成に使える 1 つの行動です。</td><td>移動、取得、攻撃、回復などの候補に使います。現状は Inspector 上の設定とアセット割り当ての入口です。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>世界状態</td><td>現在の状況を表す変数です。</td><td>敵がいる、弾がある、HP が低いなどを保持します。現状は Planner に渡す前提の状態データ入口です。</td><td><span class="badge partial">一部実装</span></td></tr>
+					</tbody>
+				</table>
+			</article>
+
+			<article class="api-card searchable-section" id="ai-task">
+				<div class="api-card-head">
+					<h2>AI: タスク計画</h2>
+					<a class="anchor-link" href="#ai-task">#</a>
+				</div>
+				<table class="data-table">
+					<thead>
+						<tr><th>コンポーネント</th><th>意味</th><th>使い方</th><th>レベル</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>タスク計画</td><td>大きな目的を小さなタスクへ分解する AI です。</td><td>複雑な NPC 行動や作業手順を作る時に使います。今回の C++ 実装では `移動タスク / 待機タスク` を切り替える最小 HTN まで実行します。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>タスク領域</td><td>使えるタスク全体の定義です。</td><td>「戦闘」「探索」「採取」などのタスク集合に使います。Fluid HTN 自体は C# のため、C++ では直接リンクせず同等の役割として扱います。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>タスク</td><td>分解される作業単位です。</td><td>移動する、調べる、拾う、攻撃するなどに使います。現状は設定入口です。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>タスク分解</td><td>タスクをさらに小さい処理へ分けます。</td><td>大きい目的を具体的な行動順へ落とし込む時に使います。現状は設定入口です。</td><td><span class="badge partial">一部実装</span></td></tr>
+					</tbody>
+				</table>
+			</article>
+
+			<article class="api-card searchable-section" id="ai-path">
+				<div class="api-card-head">
+					<h2>AI: 経路探索</h2>
+					<a class="anchor-link" href="#ai-path">#</a>
+				</div>
+				<table class="data-table">
+					<thead>
+						<tr><th>コンポーネント</th><th>意味</th><th>使い方</th><th>レベル</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>経路探索エージェント</td><td>障害物を避けながら目的地へ向かう AI です。</td><td>敵や NPC の移動本体に使います。MicroPather のローカルグリッド A* を実行し、Box / Sphere / Capsule / Mesh Collider、NavMeshObstacle、動的障害物を避けます。</td><td><span class="badge ready">実装済み</span></td></tr>
+						<tr><td>グリッド経路</td><td>マス目上の A* 探索です。</td><td>2D や簡単なマップの経路探索に使う入口です。現在の Agent が内部で使うグリッド設定に相当します。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>ナビメッシュ生成</td><td>歩ける面を生成する入口です。</td><td>床やステージの歩行可能範囲を作る想定です。Recast / Detour のソースは組み込まれていますが、完全な NavMesh ベイク UI はまだです。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>群衆エージェント</td><td>複数 Agent の回避や移動を扱う入口です。</td><td>多数の敵や NPC の移動に使う想定です。現状は Agent 実行の入口があり、経路方向は同じ回避層を使います。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>経路要求</td><td>目的地までの経路計算リクエストです。</td><td>「ここへ行きたい」という情報を渡すデータとして使います。現状は設定入口です。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>動的障害物</td><td>移動する障害物です。</td><td>動く箱、扉、車などを経路探索の障害物にする入口です。Play 中の経路探索で障害物扱いされます。</td><td><span class="badge ready">実装済み</span></td></tr>
+					</tbody>
+				</table>
+			</article>
+
+			<article class="api-card searchable-section" id="ai-steering">
+				<div class="api-card-head">
+					<h2>AI: 移動操舵</h2>
+					<a class="anchor-link" href="#ai-steering">#</a>
+				</div>
+				<table class="data-table">
+					<thead>
+						<tr><th>コンポーネント</th><th>意味</th><th>使い方</th><th>レベル</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>操舵エージェント</td><td>向きや速度をなめらかに変える AI です。</td><td>硬い直線移動ではなく、自然な曲がり方を作ります。OpenSteer のベクトル計算を利用します。</td><td><span class="badge ready">実装済み</span></td></tr>
+						<tr><td>接近操舵</td><td>対象へ近づきます。</td><td>敵を追う、アイテムへ向かう時に使います。</td><td><span class="badge ready">実装済み</span></td></tr>
+						<tr><td>逃走操舵</td><td>対象から離れます。</td><td>プレイヤーから逃げる敵に使います。</td><td><span class="badge ready">実装済み</span></td></tr>
+						<tr><td>到着操舵</td><td>目的地へ近づくほど減速します。</td><td>目的地で滑らかに止まりたい時に使います。</td><td><span class="badge ready">実装済み</span></td></tr>
+						<tr><td>追跡操舵</td><td>対象の未来位置を予測して追います。</td><td>移動する敵やボールを追う時に使います。対象 Rigidbody の速度を参照します。</td><td><span class="badge ready">実装済み</span></td></tr>
+						<tr><td>徘徊操舵</td><td>ランダムに歩き回ります。</td><td>巡回や放浪する NPC に使います。現状は巡回モードによる簡易徘徊です。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>障害物回避操舵</td><td>目の前の障害物を避けます。</td><td>壁や箱へ正面衝突しにくくする入口です。物理 Collider を見て速度を逃がします。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>群れ操舵</td><td>複数体がまとまって動く入口です。</td><td>鳥、魚、群衆のような挙動に使います。現状は分離と結合を中心にした簡易群れです。</td><td><span class="badge partial">一部実装</span></td></tr>
+					</tbody>
+				</table>
+			</article>
+
+			<article class="api-card searchable-section" id="ai-sense">
+				<div class="api-card-head">
+					<h2>AI: 知覚</h2>
+					<a class="anchor-link" href="#ai-sense">#</a>
+				</div>
+				<table class="data-table">
+					<thead>
+						<tr><th>コンポーネント</th><th>意味</th><th>使い方</th><th>レベル</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>視界センサー</td><td>範囲と角度で対象を見つけます。</td><td>敵がプレイヤーを見つける索敵に使います。Script から対象 ID、距離、方向、信頼度を読めます。</td><td><span class="badge ready">実装済み</span></td></tr>
+						<tr><td>画像入力カメラ</td><td>画像処理用のカメラ入力です。</td><td>OpenCV 系の入力元として使う入口です。現状は設定と将来の接続先です。</td><td><span class="badge display">表示段階</span></td></tr>
+						<tr><td>画像物体検出</td><td>画像から物体を検出する入口です。</td><td>Python / ONNX 側が <code>label</code>、<code>confidence</code>、検出枠を返すと Script から読めます。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>画像色追跡</td><td>指定色を追跡する入口です。</td><td>Python / OpenCV 側が色名や画面座標を返すと、Script で対象色ごとに分岐できます。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>動き検出</td><td>対象の動き量を検出します。</td><td>接続対象がある場合は前回位置との差から <code>motionMagnitude</code> を作ります。Python 側の動き結果も受け取れます。</td><td><span class="badge partial">一部実装</span></td></tr>
+					</tbody>
+				</table>
+				<div class="code-block">
+					<button class="copy-button" type="button">Copy</button>
+					<pre><code>知覚系の最低構成
+
+1. 対象を検知したい GameObject を作る
+2. AI > 視界センサー または 画像物体検出 / 画像色追跡 / 動き検出 を追加する
+3. connectedGameObjectId に検知対象を設定する
+4. 距離、角度、AI アセットパスを必要に応じて設定する
+5. C++ Script を追加して GetAiSensorState() を読む
+
+視界センサー:
+	距離と角度だけでも動く
+
+画像物体検出 / 色追跡:
+	Python や ONNX が label / confidence / x / y / w / h を返す
+
+動き検出:
+	接続対象がある場合は motionMagnitude を読む
+	Python を使う場合は motionX / motionY / motionMagnitude を返す</code></pre>
+				</div>
+			</article>
+
+			<article class="api-card searchable-section" id="ai-voice">
+				<div class="api-card-head">
+					<h2>AI: 音声</h2>
+					<a class="anchor-link" href="#ai-voice">#</a>
+				</div>
+				<table class="data-table">
+					<thead>
+						<tr><th>コンポーネント</th><th>意味</th><th>使い方</th><th>レベル</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>Whisper 音声認識</td><td>音声を文字列へ変換する入口です。</td><td>Python 側が <code>text=進め</code> のように返すと、Script で <code>text</code> を比較できます。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>音声コマンド</td><td>認識した言葉からゲーム内コマンドを発火します。</td><td>Python 側が <code>command=Move</code> や <code>commandId=1</code> を返すと、Script で移動や停止へ分岐できます。</td><td><span class="badge partial">一部実装</span></td></tr>
+					</tbody>
+				</table>
+				<div class="code-block">
+					<button class="copy-button" type="button">Copy</button>
+					<pre><code>音声系の使い方
+
+1. GameObject に AI > Whisper 音声認識 または AI > 音声コマンド を追加する
+2. `.py` か音声処理用アセットを割り当てる
+3. Script を追加する
+4. Update で EditorScriptAiSensorKindWhisperSpeech または
+   EditorScriptAiSensorKindVoiceCommand を読む
+5. 反応時に停止、攻撃、会話開始などへ分岐する
+
+#include &lt;cstring&gt;
+
+if (voiceSensor.hasComponent &&
+	voiceSensor.isDetected &&
+	std::strcmp(voiceSensor.command, "Stop") == 0) {
+	state.moveSpeed = 0.0f;
+	runtimeApi->Log("Voice Command");
+}</code></pre>
+				</div>
+			</article>
+
+			<article class="api-card searchable-section" id="animation-constraint">
+				<div class="api-card-head">
+					<h2>アニメーション / Constraint</h2>
+					<a class="anchor-link" href="#animation-constraint">#</a>
+				</div>
+				<table class="data-table">
+					<thead>
+						<tr><th>コンポーネント</th><th>意味</th><th>レベル</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>Animation</td><td>単体 Animation Clip やプロシージャルな揺れ、回転、上下移動の入口です。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>Animator</td><td>状態管理付き Animation の入口です。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>PlayableDirector</td><td>Timeline / Playable 系の入口です。</td><td><span class="badge display">表示段階</span></td></tr>
+						<tr><td>Parent / Position / Rotation / Scale Constraint</td><td>対象へ追従する制約です。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>Aim / LookAt Constraint</td><td>対象方向を見る制約です。</td><td><span class="badge partial">一部実装</span></td></tr>
+					</tbody>
+				</table>
+			</article>
+
+			<article class="api-card searchable-section" id="audio-components">
+				<div class="api-card-head">
+					<h2>オーディオ</h2>
+					<a class="anchor-link" href="#audio-components">#</a>
+				</div>
+				<table class="data-table">
+					<thead>
+						<tr><th>コンポーネント</th><th>意味</th><th>使い方</th><th>レベル</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>AudioSource</td><td>音を再生する音源です。</td><td>WAV、音量、ピッチ、ループ、Play On Awake を設定します。</td><td><span class="badge partial">一部実装</span></td></tr>
+						<tr><td>AudioListener</td><td>音を聞く位置です。</td><td>基本は Camera と同じ GameObject に付けます。</td><td><span class="badge display">表示段階</span></td></tr>
+						<tr><td>AudioReverbZone</td><td>残響範囲です。</td><td>部屋や洞窟の残響表現に使う入口です。</td><td><span class="badge display">表示段階</span></td></tr>
+						<tr><td>LowPass / HighPass / Echo / Distortion / Reverb / Chorus Filter</td><td>音に効果をかけるフィルターです。</td><td>こもり、反響、歪み、コーラスなどの音作りの入口です。</td><td><span class="badge display">表示段階</span></td></tr>
+					</tbody>
+				</table>
+			</article>
+
+			<article class="api-card searchable-section" id="ui-components">
+				<div class="api-card-head">
+					<h2>UI</h2>
+					<a class="anchor-link" href="#ui-components">#</a>
+				</div>
+				<p>
+					UI は Unity 風に追加できますが、現状は追加と Inspector 表示が中心です。
+					実際の Button クリック、Slider 値変更、Dropdown 選択などの本格実行は今後の実装範囲です。
+				</p>
+				<table class="data-table">
+					<thead>
+						<tr><th>種類</th><th>コンポーネント例</th><th>意味</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>表示</td><td>Text, TextMeshProUGUI, Image, RawImage</td><td>文字や画像を表示します。</td></tr>
+						<tr><td>操作</td><td>Button, Toggle, Slider, Scrollbar, Dropdown, InputField</td><td>クリックや入力を受け取る UI の入口です。</td></tr>
+						<tr><td>配置</td><td>HorizontalLayoutGroup, VerticalLayoutGroup, GridLayoutGroup, ContentSizeFitter</td><td>UI を並べるための入口です。</td></tr>
+						<tr><td>判定</td><td>GraphicRaycaster, EventSystem, InputSystemUIInputModule</td><td>UI クリックや選択を処理する入口です。</td></tr>
+					</tbody>
+				</table>
+			</article>
+
+			<article class="api-card searchable-section" id="effects-components">
+				<div class="api-card-head">
+					<h2>エフェクト</h2>
+					<a class="anchor-link" href="#effects-components">#</a>
+				</div>
+				<table class="data-table">
+					<thead>
+						<tr><th>コンポーネント</th><th>意味</th><th>レベル</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>ParticleSystem</td><td>粒子を発生させる入口です。発生量、寿命、速度などを持ちます。</td><td><span class="badge display">表示段階</span></td></tr>
+						<tr><td>ParticleSystemRenderer</td><td>ParticleSystem の見た目を描画する入口です。</td><td><span class="badge display">表示段階</span></td></tr>
+						<tr><td>VisualEffect</td><td>VFX Graph 風の高機能エフェクト入口です。</td><td><span class="badge display">表示段階</span></td></tr>
+						<tr><td>LensFlare / FlareLayer</td><td>レンズフレア表現の入口です。</td><td><span class="badge display">表示段階</span></td></tr>
+						<tr><td>Projector</td><td>投影表現の入口です。</td><td><span class="badge display">表示段階</span></td></tr>
+					</tbody>
+				</table>
+			</article>
+
+			<article class="api-card searchable-section" id="terrain-tilemap">
+				<div class="api-card-head">
+					<h2>地形 / タイルマップ</h2>
+					<a class="anchor-link" href="#terrain-tilemap">#</a>
+				</div>
+				<table class="data-table">
+					<thead>
+						<tr><th>コンポーネント</th><th>意味</th><th>レベル</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>Terrain</td><td>地形編集の入口です。</td><td><span class="badge display">表示段階</span></td></tr>
+						<tr><td>Terrain Collider</td><td>地形用の当たり判定入口です。</td><td><span class="badge display">表示段階</span></td></tr>
+						<tr><td>Grid</td><td>Tilemap の親グリッドです。</td><td><span class="badge display">表示段階</span></td></tr>
+						<tr><td>Tilemap / TilemapRenderer / TilemapCollider2D</td><td>2D マップ表示と当たり判定の入口です。</td><td><span class="badge display">表示段階</span></td></tr>
+					</tbody>
+				</table>
+			</article>
+
+			<article class="api-card searchable-section" id="feelkit">
+				<div class="api-card-head">
+					<h2>FeelKit</h2>
+					<a class="anchor-link" href="#feelkit">#</a>
+				</div>
+				<p>
+					FeelKit は触覚、画面揺れ、演出、音連動などのゲームフィールを扱うための入口です。
+					CG2 では HapticSource を GameObject に付け、振動強度、時間、ループなどを設定する形に寄せています。
+				</p>
+				<table class="data-table">
+					<thead>
+						<tr><th>コンポーネント</th><th>意味</th><th>使い方</th><th>レベル</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>HapticSource</td><td>触覚や振動を発生させる入口です。</td><td>衝突、攻撃、ダメージなどのタイミングで使う想定です。</td><td><span class="badge display">表示段階</span></td></tr>
+					</tbody>
+				</table>
+			</article>
+		</section>
+	</main>
+
+	<button class="back-to-top" type="button" id="backToTop">↑</button>
+	<script src="docs.js"></script>
+</body>
+</html>

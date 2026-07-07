@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "EditorScene.h"
 
@@ -62,7 +62,9 @@ public:
 	bool OverlapBox(const Vector3& center, const Vector3& size, std::vector<int32_t>& hitGameObjectIds) const;  // 箱の範囲に重なった GameObject を列挙する
 	bool AddForce(int32_t gameObjectId, const Vector3& force);  // Dynamic Rigidbody に継続力を加える
 	bool AddImpulse(int32_t gameObjectId, const Vector3& impulse);  // Dynamic Rigidbody に瞬間力を加える
+	bool AddTorque(int32_t gameObjectId, const Vector3& torque);  // Dynamic Rigidbody に回転力を加える
 	bool SetVelocity(int32_t gameObjectId, const Vector3& velocity);  // Rigidbody の速度を直接設定する
+	bool SetAngularVelocity(int32_t gameObjectId, const Vector3& angularVelocity);  // Rigidbody の角速度を直接設定する
 	const std::vector<PhysicsEvent>& GetStepEvents() const;  // 直近の固定ステップで発生した接触イベント一覧
 	void ClearStepEvents();  // 次の固定ステップ前に接触イベントを空にする
 

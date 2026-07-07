@@ -27,6 +27,7 @@
     </None>
     <None Include="Object3d.VS.hlsl" />
     <None Include="Object3d.PS.hlsl" />
+    <None Include="ShadowDepth.VS.hlsl" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="CrashHandler.cpp">
@@ -62,10 +63,37 @@
     <ClCompile Include="EditorJoltPhysicsManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
+    <ClCompile Include="EditorLocalMoveManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorRollingMoveManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
     <ClCompile Include="EditorMainMenuBar.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="EditorNativeScriptAssetManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorAIManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\AI\cppGOAP-develop\src\Action.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\AI\cppGOAP-develop\src\Node.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\AI\cppGOAP-develop\src\Planner.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\AI\cppGOAP-develop\src\WorldState.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\AI\MicroPather-master\micropather.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorNavigationManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="EditorPhysicsManager.cpp">
@@ -111,6 +139,9 @@
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="EditorMainMenuManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="EditorMeshCollision.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="EditorSceneLifecycleManager.cpp">
@@ -189,9 +220,6 @@
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="externals\imgui-node-editor-master\imgui-node-editor-master\crude_json.cpp">
-      <Filter>imgui</Filter>
-    </ClCompile>
-    <ClCompile Include="C:\Users\shota\Documents\IMGUI\ImGuizmo-master\ImGuizmo-master\src\ImGuizmo.cpp">
       <Filter>imgui</Filter>
     </ClCompile>
     <ClCompile Include="Imgui.cpp">
@@ -623,6 +651,405 @@
     <ClCompile Include="externals\FeelKitHaptics\screen\FeelKitScreen.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
+    <ClCompile Include="EditorAudioManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="CrashHandler.h">
@@ -638,6 +1065,9 @@
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="EditorAssetUtility.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="EditorAIManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="EditorBottomPanel.h">
@@ -661,10 +1091,19 @@
     <ClInclude Include="EditorJoltPhysicsManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
+    <ClInclude Include="EditorLocalMoveManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="EditorRollingMoveManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
     <ClInclude Include="EditorMainMenuBar.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="EditorNativeScriptAssetManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="EditorNavigationManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="EditorPhysicsManager.h">
@@ -719,6 +1158,9 @@
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="EditorMainMenuManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="EditorMeshCollision.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="EditorSceneLifecycleManager.h">
@@ -806,9 +1248,6 @@
       <Filter>imgui</Filter>
     </ClInclude>
     <ClInclude Include="externals\ImGuizmo-master\ImGuizmo-master\src\ImGuizmo.h">
-      <Filter>imgui</Filter>
-    </ClInclude>
-    <ClInclude Include="C:\Users\shota\Documents\IMGUI\ImGuizmo-master\ImGuizmo-master\src\ImGuizmo.h">
       <Filter>imgui</Filter>
     </ClInclude>
     <ClInclude Include="Imgui.h">

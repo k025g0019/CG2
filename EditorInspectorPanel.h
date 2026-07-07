@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "EditorCommonTypes.h"
+#include "EditorRuntimeManager.h"
 #include "EditorScene.h"
 #include "EditorSceneObject.h"
 #include "EditorSceneSynchronizer.h"
@@ -32,6 +33,7 @@ struct EditorInspectorPanelContext {
 	EditorScene& editorScene;  // Inspector が編集する Scene
 	EditorSelectionManager& selectionManager;  // 選択同期を担当する Manager
 	EditorSceneSynchronizer& sceneSynchronizer;  // SceneObject と GameObject の同期を担当する Manager
+	EditorRuntimeManager& runtimeManager;  // Play 中の Script / Animation 状態を参照する Runtime
 	const std::vector<std::string>& textureFilePaths;  // 登録済み Texture パス配列
 	const D3D12_GPU_DESCRIPTOR_HANDLE* textureSrvHandlesGPU;  // Texture Preview に使う SRV GPU Handle 配列
 	size_t textureCount;  // textureSrvHandlesGPU の有効数

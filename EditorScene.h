@@ -238,6 +238,82 @@ enum class EditorComponentType {
 	NavMeshModifierVolume,
 	// 離れた NavMesh 接続
 	NavMeshLink,
+	// BehaviorTree.CPP 用の行動ツリー AI
+	AIBehaviorTree,
+	// BehaviorTree.CPP 用の共有データ
+	AIBehaviorBlackboard,
+	// BehaviorTree.CPP 用の Selector ノード
+	AIBehaviorSelector,
+	// BehaviorTree.CPP 用の Sequence ノード
+	AIBehaviorSequence,
+	// BehaviorTree.CPP 用の実行 Task
+	AIBehaviorTask,
+	// BehaviorTree.CPP 用の Decorator
+	AIBehaviorDecorator,
+	// HFSM2 用の階層ステート AI
+	AIStateMachine,
+	// HFSM2 用の State
+	AIState,
+	// HFSM2 用の Transition
+	AIStateTransition,
+	// cppGOAP 用の目標計画 AI
+	AIGoapPlanner,
+	// cppGOAP 用の Goal
+	AIGoapGoal,
+	// cppGOAP 用の Action
+	AIGoapAction,
+	// cppGOAP 用の WorldState
+	AIGoapWorldState,
+	// Fluid HTN 用の階層タスク AI
+	AIHtnPlanner,
+	// Fluid HTN 用の Domain
+	AIHtnDomain,
+	// Fluid HTN 用の Task
+	AIHtnTask,
+	// Fluid HTN 用の Method
+	AIHtnMethod,
+	// MicroPather / Recast 用の経路探索 AI
+	AIPathfindingAgent,
+	// MicroPather 用の Grid 探索
+	AIMicroPatherGrid,
+	// RecastNavigation 用の NavMesh 生成
+	AIRecastNavMeshBuilder,
+	// RecastNavigation 用の Crowd Agent
+	AIRecastCrowdAgent,
+	// 経路要求
+	AIPathRequest,
+	// 動的障害物
+	AIDynamicObstacle,
+	// OpenSteer 用のステアリング AI
+	AISteeringAgent,
+	// OpenSteer 用の Seek 操舵
+	AISeekSteering,
+	// OpenSteer 用の Flee 操舵
+	AIFleeSteering,
+	// OpenSteer 用の Arrive 操舵
+	AIArriveSteering,
+	// OpenSteer 用の Pursuit 操舵
+	AIPursuitSteering,
+	// OpenSteer 用の Wander 操舵
+	AIWanderSteering,
+	// OpenSteer 用の障害物回避操舵
+	AIObstacleAvoidanceSteering,
+	// OpenSteer 用の群れ操舵
+	AIFlockSteering,
+	// 視界判定用 Sensor
+	AIVisionSensor,
+	// OpenCV 用のカメラ入力
+	AIOpenCvCamera,
+	// OpenCV 用の画像検出
+	AIOpenCvObjectDetector,
+	// OpenCV 用の色追跡
+	AIOpenCvColorTracker,
+	// OpenCV 用の動き検出
+	AIMotionSensor,
+	// Whisper 用の音声認識
+	AIWhisperSpeechRecognizer,
+	// Whisper 用の音声コマンド
+	AIVoiceCommand,
 	// Particle 表現
 	ParticleSystem,
 	// VFX Graph 表現
@@ -256,6 +332,10 @@ enum class EditorComponentType {
 	TilemapRenderer,
 	// Tilemap 親 Grid
 	Grid,
+	// ローカル軸の自動移動
+	LocalMove,
+	// 転がりながら進む移動
+	RollingMove,
 	// Component 種類数。範囲チェックに使う
 	Count,
 };
@@ -264,8 +344,15 @@ struct EditorComponent {
 	EditorComponentType type;  // Component の種類
 	bool isActive;  // Inspector の有効チェック
 	std::string assetPath;  // Model / Sprite / Audio などの Asset パス
+	std::string textureAssetPath;  // Renderer が明示的に使う画像パス
 	Vector3 color;  // Renderer / Light で使う色
 	float intensity;  // Light や Material の強さ
+	float metallic;  // Renderer の金属感。0 は非金属、1 は金属
+	float roughness;  // Renderer の粗さ。0 は鏡面、1 は粗い
+	float ior;  // Renderer の屈折率。ガラスや水の見た目調整に使う
+	float alpha;  // Renderer の透明度。1 は不透明
+	float reflectionStrength;  // Renderer の反射強度
+	float emissionStrength;  // Renderer の放射強度。0 より大きいと自発光する
 	float mass;  // RigidBody の質量
 	float drag;  // RigidBody の速度減衰
 	bool useGravity;  // RigidBody に重力を使うか
@@ -316,6 +403,45 @@ struct EditorComponent {
 		float hapticStrength;  // FeelKitHaptics の振動強度
 		int32_t hapticDurationMs;  // 振動持続時間 (ms)
 		bool hapticLoop;  // ループ再生
+		float audioVolume;  // AudioSource の音量 (0〜1)
+		float audioPitch;  // AudioSource のピッチ (1=通常)
+		bool audioLoop;  // AudioSource のループ再生
+		bool audioPlayOnAwake;  // Awake 時に自動再生
+		float navAgentRadius;  // NavigationAgent / NavMeshSurface の Agent 半径
+		float navAgentHeight;  // NavigationAgent / NavMeshSurface の Agent 高さ
+		float navMaxSpeed;  // NavigationAgent の最大速度
+		float navMaxAcceleration;  // NavigationAgent の最大加速度
+		float navStoppingDistance;  // NavigationAgent の停止距離
+		bool navAutoRepath;  // NavigationAgent の自動再経路探索
+		bool navCarve;  // NavMeshObstacle が移動中も NavMesh を更新するか
+		float navMaxSlope;  // NavMeshSurface の最大登坂角度 (度)
+	float navMaxClimb;  // NavMeshSurface の最大段差高さ
+	bool navAreaOverride;  // NavMeshModifier の Area 上書きフラグ
+	int32_t navArea;  // NavMeshModifier / ModifierVolume の Area 番号
+	bool navIgnoreFromBuild;  // NavMeshModifier のビルド除外フラグ
+	bool navBidirectional;  // NavMeshLink の双方向通行
+	float navCostModifier;  // NavMeshLink のコスト倍率
+	float rollingTorque;  // RollingMove が回転へ与える駆動トルク
+	float rollingHorsepower;  // RollingMove の出力上限。回し続けられる角速度の上限計算に使う
+	float constraintWeight;  // Constraint 全般の追従重み (0=切, 1=完全追従)
+	Vector3 constraintPositionOffset;  // Position / Parent Constraint の位置オフセット
+	Vector3 constraintRotationOffset;  // Rotation / Parent Constraint の回転オフセット
+	int32_t constraintAimAxis;  // AimConstraint のターゲット方向軸 (0: +X, 1: -X, 2: +Y, 3: -Y, 4: +Z, 5: -Z)
+	int32_t constraintUpAxis;  // LookAtConstraint の上方向軸
+	float constraintRoll;  // LookAtConstraint のロール角
+	bool constraintFreezeAxisX;  // ScaleConstraint の X 軸フリーズ
+	bool constraintFreezeAxisY;  // ScaleConstraint の Y 軸フリーズ
+	bool constraintFreezeAxisZ;  // ScaleConstraint の Z 軸フリーズ
+	float animationSpeed;  // Animation の再生速度倍率
+	bool animationLoop;  // Animation のループ再生
+	bool animationPlayOnAwake;  // Animation の自動再生
+	int32_t animationType;  // 0=FBX Clip, 1=Float, 2=Rotate, 3=Pulse, 4=Bob
+	float animationAmplitude;  // プロシージャルアニメーションの振幅
+	int32_t animatorState;  // Animator の現在状態インデックス
+	float particleRate;  // ParticleSystem の発生レート (個/秒)
+	float particleLifetime;  // ParticleSystem のパーティクル寿命 (秒)
+	float particleSpeed;  // ParticleSystem の初期速度
+	float particleSize;  // ParticleSystem のパーティクルサイズ
 	};
 
 struct EditorGameObject {

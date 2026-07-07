@@ -2,6 +2,7 @@
 
 #include "EditorAssetUtility.h"
 #include "EditorComponentUtility.h"
+#include "EditorMeshCollision.h"
 
 #include <algorithm>
 #include <cmath>
@@ -36,6 +37,7 @@
 #include <Jolt/Physics/Collision/ShapeFilter.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/SubShapeIDPair.h>
@@ -155,6 +157,11 @@ namespace {
 		bool isDynamic;  // Dynamic Body だけ Transform と速度を書き戻す
 	};
 
+	struct PreciseMeshCollisionBody {
+		int32_t gameObjectId;  // BVH の元になった GameObject ID
+		EditorMeshCollisionMesh collisionMesh;  // FBX / OBJ 三角形から作った BVH
+	};
+
 	struct JoltCharacterVirtualLink {
 		int32_t gameObjectId;  // CharacterVirtual の結果を書き戻す GameObject ID
 		JPH::Ref<JPH::CharacterVirtual> character;  // Rigidbody を使わない CharacterController の Jolt 実体
@@ -229,6 +236,10 @@ namespace {
 		}
 
 		return (static_cast<uint64_t>(firstId) << 32) | static_cast<uint64_t>(secondId);
+	}
+
+	uint32_t MakeBodyMapKey(JPH::BodyID bodyId) {
+		return bodyId.GetIndexAndSequenceNumber();
 	}
 
 	JPH::Quat MakeJoltRotation(const Vector3& rotate) {
@@ -392,6 +403,7 @@ public:
 		}
 
 		bodyMaterials_.clear();
+		preciseMeshCollisionBodies_.clear();
 		primaryBodyIdByGameObjectId_.clear();
 		activeContactPairs_.clear();
 		stepEvents_.clear();
@@ -493,6 +505,18 @@ public:
 		return true;
 	}
 
+	bool AddTorque(int32_t gameObjectId, const Vector3& torque) {
+		JPH::BodyID bodyId;
+		if (!TryFindPrimaryBodyId(gameObjectId, bodyId)) {
+			return false;
+		}
+
+		JPH::BodyInterface& bodyInterface = physicsSystem_->GetBodyInterface();
+		bodyInterface.AddTorque(bodyId, MakeJoltVector(torque));
+		bodyInterface.ActivateBody(bodyId);
+		return true;
+	}
+
 	bool SetVelocity(int32_t gameObjectId, const Vector3& velocity) {
 		JPH::BodyID bodyId;
 		if (!TryFindPrimaryBodyId(gameObjectId, bodyId)) {
@@ -501,6 +525,17 @@ public:
 
 		JPH::BodyInterface& bodyInterface = physicsSystem_->GetBodyInterface();
 		bodyInterface.SetLinearVelocity(bodyId, MakeJoltVector(velocity));
+		return true;
+	}
+
+	bool SetAngularVelocity(int32_t gameObjectId, const Vector3& angularVelocity) {
+		JPH::BodyID bodyId;
+		if (!TryFindPrimaryBodyId(gameObjectId, bodyId)) {
+			return false;
+		}
+
+		JPH::BodyInterface& bodyInterface = physicsSystem_->GetBodyInterface();
+		bodyInterface.SetAngularVelocity(bodyId, MakeJoltVector(angularVelocity));
 		return true;
 	}
 
@@ -539,10 +574,6 @@ public:
 		uint64_t contactPairKey = MakeContactPairKey(firstBody.GetID(), secondBody.GetID());
 		activeContactPairs_[contactPairKey] = contactPair;
 		PushStepEvents(contactPair, contactPair.isTrigger ? PhysicsEventType::TriggerEnter : PhysicsEventType::CollisionEnter);
-
-		if (contactPair.shouldLog) {
-			PushConsoleMessage(MakeContactMessage(contactPair.isTrigger ? "OnTriggerEnter" : "OnCollisionEnter", contactPair));
-		}
 	}
 
 	void OnContactPersisted(const JPH::Body& firstBody, const JPH::Body& secondBody, const JPH::ContactManifold& manifold) {
@@ -558,11 +589,6 @@ public:
 		updatedContactPair.stayFrameCount = contactIterator->second.stayFrameCount + 1;
 		contactIterator->second = updatedContactPair;
 		PushStepEvents(contactIterator->second, contactIterator->second.isTrigger ? PhysicsEventType::TriggerStay : PhysicsEventType::CollisionStay);
-		if (contactIterator->second.shouldLog && contactIterator->second.stayFrameCount % 30 == 0) {
-			PushConsoleMessage(MakeContactMessage(
-				contactIterator->second.isTrigger ? "OnTriggerStay" : "OnCollisionStay",
-				contactIterator->second));
-		}
 	}
 
 	void OnContactRemoved(const JPH::SubShapeIDPair& subShapePair) {
@@ -572,11 +598,6 @@ public:
 			return;
 		}
 
-		if (contactIterator->second.shouldLog) {
-			PushConsoleMessage(MakeContactMessage(
-				contactIterator->second.isTrigger ? "OnTriggerExit" : "OnCollisionExit",
-				contactIterator->second));
-		}
 		PushStepEvents(contactIterator->second, contactIterator->second.isTrigger ? PhysicsEventType::TriggerExit : PhysicsEventType::CollisionExit);
 		activeContactPairs_.erase(contactIterator);
 	}
@@ -590,8 +611,8 @@ private:
 		JPH::ValidateResult OnContactValidate(
 			const JPH::Body& firstBody,
 			const JPH::Body& secondBody,
-			JPH::RVec3Arg,
-			const JPH::CollideShapeResult&) override {
+			JPH::RVec3Arg baseOffset,
+			const JPH::CollideShapeResult& collisionResult) override {
 			if (owner_ == nullptr) {
 				return JPH::ValidateResult::AcceptAllContactsForThisBodyPair;
 			}
@@ -599,6 +620,15 @@ private:
 				    GetPhysicsLayerFromObjectLayer(firstBody.GetObjectLayer()),
 				    GetPhysicsLayerFromObjectLayer(secondBody.GetObjectLayer()))) {
 				return JPH::ValidateResult::RejectAllContactsForThisBodyPair;
+			}
+
+			if (owner_->HasPreciseMeshCollisionBody(firstBody) ||
+				owner_->HasPreciseMeshCollisionBody(secondBody)) {
+				if (!owner_->ShouldAcceptPreciseMeshContact(firstBody, secondBody, baseOffset, collisionResult)) {
+					return JPH::ValidateResult::RejectContact;
+				}
+
+				return JPH::ValidateResult::AcceptContact;
 			}
 
 			return JPH::ValidateResult::AcceptAllContactsForThisBodyPair;
@@ -656,6 +686,7 @@ private:
 	std::unordered_map<uint32_t, int32_t> gameObjectIdByBodyId_;  // Query / Event から GameObject ID を戻す対応表
 	std::unordered_map<int32_t, JPH::BodyID> primaryBodyIdByGameObjectId_;  // Joint Component が接続先 ID から Body を引くための対応表
 	std::unordered_map<uint32_t, PhysicsBodyMaterial> bodyMaterials_;  // Body ごとの摩擦・反発・Trigger 設定
+	std::unordered_map<uint32_t, PreciseMeshCollisionBody> preciseMeshCollisionBodies_;  // ConvexHull の接触を実メッシュ BVH で検証する
 	std::unordered_map<uint64_t, ActiveContactPair> activeContactPairs_;  // Enter 済み接触の Stay / Exit 管理
 	std::vector<PhysicsEvent> stepEvents_;  // 1 固定更新中に発生した接触イベントを Script へ渡すために保持する
 	std::vector<JPH::Ref<JPH::Constraint>> constraints_;  // Play 中に Jolt World へ追加した Joint 制約
@@ -692,16 +723,27 @@ private:
 				continue;
 			}
 
-			EditorComponent* collider = FindMainCollider(gameObject);
-			if (collider == nullptr) {
-				continue;
-			}
-
 			EditorComponent* rigidBody =
 				EditorComponentUtility::FindComponent(gameObject, EditorComponentType::RigidBody);
-			if (collider->type == EditorComponentType::CharacterController &&
+			EditorComponent implicitMeshCollider{};
+			EditorComponent* collider = FindMainCollider(gameObject);
+			if (collider == nullptr) {
+				if (rigidBody == nullptr ||
+					!rigidBody->isActive ||
+					!MakeImplicitMeshCollider(gameObject, implicitMeshCollider)) {
+					continue;
+				}
+
+				collider = &implicitMeshCollider;
+				PushConsoleMessage("物理: Rigidbody 付きモデルへ暗黙のメッシュ当たり判定を追加 " + gameObject.name);
+			}
+
+			EditorComponent runtimeCollider = *collider;  // Play 中だけ使う Collider 設定。Scene に保存済みの古い Mesh 範囲はここで補正する。
+			RefreshRuntimeMeshColliderBounds(gameObject, runtimeCollider);
+
+			if (runtimeCollider.type == EditorComponentType::CharacterController &&
 			    (rigidBody == nullptr || !rigidBody->isActive)) {
-				AddCharacterVirtual(gameObject, *collider);
+				AddCharacterVirtual(gameObject, runtimeCollider);
 				continue;
 			}
 
@@ -710,10 +752,10 @@ private:
 				isDynamic = false;  // Jolt は DOF None の Dynamic を許可しないため、全固定は Static として扱う
 			}
 
-			JPH::BodyID bodyId = CreateColliderBody(gameObject, *collider, rigidBody, isDynamic);
+			JPH::BodyID bodyId = CreateColliderBody(gameObject, runtimeCollider, rigidBody, isDynamic);
 			if (!bodyId.IsInvalid()) {
-				bodyLinks_.push_back(JoltBodyLink{gameObject.id, bodyId, collider->colliderCenter, isDynamic});
-				RegisterBody(bodyId, gameObject.id, MakeMaterial(*collider));
+				bodyLinks_.push_back(JoltBodyLink{gameObject.id, bodyId, runtimeCollider.colliderCenter, isDynamic});
+				RegisterBody(bodyId, gameObject.id, MakeMaterial(runtimeCollider));
 			}
 		}
 	}
@@ -898,6 +940,53 @@ private:
 		return nullptr;
 	}
 
+	bool MakeImplicitMeshCollider(
+		const EditorGameObject& gameObject,
+		EditorComponent& collider) const {
+		const std::string modelAssetPath = GetRenderModelAssetPath(gameObject);
+		if (modelAssetPath.empty()) {
+			return false;
+		}
+
+		collider = {};
+		collider.type = EditorComponentType::MeshCollider;
+		collider.isActive = true;
+		collider.assetPath = modelAssetPath;
+		collider.colliderCenter = {0.0f, 0.0f, 0.0f};
+		collider.colliderSize = {1.0f, 1.0f, 1.0f};
+		collider.colliderRadius = 0.5f;
+		collider.dynamicFriction = 0.6f;
+		collider.staticFriction = 0.6f;
+		collider.bounciness = 0.0f;
+		collider.frictionCombineMode = 0;
+		collider.bouncinessCombineMode = 0;
+		collider.physicsLayer = 0;
+		collider.generateContactEvents = true;
+		TryGetModelColliderBounds(gameObject, collider.colliderCenter, collider.colliderSize);
+		return true;
+	}
+
+	void RefreshRuntimeMeshColliderBounds(
+		const EditorGameObject& gameObject,
+		EditorComponent& collider) const {
+		if (collider.type != EditorComponentType::MeshCollider &&
+			collider.type != EditorComponentType::TerrainCollider) {
+			return;
+		}
+
+		Vector3 modelColliderCenter{};  // 現在の FBX / OBJ 頂点から取り直す Collider 中心。
+		Vector3 modelColliderSize{};  // Scene 保存値が古くても Play 物理は見た目と同じ ModelData に合わせる。
+		if (!TryGetModelColliderBounds(gameObject, modelColliderCenter, modelColliderSize)) {
+			return;
+		}
+
+		collider.colliderCenter = modelColliderCenter;
+		collider.colliderSize = modelColliderSize;
+		if (collider.assetPath.empty()) {
+			collider.assetPath = GetRenderModelAssetPath(gameObject);
+		}
+	}
+
 	JPH::BodyID CreateColliderBody(
 		const EditorGameObject& gameObject,
 		const EditorComponent& collider,
@@ -978,13 +1067,12 @@ private:
 		const EditorComponent& collider,
 		const EditorComponent* rigidBody,
 		bool isDynamic) {
-		// Jolt の MeshShape は静的専用。動的 MeshCollider はすり抜け防止優先で Box 近似に落とす。
 		if (isDynamic) {
-			return CreateBoxBody(gameObject, collider, rigidBody, true);
+			return CreateDynamicMeshBody(gameObject, collider, rigidBody);
 		}
 
 		JPH::TriangleList triangles;
-		if (!BuildMeshTrianglesFromModelAsset(gameObject, triangles)) {
+		if (!BuildMeshTrianglesFromModelAsset(gameObject, collider, triangles)) {
 			Vector3 halfSize = {
 				GetScaledShapeSize(collider.colliderSize.x, gameObject.scale.x) * 0.5f,
 				GetScaledShapeSize(collider.colliderSize.y, gameObject.scale.y) * 0.5f,
@@ -1002,10 +1090,46 @@ private:
 		return AddBody(settings, false);
 	}
 
+	JPH::BodyID CreateDynamicMeshBody(
+		const EditorGameObject& gameObject,
+		const EditorComponent& collider,
+		const EditorComponent* rigidBody) {
+		// Jolt の MeshShape は静的専用なので、動くモデルは FBX 頂点から凸包を作る。
+		// Box 近似より丸いモデルや斜め形状へ近く、Dynamic Body として重力・摩擦・反発も使える。
+		JPH::Array<JPH::Vec3> hullPoints;
+		if (!BuildConvexHullPointsFromModelAsset(gameObject, collider, hullPoints)) {
+			PushConsoleMessage("物理: ConvexHull 作成に失敗したため Box 近似にします " + gameObject.name);
+			return CreateBoxBody(gameObject, collider, rigidBody, true);
+		}
+
+		JPH::ConvexHullShapeSettings hullSettings(hullPoints, 0.0f);
+		JPH::ShapeSettings::ShapeResult hullResult = hullSettings.Create();
+		if (hullResult.HasError()) {
+			PushConsoleMessage("物理: ConvexHull が無効なため Box 近似にします " + gameObject.name);
+			return CreateBoxBody(gameObject, collider, rigidBody, true);
+		}
+
+		JPH::RefConst<JPH::Shape> hullShape = hullResult.Get();
+		JPH::BodyCreationSettings settings(
+			hullShape,
+			GetBodyPosition(gameObject, collider.colliderCenter),
+			MakeJoltRotation(gameObject.rotate),
+			JPH::EMotionType::Dynamic,
+			MakeJoltObjectLayer(collider.physicsLayer, true));
+		ApplyBodySettings(settings, collider, rigidBody);
+		JPH::BodyID bodyId = AddBody(settings, true);
+		if (!bodyId.IsInvalid()) {
+			RegisterPreciseMeshCollisionBody(bodyId, gameObject, collider, MakeEditorVector(hullShape->GetCenterOfMass()));
+		}
+
+		return bodyId;
+	}
+
 	bool BuildMeshTrianglesFromModelAsset(
 		const EditorGameObject& gameObject,
+		const EditorComponent& collider,
 		JPH::TriangleList& triangles) const {
-		std::string modelAssetPath = GetModelAssetPath(gameObject);
+		std::string modelAssetPath = GetCollisionModelAssetPath(gameObject, collider);
 		if (modelAssetPath.empty()) {
 			return false;
 		}
@@ -1034,17 +1158,17 @@ private:
 			const VertexData& thirdVertex = triangleVertices[2];
 
 			const JPH::Float3 firstPosition(
-				firstVertex.position.x * objectScale.x,
-				firstVertex.position.y * objectScale.y,
-				firstVertex.position.z * objectScale.z);
+				(firstVertex.position.x - collider.colliderCenter.x) * objectScale.x,
+				(firstVertex.position.y - collider.colliderCenter.y) * objectScale.y,
+				(firstVertex.position.z - collider.colliderCenter.z) * objectScale.z);
 			const JPH::Float3 secondPosition(
-				secondVertex.position.x * objectScale.x,
-				secondVertex.position.y * objectScale.y,
-				secondVertex.position.z * objectScale.z);
+				(secondVertex.position.x - collider.colliderCenter.x) * objectScale.x,
+				(secondVertex.position.y - collider.colliderCenter.y) * objectScale.y,
+				(secondVertex.position.z - collider.colliderCenter.z) * objectScale.z);
 			const JPH::Float3 thirdPosition(
-				thirdVertex.position.x * objectScale.x,
-				thirdVertex.position.y * objectScale.y,
-				thirdVertex.position.z * objectScale.z);
+				(thirdVertex.position.x - collider.colliderCenter.x) * objectScale.x,
+				(thirdVertex.position.y - collider.colliderCenter.y) * objectScale.y,
+				(thirdVertex.position.z - collider.colliderCenter.z) * objectScale.z);
 
 			triangles.push_back(JPH::Triangle(firstPosition, secondPosition, thirdPosition));
 		}
@@ -1052,7 +1176,37 @@ private:
 		return !triangles.empty();
 	}
 
-	std::string GetModelAssetPath(const EditorGameObject& gameObject) const {
+	bool BuildConvexHullPointsFromModelAsset(
+		const EditorGameObject& gameObject,
+		const EditorComponent& collider,
+		JPH::Array<JPH::Vec3>& hullPoints) const {
+		const std::string modelAssetPath = GetCollisionModelAssetPath(gameObject, collider);
+		if (modelAssetPath.empty()) {
+			return false;
+		}
+
+		ModelData modelData{};  // ConvexHull は頂点群から Jolt が外側形状を作る。
+		if (!EditorAssetUtility::LoadModelAsset(modelAssetPath, modelData) ||
+			modelData.vertices.size() < 4u) {
+			return false;
+		}
+
+		const Vector3 objectScale = {
+			gameObject.scale.x,
+			gameObject.scale.y,
+			gameObject.scale.z};
+		hullPoints.reserve(modelData.vertices.size());
+		for (const VertexData& vertex : modelData.vertices) {
+			hullPoints.push_back(JPH::Vec3(
+				(vertex.position.x - collider.colliderCenter.x) * objectScale.x,
+				(vertex.position.y - collider.colliderCenter.y) * objectScale.y,
+				(vertex.position.z - collider.colliderCenter.z) * objectScale.z));
+		}
+
+		return hullPoints.size() >= 4u;
+	}
+
+	std::string GetRenderModelAssetPath(const EditorGameObject& gameObject) const {
 		const EditorComponent* modelRenderer =
 			EditorComponentUtility::FindComponent(gameObject, EditorComponentType::ModelRenderer);
 		if (modelRenderer != nullptr && !modelRenderer->assetPath.empty()) {
@@ -1066,6 +1220,59 @@ private:
 		}
 
 		return "";
+	}
+
+	std::string GetCollisionModelAssetPath(
+		const EditorGameObject& gameObject,
+		const EditorComponent& collider) const {
+		if (!collider.assetPath.empty()) {
+			return collider.assetPath;  // MeshCollider 側で個別指定があれば、描画メッシュより優先する。
+		}
+
+		return GetRenderModelAssetPath(gameObject);
+	}
+
+	bool TryGetModelColliderBounds(
+		const EditorGameObject& gameObject,
+		Vector3& colliderCenter,
+		Vector3& colliderSize) const {
+		const EditorComponent* meshCollider =
+			EditorComponentUtility::FindComponent(gameObject, EditorComponentType::MeshCollider);
+		const std::string modelAssetPath =
+			meshCollider != nullptr ? GetCollisionModelAssetPath(gameObject, *meshCollider) : GetRenderModelAssetPath(gameObject);
+		if (modelAssetPath.empty()) {
+			return false;
+		}
+
+		ModelData modelData{};  // 実メッシュの外形を、動的 MeshCollider の Box 近似サイズにも使う。
+		if (!EditorAssetUtility::LoadModelAsset(modelAssetPath, modelData) ||
+			modelData.vertices.empty()) {
+			return false;
+		}
+
+		Vector3 minimumPosition = {
+			modelData.vertices[0].position.x,
+			modelData.vertices[0].position.y,
+			modelData.vertices[0].position.z};
+		Vector3 maximumPosition = minimumPosition;
+		for (const VertexData& vertex : modelData.vertices) {
+			minimumPosition.x = (std::min)(minimumPosition.x, vertex.position.x);
+			minimumPosition.y = (std::min)(minimumPosition.y, vertex.position.y);
+			minimumPosition.z = (std::min)(minimumPosition.z, vertex.position.z);
+			maximumPosition.x = (std::max)(maximumPosition.x, vertex.position.x);
+			maximumPosition.y = (std::max)(maximumPosition.y, vertex.position.y);
+			maximumPosition.z = (std::max)(maximumPosition.z, vertex.position.z);
+		}
+
+		colliderCenter = {
+			(minimumPosition.x + maximumPosition.x) * 0.5f,
+			(minimumPosition.y + maximumPosition.y) * 0.5f,
+			(minimumPosition.z + maximumPosition.z) * 0.5f};
+		colliderSize = {
+			(std::max)(maximumPosition.x - minimumPosition.x, kJoltMinimumShapeSize),
+			(std::max)(maximumPosition.y - minimumPosition.y, kJoltMinimumShapeSize),
+			(std::max)(maximumPosition.z - minimumPosition.z, kJoltMinimumShapeSize)};
+		return true;
 	}
 
 	void AddBoxMeshTriangles(const Vector3& halfSize, JPH::TriangleList& triangles) const {
@@ -1093,11 +1300,11 @@ private:
 	}
 
 	JPH::RVec3 GetBodyPosition(const EditorGameObject& gameObject, const Vector3& colliderCenter) const {
-		// Jolt Body の原点は Collider 中心にする。書き戻し時に colliderCenter を引いて GameObject 原点へ戻す。
+		// Jolt Body の原点は Collider 中心にする。Collider 中心は Transform Scale の影響を受ける。
 		return JPH::RVec3(
-			static_cast<JPH::Real>(gameObject.translate.x + colliderCenter.x),
-			static_cast<JPH::Real>(gameObject.translate.y + colliderCenter.y),
-			static_cast<JPH::Real>(gameObject.translate.z + colliderCenter.z));
+			static_cast<JPH::Real>(gameObject.translate.x + colliderCenter.x * gameObject.scale.x),
+			static_cast<JPH::Real>(gameObject.translate.y + colliderCenter.y * gameObject.scale.y),
+			static_cast<JPH::Real>(gameObject.translate.z + colliderCenter.z * gameObject.scale.z));
 	}
 
 	void ApplyBodySettings(
@@ -1120,8 +1327,17 @@ private:
 		settings.mLinearDamping = (std::max)(rigidBody->drag, 0.0f);
 		settings.mAngularDamping = (std::max)(rigidBody->angularDrag, 0.0f);
 		settings.mGravityFactor = rigidBody->useGravity ? 1.0f : 0.0f;
+
+		// Dynamic な MeshCollider は三角形ベースの静的地形へ高速で当たる場面が多く、
+		// Inspector の既定値が離散のままだとユーザー設定前に貫通しやすい。
+		// そのため MeshCollider を動かす時は、最低限 LinearCast を強制してすり抜けを抑える。
+		const bool shouldForceContinuousForMesh =
+			collider.type == EditorComponentType::MeshCollider &&
+			!rigidBody->isKinematic;
 		settings.mMotionQuality =
-			rigidBody->collisionDetectionMode == 1 ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete;
+			(rigidBody->collisionDetectionMode == 1 || shouldForceContinuousForMesh) ?
+				JPH::EMotionQuality::LinearCast :
+				JPH::EMotionQuality::Discrete;
 		settings.mAllowedDOFs = MakeAllowedDofs(*rigidBody);
 		settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
 		settings.mMassPropertiesOverride.mMass = (std::max)(rigidBody->mass, 0.01f);
@@ -1195,12 +1411,88 @@ private:
 	}
 
 	void RegisterBody(JPH::BodyID bodyId, int32_t gameObjectId, const PhysicsBodyMaterial& material) {
-		uint32_t bodyKey = bodyId.GetIndexAndSequenceNumber();
+		uint32_t bodyKey = MakeBodyMapKey(bodyId);
 		gameObjectIdByBodyId_[bodyKey] = gameObjectId;
 		bodyMaterials_[bodyKey] = material;
 		if (gameObjectId >= 0 && primaryBodyIdByGameObjectId_.find(gameObjectId) == primaryBodyIdByGameObjectId_.end()) {
 			primaryBodyIdByGameObjectId_[gameObjectId] = bodyId;
 		}
+	}
+
+	void RegisterPreciseMeshCollisionBody(
+		JPH::BodyID bodyId,
+		const EditorGameObject& gameObject,
+		const EditorComponent& collider,
+		const Vector3& shapeCenterOfMass) {
+		const std::string modelAssetPath = GetCollisionModelAssetPath(gameObject, collider);
+		if (modelAssetPath.empty()) {
+			return;
+		}
+
+		ModelData modelData{};  // ConvexHull の接触を、実三角形 BVH で検証するための元データ。
+		if (!EditorAssetUtility::LoadModelAsset(modelAssetPath, modelData)) {
+			return;
+		}
+
+		PreciseMeshCollisionBody preciseMeshCollisionBody{};
+		preciseMeshCollisionBody.gameObjectId = gameObject.id;
+		if (!preciseMeshCollisionBody.collisionMesh.BuildFromModelData(modelData, collider.colliderCenter, gameObject.scale, shapeCenterOfMass)) {
+			return;
+		}
+
+		const uint32_t bodyKey = MakeBodyMapKey(bodyId);
+		const size_t triangleCount = preciseMeshCollisionBody.collisionMesh.GetTriangleCount();
+		preciseMeshCollisionBodies_[bodyKey] = std::move(preciseMeshCollisionBody);
+		PushConsoleMessage(
+			"物理: MeshCollider の BVH を作成 " +
+			gameObject.name +
+			" 三角形=" +
+			std::to_string(triangleCount));
+	}
+
+	bool HasPreciseMeshCollisionBody(const JPH::Body& body) const {
+		return preciseMeshCollisionBodies_.find(MakeBodyMapKey(body.GetID())) != preciseMeshCollisionBodies_.end();
+	}
+
+	bool ShouldAcceptPreciseMeshContact(
+		const JPH::Body& firstBody,
+		const JPH::Body& secondBody,
+		JPH::RVec3Arg baseOffset,
+		const JPH::CollideShapeResult& collisionResult) const {
+		const uint64_t contactPairKey = MakeContactPairKey(firstBody.GetID(), secondBody.GetID());
+		const bool isPersistingContact = activeContactPairs_.find(contactPairKey) != activeContactPairs_.end();
+		return
+			IsPreciseMeshContactPointNearSurface(firstBody, baseOffset + collisionResult.mContactPointOn1, isPersistingContact) &&
+			IsPreciseMeshContactPointNearSurface(secondBody, baseOffset + collisionResult.mContactPointOn2, isPersistingContact);
+	}
+
+	bool IsPreciseMeshContactPointNearSurface(
+		const JPH::Body& body,
+		JPH::RVec3Arg worldPoint,
+		bool isPersistingContact) const {
+		const auto meshIterator = preciseMeshCollisionBodies_.find(MakeBodyMapKey(body.GetID()));
+		if (meshIterator == preciseMeshCollisionBodies_.end()) {
+			return true;
+		}
+
+		const Vector3 localPoint = MakeBodyLocalPoint(body, worldPoint);
+
+		// 継続接触は少し広い許容距離で受け、境界上での Reject/Accept の振動を減らす。
+		const float additionalTolerance =
+			isPersistingContact ?
+				meshIterator->second.collisionMesh.GetContactTolerance() * 0.5f :
+				0.0f;
+		return meshIterator->second.collisionMesh.IsPointNearSurface(localPoint, additionalTolerance);
+	}
+
+	Vector3 MakeBodyLocalPoint(const JPH::Body& body, JPH::RVec3Arg worldPoint) const {
+		// Jolt の接触点は Shape の重心ローカルで作られるため、BVH も同じ重心ローカルへ戻して比較する。
+		const JPH::RVec3 bodyPosition = body.GetCenterOfMassPosition();
+		const JPH::Vec3 relativePosition(
+			static_cast<float>(worldPoint.GetX() - bodyPosition.GetX()),
+			static_cast<float>(worldPoint.GetY() - bodyPosition.GetY()),
+			static_cast<float>(worldPoint.GetZ() - bodyPosition.GetZ()));
+		return MakeEditorVector(body.GetRotation().InverseRotate(relativePosition));
 	}
 
 	bool TryFindPrimaryBodyId(int32_t gameObjectId, JPH::BodyID& bodyId) const {
@@ -1284,9 +1576,9 @@ private:
 
 			Vector3 characterPosition = MakeEditorPosition(characterLink.character->GetPosition());
 			gameObject->translate = {
-				characterPosition.x - characterLink.colliderCenter.x,
-				characterPosition.y - characterLink.colliderCenter.y,
-				characterPosition.z - characterLink.colliderCenter.z};
+				characterPosition.x - characterLink.colliderCenter.x * gameObject->scale.x,
+				characterPosition.y - characterLink.colliderCenter.y * gameObject->scale.y,
+				characterPosition.z - characterLink.colliderCenter.z * gameObject->scale.z};
 			gameObject->rotate = MakeEditorRotation(characterLink.character->GetRotation());
 			characterController->velocity = MakeEditorVector(characterLink.character->GetLinearVelocity());
 		}
@@ -1305,12 +1597,14 @@ private:
 				continue;
 			}
 
-			JPH::RVec3 bodyPosition = bodyInterface.GetCenterOfMassPosition(bodyLink.bodyId);
+			JPH::RVec3 bodyPosition{};
+			JPH::Quat bodyRotation{};
+			bodyInterface.GetPositionAndRotation(bodyLink.bodyId, bodyPosition, bodyRotation);
 			gameObject->translate = {
-				static_cast<float>(bodyPosition.GetX()) - bodyLink.colliderCenter.x,
-				static_cast<float>(bodyPosition.GetY()) - bodyLink.colliderCenter.y,
-				static_cast<float>(bodyPosition.GetZ()) - bodyLink.colliderCenter.z};
-			gameObject->rotate = MakeEditorRotation(bodyInterface.GetRotation(bodyLink.bodyId));
+				static_cast<float>(bodyPosition.GetX()) - bodyLink.colliderCenter.x * gameObject->scale.x,
+				static_cast<float>(bodyPosition.GetY()) - bodyLink.colliderCenter.y * gameObject->scale.y,
+				static_cast<float>(bodyPosition.GetZ()) - bodyLink.colliderCenter.z * gameObject->scale.z};
+			gameObject->rotate = MakeEditorRotation(bodyRotation);
 
 			EditorComponent* rigidBody =
 				EditorComponentUtility::FindComponent(*gameObject, EditorComponentType::RigidBody);
@@ -1512,7 +1806,7 @@ private:
 		PushPhysicsEvent(eventType, MakeCollisionInfoForSecond(contactPair));
 	}
 
-	std::string MakeContactMessage(const char* eventName, const ActiveContactPair& contactPair) const {
+	[[maybe_unused]] std::string MakeContactMessage(const char* eventName, const ActiveContactPair& contactPair) const {
 		return
 			std::string("物理: ") +
 			eventName +
@@ -1617,8 +1911,16 @@ bool EditorJoltPhysicsManager::AddImpulse(int32_t gameObjectId, const Vector3& i
 	return impl_->AddImpulse(gameObjectId, impulse);
 }
 
+bool EditorJoltPhysicsManager::AddTorque(int32_t gameObjectId, const Vector3& torque) {
+	return impl_->AddTorque(gameObjectId, torque);
+}
+
 bool EditorJoltPhysicsManager::SetVelocity(int32_t gameObjectId, const Vector3& velocity) {
 	return impl_->SetVelocity(gameObjectId, velocity);
+}
+
+bool EditorJoltPhysicsManager::SetAngularVelocity(int32_t gameObjectId, const Vector3& angularVelocity) {
+	return impl_->SetAngularVelocity(gameObjectId, angularVelocity);
 }
 
 const std::vector<EditorJoltPhysicsManager::PhysicsEvent>& EditorJoltPhysicsManager::GetStepEvents() const {

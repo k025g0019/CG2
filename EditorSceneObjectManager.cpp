@@ -1,9 +1,13 @@
 ﻿#include "EditorSceneObjectManager.h"
 
+#include "EditorSharedState.h"
 #include "Matrix.h"
+#include "StringUtility.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstring>
+#include <filesystem>
 
 #pragma warning(disable : 5045)
 
@@ -37,12 +41,17 @@ int32_t EditorSceneObjectManager::CreateObject(
 	sceneObject.transform = initialTransform;
 	sceneObject.name = name;
 	sceneObject.assetPath.clear();
+	sceneObject.textureAssetPath.clear();
 	sceneObject.transformationResource = CreateTransformationResource();
 	sceneObject.transformationData = nullptr;
 	sceneObject.gameTransformationResource = CreateTransformationResource();
 	sceneObject.gameTransformationData = nullptr;
 	sceneObject.materialResource = CreateMaterialResource();
 	sceneObject.materialData = nullptr;
+	sceneObject.customTextureResource = nullptr;
+	sceneObject.customTextureUploadResource = nullptr;
+	sceneObject.customTextureSrvGpuHandle = {};
+	sceneObject.customTextureDescriptorIndex = -1;
 	sceneObject.customMeshVertexResource = nullptr;
 	sceneObject.customMeshVertexBufferView = {};
 	sceneObject.customMeshVertexCount = 0u;
@@ -102,20 +111,162 @@ int32_t EditorSceneObjectManager::CreateObject(
 
 	sceneObject.transformationData->WVP = MakeIdentity4x4();  // 初回描画前の行列を単位行列にしておく
 	sceneObject.transformationData->World = MakeIdentity4x4();
+	sceneObject.transformationData->lightWVP = MakeIdentity4x4();
 	sceneObject.gameTransformationData->WVP = MakeIdentity4x4();
 	sceneObject.gameTransformationData->World = MakeIdentity4x4();
+	sceneObject.gameTransformationData->lightWVP = MakeIdentity4x4();
 	sceneObject.materialData->color = {1.0f, 1.0f, 1.0f, 1.0f};  // Mesh の初期色は白。Inspector の Renderer 色で上書きされる。
 	sceneObject.materialData->enableLighting =
 		type == EditorSceneObjectType::Model ? TRUE : FALSE;  // Model はライトあり、Sprite は Texture 色をそのまま出す。
 	sceneObject.materialData->useTexture =
 		type == EditorSceneObjectType::Sprite ? TRUE : FALSE;  // Model は白い形状として始め、Sprite だけ Texture を使う。
-	sceneObject.materialData->padding[0] = 0.0f;
-	sceneObject.materialData->padding[1] = 0.0f;
+	sceneObject.materialData->metallic = 0.0f;
+	sceneObject.materialData->roughness = 0.5f;
+	sceneObject.materialData->reflectance = 0.0f;
+	sceneObject.materialData->ior = 1.0f;
+	sceneObject.materialData->emissionStrength = 0.0f;
+	sceneObject.materialData->padding0 = 0.0f;
+	sceneObject.materialData->padding1 = 0.0f;
+	sceneObject.materialData->padding2 = 0.0f;
 	sceneObject.materialData->uvTransform = MakeIdentity4x4();
 	sceneObjects_.push_back(sceneObject);
 
 	// 追加した配列番号を呼び出し側の選択管理へ返す
 	return static_cast<int32_t>(sceneObjects_.size() - 1);
+}
+
+bool EditorSceneObjectManager::SetCustomTexture(int32_t sceneObjectIndex, const std::string& textureAssetPath) {
+	if (sceneObjectIndex < 0 ||
+		sceneObjectIndex >= static_cast<int32_t>(sceneObjects_.size()) ||
+		device_ == nullptr ||
+		textureAssetPath.empty()) {
+		return false;
+	}
+
+	EditorSceneObject& sceneObject = sceneObjects_[static_cast<size_t>(sceneObjectIndex)];
+	if (sceneObject.textureAssetPath == textureAssetPath &&
+		sceneObject.customTextureResource != nullptr &&
+		sceneObject.customTextureSrvGpuHandle.ptr != 0u) {
+		return true;
+	}
+
+	if (!std::filesystem::exists(textureAssetPath)) {
+		return false;
+	}
+
+	ClearCustomTexture(sceneObjectIndex);
+
+	int32_t descriptorIndex = AcquireCustomTextureDescriptorIndex();
+	if (descriptorIndex < 0) {
+		return false;
+	}
+
+	using namespace EditorSharedState;
+
+	DirectX::ScratchImage mipImages = LoadTexture(ConvertString(textureAssetPath));
+	DirectX::TexMetadata textureMetadata = mipImages.GetMetadata();
+	ID3D12Resource* textureResource = CreateTextureResource(device_, textureMetadata);
+	if (textureResource == nullptr) {
+		ReleaseCustomTextureDescriptorIndex(descriptorIndex);
+		return false;
+	}
+
+	HRESULT hr = g_commandAllocator->Reset();
+	if (FAILED(hr)) {
+		textureResource->Release();
+		ReleaseCustomTextureDescriptorIndex(descriptorIndex);
+		return false;
+	}
+
+	hr = g_commandList->Reset(g_commandAllocator.Get(), nullptr);
+	if (FAILED(hr)) {
+		textureResource->Release();
+		ReleaseCustomTextureDescriptorIndex(descriptorIndex);
+		return false;
+	}
+
+	ID3D12Resource* uploadResource = UploadTextureData(device_, g_commandList.Get(), textureResource, mipImages);
+	if (uploadResource == nullptr) {
+		textureResource->Release();
+		ReleaseCustomTextureDescriptorIndex(descriptorIndex);
+		return false;
+	}
+
+	hr = g_commandList->Close();
+	if (FAILED(hr)) {
+		uploadResource->Release();
+		textureResource->Release();
+		ReleaseCustomTextureDescriptorIndex(descriptorIndex);
+		return false;
+	}
+
+	ID3D12CommandList* commandLists[] = {g_commandList.Get()};
+	g_commandQueue->ExecuteCommandLists(1, commandLists);
+	g_fenceValue++;
+	hr = g_commandQueue->Signal(g_fence.Get(), g_fenceValue);
+	if (FAILED(hr)) {
+		uploadResource->Release();
+		textureResource->Release();
+		ReleaseCustomTextureDescriptorIndex(descriptorIndex);
+		return false;
+	}
+
+	if (g_fence->GetCompletedValue() < g_fenceValue) {
+		hr = g_fence->SetEventOnCompletion(g_fenceValue, g_fenceEvent);
+		if (FAILED(hr)) {
+			uploadResource->Release();
+			textureResource->Release();
+			ReleaseCustomTextureDescriptorIndex(descriptorIndex);
+			return false;
+		}
+
+		WaitForSingleObject(g_fenceEvent, INFINITE);
+	}
+
+	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+	srvDesc.Format = textureMetadata.format;
+	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	srvDesc.Texture2D.MipLevels = static_cast<UINT>(textureMetadata.mipLevels);
+
+	D3D12_CPU_DESCRIPTOR_HANDLE srvCpuHandle =
+		GetCPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, static_cast<UINT>(descriptorIndex));
+	D3D12_GPU_DESCRIPTOR_HANDLE srvGpuHandle =
+		GetGPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, static_cast<UINT>(descriptorIndex));
+	device_->CreateShaderResourceView(textureResource, &srvDesc, srvCpuHandle);
+
+	sceneObject.textureAssetPath = textureAssetPath;
+	sceneObject.customTextureResource = textureResource;
+	sceneObject.customTextureUploadResource = uploadResource;
+	sceneObject.customTextureSrvGpuHandle = srvGpuHandle;
+	sceneObject.customTextureDescriptorIndex = descriptorIndex;
+	return true;
+}
+
+void EditorSceneObjectManager::ClearCustomTexture(int32_t sceneObjectIndex) {
+	if (sceneObjectIndex < 0 ||
+		sceneObjectIndex >= static_cast<int32_t>(sceneObjects_.size())) {
+		return;
+	}
+
+	EditorSceneObject& sceneObject = sceneObjects_[static_cast<size_t>(sceneObjectIndex)];
+	if (sceneObject.customTextureUploadResource != nullptr) {
+		sceneObject.customTextureUploadResource->Release();
+		sceneObject.customTextureUploadResource = nullptr;
+	}
+
+	if (sceneObject.customTextureResource != nullptr) {
+		sceneObject.customTextureResource->Release();
+		sceneObject.customTextureResource = nullptr;
+	}
+
+	if (sceneObject.customTextureDescriptorIndex >= 0) {
+		ReleaseCustomTextureDescriptorIndex(sceneObject.customTextureDescriptorIndex);
+	}
+
+	sceneObject.textureAssetPath.clear();
+	sceneObject.customTextureSrvGpuHandle = {};
+	sceneObject.customTextureDescriptorIndex = -1;
 }
 
 bool EditorSceneObjectManager::SetCustomModelMesh(
@@ -183,6 +334,7 @@ void EditorSceneObjectManager::ReleaseObject(int32_t sceneObjectIndex) {
 	}
 
 	EditorSceneObject& sceneObject = sceneObjects_[static_cast<size_t>(sceneObjectIndex)];  // 指定番号の描画用 GPU Resource を解放する
+	ClearCustomTexture(sceneObjectIndex);
 	ClearCustomModelMesh(sceneObjectIndex);
 	if (sceneObject.transformationResource != nullptr) {
 		sceneObject.transformationResource->Release();
@@ -218,6 +370,37 @@ std::vector<EditorSceneObject>& EditorSceneObjectManager::GetSceneObjects() {
 
 const std::vector<EditorSceneObject>& EditorSceneObjectManager::GetSceneObjects() const {
 	return sceneObjects_;
+}
+
+int32_t EditorSceneObjectManager::AcquireCustomTextureDescriptorIndex() {
+	if (!freeCustomTextureDescriptorIndices_.empty()) {
+		int32_t descriptorIndex = freeCustomTextureDescriptorIndices_.back();
+		freeCustomTextureDescriptorIndices_.pop_back();
+		return descriptorIndex;
+	}
+
+	if (nextCustomTextureDescriptorIndex_ >= 128) {
+		return -1;
+	}
+
+	int32_t descriptorIndex = nextCustomTextureDescriptorIndex_;
+	nextCustomTextureDescriptorIndex_++;
+	return descriptorIndex;
+}
+
+void EditorSceneObjectManager::ReleaseCustomTextureDescriptorIndex(int32_t descriptorIndex) {
+	if (descriptorIndex < 16) {
+		return;
+	}
+
+	if (std::find(
+		    freeCustomTextureDescriptorIndices_.begin(),
+		    freeCustomTextureDescriptorIndices_.end(),
+		    descriptorIndex) != freeCustomTextureDescriptorIndices_.end()) {
+		return;
+	}
+
+	freeCustomTextureDescriptorIndices_.push_back(descriptorIndex);
 }
 
 ID3D12Resource* EditorSceneObjectManager::CreateVertexResource(size_t sizeInBytes) const {

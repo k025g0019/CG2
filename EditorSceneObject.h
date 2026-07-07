@@ -34,11 +34,11 @@ enum class EditorModelMeshType {
 	Cylinder,
 	// resources/cone.fbx に対応する円錐
 	Cone,
-	// resources/Torus.fbx に対応するトーラス
+	// resources/to-tasu.fbx に対応するトーラス
 	Torus,
 	// resources/ICOCube.fbx に対応する低ポリゴン形状
 	Ico,
-	// sphere / ball 系 FBX に対応する球
+	// resources/sphere.fbx に対応する球
 	Sphere,
 	// 内部配列の要素数
 	Count,
@@ -59,6 +59,11 @@ struct EditorSceneObject {
 	TransformationMatrix* gameTransformationData;  // gameTransformationResource を CPU から書き込むための Map 済みポインタ
 	ID3D12Resource* materialResource;  // GameObject ごとの色と Texture 使用有無を GPU へ渡す ConstantBuffer
 	Material* materialData;  // materialResource を CPU から書き込むための Map 済みポインタ
+	std::string textureAssetPath;  // Model / Sprite が明示的に使う画像パス
+	ID3D12Resource* customTextureResource;  // 個別画像を GPU へ載せる Texture Resource
+	ID3D12Resource* customTextureUploadResource;  // customTextureResource へ転送する中間 Upload Buffer
+	D3D12_GPU_DESCRIPTOR_HANDLE customTextureSrvGpuHandle;  // Draw 時にそのまま渡す個別 Texture SRV
+	int32_t customTextureDescriptorIndex;  // SRV Heap 内の割り当て番号
 	ID3D12Resource* customMeshVertexResource;  // 読み込んだ実メッシュを GPU へ渡す頂点バッファ
 	D3D12_VERTEX_BUFFER_VIEW customMeshVertexBufferView;  // 実メッシュ描画時に IASetVertexBuffers へ渡す View
 	uint32_t customMeshVertexCount;  // DrawInstanced に渡す実メッシュの頂点数

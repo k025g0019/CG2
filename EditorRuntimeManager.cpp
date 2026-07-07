@@ -3,9 +3,16 @@
 void EditorRuntimeManager::Initialize(EditorScene* editorScene, std::vector<std::string>* consoleMessages) {
 	editorScene_ = editorScene;  // Play / Stop のたびに操作する Scene
 	consoleMessages_ = consoleMessages;  // Runtime 内のイベントログ出力先
-	scriptManager_.Initialize(editorScene_, &inputManager_, &physicsManager_, consoleMessages_);
-	inputManager_.Initialize(editorScene_, consoleMessages_);  // PlayerInput の Fire なども Console に出せるように同じ出力先を渡す
+	aiManager_.Initialize(editorScene_, &physicsManager_, consoleMessages_);
+	scriptManager_.Initialize(editorScene_, &inputManager_, &animationManager_, &aiManager_, &physicsManager_, consoleMessages_);
+	inputManager_.Initialize(editorScene_, consoleMessages_);
+	animationManager_.Initialize(editorScene_);
+	audioManager_.Initialize(editorScene_);
+	constraintManager_.Initialize(editorScene_);
 	physicsManager_.Initialize(editorScene_, consoleMessages_);
+	localMoveManager_.Initialize(editorScene_, &physicsManager_);
+	rollingMoveManager_.Initialize(editorScene_, &physicsManager_);
+	navigationManager_.Initialize(editorScene_, &physicsManager_, consoleMessages_);
 }
 
 #pragma warning(push)
@@ -15,8 +22,15 @@ void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 		return;
 	}
 
-	scriptManager_.Update(keyState, deltaTime);  // Script / MonoBehaviour の毎フレーム更新を呼ぶ
-	inputManager_.Update(keyState, deltaTime);  // 入力で GameObject の平面移動やジャンプ速度を更新する
+	scriptManager_.Update(keyState, deltaTime);
+	animationManager_.Update(deltaTime);
+	audioManager_.Update(deltaTime);
+	inputManager_.Update(keyState, deltaTime);
+	constraintManager_.Update(deltaTime);
+	localMoveManager_.Update(deltaTime);
+	rollingMoveManager_.Update(deltaTime);
+	aiManager_.Update(deltaTime);
+	navigationManager_.Update(deltaTime);
 	int32_t fixedStepCount = physicsManager_.Update(deltaTime);  // 入力後の速度を使って物理位置を更新する
 	float fixedTimeStep = physicsManager_.GetFixedTimeStep();  // 物理と同じ固定時間を Script 側へ渡す
 	scriptManager_.SetPhysicsEvents(physicsManager_.GetFrameEvents());  // このフレームで発生した接触イベントを FixedUpdate から参照できるようにする
@@ -45,6 +59,11 @@ void EditorRuntimeManager::Draw() {
 	}
 
 	inputManager_.Draw();
+	audioManager_.Draw();
+	aiManager_.Draw();
+	localMoveManager_.Draw();
+	rollingMoveManager_.Draw();
+	navigationManager_.Draw();
 	physicsManager_.Draw();
 }
 
@@ -56,10 +75,16 @@ void EditorRuntimeManager::TogglePlay() {
 	if (isPlaying_) {
 		// Stop 時は Play 開始前の Scene に戻す
 		physicsManager_.StopSimulation();
+		localMoveManager_.Stop();
+		rollingMoveManager_.Stop();
+		aiManager_.Stop();
+		navigationManager_.Stop();
 		if (hasSceneBackup_) {
 			*editorScene_ = sceneBackup_;
 		}
 
+		animationManager_.Stop();
+		audioManager_.Stop();
 		scriptManager_.Stop();
 		isPlaying_ = false;
 		hasSceneBackup_ = false;
@@ -69,11 +94,33 @@ void EditorRuntimeManager::TogglePlay() {
 	sceneBackup_ = *editorScene_;  // Play 開始前の編集状態を保存する
 	hasSceneBackup_ = true;
 	isPlaying_ = true;
-	scriptManager_.Initialize(editorScene_, &inputManager_, &physicsManager_, consoleMessages_);
+	scriptManager_.Initialize(editorScene_, &inputManager_, &animationManager_, &aiManager_, &physicsManager_, consoleMessages_);
 	physicsManager_.StartSimulation();
+	animationManager_.Start();
+	localMoveManager_.Start();
+	rollingMoveManager_.Start();
+	aiManager_.Start();
+	navigationManager_.Start();
+	audioManager_.Start();
 	scriptManager_.Start();
 }
 
 bool EditorRuntimeManager::IsPlaying() const {
 	return isPlaying_;
+}
+
+EditorScriptManager& EditorRuntimeManager::GetScriptManager() {
+	return scriptManager_;
+}
+
+const EditorScriptManager& EditorRuntimeManager::GetScriptManager() const {
+	return scriptManager_;
+}
+
+EditorAnimationManager& EditorRuntimeManager::GetAnimationManager() {
+	return animationManager_;
+}
+
+const EditorAnimationManager& EditorRuntimeManager::GetAnimationManager() const {
+	return animationManager_;
 }

@@ -1,0 +1,104 @@
+﻿<!doctype html>
+<html lang="ja">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>CG2 Editor Docs</title>
+	<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+	<header class="topbar">
+		<div class="brand">
+			<a href="index.html" class="brand-mark">CG2</a>
+			<div>
+				<p class="eyebrow">CG2 Editor Documentation</p>
+				<h1>Docs Home</h1>
+			</div>
+		</div>
+		<div class="top-actions">
+			<a class="ghost-button" href="api-reference.html">API Reference</a>
+			<button class="ghost-button" type="button" id="themeToggle">Theme</button>
+		</div>
+	</header>
+
+	<main class="home-layout">
+		<section class="hero">
+			<p class="eyebrow">Unity Style Editor / Components / Runtime</p>
+			<h2>CG2 エディタの機能とコンポーネントを、使い方から引けるリファレンス</h2>
+			<p>
+				このリファレンスは「どのライブラリを使っているか」ではなく、
+				「そのコンポーネントを何に使うか」「Play で何が動くか」「今どの完成度か」を確認するための入口です。
+				Unity 風に GameObject へコンポーネントを追加して使う前提でまとめています。
+			</p>
+			<div class="hero-actions">
+				<a class="primary-button" href="api-reference.html">API Reference を開く</a>
+				<a class="secondary-button" href="../README.md">README を見る</a>
+			</div>
+		</section>
+
+		<section class="card-grid">
+			<article class="doc-card">
+				<p class="eyebrow">Reference</p>
+				<h2>詳細コンポーネントリファレンス</h2>
+				<p>検索、左ナビ、用途別カテゴリ、意味、使い方、実装レベル付き。AI もライブラリ名ではなく種類で引けます。</p>
+				<a class="secondary-button" href="api-reference.html">開く</a>
+			</article>
+
+			<article class="doc-card">
+				<p class="eyebrow">Workflow</p>
+				<h2>基本の作業手順</h2>
+				<ul>
+					<li>GameObject を作成する</li>
+					<li>Inspector の下からコンポーネントを追加する</li>
+					<li>値を設定して Play で実行確認する</li>
+				</ul>
+			</article>
+
+			<article class="doc-card">
+				<p class="eyebrow">Level</p>
+				<h2>完成度の見方</h2>
+				<ul>
+					<li><strong>実装済み</strong>: 実際に使える機能</li>
+					<li><strong>一部実装</strong>: 基本動作はあるが Unity 同等ではない機能</li>
+					<li><strong>表示段階</strong>: 追加と Inspector 表示が中心の機能</li>
+				</ul>
+			</article>
+		</section>
+
+		<section class="card-grid">
+			<article class="doc-card">
+				<p class="eyebrow">Runtime</p>
+				<h3>Play で動く主なもの</h3>
+				<ul>
+					<li>Jolt Physics による 3D 重力、Rigidbody、当たり判定</li>
+					<li>PlayerInput の Move / Jump / Fire 基礎処理</li>
+					<li>BehaviorTree / GOAP / 経路探索 / 操舵 / Python AI の実行</li>
+				</ul>
+			</article>
+
+			<article class="doc-card">
+				<p class="eyebrow">Editor</p>
+				<h3>編集で使う主なもの</h3>
+				<ul>
+					<li>Hierarchy / Scene / Game / Inspector / Project / Console</li>
+					<li>移動、回転、拡縮ギズモ</li>
+					<li>Scene 保存、名前を付けて保存、Prefab 保存</li>
+				</ul>
+			</article>
+
+			<article class="doc-card">
+				<p class="eyebrow">Assets</p>
+				<h3>読み込み対象</h3>
+				<ul>
+					<li>PNG / JPG / WAV / OBJ / FBX</li>
+					<li>AI 用の PY / XML / JSON / ONNX</li>
+					<li>FBX SDK を使ったモデル読み込みの入口</li>
+					<li>メッシュ当たり判定、NavMesh 障害物化の入口</li>
+				</ul>
+			</article>
+		</section>
+	</main>
+
+	<script src="docs.js"></script>
+</body>
+</html>

@@ -1,1 +1,0 @@
-../../demos_implot/demo_implot_stock.py

@@ -1,1 +1,0 @@
-../../../bindings/imgui_bundle/im_file_dialog.pyi

@@ -1,1 +1,0 @@
-../../../bindings/imgui_bundle/imgui_tex_inspect.pyi

@@ -1,4 +1,4 @@
-﻿#include "InputActionAsset.h"
+#include "InputActionAsset.h"
 
 #include "KeyboardState.h"
 
@@ -6,7 +6,7 @@
 #pragma warning(push)
 #pragma warning(disable : 4464)
 #pragma warning(push, 0)
-#include "../../externals/imgui-node-editor-master/imgui-node-editor-master/crude_json.h"
+#include "ThirdParty/imgui-node-editor-master/imgui-node-editor-master/crude_json.h"
 #pragma warning(pop)
 #pragma warning(pop)
 

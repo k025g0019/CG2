@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="ソース ファイル">
@@ -25,183 +25,183 @@
     <None Include="Assets\Input\InGameInputAction.json">
       <Filter>リソース ファイル</Filter>
     </None>
-    <None Include="Object3d.VS.hlsl" />
-    <None Include="Object3d.PS.hlsl" />
-    <None Include="ShadowDepth.VS.hlsl" />
+    <None Include="Assets\Shaders\Object3d.VS.hlsl" />
+    <None Include="Assets\Shaders\Object3d.PS.hlsl" />
+    <None Include="Assets\Shaders\ShadowDepth.VS.hlsl" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="CrashHandler.cpp">
+    <ClCompile Include="Source\Engine\Core\CrashHandler.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="BoxCollision.cpp">
+    <ClCompile Include="Source\Engine\Physics\BoxCollision.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorComponentUtility.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorComponentUtility.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorAssetFactory.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorAssetFactory.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorAssetUtility.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorAssetUtility.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorBottomPanel.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorBottomPanel.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorBottomPanelWindowManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorBottomPanelWindowManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorHierarchyPanel.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorHierarchyPanel.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorInspectorPanel.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorInspectorPanel.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorInputManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorInputManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorJoltPhysicsManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorJoltPhysicsManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorLocalMoveManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorLocalMoveManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorRollingMoveManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorRollingMoveManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorMainMenuBar.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorMainMenuBar.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorNativeScriptAssetManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorNativeScriptAssetManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorAIManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorAIManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\AI\cppGOAP-develop\src\Action.cpp">
+    <ClCompile Include="ThirdParty\AI\cppGOAP-develop\src\Action.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\AI\cppGOAP-develop\src\Node.cpp">
+    <ClCompile Include="ThirdParty\AI\cppGOAP-develop\src\Node.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\AI\cppGOAP-develop\src\Planner.cpp">
+    <ClCompile Include="ThirdParty\AI\cppGOAP-develop\src\Planner.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\AI\cppGOAP-develop\src\WorldState.cpp">
+    <ClCompile Include="ThirdParty\AI\cppGOAP-develop\src\WorldState.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\AI\MicroPather-master\micropather.cpp">
+    <ClCompile Include="ThirdParty\AI\MicroPather-master\micropather.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorNavigationManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorNavigationManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorPhysicsManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorPhysicsManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorScene.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorScene.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorSceneCameraController.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorSceneCameraController.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorSceneObjectManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorSceneObjectManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorSceneSynchronizer.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorSceneSynchronizer.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorSelectionManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorSelectionManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorScriptManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorScriptManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorRuntimeManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorRuntimeManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorDockingManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorDockingManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorFrameInputManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorFrameInputManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorGameViewManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorGameViewManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorHierarchyWindowManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorHierarchyWindowManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorImguiFrameManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorImguiFrameManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorInspectorWindowManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorInspectorWindowManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorMainMenuManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorMainMenuManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorMeshCollision.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorMeshCollision.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorSceneLifecycleManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorSceneLifecycleManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorSceneViewManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorSceneViewManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorRenderManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorRenderManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorPlatformManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorPlatformManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="StringUtility.cpp">
+    <ClCompile Include="Source\Engine\Core\StringUtility.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="Log.cpp">
+    <ClCompile Include="Source\Engine\Core\Log.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="ApplicationWindow.cpp">
+    <ClCompile Include="Source\Engine\Core\ApplicationWindow.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="Matrix.cpp">
+    <ClCompile Include="Source\Engine\Core\Matrix.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="SphereCollision.cpp">
+    <ClCompile Include="Source\Engine\Physics\SphereCollision.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="Vector&amp;Matrix.cpp">
+    <ClCompile Include="Source\Engine\Core\Vector&amp;Matrix.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="Vector.cpp">
+    <ClCompile Include="Source\Engine\Core\Vector.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\imgui-docking\imgui-docking\imgui.cpp">
+    <ClCompile Include="ThirdParty\imgui-docking\imgui-docking\imgui.cpp">
       <Filter>imgui</Filter>
     </ClCompile>
-    <ClCompile Include="externals\imgui-docking\imgui-docking\imgui_demo.cpp">
+    <ClCompile Include="ThirdParty\imgui-docking\imgui-docking\imgui_demo.cpp">
       <Filter>imgui</Filter>
     </ClCompile>
-    <ClCompile Include="externals\imgui-docking\imgui-docking\imgui_draw.cpp">
+    <ClCompile Include="ThirdParty\imgui-docking\imgui-docking\imgui_draw.cpp">
       <Filter>imgui</Filter>
     </ClCompile>
-    <ClCompile Include="externals\imgui-docking\imgui-docking\backends\imgui_impl_dx12.cpp">
+    <ClCompile Include="ThirdParty\imgui-docking\imgui-docking\backends\imgui_impl_dx12.cpp">
       <Filter>imgui</Filter>
     </ClCompile>
-    <ClCompile Include="externals\imgui-docking\imgui-docking\backends\imgui_impl_win32.cpp">
+    <ClCompile Include="ThirdParty\imgui-docking\imgui-docking\backends\imgui_impl_win32.cpp">
       <Filter>imgui</Filter>
     </ClCompile>
-    <ClCompile Include="externals\imgui-docking\imgui-docking\imgui_tables.cpp">
+    <ClCompile Include="ThirdParty\imgui-docking\imgui-docking\imgui_tables.cpp">
       <Filter>imgui</Filter>
     </ClCompile>
-    <ClCompile Include="externals\imgui-docking\imgui-docking\imgui_widgets.cpp">
+    <ClCompile Include="ThirdParty\imgui-docking\imgui-docking\imgui_widgets.cpp">
       <Filter>imgui</Filter>
     </ClCompile>
-    <ClCompile Include="externals\ImGuizmo-master\ImGuizmo-master\src\ImGuizmo.cpp">
+    <ClCompile Include="ThirdParty\ImGuizmo-master\ImGuizmo-master\src\ImGuizmo.cpp">
       <Filter>imgui</Filter>
     </ClCompile>
-    <ClCompile Include="GameScene.cpp">
+    <ClCompile Include="Source\Engine\Core\GameScene.cpp">
       <Filter>ソース ファイル\main,gameSceen</Filter>
     </ClCompile>
     <ClCompile Include="Engine\Input\InputAction.cpp">
@@ -219,963 +219,963 @@
     <ClCompile Include="Engine\Input\KeyboardState.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\imgui-node-editor-master\imgui-node-editor-master\crude_json.cpp">
+    <ClCompile Include="ThirdParty\imgui-node-editor-master\imgui-node-editor-master\crude_json.cpp">
       <Filter>imgui</Filter>
     </ClCompile>
-    <ClCompile Include="Imgui.cpp">
+    <ClCompile Include="Source\Engine\Core\Imgui.cpp">
       <Filter>ソース ファイル\main,gameSceen</Filter>
     </ClCompile>
-    <ClCompile Include="main.cpp">
+    <ClCompile Include="Source\Engine\Core\main.cpp">
       <Filter>ソース ファイル\main,gameSceen</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\FeelKitHaptics\FeelKit.cpp">
+    <ClCompile Include="ThirdParty\FeelKitHaptics\FeelKit.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\FeelKitHaptics\FeelKitHaptics.cpp">
+    <ClCompile Include="ThirdParty\FeelKitHaptics\FeelKitHaptics.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\FeelKitHaptics\haptics\FeelKitVibration.cpp">
+    <ClCompile Include="ThirdParty\FeelKitHaptics\haptics\FeelKitVibration.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\FeelKitHaptics\core\FeelKitCore.cpp">
+    <ClCompile Include="ThirdParty\FeelKitHaptics\core\FeelKitCore.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\FeelKitHaptics\audio\FeelKitAudio.cpp">
+    <ClCompile Include="ThirdParty\FeelKitHaptics\audio\FeelKitAudio.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\FeelKitHaptics\generation\FeelKitImpactGeneration.cpp">
+    <ClCompile Include="ThirdParty\FeelKitHaptics\generation\FeelKitImpactGeneration.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\FeelKitHaptics\effects\FeelKitEffects.cpp">
+    <ClCompile Include="ThirdParty\FeelKitHaptics\effects\FeelKitEffects.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\FeelKitHaptics\screen\FeelKitScreen.cpp">
+    <ClCompile Include="ThirdParty\FeelKitHaptics\screen\FeelKitScreen.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="EditorAudioManager.cpp">
+    <ClCompile Include="Source\Engine\Editor\EditorAudioManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="externals\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="CrashHandler.h">
+    <ClInclude Include="Source\Engine\Core\CrashHandler.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="BoxCollision.h">
+    <ClInclude Include="Source\Engine\Physics\BoxCollision.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorComponentUtility.h">
+    <ClInclude Include="Source\Engine\Editor\EditorComponentUtility.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorAssetFactory.h">
+    <ClInclude Include="Source\Engine\Editor\EditorAssetFactory.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorAssetUtility.h">
+    <ClInclude Include="Source\Engine\Editor\EditorAssetUtility.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorAIManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorAIManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorBottomPanel.h">
+    <ClInclude Include="Source\Engine\Editor\EditorBottomPanel.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorBottomPanelWindowManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorBottomPanelWindowManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorCommonTypes.h">
+    <ClInclude Include="Source\Engine\Editor\EditorCommonTypes.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorHierarchyPanel.h">
+    <ClInclude Include="Source\Engine\Editor\EditorHierarchyPanel.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorInspectorPanel.h">
+    <ClInclude Include="Source\Engine\Editor\EditorInspectorPanel.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorInputManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorInputManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorJoltPhysicsManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorJoltPhysicsManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorLocalMoveManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorLocalMoveManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorRollingMoveManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorRollingMoveManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorMainMenuBar.h">
+    <ClInclude Include="Source\Engine\Editor\EditorMainMenuBar.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorNativeScriptAssetManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorNativeScriptAssetManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorNavigationManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorNavigationManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorPhysicsManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorPhysicsManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorScene.h">
+    <ClInclude Include="Source\Engine\Editor\EditorScene.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorSceneCameraController.h">
+    <ClInclude Include="Source\Engine\Editor\EditorSceneCameraController.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorSceneObject.h">
+    <ClInclude Include="Source\Engine\Editor\EditorSceneObject.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorSceneObjectManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorSceneObjectManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorSceneSynchronizer.h">
+    <ClInclude Include="Source\Engine\Editor\EditorSceneSynchronizer.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorSelectionManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorSelectionManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorScriptManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorScriptManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorScriptApi.h">
+    <ClInclude Include="Source\Engine\Editor\EditorScriptApi.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorRuntimeManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorRuntimeManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorSharedState.h">
+    <ClInclude Include="Source\Engine\Editor\EditorSharedState.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorDockingManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorDockingManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorFrameInputManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorFrameInputManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorGameViewManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorGameViewManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorHierarchyWindowManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorHierarchyWindowManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorImguiFrameManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorImguiFrameManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorInspectorWindowManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorInspectorWindowManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorMainMenuManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorMainMenuManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorMeshCollision.h">
+    <ClInclude Include="Source\Engine\Editor\EditorMeshCollision.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorSceneLifecycleManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorSceneLifecycleManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorSceneViewManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorSceneViewManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorRenderManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorRenderManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EditorPlatformManager.h">
+    <ClInclude Include="Source\Engine\Editor\EditorPlatformManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="GameScene.h">
+    <ClInclude Include="Source\Engine\Core\GameScene.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="Engine\Input\InputAction.h">
@@ -1202,60 +1202,60 @@
     <ClInclude Include="Engine\Input\KeyboardState.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="StringUtility.h">
+    <ClInclude Include="Source\Engine\Core\StringUtility.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="Log.h">
+    <ClInclude Include="Source\Engine\Core\Log.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="ApplicationWindow.h">
+    <ClInclude Include="Source\Engine\Core\ApplicationWindow.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="Matrix.h">
+    <ClInclude Include="Source\Engine\Core\Matrix.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="SphereCollision.h">
+    <ClInclude Include="Source\Engine\Physics\SphereCollision.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="Vector&amp;Matrix.h">
+    <ClInclude Include="Source\Engine\Core\Vector&amp;Matrix.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="Vector.h">
+    <ClInclude Include="Source\Engine\Core\Vector.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="externals\imgui-docking\imgui-docking\imconfig.h">
+    <ClInclude Include="ThirdParty\imgui-docking\imgui-docking\imconfig.h">
       <Filter>imgui</Filter>
     </ClInclude>
-    <ClInclude Include="externals\imgui-docking\imgui-docking\imgui.h">
+    <ClInclude Include="ThirdParty\imgui-docking\imgui-docking\imgui.h">
       <Filter>imgui</Filter>
     </ClInclude>
-    <ClInclude Include="externals\imgui-docking\imgui-docking\backends\imgui_impl_dx12.h">
+    <ClInclude Include="ThirdParty\imgui-docking\imgui-docking\backends\imgui_impl_dx12.h">
       <Filter>imgui</Filter>
     </ClInclude>
-    <ClInclude Include="externals\imgui-docking\imgui-docking\backends\imgui_impl_win32.h">
+    <ClInclude Include="ThirdParty\imgui-docking\imgui-docking\backends\imgui_impl_win32.h">
       <Filter>imgui</Filter>
     </ClInclude>
-    <ClInclude Include="externals\imgui-docking\imgui-docking\imgui_internal.h">
+    <ClInclude Include="ThirdParty\imgui-docking\imgui-docking\imgui_internal.h">
       <Filter>imgui</Filter>
     </ClInclude>
-    <ClInclude Include="externals\imgui-docking\imgui-docking\imstb_rectpack.h">
+    <ClInclude Include="ThirdParty\imgui-docking\imgui-docking\imstb_rectpack.h">
       <Filter>imgui</Filter>
     </ClInclude>
-    <ClInclude Include="externals\imgui-docking\imgui-docking\imstb_textedit.h">
+    <ClInclude Include="ThirdParty\imgui-docking\imgui-docking\imstb_textedit.h">
       <Filter>imgui</Filter>
     </ClInclude>
-    <ClInclude Include="externals\imgui-docking\imgui-docking\imstb_truetype.h">
+    <ClInclude Include="ThirdParty\imgui-docking\imgui-docking\imstb_truetype.h">
       <Filter>imgui</Filter>
     </ClInclude>
-    <ClInclude Include="externals\ImGuizmo-master\ImGuizmo-master\src\ImGuizmo.h">
+    <ClInclude Include="ThirdParty\ImGuizmo-master\ImGuizmo-master\src\ImGuizmo.h">
       <Filter>imgui</Filter>
     </ClInclude>
-    <ClInclude Include="Imgui.h">
+    <ClInclude Include="Source\Engine\Core\Imgui.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <Text Include="externals\imgui-docking\imgui-docking\LICENSE.txt">
+    <Text Include="ThirdParty\imgui-docking\imgui-docking\LICENSE.txt">
       <Filter>imgui</Filter>
     </Text>
   </ItemGroup>

@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
@@ -43,16 +43,26 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <IncludePath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\include;$(IncludePath)</IncludePath>
+    <LibraryPath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release;C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <IncludePath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\include;$(IncludePath)</IncludePath>
+    <ExternalIncludePath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;$(ExternalIncludePath)</ExternalIncludePath>
+    <LibraryPath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release;C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <WarningLevel>EnableAllWarnings</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_WINDOWS;USE_IMGUI;NOMINMAX;BTCPP_LIBRARY_VERSION=&quot;4.9.0&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>ThirdParty\imgui-docking\imgui-docking;ThirdParty\imgui-docking\imgui-docking\backends;ThirdParty\ImGuizmo-master\ImGuizmo-master\src;ThirdParty\FeelKitHaptics;ThirdParty\JoltPhysics-5.5.0;ThirdParty\AI\BehaviorTree.CPP-4.9.0\include;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\tinyxml2;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\minicoro;ThirdParty\AI\OpenSteer-master\include;ThirdParty\AI\recastnavigation-1.6.0\Detour\Include;ThirdParty\AI\recastnavigation-1.6.0\DetourCrowd\Include;ThirdParty\AI\recastnavigation-1.6.0\Recast\Include;Source\Engine\Core;Source\Engine\Editor;Source\Engine\Physics;Source\Engine\Audio;Source\Engine\Input;Source\Engine\Navigation;Source\Engine\Renderer;.;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 /external:anglebrackets /external:W0 %(AdditionalOptions)</AdditionalOptions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
       <TreatWarningAsError>true</TreatWarningAsError>
       <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
       <TreatAngleIncludeAsExternal>true</TreatAngleIncludeAsExternal>
@@ -62,10 +72,18 @@
       <EntryPointSymbol>WinMainCRTStartup</EntryPointSymbol>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <TreatLinkerWarningAsErrors>true</TreatLinkerWarningAsErrors>
+      <AdditionalDependencies>libfbxsdk.lib;onnxruntime.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <EnableDpiAwareness>PerMonitorHighDPIAware</EnableDpiAwareness>
     </Manifest>
+    <PostBuildEvent>
+      <Command>copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxcompiler.dll" "$(TargetDir)dxcompiler.dll"
+copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dxil.dll"
+copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.dll" "$(TargetDir)libfbxsdk.dll"
+copy "C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib\onnxruntime.dll" "$(TargetDir)onnxruntime.dll"
+xcopy "$(ProjectDir)Assets\Shaders" "$(TargetDir)Assets\Shaders" /E /I /Y</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -73,7 +91,8 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_WINDOWS;USE_IMGUI;NOMINMAX;BTCPP_LIBRARY_VERSION=&quot;4.9.0&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>ThirdParty\imgui-docking\imgui-docking;ThirdParty\imgui-docking\imgui-docking\backends;ThirdParty\ImGuizmo-master\ImGuizmo-master\src;ThirdParty\FeelKitHaptics;ThirdParty\JoltPhysics-5.5.0;ThirdParty\AI\BehaviorTree.CPP-4.9.0\include;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\tinyxml2;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\minicoro;ThirdParty\AI\OpenSteer-master\include;ThirdParty\AI\recastnavigation-1.6.0\Detour\Include;ThirdParty\AI\recastnavigation-1.6.0\DetourCrowd\Include;ThirdParty\AI\recastnavigation-1.6.0\Recast\Include;Source\Engine\Core;Source\Engine\Editor;Source\Engine\Physics;Source\Engine\Audio;Source\Engine\Input;Source\Engine\Navigation;Source\Engine\Renderer;.;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 /external:anglebrackets /external:W0 %(AdditionalOptions)</AdditionalOptions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
@@ -85,16 +104,355 @@
       <SubSystem>Windows</SubSystem>
       <EntryPointSymbol>WinMainCRTStartup</EntryPointSymbol>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>libfbxsdk.lib;onnxruntime.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <EnableDpiAwareness>PerMonitorHighDPIAware</EnableDpiAwareness>
     </Manifest>
+    <PostBuildEvent>
+      <Command>copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxcompiler.dll" "$(TargetDir)dxcompiler.dll"
+copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dxil.dll"
+copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.dll" "$(TargetDir)libfbxsdk.dll"
+copy "C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib\onnxruntime.dll" "$(TargetDir)onnxruntime.dll"
+xcopy "$(ProjectDir)Assets\Shaders" "$(TargetDir)Assets\Shaders" /E /I /Y</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <None Include=".editorconfig" />
+    <None Include="Assets\Input\InGameInputAction.json" />
+    <None Include="Assets\Shaders\Object3d.PS.hlsl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="Assets\Shaders\Object3d.VS.hlsl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="Assets\Shaders\ShadowDepth.VS.hlsl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="main.cpp" />
+    <ClCompile Include="Source\Engine\Core\ApplicationWindow.cpp" />
+    <ClCompile Include="Source\Engine\Physics\BoxCollision.cpp" />
+    <ClCompile Include="Source\Engine\Core\CrashHandler.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorAssetFactory.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorAssetUtility.cpp">
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorBottomPanel.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorBottomPanelWindowManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorComponentUtility.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorDockingManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorFrameInputManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorGameViewManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorHierarchyPanel.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorHierarchyWindowManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorImguiFrameManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorInspectorPanel.cpp">
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorInspectorWindowManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorInputManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorJoltPhysicsManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorLocalMoveManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorMainMenuBar.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorMainMenuManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorMeshCollision.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorNativeScriptAssetManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorAIManager.cpp">
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\cppGOAP-develop\src\Action.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\cppGOAP-develop\src\Node.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\cppGOAP-develop\src\Planner.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\cppGOAP-develop\src\WorldState.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\MicroPather-master\micropather.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\tinyxml2\tinyxml2.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\action_node.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\basic_types.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\behavior_tree.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\blackboard.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\bt_factory.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\condition_node.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\control_node.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\decorator_node.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\json_export.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\script_parser.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\script_tokenizer.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\shared_library.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\shared_library_WIN.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\tree_node.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\xml_parsing.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\recastnavigation-1.6.0\Detour\Source\DetourAlloc.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\recastnavigation-1.6.0\Detour\Source\DetourAssert.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\recastnavigation-1.6.0\Detour\Source\DetourCommon.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorAnimationManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorConstraintManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorNavigationManager.cpp">
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorPhysicsManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorRenderManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorRollingMoveManager.cpp">
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorRuntimeManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorAudioManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorScene.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorSceneCameraController.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorSceneLifecycleManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorSceneObjectManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorSceneSynchronizer.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorSceneViewManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorSelectionManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorScriptManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorPlatformManager.cpp" />
+    <ClCompile Include="Source\Engine\Core\GameScene.cpp" />
+    <ClCompile Include="Engine\Input\InputAction.cpp" />
+    <ClCompile Include="Engine\Input\InputActionAsset.cpp" />
+    <ClCompile Include="Engine\Input\InputActionMap.cpp" />
+    <ClCompile Include="Engine\Input\InputSystem.cpp" />
+    <ClCompile Include="Engine\Input\KeyboardState.cpp" />
+    <ClCompile Include="ThirdParty\imgui-docking\imgui-docking\imgui.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\imgui-docking\imgui-docking\imgui_demo.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\imgui-docking\imgui-docking\imgui_draw.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\imgui-docking\imgui-docking\backends\imgui_impl_dx12.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\imgui-docking\imgui-docking\backends\imgui_impl_win32.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\imgui-docking\imgui-docking\imgui_tables.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\imgui-docking\imgui-docking\imgui_widgets.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\ImGuizmo-master\ImGuizmo-master\src\ImGuizmo.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\imgui-node-editor-master\imgui-node-editor-master\crude_json.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\FeelKitHaptics\FeelKit.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\FeelKitHaptics\FeelKitHaptics.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\FeelKitHaptics\haptics\FeelKitVibration.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\FeelKitHaptics\core\FeelKitCore.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\FeelKitHaptics\audio\FeelKitAudio.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\FeelKitHaptics\generation\FeelKitImpactGeneration.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\FeelKitHaptics\effects\FeelKitEffects.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\FeelKitHaptics\screen\FeelKitScreen.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\Imgui.cpp">
+      <ObjectFileName>$(IntDir)imgui_helper.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\Log.cpp" />
+    <ClCompile Include="Source\Engine\Core\main.cpp" />
+    <ClCompile Include="Source\Engine\Core\Matrix.cpp" />
+    <ClCompile Include="Source\Engine\Physics\SphereCollision.cpp" />
+    <ClCompile Include="Source\Engine\Core\StringUtility.cpp" />
+    <ClCompile Include="Source\Engine\Core\Vector&amp;Matrix.cpp" />
+    <ClCompile Include="Source\Engine\Core\Vector.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Source\Engine\Core\ApplicationWindow.h" />
+    <ClInclude Include="Source\Engine\Physics\BoxCollision.h" />
+    <ClInclude Include="Source\Engine\Core\CrashHandler.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorAssetFactory.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorAssetUtility.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorAIManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorBottomPanel.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorBottomPanelWindowManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorCommonTypes.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorComponentUtility.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorDockingManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorFrameInputManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorGameViewManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorSharedState.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorHierarchyPanel.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorHierarchyWindowManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorImguiFrameManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorInspectorPanel.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorInspectorWindowManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorInputManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorJoltPhysicsManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorLocalMoveManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorMainMenuBar.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorMainMenuManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorMeshCollision.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorNativeScriptAssetManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorNavigationManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorPhysicsManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorRenderManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorRollingMoveManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorRuntimeManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorScene.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorSceneCameraController.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorSceneLifecycleManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorSceneObject.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorSceneObjectManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorSceneSynchronizer.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorSceneViewManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorSelectionManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorScriptManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorScriptApi.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorPlatformManager.h" />
+    <ClInclude Include="Source\Engine\Core\GameScene.h" />
+    <ClInclude Include="Engine\Input\InputAction.h" />
+    <ClInclude Include="Engine\Input\InputActionAsset.h" />
+    <ClInclude Include="Engine\Input\InputActionMap.h" />
+    <ClInclude Include="Engine\Input\InputBinding.h" />
+    <ClInclude Include="Engine\Input\InputContext.h" />
+    <ClInclude Include="Engine\Input\InputPhase.h" />
+    <ClInclude Include="Engine\Input\InputSystem.h" />
+    <ClInclude Include="Engine\Input\KeyboardState.h" />
+    <ClInclude Include="ThirdParty\AI\cppGOAP-develop\src\Action.h" />
+    <ClInclude Include="ThirdParty\AI\cppGOAP-develop\src\Node.h" />
+    <ClInclude Include="ThirdParty\AI\cppGOAP-develop\src\Planner.h" />
+    <ClInclude Include="ThirdParty\AI\cppGOAP-develop\src\WorldState.h" />
+    <ClInclude Include="ThirdParty\AI\MicroPather-master\micropather.h" />
+    <ClInclude Include="ThirdParty\imgui-docking\imgui-docking\imconfig.h" />
+    <ClInclude Include="ThirdParty\imgui-docking\imgui-docking\imgui.h" />
+    <ClInclude Include="ThirdParty\imgui-docking\imgui-docking\backends\imgui_impl_dx12.h" />
+    <ClInclude Include="ThirdParty\imgui-docking\imgui-docking\backends\imgui_impl_win32.h" />
+    <ClInclude Include="ThirdParty\imgui-docking\imgui-docking\imgui_internal.h" />
+    <ClInclude Include="ThirdParty\imgui-docking\imgui-docking\imstb_rectpack.h" />
+    <ClInclude Include="ThirdParty\imgui-docking\imgui-docking\imstb_textedit.h" />
+    <ClInclude Include="ThirdParty\imgui-docking\imgui-docking\imstb_truetype.h" />
+    <ClInclude Include="ThirdParty\ImGuizmo-master\ImGuizmo-master\src\ImGuizmo.h" />
+    <ClInclude Include="Source\Engine\Core\Imgui.h" />
+    <ClInclude Include="Source\Engine\Core\Log.h" />
+    <ClInclude Include="Source\Engine\Core\Matrix.h" />
+    <ClInclude Include="Source\Engine\Core\StringUtility.h" />
+    <ClInclude Include="Source\Engine\Physics\SphereCollision.h" />
+    <ClInclude Include="Source\Engine\Core\Vector&amp;Matrix.h" />
+    <ClInclude Include="Source\Engine\Core\Vector.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="ThirdParty\imgui-docking\imgui-docking\LICENSE.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="ThirdParty\DirectXTex\DirectXTex_Desktop_2022.vcxproj">
+      <Project>{371b9fa9-4c90-4ac6-a123-aced756d6c77}</Project>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

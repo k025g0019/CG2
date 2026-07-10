@@ -1,0 +1,2021 @@
+﻿<!doctype html>
+<html lang="ja">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>FeelKit API Reference</title>
+	<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+	<header class="topbar">
+		<div class="brand">
+			<a href="index.html" class="brand-mark">FK</a>
+			<div>
+				<p class="eyebrow">FeelKit Documentation</p>
+				<h1>API Reference</h1>
+			</div>
+		</div>
+		<div class="top-actions">
+			<a class="ghost-button" href="index.html">Home</a>
+			<button class="ghost-button" type="button" id="themeToggle">Theme</button>
+			<button class="menu-button" type="button" id="menuToggle">Menu</button>
+		</div>
+	</header>
+
+	<div class="layout">
+		<aside class="sidebar" id="sidebar">
+			<div class="search-panel">
+				<label for="apiSearch">関数検索</label>
+				<div class="search-row">
+					<input id="apiSearch" type="search" placeholder="PlayEffect / 音 / Shake">
+					<button type="button" id="clearSearch">Clear</button>
+				</div>
+				<p class="search-count"><span id="visibleCount">56</span> / 56 関数</p>
+			</div>
+			<nav class="nav-list" aria-label="API navigation">
+<details class="nav-group">
+<summary>共通ライフサイクル<span>4</span></summary>
+<div class="nav-group-list">
+<section class="nav-role-section">
+<div class="nav-role-title">管理</div>
+<a class="nav-item" href="#init" data-keywords="init 共通ライフサイクル 管理 feelkit の内部状態を初期化" title="Init: FeelKit の内部状態を初期化"><span class="nav-name">Init</span><span class="nav-desc">FeelKit の内部状態を初期化</span></a>
+<a class="nav-item" href="#update" data-keywords="update 共通ライフサイクル 管理 feelkit の内部演出を更新" title="Update: FeelKit の内部演出を更新"><span class="nav-name">Update</span><span class="nav-desc">FeelKit の内部演出を更新</span></a>
+<a class="nav-item" href="#draw" data-keywords="draw 共通ライフサイクル 管理 描画先へ現在の演出状態を渡す" title="Draw: 描画先へ現在の演出状態を渡す"><span class="nav-name">Draw</span><span class="nav-desc">描画先へ現在の演出状態を渡す</span></a>
+<a class="nav-item" href="#shutdown" data-keywords="shutdown 共通ライフサイクル 管理 feelkit の内部 state を破棄" title="Shutdown: FeelKit の内部 state を破棄"><span class="nav-name">Shutdown</span><span class="nav-desc">FeelKit の内部 state を破棄</span></a>
+</section>
+</div>
+</details>
+<details class="nav-group">
+<summary>音<span>7</span></summary>
+<div class="nav-group-list">
+<section class="nav-role-section">
+<div class="nav-role-title">実行</div>
+<a class="nav-item" href="#playse" data-keywords="playse 音 実行 効果音を再生" title="PlaySE: 効果音を再生"><span class="nav-name">PlaySE</span><span class="nav-desc">効果音を再生</span></a>
+<a class="nav-item" href="#playbgm" data-keywords="playbgm 音 実行 bgm を再生" title="PlayBGM: BGM を再生"><span class="nav-name">PlayBGM</span><span class="nav-desc">BGM を再生</span></a>
+<a class="nav-item" href="#stopbgm" data-keywords="stopbgm 音 実行 bgm を停止" title="StopBGM: BGM を停止"><span class="nav-name">StopBGM</span><span class="nav-desc">BGM を停止</span></a>
+<a class="nav-item" href="#playsoundeffect" data-keywords="playsoundeffect 音 実行 se を再生" title="PlaySoundEffect: SE を再生"><span class="nav-name">PlaySoundEffect</span><span class="nav-desc">SE を再生</span></a>
+<a class="nav-item" href="#playbgmswitch" data-keywords="playbgmswitch 音 実行 bgm を切り替え" title="PlayBgmSwitch: BGM を切り替え"><span class="nav-name">PlayBgmSwitch</span><span class="nav-desc">BGM を切り替え</span></a>
+<a class="nav-item" href="#playspatialsound" data-keywords="playspatialsound 音 実行 3d 音響を再生" title="PlaySpatialSound: 3D 音響を再生"><span class="nav-name">PlaySpatialSound</span><span class="nav-desc">3D 音響を再生</span></a>
+<a class="nav-item" href="#playvoice" data-keywords="playvoice 音 実行 ボイスを再生" title="PlayVoice: ボイスを再生"><span class="nav-name">PlayVoice</span><span class="nav-desc">ボイスを再生</span></a>
+</section>
+</div>
+</details>
+<details class="nav-group">
+<summary>振動<span>8</span></summary>
+<div class="nav-group-list">
+<section class="nav-role-section">
+<div class="nav-role-title">実行</div>
+<a class="nav-item" href="#playhapticfromaudio" data-keywords="playhapticfromaudio 振動 実行 音声ファイルを解析して振動を再生" title="PlayHapticFromAudio: 音声ファイルを解析して振動を再生"><span class="nav-name">PlayHapticFromAudio</span><span class="nav-desc">音声ファイルを解析して振動を再生</span></a>
+<a class="nav-item" href="#vibrate" data-keywords="vibrate 振動 実行 指定した強さと時間で振動を再生" title="Vibrate: 指定した強さと時間で振動を再生"><span class="nav-name">Vibrate</span><span class="nav-desc">指定した強さと時間で振動を再生</span></a>
+<a class="nav-item" href="#playgamepadvibration" data-keywords="playgamepadvibration 振動 実行 左右強度を指定してゲームパッド振動を再生" title="PlayGamepadVibration: 左右強度を指定してゲームパッド振動を再生"><span class="nav-name">PlayGamepadVibration</span><span class="nav-desc">左右強度を指定してゲームパッド振動を再生</span></a>
+<a class="nav-item" href="#playhdrumble" data-keywords="playhdrumble 振動 実行 hd rumble を再生" title="PlayHdRumble: HD Rumble を再生"><span class="nav-name">PlayHdRumble</span><span class="nav-desc">HD Rumble を再生</span></a>
+<a class="nav-item" href="#playdualsensehaptics" data-keywords="playdualsensehaptics 振動 実行 dualsense ハプティクスを再生" title="PlayDualSenseHaptics: DualSense ハプティクスを再生"><span class="nav-name">PlayDualSenseHaptics</span><span class="nav-desc">DualSense ハプティクスを再生</span></a>
+<a class="nav-item" href="#playtriggerfeedback" data-keywords="playtriggerfeedback 振動 実行 トリガー抵抗を再生" title="PlayTriggerFeedback: トリガー抵抗を再生"><span class="nav-name">PlayTriggerFeedback</span><span class="nav-desc">トリガー抵抗を再生</span></a>
+<a class="nav-item" href="#vibratepattern" data-keywords="vibratepattern 振動 実行 名前付き pattern で振動" title="VibratePattern: 名前付き pattern で振動"><span class="nav-name">VibratePattern</span><span class="nav-desc">名前付き pattern で振動</span></a>
+<a class="nav-item" href="#vibratefromsound" data-keywords="vibratefromsound 振動 実行 音声ファイルから振動を作って再生" title="VibrateFromSound: 音声ファイルから振動を作って再生"><span class="nav-name">VibrateFromSound</span><span class="nav-desc">音声ファイルから振動を作って再生</span></a>
+</section>
+</div>
+</details>
+<details class="nav-group">
+<summary>画面演出<span>10</span></summary>
+<div class="nav-group-list">
+<section class="nav-role-section">
+<div class="nav-role-title">実行</div>
+<a class="nav-item" href="#playshakefromaudio" data-keywords="playshakefromaudio 画面演出 実行 音声ファイルを解析して画面揺れを生成" title="PlayShakeFromAudio: 音声ファイルを解析して画面揺れを生成"><span class="nav-name">PlayShakeFromAudio</span><span class="nav-desc">音声ファイルを解析して画面揺れを生成</span></a>
+<a class="nav-item" href="#playflashfromaudio" data-keywords="playflashfromaudio 画面演出 実行 音声ファイルを解析して画面フラッシュを生成" title="PlayFlashFromAudio: 音声ファイルを解析して画面フラッシュを生成"><span class="nav-name">PlayFlashFromAudio</span><span class="nav-desc">音声ファイルを解析して画面フラッシュを生成</span></a>
+<a class="nav-item" href="#shake" data-keywords="shake 画面演出 実行 画面揺れを開始" title="Shake: 画面揺れを開始"><span class="nav-name">Shake</span><span class="nav-desc">画面揺れを開始</span></a>
+<a class="nav-item" href="#flash" data-keywords="flash 画面演出 実行 画面フラッシュを開始" title="Flash: 画面フラッシュを開始"><span class="nav-name">Flash</span><span class="nav-desc">画面フラッシュを開始</span></a>
+<a class="nav-item" href="#zoom" data-keywords="zoom 画面演出 実行 一定時間ズーム係数を設定" title="Zoom: 一定時間ズーム係数を設定"><span class="nav-name">Zoom</span><span class="nav-desc">一定時間ズーム係数を設定</span></a>
+<a class="nav-item" href="#hitstop" data-keywords="hitstop 画面演出 実行 ヒットストップ状態を開始" title="HitStop: ヒットストップ状態を開始"><span class="nav-name">HitStop</span><span class="nav-desc">ヒットストップ状態を開始</span></a>
+<a class="nav-item" href="#slowmotion" data-keywords="slowmotion 画面演出 実行 スローモーション係数を一定時間設定" title="SlowMotion: スローモーション係数を一定時間設定"><span class="nav-name">SlowMotion</span><span class="nav-desc">スローモーション係数を一定時間設定</span></a>
+<a class="nav-item" href="#createlightfromaudio" data-keywords="createlightfromaudio 画面演出 実行 音からライト点滅演出を作り" title="CreateLightFromAudio: 音からライト点滅演出を作り"><span class="nav-name">CreateLightFromAudio</span><span class="nav-desc">音からライト点滅演出を作り</span></a>
+<a class="nav-item" href="#createcameramotionfromaudio" data-keywords="createcameramotionfromaudio 画面演出 実行 音からカメラ揺れやカメラ動作を作り" title="CreateCameraMotionFromAudio: 音からカメラ揺れやカメラ動作を作り"><span class="nav-name">CreateCameraMotionFromAudio</span><span class="nav-desc">音からカメラ揺れやカメラ動作を作り</span></a>
+<a class="nav-item" href="#createslowmotionfromaudio" data-keywords="createslowmotionfromaudio 画面演出 実行 音からスローモーション演出を作り" title="CreateSlowMotionFromAudio: 音からスローモーション演出を作り"><span class="nav-name">CreateSlowMotionFromAudio</span><span class="nav-desc">音からスローモーション演出を作り</span></a>
+</section>
+</div>
+</details>
+<details class="nav-group">
+<summary>エフェクト<span>12</span></summary>
+<div class="nav-group-list">
+<section class="nav-role-section">
+<div class="nav-role-title">準備</div>
+<a class="nav-item" href="#loadeffect" data-keywords="loadeffect エフェクト 準備 名前付き effect を登録" title="LoadEffect: 名前付き effect を登録"><span class="nav-name">LoadEffect</span><span class="nav-desc">名前付き effect を登録</span></a>
+</section>
+<section class="nav-role-section">
+<div class="nav-role-title">実行</div>
+<a class="nav-item" href="#createparticlesfromaudio" data-keywords="createparticlesfromaudio エフェクト 実行 音声ファイルを解析して粒子 emitter を生成" title="CreateParticlesFromAudio: 音声ファイルを解析して粒子 emitter を生成"><span class="nav-name">CreateParticlesFromAudio</span><span class="nav-desc">音声ファイルを解析して粒子 emitter を生成</span></a>
+<a class="nav-item" href="#playeffect" data-keywords="playeffect エフェクト 実行 effect を再生" title="PlayEffect: effect を再生"><span class="nav-name">PlayEffect</span><span class="nav-desc">effect を再生</span></a>
+<a class="nav-item" href="#effectpoolsetmax" data-keywords="effectpoolsetmax エフェクト 実行 active effect の数と寿命を管理" title="EffectPoolSetMax: active effect の数と寿命を管理"><span class="nav-name">EffectPoolSetMax</span><span class="nav-desc">active effect の数と寿命を管理</span></a>
+<a class="nav-item" href="#spawndecal" data-keywords="spawndecal エフェクト 実行 弾痕、血痕、足跡などの decal を内部 pool に追加" title="SpawnDecal: 弾痕、血痕、足跡などの decal を内部 pool に追加"><span class="nav-name">SpawnDecal</span><span class="nav-desc">弾痕、血痕、足跡などの decal を内部 pool に追加</span></a>
+<a class="nav-item" href="#createtrail" data-keywords="createtrail エフェクト 実行 軌跡表現用の trail を作成、解放" title="CreateTrail: 軌跡表現用の trail を作成、解放"><span class="nav-name">CreateTrail</span><span class="nav-desc">軌跡表現用の trail を作成、解放</span></a>
+<a class="nav-item" href="#createafterimage" data-keywords="createafterimage エフェクト 実行 残像管理を作成、解放" title="CreateAfterImage: 残像管理を作成、解放"><span class="nav-name">CreateAfterImage</span><span class="nav-desc">残像管理を作成、解放</span></a>
+<a class="nav-item" href="#emit" data-keywords="emit エフェクト 実行 粒子 emitter を作成、停止" title="Emit: 粒子 emitter を作成、停止"><span class="nav-name">Emit</span><span class="nav-desc">粒子 emitter を作成、停止</span></a>
+<a class="nav-item" href="#playeffectlod" data-keywords="playeffectlod エフェクト 実行 距離に応じて lod 版 effect を選んで再生" title="PlayEffectLod: 距離に応じて LOD 版 effect を選んで再生"><span class="nav-name">PlayEffectLod</span><span class="nav-desc">距離に応じて LOD 版 effect を選んで再生</span></a>
+<a class="nav-item" href="#spawneffectfromaudio" data-keywords="spawneffectfromaudio エフェクト 実行 音の強さから effect 強度を作って発生させ" title="SpawnEffectFromAudio: 音の強さから effect 強度を作って発生させ"><span class="nav-name">SpawnEffectFromAudio</span><span class="nav-desc">音の強さから effect 強度を作って発生させ</span></a>
+<a class="nav-item" href="#playparticle" data-keywords="playparticle エフェクト 実行 パーティクルを再生" title="PlayParticle: パーティクルを再生"><span class="nav-name">PlayParticle</span><span class="nav-desc">パーティクルを再生</span></a>
+<a class="nav-item" href="#playsequence" data-keywords="playsequence エフェクト 実行 複数 event の sequence を実行" title="PlaySequence: 複数 event の sequence を実行"><span class="nav-name">PlaySequence</span><span class="nav-desc">複数 event の sequence を実行</span></a>
+</section>
+</div>
+</details>
+<details class="nav-group">
+<summary>衝突 / 爆発<span>8</span></summary>
+<div class="nav-group-list">
+<section class="nav-role-section">
+<div class="nav-role-title">実行</div>
+<a class="nav-item" href="#generateimpactfeedback" data-keywords="generateimpactfeedback 衝突 / 爆発 実行 物理衝突から振動、画面揺れ、ヒットストップ、se 音量、粒子強度を…" title="GenerateImpactFeedback: 物理衝突から振動、画面揺れ、ヒットストップ、SE 音量、粒子強度を…"><span class="nav-name">GenerateImpactFeedback</span><span class="nav-desc">物理衝突から振動、画面揺れ、ヒットストップ、SE 音量、粒子強度を…</span></a>
+<a class="nav-item" href="#generateexplosionfeedback" data-keywords="generateexplosionfeedback 衝突 / 爆発 実行 爆発パラメータから振動、揺れ、se、effect 強度を生成" title="GenerateExplosionFeedback: 爆発パラメータから振動、揺れ、SE、effect 強度を生成"><span class="nav-name">GenerateExplosionFeedback</span><span class="nav-desc">爆発パラメータから振動、揺れ、SE、effect 強度を生成</span></a>
+<a class="nav-item" href="#playimpact" data-keywords="playimpact 衝突 / 爆発 実行 衝撃演出を一括再生" title="PlayImpact: 衝撃演出を一括再生"><span class="nav-name">PlayImpact</span><span class="nav-desc">衝撃演出を一括再生</span></a>
+<a class="nav-item" href="#playexplosion" data-keywords="playexplosion 衝突 / 爆発 実行 爆発 effect を再生" title="PlayExplosion: 爆発 effect を再生"><span class="nav-name">PlayExplosion</span><span class="nav-desc">爆発 effect を再生</span></a>
+<a class="nav-item" href="#applyocclusion" data-keywords="applyocclusion 衝突 / 爆発 実行 listener と sound source の距離から occ…" title="ApplyOcclusion: listener と sound source の距離から occ…"><span class="nav-name">ApplyOcclusion</span><span class="nav-desc">listener と sound source の距離から occ…</span></a>
+<a class="nav-item" href="#playexplosion-2" data-keywords="playexplosion 衝突 / 爆発 実行 爆発 effect を再生" title="PlayExplosion: 爆発 effect を再生"><span class="nav-name">PlayExplosion</span><span class="nav-desc">爆発 effect を再生</span></a>
+<a class="nav-item" href="#generateimpacthaptics" data-keywords="generateimpacthaptics 衝突 / 爆発 実行 衝突速度と質量から振動を自動生成" title="GenerateImpactHaptics: 衝突速度と質量から振動を自動生成"><span class="nav-name">GenerateImpactHaptics</span><span class="nav-desc">衝突速度と質量から振動を自動生成</span></a>
+<a class="nav-item" href="#generateimpactshake" data-keywords="generateimpactshake 衝突 / 爆発 実行 衝突速度と質量から画面揺れを自動生成" title="GenerateImpactShake: 衝突速度と質量から画面揺れを自動生成"><span class="nav-name">GenerateImpactShake</span><span class="nav-desc">衝突速度と質量から画面揺れを自動生成</span></a>
+</section>
+</div>
+</details>
+<details class="nav-group">
+<summary>素材変換<span>5</span></summary>
+<div class="nav-group-list">
+<section class="nav-role-section">
+<div class="nav-role-title">実行</div>
+<a class="nav-item" href="#createparticlesfromimage" data-keywords="createparticlesfromimage 素材変換 実行 画像の内容から粒子 emitter を生成" title="CreateParticlesFromImage: 画像の内容から粒子 emitter を生成"><span class="nav-name">CreateParticlesFromImage</span><span class="nav-desc">画像の内容から粒子 emitter を生成</span></a>
+<a class="nav-item" href="#createcollisionfromimage" data-keywords="createcollisionfromimage 素材変換 実行 画像の非透明部分から簡易 collision を生成" title="CreateCollisionFromImage: 画像の非透明部分から簡易 collision を生成"><span class="nav-name">CreateCollisionFromImage</span><span class="nav-desc">画像の非透明部分から簡易 collision を生成</span></a>
+<a class="nav-item" href="#breakimage" data-keywords="breakimage 素材変換 実行 texture を破片データに変換" title="BreakImage: texture を破片データに変換"><span class="nav-name">BreakImage</span><span class="nav-desc">texture を破片データに変換</span></a>
+<a class="nav-item" href="#importgif" data-keywords="importgif 素材変換 実行 gif を effect として取り込み" title="ImportGif: GIF を effect として取り込み"><span class="nav-name">ImportGif</span><span class="nav-desc">GIF を effect として取り込み</span></a>
+<a class="nav-item" href="#spawntexteffect" data-keywords="spawntexteffect 素材変換 実行 文字列からテキスト演出を生成" title="SpawnTextEffect: 文字列からテキスト演出を生成"><span class="nav-name">SpawnTextEffect</span><span class="nav-desc">文字列からテキスト演出を生成</span></a>
+</section>
+</div>
+</details>
+<details class="nav-group">
+<summary>アニメーション<span>2</span></summary>
+<div class="nav-group-list">
+<section class="nav-role-section">
+<div class="nav-role-title">実行</div>
+<a class="nav-item" href="#generatehapticsfromanimation" data-keywords="generatehapticsfromanimation アニメーション 実行 アニメーション名から振動を生成" title="GenerateHapticsFromAnimation: アニメーション名から振動を生成"><span class="nav-name">GenerateHapticsFromAnimation</span><span class="nav-desc">アニメーション名から振動を生成</span></a>
+<a class="nav-item" href="#generatefootsteps" data-keywords="generatefootsteps アニメーション 実行 アニメーション名から足音と足元振動を生成" title="GenerateFootsteps: アニメーション名から足音と足元振動を生成"><span class="nav-name">GenerateFootsteps</span><span class="nav-desc">アニメーション名から足音と足元振動を生成</span></a>
+</section>
+</div>
+</details>
+			</nav>
+		</aside>
+
+		<main class="content">
+			<section class="hero small-hero">
+				<p class="eyebrow">Generated from API_REFERENCE.md</p>
+				<h2>クリックして飛べる、検索できる、コードをコピーできるリファレンス</h2>
+				<p>左の検索で関数を絞り込み、関数名クリックで該当項目へ移動できます。Markdown は引き継ぎ用、この HTML は人間が読む用です。</p>
+				<div class="hero-actions">
+					<a class="primary-button" href="#playeffect">PlayEffectを見る</a>
+					<a class="secondary-button" href="https://www.youtube.com/results?search_query=game+feel+screen+shake+haptics" target="_blank" rel="noreferrer">YouTube参考検索</a>
+				</div>
+			</section>
+
+			<div class="reference-body">
+<p>このファイルは <code>FeelKit.h</code> から使う公開 API のリファレンスです。</p>
+<p>各項目は、関数を引くために次の形式で書いています。</p>
+<ul>
+<li>宣言</li>
+<li>概略</li>
+<li>引数</li>
+<li>戻り値</li>
+<li>解説</li>
+<li>サンプルコード</li>
+<li>実装状態</li>
+</ul>
+<h2 class="chapter-subtitle" id="section-6b1eeb27b1">目次</h2>
+<ul>
+<li>共通ライフサイクル</li>
+<li>Audio</li>
+<li>Haptics</li>
+<li>Screen</li>
+<li>Effects</li>
+<li>Generation</li>
+<li>Debug / Query</li>
+<li>FeelKitHaptics</li>
+</ul>
+<section class="chapter" id="section-b2f79a6da9">
+<h2>共通ライフサイクル</h2>
+</section>
+<section class="api-card searchable-section" id="init" data-keywords="init">
+<div class="api-card-head">
+<h2>Init</h2>
+<a class="anchor-link" href="#init">#</a>
+</div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::Init();</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p><code>FeelKit</code> の内部状態を初期化します。</p>
+<h3 class="api-subheading">引数</h3>
+<p>なし</p>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>active effect、timeline、waveform、emitter、text effect、fragment、screen effect などの内部 state を初期値に戻します。 ゲーム開始時や、演出管理を明示的にリセットしたいタイミングで呼びます。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::Init();</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。内部 state を初期化します。</p>
+</section>
+<section class="api-card searchable-section" id="update" data-keywords="update">
+<div class="api-card-head">
+<h2>Update</h2>
+<a class="anchor-link" href="#update">#</a>
+</div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::Update(float deltaTime);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p><code>FeelKit</code> の内部演出を更新します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>deltaTime</code></li>
+<li>前フレームからの経過秒数</li>
+<li>負数を渡した場合は <code>0.0f</code> として扱います</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>active effect、画面揺れ、フラッシュ、ズーム、ヒットストップ、スローモーション、timeline、text effect、fragment、screen effect、trail point の寿命を進めます。 ゲームの更新処理内で毎フレーム呼びます。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::Update(1.0f / 60.0f);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。複数カテゴリの寿命管理を行います。</p>
+</section>
+<section class="api-card searchable-section" id="draw" data-keywords="draw">
+<div class="api-card-head">
+<h2>Draw</h2>
+<a class="anchor-link" href="#draw">#</a>
+</div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::Draw();</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>描画先へ、現在の演出状態を渡します。</p>
+<h3 class="api-subheading">引数</h3>
+<p>なし</p>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>設定済みの描画先へ現在の演出情報を渡します。 実際の描画はゲーム側で行います。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::Draw();</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。描画そのものは行わず、描画先へ状態を渡します。</p>
+</section>
+<section class="api-card searchable-section" id="shutdown" data-keywords="shutdown">
+<div class="api-card-head">
+<h2>Shutdown</h2>
+<a class="anchor-link" href="#shutdown">#</a>
+</div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::Shutdown();</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p><code>FeelKit</code> の内部 state を破棄します。</p>
+<h3 class="api-subheading">引数</h3>
+<p>なし</p>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>active effect、decal、timeline、waveform、emitter、LOD effect、text effect、collision、fragment、screen effect、trail point をクリアします。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::Shutdown();</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。</p>
+</section>
+<section class="chapter" id="audio">
+<h2>Audio</h2>
+</section>
+<section class="api-card searchable-section" id="playse" data-keywords="playse">
+<div class="api-card-head">
+<h2>PlaySE</h2>
+<a class="anchor-link" href="#playse">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#playsoundeffect"><span class="related-name">PlaySoundEffect</span><span class="related-note">詳細指定で再生</span></a><a class="related-chip" href="#generateimpactfeedback"><span class="related-name">GenerateImpactFeedback</span><span class="related-note">impact内で呼ばれる</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::PlaySE(const char* path);
+void FeelKit::PlaySE(const char* path, float volume);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>効果音を再生します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>path</code></li>
+<li>再生する音声ファイル名または識別子</li>
+<li><code>volume</code></li>
+<li>音量</li>
+<li><code>0.0f</code> から <code>1.0f</code> の範囲に補正されます</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>設定済みの SE 再生先を呼びます。 未設定の場合は何もしません。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::PlaySE(&quot;hit.wav&quot;, 1.0f);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。ゲーム側の音再生先と接続します。</p>
+</section>
+<section class="api-card searchable-section" id="playbgm" data-keywords="playbgm">
+<div class="api-card-head">
+<h2>PlayBGM</h2>
+<a class="anchor-link" href="#playbgm">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#stopbgm"><span class="related-name">StopBGM</span><span class="related-note">停止</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::PlayBGM(const char* path, bool loop);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>BGM を再生します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>path</code></li>
+<li>BGM のファイル名または識別子</li>
+<li><code>loop</code></li>
+<li><code>true</code> の場合はループ再生します</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>設定済みの BGM 再生先を呼びます。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::PlayBGM(&quot;stage01.ogg&quot;, true);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。音声再生そのものはゲーム側の再生先に任せます。</p>
+</section>
+<section class="api-card searchable-section" id="stopbgm" data-keywords="stopbgm">
+<div class="api-card-head">
+<h2>StopBGM</h2>
+<a class="anchor-link" href="#stopbgm">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#playbgm"><span class="related-name">PlayBGM</span><span class="related-note">再生</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::StopBGM();</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>BGM を停止します。</p>
+<h3 class="api-subheading">引数</h3>
+<p>なし</p>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>設定済みの BGM 停止先を呼びます。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::StopBGM();</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。</p>
+</section>
+<section class="api-card searchable-section" id="playhapticfromaudio" data-keywords="playhapticfromaudio">
+<div class="api-card-head">
+<h2>PlayHapticFromAudio</h2>
+<a class="anchor-link" href="#playhapticfromaudio">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#vibratefromsound"><span class="related-name">VibrateFromSound</span><span class="related-note">音から振動</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::PlayHapticFromAudio(const char* soundPath);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>音声ファイルを解析して振動を再生します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>soundPath</code></li>
+<li>解析する WAV ファイルパス</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>音を解析し、振動パラメータに変換して <code>Vibrate()</code> を呼びます。 音から振動を作る代表的な API です。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::PlayHapticFromAudio(&quot;explosion.wav&quot;);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。</p>
+</section>
+<section class="api-card searchable-section" id="playshakefromaudio" data-keywords="playshakefromaudio">
+<div class="api-card-head">
+<h2>PlayShakeFromAudio</h2>
+<a class="anchor-link" href="#playshakefromaudio">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#shake"><span class="related-name">Shake</span><span class="related-note">直接揺らす</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::PlayShakeFromAudio(const char* soundPath);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>音声ファイルを解析して画面揺れを生成します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>soundPath</code></li>
+<li>解析する WAV ファイルパス</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>音の feature をフレーム単位に分割し、timeline へ揺れイベントを登録します。 ゲーム側は <code>Update()</code> を呼ぶことで timeline を進めます。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::PlayShakeFromAudio(&quot;earthquake.wav&quot;);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。簡易な timeline 生成です。</p>
+</section>
+<section class="api-card searchable-section" id="playflashfromaudio" data-keywords="playflashfromaudio">
+<div class="api-card-head">
+<h2>PlayFlashFromAudio</h2>
+<a class="anchor-link" href="#playflashfromaudio">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#flash"><span class="related-name">Flash</span><span class="related-note">直接flash</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::PlayFlashFromAudio(const char* soundPath, unsigned int color = 0xFFFFFFFFu);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>音声ファイルを解析して画面フラッシュを生成します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>soundPath</code></li>
+<li>解析する WAV ファイルパス</li>
+<li><code>color</code></li>
+<li>フラッシュ色</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>音量やピークをもとに、timeline 上へフラッシュイベントを登録します。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::PlayFlashFromAudio(&quot;lightning.wav&quot;, 0xFFFFFFFFu);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。簡易な timeline 生成です。</p>
+</section>
+<section class="api-card searchable-section" id="createparticlesfromaudio" data-keywords="createparticlesfromaudio">
+<div class="api-card-head">
+<h2>CreateParticlesFromAudio</h2>
+<a class="anchor-link" href="#createparticlesfromaudio">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#playparticle"><span class="related-name">PlayParticle</span><span class="related-note">粒子を再生</span></a><a class="related-chip" href="#emit"><span class="related-name">Emit</span><span class="related-note">emitterを使う</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::CreateParticlesFromAudio(const char* soundPath);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>音声ファイルを解析して粒子 emitter を生成します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>soundPath</code></li>
+<li>解析する WAV ファイルパス</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>音量、低音、高音の特徴から emitter の発生量、粒子サイズ、速度、色を決めます。 現状は音の時系列に完全追従する粒子列ではなく、解析結果から emitter を作る設計です。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::CreateParticlesFromAudio(&quot;explosion.wav&quot;);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>実用最低限。ワンショット emitter 生成です。</p>
+</section>
+<section class="chapter" id="haptics">
+<h2>Haptics</h2>
+</section>
+<section class="api-card searchable-section" id="vibrate" data-keywords="vibrate">
+<div class="api-card-head">
+<h2>Vibrate</h2>
+<a class="anchor-link" href="#vibrate">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#generateimpacthaptics"><span class="related-name">GenerateImpactHaptics</span><span class="related-note">衝突から自動振動</span></a><a class="related-chip" href="#playhapticfromaudio"><span class="related-name">PlayHapticFromAudio</span><span class="related-note">音から自動振動</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::Vibrate(float power, float seconds);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>指定した強さと時間で振動を再生します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>power</code></li>
+<li>振動強度</li>
+<li><code>0.0f</code> から <code>1.0f</code> に補正されます</li>
+<li><code>seconds</code></li>
+<li>振動時間</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p><code>SetVibrationCallback()</code> に callback がある場合はそれを呼びます。 <code>FeelKitHaptics</code> backend を使う場合は <code>PlayGamepadVibration()</code> を使います。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::Vibrate(0.8f, 0.12f);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。</p>
+</section>
+<section class="api-card searchable-section" id="playgamepadvibration" data-keywords="playgamepadvibration">
+<div class="api-card-head">
+<h2>PlayGamepadVibration</h2>
+<a class="anchor-link" href="#playgamepadvibration">#</a>
+</div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>bool FeelKit::PlayGamepadVibration(const GamepadVibrationRequest&amp; request);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>左右強度を指定してゲームパッド振動を再生します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>request.leftStrength</code></li>
+<li>左モーター強度</li>
+<li><code>request.rightStrength</code></li>
+<li>右モーター強度</li>
+<li><code>request.durationMs</code></li>
+<li>振動時間ミリ秒</li>
+<li><code>request.isEnabled</code></li>
+<li><code>false</code> の場合は再生しません</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<ul>
+<li><code>true</code></li>
+<li>backend または callback に再生要求を渡せた</li>
+<li><code>false</code></li>
+<li>無効状態、または backend / callback が無い</li>
+</ul>
+<h3 class="api-subheading">解説</h3>
+<p>設定済みの振動連携先へゲームパッド振動を渡します。 連携先が無い場合は再生しません。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::GamepadVibrationRequest request;
+request.leftStrength = 0.8f;
+request.rightStrength = 0.4f;
+request.durationMs = 120;
+request.isEnabled = true;
+
+FeelKit::PlayGamepadVibration(request);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。</p>
+</section>
+<section class="api-card searchable-section" id="playhdrumble" data-keywords="playhdrumble">
+<div class="api-card-head">
+<h2>PlayHdRumble</h2>
+<a class="anchor-link" href="#playhdrumble">#</a>
+</div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>bool FeelKit::PlayHdRumble(const HdRumbleRequest&amp; request);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>HD Rumble を再生します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>request.lowFrequency</code></li>
+<li>低周波</li>
+<li><code>request.highFrequency</code></li>
+<li>高周波</li>
+<li><code>request.amplitude</code></li>
+<li>振幅</li>
+<li><code>request.durationMs</code></li>
+<li>再生時間ミリ秒</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<ul>
+<li><code>true</code></li>
+<li>連携先を呼べた</li>
+<li><code>false</code></li>
+<li>連携先未設定</li>
+</ul>
+<h3 class="api-subheading">解説</h3>
+<p>標準 backend はまだ持たず、ゲーム側の連携先へ処理を渡します。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::SetHdRumbleCallback(
+	[](float low, float high, float amplitude, int ms) {
+		hdRumble.Play(low, high, amplitude, ms);
+	});</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>連携先接続実装。</p>
+</section>
+<section class="api-card searchable-section" id="playdualsensehaptics" data-keywords="playdualsensehaptics">
+<div class="api-card-head">
+<h2>PlayDualSenseHaptics</h2>
+<a class="anchor-link" href="#playdualsensehaptics">#</a>
+</div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>bool FeelKit::PlayDualSenseHaptics(const DualSenseHapticsRequest&amp; request);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>DualSense ハプティクスを再生します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>request.leftStrength</code></li>
+<li>左側強度</li>
+<li><code>request.rightStrength</code></li>
+<li>右側強度</li>
+<li><code>request.durationMs</code></li>
+<li>再生時間ミリ秒</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<ul>
+<li><code>true</code></li>
+<li>連携先を呼べた</li>
+<li><code>false</code></li>
+<li>連携先未設定</li>
+</ul>
+<h3 class="api-subheading">解説</h3>
+<p>PC 向け DualSense backend はライブラリ内に固定せず、ゲーム側の連携先に任せます。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::PlayDualSenseHaptics({0.7f, 0.7f, 100});</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>連携先接続実装。</p>
+</section>
+<section class="api-card searchable-section" id="playtriggerfeedback" data-keywords="playtriggerfeedback">
+<div class="api-card-head">
+<h2>PlayTriggerFeedback</h2>
+<a class="anchor-link" href="#playtriggerfeedback">#</a>
+</div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>bool FeelKit::PlayTriggerFeedback(const TriggerFeedbackRequest&amp; request);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>左右トリガー抵抗を再生します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>request.leftResistance</code></li>
+<li>左トリガー抵抗</li>
+<li><code>request.rightResistance</code></li>
+<li>右トリガー抵抗</li>
+<li><code>request.durationMs</code></li>
+<li>再生時間ミリ秒</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<ul>
+<li><code>true</code></li>
+<li>連携先を呼べた</li>
+<li><code>false</code></li>
+<li>連携先未設定</li>
+</ul>
+<h3 class="api-subheading">解説</h3>
+<p>DualSense adaptive trigger などの実機依存処理はゲーム側に渡します。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::TriggerFeedbackRequest request;
+request.leftResistance = 0.5f;
+request.rightResistance = 0.2f;
+request.durationMs = 150;
+
+FeelKit::PlayTriggerFeedback(request);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>連携先接続実装。</p>
+</section>
+<section class="chapter" id="screen">
+<h2>Screen</h2>
+</section>
+<section class="api-card searchable-section" id="shake" data-keywords="shake">
+<div class="api-card-head">
+<h2>Shake</h2>
+<a class="anchor-link" href="#shake">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#playshakefromaudio"><span class="related-name">PlayShakeFromAudio</span><span class="related-note">音から揺れ</span></a><a class="related-chip" href="#generateimpactshake"><span class="related-name">GenerateImpactShake</span><span class="related-note">衝突から揺れ</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::Shake(float power, float seconds);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>画面揺れを開始します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>power</code></li>
+<li>揺れ強度</li>
+<li><code>seconds</code></li>
+<li>揺れ時間</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>現在の画面揺れ状態に反映されます。 実際のカメラ適用はゲーム側で行います。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::Shake(5.0f, 0.2f);
+
+// Update() 後にゲーム側のカメラへ揺れを反映します</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。</p>
+</section>
+<section class="api-card searchable-section" id="flash" data-keywords="flash">
+<div class="api-card-head">
+<h2>Flash</h2>
+<a class="anchor-link" href="#flash">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#playflashfromaudio"><span class="related-name">PlayFlashFromAudio</span><span class="related-note">音からflash</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::Flash(unsigned int color, float seconds);
+void FeelKit::Flash(unsigned int color, float seconds, float strength);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>画面フラッシュを開始します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>color</code></li>
+<li>RGBA 色</li>
+<li><code>seconds</code></li>
+<li>表示時間</li>
+<li><code>strength</code></li>
+<li>フラッシュ強度</li>
+<li><code>0.0f</code> から <code>1.0f</code> に補正されます</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>現在のフラッシュ状態に反映されます。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::Flash(0xFFFFFFFFu, 0.1f, 0.8f);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。</p>
+</section>
+<section class="api-card searchable-section" id="zoom" data-keywords="zoom">
+<div class="api-card-head">
+<h2>Zoom</h2>
+<a class="anchor-link" href="#zoom">#</a>
+</div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::Zoom(float scale, float seconds);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>一定時間ズーム係数を設定します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>scale</code></li>
+<li>ズーム倍率</li>
+<li><code>seconds</code></li>
+<li>継続時間</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>現在のズーム状態に反映されます。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::Zoom(1.08f, 0.15f);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。</p>
+</section>
+<section class="api-card searchable-section" id="hitstop" data-keywords="hitstop">
+<div class="api-card-head">
+<h2>HitStop</h2>
+<a class="anchor-link" href="#hitstop">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#generateimpactfeedback"><span class="related-name">GenerateImpactFeedback</span><span class="related-note">衝突feedbackで実行</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::HitStop(float seconds);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>ヒットストップ状態を開始します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>seconds</code></li>
+<li>ヒットストップ時間</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>現在のヒットストップ状態を使って、ゲーム更新停止はゲーム側で行います。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::HitStop(0.05f);
+
+// ゲーム側でヒットストップ中の更新停止を行います</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。</p>
+</section>
+<section class="api-card searchable-section" id="slowmotion" data-keywords="slowmotion">
+<div class="api-card-head">
+<h2>SlowMotion</h2>
+<a class="anchor-link" href="#slowmotion">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#createslowmotionfromaudio"><span class="related-name">CreateSlowMotionFromAudio</span><span class="related-note">音からslow motion</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::SlowMotion(float scale, float seconds);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>スローモーション係数を一定時間設定します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>scale</code></li>
+<li>時間倍率</li>
+<li><code>0.0f</code> から <code>1.0f</code> に補正されます</li>
+<li><code>seconds</code></li>
+<li>継続時間</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>現在のスローモーション状態をゲーム側の time scale に反映して使います。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::SlowMotion(0.3f, 0.2f);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。</p>
+</section>
+<section class="api-card searchable-section" id="loadeffect" data-keywords="loadeffect">
+<div class="api-card-head">
+<h2>LoadEffect</h2>
+<a class="anchor-link" href="#loadeffect">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#playeffect"><span class="related-name">PlayEffect</span><span class="related-note">登録済みeffectを再生</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>bool FeelKit::LoadEffect(const char* effectName, const EffectDesc&amp; effectDesc);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>名前付き effect を登録します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>effectName</code></li>
+<li>effect 名</li>
+<li><code>effectDesc</code></li>
+<li>texture、layout、frame 数、再生時間などの設定</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<ul>
+<li><code>true</code></li>
+<li>登録成功</li>
+<li><code>false</code></li>
+<li><code>effectName</code> が <code>nullptr</code> または空文字</li>
+</ul>
+<h3 class="api-subheading">解説</h3>
+<p>登録した effect は <code>PlayEffect(&quot;name&quot;, pos)</code> で再生できます。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::EffectDesc explosion;
+explosion.textureHandle = explosionTexture;
+explosion.layout = FeelKit::EffectLayout::grid;
+explosion.frameWidth = 64;
+explosion.frameHeight = 64;
+explosion.frameCount = 16;
+explosion.columns = 4;
+explosion.rows = 4;
+explosion.seconds = 0.5f;
+explosion.loop = false;
+
+FeelKit::LoadEffect(&quot;explosion&quot;, explosion);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。</p>
+</section>
+<section class="api-card searchable-section" id="playeffect" data-keywords="playeffect">
+<div class="api-card-head">
+<h2>PlayEffect</h2>
+<a class="anchor-link" href="#playeffect">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#loadeffect"><span class="related-name">LoadEffect</span><span class="related-note">名前登録</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>int FeelKit::PlayEffect(int textureHandle, float x, float y, int frameCount, float seconds, bool loop);
+int FeelKit::PlayEffect(int textureHandle, float x, float y, int frameWidth, int frameHeight, int frameCount, float seconds, bool loop);
+int FeelKit::PlayEffect(const EffectDesc&amp; effectDesc, Vec2 pos);
+int FeelKit::PlayEffect(const EffectDesc&amp; effectDesc, Vec3 pos);
+int FeelKit::PlayEffect(const char* effectName, Vec2 pos);
+int FeelKit::PlayEffect(const char* effectName, Vec3 pos);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>effect を再生します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>textureHandle</code></li>
+<li>ゲーム側 texture 管理の handle</li>
+<li><code>x</code>, <code>y</code></li>
+<li>2D 座標</li>
+<li><code>frameWidth</code>, <code>frameHeight</code></li>
+<li>スプライトシート 1 フレームのサイズ</li>
+<li><code>frameCount</code></li>
+<li>フレーム数</li>
+<li><code>seconds</code></li>
+<li>再生時間</li>
+<li><code>loop</code></li>
+<li>ループ再生するか</li>
+<li><code>effectDesc</code></li>
+<li>詳細設定</li>
+<li><code>effectName</code></li>
+<li><code>LoadEffect()</code> で登録した名前</li>
+<li><code>pos</code></li>
+<li>2D または 3D 座標</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<ul>
+<li><code>0</code> 以上</li>
+<li>effect ID</li>
+<li><code>-1</code></li>
+<li>名前付き effect が見つからない</li>
+</ul>
+<h3 class="api-subheading">解説</h3>
+<p>再生された effect は <code>Update()</code> で寿命管理され、<code>Draw()</code> 時に <code>SetEffectDrawCallback()</code> へ <code>EffectDrawInfo</code> が渡されます。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>int effectId = FeelKit::PlayEffect(&quot;explosion&quot;, FeelKit::Vec2{320.0f, 240.0f});</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。</p>
+</section>
+<section class="api-card searchable-section" id="effectpoolsetmax" data-keywords="effectpoolsetmax">
+<div class="api-card-head">
+<h2>EffectPoolSetMax</h2>
+<a class="anchor-link" href="#effectpoolsetmax">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#playeffect"><span class="related-name">PlayEffect</span><span class="related-note">poolで再生</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::EffectPoolSetMax(int maxEffects);
+int FeelKit::EffectPoolGetActiveCount();
+void FeelKit::EffectPoolKillAll();
+void FeelKit::EffectPoolKill(int effectId);
+bool FeelKit::EffectPoolIsAlive(int effectId);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>active effect の数と寿命を管理します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>maxEffects</code></li>
+<li>同時再生数の上限</li>
+<li><code>effectId</code></li>
+<li><code>PlayEffect()</code> が返した ID</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<ul>
+<li><code>EffectPoolGetActiveCount()</code></li>
+<li>現在の active effect 数</li>
+<li><code>EffectPoolIsAlive()</code></li>
+<li>指定 effect が生存している場合 <code>true</code></li>
+</ul>
+<h3 class="api-subheading">解説</h3>
+<p>大量の effect が残り続けることを防ぐための管理 API です。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::EffectPoolSetMax(256);
+int count = FeelKit::EffectPoolGetActiveCount();</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。</p>
+</section>
+<section class="api-card searchable-section" id="spawndecal" data-keywords="spawndecal">
+<div class="api-card-head">
+<h2>SpawnDecal</h2>
+<a class="anchor-link" href="#spawndecal">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#effectpoolsetmax"><span class="related-name">EffectPoolSetMax</span><span class="related-note">大量管理</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>int FeelKit::SpawnDecal(const DecalDesc&amp; decalDesc);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>弾痕、血痕、足跡などの decal を内部 pool に追加します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>decalDesc</code></li>
+<li>decal 名、位置、寿命、最大数など</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<ul>
+<li>decal ID</li>
+</ul>
+<h3 class="api-subheading">解説</h3>
+<p>最大数を超えた場合は古い decal が削除されます。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::DecalDesc decal;
+decal.textureName = &quot;bullet_mark&quot;;
+decal.positionX = 120.0f;
+decal.positionY = 64.0f;
+decal.lifeSeconds = 10.0f;
+decal.maxDecals = 128;
+
+int decalId = FeelKit::SpawnDecal(decal);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>実用最低限。描画はゲーム側で行います。</p>
+</section>
+<section class="api-card searchable-section" id="createtrail" data-keywords="createtrail">
+<div class="api-card-head">
+<h2>CreateTrail</h2>
+<a class="anchor-link" href="#createtrail">#</a>
+</div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>TrailHandle FeelKit::CreateTrail(const TrailDesc&amp; trailDesc);
+void FeelKit::ReleaseTrail(TrailHandle handle);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>軌跡表現用の trail を作成、解放します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>trailDesc</code></li>
+<li>寿命、幅、最大点数など</li>
+<li><code>handle</code></li>
+<li>作成された trail handle</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<ul>
+<li><code>CreateTrail()</code></li>
+<li>trail handle</li>
+<li><code>ReleaseTrail()</code></li>
+<li>なし</li>
+</ul>
+<h3 class="api-subheading">解説</h3>
+<p>trail point の寿命は <code>Update()</code> で進みます。 描画用 mesh 生成までは行いません。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::TrailDesc trail;
+trail.lifeSeconds = 0.4f;
+trail.width = 8.0f;
+trail.maxPoints = 32;
+
+FeelKit::TrailHandle handle = FeelKit::CreateTrail(trail);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>実用最低限。</p>
+</section>
+<section class="api-card searchable-section" id="createafterimage" data-keywords="createafterimage">
+<div class="api-card-head">
+<h2>CreateAfterImage</h2>
+<a class="anchor-link" href="#createafterimage">#</a>
+</div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>AfterImageHandle FeelKit::CreateAfterImage(const AfterImageDesc&amp; afterImageDesc);
+void FeelKit::ReleaseAfterImage(AfterImageHandle handle);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>残像管理を作成、解放します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>afterImageDesc</code></li>
+<li>残像間隔、寿命、フェード速度など</li>
+<li><code>handle</code></li>
+<li>afterimage handle</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<ul>
+<li><code>CreateAfterImage()</code></li>
+<li>afterimage handle</li>
+</ul>
+<h3 class="api-subheading">解説</h3>
+<p>アクションゲームのダッシュ残像などに使うための基盤です。 描画内容そのものはゲーム側で扱います。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::AfterImageDesc desc;
+desc.intervalSeconds = 0.05f;
+desc.lifeSeconds = 0.3f;
+desc.fadeSpeed = 1.0f;
+
+FeelKit::AfterImageHandle handle = FeelKit::CreateAfterImage(desc);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>実用最低限。</p>
+</section>
+<section class="api-card searchable-section" id="emit" data-keywords="emit">
+<div class="api-card-head">
+<h2>Emit</h2>
+<a class="anchor-link" href="#emit">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#playparticle"><span class="related-name">PlayParticle</span><span class="related-note">詳細指定粒子</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>EmitterHandle FeelKit::Emit(const EmitterDesc&amp; emitterDesc);
+void FeelKit::StopEmit(EmitterHandle handle);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>粒子 emitter を作成、停止します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>emitterDesc</code></li>
+<li>形状、半径、粒子数、寿命、速度など</li>
+<li><code>handle</code></li>
+<li>emitter handle</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<ul>
+<li><code>Emit()</code></li>
+<li>emitter handle</li>
+</ul>
+<h3 class="api-subheading">解説</h3>
+<p>円、扇形、球、円柱、箱、mesh surface などの emitter 形状を指定できます。 粒子描画 backend はゲーム側に任せます。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::EmitterDesc emitter;
+emitter.shape = FeelKit::EmitterShape::circle;
+emitter.radius = 64.0f;
+emitter.particleDesc.spawnRate = 30.0f;
+
+FeelKit::EmitterHandle handle = FeelKit::Emit(emitter);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>実用最低限。</p>
+</section>
+<section class="api-card searchable-section" id="playeffectlod" data-keywords="playeffectlod">
+<div class="api-card-head">
+<h2>PlayEffectLod</h2>
+<a class="anchor-link" href="#playeffectlod">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#loadeffect"><span class="related-name">LoadEffect</span><span class="related-note">effect登録</span></a><a class="related-chip" href="#playeffect"><span class="related-name">PlayEffect</span><span class="related-note">通常再生</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>int FeelKit::PlayEffectLod(const char* effectName, const Vec3&amp; position, float distance);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>距離に応じて LOD 版 effect を選んで再生します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>effectName</code></li>
+<li>基本 effect 名</li>
+<li><code>position</code></li>
+<li>再生位置</li>
+<li><code>distance</code></li>
+<li>カメラなどからの距離</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<ul>
+<li><code>0</code> 以上</li>
+<li>effect ID</li>
+<li><code>-1</code></li>
+<li>effect が見つからない</li>
+</ul>
+<h3 class="api-subheading">解説</h3>
+<p><code>_mid</code>、<code>_far</code> のような名前付き effect があれば優先し、無い場合は基本名へ fallback します。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::PlayEffectLod(&quot;explosion&quot;, FeelKit::Vec3{0.0f, 0.0f, 30.0f}, 320.0f);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>実用最低限。</p>
+</section>
+<section class="chapter" id="generation">
+<h2>Generation</h2>
+</section>
+<section class="api-card searchable-section" id="generateimpactfeedback" data-keywords="generateimpactfeedback">
+<div class="api-card-head">
+<h2>GenerateImpactFeedback</h2>
+<a class="anchor-link" href="#generateimpactfeedback">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#vibrate"><span class="related-name">Vibrate</span><span class="related-note">内部で呼ぶ</span></a><a class="related-chip" href="#shake"><span class="related-name">Shake</span><span class="related-note">内部で呼ぶ</span></a><a class="related-chip" href="#hitstop"><span class="related-name">HitStop</span><span class="related-note">内部で呼ぶ</span></a><a class="related-chip" href="#playse"><span class="related-name">PlaySE</span><span class="related-note">内部で呼ぶ</span></a><a class="related-chip" href="#playimpact"><span class="related-name">PlayImpact</span><span class="related-note">簡易統合実行</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>ImpactFeedbackResult FeelKit::GenerateImpactFeedback(float velocity, float mass, float angle, MaterialType material = MaterialType::metal);
+ImpactFeedbackResult FeelKit::GenerateImpactFeedback(Vec3 velocity, float mass, MaterialType material = MaterialType::metal);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>物理衝突から振動、画面揺れ、ヒットストップ、SE 音量、粒子強度を生成します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>velocity</code></li>
+<li>衝突速度</li>
+<li><code>mass</code></li>
+<li>質量</li>
+<li><code>angle</code></li>
+<li>衝突角度</li>
+<li><code>material</code></li>
+<li>材質</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<ul>
+<li><code>ImpactFeedbackResult</code></li>
+<li><code>vibrationPower</code></li>
+<li><code>shakePower</code></li>
+<li><code>hitStopSeconds</code></li>
+<li><code>seVolume</code></li>
+<li><code>particleIntensity</code></li>
+</ul>
+<h3 class="api-subheading">解説</h3>
+<p><code>MaterialType</code> と occlusion 係数を加味し、<code>Vibrate()</code>、<code>Shake()</code>、<code>HitStop()</code>、<code>PlaySE()</code> を呼びます。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::GenerateImpactFeedback(
+	FeelKit::Vec3{12.0f, 0.0f, 0.0f},
+	2.0f,
+	FeelKit::MaterialType::metal);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。材質と occlusion に対応しています。</p>
+</section>
+<section class="api-card searchable-section" id="generateexplosionfeedback" data-keywords="generateexplosionfeedback">
+<div class="api-card-head">
+<h2>GenerateExplosionFeedback</h2>
+<a class="anchor-link" href="#generateexplosionfeedback">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#playexplosion"><span class="related-name">PlayExplosion</span><span class="related-note">爆発演出を実行</span></a><a class="related-chip" href="#vibrate"><span class="related-name">Vibrate</span><span class="related-note">爆発振動</span></a><a class="related-chip" href="#shake"><span class="related-name">Shake</span><span class="related-note">爆発揺れ</span></a><a class="related-chip" href="#playse"><span class="related-name">PlaySE</span><span class="related-note">爆発音</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>ExplosionFeedbackResult FeelKit::GenerateExplosionFeedback(Vec3 position, float radius, float power, MaterialType material = MaterialType::metal);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>爆発パラメータから振動、揺れ、SE、effect 強度を生成します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>position</code></li>
+<li>爆発位置</li>
+<li><code>radius</code></li>
+<li>爆発半径</li>
+<li><code>power</code></li>
+<li>爆発威力</li>
+<li><code>material</code></li>
+<li>爆発対象材質</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<ul>
+<li><code>ExplosionFeedbackResult</code></li>
+<li><code>vibrationPower</code></li>
+<li><code>shakePower</code></li>
+<li><code>seVolume</code></li>
+<li><code>effectIntensity</code></li>
+</ul>
+<h3 class="api-subheading">解説</h3>
+<p>距離、威力、材質、occlusion 係数から演出値を作り、振動、画面揺れ、SE、effect を呼びます。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::GenerateExplosionFeedback(
+	FeelKit::Vec3{0.0f, 0.0f, 10.0f},
+	20.0f,
+	1.0f,
+	FeelKit::MaterialType::stone);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。</p>
+</section>
+<section class="api-card searchable-section" id="generatehapticsfromanimation" data-keywords="generatehapticsfromanimation">
+<div class="api-card-head">
+<h2>GenerateHapticsFromAnimation</h2>
+<a class="anchor-link" href="#generatehapticsfromanimation">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#vibrate"><span class="related-name">Vibrate</span><span class="related-note">実際の振動</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::GenerateHapticsFromAnimation(const char* animationName);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>アニメーション名から振動を生成します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>animationName</code></li>
+<li>アニメーション名</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p><code>SetAnimationHapticPattern()</code> で登録された pattern を優先します。 未登録の場合は <code>run</code>、<code>walk</code>、<code>jump</code>、<code>attack</code>、<code>hit</code> などの名前ヒューリスティックで振動を決めます。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::AnimationHapticPattern pattern;
+pattern.power = 0.6f;
+pattern.durationSeconds = 0.08f;
+
+FeelKit::SetAnimationHapticPattern(&quot;attack_slash&quot;, pattern);
+FeelKit::GenerateHapticsFromAnimation(&quot;attack_slash&quot;);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>実用最低限。registry 優先、未登録時は名前ヒューリスティックです。</p>
+</section>
+<section class="api-card searchable-section" id="generatefootsteps" data-keywords="generatefootsteps">
+<div class="api-card-head">
+<h2>GenerateFootsteps</h2>
+<a class="anchor-link" href="#generatefootsteps">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#playse"><span class="related-name">PlaySE</span><span class="related-note">足音SE</span></a><a class="related-chip" href="#vibrate"><span class="related-name">Vibrate</span><span class="related-note">足音振動</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::GenerateFootsteps(const char* animationName);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>アニメーション名から足音と足元振動を生成します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>animationName</code></li>
+<li>歩行、走行などのアニメーション名</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>登録済み pattern または名前ヒューリスティックを使い、左右足の交互処理を含む footstep 演出を出します。 厳密な接地フレーム解析はゲーム側イベントとの連携が必要です。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::GenerateFootsteps(&quot;run_forward&quot;);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>実用最低限。</p>
+</section>
+<section class="api-card searchable-section" id="createparticlesfromimage" data-keywords="createparticlesfromimage">
+<div class="api-card-head">
+<h2>CreateParticlesFromImage</h2>
+<a class="anchor-link" href="#createparticlesfromimage">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#emit"><span class="related-name">Emit</span><span class="related-note">粒子発生</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::CreateParticlesFromImage(const char* imagePath);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>画像の内容から粒子 emitter を生成します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>imagePath</code></li>
+<li>画像ファイルパス</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p><code>ImageDataProvider</code> から得たピクセルを使い、非透明部分や色を元に emitter を作ります。 provider が無い場合の挙動は実装側の fallback に依存します。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::CreateParticlesFromImage(&quot;logo.png&quot;);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>実用最低限。provider 接続時に実画像ベースで動きます。</p>
+</section>
+<section class="api-card searchable-section" id="createcollisionfromimage" data-keywords="createcollisionfromimage">
+<div class="api-card-head">
+<h2>CreateCollisionFromImage</h2>
+<a class="anchor-link" href="#createcollisionfromimage">#</a>
+</div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::CreateCollisionFromImage(const char* imagePath);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>画像の非透明部分から簡易 collision を生成します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>imagePath</code></li>
+<li>画像ファイルパス</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>画像ピクセルから content 領域を抽出し、内部 collision rect に変換します。 生成結果の取得 API はまだ限定的です。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::CreateCollisionFromImage(&quot;rock.png&quot;);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>実用最低限。</p>
+</section>
+<section class="api-card searchable-section" id="breakimage" data-keywords="breakimage">
+<div class="api-card-head">
+<h2>BreakImage</h2>
+<a class="anchor-link" href="#breakimage">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#draw"><span class="related-name">Draw</span><span class="related-note">描画情報を流す</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::BreakImage(int textureHandle);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>texture を破片データに変換します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>textureHandle</code></li>
+<li>破片化する texture handle</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p><code>TextureDataProvider</code> の情報を使い、中心から外側へ飛ぶ破片データを生成します。 破片は <code>Update()</code> で移動と寿命が更新され、<code>Draw()</code> や callback でゲーム側へ渡されます。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::BreakImage(textureHandle);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>実用最低限。provider 連携が前提です。</p>
+</section>
+<section class="api-card searchable-section" id="importgif" data-keywords="importgif">
+<div class="api-card-head">
+<h2>ImportGif</h2>
+<a class="anchor-link" href="#importgif">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#playeffect"><span class="related-name">PlayEffect</span><span class="related-note">sprite sheetとして再生</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::ImportGif(const char* gifPath);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>GIF を effect として取り込みます。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>gifPath</code></li>
+<li>GIF ファイルパス</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p><code>GifDataProvider</code> から frame 情報を受け取り、内部で <code>EffectDesc</code> として登録します。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::ImportGif(&quot;explosion.gif&quot;);
+FeelKit::PlayEffect(&quot;_gif_explosion.gif&quot;, FeelKit::Vec2{320.0f, 240.0f});</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>実用最低限。GIF decode は provider 側です。</p>
+</section>
+<section class="api-card searchable-section" id="spawntexteffect" data-keywords="spawntexteffect">
+<div class="api-card-head">
+<h2>SpawnTextEffect</h2>
+<a class="anchor-link" href="#spawntexteffect">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#draw"><span class="related-name">Draw</span><span class="related-note">描画情報を流す</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::SpawnTextEffect(const char* text);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>文字列からテキスト演出を生成します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>text</code></li>
+<li>表示する文字列</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>文字数、大文字、記号の比率からサイズ、散らばり、寿命を決めます。 描画は <code>SetTextDrawCallback()</code> または query API を使ってゲーム側で行います。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::SpawnTextEffect(&quot;CRITICAL!&quot;);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>実用最低限。描画 backend はゲーム側に任せます。</p>
+</section>
+<section class="api-card searchable-section" id="playimpact" data-keywords="playimpact">
+<div class="api-card-head">
+<h2>PlayImpact</h2>
+<a class="anchor-link" href="#playimpact">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#generateimpactfeedback"><span class="related-name">GenerateImpactFeedback</span><span class="related-note">詳細計算版</span></a><a class="related-chip" href="#vibrate"><span class="related-name">Vibrate</span><span class="related-note">振動</span></a><a class="related-chip" href="#shake"><span class="related-name">Shake</span><span class="related-note">画面揺れ</span></a><a class="related-chip" href="#hitstop"><span class="related-name">HitStop</span><span class="related-note">hit stop</span></a><a class="related-chip" href="#playse"><span class="related-name">PlaySE</span><span class="related-note">impact音</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::PlayImpact(const Vec3&amp; position, float intensity);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>衝撃演出を一括再生します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>position</code></li>
+<li>発生位置</li>
+<li><code>intensity</code></li>
+<li>衝撃強度</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>振動、画面揺れ、ヒットストップ、SE をまとめて発火します。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::PlayImpact(FeelKit::Vec3{0.0f, 0.0f, 0.0f}, 0.8f);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。</p>
+</section>
+<section class="api-card searchable-section" id="playexplosion" data-keywords="playexplosion">
+<div class="api-card-head">
+<h2>PlayExplosion</h2>
+<a class="anchor-link" href="#playexplosion">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#generateexplosionfeedback"><span class="related-name">GenerateExplosionFeedback</span><span class="related-note">爆発feedback生成</span></a><a class="related-chip" href="#playeffect"><span class="related-name">PlayEffect</span><span class="related-note">見た目effect</span></a><a class="related-chip" href="#vibrate"><span class="related-name">Vibrate</span><span class="related-note">振動</span></a><a class="related-chip" href="#shake"><span class="related-name">Shake</span><span class="related-note">画面揺れ</span></a><a class="related-chip" href="#playse"><span class="related-name">PlaySE</span><span class="related-note">爆発音</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void FeelKit::PlayExplosion(const Vec3&amp; position, float radius, float power);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>爆発演出を一括再生します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>position</code></li>
+<li>爆発位置</li>
+<li><code>radius</code></li>
+<li>爆発半径</li>
+<li><code>power</code></li>
+<li>爆発威力</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>内部で <code>GenerateExplosionFeedback()</code> を呼び、振動、揺れ、SE、effect を生成します。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::PlayExplosion(FeelKit::Vec3{0.0f, 0.0f, 8.0f}, 20.0f, 1.0f);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。</p>
+</section>
+<section class="chapter" id="feelkithaptics">
+<h2>FeelKitHaptics</h2>
+</section>
+<section class="api-card searchable-section" id="playsoundeffect" data-keywords="playsoundeffect">
+<div class="api-card-head">
+<h2>PlaySoundEffect</h2>
+<a class="anchor-link" href="#playsoundeffect">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#playse"><span class="related-name">PlaySE</span><span class="related-note">簡単に呼ぶ</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>bool PlaySoundEffect(const SoundEffectRequest&amp; request);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>SE を再生します。</p>
+<h3 class="api-subheading">引数</h3>
+<p><code>request</code> または各引数で、再生する演出の種類、位置、強さ、時間を指定します。</p>
+<h3 class="api-subheading">戻り値</h3>
+<ul>
+<li><code>true</code> : 実行成功</li>
+<li><code>false</code> : 連携先未設定、引数不正、無効状態など</li>
+</ul>
+<h3 class="api-subheading">解説</h3>
+<p>FeelKit 本体は engine 非依存を保つため、描画、音再生、専用 device 操作は ゲーム側の連携先やデータ供給元へ渡します。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::SoundEffectRequest request;
+request.path = &quot;hit.wav&quot;;
+request.volume = 1.0f;
+FeelKit::PlaySoundEffect(request);</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。宣言場所: audio/FeelKitAudio.h:54</p>
+</section>
+<section class="api-card searchable-section" id="playbgmswitch" data-keywords="playbgmswitch">
+<div class="api-card-head">
+<h2>PlayBgmSwitch</h2>
+<a class="anchor-link" href="#playbgmswitch">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#playbgm"><span class="related-name">PlayBGM</span><span class="related-note">通常再生</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>bool PlayBgmSwitch(const BgmSwitchRequest&amp; request);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>BGM を切り替えます。</p>
+<h3 class="api-subheading">引数</h3>
+<p><code>request</code> または各引数で、再生する演出の種類、位置、強さ、時間を指定します。</p>
+<h3 class="api-subheading">戻り値</h3>
+<ul>
+<li><code>true</code> : 実行成功</li>
+<li><code>false</code> : 連携先未設定、引数不正、無効状態など</li>
+</ul>
+<h3 class="api-subheading">解説</h3>
+<p>FeelKit 本体は engine 非依存を保つため、描画、音再生、専用 device 操作は ゲーム側の連携先やデータ供給元へ渡します。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::PlayBgmSwitch();</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。宣言場所: audio/FeelKitAudio.h:55</p>
+</section>
+<section class="api-card searchable-section" id="playspatialsound" data-keywords="playspatialsound">
+<div class="api-card-head">
+<h2>PlaySpatialSound</h2>
+<a class="anchor-link" href="#playspatialsound">#</a>
+</div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>bool PlaySpatialSound(const SpatialSoundRequest&amp; request);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>位置つき 3D 音響を再生します。</p>
+<h3 class="api-subheading">引数</h3>
+<p><code>request</code> または各引数で、再生する演出の種類、位置、強さ、時間を指定します。</p>
+<h3 class="api-subheading">戻り値</h3>
+<ul>
+<li><code>true</code> : 実行成功</li>
+<li><code>false</code> : 連携先未設定、引数不正、無効状態など</li>
+</ul>
+<h3 class="api-subheading">解説</h3>
+<p>FeelKit 本体は engine 非依存を保つため、描画、音再生、専用 device 操作は ゲーム側の連携先やデータ供給元へ渡します。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::PlaySpatialSound();</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。宣言場所: audio/FeelKitAudio.h:56</p>
+</section>
+<section class="api-card searchable-section" id="playvoice" data-keywords="playvoice">
+<div class="api-card-head">
+<h2>PlayVoice</h2>
+<a class="anchor-link" href="#playvoice">#</a>
+</div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>bool PlayVoice(const VoiceRequest&amp; request);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>ボイスを再生します。</p>
+<h3 class="api-subheading">引数</h3>
+<p><code>request</code> または各引数で、再生する演出の種類、位置、強さ、時間を指定します。</p>
+<h3 class="api-subheading">戻り値</h3>
+<ul>
+<li><code>true</code> : 実行成功</li>
+<li><code>false</code> : 連携先未設定、引数不正、無効状態など</li>
+</ul>
+<h3 class="api-subheading">解説</h3>
+<p>FeelKit 本体は engine 非依存を保つため、描画、音再生、専用 device 操作は ゲーム側の連携先やデータ供給元へ渡します。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::PlayVoice();</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。宣言場所: audio/FeelKitAudio.h:57</p>
+</section>
+<section class="api-card searchable-section" id="spawneffectfromaudio" data-keywords="spawneffectfromaudio">
+<div class="api-card-head">
+<h2>SpawnEffectFromAudio</h2>
+<a class="anchor-link" href="#spawneffectfromaudio">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#playeffect"><span class="related-name">PlayEffect</span><span class="related-note">effectを直接再生</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void SpawnEffectFromAudio(const EffectDesc&amp; desc, const char* soundPath, Vec2 pos);
+void SpawnEffectFromAudio(const EffectDesc&amp; desc, const char* soundPath, Vec3 pos);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>音の強さから effect 強度を作って発生させます。</p>
+<h3 class="api-subheading">引数</h3>
+<p>なし</p>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>FeelKit 本体は engine 非依存を保つため、描画、音再生、専用 device 操作は ゲーム側の連携先やデータ供給元へ渡します。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::EffectDesc effectDesc;
+FeelKit::SpawnEffectFromAudio(effectDesc, &quot;explosion.wav&quot;, FeelKit::Vec3{0.0f, 0.0f, 0.0f});</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。宣言場所: audio/FeelKitAudio.h:69, audio/FeelKitAudio.h:70</p>
+</section>
+<section class="api-card searchable-section" id="createlightfromaudio" data-keywords="createlightfromaudio">
+<div class="api-card-head">
+<h2>CreateLightFromAudio</h2>
+<a class="anchor-link" href="#createlightfromaudio">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#playflashfromaudio"><span class="related-name">PlayFlashFromAudio</span><span class="related-note">画面flashとして実行</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void CreateLightFromAudio(const char* soundPath);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>音からライト点滅演出を作ります。</p>
+<h3 class="api-subheading">引数</h3>
+<p>なし</p>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>FeelKit 本体は engine 非依存を保つため、描画、音再生、専用 device 操作は ゲーム側の連携先やデータ供給元へ渡します。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::CreateLightFromAudio();</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。宣言場所: audio/FeelKitAudio.h:71</p>
+</section>
+<section class="api-card searchable-section" id="createcameramotionfromaudio" data-keywords="createcameramotionfromaudio">
+<div class="api-card-head">
+<h2>CreateCameraMotionFromAudio</h2>
+<a class="anchor-link" href="#createcameramotionfromaudio">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#playshakefromaudio"><span class="related-name">PlayShakeFromAudio</span><span class="related-note">画面揺れとして実行</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void CreateCameraMotionFromAudio(const char* soundPath);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>音からカメラ揺れやカメラ動作を作ります。</p>
+<h3 class="api-subheading">引数</h3>
+<p>なし</p>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>FeelKit 本体は engine 非依存を保つため、描画、音再生、専用 device 操作は ゲーム側の連携先やデータ供給元へ渡します。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::CreateCameraMotionFromAudio();</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。宣言場所: audio/FeelKitAudio.h:72</p>
+</section>
+<section class="api-card searchable-section" id="createslowmotionfromaudio" data-keywords="createslowmotionfromaudio">
+<div class="api-card-head">
+<h2>CreateSlowMotionFromAudio</h2>
+<a class="anchor-link" href="#createslowmotionfromaudio">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#slowmotion"><span class="related-name">SlowMotion</span><span class="related-note">時間制御を実行</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void CreateSlowMotionFromAudio(const char* soundPath);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>音からスローモーション演出を作ります。</p>
+<h3 class="api-subheading">引数</h3>
+<p>なし</p>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>FeelKit 本体は engine 非依存を保つため、描画、音再生、専用 device 操作は ゲーム側の連携先やデータ供給元へ渡します。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::CreateSlowMotionFromAudio();</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。宣言場所: audio/FeelKitAudio.h:73</p>
+</section>
+<section class="chapter" id="section-e38eefc434">
+<h2>振動直接実行</h2>
+</section>
+<section class="api-card searchable-section" id="vibratepattern" data-keywords="vibratepattern">
+<div class="api-card-head">
+<h2>VibratePattern</h2>
+<a class="anchor-link" href="#vibratepattern">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#vibrate"><span class="related-name">Vibrate</span><span class="related-note">直接振動</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void VibratePattern(const char* patternName);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>名前付き pattern で振動します。</p>
+<h3 class="api-subheading">引数</h3>
+<p>なし</p>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>FeelKit 本体は engine 非依存を保つため、描画、音再生、専用 device 操作は ゲーム側の連携先やデータ供給元へ渡します。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::VibratePattern();</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。宣言場所: haptics/FeelKitVibration.h:50</p>
+</section>
+<section class="api-card searchable-section" id="vibratefromsound" data-keywords="vibratefromsound">
+<div class="api-card-head">
+<h2>VibrateFromSound</h2>
+<a class="anchor-link" href="#vibratefromsound">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#playhapticfromaudio"><span class="related-name">PlayHapticFromAudio</span><span class="related-note">解析込み音振動</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void VibrateFromSound(const char* soundPath);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>音声ファイルから振動を作って再生します。</p>
+<h3 class="api-subheading">引数</h3>
+<p>なし</p>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>FeelKit 本体は engine 非依存を保つため、描画、音再生、専用 device 操作は ゲーム側の連携先やデータ供給元へ渡します。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::VibrateFromSound();</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。宣言場所: haptics/FeelKitVibration.h:51</p>
+</section>
+<section class="chapter" id="pool">
+<h2>エフェクト pool</h2>
+</section>
+<section class="api-card searchable-section" id="generateimpacthaptics" data-keywords="generateimpacthaptics">
+<div class="api-card-head">
+<h2>GenerateImpactHaptics</h2>
+<a class="anchor-link" href="#generateimpacthaptics">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#vibrate"><span class="related-name">Vibrate</span><span class="related-note">実際の振動</span></a><a class="related-chip" href="#generateimpactfeedback"><span class="related-name">GenerateImpactFeedback</span><span class="related-note">全部まとめる</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void GenerateImpactHaptics(float velocity, float mass);
+void GenerateImpactHaptics(Vec3 velocity, float mass);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>衝突速度と質量から振動を自動生成します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>velocity</code> : 衝突速度</li>
+<li><code>mass</code> : 衝突した物体の質量</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>FeelKit 本体は engine 非依存を保つため、描画、音再生、専用 device 操作は ゲーム側の連携先やデータ供給元へ渡します。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::GenerateImpactHaptics();</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。宣言場所: generation/FeelKitImpactGeneration.h:10, generation/FeelKitImpactGeneration.h:11</p>
+</section>
+<section class="api-card searchable-section" id="generateimpactshake" data-keywords="generateimpactshake">
+<div class="api-card-head">
+<h2>GenerateImpactShake</h2>
+<a class="anchor-link" href="#generateimpactshake">#</a>
+</div>
+<div class="related-links"><span class="related-label">関連関数</span><div class="related-chip-list"><a class="related-chip" href="#shake"><span class="related-name">Shake</span><span class="related-note">実際の揺れ</span></a><a class="related-chip" href="#generateimpactfeedback"><span class="related-name">GenerateImpactFeedback</span><span class="related-note">全部まとめる</span></a></div></div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void GenerateImpactShake(float velocity, float mass);
+void GenerateImpactShake(Vec3 velocity, float mass);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>衝突速度と質量から画面揺れを自動生成します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>velocity</code> : 衝突速度</li>
+<li><code>mass</code> : 衝突した物体の質量</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>FeelKit 本体は engine 非依存を保つため、描画、音再生、専用 device 操作は ゲーム側の連携先やデータ供給元へ渡します。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::GenerateImpactShake();</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。宣言場所: generation/FeelKitImpactGeneration.h:12, generation/FeelKitImpactGeneration.h:13</p>
+</section>
+<section class="chapter" id="timeline">
+<h2>シーケンス / timeline</h2>
+</section>
+<section class="api-card searchable-section" id="playsequence" data-keywords="playsequence">
+<div class="api-card-head">
+<h2>PlaySequence</h2>
+<a class="anchor-link" href="#playsequence">#</a>
+</div>
+<h3 class="api-subheading">宣言</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>void PlaySequence(const char* sequenceName);
+void PlaySequence(const SequenceEvent* events, int eventCount);</code></pre>
+</div>
+<h3 class="api-subheading">概略</h3>
+<p>複数 event の sequence を実行します。</p>
+<h3 class="api-subheading">引数</h3>
+<ul>
+<li><code>sequenceName</code> : 登録済み sequence 名</li>
+<li><code>events</code> : 直接渡す event 配列</li>
+<li><code>eventCount</code> : event 数</li>
+</ul>
+<h3 class="api-subheading">戻り値</h3>
+<p>なし</p>
+<h3 class="api-subheading">解説</h3>
+<p>FeelKit 本体は engine 非依存を保つため、描画、音再生、専用 device 操作は ゲーム側の連携先やデータ供給元へ渡します。</p>
+<h3 class="api-subheading">サンプルコード</h3>
+<div class="code-block">
+<button class="copy-button" type="button">Copy</button>
+<pre><code>FeelKit::PlaySequence();</code></pre>
+</div>
+<h3 class="api-subheading">実装状態</h3>
+<p>本実装。宣言場所: core/FeelKitCore.h:630, core/FeelKitCore.h:631</p>
+</section>
+			</div>
+		</main>
+	</div>
+
+	<button class="back-to-top" type="button" id="backToTop">↑</button>
+	<script src="docs.js"></script>
+</body>
+</html>

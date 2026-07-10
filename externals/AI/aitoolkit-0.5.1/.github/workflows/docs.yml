@@ -1,0 +1,27 @@
+---
+name: docs
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout-scm
+        uses: actions/checkout@v2
+        with:
+          submodules: true
+      - name: setup-doxygen
+        run: |
+          set -ex
+          wget https://www.doxygen.nl/files/doxygen-1.10.0.linux.bin.tar.gz
+          tar -xvzf doxygen-1.10.0.linux.bin.tar.gz
+      - name: build
+        run: make docs DOXYGEN=${PWD}/doxygen-1.10.0/bin/doxygen
+      - name: deploy
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./build/docs/html

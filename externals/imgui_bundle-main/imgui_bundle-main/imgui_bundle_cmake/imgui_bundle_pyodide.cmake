@@ -1,0 +1,158 @@
+###################################################################################################
+# Specific build options for pyodide
+###################################################################################################
+# pyodide must use SDL2, because sdl2 is linked to the main pyodide python module (glfw is not).
+# If using glfw, it would be linked it to the side module imgui_bundle (which is a dynamic library),
+# and then we would get a runtime error in pyodide because glfw would not be found at runtime
+# (since a dynamic library does not load its own dependencies, but relies on the main module to provide them).
+
+function(ibd_pyodide_set_build_options_if_needed)
+    # Determine if we need to build pyodide
+    if (SKBUILD AND EMSCRIPTEN)
+        message(STATUS "Building for pyodide! IMGUI_BUNDLE_BUILD_PYODIDE=${IMGUI_BUNDLE_BUILD_PYODIDE}")
+        set(IMGUI_BUNDLE_BUILD_PYODIDE ON CACHE BOOL "" FORCE)
+    endif()
+
+    # If so, set the build options (backend selection, lib selection, etc.)
+    if(IMGUI_BUNDLE_BUILD_PYODIDE)
+        _ibd_pyodide_set_build_options()
+    else()
+        set(IMGUI_BUNDLE_BUILD_PYODIDE OFF CACHE BOOL "" FORCE)
+    endif()
+endfunction()
+
+function(ibd_pyodide_manually_link_sdl_to_bindings)
+    # Important: SDL2 link notes
+    # ==========================
+    # See https://github.com/pyodide/pyodide/issues/5248
+
+    # SDL2 must be linked to the native bindings _imgui_bundle.
+    # We are already linked to library_sdl.js (via -s USE_SDL=2) in the emscripten bindings.
+    # However, we need to link to the native SDL2 library as well (other we will get a runtime error: "SDL_SetHint" not found).
+    # This has something to do with the fact that this is a SIDE library, with dynamic linking.
+    # Also, libsdl2.a is not in the default search path, so we need to specify the path to it.
+
+    # We also need to link to html5.a, which contains emscripten_compute_dom_pk_code
+    # (cf https://github.com/pyodide/pyodide/issues/5029:
+    #     emscripten_compute_dom_pk_code is in html5.a (not html5.js))
+
+    # IMPORTANT: SDL2 linking for SIDE_MODULE (pyodide)
+    # ===================================================
+    # Based on https://github.com/pyodide/pyodide/issues/5248 and #5584
+    #
+    # For SIDE_MODULE builds, we need BOTH:
+    # 1. Static PIC SDL2 libraries (for native symbol definitions)
+    # 2. -s USE_SDL=2 flag (for JavaScript glue code)
+    #
+    # The key is to build SDL2 with -fPIC (Position Independent Code) using embuilder,
+    # then link those PIC libraries into the SIDE_MODULE.
+    #
+    # DO NOT link the regular (non-PIC) SDL2 libraries - they won't work in SIDE_MODULE.
+    if(IMGUI_BUNDLE_BUILD_PYODIDE AND EMSCRIPTEN)
+
+        message(STATUS "Pyodide: Building SDL2 with PIC for SIDE_MODULE compatibility")
+
+        # Build SDL2 and html5 with -fPIC using embuilder
+        # This creates PIC versions that work in SIDE_MODULE builds
+        execute_process(
+            COMMAND embuilder build sdl2 libhtml5 --pic
+            RESULT_VARIABLE result
+            OUTPUT_VARIABLE output
+            ERROR_VARIABLE error
+        )
+
+        if (NOT result EQUAL 0)
+            message(FATAL_ERROR "
+                Failed to build SDL2 with PIC for pyodide SIDE_MODULE
+                Command: embuilder build sdl2 libhtml5 --pic
+                Error: ${error}
+                See: https://github.com/pyodide/pyodide/issues/5248
+            ")
+        endif()
+
+        # Path to where emscripten stores the pic libraries where pic stands for position independent code
+        # (pic <=> -fPIC (gcc) <=> -sRELOCATABLE=1 (for emscripten))
+        set(ems_lib_path_pic ${EMSCRIPTEN_SYSROOT}/lib/wasm32-emscripten/pic)
+
+        # Manually link native side of SDL2
+        set(sdl_lib_file ${ems_lib_path_pic}/libSDL2.a)
+        if (NOT EXISTS ${sdl_lib_file})
+            message(FATAL_ERROR "
+                imgui_bundle pyodide package: could not find fPIC SDL2 library
+                    See https://github.com/pyodide/pyodide/issues/5248")
+        endif()
+
+        message(STATUS "Pyodide: Linking PIC SDL2: ${sdl_lib_file}")
+        target_link_libraries(_imgui_bundle PUBLIC ${sdl_lib_file})
+
+        # Link the PIC html5 library (contains emscripten_compute_dom_pk_code)
+        message(STATUS "Pyodide: Linking PIC html5: ${ems_lib_path_pic}/libhtml5.a")
+        target_link_libraries(_imgui_bundle PUBLIC ${ems_lib_path_pic}/libhtml5.a)
+
+        # Add -sRELOCATABLE=1 to the target:
+        # This is not useful for the moment, but may become if/when pyodide correctly handles SDL and html native link.
+        target_compile_options(_imgui_bundle PUBLIC "-sRELOCATABLE=1")
+        target_link_options(_imgui_bundle PUBLIC "-sRELOCATABLE=1")
+
+        # CRITICAL: Handle EM_JS symbols from SDL2
+        # ========================================
+        # SDL2 contains EM_JS macros (e.g., ___em_lib_deps_sdlaudio, ___em_lib_deps_sdlmouse)
+        # that create JavaScript bridge symbols. These symbols are provided at runtime by
+        # SDL2's JavaScript glue code (library_sdl.js), so they're intentionally undefined
+        # at link time.
+        #
+        # For SIDE_MODULE builds, Emscripten already defaults ERROR_ON_UNDEFINED_SYMBOLS=0,
+        # so undefined symbols are allowed by default. However, the build system uses -Werror
+        # which treats all warnings (including [-Wundefined]) as errors.
+        #
+        # Solution: Use -Wno-error=undefined to allow undefined symbol warnings without
+        # treating them as errors. This is safe because:
+        # - Regular C/C++ linking errors are still caught at compile time
+        # - Only affects link-time undefined symbols (expected for SIDE_MODULE)
+        # - SDL2's JavaScript glue will provide these symbols at runtime
+        #
+        # Note: We've replaced our own EM_JS usage (ImGui_ImplSDL2_EmscriptenOpenURL,
+        # sapp_js_write_clipboard) with EM_ASM to avoid creating unnecessary symbols.
+        # The only remaining undefined symbols are from SDL2 itself.
+        #
+        # Expected warnings (from SDL2, safe):
+        #   ___em_lib_deps_sdlaudio (SDL2 audio subsystem)
+        #   ___em_lib_deps_sdlmouse (SDL2 mouse input)
+        #   ___em_lib_deps_sdlsysurl (SDL2 URL opening)
+        #
+        # Based on: https://github.com/pyodide/pyodide/issues/5584
+        target_link_options(_imgui_bundle PUBLIC
+            "-Wno-error=undefined"  # Allow undefined symbol warnings for SDL2's EM_JS bridges
+        )
+    endif()
+endfunction()
+
+
+function(_ibd_pyodide_set_build_options)
+    if (NOT IMGUI_BUNDLE_BUILD_PYODIDE)
+        message(FATAL_ERROR "ibd_pyodide_set_build_options: IMGUI_BUNDLE_BUILD_PYODIDE is not set")
+    endif()
+    add_compile_definitions(IMGUI_BUNDLE_BUILD_PYODIDE)
+
+    # No native demos for pyodide
+    set(IMGUI_BUNDLE_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
+
+    # FreeType
+    set(HELLOIMGUI_USE_FREETYPE ON CACHE BOOL "" FORCE)
+
+    # Backend selection
+    set(HELLOIMGUI_USE_SDL2 ON CACHE BOOL "" FORCE)
+    set(HELLOIMGUI_HAS_OPENGL3 ON CACHE BOOL "" FORCE)
+    set(HELLOIMGUI_USE_GLFW3 OFF CACHE BOOL "" FORCE)
+
+    # No test engine for pyodide
+    # (We cannot afford to have test engines, because severe headaches would happen
+    #  since we would need to handle threads in between javascript, python and C++...)
+    set(HELLOIMGUI_WITH_TEST_ENGINE OFF CACHE BOOL "" FORCE)
+
+    # We need to keep the pthreads enabled, for compatibility with precompiled emscripten OpenCV
+    set(HELLOIMGUI_EMSCRIPTEN_PTHREAD ON CACHE BOOL "" FORCE)
+
+    # Disable some features
+    set(IMGUI_BUNDLE_WITH_IMFILEDIALOG OFF CACHE BOOL "" FORCE)
+endfunction()

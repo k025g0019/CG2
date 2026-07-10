@@ -367,11 +367,10 @@ FodyWeavers.xsd
 Dumps/
 
 imgui.ini
-/anchored_summary.md
-/Assets
-/Source
-/ThirdParty
-/Tools
-
-ThirdParty/onnxruntime-win-x64-gpu_cuda13-1.27.0/lib/onnxruntime_providers_cuda.dll
-ThirdParty/ovphysx/plugins/PhysXGpu_64.dll
+ThirdParty/
+externals/
+logs/
+Tools/
+.vs/
+.git/
+.codex/

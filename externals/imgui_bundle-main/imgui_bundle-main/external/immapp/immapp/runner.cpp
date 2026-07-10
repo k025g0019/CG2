@@ -1,0 +1,614 @@
+#include "immapp.h"
+
+#ifdef IMGUI_BUNDLE_WITH_IMPLOT
+#include "implot/implot.h"
+#endif
+#ifdef IMGUI_BUNDLE_WITH_IMPLOT3D
+#include "implot3d/implot3d.h"
+#endif
+#ifdef IMGUI_BUNDLE_WITH_IMFILEDIALOG
+#include "bundle_integration/ImFileDialogTextureHelper.h"
+#endif
+
+#ifdef IMGUI_BUNDLE_WITH_TEXT_INSPECT
+#include "imgui_tex_inspect/imgui_tex_inspect.h"
+#include "imgui_tex_inspect/backends/tex_inspect_opengl.h"
+#endif
+#include "hello_imgui/hello_imgui.h"
+#include "hello_imgui/internal/functional_utils.h"
+#ifdef IMGUI_BUNDLE_WITH_IMMVISION
+#include "immvision/immvision.h"
+#endif
+
+#ifdef IMGUI_BUNDLE_WITH_IMGUI_NODE_EDITOR
+std::function<void()> FnResetImGuiNodeEditorId; // may be bound from pybind_imgui_node_editor.cpp
+void UpdateNodeEditorColorsFromImguiColors();
+#endif
+
+#ifdef IMGUI_BUNDLE_WITH_IMANIM
+#include "im_anim.h"
+#endif
+
+#if defined(__EMSCRIPTEN__) && defined(HELLOIMGUI_USE_SDL2)
+#include "immapp/js_clipboard_tricks.h"
+#endif
+
+#include <chrono>
+#include <cassert>
+#include <filesystem>
+
+
+// Private API used by ImGuiTexInspect (not mentioned in headers!)
+namespace HelloImGui { std::string GlslVersion(); }
+
+
+namespace ImmApp
+{
+
+    struct ImmAppContext
+    {
+#ifdef IMGUI_BUNDLE_WITH_IMGUI_NODE_EDITOR
+        std::optional<ax::NodeEditor::EditorContext *> _NodeEditorContext;
+        ax::NodeEditor::Config _NodeEditorConfig;
+#endif
+
+#ifdef IMGUI_BUNDLE_WITH_TEXT_INSPECT
+        ImGuiTexInspect::Context * _ImGuiTextInspect_Context = nullptr;
+#endif
+    };
+
+    ImmAppContext gImmAppContext;
+
+    // Only one instance of `Renderer` can exist at a time
+    // ---------------------------------------------------
+    static int gRendererInstanceCount = 0;
+    static AddOnsParams gAddOnsParamsAtSetup;
+
+    static void Priv_TearDown();
+
+
+    static void Priv_Setup(HelloImGui::RunnerParams& runnerParams, const AddOnsParams& passedAddOnsParams)
+    {
+        gAddOnsParamsAtSetup = passedAddOnsParams;
+        AddOnsParams& addOnsParams = gAddOnsParamsAtSetup; // We may modify those
+
+        // Check if we are already running
+#ifdef IMGUI_BUNDLE_BUILD_PYTHON
+        // For python, we forgive the user for not calling TearDown() before calling Renderer()
+        // since it might be due to a Python exception, which might be recoverable, if running
+        // in a Python REPL, a notebook, or Pyodide.
+        if (gRendererInstanceCount > 0)
+        {
+            printf("ImmApp: calling TearDown() prior to Setup (probable prior exception in Python).\n");
+            Priv_TearDown();
+        }
+#else
+        if (gRendererInstanceCount > 0)
+        throw std::runtime_error("Only one instance of `ImmApp::Renderer` can exist at a time.");
+#endif
+        gRendererInstanceCount++;
+
+
+        // create implot context if required
+#ifdef IMGUI_BUNDLE_WITH_IMPLOT
+        if (addOnsParams.withImplot)
+            ImPlot::CreateContext();
+#endif
+        // create implot3d context if required
+#ifdef IMGUI_BUNDLE_WITH_IMPLOT3D
+        if (addOnsParams.withImplot3d)
+            ImPlot3D::CreateContext();
+#endif
+
+#ifdef IMGUI_BUNDLE_WITH_IMGUI_NODE_EDITOR
+        // create imgui_node_editor context if required
+        if (addOnsParams.withNodeEditor || addOnsParams.withNodeEditorConfig.has_value())
+        {
+            addOnsParams.withNodeEditor = true;
+            if (addOnsParams.withNodeEditorConfig.has_value())
+                gImmAppContext._NodeEditorConfig = addOnsParams.withNodeEditorConfig.value();
+
+            // Replace settings file name if default
+            if (gImmAppContext._NodeEditorConfig.SettingsFile == "NodeEditor.json")
+            {
+                gImmAppContext._NodeEditorConfig.SettingsFile = NodeEditorSettingsLocation(runnerParams);
+            }
+
+            gImmAppContext._NodeEditorContext = ax::NodeEditor::CreateEditor(&gImmAppContext._NodeEditorConfig);
+            ax::NodeEditor::SetCurrentEditor(gImmAppContext._NodeEditorContext.value());
+
+            // Only sequence the ID reset function if it's been set (by node editor bindings)
+            if (FnResetImGuiNodeEditorId)
+            {
+                runnerParams.callbacks.BeforeExit = HelloImGui::SequenceFunctions(
+                    FnResetImGuiNodeEditorId,
+                    runnerParams.callbacks.BeforeExit
+                );
+            }
+
+            // Update node editor colors from imgui colors
+            auto fnUpdateNodeEditorColorsFromImguiColors = [&]
+            {
+                if (addOnsParams.updateNodeEditorColorsFromImguiColors)
+                    UpdateNodeEditorColorsFromImguiColors();
+            };
+            // Once at startup
+            runnerParams.callbacks.SetupImGuiStyle = HelloImGui::SequenceFunctions(
+                runnerParams.callbacks.SetupImGuiStyle,
+                fnUpdateNodeEditorColorsFromImguiColors
+            );
+            // Once every frame. We choose a relatively unused callback to avoid
+            // situations where a user would forget to chain the callbacks.
+            runnerParams.callbacks.BeforeImGuiRender = HelloImGui::SequenceFunctions(
+                runnerParams.callbacks.BeforeImGuiRender,
+                fnUpdateNodeEditorColorsFromImguiColors
+            );
+        }
+#endif
+
+        // withLatex implies withMarkdown
+        if (addOnsParams.withLatex)
+            addOnsParams.withMarkdown = true;
+
+        // load markdown fonts if needed
+        if (addOnsParams.withMarkdown || addOnsParams.withMarkdownOptions.has_value())
+        {
+            if (!addOnsParams.withMarkdownOptions.has_value())
+                addOnsParams.withMarkdownOptions = ImGuiMd::MarkdownOptions();
+            // Propagate withLatex convenience flag into MarkdownOptions.
+            if (addOnsParams.withLatex)
+                addOnsParams.withMarkdownOptions->withLatex = true;
+            ImGuiMd::InitializeMarkdown(addOnsParams.withMarkdownOptions.value());
+
+            runnerParams.callbacks.LoadAdditionalFonts = HelloImGui::SequenceFunctions(
+                runnerParams.callbacks.LoadAdditionalFonts,
+                ImGuiMd::GetFontLoaderFunction());
+
+            // Tear down markdown WHILE the GL context is still alive.
+            // BeforeExit fires inside AbstractRunner::TearDown just before
+            // Impl_Cleanup destroys the GL context, which is exactly what
+            // ImGuiMd::DeInitializeMarkdown needs: it triggers
+            // ImGuiMicroTeX::Release() → sTextureCache.clear() → each
+            // TextureGpuOpenGl destructor → glDeleteTextures(...). If we
+            // ran this from immapp::Priv_TearDown (after HelloImGui::Run
+            // returns), the GL context would already be gone and the
+            // glDeleteTextures call would crash on Linux.
+            runnerParams.callbacks.BeforeExit = HelloImGui::SequenceFunctions(
+                runnerParams.callbacks.BeforeExit,
+                [](){ ImGuiMd::DeInitializeMarkdown(); }
+            );
+        }
+
+#ifdef IMGUI_BUNDLE_WITH_IMFILEDIALOG
+        ImFileDialogSetupTextureLoader();
+#endif
+
+#ifdef IMGUI_BUNDLE_WITH_TEXT_INSPECT
+        if (addOnsParams.withTexInspect)
+        {
+            // Modify post-init: Init ImGuiTexInspect
+            {
+                auto fn_ImGuiTextInspect_Init = [&runnerParams, &addOnsParams](){
+                    if (runnerParams.rendererBackendType == HelloImGui::RendererBackendType::OpenGL3)
+                    {
+                        ImGuiTexInspect::ImplOpenGL3_Init(HelloImGui::GlslVersion().c_str());
+                        ImGuiTexInspect::Init();
+                        gImmAppContext._ImGuiTextInspect_Context = ImGuiTexInspect::CreateContext();
+                    }
+                    else
+                    {
+                        addOnsParams.withTexInspect = false;
+                        fprintf(stderr, "ImGuiTexInspect is only supported with OpenGL renderer!");
+                    }
+                };
+                runnerParams.callbacks.PostInit = HelloImGui::SequenceFunctions(
+                    fn_ImGuiTextInspect_Init,
+                    runnerParams.callbacks.PostInit
+                );
+            }
+
+            // Modify before-exit: DeInit ImGuiTexInspect
+            {
+                auto fn_ImGuiTextInspect_DeInit = [&addOnsParams](){
+                    if (addOnsParams.withTexInspect)
+                    {
+                        ImGuiTexInspect::Shutdown();
+                        ImGuiTexInspect::DestroyContext(gImmAppContext._ImGuiTextInspect_Context);
+                        ImGuiTexInspect::ImplOpenGl3_Shutdown();
+                    }
+                };
+                runnerParams.callbacks.BeforeExit = HelloImGui::SequenceFunctions(
+                    fn_ImGuiTextInspect_DeInit,
+                    runnerParams.callbacks.BeforeExit
+                );
+            }
+        }
+#endif
+
+#ifdef IMGUI_BUNDLE_WITH_IMANIM
+        // Clear ImAnim cache, before OpenGl is uninitialized
+        if (addOnsParams.withImAnim)
+        {
+            runnerParams.callbacks.PostNewFrame = HelloImGui::SequenceFunctions(
+                runnerParams.callbacks.PostNewFrame,
+                []() {
+                    iam_update_begin_frame();
+                    iam_clip_update(ImGui::GetIO().DeltaTime);
+                });
+        }
+#endif
+
+
+#ifdef IMGUI_BUNDLE_WITH_IMMVISION
+        // Clear ImmVision cache, before OpenGl is uninitialized
+        runnerParams.callbacks.BeforeExit = HelloImGui::SequenceFunctions(
+            runnerParams.callbacks.BeforeExit,
+            ImmVision::ClearTextureCache);
+#endif
+
+#if defined(__EMSCRIPTEN__) && defined(HELLOIMGUI_USE_SDL2)
+        // SDL2's Emscripten backend doesn't implement clipboard.
+        // Install JS event listeners to bridge browser clipboard with ImGui.
+        runnerParams.callbacks.PostInit = HelloImGui::SequenceFunctions(
+            runnerParams.callbacks.PostInit,
+            JsClipboard_Install
+        );
+        // Process paste events each frame (handles Cmd+V on Mac)
+        runnerParams.callbacks.PostNewFrame = HelloImGui::SequenceFunctions(
+            runnerParams.callbacks.PostNewFrame,
+            JsClipboard_ProcessPasteRequest
+        );
+#endif
+    }
+
+    static void Priv_TearDown()
+    {
+        AddOnsParams& addOnsParams = gAddOnsParamsAtSetup;
+
+        gRendererInstanceCount = 0;
+
+#ifdef IMGUI_BUNDLE_WITH_IMPLOT
+        if (addOnsParams.withImplot)
+            ImPlot::DestroyContext();
+#endif
+#ifdef IMGUI_BUNDLE_WITH_IMPLOT3D
+        if (addOnsParams.withImplot3d)
+            ImPlot3D::DestroyContext();
+#endif
+
+#ifdef IMGUI_BUNDLE_WITH_IMGUI_NODE_EDITOR
+        if (addOnsParams.withNodeEditor)
+        {
+            assert(gImmAppContext._NodeEditorContext.has_value());
+            ax::NodeEditor::DestroyEditor(*gImmAppContext._NodeEditorContext);
+            gImmAppContext._NodeEditorContext = std::nullopt;
+        }
+#endif
+
+        // Note: ImGuiMd::DeInitializeMarkdown() is no longer called from
+        // here. It is invoked from a BeforeExit callback registered in
+        // Priv_Setup, so it runs while the GL context is still alive.
+        // (Calling it here would run after HelloImGui::Run has destroyed
+        // the context, which causes a crash inside ~TextureGpuOpenGl
+        // → glDeleteTextures on Linux.)
+    }
+
+    void Run(HelloImGui::RunnerParams& runnerParams, const AddOnsParams& addOnsParams)
+    {
+        Priv_Setup(runnerParams, addOnsParams);
+        HelloImGui::Run(runnerParams);
+        Priv_TearDown();
+    }
+
+    void Run(const HelloImGui::SimpleRunnerParams& simpleParams, const AddOnsParams& addOnsParams)
+    {
+        HelloImGui::RunnerParams runnerParams = simpleParams.ToRunnerParams();
+        Run(runnerParams, addOnsParams);
+    }
+
+
+    void Run(
+        // HelloImGui::SimpleRunnerParams below:
+        const VoidFunction& guiFunction,
+        const std::string& windowTitle,
+        bool windowSizeAuto,
+        bool windowRestorePreviousGeometry,
+        const ScreenSize& windowSize,
+        float fpsIdle,
+        bool topMost,
+        bool iniDisable,
+
+        // ImGuiBundle_AddOnsParams below:
+        bool withImplot,
+        bool withImplot3d,
+        bool withMarkdown,
+        bool withNodeEditor,
+        bool withTexInspect,
+        bool withImAnim,
+        bool withLatex,
+#ifdef IMGUI_BUNDLE_WITH_IMGUI_NODE_EDITOR
+        const std::optional<NodeEditorConfig>& withNodeEditorConfig,
+#endif
+        const std::optional<ImGuiMd::MarkdownOptions> & withMarkdownOptions
+    )
+    {
+        HelloImGui::SimpleRunnerParams simpleRunnerParams;
+        simpleRunnerParams.guiFunction = guiFunction;
+        simpleRunnerParams.windowTitle = windowTitle;
+        simpleRunnerParams.windowSizeAuto = windowSizeAuto;
+        simpleRunnerParams.windowRestorePreviousGeometry = windowRestorePreviousGeometry;
+        simpleRunnerParams.windowSize = windowSize;
+        simpleRunnerParams.fpsIdle = fpsIdle;
+        simpleRunnerParams.topMost = topMost;
+        simpleRunnerParams.iniDisable = iniDisable;
+
+        AddOnsParams addOnsParams;
+        addOnsParams.withImplot = withImplot;
+        addOnsParams.withImplot3d = withImplot3d;
+        addOnsParams.withMarkdown = withMarkdown;
+        addOnsParams.withNodeEditor = withNodeEditor;
+        addOnsParams.withTexInspect = withTexInspect;
+        addOnsParams.withImAnim = withImAnim;
+        addOnsParams.withLatex = withLatex;
+#ifdef IMGUI_BUNDLE_WITH_IMGUI_NODE_EDITOR
+        addOnsParams.withNodeEditorConfig = withNodeEditorConfig;
+#endif
+        addOnsParams.withMarkdownOptions = withMarkdownOptions;
+
+        Run(simpleRunnerParams, addOnsParams);
+    }
+
+
+    void RunWithMarkdown(
+        // HelloImGui::SimpleRunnerParams below:
+        const VoidFunction& guiFunction,
+        const std::string& windowTitle,
+        bool windowSizeAuto,
+        bool windowRestorePreviousGeometry,
+        const ScreenSize& windowSize,
+        float fpsIdle,
+        bool topMost,
+        bool iniDisable,
+
+        // ImGuiBundle_AddOnsParams below:
+        bool withImplot,
+        bool withImplot3d,
+        bool withNodeEditor,
+        bool withTexInspect,
+        bool withImAnim,
+        bool withLatex,
+#ifdef IMGUI_BUNDLE_WITH_IMGUI_NODE_EDITOR
+        const std::optional<NodeEditorConfig>& withNodeEditorConfig,
+#endif
+        const std::optional<ImGuiMd::MarkdownOptions> & withMarkdownOptions
+    )
+    {
+        HelloImGui::SimpleRunnerParams simpleRunnerParams;
+        simpleRunnerParams.guiFunction = guiFunction;
+        simpleRunnerParams.windowTitle = windowTitle;
+        simpleRunnerParams.windowSizeAuto = windowSizeAuto;
+        simpleRunnerParams.windowRestorePreviousGeometry = windowRestorePreviousGeometry;
+        simpleRunnerParams.windowSize = windowSize;
+        simpleRunnerParams.fpsIdle = fpsIdle;
+        simpleRunnerParams.topMost = topMost;
+        simpleRunnerParams.iniDisable = iniDisable;
+
+        AddOnsParams addOnsParams;
+        addOnsParams.withImplot = withImplot;
+        addOnsParams.withImplot3d = withImplot3d;
+        addOnsParams.withMarkdown = true;
+        addOnsParams.withNodeEditor = withNodeEditor;
+        addOnsParams.withTexInspect = withTexInspect;
+        addOnsParams.withImAnim = withImAnim;
+        addOnsParams.withLatex = withLatex;
+#ifdef IMGUI_BUNDLE_WITH_IMGUI_NODE_EDITOR
+        addOnsParams.withNodeEditorConfig = withNodeEditorConfig;
+#endif
+        addOnsParams.withMarkdownOptions = withMarkdownOptions;
+
+        Run(simpleRunnerParams, addOnsParams);
+    }
+
+    float EmSize()
+    {
+        return HelloImGui::EmSize();
+    }
+    ImVec2 EmToVec2(float x, float y)
+    {
+        return HelloImGui::EmToVec2(x, y);
+    }
+    ImVec2 EmToVec2(ImVec2 v)
+    {
+        return HelloImGui::EmToVec2(v);
+    }
+    float EmSize(float nbLines)
+    {
+        return HelloImGui::EmSize(nbLines);
+    }
+
+    ImVec2 PixelsToEm(ImVec2 pixels)
+    {
+        return HelloImGui::PixelsToEm(pixels);
+    }
+
+    float  PixelSizeToEm(float pixelSize)
+    {
+        return HelloImGui::PixelSizeToEm(pixelSize);
+    }
+
+
+#ifdef IMGUI_BUNDLE_WITH_IMGUI_NODE_EDITOR
+    ax::NodeEditor::EditorContext* DefaultNodeEditorContext()
+    {
+        if (!gImmAppContext._NodeEditorContext.has_value())
+            throw std::runtime_error("No current node editor context\n"
+                                     "    Did you set with_node_editor_config when calling ImmApp::Run()?");
+        return *gImmAppContext._NodeEditorContext;
+    }
+
+    ax::NodeEditor::Config* DefaultNodeEditorConfig()
+    {
+        return &gImmAppContext._NodeEditorConfig;
+    }
+
+    // NodeEditorSettingsLocation returns the path to the json file for the node editor settings.
+    std::string NodeEditorSettingsLocation(const HelloImGui::RunnerParams& runnerParams)
+    {
+        auto iniLocationOpt = HelloImGui::IniSettingsLocation(runnerParams);
+        if (!iniLocationOpt.has_value())
+            return "";
+
+        // iniLocation is of the form path/to/your/app.ini
+        // => we replace it with path/to/your/app_node_editor.json
+        std::string jsonLocation = iniLocationOpt.value();
+        jsonLocation.replace(jsonLocation.size() - 4, 4, ".node_editor.json");
+        return jsonLocation;
+    }
+
+
+    // HasNodeEditorSettings returns true if the json file for the node editor settings exists.
+    bool HasNodeEditorSettings(const HelloImGui::RunnerParams& runnerParams)
+    {
+        std::string filename = NodeEditorSettingsLocation(runnerParams);
+        if (filename.empty())
+            return false;
+        return std::filesystem::exists(filename);
+    }
+
+    // DeleteNodeEditorSettings deletes the json file for the node editor settings.
+    void DeleteNodeEditorSettings(const HelloImGui::RunnerParams& runnerParams)
+    {
+        auto filenameOpt = IniSettingsLocation(runnerParams);
+        if (!filenameOpt.has_value())
+            return;
+        const std::string& filename = filenameOpt.value();
+        if (filename.empty())
+            return;
+        if (!std::filesystem::exists(filename))
+            return;
+        bool success = std::filesystem::remove(filename);
+        IM_ASSERT(success && "Failed to delete ini file %s");
+    }
+
+#endif
+
+
+// ========================= ManualRender ====================================================
+
+namespace ManualRender  // namespace ImmApp::ManualRender
+{
+    // Enumeration to track the current state of the ManualRenderer
+    enum class RendererStatus
+    {
+        NotInitialized,
+        Initialized,
+    };
+    RendererStatus sCurrentStatus = RendererStatus::NotInitialized;
+
+    // Storage for RunnerParams when created from SimpleRunnerParams or GuiFunction
+    // This is necessary because HelloImGui::ManualRender stores a pointer to the runnerParams,
+    // so we need to keep it alive between Setup and TearDown
+    std::optional<HelloImGui::RunnerParams> sStoredRunnerParams;
+
+    // Asserts that the renderer is currently NotInitialized, without changing state.
+    // Every public Setup* entry point calls this FIRST, before any state mutation,
+    // so that on collision we throw while globals are still pristine (notably
+    // sStoredRunnerParams, which HelloImGui::ManualRender holds a pointer into).
+    void AssertNotInitialized()
+    {
+        if (sCurrentStatus == RendererStatus::Initialized)
+            IM_ASSERT(false && "ImmApp::ManualRender::SetupFromXXX() cannot be called while already initialized. Call TearDown() first.");
+    }
+
+    // Changes the current status to NotInitialized if it was Initialized,
+    // otherwise raises an error (assert or exception)
+    void TrySwitchToNotInitialized()
+    {
+        if (sCurrentStatus == RendererStatus::NotInitialized)
+            IM_ASSERT(false && "ImmApp::ManualRender::TearDown() cannot be called while not initialized.");
+        sCurrentStatus = RendererStatus::NotInitialized;
+    }
+
+
+    void SetupFromRunnerParams(HelloImGui::RunnerParams& runnerParams, const AddOnsParams& addOnsParams)
+    {
+        AssertNotInitialized();
+        Priv_Setup(runnerParams, addOnsParams);
+        HelloImGui::ManualRender::SetupFromRunnerParams(runnerParams);
+        // Flip state only after success — if any of the above throws, we stay
+        // NotInitialized so a follow-up TearDown() doesn't operate on partial state.
+        sCurrentStatus = RendererStatus::Initialized;
+    }
+
+    void SetupFromSimpleRunnerParams(const HelloImGui::SimpleRunnerParams& simpleParams, const AddOnsParams& addOnsParams)
+    {
+        AssertNotInitialized();
+        // Store the runnerParams to keep it alive for the entire lifecycle
+        sStoredRunnerParams = simpleParams.ToRunnerParams();
+        SetupFromRunnerParams(sStoredRunnerParams.value(), addOnsParams);
+    }
+
+    void SetupFromGuiFunction(
+        const VoidFunction& guiFunction,
+        const std::string& windowTitle,
+        bool windowSizeAuto,
+        bool windowRestorePreviousGeometry,
+        const ScreenSize& windowSize,
+        float fpsIdle,
+        bool topMost,
+        bool iniDisable,
+
+        // AddOnsParams below:
+        bool withImplot,
+        bool withImplot3d,
+        bool withMarkdown,
+        bool withNodeEditor,
+        bool withTexInspect,
+        bool withLatex,
+#ifdef IMGUI_BUNDLE_WITH_IMGUI_NODE_EDITOR
+        const std::optional<NodeEditorConfig>& withNodeEditorConfig,
+#endif
+        const std::optional<ImGuiMd::MarkdownOptions> & withMarkdownOptions
+    )
+    {
+        AssertNotInitialized();
+        HelloImGui::SimpleRunnerParams simpleRunnerParams;
+        simpleRunnerParams.guiFunction = guiFunction;
+        simpleRunnerParams.windowTitle = windowTitle;
+        simpleRunnerParams.windowSizeAuto = windowSizeAuto;
+        simpleRunnerParams.windowRestorePreviousGeometry = windowRestorePreviousGeometry;
+        simpleRunnerParams.windowSize = windowSize;
+        simpleRunnerParams.fpsIdle = fpsIdle;
+        simpleRunnerParams.topMost = topMost;
+        simpleRunnerParams.iniDisable = iniDisable;
+
+        AddOnsParams addOnsParams;
+        addOnsParams.withImplot = withImplot;
+        addOnsParams.withImplot3d = withImplot3d;
+        addOnsParams.withMarkdown = withMarkdown;
+        addOnsParams.withNodeEditor = withNodeEditor;
+        addOnsParams.withTexInspect = withTexInspect;
+        addOnsParams.withLatex = withLatex;
+#ifdef IMGUI_BUNDLE_WITH_IMGUI_NODE_EDITOR
+        addOnsParams.withNodeEditorConfig = withNodeEditorConfig;
+#endif
+        addOnsParams.withMarkdownOptions = withMarkdownOptions;
+
+        SetupFromSimpleRunnerParams(simpleRunnerParams, addOnsParams);
+    }
+
+    void Render()
+    {
+        HelloImGui::ManualRender::Render();
+    }
+
+    void TearDown()
+    {
+        TrySwitchToNotInitialized();
+        HelloImGui::ManualRender::TearDown();
+        Priv_TearDown();
+        sStoredRunnerParams.reset();  // Clear the stored RunnerParams
+    }
+} // namespace ManualRender
+
+} // namespace ImmApp

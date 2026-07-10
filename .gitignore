@@ -367,3 +367,11 @@ FodyWeavers.xsd
 Dumps/
 
 imgui.ini
+ThirdParty/
+externals/
+logs/
+Tools/
+.vs/
+.git/
+.codex/
+imgui.ini

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #pragma warning(push, 0)
 #include <Windows.h>
@@ -300,21 +300,38 @@ namespace EditorSharedState {
 		shaderSourceBuffer.Encoding = DXC_CP_UTF8;
 
 		// arguments �� entry point�AShader Model�ADebug ���A�œK���A�s��z�u�̎w��B
-		LPCWSTR arguments[] = {
-			filePath.c_str(),
-			L"-E", L"main",
-			L"-T", profile,
-			L"-Zi", L"-Qembed_debug",
-			L"-Od",
-			L"-Zpr",
-			L"-I", L"Assets/Shaders"
-		};
+		std::vector<std::wstring> includeDirectories{};
+		includeDirectories.push_back(L"Assets/Shaders");
+		includeDirectories.push_back(L"Assets/Shaders/lygia");
+		includeDirectories.push_back(L"Assets/Shaders/FidelityFX");
+		includeDirectories.push_back(L"ThirdParty/Shader");
+		includeDirectories.push_back(L"ThirdParty/Shader/lygia");
+		includeDirectories.push_back(L"ThirdParty/Shader/NoiseShader-3.0.1");
+		includeDirectories.push_back(L"ThirdParty/Shader/NoiseShader-3.0.1/Packages/jp.keijiro.noiseshader/Shader");
+		includeDirectories.push_back(L"ThirdParty/Shader/FidelityFX-SDK-v1.1.4/bin/shaders");
+		includeDirectories.push_back(L"ThirdParty/Shader/FidelityFX-SDK-v1.1.4/sdk/include");
+
+		std::vector<LPCWSTR> arguments{};
+		arguments.push_back(filePath.c_str());
+		arguments.push_back(L"-E");
+		arguments.push_back(L"main");
+		arguments.push_back(L"-T");
+		arguments.push_back(profile);
+		arguments.push_back(L"-Zi");
+		arguments.push_back(L"-Qembed_debug");
+		arguments.push_back(L"-Od");
+		arguments.push_back(L"-Zpr");
+
+		for (const std::wstring& includeDirectory : includeDirectories) {
+			arguments.push_back(L"-I");
+			arguments.push_back(includeDirectory.c_str());
+		}
 
 		ComPtr<IDxcResult> shaderResult; // shaderResult �� DXC �̃R���p�C�����ʖ{�́B
 		hr = dxcCompiler->Compile(
 			&shaderSourceBuffer,
-			arguments,
-			_countof(arguments),
+			arguments.data(),
+			static_cast<uint32_t>(arguments.size()),
 			includeHandler,
 			IID_PPV_ARGS(shaderResult.GetAddressOf()));
 		assert(SUCCEEDED(hr));

@@ -14,6 +14,7 @@
 
 #pragma warning(push, 0)
 #include <fbxsdk.h>
+#include <meshoptimizer.h>
 #pragma warning(pop)
 
 #pragma warning(disable : 4623 4626 5027 5045 5245)
@@ -72,6 +73,95 @@ namespace {
 			(maxPosition.x - minPosition.x),
 			(maxPosition.y - minPosition.y),
 			(maxPosition.z - minPosition.z)};
+	}
+
+	void OptimizeModelVertices(ModelData& modelData) {
+		//============================================================
+		// meshoptimizer で頂点を整理する。
+		// 描画側は非 indexed 三角形列なので、
+		// 一度 indexed 化して最適化し、最後に三角形列へ戻す。
+		//============================================================
+		if (modelData.vertices.size() < 3u) {
+			return;
+		}
+
+		const size_t sourceVertexCount = modelData.vertices.size();
+		std::vector<unsigned int> sourceIndices(sourceVertexCount);
+		for (size_t index = 0; index < sourceVertexCount; ++index) {
+			sourceIndices[index] = static_cast<unsigned int>(index);
+		}
+
+		std::vector<unsigned int> vertexRemap(sourceVertexCount);
+		const size_t uniqueVertexCount = meshopt_generateVertexRemap(
+			vertexRemap.data(),
+			sourceIndices.data(),
+			sourceIndices.size(),
+			modelData.vertices.data(),
+			modelData.vertices.size(),
+			sizeof(VertexData));
+
+		if (uniqueVertexCount == 0u) {
+			return;
+		}
+
+		std::vector<unsigned int> remappedIndices(sourceIndices.size());
+		meshopt_remapIndexBuffer(
+			remappedIndices.data(),
+			sourceIndices.data(),
+			sourceIndices.size(),
+			vertexRemap.data());
+
+		std::vector<VertexData> remappedVertices(uniqueVertexCount);
+		meshopt_remapVertexBuffer(
+			remappedVertices.data(),
+			modelData.vertices.data(),
+			modelData.vertices.size(),
+			sizeof(VertexData),
+			vertexRemap.data());
+
+		std::vector<unsigned int> cacheOptimizedIndices(remappedIndices.size());
+		meshopt_optimizeVertexCache(
+			cacheOptimizedIndices.data(),
+			remappedIndices.data(),
+			remappedIndices.size(),
+			uniqueVertexCount);
+
+		std::vector<unsigned int> overdrawOptimizedIndices(cacheOptimizedIndices.size());
+		meshopt_optimizeOverdraw(
+			overdrawOptimizedIndices.data(),
+			cacheOptimizedIndices.data(),
+			cacheOptimizedIndices.size(),
+			&remappedVertices[0].position.x,
+			uniqueVertexCount,
+			sizeof(VertexData),
+			1.05f);
+
+		std::vector<VertexData> vertexFetchOptimizedVertices(uniqueVertexCount);
+		std::vector<unsigned int> vertexFetchOptimizedIndices = overdrawOptimizedIndices;
+		const size_t optimizedVertexCount = meshopt_optimizeVertexFetch(
+			vertexFetchOptimizedVertices.data(),
+			vertexFetchOptimizedIndices.data(),
+			vertexFetchOptimizedIndices.size(),
+			remappedVertices.data(),
+			uniqueVertexCount,
+			sizeof(VertexData));
+
+		vertexFetchOptimizedVertices.resize(optimizedVertexCount);
+
+		std::vector<VertexData> expandedTriangleVertices{};
+		expandedTriangleVertices.reserve(vertexFetchOptimizedIndices.size());
+		for (unsigned int optimizedIndex : vertexFetchOptimizedIndices) {
+			if (optimizedIndex >= vertexFetchOptimizedVertices.size()) {
+				continue;
+			}
+
+			expandedTriangleVertices.push_back(
+				vertexFetchOptimizedVertices[static_cast<size_t>(optimizedIndex)]);
+		}
+
+		if (!expandedTriangleVertices.empty()) {
+			modelData.vertices = std::move(expandedTriangleVertices);
+		}
 	}
 
 	std::string TrimText(const std::string& text) {
@@ -897,6 +987,8 @@ bool EditorAssetUtility::LoadModelAsset(const std::string& path, ModelData& mode
 	if (!isLoaded) {
 		return false;
 	}
+
+	OptimizeModelVertices(loadedModelData);
 
 	CachedModelAsset& cachedAsset = g_cachedModelAssets[normalizedPath];
 	cachedAsset.modelData = loadedModelData;

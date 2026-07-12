@@ -57,7 +57,7 @@
       <WarningLevel>EnableAllWarnings</WarningLevel>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_WINDOWS;USE_IMGUI;NOMINMAX;BTCPP_LIBRARY_VERSION=&quot;4.9.0&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>ThirdParty\imgui-docking\imgui-docking;ThirdParty\imgui-docking\imgui-docking\backends;ThirdParty\ImGuizmo-master\ImGuizmo-master\src;ThirdParty\FeelKitHaptics;ThirdParty\JoltPhysics-5.5.0;ThirdParty\AI\BehaviorTree.CPP-4.9.0\include;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\tinyxml2;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\minicoro;ThirdParty\AI\OpenSteer-master\include;ThirdParty\AI\recastnavigation-1.6.0\Detour\Include;ThirdParty\AI\recastnavigation-1.6.0\DetourCrowd\Include;ThirdParty\AI\recastnavigation-1.6.0\Recast\Include;Source\Engine\Core;Source\Engine\Editor;Source\Engine\Physics;Source\Engine\Audio;Source\Engine\Input;Source\Engine\Navigation;Source\Engine\Renderer;.;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>ThirdParty\imgui-docking\imgui-docking;ThirdParty\imgui-docking\imgui-docking\backends;ThirdParty\ImGuizmo-master\ImGuizmo-master\src;ThirdParty\FeelKitHaptics;ThirdParty\JoltPhysics-5.5.0;ThirdParty\AI\BehaviorTree.CPP-4.9.0\include;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\tinyxml2;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\minicoro;ThirdParty\AI\OpenSteer-master\include;ThirdParty\AI\recastnavigation-1.6.0\Detour\Include;ThirdParty\AI\recastnavigation-1.6.0\DetourCrowd\Include;ThirdParty\AI\recastnavigation-1.6.0\Recast\Include;ThirdParty\meshoptimizer\src;ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include;ThirdParty\Shader\FidelityFX-SDK-v1.1.4\ffx-api\include;Source\Engine\Core;Source\Engine\Editor;Source\Engine\Physics;Source\Engine\Audio;Source\Engine\Input;Source\Engine\Navigation;Source\Engine\Renderer;.;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 /external:anglebrackets /external:W0 %(AdditionalOptions)</AdditionalOptions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
@@ -82,7 +82,11 @@
 copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dxil.dll"
 copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.dll" "$(TargetDir)libfbxsdk.dll"
 copy "C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib\onnxruntime.dll" "$(TargetDir)onnxruntime.dll"
-xcopy "$(ProjectDir)Assets\Shaders" "$(TargetDir)Assets\Shaders" /E /I /Y</Command>
+xcopy "$(ProjectDir)Assets\Shaders" "$(TargetDir)Assets\Shaders" /E /I /Y
+xcopy "$(ProjectDir)ThirdParty\Shader\lygia" "$(TargetDir)ThirdParty\Shader\lygia" /E /I /Y
+xcopy "$(ProjectDir)ThirdParty\Shader\NoiseShader-3.0.1\Packages\jp.keijiro.noiseshader\Shader" "$(TargetDir)ThirdParty\Shader\NoiseShader-3.0.1\Packages\jp.keijiro.noiseshader\Shader" /E /I /Y
+xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\bin\shaders" "$(TargetDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\bin\shaders" /E /I /Y
+xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(TargetDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" /E /I /Y</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -92,7 +96,7 @@ xcopy "$(ProjectDir)Assets\Shaders" "$(TargetDir)Assets\Shaders" /E /I /Y</Comma
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_WINDOWS;USE_IMGUI;NOMINMAX;BTCPP_LIBRARY_VERSION=&quot;4.9.0&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>ThirdParty\imgui-docking\imgui-docking;ThirdParty\imgui-docking\imgui-docking\backends;ThirdParty\ImGuizmo-master\ImGuizmo-master\src;ThirdParty\FeelKitHaptics;ThirdParty\JoltPhysics-5.5.0;ThirdParty\AI\BehaviorTree.CPP-4.9.0\include;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\tinyxml2;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\minicoro;ThirdParty\AI\OpenSteer-master\include;ThirdParty\AI\recastnavigation-1.6.0\Detour\Include;ThirdParty\AI\recastnavigation-1.6.0\DetourCrowd\Include;ThirdParty\AI\recastnavigation-1.6.0\Recast\Include;Source\Engine\Core;Source\Engine\Editor;Source\Engine\Physics;Source\Engine\Audio;Source\Engine\Input;Source\Engine\Navigation;Source\Engine\Renderer;.;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>ThirdParty\imgui-docking\imgui-docking;ThirdParty\imgui-docking\imgui-docking\backends;ThirdParty\ImGuizmo-master\ImGuizmo-master\src;ThirdParty\FeelKitHaptics;ThirdParty\JoltPhysics-5.5.0;ThirdParty\AI\BehaviorTree.CPP-4.9.0\include;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\tinyxml2;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\minicoro;ThirdParty\AI\OpenSteer-master\include;ThirdParty\AI\recastnavigation-1.6.0\Detour\Include;ThirdParty\AI\recastnavigation-1.6.0\DetourCrowd\Include;ThirdParty\AI\recastnavigation-1.6.0\Recast\Include;ThirdParty\meshoptimizer\src;ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include;ThirdParty\Shader\FidelityFX-SDK-v1.1.4\ffx-api\include;Source\Engine\Core;Source\Engine\Editor;Source\Engine\Physics;Source\Engine\Audio;Source\Engine\Input;Source\Engine\Navigation;Source\Engine\Renderer;.;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 /external:anglebrackets /external:W0 %(AdditionalOptions)</AdditionalOptions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
@@ -114,7 +118,11 @@ xcopy "$(ProjectDir)Assets\Shaders" "$(TargetDir)Assets\Shaders" /E /I /Y</Comma
 copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dxil.dll"
 copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.dll" "$(TargetDir)libfbxsdk.dll"
 copy "C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib\onnxruntime.dll" "$(TargetDir)onnxruntime.dll"
-xcopy "$(ProjectDir)Assets\Shaders" "$(TargetDir)Assets\Shaders" /E /I /Y</Command>
+xcopy "$(ProjectDir)Assets\Shaders" "$(TargetDir)Assets\Shaders" /E /I /Y
+xcopy "$(ProjectDir)ThirdParty\Shader\lygia" "$(TargetDir)ThirdParty\Shader\lygia" /E /I /Y
+xcopy "$(ProjectDir)ThirdParty\Shader\NoiseShader-3.0.1\Packages\jp.keijiro.noiseshader\Shader" "$(TargetDir)ThirdParty\Shader\NoiseShader-3.0.1\Packages\jp.keijiro.noiseshader\Shader" /E /I /Y
+xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\bin\shaders" "$(TargetDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\bin\shaders" /E /I /Y
+xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(TargetDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" /E /I /Y</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -217,6 +225,86 @@ xcopy "$(ProjectDir)Assets\Shaders" "$(TargetDir)Assets\Shaders" /E /I /Y</Comma
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\decorator_node.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\allocator.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\clusterizer.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\indexanalyzer.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\indexcodec.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\indexgenerator.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\meshletcodec.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\meshletutils.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\opacitymap.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\overdrawoptimizer.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\partition.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\quantization.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\rasterizer.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\simplifier.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\spatialorder.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\stripifier.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\tangentspace.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\vcacheoptimizer.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\vertexcodec.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\vertexfilter.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\vfetchoptimizer.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
@@ -429,6 +517,7 @@ xcopy "$(ProjectDir)Assets\Shaders" "$(TargetDir)Assets\Shaders" /E /I /Y</Comma
     <ClInclude Include="ThirdParty\AI\cppGOAP-develop\src\Planner.h" />
     <ClInclude Include="ThirdParty\AI\cppGOAP-develop\src\WorldState.h" />
     <ClInclude Include="ThirdParty\AI\MicroPather-master\micropather.h" />
+    <ClInclude Include="ThirdParty\meshoptimizer\src\meshoptimizer.h" />
     <ClInclude Include="ThirdParty\imgui-docking\imgui-docking\imconfig.h" />
     <ClInclude Include="ThirdParty\imgui-docking\imgui-docking\imgui.h" />
     <ClInclude Include="ThirdParty\imgui-docking\imgui-docking\backends\imgui_impl_dx12.h" />

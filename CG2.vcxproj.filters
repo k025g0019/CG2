@@ -96,6 +96,66 @@
     <ClCompile Include="Source\Engine\Editor\EditorNavigationManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\allocator.cpp">
+      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\clusterizer.cpp">
+      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\indexanalyzer.cpp">
+      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\indexcodec.cpp">
+      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\indexgenerator.cpp">
+      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\meshletcodec.cpp">
+      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\meshletutils.cpp">
+      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\opacitymap.cpp">
+      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\overdrawoptimizer.cpp">
+      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\partition.cpp">
+      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\quantization.cpp">
+      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\rasterizer.cpp">
+      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\simplifier.cpp">
+      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\spatialorder.cpp">
+      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\stripifier.cpp">
+      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\tangentspace.cpp">
+      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\vcacheoptimizer.cpp">
+      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\vertexcodec.cpp">
+      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\vertexfilter.cpp">
+      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\vfetchoptimizer.cpp">
+      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorPhysicsManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
@@ -1201,6 +1261,9 @@
     </ClInclude>
     <ClInclude Include="Engine\Input\KeyboardState.h">
       <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="ThirdParty\meshoptimizer\src\meshoptimizer.h">
+      <Filter>繝倥ャ繝繝ｼ 繝輔ぃ繧､繝ｫ</Filter>
     </ClInclude>
     <ClInclude Include="Source\Engine\Core\StringUtility.h">
       <Filter>ヘッダー ファイル</Filter>

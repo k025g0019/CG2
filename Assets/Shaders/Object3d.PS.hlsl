@@ -3,6 +3,9 @@
 #include "Common/PBRCommon.hlsli"
 #include "Lighting/IBLRuntime.hlsli"
 #include "Shadow/SoftShadow.hlsli"
+#include "lygia/color/blend/softLight.hlsl"
+#include "lygia/generative/snoise.hlsl"
+#include "FidelityFX/CAS/ShaderLibDX/ffx_a.h"
 
 struct Material
 {
@@ -148,6 +151,12 @@ AdvancedPbrMaterial BuildMaterial(float2 texcoord)
     return material;
 }
 
+float ComputeProceduralMicroVariation(float3 worldPosition, float3 normal)
+{
+    const float noiseValue = snoise(worldPosition * 0.18f + normal * 0.35f);
+    return saturate(noiseValue * 0.5f + 0.5f);
+}
+
 float4 main(PixelShaderInput input) : SV_TARGET0
 {
     AdvancedPbrMaterial material = BuildMaterial(input.texcoord);
@@ -182,6 +191,16 @@ float4 main(PixelShaderInput input) : SV_TARGET0
     float3 albedo = material.baseColor;
     float metallic = saturate(gMaterial.metallic);
     float roughness = clamp(gMaterial.roughness, 0.04f, 1.0f);
+    const float proceduralVariation = ComputeProceduralMicroVariation(input.worldPosition, N);
+    const float fidelityPhase = proceduralVariation * A_2PI;
+    const float hashVariation = frac(sin(dot(input.worldPosition, float3(12.9898f, 78.233f, 45.164f)) + fidelityPhase) * 43758.5453f);
+    const float blendOpacity = saturate((1.0f - roughness) * 0.12f + material.emissionStrength * 0.03f);
+    const float3 proceduralTint = lerp(
+        float3(1.0f, 1.0f, 1.0f),
+        float3(proceduralVariation, proceduralVariation, proceduralVariation),
+        0.18f);
+    albedo = blendSoftLight(albedo, proceduralTint, blendOpacity);
+    roughness = clamp(roughness + (hashVariation - 0.5f) * 0.02f, 0.04f, 1.0f);
     //============================================================
     // reflectance は F0 用の反射率であり AO ではない。
     // ここへ入れると反射率 0 の面から環境光まで消えて中央が黒く抜ける。
@@ -254,5 +273,6 @@ float4 main(PixelShaderInput input) : SV_TARGET0
     float3 emission = albedo * material.emissionStrength;
 
     float3 finalColor = direct + ibl + ambient + emission;
+    finalColor += (hashVariation - 0.5f) / 255.0f;
     return float4(max(finalColor, 0.0f), material.alpha);
 }

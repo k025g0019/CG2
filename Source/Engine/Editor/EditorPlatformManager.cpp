@@ -1537,7 +1537,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	postProcessRootParameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
 	postProcessRootParameters[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	postProcessRootParameters[2].Constants.ShaderRegister = 0;
-	postProcessRootParameters[2].Constants.Num32BitValues = 48;
+	postProcessRootParameters[2].Constants.Num32BitValues = 52;
 
 	postProcessRootParameters[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
 	postProcessRootParameters[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;

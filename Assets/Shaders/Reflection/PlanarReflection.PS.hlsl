@@ -12,6 +12,8 @@ struct PlanarReflectionCB
     float halfExtentX;
     float3 planeBitangent;
     float halfExtentZ;
+    float2 viewportOrigin;
+    float2 viewportSize;
 };
 
 ConstantBuffer<PlanarReflectionCB> gPlanarReflection : register(b0);
@@ -27,11 +29,20 @@ struct PixelShaderInput
     float2 texcoord : TEXCOORD0;
 };
 
+<<<<<<< HEAD
 float3 ReconstructWorldPosition(float2 texcoord, float depth)
 {
     float4 clipPosition = float4(
         texcoord.x * 2.0f - 1.0f,
         -(texcoord.y * 2.0f - 1.0f),
+=======
+float3 ReconstructWorldPosition(float2 pixelPos, float depth)
+{
+    float2 viewportLocalUv = (pixelPos - gPlanarReflection.viewportOrigin) / gPlanarReflection.viewportSize;
+    float4 clipPosition = float4(
+        viewportLocalUv.x * 2.0f - 1.0f,
+        -(viewportLocalUv.y * 2.0f - 1.0f),
+>>>>>>> コミット
         depth,
         1.0f);
 
@@ -73,7 +84,11 @@ float4 main(PixelShaderInput input) : SV_TARGET0
         return sceneColor;
     }
 
+<<<<<<< HEAD
     float3 worldPosition = ReconstructWorldPosition(input.texcoord, depth);
+=======
+    float3 worldPosition = ReconstructWorldPosition(input.position.xy, depth);
+>>>>>>> コミット
     float planeAreaMask = ComputePlaneAreaMask(worldPosition);
 
     if (planeAreaMask <= 0.0001f)

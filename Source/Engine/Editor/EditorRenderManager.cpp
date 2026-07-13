@@ -1176,15 +1176,8 @@ void EditorRenderManager::Draw() {
 		const Vector3 savedCameraPosition = directionalLightData->cameraPosition;
 		directionalLightData->cameraPosition = planarReflectionCameraPosition;
 
-		D3D12_VIEWPORT planarReflectionViewport{};
-		planarReflectionViewport.Width = static_cast<float>(g_renderWidth);
-		planarReflectionViewport.Height = static_cast<float>(g_renderHeight);
-		planarReflectionViewport.MinDepth = 0.0f;
-		planarReflectionViewport.MaxDepth = 1.0f;
-
-		D3D12_RECT planarReflectionScissorRect{};
-		planarReflectionScissorRect.right = static_cast<LONG>(g_renderWidth);
-		planarReflectionScissorRect.bottom = static_cast<LONG>(g_renderHeight);
+		D3D12_VIEWPORT planarReflectionViewport = viewport;
+		const D3D12_RECT planarReflectionScissorRect = scissorRect;
 
 		D3D12_RESOURCE_BARRIER planarReflectionBarrier{};
 		planarReflectionBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -1216,7 +1209,6 @@ void EditorRenderManager::Draw() {
 		commandList->RSSetScissorRects(1, &planarReflectionScissorRect);
 		commandList->OMSetRenderTargets(1, &planarReflectionRtvHandle, FALSE, &dsvHandle);
 		commandList->ClearRenderTargetView(planarReflectionRtvHandle, hdrClearColor, 0, nullptr);
-		commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
 		drawSkybox(planarReflectionViewport, planarReflectionScissorRect, planarReflectionRtvHandle);
 		commandList->SetGraphicsRootSignature(rootSignature.Get());
@@ -1436,7 +1428,7 @@ void EditorRenderManager::Draw() {
 		commandList->SetGraphicsRootDescriptorTable(0, hdrSrvHandleGPU);
 		commandList->SetGraphicsRootDescriptorTable(1, depthSrvHandleGPU);
 		commandList->SetGraphicsRootDescriptorTable(3, materialMaskSrvHandleGPU);
-		float reflectionParams[48] = {};
+		float reflectionParams[52] = {};
 		std::memcpy(&reflectionParams[0], &inverseViewProjectionMatrix.matrix[0][0], sizeof(float) * 16u);
 		std::memcpy(&reflectionParams[16], &planarReflectionViewProjectionMatrix.matrix[0][0], sizeof(float) * 16u);
 		reflectionParams[32] = planarReflectionPlaneNormal.x;
@@ -1455,7 +1447,11 @@ void EditorRenderManager::Draw() {
 		reflectionParams[45] = planarReflectionPlaneBitangent.y;
 		reflectionParams[46] = planarReflectionPlaneBitangent.z;
 		reflectionParams[47] = planarReflectionHalfExtentZ;
-		commandList->SetGraphicsRoot32BitConstants(2, 48, reflectionParams, 0);
+		reflectionParams[48] = viewport.TopLeftX;
+		reflectionParams[49] = viewport.TopLeftY;
+		reflectionParams[50] = viewport.Width;
+		reflectionParams[51] = viewport.Height;
+		commandList->SetGraphicsRoot32BitConstants(2, 52, reflectionParams, 0);
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		commandList->DrawInstanced(3, 1, 0, 0);
 

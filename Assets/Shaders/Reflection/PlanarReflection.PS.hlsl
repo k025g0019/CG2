@@ -51,7 +51,7 @@ float ComputePlaneAreaMask(float3 worldPosition)
     float3 fromPlane = worldPosition - gPlanarReflection.planePoint;
 
     float distanceFromPlane = abs(dot(fromPlane, planeNormal));
-    float planeDistanceMask = 1.0f - smoothstep(0.02f, 0.15f, distanceFromPlane);
+    float planeDistanceMask = 1.0f - smoothstep(0.002f, 0.015f, distanceFromPlane);
 
     float tangentDistance = abs(dot(fromPlane, planeTangent));
     float bitangentDistance = abs(dot(fromPlane, planeBitangent));

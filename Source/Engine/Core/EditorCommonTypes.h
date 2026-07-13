@@ -99,6 +99,8 @@ struct TransformationMatrix {
 	Matrix4x4 WVP;  // World * View * Projection の合成行列
 	Matrix4x4 World;  // World 座標へ変換する行列
 	Matrix4x4 lightWVP;  // 平行光源から見た World * View * Projection。影判定に使う
+	Vector4 reflectionClipPlane;  // SV_ClipDistance0 に使うクリップ平面 (normal.xyz, d)
+	Vector4 reflectionClipParams;  // x=1.0 でクリップ有効、0.0 で無効
 };
 
 struct Sprite {

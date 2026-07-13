@@ -685,7 +685,7 @@ void EditorRenderManager::Draw() {
 	// Sprite 邵�E�E�E�・�E�E�E� 3D 郢晢�E�E�E��E�E�E�郢昴・�E�E�E�晉�E�E��E�E�E�・�E�E�E� Material 邵�E�E�E�・�E�E�E�陷�E�E�E�蠕個ｧ UV 陞溽判驪�E�E�E�郢�E�E�E�雋樊ｸ夊ｭ擾�E�E�E��E�E�E�邵�E�E�E�蜷�E�E�E�・狗ｸ�E�E�E�繝ｻ
 	sphereMaterialData->uvTransform = uvTransformMatrix;
 
-	auto updateSceneObjectMatrices = [&](const Matrix4x4& targetSceneViewProjectionMatrix) {
+	auto updateSceneObjectMatrices = [&](const Matrix4x4& targetSceneViewProjectionMatrix, bool reflectionClipEnabled = false, Vector4 reflectionClipPlane = {0.0f, 0.0f, 0.0f, 0.0f}) {
 		for (EditorSceneObject& sceneObject : editorSceneObjects) {
 			Matrix4x4 sceneObjectWorldMatrix = MakeAffineMatrix(
 				sceneObject.transform.scale,
@@ -701,6 +701,8 @@ void EditorRenderManager::Draw() {
 				sceneObject.transformationData->WVP = Multiply(sceneObjectWorldMatrix, sceneObjectProjectionMatrix);
 				sceneObject.transformationData->World = sceneObjectWorldMatrix;
 				sceneObject.transformationData->lightWVP = Multiply(sceneObjectWorldMatrix, lightViewProjectionMatrix);
+				sceneObject.transformationData->reflectionClipPlane = reflectionClipPlane;
+				sceneObject.transformationData->reflectionClipParams.x = reflectionClipEnabled ? 1.0f : 0.0f;
 			}
 
 			Matrix4x4 gameObjectProjectionMatrix =
@@ -712,6 +714,7 @@ void EditorRenderManager::Draw() {
 				sceneObject.gameTransformationData->WVP = Multiply(sceneObjectWorldMatrix, gameObjectProjectionMatrix);
 				sceneObject.gameTransformationData->World = sceneObjectWorldMatrix;
 				sceneObject.gameTransformationData->lightWVP = Multiply(sceneObjectWorldMatrix, lightViewProjectionMatrix);
+				sceneObject.gameTransformationData->reflectionClipParams.x = 0.0f; // GameView では常に無効
 			}
 
 			if (sceneObject.materialData != nullptr) {
@@ -1216,7 +1219,15 @@ void EditorRenderManager::Draw() {
 		commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
 		commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource->GetGPUVirtualAddress());
 		commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);
-		updateSceneObjectMatrices(planarReflectionViewProjectionMatrix);
+		{
+			const Vector4 reflectionClipPlane = {
+				planarReflectionPlaneNormal.x,
+				planarReflectionPlaneNormal.y,
+				planarReflectionPlaneNormal.z,
+				-Dot(planarReflectionPlaneNormal, planarReflectionPlanePoint) + 0.002f
+			};
+			updateSceneObjectMatrices(planarReflectionViewProjectionMatrix, true, reflectionClipPlane);
+		}
 		defaultDrawPso = planarScenePipelineState.Get();
 		drawSceneObjects(false, planarReflectionRtvHandle, planarReflectionSourceGameObjectId);
 		defaultDrawPso = graphicsPipelineState.Get();

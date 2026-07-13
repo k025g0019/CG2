@@ -1424,7 +1424,25 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	Log(logStream, "Init Stage: planar scene pso created");
 
+	// Planar surface PSO: 反射面オブジェクトを両面描画する (CullMode=NONE)
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC planarSurfacePipelineStateDesc = graphicsPipelineStateDesc;
+	planarSurfacePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+
+	ComPtr<ID3D12PipelineState> planarSurfacePipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&planarSurfacePipelineStateDesc,
+		IID_PPV_ARGS(planarSurfacePipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || planarSurfacePipelineState == nullptr) {
+		Log(logStream, std::format("Planar surface PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	Log(logStream, "Init Stage: planar surface pso created");
+
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC objectReflectionMaskPipelineStateDesc = graphicsPipelineStateDesc;
+	objectReflectionMaskPipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
 	objectReflectionMaskPipelineStateDesc.PS = {
 		objectReflectionMaskPixelShaderBlob->GetBufferPointer(),
 		objectReflectionMaskPixelShaderBlob->GetBufferSize()
@@ -2426,6 +2444,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_rootSignature = rootSignature;
 	g_graphicsPipelineState = graphicsPipelineState;
 	g_planarScenePipelineState = planarScenePipelineState;
+	g_planarSurfacePipelineState = planarSurfacePipelineState;
 	g_objectReflectionMaskPipelineState = objectReflectionMaskPipelineState;
 	g_cullFrontPipelineState = cullFrontPipelineState;
 	g_shadowPipelineState = shadowPipelineState;

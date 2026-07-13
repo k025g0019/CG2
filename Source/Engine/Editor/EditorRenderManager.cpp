@@ -504,6 +504,7 @@ void EditorRenderManager::Draw() {
 	// rootSignature / graphicsPipelineState 邵�E�E�E�・�E�E�E� Shader 邵�E�E�E�・�E�E�E� RenderState 邵�E�E�E�・�E�E�E�陜暦�E�E�E��E�E�E�陞ｳ螟奁E�E��E��E�E�E�・�E�E�E�陞ｳ螢�E�E�E��E�E�E�繝ｻ
 	auto& graphicsPipelineState = g_graphicsPipelineState;
 	auto& planarScenePipelineState = g_planarScenePipelineState;
+	auto& planarSurfacePipelineState = g_planarSurfacePipelineState;
 	auto& objectReflectionMaskPipelineState = g_objectReflectionMaskPipelineState;
 	auto& shadowPipelineState = g_shadowPipelineState;
 	// shadowPipelineState 邵�E�E�E�・�E�E�E�郢晢�E�E�E��E�E�E�郢�E�E�E�・�E�E�E�郢晞メ・�E�E�E�荵溘○邵�E�E�E�・�E�E�E� DepthTexture 郢�E�E�E�蜑�E�E�E�E��E�E�E�諛奁E�E��E�玖氣繧臥舁EPSO邵�E�E�E�繝ｻ
@@ -958,7 +959,7 @@ void EditorRenderManager::Draw() {
 	};
 
 	ID3D12PipelineState* defaultDrawPso = graphicsPipelineState.Get();
-	auto drawSceneObjects = [&](bool isGameViewPass, const D3D12_CPU_DESCRIPTOR_HANDLE& targetRtvHandle, int32_t skipGameObjectId) {
+	auto drawSceneObjects = [&](bool isGameViewPass, const D3D12_CPU_DESCRIPTOR_HANDLE& targetRtvHandle, int32_t skipGameObjectId, int32_t planarSurfaceGameObjectId = -1) {
 		commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, &dsvHandle);
 
 		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
@@ -1008,7 +1009,10 @@ void EditorRenderManager::Draw() {
 					meshTypeIndex = static_cast<size_t>(EditorModelMeshType::Plane);
 				}
 
-				if (sceneObject.cullMode == 1 && g_cullFrontPipelineState != nullptr) {
+				if (sceneObject.gameObjectId == planarSurfaceGameObjectId && planarSurfacePipelineState != nullptr) {
+					commandList->SetPipelineState(planarSurfacePipelineState.Get());
+				}
+				else if (sceneObject.cullMode == 1 && g_cullFrontPipelineState != nullptr) {
 					commandList->SetPipelineState(g_cullFrontPipelineState.Get());
 				}
 				else {
@@ -1275,7 +1279,7 @@ void EditorRenderManager::Draw() {
 			commandList->DrawInstanced(static_cast<UINT>(modelData.vertices.size()), 1, 0, 0);
 		}
 
-		drawSceneObjects(false, hdrRtvHandle, -1);
+		drawSceneObjects(false, hdrRtvHandle, -1, planarReflectionSourceGameObjectId);
 		drawReflectionMaskObjects(false, planarReflectionSourceGameObjectId);
 	}
 

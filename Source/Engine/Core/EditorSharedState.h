@@ -676,6 +676,7 @@ namespace EditorSharedState {
 	// g_rootSignature / g_graphicsPipelineState �� Draw ���Ɏg���Œ� GPU Pipeline �ݒ�B
 	inline ComPtr<ID3D12PipelineState> g_graphicsPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_planarScenePipelineState;
+	inline ComPtr<ID3D12PipelineState> g_planarSurfacePipelineState;
 	inline ComPtr<ID3D12PipelineState> g_objectReflectionMaskPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_cullFrontPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_shadowPipelineState;

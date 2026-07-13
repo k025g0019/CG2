@@ -898,7 +898,6 @@ void EditorRenderManager::Draw() {
 		sceneClearColor[3]
 	}; // HDR RenderTexture 邵�E�E�E�・�E�E�E�髢�E�E�E�譴�E�E�E�蜍ｹ郢�E�E�E�繝ｻInspector 邵�E�E�E�・�E�E�E�髢�E�E�E�譴�E�E�E�蜍ｹ豼�E�E�E�・�E�E�E�邵�E�E�E�・�E�E�E�闕ｳ�E�E�E�髢�E�E�E�・�E�E�E�邵�E�E�E�霈披雷郢�E�E�E�荵敖繝ｻ
 	commandList->ClearRenderTargetView(hdrRtvHandle, hdrClearColor, 0, nullptr);
-	commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
 	D3D12_RESOURCE_BARRIER materialMaskBarrier{};
 	if (materialMaskRenderTarget != nullptr) {
@@ -1209,6 +1208,7 @@ void EditorRenderManager::Draw() {
 		commandList->RSSetScissorRects(1, &planarReflectionScissorRect);
 		commandList->OMSetRenderTargets(1, &planarReflectionRtvHandle, FALSE, &dsvHandle);
 		commandList->ClearRenderTargetView(planarReflectionRtvHandle, hdrClearColor, 0, nullptr);
+		commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 1, &planarReflectionScissorRect);
 
 		drawSkybox(planarReflectionViewport, planarReflectionScissorRect, planarReflectionRtvHandle);
 		commandList->SetGraphicsRootSignature(rootSignature.Get());
@@ -1246,10 +1246,10 @@ void EditorRenderManager::Draw() {
 			mainDepthBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 			commandList->ResourceBarrier(1, &mainDepthBarrier);
 		}
-		commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 	}
 
 	if (g_isSceneViewVisible) {
+		commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 1, &scissorRect);
 		commandList->RSSetViewports(1, &viewport);
 		commandList->RSSetScissorRects(1, &scissorRect);
 		drawSkybox(viewport, scissorRect, hdrRtvHandle);
@@ -1283,7 +1283,7 @@ void EditorRenderManager::Draw() {
 		gameScissorRect.right = static_cast<LONG>(g_editorGameX + g_editorGameWidth);
 		gameScissorRect.bottom = static_cast<LONG>(g_editorGameY + g_editorGameHeight);
 
-		commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+		commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 1, &gameScissorRect);
 		commandList->RSSetViewports(1, &gameViewport);
 		commandList->RSSetScissorRects(1, &gameScissorRect);
 		drawSkybox(gameViewport, gameScissorRect, hdrRtvHandle);

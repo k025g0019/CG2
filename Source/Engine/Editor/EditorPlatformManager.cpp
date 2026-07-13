@@ -1430,6 +1430,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		objectReflectionMaskPixelShaderBlob->GetBufferSize()
 	};
 	objectReflectionMaskPipelineStateDesc.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+	objectReflectionMaskPipelineStateDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
 	objectReflectionMaskPipelineStateDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
 
 	ComPtr<ID3D12PipelineState> objectReflectionMaskPipelineState;

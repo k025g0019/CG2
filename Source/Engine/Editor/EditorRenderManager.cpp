@@ -67,6 +67,183 @@ namespace {
 		return Normalize(Subtract(direction, Multiply(2.0f * signedDistance, planeNormal)));
 	}
 
+	Matrix4x4 MakePlanarReflectionMatrix(const Vector3& planePoint, const Vector3& planeNormal) {
+		const Vector3 normal = Normalize(planeNormal);
+		const float planeDistance = Dot(planePoint, normal);
+
+		Matrix4x4 reflectionMatrix = MakeIdentity4x4();
+		reflectionMatrix.matrix[0][0] = 1.0f - 2.0f * normal.x * normal.x;
+		reflectionMatrix.matrix[0][1] = -2.0f * normal.x * normal.y;
+		reflectionMatrix.matrix[0][2] = -2.0f * normal.x * normal.z;
+		reflectionMatrix.matrix[1][0] = -2.0f * normal.y * normal.x;
+		reflectionMatrix.matrix[1][1] = 1.0f - 2.0f * normal.y * normal.y;
+		reflectionMatrix.matrix[1][2] = -2.0f * normal.y * normal.z;
+		reflectionMatrix.matrix[2][0] = -2.0f * normal.z * normal.x;
+		reflectionMatrix.matrix[2][1] = -2.0f * normal.z * normal.y;
+		reflectionMatrix.matrix[2][2] = 1.0f - 2.0f * normal.z * normal.z;
+		reflectionMatrix.matrix[3][0] = 2.0f * planeDistance * normal.x;
+		reflectionMatrix.matrix[3][1] = 2.0f * planeDistance * normal.y;
+		reflectionMatrix.matrix[3][2] = 2.0f * planeDistance * normal.z;
+
+		return reflectionMatrix;
+	}
+
+	//================================================================
+	// 平面反射に使う面の情報
+	//================================================================
+
+	enum class PlanarReflectionAxis {
+		X,
+		Y,
+		Z,
+	};
+
+	struct PlanarReflectionSurface {
+		Vector3 normal;  // normal はカメラ側を向く反射面のワールド法線。
+		Vector3 tangent;  // tangent は反射面の横方向。
+		Vector3 bitangent;  // bitangent は反射面の縦方向。
+		Vector3 point;  // point は実際に反射させる表面上のワールド座標。
+		float halfExtentTangent;  // halfExtentTangent は横方向の反射範囲の半分。
+		float halfExtentBitangent;  // halfExtentBitangent は縦方向の反射範囲の半分。
+	};
+
+	Vector3 GetPlanarReflectionLocalMeshSize(const EditorSceneObject& sceneObject) {
+		// FBX / OBJ は読み込み時に計算した実メッシュのローカル AABB を使う。
+		if (sceneObject.usesCustomMesh &&
+			Length(sceneObject.customMeshLocalBoundsSize) > 0.0001f) {
+			return sceneObject.customMeshLocalBoundsSize;
+		}
+
+		// 内部基本形は生成時のローカル寸法と同じ値を返す。
+		switch (sceneObject.meshType) {
+		case EditorModelMeshType::Plane:
+			return {1.0f, 1.0f, 0.0f};
+		case EditorModelMeshType::Box:
+			return {1.6f, 0.7f, 1.0f};
+		case EditorModelMeshType::Cube:
+		case EditorModelMeshType::Cylinder:
+		case EditorModelMeshType::Cone:
+		case EditorModelMeshType::Torus:
+		case EditorModelMeshType::Ico:
+		case EditorModelMeshType::Sphere:
+		case EditorModelMeshType::Count:
+		default:
+			return {1.0f, 1.0f, 1.0f};
+		}
+	}
+
+	Vector3 GetPlanarReflectionLocalMeshCenter(const EditorSceneObject& sceneObject) {
+		if (sceneObject.usesCustomMesh &&
+			Length(sceneObject.customMeshLocalBoundsSize) > 0.0001f) {
+			return sceneObject.customMeshLocalBoundsCenter;
+		}
+
+		return {0.0f, 0.0f, 0.0f};
+	}
+
+	PlanarReflectionAxis GetPlanarReflectionAxis(
+		const EditorSceneObject& sceneObject,
+		const EditorGameObject& gameObject) {
+		const Vector3 localMeshSize = GetPlanarReflectionLocalMeshSize(sceneObject);
+		const Vector3 worldMeshSize = {
+			std::abs(localMeshSize.x * gameObject.scale.x),
+			std::abs(localMeshSize.y * gameObject.scale.y),
+			std::abs(localMeshSize.z * gameObject.scale.z)
+		};
+
+		// 同じ厚さなら床として最も一般的な Y 面を優先する。
+		PlanarReflectionAxis reflectionAxis = PlanarReflectionAxis::Y;
+		float minimumThickness = worldMeshSize.y;
+
+		if (worldMeshSize.x < minimumThickness) {
+			reflectionAxis = PlanarReflectionAxis::X;
+			minimumThickness = worldMeshSize.x;
+		}
+
+		if (worldMeshSize.z < minimumThickness) {
+			reflectionAxis = PlanarReflectionAxis::Z;
+		}
+
+		return reflectionAxis;
+	}
+
+	PlanarReflectionSurface BuildPlanarReflectionSurface(
+		const EditorSceneObject& sceneObject,
+		const EditorGameObject& gameObject,
+		const EditorComponent& reflectionProbeComponent,
+		const Vector3& cameraPosition) {
+		const Vector3 localMeshSize = GetPlanarReflectionLocalMeshSize(sceneObject);
+		const Vector3 localMeshCenter = GetPlanarReflectionLocalMeshCenter(sceneObject);
+		const PlanarReflectionAxis reflectionAxis = GetPlanarReflectionAxis(sceneObject, gameObject);
+		const Matrix4x4 objectWorldMatrix = MakeAffineMatrix(
+			gameObject.scale,
+			gameObject.rotate,
+			gameObject.translate);
+		const Vector3 localReflectionCenter = Add(
+			localMeshCenter,
+			reflectionProbeComponent.colliderCenter);
+		const Vector3 reflectionVolumeCenter = Transform(
+			localReflectionCenter,
+			objectWorldMatrix);
+
+		const Vector3 objectRight = GetRightDirectionFromRotation(gameObject.rotate);
+		const Vector3 objectUp = GetUpDirectionFromRotation(gameObject.rotate);
+		const Vector3 objectForward = GetForwardDirectionFromRotation(gameObject.rotate);
+
+		PlanarReflectionSurface reflectionSurface{};
+		float surfaceHalfThickness = 0.0f;
+
+		switch (reflectionAxis) {
+		case PlanarReflectionAxis::X:
+			reflectionSurface.normal = objectRight;
+			reflectionSurface.tangent = objectUp;
+			reflectionSurface.bitangent = objectForward;
+			reflectionSurface.halfExtentTangent = std::abs(
+				localMeshSize.y * gameObject.scale.y) * 0.5f;
+			reflectionSurface.halfExtentBitangent = std::abs(
+				localMeshSize.z * gameObject.scale.z) * 0.5f;
+			surfaceHalfThickness = std::abs(localMeshSize.x * gameObject.scale.x) * 0.5f;
+			break;
+
+		case PlanarReflectionAxis::Z:
+			reflectionSurface.normal = objectForward;
+			reflectionSurface.tangent = objectRight;
+			reflectionSurface.bitangent = objectUp;
+			reflectionSurface.halfExtentTangent = std::abs(
+				localMeshSize.x * gameObject.scale.x) * 0.5f;
+			reflectionSurface.halfExtentBitangent = std::abs(
+				localMeshSize.y * gameObject.scale.y) * 0.5f;
+			surfaceHalfThickness = std::abs(localMeshSize.z * gameObject.scale.z) * 0.5f;
+			break;
+
+		case PlanarReflectionAxis::Y:
+		default:
+			reflectionSurface.normal = objectUp;
+			reflectionSurface.tangent = objectRight;
+			reflectionSurface.bitangent = objectForward;
+			reflectionSurface.halfExtentTangent = std::abs(
+				localMeshSize.x * gameObject.scale.x) * 0.5f;
+			reflectionSurface.halfExtentBitangent = std::abs(
+				localMeshSize.z * gameObject.scale.z) * 0.5f;
+			surfaceHalfThickness = std::abs(localMeshSize.y * gameObject.scale.y) * 0.5f;
+			break;
+		}
+
+		// 薄い Box を床や壁にした場合は、カメラに近い外側の面を反射面にする。
+		const Vector3 cameraFromCenter = Subtract(cameraPosition, reflectionVolumeCenter);
+		if (Dot(cameraFromCenter, reflectionSurface.normal) < 0.0f) {
+			reflectionSurface.normal = Multiply(-1.0f, reflectionSurface.normal);
+		}
+
+		reflectionSurface.point = Add(
+			reflectionVolumeCenter,
+			Multiply(surfaceHalfThickness, reflectionSurface.normal));
+		reflectionSurface.halfExtentTangent = (std::max)(reflectionSurface.halfExtentTangent, 0.05f);
+		reflectionSurface.halfExtentBitangent = (std::max)(reflectionSurface.halfExtentBitangent, 0.05f);
+
+		return reflectionSurface;
+	}
+
 	void ApplySceneLightToDirectionalBuffer(DirectionalLight& directionalLightData) {
 		for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
 			if (!gameObject.isActive) {
@@ -864,7 +1041,7 @@ void EditorRenderManager::Draw() {
 		}
 	};
 
-	auto drawReflectionMaskObjects = [&](bool isGameViewPass) {
+	auto drawReflectionMaskObjects = [&](bool isGameViewPass, int32_t planarMaskGameObjectId) {
 		if (materialMaskRenderTarget == nullptr || objectReflectionMaskPipelineState == nullptr) {
 			return;
 		}
@@ -876,6 +1053,11 @@ void EditorRenderManager::Draw() {
 
 		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
 			if (sceneObject.type == EditorSceneObjectType::Sprite) {
+				continue;
+			}
+
+			if (planarMaskGameObjectId >= 0 &&
+				sceneObject.gameObjectId != planarMaskGameObjectId) {
 				continue;
 			}
 
@@ -946,48 +1128,44 @@ void EditorRenderManager::Draw() {
 			continue;
 		}
 
-		//============================================================
-		// plane.obj は XY 平面に置かれ、法線が -Z を向く
-		// そのため平面反射も「右=X」「上=Y」「法線=-Forward」で組み立てる
-		//============================================================
-		planarReflectionPlaneNormal = Multiply(-1.0f, GetForwardDirectionFromRotation(gameObject.rotate));
-		if (Length(planarReflectionPlaneNormal) <= 0.0001f) {
-			planarReflectionPlaneNormal = {0.0f, 0.0f, -1.0f};
+		const EditorSceneObject* reflectionSceneObject = nullptr;
+		for (const EditorSceneObject& candidateSceneObject : editorSceneObjects) {
+			if (candidateSceneObject.gameObjectId == gameObject.id) {
+				reflectionSceneObject = &candidateSceneObject;
+				break;
+			}
 		}
 
-		const Matrix4x4 planarObjectWorldMatrix = MakeAffineMatrix(gameObject.scale, gameObject.rotate, gameObject.translate);
-		planarReflectionPlanePoint = Transform(reflectionProbeComponent->colliderCenter, planarObjectWorldMatrix);
+		if (reflectionSceneObject == nullptr) {
+			continue;
+		}
+
+		//============================================================
+		// 反射面のワールド座標と向きを決定
+		//============================================================
+
+		const PlanarReflectionSurface reflectionSurface = BuildPlanarReflectionSurface(
+			*reflectionSceneObject,
+			gameObject,
+			*reflectionProbeComponent,
+			cameraTransform.translate);
+		planarReflectionPlaneNormal = reflectionSurface.normal;
+		planarReflectionPlanePoint = reflectionSurface.point;
+		planarReflectionPlaneTangent = reflectionSurface.tangent;
+		planarReflectionPlaneBitangent = reflectionSurface.bitangent;
+		planarReflectionHalfExtentX = reflectionSurface.halfExtentTangent;
+		planarReflectionHalfExtentZ = reflectionSurface.halfExtentBitangent;
 		planarReflectionIntensity = (std::max)(reflectionProbeComponent->intensity, 0.0f);
-		planarReflectionPlaneTangent = GetRightDirectionFromRotation(gameObject.rotate);
-		planarReflectionPlaneBitangent = GetUpDirectionFromRotation(gameObject.rotate);
-		planarReflectionHalfExtentX = (std::max)(std::abs(reflectionProbeComponent->colliderSize.x * gameObject.scale.x) * 0.5f, 0.05f);
-		planarReflectionHalfExtentZ = (std::max)(std::abs(reflectionProbeComponent->colliderSize.y * gameObject.scale.y) * 0.5f, 0.05f);
 		planarReflectionFadeDistance = (std::max)(
-			(std::min)(planarReflectionHalfExtentX, planarReflectionHalfExtentZ) * 0.2f,
-			0.05f);
+			(std::min)(planarReflectionHalfExtentX, planarReflectionHalfExtentZ) * 0.02f,
+			0.01f);
 		planarReflectionSourceGameObjectId = gameObject.id;
 
-		planarReflectionCameraPosition = ReflectPointAcrossPlane(
-			cameraTransform.translate,
+		const Matrix4x4 planarReflectionMatrix = MakePlanarReflectionMatrix(
 			planarReflectionPlanePoint,
 			planarReflectionPlaneNormal);
-		Vector3 planarReflectionForward = ReflectDirectionAcrossPlane(
-			GetForwardDirectionFromRotation(cameraTransform.rotate),
-			planarReflectionPlaneNormal);
-		Vector3 planarReflectionUp = ReflectDirectionAcrossPlane(
-			GetUpDirectionFromRotation(cameraTransform.rotate),
-			planarReflectionPlaneNormal);
-		if (Length(planarReflectionForward) <= 0.0001f) {
-			planarReflectionForward = {0.0f, 0.0f, 1.0f};
-		}
-		if (Length(planarReflectionUp) <= 0.0001f) {
-			planarReflectionUp = {0.0f, 1.0f, 0.0f};
-		}
-		const Matrix4x4 planarReflectionViewMatrix = MakeLookAtMatrix(
-			planarReflectionCameraPosition,
-			Add(planarReflectionCameraPosition, planarReflectionForward),
-			planarReflectionUp);
-		planarReflectionViewProjectionMatrix = Multiply(planarReflectionViewMatrix, projectionMatrix);
+		planarReflectionCameraPosition = Transform(cameraTransform.translate, planarReflectionMatrix);
+		planarReflectionViewProjectionMatrix = Multiply(planarReflectionMatrix, sceneViewProjectionMatrix);
 		hasPlanarReflectionPass = planarReflectionRenderTarget != nullptr &&
 			planarScenePipelineState != nullptr &&
 			planarReflectionPipelineState != nullptr;
@@ -1015,6 +1193,16 @@ void EditorRenderManager::Draw() {
 		planarReflectionBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		planarReflectionBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		commandList->ResourceBarrier(1, &planarReflectionBarrier);
+
+		if (depthStencilResource != nullptr) {
+			D3D12_RESOURCE_BARRIER reflectionDepthBarrier{};
+			reflectionDepthBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			reflectionDepthBarrier.Transition.pResource = depthStencilResource;
+			reflectionDepthBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+			reflectionDepthBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+			reflectionDepthBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+			commandList->ResourceBarrier(1, &reflectionDepthBarrier);
+		}
 
 		commandList->SetGraphicsRootSignature(rootSignature.Get());
 		commandList->SetPipelineState(planarScenePipelineState.Get());
@@ -1056,6 +1244,19 @@ void EditorRenderManager::Draw() {
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	}
 
+	if (g_isSceneViewVisible || g_isGameViewVisible) {
+		if (depthStencilResource != nullptr && !hasPlanarReflectionPass) {
+			D3D12_RESOURCE_BARRIER mainDepthBarrier{};
+			mainDepthBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			mainDepthBarrier.Transition.pResource = depthStencilResource;
+			mainDepthBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+			mainDepthBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+			mainDepthBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+			commandList->ResourceBarrier(1, &mainDepthBarrier);
+		}
+		commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+	}
+
 	if (g_isSceneViewVisible) {
 		commandList->RSSetViewports(1, &viewport);
 		commandList->RSSetScissorRects(1, &scissorRect);
@@ -1072,7 +1273,7 @@ void EditorRenderManager::Draw() {
 		}
 
 		drawSceneObjects(false, hdrRtvHandle, -1);
-		drawReflectionMaskObjects(false);
+		drawReflectionMaskObjects(false, planarReflectionSourceGameObjectId);
 	}
 
 	if (g_isGameViewVisible) {
@@ -1095,7 +1296,7 @@ void EditorRenderManager::Draw() {
 		commandList->RSSetScissorRects(1, &gameScissorRect);
 		drawSkybox(gameViewport, gameScissorRect, hdrRtvHandle);
 		drawSceneObjects(true, hdrRtvHandle, -1);
-		drawReflectionMaskObjects(true);
+		drawReflectionMaskObjects(true, planarReflectionSourceGameObjectId);
 	}
 
 	if (materialMaskRenderTarget != nullptr) {
@@ -1110,7 +1311,8 @@ void EditorRenderManager::Draw() {
 	commandList->ResourceBarrier(1, &hdrBarrier);
 
 	// Depth 郢�E�E�E�繝ｻDEPTH_WRITE 遶翫・PIXEL_SHADER_RESOURCE 邵�E�E�E�・�E�E�E�鬩匁E�E��E��E�E�E�驕假�E�E�E��E�E�E� (SSR 邵�E�E�E�・�E�E�E� SSAO 邵�E�E�E�迹夲�E�E�E��E�E�E�・�E�E�E�郢�E�E�E�竏夲�E�E�E�狗ｹ�E�E�E�蛹�E�E�E�竕ｧ邵�E�E�E�・�E�E�E�)
-	if (depthStencilResource != nullptr) {
+	if (depthStencilResource != nullptr &&
+		(hasPlanarReflectionPass || g_isSceneViewVisible || g_isGameViewVisible)) {
 		D3D12_RESOURCE_BARRIER depthBarrier{};
 		depthBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		depthBarrier.Transition.pResource = depthStencilResource;
@@ -1214,14 +1416,6 @@ void EditorRenderManager::Draw() {
 		ssaoBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		ssaoBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		commandList->ResourceBarrier(1, &ssaoBarrier);
-
-		D3D12_RESOURCE_BARRIER ssaoDepthBarrier{};
-		ssaoDepthBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		ssaoDepthBarrier.Transition.pResource = depthStencilResource;
-		ssaoDepthBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-		ssaoDepthBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		ssaoDepthBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-		commandList->ResourceBarrier(1, &ssaoDepthBarrier);
 	}
 
 	// Planar Reflection

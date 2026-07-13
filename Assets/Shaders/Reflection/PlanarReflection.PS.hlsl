@@ -1,4 +1,4 @@
-#include "Common/ToneMappingCommon.hlsli"
+﻿#include "Common/ToneMappingCommon.hlsli"
 
 struct PlanarReflectionCB
 {
@@ -27,70 +27,65 @@ struct PixelShaderInput
     float2 texcoord : TEXCOORD0;
 };
 
-float4 main(PixelShaderInput input) : SV_TARGET0
+float3 ReconstructWorldPosition(float2 texcoord, float depth)
 {
-    float4 sceneColor = gSceneColor.Sample(gSampler, input.texcoord);
-    float depth = gDepth.Sample(gSampler, input.texcoord).r;
+    float4 clipPosition = float4(
+        texcoord.x * 2.0f - 1.0f,
+        -(texcoord.y * 2.0f - 1.0f),
+        depth,
+        1.0f);
 
-    if (depth >= 0.99999f)
-    {
-        return sceneColor;
-    }
+    float4 worldPosition = mul(clipPosition, gPlanarReflection.invViewProjection);
+    return worldPosition.xyz / max(worldPosition.w, 0.0001f);
+}
 
-    float4 materialMask = gMaterialMask.Sample(gSampler, input.texcoord);
-    float usePlanar = materialMask.z >= 1.5f ? 1.0f : 0.0f;
-
-    if (usePlanar <= 0.0f)
-    {
-        return sceneColor;
-    }
-
+float ComputePlaneAreaMask(float3 worldPosition)
+{
     float3 planeNormal = normalize(gPlanarReflection.planeNormal);
-    float fadeDistance = max(gPlanarReflection.fadeDistance, 0.0001f);
-    float3 planePoint = gPlanarReflection.planePoint;
     float3 planeTangent = normalize(gPlanarReflection.planeTangent);
     float3 planeBitangent = normalize(gPlanarReflection.planeBitangent);
-    float halfExtentX = max(gPlanarReflection.halfExtentX, 0.0001f);
-    float halfExtentZ = max(gPlanarReflection.halfExtentZ, 0.0001f);
-    float planarIntensity = max(gPlanarReflection.intensity, 0.0f);
+    float3 fromPlane = worldPosition - gPlanarReflection.planePoint;
 
-    float2 clipUv = float2(input.texcoord.x * 2.0f - 1.0f, 1.0f - input.texcoord.y * 2.0f);
-    float4 clipPosition = float4(clipUv, depth, 1.0f);
-    float4 reflectionWorldPosition4 = mul(clipPosition, gPlanarReflection.invViewProjection);
-    reflectionWorldPosition4.xyz /= max(reflectionWorldPosition4.w, 0.000001f);
+    float distanceFromPlane = abs(dot(fromPlane, planeNormal));
+    float planeDistanceMask = 1.0f - smoothstep(0.02f, 0.15f, distanceFromPlane);
 
-    float3 reflectionWorldPosition = reflectionWorldPosition4.xyz;
-    float3 planeOffset = reflectionWorldPosition - planePoint;
-    float planeLocalX = dot(planeOffset, planeTangent);
-    float planeLocalZ = dot(planeOffset, planeBitangent);
-    if (abs(planeLocalX) > halfExtentX || abs(planeLocalZ) > halfExtentZ)
+    float tangentDistance = abs(dot(fromPlane, planeTangent));
+    float bitangentDistance = abs(dot(fromPlane, planeBitangent));
+    float edgeDistanceX = gPlanarReflection.halfExtentX - tangentDistance;
+    float edgeDistanceZ = gPlanarReflection.halfExtentZ - bitangentDistance;
+    float edgeDistance = min(edgeDistanceX, edgeDistanceZ);
+    float edgeFadeWidth = max(gPlanarReflection.fadeDistance, 0.001f);
+    float edgeMask = smoothstep(0.0f, edgeFadeWidth, edgeDistance);
+
+    return saturate(planeDistanceMask * edgeMask);
+}
+
+float4 main(PixelShaderInput input) : SV_TARGET0
+{
+    int2 pixel = int2(input.position.xy);
+
+    float4 sceneColor = gSceneColor.Load(int3(pixel, 0));
+    float depth = gDepth.Load(int3(pixel, 0));
+    float4 materialMask = gMaterialMask.Load(int3(pixel, 0));
+
+    if (depth >= 0.9999f || materialMask.z < 1.5f)
     {
         return sceneColor;
     }
 
-    float4 reflectionClip = mul(float4(reflectionWorldPosition, 1.0f), gPlanarReflection.reflectionViewProjection);
-    if (reflectionClip.w <= 0.000001f)
+    float3 worldPosition = ReconstructWorldPosition(input.texcoord, depth);
+    float planeAreaMask = ComputePlaneAreaMask(worldPosition);
+
+    if (planeAreaMask <= 0.0001f)
     {
         return sceneColor;
     }
 
-    float2 reflectionUv;
-    reflectionUv.x = reflectionClip.x / reflectionClip.w * 0.5f + 0.5f;
-    reflectionUv.y = -reflectionClip.y / reflectionClip.w * 0.5f + 0.5f;
+    // 反射 RT はメインカメラを鏡面で反転したカメラで描く。
+    // 鏡面上の画素はメイン画面と同じスクリーン座標に対応するため、再投影で UV を作らない。
+    float4 reflectionColor = gPlanarReflectionColor.SampleLevel(gSampler, input.texcoord, 0.0f);
+    float reflectionStrength =
+        saturate(materialMask.x * materialMask.y * max(gPlanarReflection.intensity, 0.0f) * planeAreaMask);
 
-    if (reflectionUv.x < 0.0f || reflectionUv.x > 1.0f || reflectionUv.y < 0.0f || reflectionUv.y > 1.0f)
-    {
-        return sceneColor;
-    }
-
-    float3 reflectionColor = gPlanarReflectionColor.Sample(gSampler, reflectionUv).rgb;
-    float edgeDistanceX = halfExtentX - abs(planeLocalX);
-    float edgeDistanceZ = halfExtentZ - abs(planeLocalZ);
-    float planeFade = saturate(min(edgeDistanceX, edgeDistanceZ) / fadeDistance);
-    float reflectMask = saturate(materialMask.x);
-    float smoothness = saturate(materialMask.y);
-    float probeIntensity = saturate(materialMask.w);
-    float blendRate = saturate(reflectMask * smoothness * probeIntensity * planarIntensity * planeFade);
-
-    return float4(lerp(sceneColor.rgb, reflectionColor, blendRate), sceneColor.a);
+    return float4(lerp(sceneColor.rgb, reflectionColor.rgb, reflectionStrength), sceneColor.a);
 }

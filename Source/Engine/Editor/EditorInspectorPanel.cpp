@@ -401,6 +401,8 @@ namespace {
 		{"地形・タイルマップ", "タイルマップ当たり判定 2D", EditorComponentType::TilemapCollider2D},
 		{"地形・タイルマップ", "グリッド", EditorComponentType::Grid},
 		{"FeelKit", "FeelKit 触覚ソース", EditorComponentType::HapticSource},
+		{"ライト・環境", "ポストプロセス", EditorComponentType::PostProcess},
+		{"ライト・環境", "環境", EditorComponentType::Environment},
 	};
 
 	const char* GetComponentDisplayName(EditorComponentType type) {
@@ -2226,6 +2228,71 @@ namespace {
 		DrawVector3Row("サイズ", component.colliderSize, 0.01f, 0.01f, 1000.0f);
 	}
 
+	void DrawPostProcessComponent(EditorComponent& component) {
+		DrawTextRow("説明", "画面全体のポストプロセス効果を調整します。このコンポーネントを追加した GameObject の設定が有効になります。");
+		const char* aaItems[] = {"None", "FXAA", "SMAA", "Temporal"};
+		DrawComboRow("アンチエイリアス", component.aaMode, aaItems, static_cast<int32_t>(_countof(aaItems)));
+		DrawCheckboxRow("SSR", component.ssrEnabled);
+		ImGui::Separator();
+		DrawFloatRow("Bloom 強さ", component.bloomIntensity, 0.01f, 0.0f, 10.0f);
+		DrawFloatRow("Bloom しきい値", component.bloomThreshold, 0.01f, 0.0f, 10.0f);
+		DrawFloatRow("Bloom 遷移幅", component.bloomSoftKnee, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("Bloom にじみ", component.bloomScatter, 0.01f, 0.0f, 1.0f);
+		ImGui::Separator();
+		DrawFloatRow("最終明るさ", component.finalBrightness, 0.01f, 0.0f, 4.0f);
+		ImGui::Separator();
+		DrawTextRow("トーンマップ", "トーンマッピングと最終合成の設定");
+		const char* tmItems[] = {"Reinhard", "Filmic", "Timothy", "Uncharted2", "ACES"};
+		DrawComboRow("トーンマップ", component.compositeToneMappingMode, tmItems, static_cast<int32_t>(_countof(tmItems)));
+		DrawFloatRow("露出", component.compositeExposure, 0.01f, 0.0f, 8.0f);
+		DrawFloatRow("ホワイトポイント", component.compositeWhitePoint, 0.1f, 0.1f, 20.0f);
+		DrawFloatRow("彩度", component.compositeSaturation, 0.01f, 0.0f, 4.0f);
+		DrawFloatRow("コントラスト", component.compositeContrast, 0.01f, 0.0f, 4.0f);
+		DrawFloatRow("ビネット", component.compositeVignetteStrength, 0.01f, 0.0f, 2.0f);
+		DrawFloatRow("ビネット半径", component.compositeVignetteRadius, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("フィルムグレイン", component.compositeFilmGrain, 0.01f, 0.0f, 2.0f);
+		DrawFloatRow("色収差", component.compositeChromaticAberration, 0.01f, 0.0f, 2.0f);
+		DrawFloatRow("AO強度", component.compositeAmbientOcclusionStrength, 0.01f, 0.0f, 2.0f);
+	}
+
+	void DrawEnvironmentComponent(EditorComponent& component) {
+		DrawTextRow("説明", "環境光・スカイ・HDRIの設定を行います。空の色・明るさ・反射への影響を調整します。");
+		DrawStringInputRow("環境画像", component.assetPath);
+		DrawCheckboxRow("環境画像を使用", component.environmentTextureEnabled);
+		DrawFloatRow("露出", component.intensity, 0.01f, 0.0f, 8.0f);
+		DrawColor3Row("上空の色", component.color);
+		DrawColor3Row("地平線の色", component.skyLowerColor);
+		DrawFloatRow("地平線のぼかし", component.roughness, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("反射への寄与", component.reflectionStrength, 0.01f, 0.0f, 4.0f);
+		DrawFloatRow("環境光", component.metallic, 0.01f, 0.0f, 4.0f);
+		DrawFloatRow("放射の強さ", component.emissionStrength, 0.01f, 0.0f, 10.0f);
+		DrawFloatRow("環境テクスチャ回転", component.environmentTextureRotation, 0.01f, 0.0f, 6.2832f);
+		DrawFloatRow("MIPバイアス", component.environmentTextureMipBias, 0.01f, 0.0f, 4.0f);
+	}
+
+	void DrawCameraComponent(EditorInspectorPanelContext& context, EditorGameObject& gameObject, EditorComponent& component) {
+		DrawTextRow("説明", "GameView に描く実行カメラです。追従対象IDを設定すると、その GameObject へ簡易追従します。");
+		DrawGameObjectReferenceRow(context, gameObject, "追従対象", component.connectedGameObjectId, "未設定", false);
+		const char* projectionItems[] = {"Perspective", "Orthographic"};
+		DrawComboRow("投影", component.cameraProjectionMode, projectionItems, static_cast<int32_t>(_countof(projectionItems)));
+		DrawFloatRow("視野角", component.cameraFieldOfView, 1.0f, 1.0f, 179.0f);
+		DrawFloatRow("ニアクリップ", component.cameraNearClip, 0.01f, 0.01f, 100.0f);
+		DrawFloatRow("ファークリップ", component.cameraFarClip, 1.0f, 0.1f, 10000.0f);
+		DrawFloatRow("露出補正 (EV)", component.cameraExposure, 0.1f, -10.0f, 10.0f);
+		ImGui::Separator();
+		DrawCheckboxRow("被写界深度", component.cameraDofEnabled);
+		if (component.cameraDofEnabled) {
+			DrawFloatRow("フォーカス距離", component.cameraDofFocusDistance, 0.1f, 0.1f, 1000.0f);
+			DrawFloatRow("絞り", component.cameraDofAperture, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("焦点距離 (mm)", component.cameraDofFocalLength, 1.0f, 1.0f, 300.0f);
+		}
+		ImGui::Separator();
+		DrawCheckboxRow("モーションブラー", component.cameraMotionBlurEnabled);
+		if (component.cameraMotionBlurEnabled) {
+			DrawFloatRow("ブラー強度", component.cameraMotionBlurIntensity, 0.01f, 0.0f, 1.0f);
+		}
+	}
+
 	void DrawLightProbeGroupComponent(EditorComponent& component) {
 		DrawTextRow("説明", "ライトプローブの配置をまとめるコンポーネントです。");
 		DrawTextRow("状態", component.isActive ? "有効" : "無効");
@@ -2329,11 +2396,7 @@ namespace {
 			DrawLightComponent(component);
 			break;
 		case EditorComponentType::Camera:
-			DrawTextRow("説明", "GameView に描く実行カメラです。追従対象IDを設定すると、その GameObject へ簡易追従します。");
-			DrawTextRow("投影", "Perspective");
-			DrawDisabledComboRow("描画順", "Main Camera");
-			DrawGameObjectReferenceRow(context, gameObject, "追従対象", component.connectedGameObjectId, "未設定", false);
-			DrawTextRow("追従オフセット", "この GameObject の位置をオフセットとして使います。0,0,0 なら 0,2,-6 を使います。");
+			DrawCameraComponent(context, gameObject, component);
 			break;
 		case EditorComponentType::FlareLayer:
 			DrawFlareLayerComponent(component);
@@ -2346,6 +2409,12 @@ namespace {
 			break;
 		case EditorComponentType::ReflectionProbe:
 			DrawReflectionProbeComponent(component);
+			break;
+		case EditorComponentType::PostProcess:
+			DrawPostProcessComponent(component);
+			break;
+		case EditorComponentType::Environment:
+			DrawEnvironmentComponent(component);
 			break;
 		case EditorComponentType::LightProbeGroup:
 			DrawLightProbeGroupComponent(component);
@@ -2744,6 +2813,7 @@ namespace {
 				"オーディオ",
 				"UI",
 				"入力・イベント",
+				"ゲームプレイ",
 				"ナビゲーション",
 				"AI",
 				"エフェクト",

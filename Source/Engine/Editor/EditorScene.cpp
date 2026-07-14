@@ -172,6 +172,8 @@ namespace {
 		"Grid",
 		"LocalMove",
 		"RollingMove",
+		"PostProcess",
+		"Environment",
 	};
 	constexpr int32_t kEditorComponentTypeCount =
 		static_cast<int32_t>(sizeof(kEditorComponentTypeNames) / sizeof(kEditorComponentTypeNames[0]));
@@ -549,7 +551,44 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 			     << component.alpha << "|"
 			     << component.reflectionStrength << "|"
 			     << component.textureAssetPath << "|"
-			     << component.emissionStrength << "\n";
+			     << component.emissionStrength << "|"
+			     << component.bloomIntensity << "|"
+			     << component.finalBrightness << "|"
+			     << component.smaaEnabled << "|"
+			     << component.taaEnabled << "|"
+			     << component.ssrEnabled << "|"
+			     << component.skyLowerColor.x << "|"
+			     << component.skyLowerColor.y << "|"
+			     << component.skyLowerColor.z << "|"
+			     << component.environmentTextureRotation << "|"
+			     << component.environmentTextureMipBias << "|"
+			     << component.environmentTextureEnabled << "|"
+			     << component.cameraFieldOfView << "|"
+			     << component.cameraNearClip << "|"
+			     << component.cameraFarClip << "|"
+			     << component.cameraProjectionMode << "|"
+			     << component.cameraDofEnabled << "|"
+			     << component.cameraDofFocusDistance << "|"
+			     << component.cameraDofAperture << "|"
+			     << component.cameraDofFocalLength << "|"
+			     << component.cameraMotionBlurEnabled << "|"
+			     << component.cameraMotionBlurIntensity << "|"
+			     << component.cameraExposure << "|"
+			     << component.bloomThreshold << "|"
+			     << component.bloomSoftKnee << "|"
+			     << component.bloomScatter << "|"
+			     << component.aaMode << "|"
+			     << component.compositeExposure << "|"
+			     << component.compositeWhitePoint << "|"
+			     << component.compositeToneMappingMode << "|"
+			     << component.compositeBloomIntensity << "|"
+			     << component.compositeSaturation << "|"
+			     << component.compositeContrast << "|"
+			     << component.compositeVignetteStrength << "|"
+			     << component.compositeVignetteRadius << "|"
+			     << component.compositeFilmGrain << "|"
+			     << component.compositeChromaticAberration << "|"
+			     << component.compositeAmbientOcclusionStrength << "\n";
 		}
 	}
 
@@ -736,6 +775,62 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 						component.textureAssetPath = elements[113];
 						component.emissionStrength = ToFloat(elements[114]);
 					}
+					if (elements.size() >= 120) {
+						component.bloomIntensity = ToFloat(elements[115]);
+						component.finalBrightness = ToFloat(elements[116]);
+						component.smaaEnabled = ToInt(elements[117]) != 0;
+						component.taaEnabled = ToInt(elements[118]) != 0;
+						component.ssrEnabled = ToInt(elements[119]) != 0;
+					}
+				if (elements.size() >= 126) {
+					component.skyLowerColor = {ToFloat(elements[120]), ToFloat(elements[121]), ToFloat(elements[122])};
+					component.environmentTextureRotation = ToFloat(elements[123]);
+					component.environmentTextureMipBias = ToFloat(elements[124]);
+					component.environmentTextureEnabled = ToInt(elements[125]) != 0;
+				}
+				if (elements.size() >= 137) {
+					component.cameraFieldOfView = ToFloat(elements[126]);
+					component.cameraNearClip = ToFloat(elements[127]);
+					component.cameraFarClip = ToFloat(elements[128]);
+					component.cameraProjectionMode = ToInt(elements[129]);
+					component.cameraDofEnabled = ToInt(elements[130]) != 0;
+					component.cameraDofFocusDistance = ToFloat(elements[131]);
+					component.cameraDofAperture = ToFloat(elements[132]);
+					component.cameraDofFocalLength = ToFloat(elements[133]);
+					component.cameraMotionBlurEnabled = ToInt(elements[134]) != 0;
+					component.cameraMotionBlurIntensity = ToFloat(elements[135]);
+					component.cameraExposure = ToFloat(elements[136]);
+				}
+				if (elements.size() >= 140) {
+					component.bloomThreshold = ToFloat(elements[137]);
+					component.bloomSoftKnee = ToFloat(elements[138]);
+					component.bloomScatter = ToFloat(elements[139]);
+				}
+				if (elements.size() >= 141) {
+					component.aaMode = ToInt(elements[140]);
+				} else {
+					// 旧形式: smaaEnabled/taaEnabled から aaMode を推定
+					if (component.taaEnabled) {
+						component.aaMode = 3;
+					} else if (component.smaaEnabled) {
+						component.aaMode = 2;
+					} else {
+						component.aaMode = 0;
+					}
+				}
+				if (elements.size() >= 152) {
+					component.compositeExposure = ToFloat(elements[141]);
+					component.compositeWhitePoint = ToFloat(elements[142]);
+					component.compositeToneMappingMode = ToInt(elements[143]);
+					component.compositeBloomIntensity = ToFloat(elements[144]);
+					component.compositeSaturation = ToFloat(elements[145]);
+					component.compositeContrast = ToFloat(elements[146]);
+					component.compositeVignetteStrength = ToFloat(elements[147]);
+					component.compositeVignetteRadius = ToFloat(elements[148]);
+					component.compositeFilmGrain = ToFloat(elements[149]);
+					component.compositeChromaticAberration = ToFloat(elements[150]);
+					component.compositeAmbientOcclusionStrength = ToFloat(elements[151]);
+				}
 					gameObject.components.push_back(component);
 					break;
 				}
@@ -972,6 +1067,56 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 	component.particleLifetime = 2.0f;
 	component.particleSpeed = 5.0f;
 	component.particleSize = 0.5f;
+
+	if (type == EditorComponentType::PostProcess) {
+		component.bloomIntensity = 1.0f;
+		component.bloomThreshold = 1.0f;
+		component.bloomSoftKnee = 0.5f;
+		component.bloomScatter = 0.72f;
+		component.aaMode = 1;
+		component.finalBrightness = 1.0f;
+		component.smaaEnabled = true;
+		component.taaEnabled = true;
+		component.ssrEnabled = false;
+		component.compositeExposure = 1.0f;
+		component.compositeWhitePoint = 3.0f;
+		component.compositeToneMappingMode = 3;
+		component.compositeBloomIntensity = 0.70f;
+		component.compositeSaturation = 1.08f;
+		component.compositeContrast = 1.05f;
+		component.compositeVignetteStrength = 0.18f;
+		component.compositeVignetteRadius = 0.92f;
+		component.compositeFilmGrain = 0.25f;
+		component.compositeChromaticAberration = 0.15f;
+		component.compositeAmbientOcclusionStrength = 0.65f;
+	}
+
+	if (type == EditorComponentType::Environment) {
+		component.color = {0.4f, 0.6f, 1.0f};
+		component.intensity = 1.0f;
+		component.emissionStrength = 0.0f;
+		component.roughness = 0.05f;
+		component.reflectionStrength = 1.0f;
+		component.metallic = 0.3f;
+		component.skyLowerColor = {0.4f, 0.4f, 0.4f};
+		component.environmentTextureEnabled = false;
+		component.environmentTextureRotation = 0.0f;
+		component.environmentTextureMipBias = 0.0f;
+	}
+
+	if (type == EditorComponentType::Camera) {
+		component.cameraFieldOfView = 60.0f;
+		component.cameraNearClip = 0.3f;
+		component.cameraFarClip = 1000.0f;
+		component.cameraProjectionMode = 0;
+		component.cameraDofEnabled = false;
+		component.cameraDofFocusDistance = 10.0f;
+		component.cameraDofAperture = 0.1f;
+		component.cameraDofFocalLength = 50.0f;
+		component.cameraMotionBlurEnabled = false;
+		component.cameraMotionBlurIntensity = 0.5f;
+		component.cameraExposure = 0.0f;
+	}
 
 	if (type == EditorComponentType::ReflectionProbe) {
 		component.assetPath = "ScreenSpace";  // 反射コンポーネントは既定で既存 SSR を使う。

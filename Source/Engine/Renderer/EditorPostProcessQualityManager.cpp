@@ -11,10 +11,7 @@ namespace {
 	constexpr uint32_t kSmaaWeightPipelineIndex = 4u;
 	constexpr uint32_t kSmaaNeighborhoodPipelineIndex = 5u;
 	constexpr uint32_t kRootConstantCount = 8u;
-	constexpr float kBloomThreshold = 1.0f;
-	constexpr float kBloomSoftKnee = 0.5f;
-	constexpr float kBloomScatter = 0.72f;
-	constexpr float kBloomIntensity = 1.0f;
+
 
 	DXGI_FORMAT GetResourceFormat(uint32_t resourceIndex) {
 		constexpr uint32_t kSmaaEdgeResourceIndex = 7u;
@@ -111,7 +108,11 @@ bool EditorPostProcessQualityManager::Resize(uint32_t renderWidth, uint32_t rend
 
 bool EditorPostProcessQualityManager::ExecuteBloom(
 	ID3D12GraphicsCommandList* commandList,
-	D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle) {
+	D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle,
+	float bloomIntensity,
+	float bloomThreshold,
+	float bloomSoftKnee,
+	float bloomScatter) {
 
 	if (!isInitialized_ || commandList == nullptr || sourceColorSrvHandle.ptr == 0u) {
 		return false;
@@ -135,8 +136,8 @@ bool EditorPostProcessQualityManager::ExecuteBloom(
 	std::array<float, 8u> constants{};
 	constants[0] = 1.0f / static_cast<float>(renderWidth_);
 	constants[1] = 1.0f / static_cast<float>(renderHeight_);
-	constants[2] = kBloomThreshold;
-	constants[3] = kBloomSoftKnee;
+	constants[2] = bloomThreshold;
+	constants[3] = bloomSoftKnee;
 
 	if (!DrawPass(
 		commandList,
@@ -203,9 +204,9 @@ bool EditorPostProcessQualityManager::ExecuteBloom(
 		constants.fill(0.0f);
 		constants[0] = inverseLowResolutionSize[0];
 		constants[1] = inverseLowResolutionSize[1];
-		constants[2] = kBloomScatter;
+		constants[2] = bloomScatter;
 		constants[3] = passIndex == lowResolutionSources.size() - 1u
-			? kBloomIntensity
+			? bloomIntensity
 			: 1.0f;
 
 		if (!DrawPass(

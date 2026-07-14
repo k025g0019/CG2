@@ -336,6 +336,10 @@ enum class EditorComponentType {
 	LocalMove,
 	// 転がりながら進む移動
 	RollingMove,
+	// ポストプロセス設定（Bloom / SMAA / TAA / SSR / 最終合成）
+	PostProcess,
+	// 環境光 / HDRI 設定
+	Environment,
 	// Component 種類数。範囲チェックに使う
 	Count,
 };
@@ -442,6 +446,45 @@ struct EditorComponent {
 	float particleLifetime;  // ParticleSystem のパーティクル寿命 (秒)
 	float particleSpeed;  // ParticleSystem の初期速度
 	float particleSize;  // ParticleSystem のパーティクルサイズ
+	// PostProcess 設定
+	float bloomIntensity;  // Bloom の強さ。0 で Bloom OFF
+	float bloomThreshold;  // Bloom 輝度しきい値
+	float bloomSoftKnee;  // Bloom しきい値遷移の softness
+	float bloomScatter;  // Bloom のにじみ広がり (0=狭, 1=広)
+	int32_t aaMode;  // 0=None, 1=FXAA, 2=SMAA, 3=Temporal
+	float finalBrightness;  // 最終合成の明るさ
+	bool smaaEnabled;  // SMAA 有効（旧aaMode）
+	bool taaEnabled;  // TAA 有効（旧aaMode）
+	bool ssrEnabled;  // SSR 有効
+	// Final Composite 設定（FinalComposite.PS.hlsl の定数バッファに対応）
+	float compositeExposure;  // 露出
+	float compositeWhitePoint;  // ホワイトポイント
+	int32_t compositeToneMappingMode;  // 0=Reinhard, 1=Filmic, 2=Timothy, 3=Uncharted2, 4=ACES
+	float compositeBloomIntensity;  // Bloom 合成強さ
+	float compositeSaturation;  // 彩度
+	float compositeContrast;  // コントラスト
+	float compositeVignetteStrength;  // ビネット
+	float compositeVignetteRadius;  // ビネット半径
+	float compositeFilmGrain;  // フィルムグレイン
+	float compositeChromaticAberration;  // 色収差
+	float compositeAmbientOcclusionStrength;  // AO強度
+	// Environment 設定
+	Vector3 skyLowerColor;  // 地平線 / 下側の空色
+	float environmentTextureRotation;  // 環境テクスチャの水平回転（ラジアン）
+	float environmentTextureMipBias;  // 反射時のMIPバイアス
+	bool environmentTextureEnabled;  // 環境テクスチャを使うか
+	// Camera 設定
+	float cameraFieldOfView;  // 視野角（度）
+	float cameraNearClip;  // ニアクリップ距離
+	float cameraFarClip;  // ファークリップ距離
+	int32_t cameraProjectionMode;  // 0=Perspective, 1=Orthographic
+	bool cameraDofEnabled;  // 被写界深度有効
+	float cameraDofFocusDistance;  // フォーカス距離
+	float cameraDofAperture;  // 絞り（ボケ量）
+	float cameraDofFocalLength;  // 焦点距離
+	bool cameraMotionBlurEnabled;  // モーションブラー有効
+	float cameraMotionBlurIntensity;  // ブラー強度
+	float cameraExposure;  // 露出補正 (EV)
 	};
 
 struct EditorGameObject {

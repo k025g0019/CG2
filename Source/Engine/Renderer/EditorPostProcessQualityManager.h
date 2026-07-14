@@ -29,7 +29,11 @@ public:
 	bool Resize(uint32_t renderWidth, uint32_t renderHeight);
 	bool ExecuteBloom(
 		ID3D12GraphicsCommandList* commandList,
-		D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle);
+		D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle,
+		float bloomIntensity = 1.0f,
+		float bloomThreshold = 1.0f,
+		float bloomSoftKnee = 0.5f,
+		float bloomScatter = 0.72f);
 	bool ExecuteSmaa(
 		ID3D12GraphicsCommandList* commandList,
 		D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle);

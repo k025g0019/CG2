@@ -284,7 +284,30 @@ namespace {
 		directionalLightData.areaRadius = 1.0f;
 	}
 
-	
+	void ApplyEnvironmentComponent(DirectionalLight* directionalLightData) {
+		for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
+			if (!gameObject.isActive) {
+				continue;
+			}
+			const EditorComponent* env =
+				EditorComponentUtility::FindComponent(gameObject, EditorComponentType::Environment);
+			if (env == nullptr || !env->isActive) {
+				continue;
+			}
+			directionalLightData->skyUpperColor = env->color;
+			directionalLightData->skyIntensity = env->intensity;
+			directionalLightData->skyLowerColor = env->skyLowerColor;
+			directionalLightData->horizonSharpness = (std::max)(env->roughness, 0.0001f);
+			directionalLightData->skyEmission = env->emissionStrength;
+			directionalLightData->reflectionIntensity = env->reflectionStrength;
+			directionalLightData->ambientIntensity = env->metallic;
+			directionalLightData->environmentTextureEnabled = env->environmentTextureEnabled ? 1.0f : 0.0f;
+			directionalLightData->environmentTextureIntensity = env->intensity;
+			directionalLightData->environmentTextureRotation = env->environmentTextureRotation;
+			directionalLightData->environmentTextureMipBias = env->environmentTextureMipBias;
+			break;
+		}
+	}
 
 	float GetMaxAbsScale(const Vector3& scale) {
 		float maxScale = (std::max)(std::fabs(scale.x), std::fabs(scale.y));
@@ -502,6 +525,61 @@ namespace {
 			shadowRadius * 4.0f + 50.0f);
 
 		return Multiply(lightViewMatrix, lightProjectionMatrix);
+	}
+
+	struct PostProcessSettings {
+		float bloomIntensity = 1.0f;
+		float bloomThreshold = 1.0f;
+		float bloomSoftKnee = 0.5f;
+		float bloomScatter = 0.72f;
+		float finalBrightness = 1.0f;
+		int32_t aaMode = 1;
+		bool ssrEnabled = false;
+		float compositeExposure = 1.0f;
+		float compositeWhitePoint = 3.0f;
+		int32_t compositeToneMappingMode = 3;
+		float compositeBloomIntensity = 0.70f;
+		float compositeSaturation = 1.08f;
+		float compositeContrast = 1.05f;
+		float compositeVignetteStrength = 0.18f;
+		float compositeVignetteRadius = 0.92f;
+		float compositeFilmGrain = 0.25f;
+		float compositeChromaticAberration = 0.15f;
+		float compositeAmbientOcclusionStrength = 0.65f;
+	};
+
+	PostProcessSettings GetPostProcessSettings() {
+		for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
+			if (!gameObject.isActive) {
+				continue;
+			}
+			const EditorComponent* pp =
+				EditorComponentUtility::FindComponent(gameObject, EditorComponentType::PostProcess);
+			if (pp == nullptr || !pp->isActive) {
+				continue;
+			}
+			PostProcessSettings settings;
+			settings.bloomIntensity = pp->bloomIntensity;
+			settings.bloomThreshold = pp->bloomThreshold;
+			settings.bloomSoftKnee = pp->bloomSoftKnee;
+			settings.bloomScatter = pp->bloomScatter;
+			settings.finalBrightness = pp->finalBrightness;
+			settings.aaMode = pp->aaMode;
+			settings.ssrEnabled = pp->ssrEnabled;
+			settings.compositeExposure = pp->compositeExposure;
+			settings.compositeWhitePoint = pp->compositeWhitePoint;
+			settings.compositeToneMappingMode = pp->compositeToneMappingMode;
+			settings.compositeBloomIntensity = pp->compositeBloomIntensity;
+			settings.compositeSaturation = pp->compositeSaturation;
+			settings.compositeContrast = pp->compositeContrast;
+			settings.compositeVignetteStrength = pp->compositeVignetteStrength;
+			settings.compositeVignetteRadius = pp->compositeVignetteRadius;
+			settings.compositeFilmGrain = pp->compositeFilmGrain;
+			settings.compositeChromaticAberration = pp->compositeChromaticAberration;
+			settings.compositeAmbientOcclusionStrength = pp->compositeAmbientOcclusionStrength;
+			return settings;
+		}
+		return PostProcessSettings{};
 	}
 }
 
@@ -956,6 +1034,8 @@ void EditorRenderManager::Draw() {
 		float materialMaskClearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 		commandList->ClearRenderTargetView(materialMaskRtvHandle, materialMaskClearColor, 0, nullptr);
 	}
+
+	ApplyEnvironmentComponent(directionalLightData);
 
 	auto drawSkybox = [&](
 			const D3D12_VIEWPORT& targetViewport,
@@ -1714,10 +1794,16 @@ void EditorRenderManager::Draw() {
 	}
 
 	//================================================================
+	// ポストプロセス設定の読み取り
+	//================================================================
+	const PostProcessSettings ppSettings = GetPostProcessSettings();
+
+	//================================================================
 	// Compute: SSR と時間方向の履歴解決
 	//================================================================
 
-	if (hdrPostSourceResource != nullptr &&
+	if (ppSettings.aaMode == 3 &&
+		hdrPostSourceResource != nullptr &&
 		depthStencilResource != nullptr &&
 		materialMaskRenderTarget != nullptr &&
 		(g_isSceneViewVisible || g_isGameViewVisible)) {
@@ -1789,9 +1875,14 @@ void EditorRenderManager::Draw() {
 	// 多段Bloomを実行し、失敗時は既存Bloomを最終合成に使う
 	//================================================================
 	D3D12_GPU_DESCRIPTOR_HANDLE finalBloomSrvHandle = bloomSrvHandlesGPU[0];
-	const bool isQualityBloomExecuted = g_postProcessQualityManager.ExecuteBloom(
-		commandList.Get(),
-		hdrPostSourceSrvHandle);
+	const bool isQualityBloomExecuted = ppSettings.bloomIntensity > 0.0f &&
+		g_postProcessQualityManager.ExecuteBloom(
+			commandList.Get(),
+			hdrPostSourceSrvHandle,
+			ppSettings.bloomIntensity,
+			ppSettings.bloomThreshold,
+			ppSettings.bloomSoftKnee,
+			ppSettings.bloomScatter);
 
 	if (isQualityBloomExecuted) {
 		finalBloomSrvHandle = g_postProcessQualityManager.GetBloomSrvHandle();
@@ -1820,17 +1911,17 @@ void EditorRenderManager::Draw() {
 		commandList->SetGraphicsRootDescriptorTable(1, finalBloomSrvHandle);
 		commandList->SetGraphicsRootDescriptorTable(3, ssaoSrvHandlesGPU[1]);
 		float finalCompositeParams[12] = {
-			1.0f,
-			1.0f,
-			3.0f,
-			0.70f,
-			1.08f,
-			1.05f,
-			0.18f,
-			0.92f,
-			0.25f,
-			0.15f,
-			0.65f,
+			ppSettings.compositeExposure,
+			ppSettings.compositeWhitePoint,
+			static_cast<float>(ppSettings.compositeToneMappingMode),
+			ppSettings.compositeBloomIntensity,
+			ppSettings.compositeSaturation,
+			ppSettings.compositeContrast,
+			ppSettings.compositeVignetteStrength,
+			ppSettings.compositeVignetteRadius,
+			ppSettings.compositeFilmGrain,
+			ppSettings.compositeChromaticAberration,
+			ppSettings.compositeAmbientOcclusionStrength,
 			0.0f
 		};
 		commandList->SetGraphicsRoot32BitConstants(2u, 12u, finalCompositeParams, 0u);
@@ -1887,15 +1978,18 @@ void EditorRenderManager::Draw() {
 	D3D12_GPU_DESCRIPTOR_HANDLE finalAntialiasSourceSrvHandle = isSharpenExecuted
 		? hdrCompositeSrvHandleGPU
 		: postProcessSrvHandleGPU;
-	const bool isSmaaExecuted = g_postProcessQualityManager.ExecuteSmaa(
-		commandList.Get(),
-		finalAntialiasSourceSrvHandle);
+	bool isSmaaExecuted = false;
+	if (ppSettings.aaMode == 2) {
+		isSmaaExecuted = g_postProcessQualityManager.ExecuteSmaa(
+			commandList.Get(),
+			finalAntialiasSourceSrvHandle);
+	}
 
 	if (isSmaaExecuted) {
 		finalAntialiasSourceSrvHandle = g_postProcessQualityManager.GetSmaaOutputSrvHandle();
 	}
 
-	// FXAA: LDR RT 遶翫・back buffer
+	// Back buffer に出力（AAモードに応じてパスを排他制御）
 	D3D12_RESOURCE_BARRIER backBufferBarrier{};
 	backBufferBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 	backBufferBarrier.Transition.pResource = swapChainResources[backBufferIndex];
@@ -1916,12 +2010,18 @@ void EditorRenderManager::Draw() {
 		commandList->SetPipelineState(fxaaPipelineState.Get());
 		commandList->SetGraphicsRootDescriptorTable(0, finalAntialiasSourceSrvHandle);
 		commandList->SetGraphicsRootDescriptorTable(1, finalBloomSrvHandle);
-		float fxaaParams[4] = {
-			1.0f / static_cast<float>(g_renderWidth),
-			1.0f / static_cast<float>(g_renderHeight),
-			0.65f,
-			0.0312f
-		};
+		float fxaaParams[4];
+		if (ppSettings.aaMode == 1) {
+			fxaaParams[0] = 1.0f / static_cast<float>(g_renderWidth);
+			fxaaParams[1] = 1.0f / static_cast<float>(g_renderHeight);
+			fxaaParams[2] = 0.65f;
+			fxaaParams[3] = 0.0312f;
+		} else {
+			fxaaParams[0] = 1.0f / static_cast<float>(g_renderWidth);
+			fxaaParams[1] = 1.0f / static_cast<float>(g_renderHeight);
+			fxaaParams[2] = 0.0f;
+			fxaaParams[3] = 10.0f;
+		}
 		commandList->SetGraphicsRoot32BitConstants(2, 4, fxaaParams, 0);
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		commandList->DrawInstanced(3, 1, 0, 0);

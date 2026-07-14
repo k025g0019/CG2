@@ -115,11 +115,44 @@ namespace {
 			gameCameraTransform.rotate,
 			gameCameraTransform.translate);
 		g_gameViewMatrix = Inverse(g_gameCameraMatrix);
-		g_gameProjectionMatrix = MakePerspectiveFovMatrix(
-			0.45f,
-			g_editorGameWidth / g_editorGameHeight,
-			0.1f,
-			1000.0f);
+
+		// 既定の投影パラメータ（Camera Component がなければこの値を使う）
+		float fovY = 0.45f;
+		float nearZ = 0.1f;
+		float farZ = 1000.0f;
+		int32_t projectionMode = 0;
+
+		// Camera Component を検索して投影パラメータを上書き
+		for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
+			if (!gameObject.isActive) {
+				continue;
+			}
+			const EditorComponent* cameraComponent = FindRuntimeCameraComponent(gameObject);
+			if (cameraComponent == nullptr) {
+				continue;
+			}
+			fovY = cameraComponent->cameraFieldOfView * (std::numbers::pi_v<float> / 180.0f);
+			nearZ = cameraComponent->cameraNearClip;
+			farZ = cameraComponent->cameraFarClip;
+			projectionMode = cameraComponent->cameraProjectionMode;
+			break;
+		}
+
+		if (projectionMode == 1) {
+			const float orthoHeight = 10.0f;
+			const float aspect = g_editorGameWidth / g_editorGameHeight;
+			const float orthoWidth = orthoHeight * aspect;
+			g_gameProjectionMatrix = MakeOrthographicMatrix(
+				-orthoWidth * 0.5f, -orthoHeight * 0.5f,
+				orthoWidth * 0.5f, orthoHeight * 0.5f,
+				nearZ, farZ);
+		} else {
+			g_gameProjectionMatrix = MakePerspectiveFovMatrix(
+				fovY,
+				g_editorGameWidth / g_editorGameHeight,
+				nearZ,
+				farZ);
+		}
 	}
 }
 

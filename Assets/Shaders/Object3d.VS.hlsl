@@ -3,6 +3,8 @@ struct TransformationMatrix
     row_major float4x4 WVP;
     row_major float4x4 World;
     row_major float4x4 lightWVP;
+    float4 reflectionClipPlane;
+    float4 reflectionClipParams;
 };
 
 ConstantBuffer<TransformationMatrix> gTransformationMatrix : register(b0);
@@ -21,6 +23,7 @@ struct VertexShaderOutput
     float3 normal : NORMAL0;
     float3 worldPosition : TEXCOORD1;
     float4 shadowPosition : TEXCOORD2;
+    float reflectionClipDistance : SV_ClipDistance0;
 };
 
 VertexShaderOutput main(VertexShaderInput input)
@@ -33,6 +36,10 @@ VertexShaderOutput main(VertexShaderInput input)
     output.normal = normalize(mul(float4(input.normal, 0.0f), gTransformationMatrix.World).xyz);
     output.worldPosition = worldPosition.xyz;
     output.shadowPosition = mul(input.position, gTransformationMatrix.lightWVP);
+
+    output.reflectionClipDistance = gTransformationMatrix.reflectionClipParams.x > 0.5f
+        ? dot(worldPosition, gTransformationMatrix.reflectionClipPlane)
+        : 1.0f;
 
     return output;
 }

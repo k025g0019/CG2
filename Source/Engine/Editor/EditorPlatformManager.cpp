@@ -1,4 +1,4 @@
-#pragma warning(disable : 4189 4514)
+﻿#pragma warning(disable : 4189 4514)
 
 #include "EditorPlatformManager.h"
 #include <onnxruntime_cxx_api.h>
@@ -1234,6 +1234,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	spriteMaterialData->reflectionMode = 0.0f;
 	spriteMaterialData->reflectionProbeIntensity = 0.0f;
 	spriteMaterialData->reflectionReserved = 0.0f;
+	spriteMaterialData->materialPadding0 = 0.0f;
+	spriteMaterialData->materialPadding1 = 0.0f;
 	spriteMaterialData->uvTransform = MakeIdentity4x4();
 
 	ID3D12Resource* sphereMaterialResource = CreateBufferResource(device.Get(), sizeof(Material));
@@ -1252,6 +1254,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	sphereMaterialData->reflectionMode = 0.0f;
 	sphereMaterialData->reflectionProbeIntensity = 0.0f;
 	sphereMaterialData->reflectionReserved = 0.0f;
+	sphereMaterialData->materialPadding0 = 0.0f;
+	sphereMaterialData->materialPadding1 = 0.0f;
 	sphereMaterialData->uvTransform = MakeIdentity4x4();
 
 	ID3D12Resource* directionalLightResource = CreateBufferResource(device.Get(), sizeof(DirectionalLight));
@@ -1409,7 +1413,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	Log(logStream, "Init Stage: object pso created");
 
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC planarScenePipelineStateDesc = graphicsPipelineStateDesc;
-	planarScenePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	// 反射行列を ViewProjection より前へ掛けると winding が反転する。
+	// FRONT を落とすことで、鏡から見える本来の表面を反射 RT へ残す。
+	planarScenePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_FRONT;
 
 	ComPtr<ID3D12PipelineState> planarScenePipelineState;
 	hr = device->CreateGraphicsPipelineState(
@@ -1424,12 +1430,31 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	Log(logStream, "Init Stage: planar scene pso created");
 
+	// Planar surface PSO: 反射面オブジェクトを両面描画する (CullMode=NONE)
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC planarSurfacePipelineStateDesc = graphicsPipelineStateDesc;
+	planarSurfacePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+
+	ComPtr<ID3D12PipelineState> planarSurfacePipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&planarSurfacePipelineStateDesc,
+		IID_PPV_ARGS(planarSurfacePipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || planarSurfacePipelineState == nullptr) {
+		Log(logStream, std::format("Planar surface PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	Log(logStream, "Init Stage: planar surface pso created");
+
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC objectReflectionMaskPipelineStateDesc = graphicsPipelineStateDesc;
+	objectReflectionMaskPipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
 	objectReflectionMaskPipelineStateDesc.PS = {
 		objectReflectionMaskPixelShaderBlob->GetBufferPointer(),
 		objectReflectionMaskPixelShaderBlob->GetBufferSize()
 	};
 	objectReflectionMaskPipelineStateDesc.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+	objectReflectionMaskPipelineStateDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
 	objectReflectionMaskPipelineStateDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
 
 	ComPtr<ID3D12PipelineState> objectReflectionMaskPipelineState;
@@ -1536,7 +1561,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	postProcessRootParameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
 	postProcessRootParameters[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	postProcessRootParameters[2].Constants.ShaderRegister = 0;
-	postProcessRootParameters[2].Constants.Num32BitValues = 48;
+	postProcessRootParameters[2].Constants.Num32BitValues = 40;
 
 	postProcessRootParameters[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
 	postProcessRootParameters[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -2277,6 +2302,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	if (iblPrefilterCube == nullptr) makePlaceholder(2, 2, 6, DXGI_FORMAT_R16G16B16A16_FLOAT, true, iblPrefilterCube, iblPrefilterSrvHandleCPU);
 
 	loadIblCube(iblFiles[2], iblEnvironmentCube, iblEnvironmentSrvHandleCPU, nullptr);
+	g_iblEnvironmentCubeLoaded = iblEnvironmentCube != nullptr;
 	if (iblEnvironmentCube == nullptr) makePlaceholder(2, 2, 6, DXGI_FORMAT_R16G16B16A16_FLOAT, true, iblEnvironmentCube, iblEnvironmentSrvHandleCPU);
 
 	loadIblCube(iblFiles[3], iblBrdfLut, iblBrdfLutSrvHandleCPU, nullptr);
@@ -2425,6 +2451,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_rootSignature = rootSignature;
 	g_graphicsPipelineState = graphicsPipelineState;
 	g_planarScenePipelineState = planarScenePipelineState;
+	g_planarSurfacePipelineState = planarSurfacePipelineState;
 	g_objectReflectionMaskPipelineState = objectReflectionMaskPipelineState;
 	g_cullFrontPipelineState = cullFrontPipelineState;
 	g_shadowPipelineState = shadowPipelineState;

@@ -130,6 +130,8 @@ int32_t EditorSceneObjectManager::CreateObject(
 	sceneObject.materialData->reflectionMode = 0.0f;
 	sceneObject.materialData->reflectionProbeIntensity = 0.0f;
 	sceneObject.materialData->reflectionReserved = 0.0f;
+	sceneObject.materialData->materialPadding0 = 0.0f;
+	sceneObject.materialData->materialPadding1 = 0.0f;
 	sceneObject.materialData->uvTransform = MakeIdentity4x4();
 	sceneObject.cullMode = 0;
 	sceneObjects_.push_back(sceneObject);

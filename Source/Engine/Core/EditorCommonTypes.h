@@ -3,6 +3,7 @@
 #include "Matrix.h"
 #include "Vector.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -50,8 +51,13 @@ struct Material {
 	float reflectionMode;  // 0: SSR / 1: Cubemap / 2: Planar
 	float reflectionProbeIntensity;  // 反射コンポーネント側で上書きする強さ
 	float reflectionReserved;  // 反射コンポーネント側の粗さ上書き値
+	float materialPadding0;  // HLSL cbuffer の 16byte 境界合わせ
+	float materialPadding1;  // HLSL cbuffer の 16byte 境界合わせ
 	Matrix4x4 uvTransform;  // UV の移動 / 回転 / 拡縮行列
 };
+
+static_assert(offsetof(Material, uvTransform) == 64u, "Material と HLSL cbuffer の uvTransform 開始位置が一致していません。");
+static_assert(sizeof(Material) == 128u, "Material と HLSL cbuffer のサイズが一致していません。");
 
 constexpr int32_t kMaxEmissiveLights = 8;
 
@@ -99,6 +105,8 @@ struct TransformationMatrix {
 	Matrix4x4 WVP;  // World * View * Projection の合成行列
 	Matrix4x4 World;  // World 座標へ変換する行列
 	Matrix4x4 lightWVP;  // 平行光源から見た World * View * Projection。影判定に使う
+	Vector4 reflectionClipPlane;  // SV_ClipDistance0 に使うクリップ平面 (normal.xyz, d)
+	Vector4 reflectionClipParams;  // x=1.0 でクリップ有効、0.0 で無効
 };
 
 struct Sprite {

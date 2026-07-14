@@ -1,4 +1,4 @@
-#ifndef IBL_RUNTIME_HLSLI
+﻿#ifndef IBL_RUNTIME_HLSLI
 #define IBL_RUNTIME_HLSLI
 
 #include "../Common/PBRCommon.hlsli"

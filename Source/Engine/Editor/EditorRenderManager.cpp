@@ -5,6 +5,7 @@
 #include "EditorAssetUtility.h"
 #include "EditorComponentUtility.h"
 #include "EditorSharedState.h"
+#include "Log.h"
 
 #include <cmath>
 #include <cstring>
@@ -56,15 +57,183 @@ namespace {
 		return Normalize(worldRight);
 	}
 
-	Vector3 ReflectPointAcrossPlane(const Vector3& point, const Vector3& planePoint, const Vector3& planeNormal) {
-		const Vector3 offset = Subtract(point, planePoint);
-		const float signedDistance = Dot(offset, planeNormal);
-		return Subtract(point, Multiply(2.0f * signedDistance, planeNormal));
+	Matrix4x4 MakePlanarReflectionMatrix(const Vector3& planePoint, const Vector3& planeNormal) {
+		const Vector3 normal = Normalize(planeNormal);
+		const float planeDistance = Dot(planePoint, normal);
+
+		// ワールド座標を平面の反対側へ移す、行ベクトル用の反射行列。
+		// View 行列を組み直さず、この行列を元の ViewProjection より前へ掛ける。
+		Matrix4x4 reflectionMatrix = MakeIdentity4x4();
+		reflectionMatrix.matrix[0][0] = 1.0f - 2.0f * normal.x * normal.x;
+		reflectionMatrix.matrix[0][1] = -2.0f * normal.x * normal.y;
+		reflectionMatrix.matrix[0][2] = -2.0f * normal.x * normal.z;
+		reflectionMatrix.matrix[1][0] = -2.0f * normal.y * normal.x;
+		reflectionMatrix.matrix[1][1] = 1.0f - 2.0f * normal.y * normal.y;
+		reflectionMatrix.matrix[1][2] = -2.0f * normal.y * normal.z;
+		reflectionMatrix.matrix[2][0] = -2.0f * normal.z * normal.x;
+		reflectionMatrix.matrix[2][1] = -2.0f * normal.z * normal.y;
+		reflectionMatrix.matrix[2][2] = 1.0f - 2.0f * normal.z * normal.z;
+		reflectionMatrix.matrix[3][0] = 2.0f * planeDistance * normal.x;
+		reflectionMatrix.matrix[3][1] = 2.0f * planeDistance * normal.y;
+		reflectionMatrix.matrix[3][2] = 2.0f * planeDistance * normal.z;
+
+		return reflectionMatrix;
 	}
 
-	Vector3 ReflectDirectionAcrossPlane(const Vector3& direction, const Vector3& planeNormal) {
-		const float signedDistance = Dot(direction, planeNormal);
-		return Normalize(Subtract(direction, Multiply(2.0f * signedDistance, planeNormal)));
+	//================================================================
+	// 平面反射に使う面の情報
+	//================================================================
+
+	enum class PlanarReflectionAxis {
+		X,
+		Y,
+		Z,
+	};
+
+	struct PlanarReflectionSurface {
+		Vector3 normal;  // normal はカメラ側を向く反射面のワールド法線。
+		Vector3 tangent;  // tangent は反射面の横方向。
+		Vector3 bitangent;  // bitangent は反射面の縦方向。
+		Vector3 point;  // point は実際に反射させる表面上のワールド座標。
+		float halfExtentTangent;  // halfExtentTangent は横方向の反射範囲の半分。
+		float halfExtentBitangent;  // halfExtentBitangent は縦方向の反射範囲の半分。
+	};
+
+	Vector3 GetPlanarReflectionLocalMeshSize(const EditorSceneObject& sceneObject) {
+		// FBX / OBJ は読み込み時に計算した実メッシュのローカル AABB を使う。
+		if (sceneObject.usesCustomMesh &&
+			Length(sceneObject.customMeshLocalBoundsSize) > 0.0001f) {
+			return sceneObject.customMeshLocalBoundsSize;
+		}
+
+		// 内部基本形は生成時のローカル寸法と同じ値を返す。
+		switch (sceneObject.meshType) {
+		case EditorModelMeshType::Plane:
+			return {1.0f, 1.0f, 0.0f};
+		case EditorModelMeshType::Box:
+			return {1.6f, 0.7f, 1.0f};
+		case EditorModelMeshType::Cube:
+		case EditorModelMeshType::Cylinder:
+		case EditorModelMeshType::Cone:
+		case EditorModelMeshType::Torus:
+		case EditorModelMeshType::Ico:
+		case EditorModelMeshType::Sphere:
+		case EditorModelMeshType::Count:
+		default:
+			return {1.0f, 1.0f, 1.0f};
+		}
+	}
+
+	Vector3 GetPlanarReflectionLocalMeshCenter(const EditorSceneObject& sceneObject) {
+		if (sceneObject.usesCustomMesh &&
+			Length(sceneObject.customMeshLocalBoundsSize) > 0.0001f) {
+			return sceneObject.customMeshLocalBoundsCenter;
+		}
+
+		return {0.0f, 0.0f, 0.0f};
+	}
+
+	PlanarReflectionAxis GetPlanarReflectionAxis(
+		const EditorSceneObject& sceneObject,
+		const EditorGameObject& gameObject) {
+		const Vector3 localMeshSize = GetPlanarReflectionLocalMeshSize(sceneObject);
+		const Vector3 worldMeshSize = {
+			std::abs(localMeshSize.x * gameObject.scale.x),
+			std::abs(localMeshSize.y * gameObject.scale.y),
+			std::abs(localMeshSize.z * gameObject.scale.z)
+		};
+
+		// 同じ厚さなら床として最も一般的な Y 面を優先する。
+		PlanarReflectionAxis reflectionAxis = PlanarReflectionAxis::Y;
+		float minimumThickness = worldMeshSize.y;
+
+		if (worldMeshSize.x < minimumThickness) {
+			reflectionAxis = PlanarReflectionAxis::X;
+			minimumThickness = worldMeshSize.x;
+		}
+
+		if (worldMeshSize.z < minimumThickness) {
+			reflectionAxis = PlanarReflectionAxis::Z;
+		}
+
+		return reflectionAxis;
+	}
+
+	PlanarReflectionSurface BuildPlanarReflectionSurface(
+		const EditorSceneObject& sceneObject,
+		const EditorGameObject& gameObject,
+		const EditorComponent& reflectionProbeComponent,
+		const Vector3& cameraPosition) {
+		const Vector3 localMeshSize = GetPlanarReflectionLocalMeshSize(sceneObject);
+		const Vector3 localMeshCenter = GetPlanarReflectionLocalMeshCenter(sceneObject);
+		const PlanarReflectionAxis reflectionAxis = GetPlanarReflectionAxis(sceneObject, gameObject);
+		const Matrix4x4 objectWorldMatrix = MakeAffineMatrix(
+			gameObject.scale,
+			gameObject.rotate,
+			gameObject.translate);
+		const Vector3 localReflectionCenter = Add(
+			localMeshCenter,
+			reflectionProbeComponent.colliderCenter);
+		const Vector3 reflectionVolumeCenter = Transform(
+			localReflectionCenter,
+			objectWorldMatrix);
+
+		const Vector3 objectRight = GetRightDirectionFromRotation(gameObject.rotate);
+		const Vector3 objectUp = GetUpDirectionFromRotation(gameObject.rotate);
+		const Vector3 objectForward = GetForwardDirectionFromRotation(gameObject.rotate);
+
+		PlanarReflectionSurface reflectionSurface{};
+		float surfaceHalfThickness = 0.0f;
+
+		switch (reflectionAxis) {
+		case PlanarReflectionAxis::X:
+			reflectionSurface.normal = objectRight;
+			reflectionSurface.tangent = objectUp;
+			reflectionSurface.bitangent = objectForward;
+			reflectionSurface.halfExtentTangent = std::abs(
+				localMeshSize.y * gameObject.scale.y) * 0.5f;
+			reflectionSurface.halfExtentBitangent = std::abs(
+				localMeshSize.z * gameObject.scale.z) * 0.5f;
+			surfaceHalfThickness = std::abs(localMeshSize.x * gameObject.scale.x) * 0.5f;
+			break;
+
+		case PlanarReflectionAxis::Z:
+			reflectionSurface.normal = objectForward;
+			reflectionSurface.tangent = objectRight;
+			reflectionSurface.bitangent = objectUp;
+			reflectionSurface.halfExtentTangent = std::abs(
+				localMeshSize.x * gameObject.scale.x) * 0.5f;
+			reflectionSurface.halfExtentBitangent = std::abs(
+				localMeshSize.y * gameObject.scale.y) * 0.5f;
+			surfaceHalfThickness = std::abs(localMeshSize.z * gameObject.scale.z) * 0.5f;
+			break;
+
+		case PlanarReflectionAxis::Y:
+		default:
+			reflectionSurface.normal = objectUp;
+			reflectionSurface.tangent = objectRight;
+			reflectionSurface.bitangent = objectForward;
+			reflectionSurface.halfExtentTangent = std::abs(
+				localMeshSize.x * gameObject.scale.x) * 0.5f;
+			reflectionSurface.halfExtentBitangent = std::abs(
+				localMeshSize.z * gameObject.scale.z) * 0.5f;
+			surfaceHalfThickness = std::abs(localMeshSize.y * gameObject.scale.y) * 0.5f;
+			break;
+		}
+
+		// 薄い Box を床や壁にした場合は、カメラに近い外側の面を反射面にする。
+		const Vector3 cameraFromCenter = Subtract(cameraPosition, reflectionVolumeCenter);
+		if (Dot(cameraFromCenter, reflectionSurface.normal) < 0.0f) {
+			reflectionSurface.normal = Multiply(-1.0f, reflectionSurface.normal);
+		}
+
+		reflectionSurface.point = Add(
+			reflectionVolumeCenter,
+			Multiply(surfaceHalfThickness, reflectionSurface.normal));
+		reflectionSurface.halfExtentTangent = (std::max)(reflectionSurface.halfExtentTangent, 0.05f);
+		reflectionSurface.halfExtentBitangent = (std::max)(reflectionSurface.halfExtentBitangent, 0.05f);
+
+		return reflectionSurface;
 	}
 
 	void ApplySceneLightToDirectionalBuffer(DirectionalLight& directionalLightData) {
@@ -251,6 +420,49 @@ namespace {
 		return viewMatrix;
 	}
 
+	//================================================================
+	// 平面反射に使うカメラ
+	//================================================================
+
+	struct PlanarReflectionCamera {
+		Matrix4x4 viewProjection;  // viewProjection は反射後のカメラでシーンを描く行列。
+		Matrix4x4 inverseViewProjection;  // inverseViewProjection は反射空間の空と方向を復元する行列。
+		Vector3 position;  // position は PBR の視線方向計算へ渡す反射カメラのワールド位置。
+	};
+
+	Vector3 GetCameraMatrixPosition(const Matrix4x4& cameraWorldMatrix) {
+		return {
+			cameraWorldMatrix.matrix[3][0],
+			cameraWorldMatrix.matrix[3][1],
+			cameraWorldMatrix.matrix[3][2]
+		};
+	}
+
+	PlanarReflectionCamera MakePlanarReflectionCamera(
+		const Matrix4x4& sourceCameraWorldMatrix,
+		const Matrix4x4& sourceViewProjectionMatrix,
+		const Vector3& planePoint,
+		const Vector3& planeNormal) {
+		const Vector3 sourceCameraPosition = GetCameraMatrixPosition(sourceCameraWorldMatrix);
+		const Matrix4x4 reflectionMatrix = MakePlanarReflectionMatrix(
+			planePoint,
+			planeNormal);
+
+		PlanarReflectionCamera reflectionCamera{};
+		reflectionCamera.position = Transform(
+			sourceCameraPosition,
+			reflectionMatrix);
+
+		// 反射行列は鏡像の反転と倍率を、元カメラと同じ射影へ保持する。
+		// LookAt の再構築で反射空間の handedness を失わせない。
+		reflectionCamera.viewProjection = Multiply(
+			reflectionMatrix,
+			sourceViewProjectionMatrix);
+		reflectionCamera.inverseViewProjection = Inverse(reflectionCamera.viewProjection);
+
+		return reflectionCamera;
+	}
+
 	Matrix4x4 MakeLightViewProjectionMatrix(
 		const std::vector<EditorSceneObject>& editorSceneObjects,
 		const Transforms& legacyTransform,
@@ -327,6 +539,7 @@ void EditorRenderManager::Draw() {
 	// rootSignature / graphicsPipelineState 邵�E�E�E�・�E�E�E� Shader 邵�E�E�E�・�E�E�E� RenderState 邵�E�E�E�・�E�E�E�陜暦�E�E�E��E�E�E�陞ｳ螟奁E�E��E��E�E�E�・�E�E�E�陞ｳ螢�E�E�E��E�E�E�繝ｻ
 	auto& graphicsPipelineState = g_graphicsPipelineState;
 	auto& planarScenePipelineState = g_planarScenePipelineState;
+	auto& planarSurfacePipelineState = g_planarSurfacePipelineState;
 	auto& objectReflectionMaskPipelineState = g_objectReflectionMaskPipelineState;
 	auto& shadowPipelineState = g_shadowPipelineState;
 	// shadowPipelineState 邵�E�E�E�・�E�E�E�郢晢�E�E�E��E�E�E�郢�E�E�E�・�E�E�E�郢晞メ・�E�E�E�荵溘○邵�E�E�E�・�E�E�E� DepthTexture 郢�E�E�E�蜑�E�E�E�E��E�E�E�諛奁E�E��E�玖氣繧臥舁EPSO邵�E�E�E�繝ｻ
@@ -488,6 +701,7 @@ void EditorRenderManager::Draw() {
 	Matrix4x4 worldViewProjectionMatrix = Multiply(worldMatrix, sceneViewProjectionMatrix);
 	// worldViewProjectionMatrix 邵�E�E�E�・�E�E�E� 3D 郢晢�E�E�E��E�E�E�郢昴・�E�E�E�晉�E�E��E�E�E�繝ｻSceneView 邵�E�E�E�・�E�E�E�隰壼供�E�E�E�E�・�E�E�E�邵�E�E�E�蜷�E�E�E�・・WVP邵�E�E�E�繝ｻ
 	Matrix4x4 gameViewProjectionMatrix = Multiply(g_gameViewMatrix, g_gameProjectionMatrix);
+	Matrix4x4 inverseGameViewProjectionMatrix = Inverse(gameViewProjectionMatrix);
 	Matrix4x4 lightViewProjectionMatrix = MakeLightViewProjectionMatrix(
 		editorSceneObjects,
 		transform,
@@ -508,33 +722,40 @@ void EditorRenderManager::Draw() {
 	// Sprite 邵�E�E�E�・�E�E�E� 3D 郢晢�E�E�E��E�E�E�郢昴・�E�E�E�晉�E�E��E�E�E�・�E�E�E� Material 邵�E�E�E�・�E�E�E�陷�E�E�E�蠕個ｧ UV 陞溽判驪�E�E�E�郢�E�E�E�雋樊ｸ夊ｭ擾�E�E�E��E�E�E�邵�E�E�E�蜷�E�E�E�・狗ｸ�E�E�E�繝ｻ
 	sphereMaterialData->uvTransform = uvTransformMatrix;
 
-	auto updateSceneObjectMatrices = [&](const Matrix4x4& targetSceneViewProjectionMatrix) {
+	auto updateSceneObjectMatrices = [&](
+			const Matrix4x4& targetViewProjectionMatrix,
+			bool isGameViewTarget,
+			bool reflectionClipEnabled = false,
+			Vector4 reflectionClipPlane = {0.0f, 0.0f, 0.0f, 0.0f}) {
 		for (EditorSceneObject& sceneObject : editorSceneObjects) {
 			Matrix4x4 sceneObjectWorldMatrix = MakeAffineMatrix(
 				sceneObject.transform.scale,
 				sceneObject.transform.rotate,
 				sceneObject.transform.translate);
 
-			Matrix4x4 sceneObjectProjectionMatrix =
+			const Matrix4x4 sceneObjectProjectionMatrix =
 				sceneObject.type == EditorSceneObjectType::Sprite
 					? spriteProjectionMatrix
-					: targetSceneViewProjectionMatrix;
+					: targetViewProjectionMatrix;
+			TransformationMatrix* targetTransformationData = isGameViewTarget
+				? sceneObject.gameTransformationData
+				: sceneObject.transformationData;
 
-			if (sceneObject.transformationData != nullptr) {
-				sceneObject.transformationData->WVP = Multiply(sceneObjectWorldMatrix, sceneObjectProjectionMatrix);
-				sceneObject.transformationData->World = sceneObjectWorldMatrix;
-				sceneObject.transformationData->lightWVP = Multiply(sceneObjectWorldMatrix, lightViewProjectionMatrix);
-			}
-
-			Matrix4x4 gameObjectProjectionMatrix =
-				sceneObject.type == EditorSceneObjectType::Sprite
-					? spriteProjectionMatrix
-					: gameViewProjectionMatrix;
-
-			if (sceneObject.gameTransformationData != nullptr) {
-				sceneObject.gameTransformationData->WVP = Multiply(sceneObjectWorldMatrix, gameObjectProjectionMatrix);
-				sceneObject.gameTransformationData->World = sceneObjectWorldMatrix;
-				sceneObject.gameTransformationData->lightWVP = Multiply(sceneObjectWorldMatrix, lightViewProjectionMatrix);
+			if (targetTransformationData != nullptr) {
+				targetTransformationData->WVP = Multiply(
+					sceneObjectWorldMatrix,
+					sceneObjectProjectionMatrix);
+				targetTransformationData->World = sceneObjectWorldMatrix;
+				targetTransformationData->lightWVP = Multiply(
+					sceneObjectWorldMatrix,
+					lightViewProjectionMatrix);
+				targetTransformationData->reflectionClipPlane = reflectionClipPlane;
+				targetTransformationData->reflectionClipParams = {
+					reflectionClipEnabled ? 1.0f : 0.0f,
+					0.0f,
+					0.0f,
+					0.0f
+				};
 			}
 
 			if (sceneObject.materialData != nullptr) {
@@ -543,7 +764,8 @@ void EditorRenderManager::Draw() {
 		}
 	};
 
-	updateSceneObjectMatrices(sceneViewProjectionMatrix);
+	updateSceneObjectMatrices(sceneViewProjectionMatrix, false);
+	updateSceneObjectMatrices(gameViewProjectionMatrix, true);
 
 	hr = commandAllocator->Reset();
 	// CommandAllocator / CommandList 郢�E�E�E�蜑�E�E�E�E��E�E�E�鄙ｫ繝ｵ郢晢�E�E�E��E�E�E�郢晢�E�E�E��E�E�E�郢晢�E�E�E��E�E�E�邵�E�E�E�・�E�E�E�隰�E�E�E�蜀怜�E髫�E�E�E�蛟ｬ鮖ｸ騾匁E�E��E��E�E�E�邵�E�E�E�・�E�E�E� Reset 邵�E�E�E�蜷�E�E�E�・狗ｸ�E�E�E�繝ｻ
@@ -611,9 +833,12 @@ void EditorRenderManager::Draw() {
 		!g_loadedEnvironmentTextureAssetPath.empty();
 	const float userRequestedEnvironmentTexture =
 		directionalLightData->environmentTextureEnabled >= 0.5f ? 1.0f : 0.0f;
-	const float environmentTextureEnabledForFrame =
+	const float skyEnvironmentTextureEnabled =
 		hasEnvironmentTexture ? userRequestedEnvironmentTexture : 0.0f;
-	directionalLightData->environmentTextureEnabled = environmentTextureEnabledForFrame;
+
+	// IBL 用 Cube は実 DDS が無い場合も中立グレーの TextureCube を持つ。
+	// 2D 背景画像の有無とは分離し、直接光が無い場面でも環境反射を失わないようにする。
+	directionalLightData->environmentTextureEnabled = userRequestedEnvironmentTexture;
 
 	UINT backBufferIndex = swapChain->GetCurrentBackBufferIndex();
 	// backBufferIndex 邵�E�E�E�・�E�E�E�闔蛾宦螻楢�E�E�E��E�E�E�蜀怜�E邵�E�E�E�蜷�E�E�E�・・SwapChain buffer 邵�E�E�E�・�E�E�E�騾�E�E�E�・�E�E�E�陷�E�E�E�・�E�E�E�邵�E�E�E�繝ｻ
@@ -721,7 +946,6 @@ void EditorRenderManager::Draw() {
 		sceneClearColor[3]
 	}; // HDR RenderTexture 邵�E�E�E�・�E�E�E�髢�E�E�E�譴�E�E�E�蜍ｹ郢�E�E�E�繝ｻInspector 邵�E�E�E�・�E�E�E�髢�E�E�E�譴�E�E�E�蜍ｹ豼�E�E�E�・�E�E�E�邵�E�E�E�・�E�E�E�闕ｳ�E�E�E�髢�E�E�E�・�E�E�E�邵�E�E�E�霈披雷郢�E�E�E�荵敖繝ｻ
 	commandList->ClearRenderTargetView(hdrRtvHandle, hdrClearColor, 0, nullptr);
-	commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
 	D3D12_RESOURCE_BARRIER materialMaskBarrier{};
 	if (materialMaskRenderTarget != nullptr) {
@@ -736,7 +960,12 @@ void EditorRenderManager::Draw() {
 		commandList->ClearRenderTargetView(materialMaskRtvHandle, materialMaskClearColor, 0, nullptr);
 	}
 
-	auto drawSkybox = [&](const D3D12_VIEWPORT& targetViewport, const D3D12_RECT& targetScissorRect, const D3D12_CPU_DESCRIPTOR_HANDLE& targetRtvHandle) {
+	auto drawSkybox = [&](
+			const D3D12_VIEWPORT& targetViewport,
+			const D3D12_RECT& targetScissorRect,
+			const D3D12_CPU_DESCRIPTOR_HANDLE& targetRtvHandle,
+			const Matrix4x4& targetInverseViewProjectionMatrix,
+			const Vector3& targetCameraPosition) {
 		if (skyboxPipelineState == nullptr) {
 			return;
 		}
@@ -747,25 +976,32 @@ void EditorRenderManager::Draw() {
 		commandList->RSSetScissorRects(1, &targetScissorRect);
 		commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, nullptr);
 		commandList->SetGraphicsRootDescriptorTable(0, environmentSrvHandleGPU);
-		float skyboxParams[16] = {
-			directionalLightData->skyUpperColor.x,
-			directionalLightData->skyUpperColor.y,
-			directionalLightData->skyUpperColor.z,
-			(std::max)(directionalLightData->skyIntensity, 0.0f),
-			directionalLightData->skyLowerColor.x,
-			directionalLightData->skyLowerColor.y,
-			directionalLightData->skyLowerColor.z,
-			(std::max)(directionalLightData->horizonSharpness, 0.0001f),
-			directionalLightData->direction.x,
-			directionalLightData->direction.y,
-			directionalLightData->direction.z,
-			(std::max)(directionalLightData->skyEmission, 0.0f),
-			environmentTextureEnabledForFrame,
-			directionalLightData->environmentTextureIntensity,
-			directionalLightData->environmentTextureRotation,
-			directionalLightData->environmentTextureMipBias
-		};
-		commandList->SetGraphicsRoot32BitConstants(2, 16, skyboxParams, 0);
+		float skyboxParams[36] = {};
+		std::memcpy(
+			&skyboxParams[0],
+			&targetInverseViewProjectionMatrix.matrix[0][0],
+			sizeof(float) * 16u);
+		skyboxParams[16] = directionalLightData->skyUpperColor.x;
+		skyboxParams[17] = directionalLightData->skyUpperColor.y;
+		skyboxParams[18] = directionalLightData->skyUpperColor.z;
+		skyboxParams[19] = (std::max)(directionalLightData->skyIntensity, 0.0f);
+		skyboxParams[20] = directionalLightData->skyLowerColor.x;
+		skyboxParams[21] = directionalLightData->skyLowerColor.y;
+		skyboxParams[22] = directionalLightData->skyLowerColor.z;
+		skyboxParams[23] = (std::max)(directionalLightData->horizonSharpness, 0.0001f);
+		skyboxParams[24] = directionalLightData->direction.x;
+		skyboxParams[25] = directionalLightData->direction.y;
+		skyboxParams[26] = directionalLightData->direction.z;
+		skyboxParams[27] = (std::max)(directionalLightData->skyEmission, 0.0f);
+		skyboxParams[28] = skyEnvironmentTextureEnabled;
+		skyboxParams[29] = directionalLightData->environmentTextureIntensity;
+		skyboxParams[30] = directionalLightData->environmentTextureRotation;
+		skyboxParams[31] = directionalLightData->environmentTextureMipBias;
+		skyboxParams[32] = targetCameraPosition.x;
+		skyboxParams[33] = targetCameraPosition.y;
+		skyboxParams[34] = targetCameraPosition.z;
+		skyboxParams[35] = 0.0f;
+		commandList->SetGraphicsRoot32BitConstants(2, 36, skyboxParams, 0);
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		commandList->DrawInstanced(3, 1, 0, 0);
 
@@ -779,7 +1015,7 @@ void EditorRenderManager::Draw() {
 	};
 
 	ID3D12PipelineState* defaultDrawPso = graphicsPipelineState.Get();
-	auto drawSceneObjects = [&](bool isGameViewPass, const D3D12_CPU_DESCRIPTOR_HANDLE& targetRtvHandle, int32_t skipGameObjectId) {
+	auto drawSceneObjects = [&](bool isGameViewPass, const D3D12_CPU_DESCRIPTOR_HANDLE& targetRtvHandle, int32_t skipGameObjectId, int32_t planarSurfaceGameObjectId = -1) {
 		commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, &dsvHandle);
 
 		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
@@ -829,7 +1065,10 @@ void EditorRenderManager::Draw() {
 					meshTypeIndex = static_cast<size_t>(EditorModelMeshType::Plane);
 				}
 
-				if (sceneObject.cullMode == 1 && g_cullFrontPipelineState != nullptr) {
+				if (sceneObject.gameObjectId == planarSurfaceGameObjectId && planarSurfacePipelineState != nullptr) {
+					commandList->SetPipelineState(planarSurfacePipelineState.Get());
+				}
+				else if (sceneObject.cullMode == 1 && g_cullFrontPipelineState != nullptr) {
 					commandList->SetPipelineState(g_cullFrontPipelineState.Get());
 				}
 				else {
@@ -864,7 +1103,7 @@ void EditorRenderManager::Draw() {
 		}
 	};
 
-	auto drawReflectionMaskObjects = [&](bool isGameViewPass) {
+	auto drawReflectionMaskObjects = [&](bool isGameViewPass, int32_t planarMaskGameObjectId) {
 		if (materialMaskRenderTarget == nullptr || objectReflectionMaskPipelineState == nullptr) {
 			return;
 		}
@@ -876,6 +1115,11 @@ void EditorRenderManager::Draw() {
 
 		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
 			if (sceneObject.type == EditorSceneObjectType::Sprite) {
+				continue;
+			}
+
+			if (planarMaskGameObjectId >= 0 &&
+				sceneObject.gameObjectId != planarMaskGameObjectId) {
 				continue;
 			}
 
@@ -920,18 +1164,29 @@ void EditorRenderManager::Draw() {
 		commandList->OMSetRenderTargets(1, &hdrRtvHandle, FALSE, &dsvHandle);
 	};
 
+	D3D12_VIEWPORT gameViewport{};
+	gameViewport.TopLeftX = g_editorGameX;
+	gameViewport.TopLeftY = g_editorGameY;
+	gameViewport.Width = g_editorGameWidth;
+	gameViewport.Height = g_editorGameHeight;
+	gameViewport.MinDepth = 0.0f;
+	gameViewport.MaxDepth = 1.0f;
+
+	D3D12_RECT gameScissorRect{};
+	gameScissorRect.left = static_cast<LONG>(g_editorGameX);
+	gameScissorRect.top = static_cast<LONG>(g_editorGameY);
+	gameScissorRect.right = static_cast<LONG>(g_editorGameX + g_editorGameWidth);
+	gameScissorRect.bottom = static_cast<LONG>(g_editorGameY + g_editorGameHeight);
+
 	bool hasPlanarReflectionPass = false;
-	Matrix4x4 planarReflectionViewProjectionMatrix = MakeIdentity4x4();
-	Vector3 planarReflectionPlaneNormal = {0.0f, 1.0f, 0.0f};
-	Vector3 planarReflectionPlanePoint = {0.0f, 0.0f, 0.0f};
-	Vector3 planarReflectionPlaneTangent = {1.0f, 0.0f, 0.0f};
-	Vector3 planarReflectionPlaneBitangent = {0.0f, 0.0f, 1.0f};
-	float planarReflectionHalfExtentX = 1.0f;
-	float planarReflectionHalfExtentZ = 1.0f;
-	float planarReflectionIntensity = 0.0f;
-	float planarReflectionFadeDistance = 0.25f;
 	int32_t planarReflectionSourceGameObjectId = -1;
-	Vector3 planarReflectionCameraPosition = directionalLightData->cameraPosition;
+	const EditorGameObject* planarReflectionGameObject = nullptr;
+	const EditorComponent* planarReflectionProbeComponent = nullptr;
+	const EditorSceneObject* planarReflectionSceneObject = nullptr;
+	PlanarReflectionCamera scenePlanarReflectionCamera{};
+	PlanarReflectionCamera gamePlanarReflectionCamera{};
+	bool hasScenePlanarReflectionCamera = false;
+	bool hasGamePlanarReflectionCamera = false;
 
 	for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
 		if (!gameObject.isActive) {
@@ -946,68 +1201,32 @@ void EditorRenderManager::Draw() {
 			continue;
 		}
 
-		//============================================================
-		// plane.obj は XY 平面に置かれ、法線が -Z を向く
-		// そのため平面反射も「右=X」「上=Y」「法線=-Forward」で組み立てる
-		//============================================================
-		planarReflectionPlaneNormal = Multiply(-1.0f, GetForwardDirectionFromRotation(gameObject.rotate));
-		if (Length(planarReflectionPlaneNormal) <= 0.0001f) {
-			planarReflectionPlaneNormal = {0.0f, 0.0f, -1.0f};
+		const EditorSceneObject* reflectionSceneObject = nullptr;
+		for (const EditorSceneObject& candidateSceneObject : editorSceneObjects) {
+			if (candidateSceneObject.gameObjectId == gameObject.id) {
+				reflectionSceneObject = &candidateSceneObject;
+				break;
+			}
 		}
 
-		const Matrix4x4 planarObjectWorldMatrix = MakeAffineMatrix(gameObject.scale, gameObject.rotate, gameObject.translate);
-		planarReflectionPlanePoint = Transform(reflectionProbeComponent->colliderCenter, planarObjectWorldMatrix);
-		planarReflectionIntensity = (std::max)(reflectionProbeComponent->intensity, 0.0f);
-		planarReflectionPlaneTangent = GetRightDirectionFromRotation(gameObject.rotate);
-		planarReflectionPlaneBitangent = GetUpDirectionFromRotation(gameObject.rotate);
-		planarReflectionHalfExtentX = (std::max)(std::abs(reflectionProbeComponent->colliderSize.x * gameObject.scale.x) * 0.5f, 0.05f);
-		planarReflectionHalfExtentZ = (std::max)(std::abs(reflectionProbeComponent->colliderSize.y * gameObject.scale.y) * 0.5f, 0.05f);
-		planarReflectionFadeDistance = (std::max)(
-			(std::min)(planarReflectionHalfExtentX, planarReflectionHalfExtentZ) * 0.2f,
-			0.05f);
+		if (reflectionSceneObject == nullptr) {
+			Log(std::format("Planar Reflection skipped: render object not found. id={}, name={}", gameObject.id, gameObject.name));
+			continue;
+		}
+
 		planarReflectionSourceGameObjectId = gameObject.id;
-
-		planarReflectionCameraPosition = ReflectPointAcrossPlane(
-			cameraTransform.translate,
-			planarReflectionPlanePoint,
-			planarReflectionPlaneNormal);
-		Vector3 planarReflectionForward = ReflectDirectionAcrossPlane(
-			GetForwardDirectionFromRotation(cameraTransform.rotate),
-			planarReflectionPlaneNormal);
-		Vector3 planarReflectionUp = ReflectDirectionAcrossPlane(
-			GetUpDirectionFromRotation(cameraTransform.rotate),
-			planarReflectionPlaneNormal);
-		if (Length(planarReflectionForward) <= 0.0001f) {
-			planarReflectionForward = {0.0f, 0.0f, 1.0f};
-		}
-		if (Length(planarReflectionUp) <= 0.0001f) {
-			planarReflectionUp = {0.0f, 1.0f, 0.0f};
-		}
-		const Matrix4x4 planarReflectionViewMatrix = MakeLookAtMatrix(
-			planarReflectionCameraPosition,
-			Add(planarReflectionCameraPosition, planarReflectionForward),
-			planarReflectionUp);
-		planarReflectionViewProjectionMatrix = Multiply(planarReflectionViewMatrix, projectionMatrix);
+		planarReflectionGameObject = &gameObject;
+		planarReflectionProbeComponent = reflectionProbeComponent;
+		planarReflectionSceneObject = reflectionSceneObject;
 		hasPlanarReflectionPass = planarReflectionRenderTarget != nullptr &&
 			planarScenePipelineState != nullptr &&
-			planarReflectionPipelineState != nullptr;
+			planarReflectionPipelineState != nullptr &&
+			materialMaskRenderTarget != nullptr &&
+			(g_isSceneViewVisible || g_isGameViewVisible);
 		break;
 	}
 
 	if (hasPlanarReflectionPass) {
-		const Vector3 savedCameraPosition = directionalLightData->cameraPosition;
-		directionalLightData->cameraPosition = planarReflectionCameraPosition;
-
-		D3D12_VIEWPORT planarReflectionViewport{};
-		planarReflectionViewport.Width = static_cast<float>(g_renderWidth);
-		planarReflectionViewport.Height = static_cast<float>(g_renderHeight);
-		planarReflectionViewport.MinDepth = 0.0f;
-		planarReflectionViewport.MaxDepth = 1.0f;
-
-		D3D12_RECT planarReflectionScissorRect{};
-		planarReflectionScissorRect.right = static_cast<LONG>(g_renderWidth);
-		planarReflectionScissorRect.bottom = static_cast<LONG>(g_renderHeight);
-
 		D3D12_RESOURCE_BARRIER planarReflectionBarrier{};
 		planarReflectionBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		planarReflectionBarrier.Transition.pResource = planarReflectionRenderTarget;
@@ -1016,33 +1235,123 @@ void EditorRenderManager::Draw() {
 		planarReflectionBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		commandList->ResourceBarrier(1, &planarReflectionBarrier);
 
-		commandList->SetGraphicsRootSignature(rootSignature.Get());
-		commandList->SetPipelineState(planarScenePipelineState.Get());
-		commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
-		commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource->GetGPUVirtualAddress());
-	commandList->SetDescriptorHeaps(1, descriptorHeaps);
-	commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);
-	commandList->SetGraphicsRootDescriptorTable(6, environmentSrvHandleGPU);
-	commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		commandList->RSSetViewports(1, &planarReflectionViewport);
-		commandList->RSSetScissorRects(1, &planarReflectionScissorRect);
-		commandList->OMSetRenderTargets(1, &planarReflectionRtvHandle, FALSE, &dsvHandle);
+		if (depthStencilResource != nullptr) {
+			D3D12_RESOURCE_BARRIER reflectionDepthBarrier{};
+			reflectionDepthBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			reflectionDepthBarrier.Transition.pResource = depthStencilResource;
+			reflectionDepthBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+			reflectionDepthBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+			reflectionDepthBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+			commandList->ResourceBarrier(1, &reflectionDepthBarrier);
+		}
+
 		commandList->ClearRenderTargetView(planarReflectionRtvHandle, hdrClearColor, 0, nullptr);
-		commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
-		drawSkybox(planarReflectionViewport, planarReflectionScissorRect, planarReflectionRtvHandle);
-		commandList->SetGraphicsRootSignature(rootSignature.Get());
-		commandList->SetPipelineState(planarScenePipelineState.Get());
-		commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
-		commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource->GetGPUVirtualAddress());
-		commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);
-		updateSceneObjectMatrices(planarReflectionViewProjectionMatrix);
-		defaultDrawPso = planarScenePipelineState.Get();
-		drawSceneObjects(false, planarReflectionRtvHandle, planarReflectionSourceGameObjectId);
-		defaultDrawPso = graphicsPipelineState.Get();
-		updateSceneObjectMatrices(sceneViewProjectionMatrix);
+		//============================================================
+		// Scene / Game ごとの反射カメラ描画
+		//============================================================
 
-		directionalLightData->cameraPosition = savedCameraPosition;
+		auto drawPlanarReflectionView = [&](
+				bool isGameViewPass,
+				const Matrix4x4& sourceCameraWorldMatrix,
+				const Matrix4x4& sourceViewProjectionMatrix,
+				const D3D12_VIEWPORT& targetViewport,
+				const D3D12_RECT& targetScissorRect) {
+			const Vector3 sourceCameraPosition = GetCameraMatrixPosition(sourceCameraWorldMatrix);
+			const PlanarReflectionSurface reflectionSurface = BuildPlanarReflectionSurface(
+				*planarReflectionSceneObject,
+				*planarReflectionGameObject,
+				*planarReflectionProbeComponent,
+				sourceCameraPosition);
+			const PlanarReflectionCamera reflectionCamera = MakePlanarReflectionCamera(
+				sourceCameraWorldMatrix,
+				sourceViewProjectionMatrix,
+				reflectionSurface.point,
+				reflectionSurface.normal);
+			if (isGameViewPass) {
+				gamePlanarReflectionCamera = reflectionCamera;
+				hasGamePlanarReflectionCamera = true;
+			}
+			else {
+				scenePlanarReflectionCamera = reflectionCamera;
+				hasScenePlanarReflectionCamera = true;
+			}
+
+			const Vector4 reflectionClipPlane = {
+				reflectionSurface.normal.x,
+				reflectionSurface.normal.y,
+				reflectionSurface.normal.z,
+				-Dot(reflectionSurface.normal, reflectionSurface.point) + 0.002f
+			};
+
+			const Vector3 savedCameraPosition = directionalLightData->cameraPosition;
+			directionalLightData->cameraPosition = reflectionCamera.position;
+
+			commandList->ClearDepthStencilView(
+				dsvHandle,
+				D3D12_CLEAR_FLAG_DEPTH,
+				1.0f,
+				0,
+				1,
+				&targetScissorRect);
+			commandList->RSSetViewports(1, &targetViewport);
+			commandList->RSSetScissorRects(1, &targetScissorRect);
+			drawSkybox(
+				targetViewport,
+				targetScissorRect,
+				planarReflectionRtvHandle,
+				reflectionCamera.inverseViewProjection,
+				reflectionCamera.position);
+
+			commandList->SetGraphicsRootSignature(rootSignature.Get());
+			commandList->SetPipelineState(planarScenePipelineState.Get());
+			commandList->SetGraphicsRootConstantBufferView(
+				2,
+				directionalLightResource->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootConstantBufferView(
+				5,
+				emissiveLightResource->GetGPUVirtualAddress());
+			commandList->SetDescriptorHeaps(1, descriptorHeaps);
+			commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);
+			commandList->SetGraphicsRootDescriptorTable(6, environmentSrvHandleGPU);
+			commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+			updateSceneObjectMatrices(
+				reflectionCamera.viewProjection,
+				isGameViewPass,
+				true,
+				reflectionClipPlane);
+			defaultDrawPso = planarScenePipelineState.Get();
+			drawSceneObjects(
+				isGameViewPass,
+				planarReflectionRtvHandle,
+				planarReflectionSourceGameObjectId);
+			defaultDrawPso = graphicsPipelineState.Get();
+
+			// 反射用の行列を通常描画へ残さないよう、そのビューだけを即座に戻す。
+			updateSceneObjectMatrices(
+				sourceViewProjectionMatrix,
+				isGameViewPass);
+			directionalLightData->cameraPosition = savedCameraPosition;
+		};
+
+		if (g_isSceneViewVisible) {
+			drawPlanarReflectionView(
+				false,
+				cameraMatrix,
+				sceneViewProjectionMatrix,
+				viewport,
+				scissorRect);
+		}
+
+		if (g_isGameViewVisible) {
+			drawPlanarReflectionView(
+				true,
+				g_gameCameraMatrix,
+				gameViewProjectionMatrix,
+				gameViewport,
+				gameScissorRect);
+		}
 
 		planarReflectionBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		planarReflectionBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
@@ -1056,10 +1365,28 @@ void EditorRenderManager::Draw() {
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	}
 
+	if (g_isSceneViewVisible || g_isGameViewVisible) {
+		if (depthStencilResource != nullptr && !hasPlanarReflectionPass) {
+			D3D12_RESOURCE_BARRIER mainDepthBarrier{};
+			mainDepthBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			mainDepthBarrier.Transition.pResource = depthStencilResource;
+			mainDepthBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+			mainDepthBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+			mainDepthBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+			commandList->ResourceBarrier(1, &mainDepthBarrier);
+		}
+	}
+
 	if (g_isSceneViewVisible) {
+		commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 1, &scissorRect);
 		commandList->RSSetViewports(1, &viewport);
 		commandList->RSSetScissorRects(1, &scissorRect);
-		drawSkybox(viewport, scissorRect, hdrRtvHandle);
+		drawSkybox(
+			viewport,
+			scissorRect,
+			hdrRtvHandle,
+			inverseViewProjectionMatrix,
+			cameraTransform.translate);
 
 		if (isLegacyPreviewVisible) {
 			commandList->SetGraphicsRootConstantBufferView(0, sphereMaterialResource->GetGPUVirtualAddress());
@@ -1071,31 +1398,22 @@ void EditorRenderManager::Draw() {
 			commandList->DrawInstanced(static_cast<UINT>(modelData.vertices.size()), 1, 0, 0);
 		}
 
-		drawSceneObjects(false, hdrRtvHandle, -1);
-		drawReflectionMaskObjects(false);
+		drawSceneObjects(false, hdrRtvHandle, -1, planarReflectionSourceGameObjectId);
+		drawReflectionMaskObjects(false, planarReflectionSourceGameObjectId);
 	}
 
 	if (g_isGameViewVisible) {
-		D3D12_VIEWPORT gameViewport{};
-		gameViewport.TopLeftX = g_editorGameX;
-		gameViewport.TopLeftY = g_editorGameY;
-		gameViewport.Width = g_editorGameWidth;
-		gameViewport.Height = g_editorGameHeight;
-		gameViewport.MinDepth = 0.0f;
-		gameViewport.MaxDepth = 1.0f;
-
-		D3D12_RECT gameScissorRect{};
-		gameScissorRect.left = static_cast<LONG>(g_editorGameX);
-		gameScissorRect.top = static_cast<LONG>(g_editorGameY);
-		gameScissorRect.right = static_cast<LONG>(g_editorGameX + g_editorGameWidth);
-		gameScissorRect.bottom = static_cast<LONG>(g_editorGameY + g_editorGameHeight);
-
-		commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+		commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 1, &gameScissorRect);
 		commandList->RSSetViewports(1, &gameViewport);
 		commandList->RSSetScissorRects(1, &gameScissorRect);
-		drawSkybox(gameViewport, gameScissorRect, hdrRtvHandle);
-		drawSceneObjects(true, hdrRtvHandle, -1);
-		drawReflectionMaskObjects(true);
+		drawSkybox(
+			gameViewport,
+			gameScissorRect,
+			hdrRtvHandle,
+			inverseGameViewProjectionMatrix,
+			g_gameCameraPosition);
+		drawSceneObjects(true, hdrRtvHandle, -1, planarReflectionSourceGameObjectId);
+		drawReflectionMaskObjects(true, planarReflectionSourceGameObjectId);
 	}
 
 	if (materialMaskRenderTarget != nullptr) {
@@ -1110,7 +1428,8 @@ void EditorRenderManager::Draw() {
 	commandList->ResourceBarrier(1, &hdrBarrier);
 
 	// Depth 郢�E�E�E�繝ｻDEPTH_WRITE 遶翫・PIXEL_SHADER_RESOURCE 邵�E�E�E�・�E�E�E�鬩匁E�E��E��E�E�E�驕假�E�E�E��E�E�E� (SSR 邵�E�E�E�・�E�E�E� SSAO 邵�E�E�E�迹夲�E�E�E��E�E�E�・�E�E�E�郢�E�E�E�竏夲�E�E�E�狗ｹ�E�E�E�蛹�E�E�E�竕ｧ邵�E�E�E�・�E�E�E�)
-	if (depthStencilResource != nullptr) {
+	if (depthStencilResource != nullptr &&
+		(hasPlanarReflectionPass || g_isSceneViewVisible || g_isGameViewVisible)) {
 		D3D12_RESOURCE_BARRIER depthBarrier{};
 		depthBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		depthBarrier.Transition.pResource = depthStencilResource;
@@ -1214,14 +1533,6 @@ void EditorRenderManager::Draw() {
 		ssaoBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		ssaoBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		commandList->ResourceBarrier(1, &ssaoBarrier);
-
-		D3D12_RESOURCE_BARRIER ssaoDepthBarrier{};
-		ssaoDepthBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		ssaoDepthBarrier.Transition.pResource = depthStencilResource;
-		ssaoDepthBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-		ssaoDepthBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		ssaoDepthBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-		commandList->ResourceBarrier(1, &ssaoDepthBarrier);
 	}
 
 	// Planar Reflection
@@ -1242,26 +1553,42 @@ void EditorRenderManager::Draw() {
 		commandList->SetGraphicsRootDescriptorTable(0, hdrSrvHandleGPU);
 		commandList->SetGraphicsRootDescriptorTable(1, depthSrvHandleGPU);
 		commandList->SetGraphicsRootDescriptorTable(3, materialMaskSrvHandleGPU);
-		float reflectionParams[48] = {};
-		std::memcpy(&reflectionParams[0], &inverseViewProjectionMatrix.matrix[0][0], sizeof(float) * 16u);
-		std::memcpy(&reflectionParams[16], &planarReflectionViewProjectionMatrix.matrix[0][0], sizeof(float) * 16u);
-		reflectionParams[32] = planarReflectionPlaneNormal.x;
-		reflectionParams[33] = planarReflectionPlaneNormal.y;
-		reflectionParams[34] = planarReflectionPlaneNormal.z;
-		reflectionParams[35] = planarReflectionFadeDistance;
-		reflectionParams[36] = planarReflectionPlanePoint.x;
-		reflectionParams[37] = planarReflectionPlanePoint.y;
-		reflectionParams[38] = planarReflectionPlanePoint.z;
-		reflectionParams[39] = planarReflectionIntensity;
-		reflectionParams[40] = planarReflectionPlaneTangent.x;
-		reflectionParams[41] = planarReflectionPlaneTangent.y;
-		reflectionParams[42] = planarReflectionPlaneTangent.z;
-		reflectionParams[43] = planarReflectionHalfExtentX;
-		reflectionParams[44] = planarReflectionPlaneBitangent.x;
-		reflectionParams[45] = planarReflectionPlaneBitangent.y;
-		reflectionParams[46] = planarReflectionPlaneBitangent.z;
-		reflectionParams[47] = planarReflectionHalfExtentZ;
-		commandList->SetGraphicsRoot32BitConstants(2, 48, reflectionParams, 0);
+
+		float reflectionParams[40] = {};
+		auto copyMatrixToReflectionParams = [&](
+				uint32_t startIndex,
+				const Matrix4x4& matrixValue) {
+			std::memcpy(
+				&reflectionParams[startIndex],
+				&matrixValue.matrix[0][0],
+				sizeof(float) * 16u);
+		};
+		auto copyViewportToReflectionParams = [&](
+				uint32_t startIndex,
+				const D3D12_VIEWPORT& viewportValue) {
+			reflectionParams[startIndex + 0u] = viewportValue.TopLeftX;
+			reflectionParams[startIndex + 1u] = viewportValue.TopLeftY;
+			reflectionParams[startIndex + 2u] = viewportValue.Width;
+			reflectionParams[startIndex + 3u] = viewportValue.Height;
+		};
+
+		reflectionParams[0] = 1.0f / static_cast<float>(g_renderWidth);
+		reflectionParams[1] = 1.0f / static_cast<float>(g_renderHeight);
+		reflectionParams[2] = 12.0f;
+		reflectionParams[3] = 1.0f;
+
+		if (hasScenePlanarReflectionCamera) {
+			copyMatrixToReflectionParams(4u, inverseViewProjectionMatrix);
+			copyMatrixToReflectionParams(20u, scenePlanarReflectionCamera.viewProjection);
+			copyViewportToReflectionParams(36u, viewport);
+		}
+		else if (hasGamePlanarReflectionCamera) {
+			copyMatrixToReflectionParams(4u, inverseGameViewProjectionMatrix);
+			copyMatrixToReflectionParams(20u, gamePlanarReflectionCamera.viewProjection);
+			copyViewportToReflectionParams(36u, gameViewport);
+		}
+
+		commandList->SetGraphicsRoot32BitConstants(2, 40, reflectionParams, 0);
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		commandList->DrawInstanced(3, 1, 0, 0);
 

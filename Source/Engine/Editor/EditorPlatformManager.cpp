@@ -686,7 +686,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	// srvDescriptorHeap は Texture SRV と ImGui 用 SRV めEShader から参�Eする Heap、E
 	ID3D12DescriptorHeap* srvDescriptorHeap =
-		CreateDescriptorHeap(device.Get(), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 128, true);
+		CreateDescriptorHeap(device.Get(), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1024, true);
 
 	// dsvDescriptorHeap は DepthStencil を参照する Heap、E
 	ID3D12DescriptorHeap* dsvDescriptorHeap =
@@ -1057,6 +1057,78 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	ComPtr<IDxcBlob> sharpenPixelShaderBlob = CompileShader(
 		L"Assets/Shaders/PostProcess/Sharpen.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
+	ComPtr<IDxcBlob> finalCompositePixelShaderBlob = CompileShader(
+		L"Assets/Shaders/PostProcess/FinalComposite.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> bloomPrefilterPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/PostProcess/Bloom/BloomPrefilter.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> bloomDownsamplePixelShaderBlob = CompileShader(
+		L"Assets/Shaders/PostProcess/Bloom/BloomDownsample.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> bloomUpsamplePixelShaderBlob = CompileShader(
+		L"Assets/Shaders/PostProcess/Bloom/BloomUpsample.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> smaaEdgePixelShaderBlob = CompileShader(
+		L"Assets/Shaders/PostProcess/SMAA/SMAAEdgeDetection.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> smaaWeightPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/PostProcess/SMAA/SMAABlendWeight.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> smaaNeighborhoodPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/PostProcess/SMAA/SMAANeighborhoodBlend.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> depthPyramidComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Depth/DepthPyramid.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> depthDownsampleComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Depth/DepthDownsample.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> reconstructNormalComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Depth/ReconstructNormal.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> cameraVelocityComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Temporal/CameraVelocity.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> velocityDilateComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Temporal/VelocityDilate.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> disocclusionMaskComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Temporal/DisocclusionMask.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> reactiveMaskComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Temporal/ReactiveMask.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> ssrTraceComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Reflection/SSRTrace.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> ssrResolveComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Reflection/SSRResolve.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> ssrTemporalResolveComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Reflection/SSRTemporalResolve.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> ssrDenoiseComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Reflection/SSRDenoise.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> ssrCompositeComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Reflection/SSRComposite.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> temporalResolveComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Temporal/TemporalResolve.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> copyDepthComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Temporal/CopyDepth.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> frustumCullingComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Culling/FrustumCulling.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> occlusionCullingComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Culling/OcclusionCulling.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> buildIndirectArgsComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Culling/BuildIndirectArgs.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
 
 	if (vertexShaderBlob == nullptr ||
 		pixelShaderBlob == nullptr ||
@@ -1071,7 +1143,31 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		ssaoBlurPixelShaderBlob == nullptr ||
 		skyboxPixelShaderBlob == nullptr ||
 		planarReflectionPixelShaderBlob == nullptr ||
-		sharpenPixelShaderBlob == nullptr) {
+		sharpenPixelShaderBlob == nullptr ||
+		finalCompositePixelShaderBlob == nullptr ||
+		bloomPrefilterPixelShaderBlob == nullptr ||
+		bloomDownsamplePixelShaderBlob == nullptr ||
+		bloomUpsamplePixelShaderBlob == nullptr ||
+		smaaEdgePixelShaderBlob == nullptr ||
+		smaaWeightPixelShaderBlob == nullptr ||
+		smaaNeighborhoodPixelShaderBlob == nullptr ||
+		depthPyramidComputeShaderBlob == nullptr ||
+		depthDownsampleComputeShaderBlob == nullptr ||
+		reconstructNormalComputeShaderBlob == nullptr ||
+		cameraVelocityComputeShaderBlob == nullptr ||
+		velocityDilateComputeShaderBlob == nullptr ||
+		disocclusionMaskComputeShaderBlob == nullptr ||
+		reactiveMaskComputeShaderBlob == nullptr ||
+		ssrTraceComputeShaderBlob == nullptr ||
+		ssrResolveComputeShaderBlob == nullptr ||
+		ssrTemporalResolveComputeShaderBlob == nullptr ||
+		ssrDenoiseComputeShaderBlob == nullptr ||
+		ssrCompositeComputeShaderBlob == nullptr ||
+		temporalResolveComputeShaderBlob == nullptr ||
+		copyDepthComputeShaderBlob == nullptr ||
+		frustumCullingComputeShaderBlob == nullptr ||
+		occlusionCullingComputeShaderBlob == nullptr ||
+		buildIndirectArgsComputeShaderBlob == nullptr) {
 		RequestInitializationFailure();  // �K�{�V�F�[�_�[�� 1 �ł��������� PSO �쐬�֐i�߂Ȃ��B
 		return;
 	}
@@ -1236,6 +1332,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	spriteMaterialData->reflectionReserved = 0.0f;
 	spriteMaterialData->materialPadding0 = 0.0f;
 	spriteMaterialData->materialPadding1 = 0.0f;
+	spriteMaterialData->reflectionProbeCenter = {0.0f, 0.0f, 0.0f};
+	spriteMaterialData->reflectionProbeBoxProjection = 0.0f;
+	spriteMaterialData->reflectionProbeExtent = {1.0f, 1.0f, 1.0f};
+	spriteMaterialData->materialPadding2 = 0.0f;
 	spriteMaterialData->uvTransform = MakeIdentity4x4();
 
 	ID3D12Resource* sphereMaterialResource = CreateBufferResource(device.Get(), sizeof(Material));
@@ -1256,6 +1356,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	sphereMaterialData->reflectionReserved = 0.0f;
 	sphereMaterialData->materialPadding0 = 0.0f;
 	sphereMaterialData->materialPadding1 = 0.0f;
+	sphereMaterialData->reflectionProbeCenter = {0.0f, 0.0f, 0.0f};
+	sphereMaterialData->reflectionProbeBoxProjection = 0.0f;
+	sphereMaterialData->reflectionProbeExtent = {1.0f, 1.0f, 1.0f};
+	sphereMaterialData->materialPadding2 = 0.0f;
 	sphereMaterialData->uvTransform = MakeIdentity4x4();
 
 	ID3D12Resource* directionalLightResource = CreateBufferResource(device.Get(), sizeof(DirectionalLight));
@@ -1725,6 +1829,95 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	ComPtr<ID3D12PipelineState> sharpenPipelineState = CreatePostProcessPSO(
 		"Sharpen", sharpenPixelShaderBlob.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
 	if (sharpenPipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
+	ComPtr<ID3D12PipelineState> finalCompositePipelineState = CreatePostProcessPSO(
+		"FinalComposite", finalCompositePixelShaderBlob.Get(), DXGI_FORMAT_R8G8B8A8_UNORM);
+
+	if (finalCompositePipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
+	const bool isDepthHierarchyInitialized = g_depthHierarchyManager.Initialize(
+		device.Get(),
+		srvDescriptorHeap,
+		srvSize,
+		depthPyramidComputeShaderBlob.Get(),
+		depthDownsampleComputeShaderBlob.Get(),
+		reconstructNormalComputeShaderBlob.Get(),
+		renderWidth,
+		renderHeight);
+
+	if (!isDepthHierarchyInitialized) {
+		Log(logStream, "Depth hierarchy initialization failed");
+		RequestInitializationFailure();
+		return;
+	}
+
+	const std::array<IDxcBlob*, EditorTemporalRenderingManager::kPipelineCount> temporalShaderBlobs = {
+		cameraVelocityComputeShaderBlob.Get(),
+		velocityDilateComputeShaderBlob.Get(),
+		disocclusionMaskComputeShaderBlob.Get(),
+		reactiveMaskComputeShaderBlob.Get(),
+		ssrTraceComputeShaderBlob.Get(),
+		ssrResolveComputeShaderBlob.Get(),
+		ssrTemporalResolveComputeShaderBlob.Get(),
+		ssrDenoiseComputeShaderBlob.Get(),
+		ssrCompositeComputeShaderBlob.Get(),
+		temporalResolveComputeShaderBlob.Get(),
+		copyDepthComputeShaderBlob.Get(),
+	};
+	const bool isTemporalRenderingInitialized = g_temporalRenderingManager.Initialize(
+		device.Get(),
+		srvDescriptorHeap,
+		srvSize,
+		temporalShaderBlobs,
+		renderWidth,
+		renderHeight);
+
+	if (!isTemporalRenderingInitialized) {
+		Log(logStream, "Temporal rendering initialization failed");
+		RequestInitializationFailure();
+		return;
+	}
+
+	const std::array<IDxcBlob*, EditorPostProcessQualityManager::kPipelineCount>
+		postProcessQualityShaderBlobs = {
+			bloomPrefilterPixelShaderBlob.Get(),
+			bloomDownsamplePixelShaderBlob.Get(),
+			bloomUpsamplePixelShaderBlob.Get(),
+			smaaEdgePixelShaderBlob.Get(),
+			smaaWeightPixelShaderBlob.Get(),
+			smaaNeighborhoodPixelShaderBlob.Get(),
+		};
+	const bool isPostProcessQualityInitialized = g_postProcessQualityManager.Initialize(
+		device.Get(),
+		srvDescriptorHeap,
+		srvSize,
+		fullscreenVertexShaderBlob.Get(),
+		postProcessQualityShaderBlobs,
+		renderWidth,
+		renderHeight);
+
+	if (!isPostProcessQualityInitialized) {
+		Log(logStream, "Post-process quality initialization failed");
+		RequestInitializationFailure();
+		return;
+	}
+
+	const bool isGpuCullingInitialized = g_gpuCullingManager.Initialize(
+		device.Get(),
+		srvDescriptorHeap,
+		srvSize,
+		frustumCullingComputeShaderBlob.Get(),
+		occlusionCullingComputeShaderBlob.Get(),
+		buildIndirectArgsComputeShaderBlob.Get());
+
+	if (!isGpuCullingInitialized) {
+		Log(logStream, "GPU culling initialization failed");
 		RequestInitializationFailure();
 		return;
 	}
@@ -2446,6 +2639,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_skyboxPixelShaderBlob = skyboxPixelShaderBlob;
 	g_planarReflectionPixelShaderBlob = planarReflectionPixelShaderBlob;
 	g_sharpenPixelShaderBlob = sharpenPixelShaderBlob;
+	g_finalCompositePixelShaderBlob = finalCompositePixelShaderBlob;
 	g_signatureBlob = signatureBlob;
 	g_errorBlob = errorBlob;
 	g_rootSignature = rootSignature;
@@ -2465,6 +2659,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_skyboxPipelineState = skyboxPipelineState;
 	g_planarReflectionPipelineState = planarReflectionPipelineState;
 	g_sharpenPipelineState = sharpenPipelineState;
+	g_finalCompositePipelineState = finalCompositePipelineState;
 	g_iblIrradianceCube = iblIrradianceCube;
 	g_iblPrefilterCube = iblPrefilterCube;
 	g_iblEnvironmentCube = iblEnvironmentCube;
@@ -2831,6 +3026,10 @@ int EditorPlatformManager::Finalize() {
 	}
 	modelVertexResource->Release();
 	vertexResource->Release();
+	g_gpuCullingManager.Finalize();
+	g_postProcessQualityManager.Finalize();
+	g_temporalRenderingManager.Finalize();
+	g_depthHierarchyManager.Finalize();
 	srvDescriptorHeap->Release();
 	dsvDescriptorHeap->Release();
 	rtvDescriptorHeap->Release();

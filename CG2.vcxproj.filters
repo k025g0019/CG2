@@ -25,9 +25,39 @@
     <None Include="Assets\Input\InGameInputAction.json">
       <Filter>リソース ファイル</Filter>
     </None>
-    <None Include="Assets\Shaders\Object3d.VS.hlsl" />
-    <None Include="Assets\Shaders\Object3d.PS.hlsl" />
+	<None Include="Assets\Shaders\Object3d.VS.hlsl" />
+	<None Include="Assets\Shaders\Object3d.PS.hlsl" />
+	<None Include="Assets\Shaders\Object3dReflectionMask.PS.hlsl" />
+	<None Include="Assets\Shaders\Culling\BuildIndirectArgs.CS.hlsl" />
+	<None Include="Assets\Shaders\Culling\FrustumCulling.CS.hlsl" />
+	<None Include="Assets\Shaders\Culling\OcclusionCulling.CS.hlsl" />
+	<None Include="Assets\Shaders\Depth\DepthDownsample.CS.hlsl" />
+	<None Include="Assets\Shaders\Depth\DepthPyramid.CS.hlsl" />
+	<None Include="Assets\Shaders\Depth\ReconstructNormal.CS.hlsl" />
+	<None Include="Assets\Shaders\PostProcess\Bloom\BloomCommon.hlsli" />
+	<None Include="Assets\Shaders\PostProcess\Bloom\BloomDownsample.PS.hlsl" />
+	<None Include="Assets\Shaders\PostProcess\Bloom\BloomPrefilter.PS.hlsl" />
+	<None Include="Assets\Shaders\PostProcess\Bloom\BloomUpsample.PS.hlsl" />
+	<None Include="Assets\Shaders\PostProcess\SMAA\SMAABlendWeight.PS.hlsl" />
+	<None Include="Assets\Shaders\PostProcess\SMAA\SMAACommon.hlsli" />
+	<None Include="Assets\Shaders\PostProcess\SMAA\SMAAEdgeDetection.PS.hlsl" />
+	<None Include="Assets\Shaders\PostProcess\SMAA\SMAANeighborhoodBlend.PS.hlsl" />
+	<None Include="Assets\Shaders\PostProcess\FinalComposite.PS.hlsl" />
     <None Include="Assets\Shaders\DirectXTK\EnvironmentMapEffectBridge.hlsli" />
+    <None Include="Assets\Shaders\Reflection\ParallaxCorrectedCubemap.hlsli" />
+    <None Include="Assets\Shaders\Reflection\SSRComposite.CS.hlsl" />
+    <None Include="Assets\Shaders\Reflection\SSRDenoise.CS.hlsl" />
+    <None Include="Assets\Shaders\Reflection\SSRResolve.CS.hlsl" />
+    <None Include="Assets\Shaders\Reflection\SSRTemporalResolve.CS.hlsl" />
+    <None Include="Assets\Shaders\Reflection\SSRTrace.CS.hlsl" />
+    <None Include="Assets\Shaders\Temporal\CameraVelocity.CS.hlsl" />
+    <None Include="Assets\Shaders\Temporal\CopyDepth.CS.hlsl" />
+    <None Include="Assets\Shaders\Temporal\DisocclusionMask.CS.hlsl" />
+    <None Include="Assets\Shaders\Temporal\HistoryClamp.hlsli" />
+    <None Include="Assets\Shaders\Temporal\ReactiveMask.CS.hlsl" />
+    <None Include="Assets\Shaders\Temporal\TemporalCommon.hlsli" />
+    <None Include="Assets\Shaders\Temporal\TemporalResolve.CS.hlsl" />
+    <None Include="Assets\Shaders\Temporal\VelocityDilate.CS.hlsl" />
     <None Include="Assets\Shaders\ShadowDepth.VS.hlsl" />
   </ItemGroup>
   <ItemGroup>
@@ -212,6 +242,18 @@
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorRenderManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Renderer\EditorDepthHierarchyManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+	<ClCompile Include="Source\Engine\Renderer\EditorGpuCullingManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Renderer\EditorPostProcessQualityManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Renderer\EditorTemporalRenderingManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorPlatformManager.cpp">
@@ -1137,7 +1179,7 @@
     <ClInclude Include="Source\Engine\Editor\EditorBottomPanelWindowManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="Source\Engine\Editor\EditorCommonTypes.h">
+	<ClInclude Include="Source\Engine\Core\EditorCommonTypes.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="Source\Engine\Editor\EditorHierarchyPanel.h">
@@ -1197,7 +1239,7 @@
     <ClInclude Include="Source\Engine\Editor\EditorRuntimeManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="Source\Engine\Editor\EditorSharedState.h">
+	<ClInclude Include="Source\Engine\Core\EditorSharedState.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="Source\Engine\Editor\EditorDockingManager.h">
@@ -1231,6 +1273,18 @@
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="Source\Engine\Editor\EditorRenderManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Renderer\EditorDepthHierarchyManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+	<ClInclude Include="Source\Engine\Renderer\EditorGpuCullingManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Renderer\EditorPostProcessQualityManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Renderer\EditorTemporalRenderingManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="Source\Engine\Editor\EditorPlatformManager.h">

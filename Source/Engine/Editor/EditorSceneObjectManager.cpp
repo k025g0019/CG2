@@ -132,6 +132,10 @@ int32_t EditorSceneObjectManager::CreateObject(
 	sceneObject.materialData->reflectionReserved = 0.0f;
 	sceneObject.materialData->materialPadding0 = 0.0f;
 	sceneObject.materialData->materialPadding1 = 0.0f;
+	sceneObject.materialData->reflectionProbeCenter = {0.0f, 0.0f, 0.0f};
+	sceneObject.materialData->reflectionProbeBoxProjection = 0.0f;
+	sceneObject.materialData->reflectionProbeExtent = {1.0f, 1.0f, 1.0f};
+	sceneObject.materialData->materialPadding2 = 0.0f;
 	sceneObject.materialData->uvTransform = MakeIdentity4x4();
 	sceneObject.cullMode = 0;
 	sceneObjects_.push_back(sceneObject);
@@ -388,7 +392,7 @@ int32_t EditorSceneObjectManager::AcquireCustomTextureDescriptorIndex() {
 		return descriptorIndex;
 	}
 
-	if (nextCustomTextureDescriptorIndex_ >= 128) {
+	if (nextCustomTextureDescriptorIndex_ >= 1024) {
 		return -1;
 	}
 
@@ -398,7 +402,7 @@ int32_t EditorSceneObjectManager::AcquireCustomTextureDescriptorIndex() {
 }
 
 void EditorSceneObjectManager::ReleaseCustomTextureDescriptorIndex(int32_t descriptorIndex) {
-	if (descriptorIndex < 64) {
+	if (descriptorIndex < 128) {
 		return;
 	}
 

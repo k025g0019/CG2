@@ -15,6 +15,10 @@ struct Material
     float reflectionReserved;
     float materialPadding0;
     float materialPadding1;
+    float3 reflectionProbeCenter;
+    float reflectionProbeBoxProjection;
+    float3 reflectionProbeExtent;
+    float materialPadding2;
     row_major float4x4 uvTransform;
 };
 

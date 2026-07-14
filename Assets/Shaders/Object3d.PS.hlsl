@@ -3,6 +3,7 @@
 #include "Common/PBRCommon.hlsli"
 #include "Lighting/IBLRuntime.hlsli"
 #include "DirectXTK/EnvironmentMapEffectBridge.hlsli"
+#include "Reflection/ParallaxCorrectedCubemap.hlsli"
 #include "Shadow/SoftShadow.hlsli"
 #include "lygia/color/blend/softLight.hlsl"
 #include "lygia/generative/snoise.hlsl"
@@ -23,6 +24,10 @@ struct Material
     float reflectionReserved;
     float materialPadding0;
     float materialPadding1;
+    float3 reflectionProbeCenter;
+    float reflectionProbeBoxProjection;
+    float3 reflectionProbeExtent;
+    float materialPadding2;
     row_major float4x4 uvTransform;
 };
 
@@ -303,6 +308,14 @@ float4 main(PixelShaderInput input) : SV_TARGET0
             environmentMapInput.fresnelFactor = 5.0f;
             environmentMapInput.environmentMapSpecular = F0 * max(gDirectionalLight.environmentTextureIntensity, 1.0f) * smoothness;
             environmentMapInput.useFresnel = false;
+            const float3 environmentCoordinate = DirectXTKComputeEnvironmentCoordinate(V, N);
+            environmentMapInput.environmentCoordinate = CorrectParallaxCubemapDirection(
+                input.worldPosition,
+                environmentCoordinate,
+                gMaterial.reflectionProbeCenter,
+                gMaterial.reflectionProbeExtent);
+            environmentMapInput.useEnvironmentCoordinate =
+                gMaterial.reflectionProbeBoxProjection >= 0.5f;
 
             finalColor = DirectXTKApplyEnvironmentMap(
                 environmentMapInput,

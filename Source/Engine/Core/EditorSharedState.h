@@ -47,6 +47,10 @@
 #include "EditorInspectorPanel.h"
 #include "EditorMainMenuBar.h"
 #include "EditorRuntimeManager.h"
+#include "EditorDepthHierarchyManager.h"
+#include "EditorGpuCullingManager.h"
+#include "EditorPostProcessQualityManager.h"
+#include "EditorTemporalRenderingManager.h"
 #include "EditorScene.h"
 #include "EditorSceneCameraController.h"
 #include "EditorSceneObjectManager.h"
@@ -542,6 +546,9 @@ namespace EditorSharedState {
 	constexpr uint32_t kRuntimeMaterialMaskSrvDescriptorIndex = 28; // Object3d �̋��ʗ� / �e���}�X�N SRV�B
 	constexpr uint32_t kRuntimePlanarReflectionSrvDescriptorIndex = 29; // ���ʔ��˗p�ɕʃJ�����ŕ`���� HDR RT �� SRV�B
 	constexpr uint32_t kRuntimeEnvironmentSrvDescriptorIndex = 30; // ���摜 / HDRI �� SRV�B
+	constexpr uint32_t kRuntimeDepthPyramidDescriptorStartIndex = 31u; // 深度ピラミッドは SRV/UAV を交互に 31～54 番へ配置する。
+	constexpr uint32_t kRuntimeReconstructedNormalSrvDescriptorIndex = 55u; // 深度から再構築したワールド法線の SRV。
+	constexpr uint32_t kRuntimeReconstructedNormalUavDescriptorIndex = 56u; // ワールド法線を書き込む UAV。
 	constexpr uint32_t kRuntimeRtvCount = 12; // RTV Heap �T�C�Y: swap2 + HDR + bloom2 + post + SSAO2 + HDR���� + �ގ��}�X�N + ���ʔ���
 	inline HINSTANCE g_instanceHandle = nullptr; // g_instanceHandle �� Win32 Window �� DirectInput �������Ɏg���A�v�����́B
 	inline int g_exitCode = 0; // g_exitCode �� WinMain �֕Ԃ��I���R�[�h�B
@@ -667,6 +674,7 @@ namespace EditorSharedState {
 	inline ComPtr<IDxcBlob> g_skyboxPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_planarReflectionPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_sharpenPixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_finalCompositePixelShaderBlob;
 
 
 	inline ComPtr<ID3DBlob> g_signatureBlob; // g_signatureBlob / g_errorBlob �� RootSignature �V���A���C�Y���ʂƎ��s���O�B
@@ -692,6 +700,11 @@ namespace EditorSharedState {
 	inline ComPtr<ID3D12PipelineState> g_skyboxPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_planarReflectionPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_sharpenPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_finalCompositePipelineState;
+	inline EditorDepthHierarchyManager g_depthHierarchyManager;
+	inline EditorGpuCullingManager g_gpuCullingManager;
+	inline EditorPostProcessQualityManager g_postProcessQualityManager;
+	inline EditorTemporalRenderingManager g_temporalRenderingManager;
 	// IBL uses existing root signature with added descriptor ranges
 
 	inline ID3D12Resource* g_spriteMaterialResource = nullptr;
@@ -1261,6 +1274,18 @@ namespace EditorSharedState {
 				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimePlanarReflectionSrvDescriptorIndex);
 			g_device->CreateShaderResourceView(g_planarReflectionRenderTarget, &srvDesc, g_planarReflectionSrvHandleCPU);
 		}
+
+		// 深度依存の Compute Texture も Scene 描画サイズへ追従させる。
+		const bool isDepthHierarchyResized = g_depthHierarchyManager.Resize(g_renderWidth, g_renderHeight);
+		assert(isDepthHierarchyResized);
+
+		const bool isTemporalRenderingResized = g_temporalRenderingManager.Resize(g_renderWidth, g_renderHeight);
+		assert(isTemporalRenderingResized);
+
+		const bool isPostProcessQualityResized = g_postProcessQualityManager.Resize(
+			g_renderWidth,
+			g_renderHeight);
+		assert(isPostProcessQualityResized);
 	}
 }
 

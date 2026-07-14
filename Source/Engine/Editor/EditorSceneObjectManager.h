@@ -38,7 +38,7 @@ private:
 	ID3D12Device* device_ = nullptr;  // GPU Resource 作成に使う DirectX12 Device
 	std::vector<EditorSceneObject> sceneObjects_;  // Scene 上に表示するモデル / スプライトの描画用データ
 	std::vector<int32_t> freeCustomTextureDescriptorIndices_;  // 削除済み SceneObject から回収した SRV 番号
-	int32_t nextCustomTextureDescriptorIndex_ = 64;  // 0:ImGui, 1-4:固定テクスチャ, 15-30:Runtime SRV, 64以降を個別画像へ使う
+	int32_t nextCustomTextureDescriptorIndex_ = 128;  // 0-127 は描画機能、128 以降は GameObject ごとの画像 SRV に使う
 	ID3D12Resource* CreateVertexResource(size_t sizeInBytes) const;  // 実メッシュ頂点を書き込む Upload Buffer を作る
 	ID3D12Resource* CreateTransformationResource() const;  // WVP / World 行列を書き込む Upload Buffer を作る
 	ID3D12Resource* CreateMaterialResource() const;  // GameObject ごとの Material 値を書き込む Upload Buffer を作る

@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 using namespace EditorSharedState;
 
@@ -551,12 +552,7 @@ void EditorRenderManager::Draw() {
 	auto& hdrRtvHandle = g_hdrRtvHandle;
 	auto& hdrSrvHandleGPU = g_hdrSrvHandleGPU;
 	auto& postProcessRootSignature = g_postProcessRootSignature;
-	auto& toneMappingPipelineState = g_toneMappingPipelineState;
-	auto& bloomRenderTargets = g_bloomRenderTargets;
-	auto& bloomRtvHandles = g_bloomRtvHandles;
 	auto& bloomSrvHandlesGPU = g_bloomSrvHandlesGPU;
-	auto& bloomExtractPipelineState = g_bloomExtractPipelineState;
-	auto& bloomBlurPipelineState = g_bloomBlurPipelineState;
 	auto& postProcessRenderTarget = g_postProcessRenderTarget;
 	auto& postProcessRtvHandle = g_postProcessRtvHandle;
 	auto& postProcessSrvHandleGPU = g_postProcessSrvHandleGPU;
@@ -572,6 +568,7 @@ void EditorRenderManager::Draw() {
 	auto& skyboxPipelineState = g_skyboxPipelineState;
 	auto& planarReflectionPipelineState = g_planarReflectionPipelineState;
 	auto& sharpenPipelineState = g_sharpenPipelineState;
+	auto& finalCompositePipelineState = g_finalCompositePipelineState;
 	auto& materialMaskRenderTarget = g_materialMaskRenderTarget;
 	auto& materialMaskRtvHandle = g_materialMaskRtvHandle;
 	auto& materialMaskSrvHandleGPU = g_materialMaskSrvHandleGPU;
@@ -1017,9 +1014,17 @@ void EditorRenderManager::Draw() {
 	ID3D12PipelineState* defaultDrawPso = graphicsPipelineState.Get();
 	auto drawSceneObjects = [&](bool isGameViewPass, const D3D12_CPU_DESCRIPTOR_HANDLE& targetRtvHandle, int32_t skipGameObjectId, int32_t planarSurfaceGameObjectId = -1) {
 		commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, &dsvHandle);
+		const bool isPlanarReflectionDraw = targetRtvHandle.ptr == planarReflectionRtvHandle.ptr;
+		const bool useGpuCullingForPass = !isPlanarReflectionDraw &&
+			((!isGameViewPass && g_isSceneViewVisible) ||
+			(isGameViewPass && !g_isSceneViewVisible && g_isGameViewVisible));
 
 		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
 			if (skipGameObjectId >= 0 && sceneObject.gameObjectId == skipGameObjectId) {
+				continue;
+			}
+
+			if (useGpuCullingForPass && !g_gpuCullingManager.IsVisible(sceneObject.gameObjectId)) {
 				continue;
 			}
 
@@ -1440,19 +1445,127 @@ void EditorRenderManager::Draw() {
 	}
 
 	//================================================================
-	// Post-process: Bloom + ToneMapping
+	// Compute: 深度ピラミッドとワールド法線の生成
 	//================================================================
 
-	uint32_t bloomWidth = (std::max)(1u, g_renderWidth / 4);
-	uint32_t bloomHeight = (std::max)(1u, g_renderHeight / 4);
+	if (depthStencilResource != nullptr &&
+		(hasPlanarReflectionPass || g_isSceneViewVisible || g_isGameViewVisible)) {
+		const D3D12_RESOURCE_STATES computeReadableDepthState = static_cast<D3D12_RESOURCE_STATES>(
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
+			D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 
-	D3D12_VIEWPORT bloomViewport{};
-	bloomViewport.Width = static_cast<float>(bloomWidth);
-	bloomViewport.Height = static_cast<float>(bloomHeight);
-	bloomViewport.MaxDepth = 1.0f;
-	D3D12_RECT bloomScissor{};
-	bloomScissor.right = static_cast<LONG>(bloomWidth);
-	bloomScissor.bottom = static_cast<LONG>(bloomHeight);
+		D3D12_RESOURCE_BARRIER depthComputeBarrier{};
+		depthComputeBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		depthComputeBarrier.Transition.pResource = depthStencilResource;
+		depthComputeBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		depthComputeBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		depthComputeBarrier.Transition.StateAfter = computeReadableDepthState;
+		commandList->ResourceBarrier(1u, &depthComputeBarrier);
+
+		ID3D12DescriptorHeap* computeDescriptorHeaps[] = {srvDescriptorHeap};
+		commandList->SetDescriptorHeaps(1u, computeDescriptorHeaps);
+		const Matrix4x4& depthInverseViewProjection = g_isSceneViewVisible
+			? inverseViewProjectionMatrix
+			: inverseGameViewProjectionMatrix;
+		g_depthHierarchyManager.Generate(
+			commandList.Get(),
+			depthSrvHandleGPU,
+			&depthInverseViewProjection.matrix[0][0]);
+
+		//================================================================
+		// GPU Occlusion Culling 用のワールド AABB を作る
+		//================================================================
+
+		std::vector<EditorGpuCullingInput> gpuCullingInputs;
+		gpuCullingInputs.reserve(editorSceneObjects.size());
+
+		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
+			if (sceneObject.type != EditorSceneObjectType::Model ||
+				sceneObject.transformationData == nullptr) {
+				continue;
+			}
+
+			const Vector3 localBoundsCenter = GetPlanarReflectionLocalMeshCenter(sceneObject);
+			const Vector3 localBoundsSize = GetPlanarReflectionLocalMeshSize(sceneObject);
+			const Vector3 localBoundsExtent = {
+				localBoundsSize.x * 0.5f,
+				localBoundsSize.y * 0.5f,
+				localBoundsSize.z * 0.5f
+			};
+			Vector3 worldMinimum = {
+				(std::numeric_limits<float>::max)(),
+				(std::numeric_limits<float>::max)(),
+				(std::numeric_limits<float>::max)()
+			};
+			Vector3 worldMaximum = {
+				-(std::numeric_limits<float>::max)(),
+				-(std::numeric_limits<float>::max)(),
+				-(std::numeric_limits<float>::max)()
+			};
+
+			for (uint32_t cornerIndex = 0u; cornerIndex < 8u; cornerIndex++) {
+				const Vector3 localCorner = {
+					localBoundsCenter.x + ((cornerIndex & 1u) != 0u ? localBoundsExtent.x : -localBoundsExtent.x),
+					localBoundsCenter.y + ((cornerIndex & 2u) != 0u ? localBoundsExtent.y : -localBoundsExtent.y),
+					localBoundsCenter.z + ((cornerIndex & 4u) != 0u ? localBoundsExtent.z : -localBoundsExtent.z)
+				};
+				const Vector3 worldCorner = Transform(localCorner, sceneObject.transformationData->World);
+				worldMinimum.x = (std::min)(worldMinimum.x, worldCorner.x);
+				worldMinimum.y = (std::min)(worldMinimum.y, worldCorner.y);
+				worldMinimum.z = (std::min)(worldMinimum.z, worldCorner.z);
+				worldMaximum.x = (std::max)(worldMaximum.x, worldCorner.x);
+				worldMaximum.y = (std::max)(worldMaximum.y, worldCorner.y);
+				worldMaximum.z = (std::max)(worldMaximum.z, worldCorner.z);
+			}
+
+			uint32_t vertexCount = sceneObject.customMeshVertexCount;
+
+			if (!sceneObject.usesCustomMesh || vertexCount == 0u) {
+				size_t meshTypeIndex = static_cast<size_t>(sceneObject.meshType);
+
+				if (meshTypeIndex >= kEditorModelMeshTypeCount) {
+					meshTypeIndex = static_cast<size_t>(EditorModelMeshType::Plane);
+				}
+
+				vertexCount = primitiveVertexCounts[meshTypeIndex];
+			}
+
+			gpuCullingInputs.push_back({
+				(worldMinimum.x + worldMaximum.x) * 0.5f,
+				(worldMinimum.y + worldMaximum.y) * 0.5f,
+				(worldMinimum.z + worldMaximum.z) * 0.5f,
+				(worldMaximum.x - worldMinimum.x) * 0.5f,
+				(worldMaximum.y - worldMinimum.y) * 0.5f,
+				(worldMaximum.z - worldMinimum.z) * 0.5f,
+				sceneObject.gameObjectId,
+				vertexCount
+			});
+		}
+
+		const uint32_t depthLevelCount = g_depthHierarchyManager.GetActiveLevelCount();
+
+		if (depthLevelCount > 0u) {
+			const uint32_t cullingDepthLevel = (std::min)(4u, depthLevelCount - 1u);
+			const Matrix4x4& cullingViewProjection = g_isSceneViewVisible
+				? sceneViewProjectionMatrix
+				: gameViewProjectionMatrix;
+			g_gpuCullingManager.Execute(
+				commandList.Get(),
+				gpuCullingInputs,
+				g_depthHierarchyManager.GetDepthPyramidSrvHandle(cullingDepthLevel),
+				&cullingViewProjection.matrix[0][0],
+				g_depthHierarchyManager.GetDepthPyramidWidth(cullingDepthLevel),
+				g_depthHierarchyManager.GetDepthPyramidHeight(cullingDepthLevel));
+		}
+
+		depthComputeBarrier.Transition.StateBefore = computeReadableDepthState;
+		depthComputeBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		commandList->ResourceBarrier(1u, &depthComputeBarrier);
+	}
+
+	//================================================================
+	// Post-process: Bloom + ToneMapping
+	//================================================================
 
 	D3D12_VIEWPORT fullViewport{};
 	fullViewport.Width = static_cast<float>(g_renderWidth);
@@ -1464,6 +1577,7 @@ void EditorRenderManager::Draw() {
 
 	float clearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 	D3D12_GPU_DESCRIPTOR_HANDLE hdrPostSourceSrvHandle = hdrSrvHandleGPU;
+	ID3D12Resource* hdrPostSourceResource = hdrRenderTarget;
 
 	//================================================================
 	// SSR (Screen Space Reflection)
@@ -1596,86 +1710,91 @@ void EditorRenderManager::Draw() {
 		compositeBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		commandList->ResourceBarrier(1, &compositeBarrier);
 		hdrPostSourceSrvHandle = hdrCompositeSrvHandleGPU;
+		hdrPostSourceResource = hdrCompositeRenderTarget;
 	}
 
-	// Bloom extract: HDR RT 遶翫・BloomA
-	{
-		D3D12_RESOURCE_BARRIER barrier{};
-		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		barrier.Transition.pResource = bloomRenderTargets[0];
-		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-		commandList->ResourceBarrier(1, &barrier);
+	//================================================================
+	// Compute: SSR と時間方向の履歴解決
+	//================================================================
 
-		commandList->SetPipelineState(bloomExtractPipelineState.Get());
-		commandList->RSSetViewports(1, &bloomViewport);
-		commandList->RSSetScissorRects(1, &bloomScissor);
-		commandList->OMSetRenderTargets(1, &bloomRtvHandles[0], FALSE, nullptr);
-		commandList->ClearRenderTargetView(bloomRtvHandles[0], clearColor, 0, nullptr);
-		commandList->SetGraphicsRootDescriptorTable(0, hdrPostSourceSrvHandle);
-		commandList->SetGraphicsRootDescriptorTable(1, shadowMapSrvGpuHandle);
-		float extractParams[4] = {2.0f, 0.5f, 1.0f, 0.0f};
-		commandList->SetGraphicsRoot32BitConstants(2, 4, extractParams, 0);
-		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		commandList->DrawInstanced(3, 1, 0, 0);
+	if (hdrPostSourceResource != nullptr &&
+		depthStencilResource != nullptr &&
+		materialMaskRenderTarget != nullptr &&
+		(g_isSceneViewVisible || g_isGameViewVisible)) {
+		const D3D12_RESOURCE_STATES shaderReadState = static_cast<D3D12_RESOURCE_STATES>(
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
+			D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 
-		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		commandList->ResourceBarrier(1, &barrier);
+		std::array<D3D12_RESOURCE_BARRIER, 3u> temporalInputBarriers{};
+		ID3D12Resource* temporalInputResources[3] = {
+			hdrPostSourceResource,
+			depthStencilResource,
+			materialMaskRenderTarget,
+		};
+
+		for (uint32_t barrierIndex = 0u; barrierIndex < temporalInputBarriers.size(); barrierIndex++) {
+			D3D12_RESOURCE_BARRIER& temporalInputBarrier = temporalInputBarriers[barrierIndex];
+			temporalInputBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			temporalInputBarrier.Transition.pResource = temporalInputResources[barrierIndex];
+			temporalInputBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+			temporalInputBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+			temporalInputBarrier.Transition.StateAfter = shaderReadState;
+		}
+
+		commandList->ResourceBarrier(
+			static_cast<UINT>(temporalInputBarriers.size()),
+			temporalInputBarriers.data());
+
+		const bool useSceneCamera = g_isSceneViewVisible;
+		const Matrix4x4& temporalInverseViewProjection = useSceneCamera
+			? inverseViewProjectionMatrix
+			: inverseGameViewProjectionMatrix;
+		const Matrix4x4& temporalViewProjection = useSceneCamera
+			? sceneViewProjectionMatrix
+			: gameViewProjectionMatrix;
+		const Vector3& temporalCameraPosition = useSceneCamera
+			? cameraTransform.translate
+			: g_gameCameraPosition;
+		const uint32_t depthLevelCount = g_depthHierarchyManager.GetActiveLevelCount();
+		const uint32_t ssrDepthLevel = depthLevelCount > 3u ? 2u : 0u;
+
+		ID3D12DescriptorHeap* temporalDescriptorHeaps[] = {srvDescriptorHeap};
+		commandList->SetDescriptorHeaps(1u, temporalDescriptorHeaps);
+		const bool isTemporalRenderingExecuted = g_temporalRenderingManager.Execute(
+			commandList.Get(),
+			hdrPostSourceSrvHandle,
+			depthSrvHandleGPU,
+			g_depthHierarchyManager.GetReconstructedNormalSrvHandle(),
+			g_depthHierarchyManager.GetDepthPyramidSrvHandle(ssrDepthLevel),
+			materialMaskSrvHandleGPU,
+			&temporalInverseViewProjection.matrix[0][0],
+			&temporalViewProjection.matrix[0][0],
+			&temporalCameraPosition.x);
+
+		for (D3D12_RESOURCE_BARRIER& temporalInputBarrier : temporalInputBarriers) {
+			temporalInputBarrier.Transition.StateBefore = shaderReadState;
+			temporalInputBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		}
+
+		commandList->ResourceBarrier(
+			static_cast<UINT>(temporalInputBarriers.size()),
+			temporalInputBarriers.data());
+
+		if (isTemporalRenderingExecuted) {
+			hdrPostSourceSrvHandle = g_temporalRenderingManager.GetOutputSrvHandle();
+		}
 	}
 
-	// Bloom blur horizontal: BloomA 遶翫・BloomB
-	{
-		D3D12_RESOURCE_BARRIER barrier{};
-		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		barrier.Transition.pResource = bloomRenderTargets[1];
-		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-		commandList->ResourceBarrier(1, &barrier);
+	//================================================================
+	// 多段Bloomを実行し、失敗時は既存Bloomを最終合成に使う
+	//================================================================
+	D3D12_GPU_DESCRIPTOR_HANDLE finalBloomSrvHandle = bloomSrvHandlesGPU[0];
+	const bool isQualityBloomExecuted = g_postProcessQualityManager.ExecuteBloom(
+		commandList.Get(),
+		hdrPostSourceSrvHandle);
 
-		commandList->SetPipelineState(bloomBlurPipelineState.Get());
-		commandList->RSSetViewports(1, &bloomViewport);
-		commandList->RSSetScissorRects(1, &bloomScissor);
-		commandList->OMSetRenderTargets(1, &bloomRtvHandles[1], FALSE, nullptr);
-		commandList->ClearRenderTargetView(bloomRtvHandles[1], clearColor, 0, nullptr);
-		commandList->SetGraphicsRootDescriptorTable(0, bloomSrvHandlesGPU[0]);
-		commandList->SetGraphicsRootDescriptorTable(1, shadowMapSrvGpuHandle);
-		float blurHParams[4] = {1.0f / static_cast<float>(bloomWidth), 0.0f, 0.0f, 0.0f};
-		commandList->SetGraphicsRoot32BitConstants(2, 4, blurHParams, 0);
-		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		commandList->DrawInstanced(3, 1, 0, 0);
-
-		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		commandList->ResourceBarrier(1, &barrier);
-	}
-
-	// Bloom blur vertical: BloomB 遶翫・BloomA
-	{
-		D3D12_RESOURCE_BARRIER barrier{};
-		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		barrier.Transition.pResource = bloomRenderTargets[0];
-		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-		commandList->ResourceBarrier(1, &barrier);
-
-		commandList->SetPipelineState(bloomBlurPipelineState.Get());
-		commandList->RSSetViewports(1, &bloomViewport);
-		commandList->RSSetScissorRects(1, &bloomScissor);
-		commandList->OMSetRenderTargets(1, &bloomRtvHandles[0], FALSE, nullptr);
-		commandList->SetGraphicsRootDescriptorTable(0, bloomSrvHandlesGPU[1]);
-		commandList->SetGraphicsRootDescriptorTable(1, shadowMapSrvGpuHandle);
-		float blurVParams[4] = {0.0f, 1.0f / static_cast<float>(bloomHeight), 1.0f, 0.0f};
-		commandList->SetGraphicsRoot32BitConstants(2, 4, blurVParams, 0);
-		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		commandList->DrawInstanced(3, 1, 0, 0);
-
-		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		commandList->ResourceBarrier(1, &barrier);
+	if (isQualityBloomExecuted) {
+		finalBloomSrvHandle = g_postProcessQualityManager.GetBloomSrvHandle();
 	}
 
 	// Final tone mapping + bloom composite: HDR RT + BloomA 遶翫・LDR RT
@@ -1696,11 +1815,11 @@ void EditorRenderManager::Draw() {
 		ID3D12DescriptorHeap* heaps[] = {srvDescriptorHeap};
 		commandList->SetDescriptorHeaps(1, heaps);
 		commandList->SetGraphicsRootSignature(postProcessRootSignature.Get());
-		commandList->SetPipelineState(toneMappingPipelineState.Get());
+		commandList->SetPipelineState(finalCompositePipelineState.Get());
 		commandList->SetGraphicsRootDescriptorTable(0, hdrPostSourceSrvHandle);
-		commandList->SetGraphicsRootDescriptorTable(1, bloomSrvHandlesGPU[0]);
+		commandList->SetGraphicsRootDescriptorTable(1, finalBloomSrvHandle);
 		commandList->SetGraphicsRootDescriptorTable(3, ssaoSrvHandlesGPU[1]);
-		float toneMappingParams[12] = {
+		float finalCompositeParams[12] = {
 			1.0f,
 			1.0f,
 			3.0f,
@@ -1714,7 +1833,7 @@ void EditorRenderManager::Draw() {
 			0.65f,
 			0.0f
 		};
-		commandList->SetGraphicsRoot32BitConstants(2, 12, toneMappingParams, 0);
+		commandList->SetGraphicsRoot32BitConstants(2u, 12u, finalCompositeParams, 0u);
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		commandList->DrawInstanced(3, 1, 0, 0);
 
@@ -1727,6 +1846,8 @@ void EditorRenderManager::Draw() {
 	// 闕ｳ・�E�E�E�: Sharpen
 	// ToneMapping 陟募�E�E�E�後�E騾匁E�E��E��E�E�E�陷剁E�E��E�奁E�E��E�定氣莉｣・�E�E�E�邵�E�E�E�・�E�E�E�邵�E�E�E�螟ｧ・�E�E�E�霈披�E�E�E�驍ｱ・�E�E�E�郢�E�E�E�竏壺�E�E�E�邵�E�E�E�竏ｵ諤咎お繝ｻFXAA 邵�E�E�E�・�E�E�E�雋ゑ�E�E�E��E�E�E�邵�E�E�E�蜷�E�E�E��E�E�E�繝ｻ
 	//================================================================
+	bool isSharpenExecuted = false;
+
 	if (hdrCompositeRenderTarget != nullptr && sharpenPipelineState != nullptr) {
 		D3D12_RESOURCE_BARRIER sharpenBarrier{};
 		sharpenBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -1743,7 +1864,7 @@ void EditorRenderManager::Draw() {
 		commandList->SetGraphicsRootSignature(postProcessRootSignature.Get());
 		commandList->SetPipelineState(sharpenPipelineState.Get());
 		commandList->SetGraphicsRootDescriptorTable(0, postProcessSrvHandleGPU);
-		commandList->SetGraphicsRootDescriptorTable(1, bloomSrvHandlesGPU[0]);
+		commandList->SetGraphicsRootDescriptorTable(1, finalBloomSrvHandle);
 		float sharpenParams[4] = {
 			1.0f / static_cast<float>(g_renderWidth),
 			1.0f / static_cast<float>(g_renderHeight),
@@ -1757,6 +1878,21 @@ void EditorRenderManager::Draw() {
 		sharpenBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		sharpenBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		commandList->ResourceBarrier(1, &sharpenBarrier);
+		isSharpenExecuted = true;
+	}
+
+	//================================================================
+	// SMAA 3パスで輪郭検出、重み計算、近傍合成を順番に行う
+	//================================================================
+	D3D12_GPU_DESCRIPTOR_HANDLE finalAntialiasSourceSrvHandle = isSharpenExecuted
+		? hdrCompositeSrvHandleGPU
+		: postProcessSrvHandleGPU;
+	const bool isSmaaExecuted = g_postProcessQualityManager.ExecuteSmaa(
+		commandList.Get(),
+		finalAntialiasSourceSrvHandle);
+
+	if (isSmaaExecuted) {
+		finalAntialiasSourceSrvHandle = g_postProcessQualityManager.GetSmaaOutputSrvHandle();
 	}
 
 	// FXAA: LDR RT 遶翫・back buffer
@@ -1778,8 +1914,8 @@ void EditorRenderManager::Draw() {
 		commandList->SetDescriptorHeaps(1, heaps);
 		commandList->SetGraphicsRootSignature(postProcessRootSignature.Get());
 		commandList->SetPipelineState(fxaaPipelineState.Get());
-		commandList->SetGraphicsRootDescriptorTable(0, hdrCompositeSrvHandleGPU);
-		commandList->SetGraphicsRootDescriptorTable(1, bloomSrvHandlesGPU[0]);
+		commandList->SetGraphicsRootDescriptorTable(0, finalAntialiasSourceSrvHandle);
+		commandList->SetGraphicsRootDescriptorTable(1, finalBloomSrvHandle);
 		float fxaaParams[4] = {
 			1.0f / static_cast<float>(g_renderWidth),
 			1.0f / static_cast<float>(g_renderHeight),
@@ -1826,6 +1962,9 @@ void EditorRenderManager::Draw() {
 			WaitForSingleObject(fenceEvent, INFINITE);
 		}
 	}
+
+	// GPU が完了したため、次フレームで使う可視結果を安全に読み戻す。
+	g_gpuCullingManager.ResolveReadback();
 
 	g_isDrawRequested = false;
 	// 闔�E�E�E�E��E�E�E�繝ｵ郢晢�E�E�E��E�E�E�郢晢�E�E�E��E�E�E�郢晢�E�E�E��E�E�E�邵�E�E�E�・�E�E�E�隰�E�E�E�蜀怜�E髫補扱・�E�E�E�繧・�E�E�E�定ｱ�E�E�E�驛�E�E�E�E��E�E�E�・�E�E�E�邵�E�E�E�蜉ｱ笳・�E�E�E��E�E�E�・�E�E�E�邵�E�E�E�・�E�E�E�邵�E�E�E�竏ｵ・�E�E�E�・�E�E�E�邵�E�E�E�・�E�E�E� ImGui::Render 邵�E�E�E�・�E�E�E�邵�E�E�E�・�E�E�E� Renderer 郢�E�E�E�蜻茨�E�E�E��E�E�E�・�E�E�E�郢�E�E�E�竏夲�E�E�E�狗ｸ�E�E�E�繝ｻ

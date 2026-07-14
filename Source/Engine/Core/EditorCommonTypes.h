@@ -53,11 +53,15 @@ struct Material {
 	float reflectionReserved;  // 反射コンポーネント側の粗さ上書き値
 	float materialPadding0;  // HLSL cbuffer の 16byte 境界合わせ
 	float materialPadding1;  // HLSL cbuffer の 16byte 境界合わせ
+	Vector3 reflectionProbeCenter;  // Box Projection に使う Reflection Probe のワールド中心
+	float reflectionProbeBoxProjection;  // 1.0f なら Box Projection でキューブマップ方向を補正する
+	Vector3 reflectionProbeExtent;  // Reflection Probe のワールド半径。各軸の Box 半分サイズ
+	float materialPadding2;  // HLSL cbuffer の 16byte 境界合わせ
 	Matrix4x4 uvTransform;  // UV の移動 / 回転 / 拡縮行列
 };
 
-static_assert(offsetof(Material, uvTransform) == 64u, "Material と HLSL cbuffer の uvTransform 開始位置が一致していません。");
-static_assert(sizeof(Material) == 128u, "Material と HLSL cbuffer のサイズが一致していません。");
+static_assert(offsetof(Material, uvTransform) == 96u, "Material と HLSL cbuffer の uvTransform 開始位置が一致していません。");
+static_assert(sizeof(Material) == 160u, "Material と HLSL cbuffer のサイズが一致していません。");
 
 constexpr int32_t kMaxEmissiveLights = 8;
 

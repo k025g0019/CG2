@@ -3,7 +3,9 @@
 #include "EditorAssetUtility.h"
 #include "EditorComponentUtility.h"
 
+#include <algorithm>
 #include <cstddef>
+#include <cmath>
 
 #pragma warning(disable : 5045)
 
@@ -68,6 +70,35 @@ namespace {
 			reflectionProbeComponent != nullptr && reflectionProbeComponent->isActive
 			? reflectionProbeComponent->roughness
 			: 0.0f;
+
+		//============================================================
+		// Cubemap Reflection Probe の Box Projection 範囲
+		//============================================================
+
+		const bool isCubemapProbeActive =
+			reflectionProbeComponent != nullptr &&
+			reflectionProbeComponent->isActive &&
+			reflectionProbeComponent->assetPath == "Cubemap";
+
+		if (isCubemapProbeActive) {
+			const Vector3& probeCenter = reflectionProbeComponent->colliderCenter;
+			const Vector3& probeSize = reflectionProbeComponent->colliderSize;
+			const Vector3& objectScale = sceneObject.transform.scale;
+			sceneObject.materialData->reflectionProbeCenter = {
+				sceneObject.transform.translate.x + probeCenter.x * objectScale.x,
+				sceneObject.transform.translate.y + probeCenter.y * objectScale.y,
+				sceneObject.transform.translate.z + probeCenter.z * objectScale.z};
+			sceneObject.materialData->reflectionProbeExtent = {
+				(std::max)(std::abs(probeSize.x * objectScale.x) * 0.5f, 0.01f),
+				(std::max)(std::abs(probeSize.y * objectScale.y) * 0.5f, 0.01f),
+				(std::max)(std::abs(probeSize.z * objectScale.z) * 0.5f, 0.01f)};
+			sceneObject.materialData->reflectionProbeBoxProjection = 1.0f;
+		}
+		else {
+			sceneObject.materialData->reflectionProbeCenter = {0.0f, 0.0f, 0.0f};
+			sceneObject.materialData->reflectionProbeExtent = {1.0f, 1.0f, 1.0f};
+			sceneObject.materialData->reflectionProbeBoxProjection = 0.0f;
+		}
 	}
 }
 

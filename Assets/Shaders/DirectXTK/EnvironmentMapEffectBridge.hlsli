@@ -20,6 +20,8 @@ struct DirectXTKEnvironmentMapInput
     float fresnelFactor;            // FresnelFactor 相当。
     float3 environmentMapSpecular;  // EnvironmentMapSpecular 相当。
     bool useFresnel;                // DirectXTK の Fresnel / 非 Fresnel バリアント切替。
+    float3 environmentCoordinate;   // Box Projection 適用後のキューブマップ参照方向。
+    bool useEnvironmentCoordinate;  // true なら上の参照方向をそのまま使う。
 };
 
 float DirectXTKComputeEnvironmentFresnel(
@@ -50,9 +52,9 @@ float3 DirectXTKApplyEnvironmentMap(
         return input.litColor;
     }
 
-    float3 environmentCoordinate = DirectXTKComputeEnvironmentCoordinate(
-        input.eyeVector,
-        input.worldNormal);
+    float3 environmentCoordinate = input.useEnvironmentCoordinate
+        ? normalize(input.environmentCoordinate)
+        : DirectXTKComputeEnvironmentCoordinate(input.eyeVector, input.worldNormal);
 
     float4 sampledEnvironmentMap = environmentMap.Sample(
         environmentSampler,

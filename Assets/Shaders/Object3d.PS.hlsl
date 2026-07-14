@@ -2,6 +2,7 @@
 #include "Common/AdvancedPBR.hlsli"
 #include "Common/PBRCommon.hlsli"
 #include "Lighting/IBLRuntime.hlsli"
+#include "DirectXTK/EnvironmentMapEffectBridge.hlsli"
 #include "Shadow/SoftShadow.hlsli"
 #include "lygia/color/blend/softLight.hlsl"
 #include "lygia/generative/snoise.hlsl"
@@ -20,6 +21,8 @@ struct Material
     float reflectionMode;
     float reflectionProbeIntensity;
     float reflectionReserved;
+    float materialPadding0;
+    float materialPadding1;
     row_major float4x4 uvTransform;
 };
 
@@ -273,6 +276,42 @@ float4 main(PixelShaderInput input) : SV_TARGET0
     float3 emission = albedo * material.emissionStrength;
 
     float3 finalColor = direct + ibl + ambient + emission;
+
+    //============================================================
+    // DirectXTK EnvironmentMapEffect 方式のキューブ環境反射
+    //============================================================
+    {
+        const float smoothness = saturate(1.0f - roughness);
+        const float materialReflection = max(max(gMaterial.reflectance, gMaterial.reflectionProbeIntensity), metallic);
+        const float cubemapModeMask =
+            step(0.5f, gMaterial.reflectionMode) *
+            (1.0f - step(1.5f, gMaterial.reflectionMode));
+        const float environmentMapAmount = saturate(
+            cubemapModeMask *
+            max(materialReflection, 1.0f) *
+            smoothness *
+            max(gDirectionalLight.reflectionIntensity, 1.0f));
+
+        if (environmentMapAmount > 0.0001f)
+        {
+            DirectXTKEnvironmentMapInput environmentMapInput;
+            environmentMapInput.litColor = finalColor;
+            environmentMapInput.alpha = material.alpha;
+            environmentMapInput.eyeVector = V;
+            environmentMapInput.worldNormal = N;
+            environmentMapInput.environmentMapAmount = environmentMapAmount;
+            environmentMapInput.fresnelFactor = 5.0f;
+            environmentMapInput.environmentMapSpecular = F0 * max(gDirectionalLight.environmentTextureIntensity, 1.0f) * smoothness;
+            environmentMapInput.useFresnel = false;
+
+            finalColor = DirectXTKApplyEnvironmentMap(
+                environmentMapInput,
+                gEnvironmentCube,
+                gIblSampler,
+                gDirectionalLight.environmentTextureEnabled);
+        }
+    }
+
     finalColor += (hashVariation - 0.5f) / 255.0f;
     return float4(max(finalColor, 0.0f), material.alpha);
 }

@@ -1,4 +1,4 @@
-#pragma warning(disable : 4189 4514)
+﻿#pragma warning(disable : 4189 4514)
 
 #include "EditorPlatformManager.h"
 #include <onnxruntime_cxx_api.h>
@@ -1234,6 +1234,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	spriteMaterialData->reflectionMode = 0.0f;
 	spriteMaterialData->reflectionProbeIntensity = 0.0f;
 	spriteMaterialData->reflectionReserved = 0.0f;
+	spriteMaterialData->materialPadding0 = 0.0f;
+	spriteMaterialData->materialPadding1 = 0.0f;
 	spriteMaterialData->uvTransform = MakeIdentity4x4();
 
 	ID3D12Resource* sphereMaterialResource = CreateBufferResource(device.Get(), sizeof(Material));
@@ -1252,6 +1254,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	sphereMaterialData->reflectionMode = 0.0f;
 	sphereMaterialData->reflectionProbeIntensity = 0.0f;
 	sphereMaterialData->reflectionReserved = 0.0f;
+	sphereMaterialData->materialPadding0 = 0.0f;
+	sphereMaterialData->materialPadding1 = 0.0f;
 	sphereMaterialData->uvTransform = MakeIdentity4x4();
 
 	ID3D12Resource* directionalLightResource = CreateBufferResource(device.Get(), sizeof(DirectionalLight));
@@ -1409,7 +1413,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	Log(logStream, "Init Stage: object pso created");
 
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC planarScenePipelineStateDesc = graphicsPipelineStateDesc;
-	planarScenePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	// 反射行列を ViewProjection より前へ掛けると winding が反転する。
+	// FRONT を落とすことで、鏡から見える本来の表面を反射 RT へ残す。
+	planarScenePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_FRONT;
 
 	ComPtr<ID3D12PipelineState> planarScenePipelineState;
 	hr = device->CreateGraphicsPipelineState(
@@ -1555,7 +1561,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	postProcessRootParameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
 	postProcessRootParameters[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	postProcessRootParameters[2].Constants.ShaderRegister = 0;
-	postProcessRootParameters[2].Constants.Num32BitValues = 52;
+	postProcessRootParameters[2].Constants.Num32BitValues = 40;
 
 	postProcessRootParameters[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
 	postProcessRootParameters[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -2296,6 +2302,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	if (iblPrefilterCube == nullptr) makePlaceholder(2, 2, 6, DXGI_FORMAT_R16G16B16A16_FLOAT, true, iblPrefilterCube, iblPrefilterSrvHandleCPU);
 
 	loadIblCube(iblFiles[2], iblEnvironmentCube, iblEnvironmentSrvHandleCPU, nullptr);
+	g_iblEnvironmentCubeLoaded = iblEnvironmentCube != nullptr;
 	if (iblEnvironmentCube == nullptr) makePlaceholder(2, 2, 6, DXGI_FORMAT_R16G16B16A16_FLOAT, true, iblEnvironmentCube, iblEnvironmentSrvHandleCPU);
 
 	loadIblCube(iblFiles[3], iblBrdfLut, iblBrdfLutSrvHandleCPU, nullptr);

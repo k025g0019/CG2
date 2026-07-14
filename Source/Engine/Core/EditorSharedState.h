@@ -844,6 +844,7 @@ namespace EditorSharedState {
 	inline ID3D12Resource* g_iblIrradianceCube = nullptr;
 	inline ID3D12Resource* g_iblPrefilterCube = nullptr;
 	inline ID3D12Resource* g_iblBRDFLUT = nullptr;
+	inline bool g_iblEnvironmentCubeLoaded = false;  // EnvironmentMapEffect 用の実キューブマップが読み込めたか。
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_iblIrradianceSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_iblIrradianceSrvHandleGPU{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_iblPrefilterSrvHandleCPU{};

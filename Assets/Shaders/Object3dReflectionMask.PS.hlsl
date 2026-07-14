@@ -13,6 +13,8 @@ struct Material
     float reflectionMode;
     float reflectionProbeIntensity;
     float reflectionReserved;
+    float materialPadding0;
+    float materialPadding1;
     row_major float4x4 uvTransform;
 };
 
@@ -31,10 +33,18 @@ float4 main(PixelShaderInput input) : SV_TARGET0
 {
     float reflectMask = saturate(max(gMaterial.reflectance, gMaterial.metallic));
     float smoothness = saturate(1.0f - gMaterial.roughness);
-    float reflectionMode = clamp(gMaterial.reflectionMode, 0.0f, 2.0f);
-    float reflectionProbeIntensity = max(gMaterial.reflectionProbeIntensity, 0.0f);
+    const float reflectionMode = clamp(gMaterial.reflectionMode, 0.0f, 2.0f);
+    const float reflectionProbeIntensity = max(gMaterial.reflectionProbeIntensity, 0.0f);
 
-    if (gMaterial.enableLighting == 0)
+    // Reflection Probe を付けた面は、材質の Metallic に依存せず反射面として扱う。
+    // Reflection Probe の粗さは材質の粗さとは独立して、反射像のぼかし量を決める。
+    if (reflectionMode >= 0.5f)
+    {
+        reflectMask = 1.0f;
+        smoothness = saturate(1.0f - gMaterial.reflectionReserved);
+    }
+
+    if (gMaterial.enableLighting == 0 && reflectionMode < 0.5f)
     {
         reflectMask = 0.0f;
     }

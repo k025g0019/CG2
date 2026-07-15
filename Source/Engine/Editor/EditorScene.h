@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "EditorScriptApi.h"
 #include "Vector.h"
 
 #include <cstdint>
@@ -344,6 +345,33 @@ enum class EditorComponentType {
 	Count,
 };
 
+//============================================================
+// C++ Script / PlayerInput の可変長データ
+//============================================================
+
+struct EditorScriptProperty {
+	std::string name;  // C++ 側で ExposeFloat などへ渡した変数名。
+	std::string displayName;  // Inspector に表示する日本語名。
+	int32_t type = 0;  // EditorScriptFieldType と同じ値を保存する。
+	bool boolValue = false;  // bool 公開変数の保存値。
+	int32_t intValue = 0;  // int32_t 公開変数の保存値。
+	float floatValue = 0.0f;  // float 公開変数の保存値。
+	EditorScriptVector2 vector2Value{0.0f, 0.0f};  // Vector2 公開変数の保存値。DLL 境界と同じ型を使う。
+	Vector3 vector3Value{0.0f, 0.0f, 0.0f};  // Vector3 公開変数の保存値。
+	std::string stringValue;  // std::string 公開変数の保存値。
+	float minValue = 0.0f;  // Inspector の入力下限。
+	float maxValue = 0.0f;  // Inspector の入力上限。
+	float step = 0.1f;  // Inspector のドラッグ変化量。
+	bool hasRange = false;  // minValue / maxValue を使うなら true。
+};
+
+struct EditorInputEventBinding {
+	std::string actionMapName;  // Input Actions 内の ActionMap 名。
+	std::string actionName;  // Input Actions 内の Action 名。
+	std::string functionName;  // C++ Script で BindAction した関数名。
+	int32_t valueType = 0;  // 0=Button、1=Vector2。
+};
+
 struct EditorComponent {
 	EditorComponentType type;  // Component の種類
 	bool isActive;  // Inspector の有効チェック
@@ -485,6 +513,8 @@ struct EditorComponent {
 	bool cameraMotionBlurEnabled;  // モーションブラー有効
 	float cameraMotionBlurIntensity;  // ブラー強度
 	float cameraExposure;  // 露出補正 (EV)
+	std::vector<EditorScriptProperty> scriptProperties;  // DLL が公開した変数と GameObject ごとの保存値。
+	std::vector<EditorInputEventBinding> inputEventBindings;  // Input Action と C++ 関数名の接続一覧。
 	};
 
 struct EditorGameObject {

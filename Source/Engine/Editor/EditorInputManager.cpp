@@ -14,18 +14,21 @@ using namespace EditorSharedState;
 
 namespace {
 	constexpr float kEditorFloorY = 0.0f;  // ジャンプ可能判定で床として扱うワールド Y 座標
-	constexpr size_t kMaxInputConsoleMessages = 240;  // Console を入力ログで無制限に増やさない上限
-
 	struct PlayerInputActionDefinition {
-		bool hasMove = false;  // Move Action が定義されているなら true
-		int32_t moveUpKey = 0;  // 2DVector Composite の Up
-		int32_t moveDownKey = 0;  // 2DVector Composite の Down
-		int32_t moveLeftKey = 0;  // 2DVector Composite の Left
-		int32_t moveRightKey = 0;  // 2DVector Composite の Right
+		struct Vector2Binding {
+			int32_t upKey = 0;  // 2DVector Composite の正方向 Y。
+			int32_t downKey = 0;  // 2DVector Composite の負方向 Y。
+			int32_t leftKey = 0;  // 2DVector Composite の負方向 X。
+			int32_t rightKey = 0;  // 2DVector Composite の正方向 X。
+			std::string bindingPath;  // Keyboard/2DVector(W,S,A,D) のような表示用 Path。
+		};
+		std::unordered_map<std::string, Vector2Binding> vector2Bindings;  // Move / Look / Steer など任意名の Vector2 Action。
+
 		struct ButtonBinding {
 			bool usesMouse = false;  // true ならキーではなくマウスボタンを使う。
 			int32_t key = 0;  // キー入力の DirectInput 番号。
 			int32_t mouseButton = -1;  // マウス入力のボタン番号。
+			std::string bindingPath;  // Keyboard/Space または Mouse/LeftButton。
 		};
 		std::unordered_map<std::string, ButtonBinding> buttonBindings;  // Jump / Fire / Submit / LeftClick など任意の Button Action を保持する。
 	};
@@ -46,23 +49,27 @@ namespace {
 	}
 
 	int32_t DikCodeFromName(const std::string& keyName) {
-		if (keyName == "W") { return 0x11; }
-		if (keyName == "A") { return 0x1E; }
-		if (keyName == "S") { return 0x1F; }
-		if (keyName == "D") { return 0x20; }
-		if (keyName == "Q") { return 0x10; }
-		if (keyName == "E") { return 0x12; }
-		if (keyName == "R") { return 0x13; }
-		if (keyName == "F") { return 0x21; }
-		if (keyName == "Space") { return 0x39; }
-		if (keyName == "LeftShift") { return 0x2A; }
-		if (keyName == "RightShift") { return 0x36; }
-		if (keyName == "LeftCtrl") { return 0x1D; }
-		if (keyName == "UpArrow") { return 0xC8; }
-		if (keyName == "DownArrow") { return 0xD0; }
-		if (keyName == "LeftArrow") { return 0xCB; }
-		if (keyName == "RightArrow") { return 0xCD; }
-		return 0;
+		static const std::unordered_map<std::string, int32_t> kDikCodes{
+			{"Escape", 0x01}, {"1", 0x02}, {"2", 0x03}, {"3", 0x04}, {"4", 0x05},
+			{"5", 0x06}, {"6", 0x07}, {"7", 0x08}, {"8", 0x09}, {"9", 0x0A}, {"0", 0x0B},
+			{"Backspace", 0x0E}, {"Tab", 0x0F},
+			{"Q", 0x10}, {"W", 0x11}, {"E", 0x12}, {"R", 0x13}, {"T", 0x14}, {"Y", 0x15},
+			{"U", 0x16}, {"I", 0x17}, {"O", 0x18}, {"P", 0x19},
+			{"Enter", 0x1C}, {"Return", 0x1C}, {"LeftCtrl", 0x1D},
+			{"A", 0x1E}, {"S", 0x1F}, {"D", 0x20}, {"F", 0x21}, {"G", 0x22}, {"H", 0x23},
+			{"J", 0x24}, {"K", 0x25}, {"L", 0x26}, {"LeftShift", 0x2A},
+			{"Z", 0x2C}, {"X", 0x2D}, {"C", 0x2E}, {"V", 0x2F}, {"B", 0x30},
+			{"N", 0x31}, {"M", 0x32}, {"RightShift", 0x36}, {"LeftAlt", 0x38}, {"Space", 0x39},
+			{"F1", 0x3B}, {"F2", 0x3C}, {"F3", 0x3D}, {"F4", 0x3E}, {"F5", 0x3F},
+			{"F6", 0x40}, {"F7", 0x41}, {"F8", 0x42}, {"F9", 0x43}, {"F10", 0x44},
+			{"F11", 0x57}, {"F12", 0x58}, {"RightCtrl", 0x9D}, {"RightAlt", 0xB8},
+			{"Home", 0xC7}, {"Up", 0xC8}, {"UpArrow", 0xC8}, {"PageUp", 0xC9},
+			{"Left", 0xCB}, {"LeftArrow", 0xCB}, {"Right", 0xCD}, {"RightArrow", 0xCD},
+			{"End", 0xCF}, {"Down", 0xD0}, {"DownArrow", 0xD0}, {"PageDown", 0xD1},
+			{"Insert", 0xD2}, {"Delete", 0xD3}};
+		const auto keyIterator = kDikCodes.find(keyName);
+
+		return keyIterator != kDikCodes.end() ? keyIterator->second : 0;
 	}
 
 	int32_t MouseButtonFromName(const std::string& buttonName) {
@@ -105,21 +112,26 @@ namespace {
 			const std::string& valueType = elements[3];
 			const std::string& bindingType = elements[4];
 
-			if (actionName == "Move" && valueType == "Vector2" && bindingType == "2DVector" && elements.size() >= 9) {
-				actionDefinition.hasMove = true;
-				actionDefinition.moveUpKey = DikCodeFromName(elements[5]);
-				actionDefinition.moveDownKey = DikCodeFromName(elements[6]);
-				actionDefinition.moveLeftKey = DikCodeFromName(elements[7]);
-				actionDefinition.moveRightKey = DikCodeFromName(elements[8]);
+			if (valueType == "Vector2" && bindingType == "2DVector" && elements.size() >= 9) {
+				PlayerInputActionDefinition::Vector2Binding vector2Binding{};
+				vector2Binding.upKey = DikCodeFromName(elements[5]);
+				vector2Binding.downKey = DikCodeFromName(elements[6]);
+				vector2Binding.leftKey = DikCodeFromName(elements[7]);
+				vector2Binding.rightKey = DikCodeFromName(elements[8]);
+				vector2Binding.bindingPath =
+					"Keyboard/2DVector(" + elements[5] + "," + elements[6] + "," + elements[7] + "," + elements[8] + ")";
+				actionDefinition.vector2Bindings[actionName] = vector2Binding;
 			}
 			else if (valueType == "Button") {
 				PlayerInputActionDefinition::ButtonBinding buttonBinding{};
 				if (bindingType == "Key" && elements.size() >= 6) {
 					buttonBinding.key = DikCodeFromName(elements[5]);
+					buttonBinding.bindingPath = "Keyboard/" + elements[5];
 				}
 				else if (bindingType == "Mouse" && elements.size() >= 6) {
 					buttonBinding.usesMouse = true;
 					buttonBinding.mouseButton = MouseButtonFromName(elements[5]);
+					buttonBinding.bindingPath = "Mouse/" + elements[5];
 				}
 
 				if (buttonBinding.key != 0 || buttonBinding.mouseButton >= 0) {
@@ -128,7 +140,7 @@ namespace {
 			}
 		}
 
-		return actionDefinition.hasMove || !actionDefinition.buttonBindings.empty();
+		return !actionDefinition.vector2Bindings.empty() || !actionDefinition.buttonBindings.empty();
 	}
 }
 
@@ -192,36 +204,34 @@ void EditorInputManager::Update(const uint8_t* keyState, float deltaTime) {
 			characterController->isActive;  // Rigidbody なし CharacterController は Jolt CharacterVirtual の速度を更新する
 
 		bool hasRuntimeInput = false;  // 旧 Input または新 PlayerInput のどちらかが動作していれば true
+		bool appliesBuiltInMovement = false;  // 旧 Input Component の互換移動を実行する場合だけ true。
 		Vector3 moveDirection{0.0f, 0.0f, 0.0f};  // 実際に移動へ使う入力方向
 		bool isJumpPressed = false;  // Jump Action または旧 Input Jump が押されていれば true
-		bool isFirePressed = false;  // Fire Action が押されていれば true
 
 		if (playerInput != nullptr && playerInput->isActive && !playerInput->assetPath.empty()) {
 			PlayerInputActionDefinition actionDefinition{};
 			if (TryLoadPlayerInputActionsAsset(playerInput->assetPath, playerInput->inputActionMapName, actionDefinition)) {
 				hasRuntimeInput = true;
 
-				if (actionDefinition.hasMove && !playerInput->inputMoveEventName.empty()) {
+				for (const auto& vector2BindingPair : actionDefinition.vector2Bindings) {
+					const std::string& actionName = vector2BindingPair.first;
+					const PlayerInputActionDefinition::Vector2Binding& vector2Binding = vector2BindingPair.second;
 					float moveInputX = 0.0f;  // DLL Script から参照する Unity 風 Move Vector2 の X。
 					float moveInputY = 0.0f;  // DLL Script から参照する Unity 風 Move Vector2 の Y。
-					if (IsKeyPressed(keyState, actionDefinition.moveUpKey)) {
-						moveDirection.x += cameraForward.x;
-						moveDirection.z += cameraForward.z;
+
+					if (IsKeyPressed(keyState, vector2Binding.upKey)) {
 						moveInputY += 1.0f;
 					}
-					if (IsKeyPressed(keyState, actionDefinition.moveDownKey)) {
-						moveDirection.x -= cameraForward.x;
-						moveDirection.z -= cameraForward.z;
+
+					if (IsKeyPressed(keyState, vector2Binding.downKey)) {
 						moveInputY -= 1.0f;
 					}
-					if (IsKeyPressed(keyState, actionDefinition.moveLeftKey)) {
-						moveDirection.x -= cameraRight.x;
-						moveDirection.z -= cameraRight.z;
+
+					if (IsKeyPressed(keyState, vector2Binding.leftKey)) {
 						moveInputX -= 1.0f;
 					}
-					if (IsKeyPressed(keyState, actionDefinition.moveRightKey)) {
-						moveDirection.x += cameraRight.x;
-						moveDirection.z += cameraRight.z;
+
+					if (IsKeyPressed(keyState, vector2Binding.rightKey)) {
 						moveInputX += 1.0f;
 					}
 
@@ -229,7 +239,8 @@ void EditorInputManager::Update(const uint8_t* keyState, float deltaTime) {
 					moveState.x = moveInputX;
 					moveState.y = moveInputY;
 					moveState.isActive = true;
-					actionVector2States_[MakeActionStateKey(gameObject.id, playerInput->inputActionMapName, "Move")] = moveState;
+					moveState.bindingPath = vector2Binding.bindingPath;
+					actionVector2States_[MakeActionStateKey(gameObject.id, playerInput->inputActionMapName, actionName)] = moveState;
 				}
 
 				for (const auto& buttonBindingPair : actionDefinition.buttonBindings) {
@@ -245,27 +256,19 @@ void EditorInputManager::Update(const uint8_t* keyState, float deltaTime) {
 					ActionButtonState buttonState{};
 					buttonState.isPressed = isPressed;
 					buttonState.wasJustPressed = isPressed && !wasPressed;
+					buttonState.wasJustReleased = !isPressed && wasPressed;
 					buttonState.isActive = true;
+					buttonState.bindingPath = buttonBinding.bindingPath;
 					actionButtonStates_[actionStateKey] = buttonState;
 					actionPressedStates_[actionStateKey] = isPressed;
 
-					if (actionName == "Jump" && !playerInput->inputJumpEventName.empty()) {
-						isJumpPressed = isPressed;
-					}
-
-					if (actionName == "Fire" && !playerInput->inputFireEventName.empty()) {
-						isFirePressed = isPressed;
-					}
-				}
-
-				if (WasActionJustPressed(gameObject.id, playerInput->inputActionMapName, "Fire")) {
-					PushConsoleMessage("入力: " + gameObject.name + " が " + playerInput->inputFireEventName + " を実行");
 				}
 			}
 		}
 
 		if (!hasRuntimeInput && input != nullptr && input->isActive) {
 			hasRuntimeInput = true;
+			appliesBuiltInMovement = true;
 
 			// 旧 Input Component は互換維持のため残し、PlayerInput がない場合だけ使う
 			if (IsKeyPressed(keyState, input->inputForwardKey)) {
@@ -297,7 +300,7 @@ void EditorInputManager::Update(const uint8_t* keyState, float deltaTime) {
 			}
 		}
 
-		if (!hasRuntimeInput) {
+		if (!hasRuntimeInput || !appliesBuiltInMovement) {
 			continue;
 		}
 
@@ -395,6 +398,36 @@ bool EditorInputManager::WasActionJustPressed(
 	return actionStateIt->second.wasJustPressed;
 }
 
+bool EditorInputManager::WasActionJustReleased(
+	int32_t gameObjectId,
+	const std::string& actionMapName,
+	const std::string& actionName) const {
+	const auto actionStateIt = actionButtonStates_.find(MakeActionStateKey(gameObjectId, actionMapName, actionName));
+	if (actionStateIt == actionButtonStates_.end() || !actionStateIt->second.isActive) {
+		return false;
+	}
+
+	return actionStateIt->second.wasJustReleased;
+}
+
+std::string EditorInputManager::GetActionBindingPath(
+	int32_t gameObjectId,
+	const std::string& actionMapName,
+	const std::string& actionName) const {
+	const std::string actionStateKey = MakeActionStateKey(gameObjectId, actionMapName, actionName);
+	const auto buttonStateIt = actionButtonStates_.find(actionStateKey);
+	if (buttonStateIt != actionButtonStates_.end() && buttonStateIt->second.isActive) {
+		return buttonStateIt->second.bindingPath;
+	}
+
+	const auto vectorStateIt = actionVector2States_.find(actionStateKey);
+	if (vectorStateIt != actionVector2States_.end() && vectorStateIt->second.isActive) {
+		return vectorStateIt->second.bindingPath;
+	}
+
+	return "";
+}
+
 bool EditorInputManager::IsKeyPressed(const uint8_t* keyState, int32_t keyIndex) const {
 	// DirectInput のキー配列は 0 から 255 までなので範囲外は未入力扱い
 	if (keyState == nullptr || keyIndex < 0 || keyIndex >= 256) {
@@ -434,15 +467,4 @@ float EditorInputManager::GetColliderBottomOffset(const EditorGameObject& gameOb
 
 	// Collider がない場合は仮の半身分として -0.5f を返す
 	return -0.5f;
-}
-
-void EditorInputManager::PushConsoleMessage(const std::string& message) {
-	if (consoleMessages_ == nullptr) {
-		return;
-	}
-
-	consoleMessages_->push_back(message);
-	if (consoleMessages_->size() > kMaxInputConsoleMessages) {
-		consoleMessages_->erase(consoleMessages_->begin());
-	}
 }

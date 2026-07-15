@@ -193,6 +193,42 @@ namespace {
 		return elements;
 	}
 
+	void ReplaceSceneTokenText(std::string& text, const std::string& sourceText, const std::string& replacementText) {
+		size_t searchPosition = 0U;
+		while ((searchPosition = text.find(sourceText, searchPosition)) != std::string::npos) {
+			text.replace(searchPosition, sourceText.size(), replacementText);
+			searchPosition += replacementText.size();
+		}
+	}
+
+	std::string EncodeSceneToken(const std::string& text) {
+		std::string encodedText = text;  // 可変長 Script 文字列が Scene の区切り記号を壊さないよう符号化する。
+		ReplaceSceneTokenText(encodedText, "%", "%25");
+		ReplaceSceneTokenText(encodedText, "|", "%7C");
+		ReplaceSceneTokenText(encodedText, "\r", "%0D");
+		ReplaceSceneTokenText(encodedText, "\n", "%0A");
+		return encodedText;
+	}
+
+	std::string DecodeSceneToken(const std::string& text) {
+		std::string decodedText = text;
+		ReplaceSceneTokenText(decodedText, "%0A", "\n");
+		ReplaceSceneTokenText(decodedText, "%0D", "\r");
+		ReplaceSceneTokenText(decodedText, "%7C", "|");
+		ReplaceSceneTokenText(decodedText, "%25", "%");
+		return decodedText;
+	}
+
+	void AddDefaultInputEventBindings(EditorComponent& component) {
+		if (component.type != EditorComponentType::PlayerInput || !component.inputEventBindings.empty()) {
+			return;
+		}
+
+		component.inputEventBindings.push_back({"Player", "Move", "OnMove", 1});
+		component.inputEventBindings.push_back({"Player", "Jump", "OnJump", 0});
+		component.inputEventBindings.push_back({"Player", "Fire", "OnFire", 0});
+	}
+
 	int32_t ToInt(const std::string& text) {
 		// Scene ファイルの文字列を int32_t に変換する
 		return static_cast<int32_t>(std::stoi(text));
@@ -589,6 +625,40 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 			     << component.compositeFilmGrain << "|"
 			     << component.compositeChromaticAberration << "|"
 			     << component.compositeAmbientOcclusionStrength << "\n";
+
+			// C++ Script の公開変数は個数が変わるため、Component 共通行とは別の行で保存する。
+			for (const EditorScriptProperty& scriptProperty : component.scriptProperties) {
+				file << "ScriptProperty|"
+				     << gameObject.id << "|"
+				     << static_cast<int32_t>(component.type) << "|"
+				     << EncodeSceneToken(scriptProperty.name) << "|"
+				     << EncodeSceneToken(scriptProperty.displayName) << "|"
+				     << scriptProperty.type << "|"
+				     << scriptProperty.boolValue << "|"
+				     << scriptProperty.intValue << "|"
+				     << scriptProperty.floatValue << "|"
+				     << scriptProperty.vector2Value.x << "|"
+				     << scriptProperty.vector2Value.y << "|"
+				     << scriptProperty.vector3Value.x << "|"
+				     << scriptProperty.vector3Value.y << "|"
+				     << scriptProperty.vector3Value.z << "|"
+				     << EncodeSceneToken(scriptProperty.stringValue) << "|"
+				     << scriptProperty.minValue << "|"
+				     << scriptProperty.maxValue << "|"
+				     << scriptProperty.step << "|"
+				     << scriptProperty.hasRange << "\n";
+			}
+
+			// PlayerInput は Action 数を固定せず、Action と C++ 関数の接続を 1 行ずつ保存する。
+			for (const EditorInputEventBinding& inputEventBinding : component.inputEventBindings) {
+				file << "InputEventBinding|"
+				     << gameObject.id << "|"
+				     << static_cast<int32_t>(component.type) << "|"
+				     << EncodeSceneToken(inputEventBinding.actionMapName) << "|"
+				     << EncodeSceneToken(inputEventBinding.actionName) << "|"
+				     << EncodeSceneToken(inputEventBinding.functionName) << "|"
+				     << inputEventBinding.valueType << "\n";
+			}
 		}
 	}
 
@@ -653,6 +723,8 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 				}
 
 				EditorComponent component = CreateComponent(ComponentTypeFromIndex(ToInt(elements[2])));  // 保存されていた ComponentType で初期値を作り、保存値で上書きする
+				component.scriptProperties.clear();  // 後続の ScriptProperty 行から保存値を復元する。
+				component.inputEventBindings.clear();  // 後続の InputEventBinding 行を重複させない。
 				component.isActive = ToInt(elements[3]) != 0;
 				component.assetPath = elements[4];
 				component.color = {ToFloat(elements[5]), ToFloat(elements[6]), ToFloat(elements[7])};
@@ -679,6 +751,8 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 					component.hapticStrength = ToFloat(elements[33]);
 					component.hapticDurationMs = ToInt(elements[34]);
 					component.hapticLoop = ToInt(elements[35]) != 0;
+				}
+				if (elements.size() >= 40) {
 					component.audioVolume = ToFloat(elements[36]);
 					component.audioPitch = ToFloat(elements[37]);
 					component.audioLoop = ToInt(elements[38]) != 0;
@@ -702,112 +776,112 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 					component.physicsLayer = ToInt(elements[56]);
 					component.generateContactEvents = ToInt(elements[57]) != 0;
 				}
-					if (elements.size() >= 64) {
-						component.connectedGameObjectId = ToInt(elements[54]);  // Joint の接続先 ID。Scene 内 GameObject と対応させる
-						component.jointAxis = {ToFloat(elements[55]), ToFloat(elements[56]), ToFloat(elements[57])};
-						component.jointMinLimit = ToFloat(elements[58]);
-						component.jointMaxLimit = ToFloat(elements[59]);
-						component.jointMinDistance = ToFloat(elements[60]);
-						component.jointMaxDistance = ToFloat(elements[61]);
-						component.jointSpringFrequency = ToFloat(elements[62]);
-						component.jointSpringDamping = ToFloat(elements[63]);
-					}
-					if (elements.size() >= 69) {
-						component.inputActionMapName = elements[64];
-						component.inputBehavior = ToInt(elements[65]);
-						component.inputMoveEventName = elements[66];
-						component.inputJumpEventName = elements[67];
-						component.inputFireEventName = elements[68];
-					}
-					if (elements.size() >= 83) {
-						component.navAgentRadius = ToFloat(elements[69]);
-						component.navAgentHeight = ToFloat(elements[70]);
-						component.navMaxSpeed = ToFloat(elements[71]);
-						component.navMaxAcceleration = ToFloat(elements[72]);
-						component.navStoppingDistance = ToFloat(elements[73]);
-						component.navAutoRepath = ToInt(elements[74]) != 0;
-						component.navCarve = ToInt(elements[75]) != 0;
-						component.navMaxSlope = ToFloat(elements[76]);
-						component.navMaxClimb = ToFloat(elements[77]);
-						component.navAreaOverride = ToInt(elements[78]) != 0;
-						component.navArea = ToInt(elements[79]);
-						component.navIgnoreFromBuild = ToInt(elements[80]) != 0;
-						component.navBidirectional = ToInt(elements[81]) != 0;
-						component.navCostModifier = ToFloat(elements[82]);
-					}
-					if (elements.size() >= 85) {
-						component.rollingTorque = ToFloat(elements[83]);
-						component.rollingHorsepower = ToFloat(elements[84]);
-					}
-					if (elements.size() >= 96) {
-						component.constraintWeight = ToFloat(elements[85]);
-						component.constraintPositionOffset = {ToFloat(elements[86]), ToFloat(elements[87]), ToFloat(elements[88])};
-						component.constraintRotationOffset = {ToFloat(elements[89]), ToFloat(elements[90]), ToFloat(elements[91])};
-						component.constraintAimAxis = ToInt(elements[92]);
-						component.constraintUpAxis = ToInt(elements[93]);
-						component.constraintRoll = ToFloat(elements[94]);
-						component.constraintFreezeAxisX = ToInt(elements[95]) != 0;
-						component.constraintFreezeAxisY = ToInt(elements[96]) != 0;
-						component.constraintFreezeAxisZ = ToInt(elements[97]) != 0;
-					}
-					if (elements.size() >= 103) {
-						component.animationSpeed = ToFloat(elements[98]);
-						component.animationLoop = ToInt(elements[99]) != 0;
-						component.animationPlayOnAwake = ToInt(elements[100]) != 0;
-						component.animationType = ToInt(elements[101]);
-						component.animationAmplitude = ToFloat(elements[102]);
-					}
-					if (elements.size() >= 108) {
-						component.animatorState = ToInt(elements[103]);
-						component.particleRate = ToFloat(elements[104]);
-						component.particleLifetime = ToFloat(elements[105]);
-						component.particleSpeed = ToFloat(elements[106]);
-						component.particleSize = ToFloat(elements[107]);
-					}
-					if (elements.size() >= 113) {
-						component.metallic = ToFloat(elements[108]);
-						component.roughness = ToFloat(elements[109]);
-						component.ior = ToFloat(elements[110]);
-						component.alpha = ToFloat(elements[111]);
-						component.reflectionStrength = ToFloat(elements[112]);
-					}
-					if (elements.size() >= 115) {
-						component.textureAssetPath = elements[113];
-						component.emissionStrength = ToFloat(elements[114]);
-					}
-					if (elements.size() >= 120) {
-						component.bloomIntensity = ToFloat(elements[115]);
-						component.finalBrightness = ToFloat(elements[116]);
-						component.smaaEnabled = ToInt(elements[117]) != 0;
-						component.taaEnabled = ToInt(elements[118]) != 0;
-						component.ssrEnabled = ToInt(elements[119]) != 0;
-					}
-				if (elements.size() >= 126) {
-					component.skyLowerColor = {ToFloat(elements[120]), ToFloat(elements[121]), ToFloat(elements[122])};
-					component.environmentTextureRotation = ToFloat(elements[123]);
-					component.environmentTextureMipBias = ToFloat(elements[124]);
-					component.environmentTextureEnabled = ToInt(elements[125]) != 0;
+				if (elements.size() >= 68) {
+					component.connectedGameObjectId = ToInt(elements[58]);  // Joint の接続先 ID。Scene 内 GameObject と対応させる
+					component.jointAxis = {ToFloat(elements[59]), ToFloat(elements[60]), ToFloat(elements[61])};
+					component.jointMinLimit = ToFloat(elements[62]);
+					component.jointMaxLimit = ToFloat(elements[63]);
+					component.jointMinDistance = ToFloat(elements[64]);
+					component.jointMaxDistance = ToFloat(elements[65]);
+					component.jointSpringFrequency = ToFloat(elements[66]);
+					component.jointSpringDamping = ToFloat(elements[67]);
 				}
-				if (elements.size() >= 137) {
-					component.cameraFieldOfView = ToFloat(elements[126]);
-					component.cameraNearClip = ToFloat(elements[127]);
-					component.cameraFarClip = ToFloat(elements[128]);
-					component.cameraProjectionMode = ToInt(elements[129]);
-					component.cameraDofEnabled = ToInt(elements[130]) != 0;
-					component.cameraDofFocusDistance = ToFloat(elements[131]);
-					component.cameraDofAperture = ToFloat(elements[132]);
-					component.cameraDofFocalLength = ToFloat(elements[133]);
-					component.cameraMotionBlurEnabled = ToInt(elements[134]) != 0;
-					component.cameraMotionBlurIntensity = ToFloat(elements[135]);
-					component.cameraExposure = ToFloat(elements[136]);
+				if (elements.size() >= 73) {
+					component.inputActionMapName = elements[68];
+					component.inputBehavior = ToInt(elements[69]);
+					component.inputMoveEventName = elements[70];
+					component.inputJumpEventName = elements[71];
+					component.inputFireEventName = elements[72];
 				}
-				if (elements.size() >= 140) {
-					component.bloomThreshold = ToFloat(elements[137]);
-					component.bloomSoftKnee = ToFloat(elements[138]);
-					component.bloomScatter = ToFloat(elements[139]);
+				if (elements.size() >= 87) {
+					component.navAgentRadius = ToFloat(elements[73]);
+					component.navAgentHeight = ToFloat(elements[74]);
+					component.navMaxSpeed = ToFloat(elements[75]);
+					component.navMaxAcceleration = ToFloat(elements[76]);
+					component.navStoppingDistance = ToFloat(elements[77]);
+					component.navAutoRepath = ToInt(elements[78]) != 0;
+					component.navCarve = ToInt(elements[79]) != 0;
+					component.navMaxSlope = ToFloat(elements[80]);
+					component.navMaxClimb = ToFloat(elements[81]);
+					component.navAreaOverride = ToInt(elements[82]) != 0;
+					component.navArea = ToInt(elements[83]);
+					component.navIgnoreFromBuild = ToInt(elements[84]) != 0;
+					component.navBidirectional = ToInt(elements[85]) != 0;
+					component.navCostModifier = ToFloat(elements[86]);
+				}
+				if (elements.size() >= 89) {
+					component.rollingTorque = ToFloat(elements[87]);
+					component.rollingHorsepower = ToFloat(elements[88]);
+				}
+				if (elements.size() >= 102) {
+					component.constraintWeight = ToFloat(elements[89]);
+					component.constraintPositionOffset = {ToFloat(elements[90]), ToFloat(elements[91]), ToFloat(elements[92])};
+					component.constraintRotationOffset = {ToFloat(elements[93]), ToFloat(elements[94]), ToFloat(elements[95])};
+					component.constraintAimAxis = ToInt(elements[96]);
+					component.constraintUpAxis = ToInt(elements[97]);
+					component.constraintRoll = ToFloat(elements[98]);
+					component.constraintFreezeAxisX = ToInt(elements[99]) != 0;
+					component.constraintFreezeAxisY = ToInt(elements[100]) != 0;
+					component.constraintFreezeAxisZ = ToInt(elements[101]) != 0;
+				}
+				if (elements.size() >= 107) {
+					component.animationSpeed = ToFloat(elements[102]);
+					component.animationLoop = ToInt(elements[103]) != 0;
+					component.animationPlayOnAwake = ToInt(elements[104]) != 0;
+					component.animationType = ToInt(elements[105]);
+					component.animationAmplitude = ToFloat(elements[106]);
+				}
+				if (elements.size() >= 112) {
+					component.animatorState = ToInt(elements[107]);
+					component.particleRate = ToFloat(elements[108]);
+					component.particleLifetime = ToFloat(elements[109]);
+					component.particleSpeed = ToFloat(elements[110]);
+					component.particleSize = ToFloat(elements[111]);
+				}
+				if (elements.size() >= 117) {
+					component.metallic = ToFloat(elements[112]);
+					component.roughness = ToFloat(elements[113]);
+					component.ior = ToFloat(elements[114]);
+					component.alpha = ToFloat(elements[115]);
+					component.reflectionStrength = ToFloat(elements[116]);
+				}
+				if (elements.size() >= 119) {
+					component.textureAssetPath = elements[117];
+					component.emissionStrength = ToFloat(elements[118]);
+				}
+				if (elements.size() >= 124) {
+					component.bloomIntensity = ToFloat(elements[119]);
+					component.finalBrightness = ToFloat(elements[120]);
+					component.smaaEnabled = ToInt(elements[121]) != 0;
+					component.taaEnabled = ToInt(elements[122]) != 0;
+					component.ssrEnabled = ToInt(elements[123]) != 0;
+				}
+				if (elements.size() >= 130) {
+					component.skyLowerColor = {ToFloat(elements[124]), ToFloat(elements[125]), ToFloat(elements[126])};
+					component.environmentTextureRotation = ToFloat(elements[127]);
+					component.environmentTextureMipBias = ToFloat(elements[128]);
+					component.environmentTextureEnabled = ToInt(elements[129]) != 0;
 				}
 				if (elements.size() >= 141) {
-					component.aaMode = ToInt(elements[140]);
+					component.cameraFieldOfView = ToFloat(elements[130]);
+					component.cameraNearClip = ToFloat(elements[131]);
+					component.cameraFarClip = ToFloat(elements[132]);
+					component.cameraProjectionMode = ToInt(elements[133]);
+					component.cameraDofEnabled = ToInt(elements[134]) != 0;
+					component.cameraDofFocusDistance = ToFloat(elements[135]);
+					component.cameraDofAperture = ToFloat(elements[136]);
+					component.cameraDofFocalLength = ToFloat(elements[137]);
+					component.cameraMotionBlurEnabled = ToInt(elements[138]) != 0;
+					component.cameraMotionBlurIntensity = ToFloat(elements[139]);
+					component.cameraExposure = ToFloat(elements[140]);
+				}
+				if (elements.size() >= 144) {
+					component.bloomThreshold = ToFloat(elements[141]);
+					component.bloomSoftKnee = ToFloat(elements[142]);
+					component.bloomScatter = ToFloat(elements[143]);
+				}
+				if (elements.size() >= 145) {
+					component.aaMode = ToInt(elements[144]);
 				} else {
 					// 旧形式: smaaEnabled/taaEnabled から aaMode を推定
 					if (component.taaEnabled) {
@@ -818,27 +892,95 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 						component.aaMode = 0;
 					}
 				}
-				if (elements.size() >= 152) {
-					component.compositeExposure = ToFloat(elements[141]);
-					component.compositeWhitePoint = ToFloat(elements[142]);
-					component.compositeToneMappingMode = ToInt(elements[143]);
-					component.compositeBloomIntensity = ToFloat(elements[144]);
-					component.compositeSaturation = ToFloat(elements[145]);
-					component.compositeContrast = ToFloat(elements[146]);
-					component.compositeVignetteStrength = ToFloat(elements[147]);
-					component.compositeVignetteRadius = ToFloat(elements[148]);
-					component.compositeFilmGrain = ToFloat(elements[149]);
-					component.compositeChromaticAberration = ToFloat(elements[150]);
-					component.compositeAmbientOcclusionStrength = ToFloat(elements[151]);
+				if (elements.size() >= 156) {
+					component.compositeExposure = ToFloat(elements[145]);
+					component.compositeWhitePoint = ToFloat(elements[146]);
+					component.compositeToneMappingMode = ToInt(elements[147]);
+					component.compositeBloomIntensity = ToFloat(elements[148]);
+					component.compositeSaturation = ToFloat(elements[149]);
+					component.compositeContrast = ToFloat(elements[150]);
+					component.compositeVignetteStrength = ToFloat(elements[151]);
+					component.compositeVignetteRadius = ToFloat(elements[152]);
+					component.compositeFilmGrain = ToFloat(elements[153]);
+					component.compositeChromaticAberration = ToFloat(elements[154]);
+					component.compositeAmbientOcclusionStrength = ToFloat(elements[155]);
 				}
-					gameObject.components.push_back(component);
+				gameObject.components.push_back(component);
+				break;
+			}
+		}
+		else if (elements[0] == "ScriptProperty" && elements.size() >= 19) {
+			const int32_t ownerId = ToInt(elements[1]);
+			const EditorComponentType componentType = ComponentTypeFromIndex(ToInt(elements[2]));
+
+			for (EditorGameObject& gameObject : loadedGameObjects) {
+				if (gameObject.id != ownerId) {
+					continue;
+				}
+
+				for (EditorComponent& component : gameObject.components) {
+					if (component.type != componentType) {
+						continue;
+					}
+
+					EditorScriptProperty scriptProperty{};
+					scriptProperty.name = DecodeSceneToken(elements[3]);
+					scriptProperty.displayName = DecodeSceneToken(elements[4]);
+					scriptProperty.type = ToInt(elements[5]);
+					scriptProperty.boolValue = ToInt(elements[6]) != 0;
+					scriptProperty.intValue = ToInt(elements[7]);
+					scriptProperty.floatValue = ToFloat(elements[8]);
+					scriptProperty.vector2Value = {ToFloat(elements[9]), ToFloat(elements[10])};
+					scriptProperty.vector3Value = {ToFloat(elements[11]), ToFloat(elements[12]), ToFloat(elements[13])};
+					scriptProperty.stringValue = DecodeSceneToken(elements[14]);
+					scriptProperty.minValue = ToFloat(elements[15]);
+					scriptProperty.maxValue = ToFloat(elements[16]);
+					scriptProperty.step = ToFloat(elements[17]);
+					scriptProperty.hasRange = ToInt(elements[18]) != 0;
+					component.scriptProperties.push_back(scriptProperty);
 					break;
 				}
+
+				break;
+			}
+		}
+		else if (elements[0] == "InputEventBinding" && elements.size() >= 7) {
+			const int32_t ownerId = ToInt(elements[1]);
+			const EditorComponentType componentType = ComponentTypeFromIndex(ToInt(elements[2]));
+
+			for (EditorGameObject& gameObject : loadedGameObjects) {
+				if (gameObject.id != ownerId) {
+					continue;
+				}
+
+				for (EditorComponent& component : gameObject.components) {
+					if (component.type != componentType) {
+						continue;
+					}
+
+					EditorInputEventBinding inputEventBinding{};
+					inputEventBinding.actionMapName = DecodeSceneToken(elements[3]);
+					inputEventBinding.actionName = DecodeSceneToken(elements[4]);
+					inputEventBinding.functionName = DecodeSceneToken(elements[5]);
+					inputEventBinding.valueType = ToInt(elements[6]);
+					component.inputEventBindings.push_back(inputEventBinding);
+					break;
+				}
+
+				break;
+			}
 		}
 	}
 
 	if (!hasSceneData) {
 		return false;
+	}
+
+	// InputEventBinding 行を持たない旧 Scene には、PlayerInput の標準イベントを補完する。
+	for (EditorGameObject& gameObject : loadedGameObjects) {
+		for (EditorComponent& component : gameObject.components) {
+			AddDefaultInputEventBindings(component);
+		}
 	}
 
 	gameObjects_ = loadedGameObjects;  // 読み込み成功後だけ現在 Scene を差し替える
@@ -1063,10 +1205,13 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.animationType = 0;
 		component.animationAmplitude = 1.0f;
 		component.animatorState = 0;
-	component.particleRate = 10.0f;
-	component.particleLifetime = 2.0f;
-	component.particleSpeed = 5.0f;
-	component.particleSize = 0.5f;
+		component.particleRate = 10.0f;
+		component.particleLifetime = 2.0f;
+		component.particleSpeed = 5.0f;
+		component.particleSize = 0.5f;
+		component.scriptProperties.clear();
+		component.inputEventBindings.clear();
+		AddDefaultInputEventBindings(component);
 
 	if (type == EditorComponentType::PostProcess) {
 		component.bloomIntensity = 1.0f;

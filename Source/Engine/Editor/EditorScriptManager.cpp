@@ -9,6 +9,7 @@
 #include <Windows.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <sstream>
 
@@ -68,6 +69,80 @@ namespace {
 		return "";
 	}
 
+	EditorScriptProperty MakeScriptProperty(const EditorScriptFieldDescriptor& fieldDescriptor) {
+		EditorScriptProperty scriptProperty{};
+		scriptProperty.name = fieldDescriptor.name;
+		scriptProperty.displayName = fieldDescriptor.displayName;
+		scriptProperty.type = fieldDescriptor.defaultValue.type;
+		scriptProperty.boolValue = fieldDescriptor.defaultValue.boolValue;
+		scriptProperty.intValue = fieldDescriptor.defaultValue.intValue;
+		scriptProperty.floatValue = fieldDescriptor.defaultValue.floatValue;
+		scriptProperty.vector2Value = {
+			fieldDescriptor.defaultValue.vector2Value.x,
+			fieldDescriptor.defaultValue.vector2Value.y};
+		scriptProperty.vector3Value = ToEditorVector3(fieldDescriptor.defaultValue.vector3Value);
+		scriptProperty.stringValue = fieldDescriptor.defaultValue.stringValue;
+		scriptProperty.minValue = fieldDescriptor.minValue;
+		scriptProperty.maxValue = fieldDescriptor.maxValue;
+		scriptProperty.step = fieldDescriptor.step;
+		scriptProperty.hasRange = fieldDescriptor.hasRange;
+		return scriptProperty;
+	}
+
+	EditorScriptFieldValue MakeScriptFieldValue(const EditorScriptProperty& scriptProperty) {
+		EditorScriptFieldValue fieldValue{};
+		fieldValue.type = scriptProperty.type;
+		fieldValue.boolValue = scriptProperty.boolValue;
+		fieldValue.intValue = scriptProperty.intValue;
+		fieldValue.floatValue = scriptProperty.floatValue;
+		fieldValue.vector2Value = {
+			scriptProperty.vector2Value.x,
+			scriptProperty.vector2Value.y};
+		fieldValue.vector3Value = ToScriptVector3(scriptProperty.vector3Value);
+		CopyStringToFixedBuffer(scriptProperty.stringValue, fieldValue.stringValue, sizeof(fieldValue.stringValue));
+		return fieldValue;
+	}
+
+	void ApplyScriptFieldValue(
+		EditorScriptProperty& scriptProperty,
+		const EditorScriptFieldValue& fieldValue) {
+		if (scriptProperty.type != fieldValue.type) {
+			return;
+		}
+
+		switch (fieldValue.type) {
+		case EditorScriptFieldTypeBool:
+			scriptProperty.boolValue = fieldValue.boolValue;
+			break;
+		case EditorScriptFieldTypeInt32:
+			scriptProperty.intValue = fieldValue.intValue;
+			break;
+		case EditorScriptFieldTypeFloat:
+			scriptProperty.floatValue = fieldValue.floatValue;
+			break;
+		case EditorScriptFieldTypeVector2:
+			scriptProperty.vector2Value = {
+				fieldValue.vector2Value.x,
+				fieldValue.vector2Value.y};
+			break;
+		case EditorScriptFieldTypeVector3:
+			scriptProperty.vector3Value = ToEditorVector3(fieldValue.vector3Value);
+			break;
+		case EditorScriptFieldTypeString:
+			scriptProperty.stringValue = fieldValue.stringValue;
+			break;
+		default:
+			break;
+		}
+	}
+
+	std::string MakeInputActionStateKey(
+		int32_t gameObjectId,
+		const std::string& actionMapName,
+		const std::string& actionName) {
+		return std::to_string(gameObjectId) + "|" + actionMapName + "|" + actionName;
+	}
+
 }
 
 void EditorScriptManager::Initialize(
@@ -90,6 +165,9 @@ void EditorScriptManager::Initialize(
 	scriptBindings_.clear();
 	scriptModules_.clear();
 	moduleStatusMessages_.clear();
+	scriptMetadataCache_.clear();
+	inputActionActiveStates_.clear();
+	missingActionWarnings_.clear();
 	currentKeyState_.fill(0);
 	previousKeyState_.fill(0);
 	reloadGeneration_ = 0;
@@ -125,6 +203,16 @@ void EditorScriptManager::Update(const uint8_t* keyState, float deltaTime) {
 	HotReloadChangedModules();
 	lastDeltaTime_ = deltaTime;  // DLL 側の Update にそのまま渡す秒数。
 
+	// Inspector で編集した公開変数は、Input Action と Update のどちらよりも先に反映する。
+	for (const ScriptBinding& scriptBinding : scriptBindings_) {
+		ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
+		if (scriptModule != nullptr && scriptModule->isLoaded) {
+			ApplyComponentFieldsToInstance(scriptBinding, *scriptModule);
+		}
+	}
+
+	DispatchInputActions();
+
 	for (const ScriptBinding& scriptBinding : scriptBindings_) {
 		ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
 		if (scriptModule == nullptr || !scriptModule->isLoaded || scriptModule->updateFunction == nullptr) {
@@ -132,6 +220,7 @@ void EditorScriptManager::Update(const uint8_t* keyState, float deltaTime) {
 		}
 
 		scriptModule->updateFunction(scriptBinding.gameObjectId, deltaTime);
+		ReadInstanceFieldsToComponent(scriptBinding, *scriptModule);
 	}
 }
 
@@ -162,6 +251,8 @@ void EditorScriptManager::FixedUpdate(float fixedDeltaTime) {
 		if (scriptModule->fixedUpdateFunction != nullptr) {
 			scriptModule->fixedUpdateFunction(scriptBinding.gameObjectId, fixedDeltaTime);
 		}
+
+		ReadInstanceFieldsToComponent(scriptBinding, *scriptModule);
 	}
 }
 
@@ -182,6 +273,8 @@ void EditorScriptManager::Stop() {
 	physicsEvents_.clear();
 	UnloadAllModules();
 	scriptBindings_.clear();
+	inputActionActiveStates_.clear();
+	missingActionWarnings_.clear();
 	currentKeyState_.fill(0);
 	previousKeyState_.fill(0);
 }
@@ -249,6 +342,60 @@ EditorScriptManager::ScriptDebugInfo EditorScriptManager::GetDebugInfo(int32_t g
 	}
 
 	return debugInfo;
+}
+
+bool EditorScriptManager::RefreshExposedFields(EditorComponent& scriptComponent) {
+	const bool isScriptComponent =
+		scriptComponent.type == EditorComponentType::Script ||
+		scriptComponent.type == EditorComponentType::MonoBehaviour;
+
+	if (!isScriptComponent || scriptComponent.assetPath.empty()) {
+		return false;
+	}
+
+	ScriptModule* loadedModule = FindModule(scriptComponent.assetPath);
+	if (loadedModule != nullptr &&
+		loadedModule->isLoaded &&
+		loadedModule->getFieldCountFunction != nullptr &&
+		loadedModule->getFieldDescriptorFunction != nullptr) {
+		std::vector<EditorScriptFieldDescriptor> fieldDescriptors;
+		const int32_t fieldCount = (std::clamp)(loadedModule->getFieldCountFunction(), 0, 512);
+		fieldDescriptors.reserve(static_cast<size_t>(fieldCount));
+
+		for (int32_t fieldIndex = 0; fieldIndex < fieldCount; fieldIndex++) {
+			EditorScriptFieldDescriptor fieldDescriptor{};
+			if (loadedModule->getFieldDescriptorFunction(fieldIndex, &fieldDescriptor)) {
+				fieldDescriptors.push_back(fieldDescriptor);
+			}
+		}
+
+		SynchronizeComponentProperties(scriptComponent, fieldDescriptors);
+		return true;
+	}
+
+	const std::filesystem::path sourcePath = std::filesystem::absolute(scriptComponent.assetPath);
+	std::error_code fileError;
+	if (!std::filesystem::exists(sourcePath, fileError) || fileError) {
+		return false;
+	}
+
+	const std::filesystem::file_time_type currentWriteTime = std::filesystem::last_write_time(sourcePath, fileError);
+	if (fileError) {
+		return false;
+	}
+
+	ScriptMetadata& scriptMetadata = scriptMetadataCache_[scriptComponent.assetPath];
+	if (!scriptMetadata.isValid || scriptMetadata.lastWriteTime != currentWriteTime) {
+		ScriptMetadata loadedMetadata{};
+		if (!ReadMetadataFromDll(scriptComponent.assetPath, loadedMetadata)) {
+			return false;
+		}
+
+		scriptMetadata = loadedMetadata;
+	}
+
+	SynchronizeComponentProperties(scriptComponent, scriptMetadata.fieldDescriptors);
+	return true;
 }
 
 void EditorScriptManager::ScriptLogBridge(const char* message) {
@@ -482,12 +629,37 @@ void EditorScriptManager::BuildRuntimeApi() {
 }
 
 void EditorScriptManager::StartBindingsForModule(ScriptModule& scriptModule) {
-	if (!scriptModule.isLoaded || scriptModule.startFunction == nullptr) {
+	if (!scriptModule.isLoaded) {
 		return;
 	}
 
-	for (const int32_t gameObjectId : scriptModule.attachedGameObjectIds) {
-		scriptModule.startFunction(gameObjectId);
+	std::vector<EditorScriptFieldDescriptor> fieldDescriptors;
+	if (scriptModule.getFieldCountFunction != nullptr && scriptModule.getFieldDescriptorFunction != nullptr) {
+		const int32_t fieldCount = (std::clamp)(scriptModule.getFieldCountFunction(), 0, 512);
+		fieldDescriptors.reserve(static_cast<size_t>(fieldCount));
+
+		for (int32_t fieldIndex = 0; fieldIndex < fieldCount; fieldIndex++) {
+			EditorScriptFieldDescriptor fieldDescriptor{};
+			if (scriptModule.getFieldDescriptorFunction(fieldIndex, &fieldDescriptor)) {
+				fieldDescriptors.push_back(fieldDescriptor);
+			}
+		}
+	}
+
+	for (const ScriptBinding& scriptBinding : scriptBindings_) {
+		if (scriptBinding.dllPath != scriptModule.sourceDllPath) {
+			continue;
+		}
+
+		EditorComponent* scriptComponent = FindScriptComponent(scriptBinding);
+		if (scriptComponent != nullptr) {
+			SynchronizeComponentProperties(*scriptComponent, fieldDescriptors);
+			ApplyComponentFieldsToInstance(scriptBinding, scriptModule);
+		}
+
+		if (scriptModule.startFunction != nullptr) {
+			scriptModule.startFunction(scriptBinding.gameObjectId);
+		}
 	}
 }
 
@@ -496,9 +668,290 @@ void EditorScriptManager::StopBindingsForModule(ScriptModule& scriptModule) {
 		return;
 	}
 
-	for (const int32_t gameObjectId : scriptModule.attachedGameObjectIds) {
-		scriptModule.stopFunction(gameObjectId);
+	for (const ScriptBinding& scriptBinding : scriptBindings_) {
+		if (scriptBinding.dllPath == scriptModule.sourceDllPath) {
+			scriptModule.stopFunction(scriptBinding.gameObjectId);
+		}
 	}
+}
+
+void EditorScriptManager::DispatchInputActions() {
+	if (editorScene_ == nullptr || inputManager_ == nullptr) {
+		return;
+	}
+
+	for (EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
+		if (!gameObject.isActive) {
+			continue;
+		}
+
+		EditorComponent* playerInput =
+			EditorComponentUtility::FindComponent(gameObject, EditorComponentType::PlayerInput);
+		if (playerInput == nullptr || !playerInput->isActive) {
+			continue;
+		}
+
+		for (const EditorInputEventBinding& eventBinding : playerInput->inputEventBindings) {
+			if (eventBinding.actionMapName.empty() ||
+				eventBinding.actionName.empty() ||
+				eventBinding.functionName.empty()) {
+				continue;
+			}
+
+			EditorScriptInputActionContext inputContext{};
+			inputContext.gameObjectId = gameObject.id;
+			inputContext.valueType = eventBinding.valueType;
+			CopyStringToFixedBuffer(eventBinding.actionMapName, inputContext.actionMapName, sizeof(inputContext.actionMapName));
+			CopyStringToFixedBuffer(eventBinding.actionName, inputContext.actionName, sizeof(inputContext.actionName));
+			CopyStringToFixedBuffer(
+				inputManager_->GetActionBindingPath(gameObject.id, eventBinding.actionMapName, eventBinding.actionName),
+				inputContext.bindingPath,
+				sizeof(inputContext.bindingPath));
+
+			auto invokeAction = [&](int32_t inputPhase) {
+				inputContext.phase = inputPhase;
+				bool hasScriptCandidate = false;
+				bool wasInvoked = false;
+
+				for (const ScriptBinding& scriptBinding : scriptBindings_) {
+					if (scriptBinding.gameObjectId != gameObject.id) {
+						continue;
+					}
+
+					ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
+					if (scriptModule == nullptr || !scriptModule->isLoaded || scriptModule->invokeActionFunction == nullptr) {
+						continue;
+					}
+
+					hasScriptCandidate = true;
+					wasInvoked = scriptModule->invokeActionFunction(
+						scriptBinding.gameObjectId,
+						eventBinding.functionName.c_str(),
+						&inputContext);
+
+					if (wasInvoked) {
+						break;  // 1 つの Event 欄は、登録関数を持つ 1 つの C++ Component だけを呼ぶ。
+					}
+				}
+
+				if (hasScriptCandidate && !wasInvoked) {
+					const std::string warningKey =
+						std::to_string(gameObject.id) + "|" + eventBinding.functionName;
+
+					if (missingActionWarnings_.insert(warningKey).second) {
+						PushConsoleMessage(
+							"Input関数が未登録です: " + eventBinding.functionName + " (GameObject=" + gameObject.name + ")");
+					}
+				}
+			};
+
+			if (eventBinding.valueType == EditorScriptInputValueTypeVector2) {
+				float inputX = 0.0f;
+				float inputY = 0.0f;
+				inputManager_->TryGetActionVector2(
+					gameObject.id,
+					eventBinding.actionMapName,
+					eventBinding.actionName,
+					inputX,
+					inputY);
+				inputContext.vector2Value = {inputX, inputY};
+				const bool isActive = std::fabs(inputX) > 0.0001f || std::fabs(inputY) > 0.0001f;
+				const std::string actionStateKey =
+					MakeInputActionStateKey(gameObject.id, eventBinding.actionMapName, eventBinding.actionName);
+				const bool wasActive = inputActionActiveStates_[actionStateKey];
+
+				if (isActive && !wasActive) {
+					invokeAction(EditorScriptInputPhaseStarted);
+				}
+
+				if (isActive) {
+					invokeAction(EditorScriptInputPhasePerformed);
+				}
+
+				if (!isActive && wasActive) {
+					invokeAction(EditorScriptInputPhaseCanceled);
+				}
+
+				inputActionActiveStates_[actionStateKey] = isActive;
+				continue;
+			}
+
+			inputContext.buttonValue = inputManager_->IsActionPressed(
+				gameObject.id,
+				eventBinding.actionMapName,
+				eventBinding.actionName)
+				? 1.0f
+				: 0.0f;
+
+			if (inputManager_->WasActionJustPressed(gameObject.id, eventBinding.actionMapName, eventBinding.actionName)) {
+				invokeAction(EditorScriptInputPhaseStarted);
+				invokeAction(EditorScriptInputPhasePerformed);
+			}
+
+			if (inputManager_->WasActionJustReleased(gameObject.id, eventBinding.actionMapName, eventBinding.actionName)) {
+				invokeAction(EditorScriptInputPhaseCanceled);
+			}
+		}
+	}
+}
+
+void EditorScriptManager::ApplyComponentFieldsToInstance(
+	const ScriptBinding& scriptBinding,
+	ScriptModule& scriptModule) {
+	if (scriptModule.setFieldValueFunction == nullptr) {
+		return;
+	}
+
+	EditorComponent* scriptComponent = FindScriptComponent(scriptBinding);
+	if (scriptComponent == nullptr) {
+		return;
+	}
+
+	for (const EditorScriptProperty& scriptProperty : scriptComponent->scriptProperties) {
+		const EditorScriptFieldValue fieldValue = MakeScriptFieldValue(scriptProperty);
+		scriptModule.setFieldValueFunction(scriptBinding.gameObjectId, scriptProperty.name.c_str(), &fieldValue);
+	}
+}
+
+void EditorScriptManager::ReadInstanceFieldsToComponent(
+	const ScriptBinding& scriptBinding,
+	ScriptModule& scriptModule) {
+	if (scriptModule.getFieldValueFunction == nullptr) {
+		return;
+	}
+
+	EditorComponent* scriptComponent = FindScriptComponent(scriptBinding);
+	if (scriptComponent == nullptr) {
+		return;
+	}
+
+	for (EditorScriptProperty& scriptProperty : scriptComponent->scriptProperties) {
+		EditorScriptFieldValue fieldValue{};
+		if (!scriptModule.getFieldValueFunction(
+				scriptBinding.gameObjectId,
+				scriptProperty.name.c_str(),
+				&fieldValue)) {
+			continue;
+		}
+
+		ApplyScriptFieldValue(scriptProperty, fieldValue);
+	}
+}
+
+void EditorScriptManager::SynchronizeComponentProperties(
+	EditorComponent& scriptComponent,
+	const std::vector<EditorScriptFieldDescriptor>& fieldDescriptors) {
+	std::vector<EditorScriptProperty> synchronizedProperties;
+	synchronizedProperties.reserve(fieldDescriptors.size());
+
+	for (const EditorScriptFieldDescriptor& fieldDescriptor : fieldDescriptors) {
+		EditorScriptProperty synchronizedProperty = MakeScriptProperty(fieldDescriptor);
+		const auto existingPropertyIt = std::find_if(
+			scriptComponent.scriptProperties.begin(),
+			scriptComponent.scriptProperties.end(),
+			[&fieldDescriptor](const EditorScriptProperty& scriptProperty) {
+				return scriptProperty.name == fieldDescriptor.name &&
+					scriptProperty.type == fieldDescriptor.defaultValue.type;
+			});
+
+		if (existingPropertyIt != scriptComponent.scriptProperties.end()) {
+			const std::string displayName = synchronizedProperty.displayName;
+			const float minValue = synchronizedProperty.minValue;
+			const float maxValue = synchronizedProperty.maxValue;
+			const float step = synchronizedProperty.step;
+			const bool hasRange = synchronizedProperty.hasRange;
+			synchronizedProperty = *existingPropertyIt;
+			synchronizedProperty.displayName = displayName;
+			synchronizedProperty.minValue = minValue;
+			synchronizedProperty.maxValue = maxValue;
+			synchronizedProperty.step = step;
+			synchronizedProperty.hasRange = hasRange;
+		}
+
+		synchronizedProperties.push_back(synchronizedProperty);
+	}
+
+	scriptComponent.scriptProperties = synchronizedProperties;
+}
+
+EditorComponent* EditorScriptManager::FindScriptComponent(const ScriptBinding& scriptBinding) {
+	if (editorScene_ == nullptr) {
+		return nullptr;
+	}
+
+	EditorGameObject* gameObject = editorScene_->FindGameObject(scriptBinding.gameObjectId);
+	if (gameObject == nullptr) {
+		return nullptr;
+	}
+
+	for (EditorComponent& component : gameObject->components) {
+		if (component.type == scriptBinding.componentType && component.assetPath == scriptBinding.dllPath) {
+			return &component;
+		}
+	}
+
+	return nullptr;
+}
+
+bool EditorScriptManager::ReadMetadataFromDll(const std::string& dllPath, ScriptMetadata& scriptMetadata) {
+	const std::filesystem::path sourcePath = std::filesystem::absolute(dllPath);
+	std::error_code fileError;
+	scriptMetadata = {};
+	scriptMetadata.lastWriteTime = std::filesystem::last_write_time(sourcePath, fileError);
+	if (fileError) {
+		return false;
+	}
+
+	const std::filesystem::path cacheDirectory = std::filesystem::path("runtime_cache") / "scripts" / "metadata";
+	std::filesystem::create_directories(cacheDirectory, fileError);
+	if (fileError) {
+		return false;
+	}
+
+	reloadGeneration_++;
+	const std::filesystem::path copiedDllPath =
+		cacheDirectory /
+		(sourcePath.stem().generic_string() + "_metadata_" + std::to_string(reloadGeneration_) + ".dll");
+	std::filesystem::copy_file(
+		sourcePath,
+		copiedDllPath,
+		std::filesystem::copy_options::overwrite_existing,
+		fileError);
+	if (fileError) {
+		return false;
+	}
+
+	const std::wstring copiedDllPathWide = ConvertString(copiedDllPath.generic_string());
+	HMODULE moduleHandle = LoadLibraryW(copiedDllPathWide.c_str());
+	if (moduleHandle == nullptr) {
+		std::filesystem::remove(copiedDllPath, fileError);
+		return false;
+	}
+
+#pragma warning(push)
+#pragma warning(disable : 4191)
+	const EditorScriptGetFieldCountFn getFieldCountFunction =
+		reinterpret_cast<EditorScriptGetFieldCountFn>(GetProcAddress(moduleHandle, "EditorScript_GetFieldCount"));
+	const EditorScriptGetFieldDescriptorFn getFieldDescriptorFunction =
+		reinterpret_cast<EditorScriptGetFieldDescriptorFn>(GetProcAddress(moduleHandle, "EditorScript_GetFieldDescriptor"));
+#pragma warning(pop)
+
+	if (getFieldCountFunction != nullptr && getFieldDescriptorFunction != nullptr) {
+		const int32_t fieldCount = (std::clamp)(getFieldCountFunction(), 0, 512);
+		scriptMetadata.fieldDescriptors.reserve(static_cast<size_t>(fieldCount));
+
+		for (int32_t fieldIndex = 0; fieldIndex < fieldCount; fieldIndex++) {
+			EditorScriptFieldDescriptor fieldDescriptor{};
+			if (getFieldDescriptorFunction(fieldIndex, &fieldDescriptor)) {
+				scriptMetadata.fieldDescriptors.push_back(fieldDescriptor);
+			}
+		}
+	}
+
+	FreeLibrary(moduleHandle);
+	std::filesystem::remove(copiedDllPath, fileError);
+	scriptMetadata.isValid = true;
+	return true;
 }
 
 void EditorScriptManager::HotReloadChangedModules() {
@@ -614,6 +1067,16 @@ bool EditorScriptManager::LoadModule(const std::string& dllPath) {
 		reinterpret_cast<EditorScriptPhysicsEventFn>(GetProcAddress(moduleHandle, "EditorScript_OnPhysicsEvent"));
 	scriptModule.stopFunction =
 		reinterpret_cast<EditorScriptStopFn>(GetProcAddress(moduleHandle, "EditorScript_Stop"));
+	scriptModule.getFieldCountFunction =
+		reinterpret_cast<EditorScriptGetFieldCountFn>(GetProcAddress(moduleHandle, "EditorScript_GetFieldCount"));
+	scriptModule.getFieldDescriptorFunction =
+		reinterpret_cast<EditorScriptGetFieldDescriptorFn>(GetProcAddress(moduleHandle, "EditorScript_GetFieldDescriptor"));
+	scriptModule.getFieldValueFunction =
+		reinterpret_cast<EditorScriptGetFieldValueFn>(GetProcAddress(moduleHandle, "EditorScript_GetFieldValue"));
+	scriptModule.setFieldValueFunction =
+		reinterpret_cast<EditorScriptSetFieldValueFn>(GetProcAddress(moduleHandle, "EditorScript_SetFieldValue"));
+	scriptModule.invokeActionFunction =
+		reinterpret_cast<EditorScriptInvokeActionFn>(GetProcAddress(moduleHandle, "EditorScript_InvokeAction"));
 #pragma warning(pop)
 
 	if (scriptModule.loadFunction == nullptr || !scriptModule.loadFunction(kEditorScriptApiVersion, &runtimeApi_)) {
@@ -651,6 +1114,11 @@ void EditorScriptManager::UnloadModule(ScriptModule& scriptModule) {
 	scriptModule.fixedUpdateFunction = nullptr;
 	scriptModule.physicsEventFunction = nullptr;
 	scriptModule.stopFunction = nullptr;
+	scriptModule.getFieldCountFunction = nullptr;
+	scriptModule.getFieldDescriptorFunction = nullptr;
+	scriptModule.getFieldValueFunction = nullptr;
+	scriptModule.setFieldValueFunction = nullptr;
+	scriptModule.invokeActionFunction = nullptr;
 	scriptModule.isLoaded = false;
 }
 

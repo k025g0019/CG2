@@ -697,6 +697,41 @@ namespace {
 		return isChanged;
 	}
 
+	bool DrawVector2Row(const char* label, EditorScriptVector2& value, float speed, float minValue, float maxValue) {
+		bool isChanged = false;
+		ImGui::PushID(label);
+
+		if (BeginPropertyTable("Vector2Row", 2)) {
+			SetupTwoColumnPropertyTable();
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted(label);
+			ImGui::TableNextColumn();
+			const ImGuiStyle& style = ImGui::GetStyle();
+			float inputWidth =
+				(ImGui::GetContentRegionAvail().x - kAxisLabelWidth * 2.0f - style.ItemInnerSpacing.x * 3.0f) / 2.0f;
+			inputWidth = (std::max)(inputWidth, 48.0f);
+
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted("X");
+			ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+			ImGui::SetNextItemWidth(inputWidth);
+			isChanged |= ImGui::DragFloat("##X", &value.x, speed, minValue, maxValue, "%.3f");
+
+			ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted("Y");
+			ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+			ImGui::SetNextItemWidth(inputWidth);
+			isChanged |= ImGui::DragFloat("##Y", &value.y, speed, minValue, maxValue, "%.3f");
+			ImGui::EndTable();
+		}
+
+		ImGui::PopID();
+		return isChanged;
+	}
+
 	bool DrawFloatRow(const char* label, float& value, float speed, float minValue, float maxValue) {
 		bool isChanged = false;  // float 入力が変更されたか
 		ImGui::PushID(label);
@@ -1641,20 +1676,77 @@ namespace {
 
 		void DrawPlayerInputComponent(EditorInspectorPanelContext& context, EditorComponent& component) {
 			const char* behaviorItems[] = {"Invoke C++ Events"};
+			const char* valueTypeItems[] = {"Button", "Vector2"};
 			component.inputBehavior = (std::clamp)(component.inputBehavior, 0, static_cast<int32_t>(_countof(behaviorItems)) - 1);
 
-			DrawTextRow("説明", "新 Input System 風の Player Input です。Actions は Project の Assets 配下に作成し、そこから割り当てます。");
-			DrawTextRow("手順1", "下の Project タブで .inputactions を作成し、Inspector の Input Actions で ActionMap / Action / Path を設定します。");
-			DrawTextRow("手順2", "この GameObject に PlayerInput を付け、Actions にその .inputactions を割り当てます。");
-			DrawTextRow("手順3", "Play 中は Move で移動、Jump で上方向速度、Fire でイベント取得が動きます。");
+			DrawTextRow("説明", "Input Actions の ActionMap / Action を、同じ GameObject の C++ 関数へ接続します。");
 			DrawTextRow("Actions", component.assetPath.empty() ? "未設定" : component.assetPath.c_str());
 			DrawStringInputRow("Actions パス", component.assetPath);
 			DrawStringInputRow("Default Map", component.inputActionMapName);
 			DrawComboRow("Behavior", component.inputBehavior, behaviorItems, static_cast<int32_t>(_countof(behaviorItems)));
 			DrawSubHeader("Events");
-			DrawStringInputRow("Move", component.inputMoveEventName);
-			DrawStringInputRow("Jump", component.inputJumpEventName);
-			DrawStringInputRow("Fire", component.inputFireEventName);
+
+			int32_t removeEventIndex = -1;
+			for (size_t eventIndex = 0U; eventIndex < component.inputEventBindings.size(); eventIndex++) {
+				EditorInputEventBinding& eventBinding = component.inputEventBindings[eventIndex];
+				ImGui::PushID(static_cast<int32_t>(eventIndex));
+				ImGui::SeparatorText(("イベント " + std::to_string(eventIndex + 1U)).c_str());
+				DrawStringInputRow("Action Map", eventBinding.actionMapName);
+				DrawStringInputRow("Action", eventBinding.actionName);
+				DrawStringInputRow("C++ 関数", eventBinding.functionName);
+				eventBinding.valueType = (std::clamp)(eventBinding.valueType, 0, 1);
+				DrawComboRow("値の型", eventBinding.valueType, valueTypeItems, static_cast<int32_t>(_countof(valueTypeItems)));
+
+				if (ImGui::Button("このイベントを削除", ImVec2(-1.0f, 0.0f))) {
+					removeEventIndex = static_cast<int32_t>(eventIndex);
+				}
+
+				ImGui::PopID();
+			}
+
+			if (removeEventIndex >= 0) {
+				component.inputEventBindings.erase(component.inputEventBindings.begin() + removeEventIndex);
+			}
+
+			if (ImGui::Button("イベントを追加", ImVec2(-1.0f, 0.0f))) {
+				component.inputEventBindings.push_back({component.inputActionMapName, "NewAction", "OnNewAction", 0});
+			}
+
+			if (!component.assetPath.empty()) {
+				if (ImGui::Button("Actions から不足イベントを追加", ImVec2(-1.0f, 0.0f))) {
+					const std::vector<InputActionsAssetEntry> actionEntries = LoadInputActionsEntries(component.assetPath);
+
+					for (const InputActionsAssetEntry& actionEntry : actionEntries) {
+						const auto eventIt = std::find_if(
+							component.inputEventBindings.begin(),
+							component.inputEventBindings.end(),
+							[&actionEntry](const EditorInputEventBinding& eventBinding) {
+								return eventBinding.actionMapName == actionEntry.actionMapName &&
+									eventBinding.actionName == actionEntry.actionName;
+							});
+
+						if (eventIt == component.inputEventBindings.end()) {
+							component.inputEventBindings.push_back({
+								actionEntry.actionMapName,
+								actionEntry.actionName,
+								"On" + actionEntry.actionName,
+								actionEntry.isVector2 ? 1 : 0});
+						}
+					}
+				}
+			}
+
+			for (const EditorInputEventBinding& eventBinding : component.inputEventBindings) {
+				if (eventBinding.actionName == "Move") {
+					component.inputMoveEventName = eventBinding.functionName;
+				}
+				else if (eventBinding.actionName == "Jump") {
+					component.inputJumpEventName = eventBinding.functionName;
+				}
+				else if (eventBinding.actionName == "Fire") {
+					component.inputFireEventName = eventBinding.functionName;
+				}
+			}
 
 			if (ImGui::Button("Create Actions...", ImVec2(-1.0f, 0.0f))) {
 				CreatePlayerInputActionsAsset(context, component);
@@ -1673,9 +1765,7 @@ namespace {
 				}
 			}
 
-			DrawTextRow("C++ 取得例1", "runtimeApi->GetActionVector2(gameObjectId, \"Player\", \"Move\")");
-			DrawTextRow("C++ 取得例2", "runtimeApi->WasActionJustPressed(gameObjectId, \"Player\", \"Jump\")");
-			DrawTextRow("追加 Action", "Project の Input Actions アセットを編集して ActionMap / Action / Path を増やし、C++ 側でその名前を使います。");
+			DrawTextRow("C++ 側", "BindAction(\"OnMove\", ...) の登録名と、上の C++ 関数名を一致させます。");
 		}
 
 	void DrawHapticSourceComponent(EditorComponent& component) {
@@ -1725,7 +1815,12 @@ namespace {
 				ImGui::TableNextColumn();
 				ImGui::SetNextItemWidth(-1.0f);
 				if (ImGui::InputText("##DllPath", dllPathBuffer, sizeof(dllPathBuffer))) {
-					component.assetPath = dllPathBuffer;  // DLL を手入力で差し替えたい時のため、直接パス編集も許可する。
+					const std::string nextDllPath = dllPathBuffer;
+
+					if (component.assetPath != nextDllPath) {
+						component.assetPath = nextDllPath;  // DLL を差し替えた時は、新しい型情報を読み直す。
+						component.scriptProperties.clear();
+					}
 				}
 				ImGui::EndTable();
 			}
@@ -1736,7 +1831,13 @@ namespace {
 		if (!context.selectedAssetPath.empty() && context.selectedAssetPath.find(".dll") != std::string::npos) {
 			if (ImGui::Button("選択中 DLL を設定", ImVec2(-1.0f, 0.0f))) {
 				component.assetPath = context.selectedAssetPath;  // Project で選んだ DLL をそのまま Script に割り当てる。
+				component.scriptProperties.clear();
 			}
+		}
+
+		EditorScriptManager& scriptManager = context.runtimeManager.GetScriptManager();
+		if (!component.assetPath.empty()) {
+			scriptManager.RefreshExposedFields(component);
 		}
 
 		{
@@ -1750,6 +1851,61 @@ namespace {
 			DrawTextRow("状態メッセージ", debugInfo.lastStatusMessage.empty() ? "なし" : debugInfo.lastStatusMessage.c_str());
 		}
 
+		DrawSubHeader("公開変数");
+		if (component.scriptProperties.empty()) {
+			DrawTextRow("状態", "公開変数なし。DLLをビルドすると Expose... で登録した変数が表示されます。");
+		}
+
+		for (size_t propertyIndex = 0U; propertyIndex < component.scriptProperties.size(); propertyIndex++) {
+			EditorScriptProperty& scriptProperty = component.scriptProperties[propertyIndex];
+			const char* propertyLabel = scriptProperty.displayName.empty()
+				? scriptProperty.name.c_str()
+				: scriptProperty.displayName.c_str();
+			const float minValue = scriptProperty.hasRange ? scriptProperty.minValue : 0.0f;
+			const float maxValue = scriptProperty.hasRange ? scriptProperty.maxValue : 0.0f;
+			const float step = (std::max)(scriptProperty.step, 0.001f);
+			ImGui::PushID(static_cast<int32_t>(propertyIndex));
+
+			switch (scriptProperty.type) {
+			case EditorScriptFieldTypeBool:
+				DrawCheckboxRow(propertyLabel, scriptProperty.boolValue);
+				break;
+			case EditorScriptFieldTypeInt32:
+				DrawIntRow(propertyLabel, scriptProperty.intValue);
+
+				if (scriptProperty.hasRange) {
+					scriptProperty.intValue = (std::clamp)(
+						scriptProperty.intValue,
+						static_cast<int32_t>(scriptProperty.minValue),
+						static_cast<int32_t>(scriptProperty.maxValue));
+				}
+				break;
+			case EditorScriptFieldTypeFloat:
+				DrawFloatRow(propertyLabel, scriptProperty.floatValue, step, minValue, maxValue);
+				break;
+			case EditorScriptFieldTypeVector2:
+				DrawVector2Row(propertyLabel, scriptProperty.vector2Value, step, minValue, maxValue);
+				break;
+			case EditorScriptFieldTypeVector3:
+				DrawVector3Row(propertyLabel, scriptProperty.vector3Value, step, minValue, maxValue);
+				break;
+			case EditorScriptFieldTypeString:
+				DrawStringInputRow(propertyLabel, scriptProperty.stringValue);
+				break;
+			default:
+				DrawTextRow(propertyLabel, "未対応の型");
+				break;
+			}
+
+			ImGui::PopID();
+		}
+
+		if (!component.assetPath.empty()) {
+			if (ImGui::Button("DLL から公開変数を読み込む", ImVec2(-1.0f, 0.0f))) {
+				scriptManager.RefreshExposedFields(component);
+			}
+		}
+
 		DrawSubHeader("C++ スクリプト生成");
 		ImGui::InputText("クラス名", requestedScriptName, sizeof(requestedScriptName));
 
@@ -1760,6 +1916,7 @@ namespace {
 
 			if (result.isSucceeded) {
 				component.assetPath = result.dllFilePath;  // 生成直後から Script Component は想定 DLL を参照する。
+				component.scriptProperties.clear();
 				context.selectedAssetPath = result.sourceFilePath;  // Project ではまず .cpp を選択状態にして編集へ入りやすくする。
 				std::string nextDefaultName = gameObject.name + "Script";
 				for (char& letter : nextDefaultName) {

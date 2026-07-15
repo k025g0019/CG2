@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #pragma warning(push)
@@ -48,6 +49,7 @@ public:
 	void Stop();  // Play 停止時に Script の Stop を呼ぶ
 	bool IsStarted() const;  // Start 済みかどうかを返す
 	ScriptDebugInfo GetDebugInfo(int32_t gameObjectId) const;  // Inspector 用に DLL の現在状態を返す
+	bool RefreshExposedFields(EditorComponent& scriptComponent);  // DLL の公開変数定義を Inspector 用データへ同期する
 
 private:
 	struct ScriptBinding {
@@ -68,8 +70,19 @@ private:
 		EditorScriptFixedUpdateFn fixedUpdateFunction = nullptr;  // 固定更新関数
 		EditorScriptPhysicsEventFn physicsEventFunction = nullptr;  // 接触イベント通知関数
 		EditorScriptStopFn stopFunction = nullptr;  // Play 停止時の終了関数
+		EditorScriptGetFieldCountFn getFieldCountFunction = nullptr;  // DLL が公開する Inspector 変数数を返す
+		EditorScriptGetFieldDescriptorFn getFieldDescriptorFunction = nullptr;  // 公開変数の型と表示名を返す
+		EditorScriptGetFieldValueFn getFieldValueFunction = nullptr;  // Script インスタンスの現在値を返す
+		EditorScriptSetFieldValueFn setFieldValueFunction = nullptr;  // Inspector 保存値を Script インスタンスへ設定する
+		EditorScriptInvokeActionFn invokeActionFunction = nullptr;  // PlayerInput の関数名を C++ メソッドへ通知する
 		bool isLoaded = false;  // 関数取得と初期化まで成功していれば true
 		std::vector<int32_t> attachedGameObjectIds;  // この DLL を使っている GameObject 一覧
+	};
+
+	struct ScriptMetadata {
+		std::filesystem::file_time_type lastWriteTime{};  // 同じ DLL を毎フレーム読み直さないための更新日時
+		std::vector<EditorScriptFieldDescriptor> fieldDescriptors;  // Inspector へ表示する公開変数定義
+		bool isValid = false;  // メタデータ取得に成功していれば true
 	};
 
 	EditorScene* editorScene_ = nullptr;  // Script Component を探す対象 Scene
@@ -85,6 +98,9 @@ private:
 	std::vector<ScriptBinding> scriptBindings_;  // Scene 内 Script Component から作った実行対象一覧
 	std::unordered_map<std::string, ScriptModule> scriptModules_;  // DLL パス単位で 1 度だけロードしたモジュール一覧
 	std::unordered_map<std::string, std::string> moduleStatusMessages_;  // DLL ごとの最新状態メッセージ
+	std::unordered_map<std::string, ScriptMetadata> scriptMetadataCache_;  // Play 前の Inspector 用 DLL メタデータキャッシュ
+	std::unordered_map<std::string, bool> inputActionActiveStates_;  // Vector2 Action の started / canceled 判定用状態
+	std::unordered_set<std::string> missingActionWarnings_;  // 未登録関数の警告を同じPlay中に一度だけ出す
 	std::array<uint8_t, 256> currentKeyState_{};  // DLL Script から参照する最新キー状態
 	std::array<uint8_t, 256> previousKeyState_{};  // 押した瞬間判定用の 1 フレーム前キー状態
 	uint64_t reloadGeneration_ = 0;  // 作業 DLL コピー名を毎回変えるための通し番号
@@ -94,6 +110,12 @@ private:
 	void BuildRuntimeApi();  // DLL へ公開する関数ポインタを設定する
 	void StartBindingsForModule(ScriptModule& scriptModule);  // DLL を使う全 GameObject に Start を送る
 	void StopBindingsForModule(ScriptModule& scriptModule);  // DLL を使う全 GameObject に Stop を送る
+	void DispatchInputActions();  // PlayerInput の Action を同じ GameObject の C++ 関数へ通知する
+	void ApplyComponentFieldsToInstance(const ScriptBinding& scriptBinding, ScriptModule& scriptModule);  // 保存済み Inspector 値を Script インスタンスへ戻す
+	void ReadInstanceFieldsToComponent(const ScriptBinding& scriptBinding, ScriptModule& scriptModule);  // Script が更新した公開変数を Inspector と Scene 保存値へ戻す
+	void SynchronizeComponentProperties(EditorComponent& scriptComponent, const std::vector<EditorScriptFieldDescriptor>& fieldDescriptors);  // DLL 定義と保存値を名前で統合する
+	bool ReadMetadataFromDll(const std::string& dllPath, ScriptMetadata& scriptMetadata);  // Play 前でも DLL から公開変数定義を取得する
+	EditorComponent* FindScriptComponent(const ScriptBinding& scriptBinding);  // Binding が指す Script / MonoBehaviour Component を返す
 	void HotReloadChangedModules();  // 元 DLL の更新日時を見て差し替える
 	void UnloadAllModules();  // Play 停止時にすべての DLL を解放する
 	bool LoadModule(const std::string& dllPath);  // DLL を読み込み、必要な関数を取得する

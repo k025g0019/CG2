@@ -544,7 +544,8 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
     <ClInclude Include="Source\Engine\Editor\EditorSceneViewManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorSelectionManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorScriptManager.h" />
-    <ClInclude Include="Source\Engine\Editor\EditorScriptApi.h" />
+    <ClInclude Include="Source\Engine\Core\EditorNativeScript.h" />
+    <ClInclude Include="Source\Engine\Core\EditorScriptApi.h" />
     <ClInclude Include="Source\Engine\Editor\EditorPlatformManager.h" />
     <ClInclude Include="Source\Engine\Core\GameScene.h" />
     <ClInclude Include="Engine\Input\InputAction.h" />

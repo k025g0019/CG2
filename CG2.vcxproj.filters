@@ -1233,7 +1233,10 @@
     <ClInclude Include="Source\Engine\Editor\EditorScriptManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="Source\Engine\Editor\EditorScriptApi.h">
+    <ClInclude Include="Source\Engine\Core\EditorNativeScript.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Core\EditorScriptApi.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="Source\Engine\Editor\EditorRuntimeManager.h">

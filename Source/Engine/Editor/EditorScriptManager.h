@@ -50,6 +50,12 @@ public:
 	bool IsStarted() const;  // Start 済みかどうかを返す
 	ScriptDebugInfo GetDebugInfo(int32_t gameObjectId) const;  // Inspector 用に DLL の現在状態を返す
 	bool RefreshExposedFields(EditorComponent& scriptComponent);  // DLL の公開変数定義を Inspector 用データへ同期する
+	void QueueUiEvent(
+		int32_t gameObjectId,
+		const std::string& functionName,
+		int32_t valueType = EditorScriptInputValueTypeButton,
+		float buttonValue = 1.0f,
+		EditorScriptVector2 vector2Value = {});  // Game View UI の操作を次の Update で Script へ通知する
 
 private:
 	struct ScriptBinding {
@@ -85,6 +91,14 @@ private:
 		bool isValid = false;  // メタデータ取得に成功していれば true
 	};
 
+	struct QueuedUiEvent {
+		int32_t gameObjectId = -1;  // クリックを受けた GameObject ID。
+		std::string functionName;  // 呼び出す C++ Script 関数名。
+		int32_t valueType = EditorScriptInputValueTypeButton;  // Button か Vector2 かを Script 側へ伝える。
+		float buttonValue = 1.0f;  // Button / Toggle の値。
+		EditorScriptVector2 vector2Value{};  // Slider など 1 軸値は x に入れる。
+	};
+
 	EditorScene* editorScene_ = nullptr;  // Script Component を探す対象 Scene
 	EditorInputManager* inputManager_ = nullptr;  // PlayerInput Action を読む入力 API
 	EditorAnimationManager* animationManager_ = nullptr;  // Animation の再生状態と現在時刻を読む API
@@ -101,6 +115,7 @@ private:
 	std::unordered_map<std::string, ScriptMetadata> scriptMetadataCache_;  // Play 前の Inspector 用 DLL メタデータキャッシュ
 	std::unordered_map<std::string, bool> inputActionActiveStates_;  // Vector2 Action の started / canceled 判定用状態
 	std::unordered_set<std::string> missingActionWarnings_;  // 未登録関数の警告を同じPlay中に一度だけ出す
+	std::vector<QueuedUiEvent> queuedUiEvents_;  // Game View UI から来たイベントを Update まで保持する
 	std::array<uint8_t, 256> currentKeyState_{};  // DLL Script から参照する最新キー状態
 	std::array<uint8_t, 256> previousKeyState_{};  // 押した瞬間判定用の 1 フレーム前キー状態
 	uint64_t reloadGeneration_ = 0;  // 作業 DLL コピー名を毎回変えるための通し番号
@@ -110,6 +125,7 @@ private:
 	void BuildRuntimeApi();  // DLL へ公開する関数ポインタを設定する
 	void StartBindingsForModule(ScriptModule& scriptModule);  // DLL を使う全 GameObject に Start を送る
 	void StopBindingsForModule(ScriptModule& scriptModule);  // DLL を使う全 GameObject に Stop を送る
+	void DispatchQueuedUiEvents();  // Button などの UI イベントを C++ Script 関数へ通知する
 	void DispatchInputActions();  // PlayerInput の Action を同じ GameObject の C++ 関数へ通知する
 	void ApplyComponentFieldsToInstance(const ScriptBinding& scriptBinding, ScriptModule& scriptModule);  // 保存済み Inspector 値を Script インスタンスへ戻す
 	void ReadInstanceFieldsToComponent(const ScriptBinding& scriptBinding, ScriptModule& scriptModule);  // Script が更新した公開変数を Inspector と Scene 保存値へ戻す

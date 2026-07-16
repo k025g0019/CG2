@@ -2015,6 +2015,42 @@ namespace {
 		DrawFloatRow("透明度", component.intensity, 0.01f, 0.0f, 1.0f);
 	}
 
+	void DrawButtonComponent(EditorComponent& component) {
+		DrawTextRow("説明", "Game View 上に表示し、クリック時に C++ Script の関数を呼びます。");
+		DrawStringInputRow("表示文字", component.buttonLabel);
+		DrawVector2Row("位置", component.buttonPosition, 0.5f, -10000.0f, 10000.0f);
+		DrawVector2Row("サイズ", component.buttonSize, 0.5f, 1.0f, 4096.0f);
+		DrawColor3Row("通常色", component.color);
+		DrawColor3Row("ホバー色", component.buttonHoverColor);
+		DrawColor3Row("押下色", component.buttonPressedColor);
+		DrawCheckboxRow("操作可能", component.buttonInteractable);
+		DrawStringInputRow("クリック関数", component.buttonOnClickFunction);
+	}
+
+	void DrawToggleComponent(EditorComponent& component) {
+		DrawTextRow("説明", "Game View 上に ON / OFF を表示し、変更時に C++ Script の関数を呼びます。");
+		DrawStringInputRow("表示文字", component.buttonLabel);
+		DrawVector2Row("位置", component.buttonPosition, 0.5f, -10000.0f, 10000.0f);
+		DrawVector2Row("サイズ", component.buttonSize, 0.5f, 1.0f, 4096.0f);
+		DrawCheckboxRow("現在値", component.toggleValue);
+		DrawColor3Row("通常色", component.color);
+		DrawCheckboxRow("操作可能", component.buttonInteractable);
+		DrawStringInputRow("変更関数", component.toggleOnValueChangedFunction);
+	}
+
+	void DrawSliderComponent(EditorComponent& component) {
+		DrawTextRow("説明", "Game View 上に数値バーを表示し、変更時に C++ Script の関数を呼びます。");
+		DrawStringInputRow("表示文字", component.buttonLabel);
+		DrawVector2Row("位置", component.buttonPosition, 0.5f, -10000.0f, 10000.0f);
+		DrawVector2Row("サイズ", component.buttonSize, 0.5f, 1.0f, 4096.0f);
+		DrawFloatRow("最小値", component.sliderMinValue, 0.01f, -100000.0f, 100000.0f);
+		DrawFloatRow("最大値", component.sliderMaxValue, 0.01f, -100000.0f, 100000.0f);
+		DrawFloatRow("現在値", component.sliderValue, 0.01f, component.sliderMinValue, component.sliderMaxValue);
+		DrawColor3Row("色", component.color);
+		DrawCheckboxRow("操作可能", component.buttonInteractable);
+		DrawStringInputRow("変更関数", component.sliderOnValueChangedFunction);
+	}
+
 	void DrawNavMeshAgentComponent(
 		EditorInspectorPanelContext& context,
 		const EditorGameObject& ownerGameObject,
@@ -2927,9 +2963,6 @@ namespace {
 		case EditorComponentType::GraphicRaycaster:
 		case EditorComponentType::RawImage:
 		case EditorComponentType::TextMeshProUGUI:
-		case EditorComponentType::Button:
-		case EditorComponentType::Toggle:
-		case EditorComponentType::Slider:
 		case EditorComponentType::Scrollbar:
 		case EditorComponentType::Dropdown:
 		case EditorComponentType::TMPDropdown:
@@ -2945,6 +2978,15 @@ namespace {
 		case EditorComponentType::AspectRatioFitter:
 		case EditorComponentType::LayoutElement:
 			DrawUIComponent(component, "UI 表示用コンポーネントです。");
+			break;
+		case EditorComponentType::Button:
+			DrawButtonComponent(component);
+			break;
+		case EditorComponentType::Toggle:
+			DrawToggleComponent(component);
+			break;
+		case EditorComponentType::Slider:
+			DrawSliderComponent(component);
 			break;
 		case EditorComponentType::Transform:
 		case EditorComponentType::Count:

@@ -513,6 +513,19 @@ struct EditorComponent {
 	bool cameraMotionBlurEnabled;  // モーションブラー有効
 	float cameraMotionBlurIntensity;  // ブラー強度
 	float cameraExposure;  // 露出補正 (EV)
+	std::string buttonLabel;  // Game View に表示する Button の文字。
+	EditorScriptVector2 buttonPosition;  // Game View 左上からの Button 表示位置。
+	EditorScriptVector2 buttonSize;  // Game View 上の Button サイズ。
+	bool buttonInteractable;  // false なら見えるがクリックできない。
+	Vector3 buttonHoverColor;  // マウスが乗った時の Button 色。
+	Vector3 buttonPressedColor;  // 押している間の Button 色。
+	std::string buttonOnClickFunction;  // クリック時に C++ Script へ通知する関数名。
+	bool toggleValue;  // Toggle の現在値。
+	std::string toggleOnValueChangedFunction;  // Toggle 変更時に C++ Script へ通知する関数名。
+	float sliderValue;  // Slider の現在値。
+	float sliderMinValue;  // Slider の最小値。
+	float sliderMaxValue;  // Slider の最大値。
+	std::string sliderOnValueChangedFunction;  // Slider 変更時に C++ Script へ通知する関数名。
 	std::vector<EditorScriptProperty> scriptProperties;  // DLL が公開した変数と GameObject ごとの保存値。
 	std::vector<EditorInputEventBinding> inputEventBindings;  // Input Action と C++ 関数名の接続一覧。
 	};

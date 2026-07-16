@@ -168,6 +168,7 @@ void EditorScriptManager::Initialize(
 	scriptMetadataCache_.clear();
 	inputActionActiveStates_.clear();
 	missingActionWarnings_.clear();
+	queuedUiEvents_.clear();
 	currentKeyState_.fill(0);
 	previousKeyState_.fill(0);
 	reloadGeneration_ = 0;
@@ -211,6 +212,7 @@ void EditorScriptManager::Update(const uint8_t* keyState, float deltaTime) {
 		}
 	}
 
+	DispatchQueuedUiEvents();
 	DispatchInputActions();
 
 	for (const ScriptBinding& scriptBinding : scriptBindings_) {
@@ -275,6 +277,7 @@ void EditorScriptManager::Stop() {
 	scriptBindings_.clear();
 	inputActionActiveStates_.clear();
 	missingActionWarnings_.clear();
+	queuedUiEvents_.clear();
 	currentKeyState_.fill(0);
 	previousKeyState_.fill(0);
 }
@@ -396,6 +399,25 @@ bool EditorScriptManager::RefreshExposedFields(EditorComponent& scriptComponent)
 
 	SynchronizeComponentProperties(scriptComponent, scriptMetadata.fieldDescriptors);
 	return true;
+}
+
+void EditorScriptManager::QueueUiEvent(
+	int32_t gameObjectId,
+	const std::string& functionName,
+	int32_t valueType,
+	float buttonValue,
+	EditorScriptVector2 vector2Value) {
+	if (!isStarted_ || functionName.empty()) {
+		return;
+	}
+
+	QueuedUiEvent uiEvent{};
+	uiEvent.gameObjectId = gameObjectId;
+	uiEvent.functionName = functionName;
+	uiEvent.valueType = valueType;
+	uiEvent.buttonValue = buttonValue;
+	uiEvent.vector2Value = vector2Value;
+	queuedUiEvents_.push_back(uiEvent);
 }
 
 void EditorScriptManager::ScriptLogBridge(const char* message) {
@@ -671,6 +693,67 @@ void EditorScriptManager::StopBindingsForModule(ScriptModule& scriptModule) {
 	for (const ScriptBinding& scriptBinding : scriptBindings_) {
 		if (scriptBinding.dllPath == scriptModule.sourceDllPath) {
 			scriptModule.stopFunction(scriptBinding.gameObjectId);
+		}
+	}
+}
+
+void EditorScriptManager::DispatchQueuedUiEvents() {
+	if (editorScene_ == nullptr || queuedUiEvents_.empty()) {
+		return;
+	}
+
+	std::vector<QueuedUiEvent> uiEvents;
+	uiEvents.swap(queuedUiEvents_);  // Script 側から再度イベントが積まれても、次フレームへ回す。
+
+	for (const QueuedUiEvent& uiEvent : uiEvents) {
+		if (uiEvent.gameObjectId < 0 || uiEvent.functionName.empty()) {
+			continue;
+		}
+
+		EditorScriptInputActionContext inputContext{};
+		inputContext.gameObjectId = uiEvent.gameObjectId;
+		inputContext.phase = EditorScriptInputPhasePerformed;
+		inputContext.valueType = uiEvent.valueType;
+		inputContext.buttonValue = uiEvent.buttonValue;
+		inputContext.vector2Value = uiEvent.vector2Value;
+		CopyStringToFixedBuffer("UI", inputContext.actionMapName, sizeof(inputContext.actionMapName));
+		CopyStringToFixedBuffer("Button", inputContext.actionName, sizeof(inputContext.actionName));
+		CopyStringToFixedBuffer("UI/Button", inputContext.bindingPath, sizeof(inputContext.bindingPath));
+
+		bool hasScriptCandidate = false;
+		bool wasInvoked = false;
+
+		for (const ScriptBinding& scriptBinding : scriptBindings_) {
+			if (scriptBinding.gameObjectId != uiEvent.gameObjectId) {
+				continue;
+			}
+
+			ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
+			if (scriptModule == nullptr || !scriptModule->isLoaded || scriptModule->invokeActionFunction == nullptr) {
+				continue;
+			}
+
+			hasScriptCandidate = true;
+			wasInvoked = scriptModule->invokeActionFunction(
+				scriptBinding.gameObjectId,
+				uiEvent.functionName.c_str(),
+				&inputContext);
+
+			if (wasInvoked) {
+				break;
+			}
+		}
+
+		if (hasScriptCandidate && !wasInvoked) {
+			const std::string warningKey =
+				"UI|" + std::to_string(uiEvent.gameObjectId) + "|" + uiEvent.functionName;
+
+			if (missingActionWarnings_.insert(warningKey).second) {
+				const EditorGameObject* gameObject = editorScene_->FindGameObject(uiEvent.gameObjectId);
+				const std::string gameObjectName = gameObject != nullptr ? gameObject->name : "Unknown";
+				PushConsoleMessage(
+					"Button関数が未登録です: " + uiEvent.functionName + " (GameObject=" + gameObjectName + ")");
+			}
 		}
 	}
 }

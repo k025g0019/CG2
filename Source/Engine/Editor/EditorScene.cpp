@@ -624,7 +624,26 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 			     << component.compositeVignetteRadius << "|"
 			     << component.compositeFilmGrain << "|"
 			     << component.compositeChromaticAberration << "|"
-			     << component.compositeAmbientOcclusionStrength << "\n";
+			     << component.compositeAmbientOcclusionStrength << "|"
+			     << EncodeSceneToken(component.buttonLabel) << "|"
+			     << component.buttonPosition.x << "|"
+			     << component.buttonPosition.y << "|"
+			     << component.buttonSize.x << "|"
+			     << component.buttonSize.y << "|"
+			     << component.buttonInteractable << "|"
+			     << EncodeSceneToken(component.buttonOnClickFunction) << "|"
+			     << component.buttonHoverColor.x << "|"
+			     << component.buttonHoverColor.y << "|"
+			     << component.buttonHoverColor.z << "|"
+			     << component.buttonPressedColor.x << "|"
+			     << component.buttonPressedColor.y << "|"
+			     << component.buttonPressedColor.z << "|"
+			     << component.toggleValue << "|"
+			     << EncodeSceneToken(component.toggleOnValueChangedFunction) << "|"
+			     << component.sliderValue << "|"
+			     << component.sliderMinValue << "|"
+			     << component.sliderMaxValue << "|"
+			     << EncodeSceneToken(component.sliderOnValueChangedFunction) << "\n";
 
 			// C++ Script の公開変数は個数が変わるため、Component 共通行とは別の行で保存する。
 			for (const EditorScriptProperty& scriptProperty : component.scriptProperties) {
@@ -904,6 +923,23 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 					component.compositeFilmGrain = ToFloat(elements[153]);
 					component.compositeChromaticAberration = ToFloat(elements[154]);
 					component.compositeAmbientOcclusionStrength = ToFloat(elements[155]);
+				}
+				if (elements.size() >= 169) {
+					component.buttonLabel = DecodeSceneToken(elements[156]);
+					component.buttonPosition = {ToFloat(elements[157]), ToFloat(elements[158])};
+					component.buttonSize = {ToFloat(elements[159]), ToFloat(elements[160])};
+					component.buttonInteractable = ToInt(elements[161]) != 0;
+					component.buttonOnClickFunction = DecodeSceneToken(elements[162]);
+					component.buttonHoverColor = {ToFloat(elements[163]), ToFloat(elements[164]), ToFloat(elements[165])};
+					component.buttonPressedColor = {ToFloat(elements[166]), ToFloat(elements[167]), ToFloat(elements[168])};
+				}
+				if (elements.size() >= 175) {
+					component.toggleValue = ToInt(elements[169]) != 0;
+					component.toggleOnValueChangedFunction = DecodeSceneToken(elements[170]);
+					component.sliderValue = ToFloat(elements[171]);
+					component.sliderMinValue = ToFloat(elements[172]);
+					component.sliderMaxValue = ToFloat(elements[173]);
+					component.sliderOnValueChangedFunction = DecodeSceneToken(elements[174]);
 				}
 				gameObject.components.push_back(component);
 				break;
@@ -1209,6 +1245,19 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.particleLifetime = 2.0f;
 		component.particleSpeed = 5.0f;
 		component.particleSize = 0.5f;
+		component.buttonLabel = "Button";
+		component.buttonPosition = {20.0f, 20.0f};
+		component.buttonSize = {160.0f, 48.0f};
+		component.buttonInteractable = true;
+		component.buttonHoverColor = {0.25f, 0.45f, 0.80f};
+		component.buttonPressedColor = {0.15f, 0.30f, 0.60f};
+		component.buttonOnClickFunction = "OnClick";
+		component.toggleValue = false;
+		component.toggleOnValueChangedFunction = "OnValueChanged";
+		component.sliderValue = 0.5f;
+		component.sliderMinValue = 0.0f;
+		component.sliderMaxValue = 1.0f;
+		component.sliderOnValueChangedFunction = "OnValueChanged";
 		component.scriptProperties.clear();
 		component.inputEventBindings.clear();
 		AddDefaultInputEventBindings(component);

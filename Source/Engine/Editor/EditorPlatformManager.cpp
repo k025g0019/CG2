@@ -1060,6 +1060,15 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	ComPtr<IDxcBlob> finalCompositePixelShaderBlob = CompileShader(
 		L"Assets/Shaders/PostProcess/FinalComposite.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
+	ComPtr<IDxcBlob> passthroughPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/PostProcess/Passthrough.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> depthOfFieldPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/PostProcess/DepthOfField.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> motionBlurPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/PostProcess/MotionBlur.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
 	ComPtr<IDxcBlob> bloomPrefilterPixelShaderBlob = CompileShader(
 		L"Assets/Shaders/PostProcess/Bloom/BloomPrefilter.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
@@ -1145,6 +1154,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		planarReflectionPixelShaderBlob == nullptr ||
 		sharpenPixelShaderBlob == nullptr ||
 		finalCompositePixelShaderBlob == nullptr ||
+		passthroughPixelShaderBlob == nullptr ||
+		depthOfFieldPixelShaderBlob == nullptr ||
+		motionBlurPixelShaderBlob == nullptr ||
 		bloomPrefilterPixelShaderBlob == nullptr ||
 		bloomDownsamplePixelShaderBlob == nullptr ||
 		bloomUpsamplePixelShaderBlob == nullptr ||
@@ -1837,6 +1849,27 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		"FinalComposite", finalCompositePixelShaderBlob.Get(), DXGI_FORMAT_R8G8B8A8_UNORM);
 
 	if (finalCompositePipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
+	ComPtr<ID3D12PipelineState> passthroughPipelineState = CreatePostProcessPSO(
+		"Passthrough", passthroughPixelShaderBlob.Get(), DXGI_FORMAT_R8G8B8A8_UNORM);
+	if (passthroughPipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
+	ComPtr<ID3D12PipelineState> depthOfFieldPipelineState = CreatePostProcessPSO(
+		"DepthOfField", depthOfFieldPixelShaderBlob.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
+	if (depthOfFieldPipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
+	ComPtr<ID3D12PipelineState> motionBlurPipelineState = CreatePostProcessPSO(
+		"MotionBlur", motionBlurPixelShaderBlob.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
+	if (motionBlurPipelineState == nullptr) {
 		RequestInitializationFailure();
 		return;
 	}
@@ -2640,6 +2673,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_planarReflectionPixelShaderBlob = planarReflectionPixelShaderBlob;
 	g_sharpenPixelShaderBlob = sharpenPixelShaderBlob;
 	g_finalCompositePixelShaderBlob = finalCompositePixelShaderBlob;
+	g_passthroughPixelShaderBlob = passthroughPixelShaderBlob;
+	g_depthOfFieldPixelShaderBlob = depthOfFieldPixelShaderBlob;
+	g_motionBlurPixelShaderBlob = motionBlurPixelShaderBlob;
 	g_signatureBlob = signatureBlob;
 	g_errorBlob = errorBlob;
 	g_rootSignature = rootSignature;
@@ -2660,6 +2696,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_planarReflectionPipelineState = planarReflectionPipelineState;
 	g_sharpenPipelineState = sharpenPipelineState;
 	g_finalCompositePipelineState = finalCompositePipelineState;
+	g_passthroughPipelineState = passthroughPipelineState;
+	g_depthOfFieldPipelineState = depthOfFieldPipelineState;
+	g_motionBlurPipelineState = motionBlurPipelineState;
 	g_iblIrradianceCube = iblIrradianceCube;
 	g_iblPrefilterCube = iblPrefilterCube;
 	g_iblEnvironmentCube = iblEnvironmentCube;

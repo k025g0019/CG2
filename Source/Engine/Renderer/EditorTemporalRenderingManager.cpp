@@ -286,6 +286,10 @@ D3D12_GPU_DESCRIPTOR_HANDLE EditorTemporalRenderingManager::GetOutputSrvHandle()
 	return srvHandles_[static_cast<size_t>(outputType)];
 }
 
+D3D12_GPU_DESCRIPTOR_HANDLE EditorTemporalRenderingManager::GetVelocitySrvHandle() const {
+	return srvHandles_[static_cast<size_t>(ResourceType::DilatedVelocity)];
+}
+
 bool EditorTemporalRenderingManager::CreateRootSignatureAndPipelineStates(
 	const std::array<IDxcBlob*, kPipelineCount>& computeShaderBlobs) {
 

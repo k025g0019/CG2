@@ -2624,6 +2624,9 @@ namespace {
 			DrawFloatRow("ピッチ", component.audioPitch, 0.01f, 0.0f, 3.0f);
 			DrawCheckboxRow("ループ", component.audioLoop);
 			DrawCheckboxRow("自動再生", component.audioPlayOnAwake);
+			DrawFloatRow("空間ブレンド", component.audioSpatialBlend, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("最小距離", component.audioMinDistance, 0.1f, 0.0f, 1000.0f);
+			DrawFloatRow("最大距離", component.audioMaxDistance, 0.1f, 0.0f, 10000.0f);
 			break;
 		case EditorComponentType::AudioReverbZone:
 			DrawAudioFilterComponent(component, "範囲内の音へリバーブを加えるコンポーネントです。");

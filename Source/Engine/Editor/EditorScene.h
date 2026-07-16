@@ -439,6 +439,9 @@ struct EditorComponent {
 		float audioPitch;  // AudioSource のピッチ (1=通常)
 		bool audioLoop;  // AudioSource のループ再生
 		bool audioPlayOnAwake;  // Awake 時に自動再生
+		float audioSpatialBlend;  // 3D空間ブレンド (0=2D, 1=3D)
+		float audioMinDistance;  // 3D最小距離
+		float audioMaxDistance;  // 3D最大距離
 		float navAgentRadius;  // NavigationAgent / NavMeshSurface の Agent 半径
 		float navAgentHeight;  // NavigationAgent / NavMeshSurface の Agent 高さ
 		float navMaxSpeed;  // NavigationAgent の最大速度

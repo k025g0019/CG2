@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #pragma warning(push, 0)
 #include <Windows.h>
@@ -293,10 +293,14 @@ namespace EditorSharedState {
 		Log(logStream, std::format("Begin CompileShader, path:{}, profile:{}",
 		                           ConvertString(filePath), ConvertString(std::wstring{profile})));
 
-		ComPtr<IDxcBlobEncoding> shaderSource; // shaderSource �͓ǂݍ��� HLSL �t�@�C���{���B
-		HRESULT hr = dxcUtils->LoadFile(filePath.c_str(), nullptr, shaderSource.GetAddressOf());
-		assert(SUCCEEDED(hr));
-
+		ComPtr<IDxcBlobEncoding> shaderSourceSource;
+		HRESULT hr = dxcUtils->LoadFile(filePath.c_str(), nullptr, shaderSourceSource.GetAddressOf());
+		if (FAILED(hr) || shaderSourceSource == nullptr) {
+			Log(logStream, std::format("Failed to load shader file: {}", ConvertString(filePath)));
+			return nullptr;
+		}
+		
+		ComPtr<IDxcBlobEncoding> shaderSource = shaderSourceSource;
 		// shaderSourceBuffer �� DXC �ɓn���\�[�X�R�[�h�̃|�C���^�E�T�C�Y�E�����R�[�h�B
 		DxcBuffer shaderSourceBuffer{};
 		shaderSourceBuffer.Ptr = shaderSource->GetBufferPointer();
@@ -675,6 +679,9 @@ namespace EditorSharedState {
 	inline ComPtr<IDxcBlob> g_planarReflectionPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_sharpenPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_finalCompositePixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_depthOfFieldPixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_motionBlurPixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_passthroughPixelShaderBlob;
 
 
 	inline ComPtr<ID3DBlob> g_signatureBlob; // g_signatureBlob / g_errorBlob �� RootSignature �V���A���C�Y���ʂƎ��s���O�B
@@ -701,6 +708,9 @@ namespace EditorSharedState {
 	inline ComPtr<ID3D12PipelineState> g_planarReflectionPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_sharpenPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_finalCompositePipelineState;
+	inline ComPtr<ID3D12PipelineState> g_depthOfFieldPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_motionBlurPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_passthroughPipelineState;
 	inline EditorDepthHierarchyManager g_depthHierarchyManager;
 	inline EditorGpuCullingManager g_gpuCullingManager;
 	inline EditorPostProcessQualityManager g_postProcessQualityManager;

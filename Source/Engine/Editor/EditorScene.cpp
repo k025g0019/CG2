@@ -643,7 +643,10 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 			     << component.sliderValue << "|"
 			     << component.sliderMinValue << "|"
 			     << component.sliderMaxValue << "|"
-			     << EncodeSceneToken(component.sliderOnValueChangedFunction) << "\n";
+			     << EncodeSceneToken(component.sliderOnValueChangedFunction) << "|"
+			     << component.audioSpatialBlend << "|"
+			     << component.audioMinDistance << "|"
+			     << component.audioMaxDistance << "\n";
 
 			// C++ Script の公開変数は個数が変わるため、Component 共通行とは別の行で保存する。
 			for (const EditorScriptProperty& scriptProperty : component.scriptProperties) {
@@ -933,16 +936,21 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 					component.buttonHoverColor = {ToFloat(elements[163]), ToFloat(elements[164]), ToFloat(elements[165])};
 					component.buttonPressedColor = {ToFloat(elements[166]), ToFloat(elements[167]), ToFloat(elements[168])};
 				}
-				if (elements.size() >= 175) {
-					component.toggleValue = ToInt(elements[169]) != 0;
-					component.toggleOnValueChangedFunction = DecodeSceneToken(elements[170]);
-					component.sliderValue = ToFloat(elements[171]);
-					component.sliderMinValue = ToFloat(elements[172]);
-					component.sliderMaxValue = ToFloat(elements[173]);
-					component.sliderOnValueChangedFunction = DecodeSceneToken(elements[174]);
-				}
-				gameObject.components.push_back(component);
-				break;
+			if (elements.size() >= 175) {
+				component.toggleValue = ToInt(elements[169]) != 0;
+				component.toggleOnValueChangedFunction = DecodeSceneToken(elements[170]);
+				component.sliderValue = ToFloat(elements[171]);
+				component.sliderMinValue = ToFloat(elements[172]);
+				component.sliderMaxValue = ToFloat(elements[173]);
+				component.sliderOnValueChangedFunction = DecodeSceneToken(elements[174]);
+			}
+			if (elements.size() >= 178) {
+				component.audioSpatialBlend = ToFloat(elements[175]);
+				component.audioMinDistance = ToFloat(elements[176]);
+				component.audioMaxDistance = ToFloat(elements[177]);
+			}
+			gameObject.components.push_back(component);
+			break;
 			}
 		}
 		else if (elements[0] == "ScriptProperty" && elements.size() >= 19) {
@@ -1210,6 +1218,9 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.audioPitch = 1.0f;
 		component.audioLoop = false;
 		component.audioPlayOnAwake = true;
+		component.audioSpatialBlend = 1.0f;
+		component.audioMinDistance = 1.0f;
+		component.audioMaxDistance = 50.0f;
 		component.navAgentRadius = 0.5f;
 		component.navAgentHeight = 2.0f;
 		component.navMaxSpeed = 3.5f;

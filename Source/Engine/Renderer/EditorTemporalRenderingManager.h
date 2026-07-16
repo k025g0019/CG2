@@ -41,6 +41,7 @@ public:
 	void Finalize();
 
 	D3D12_GPU_DESCRIPTOR_HANDLE GetOutputSrvHandle() const;
+	D3D12_GPU_DESCRIPTOR_HANDLE GetVelocitySrvHandle() const;
 
 private:
 	enum class ResourceType : uint32_t {

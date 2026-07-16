@@ -546,40 +546,58 @@ namespace {
 		float compositeFilmGrain = 0.25f;
 		float compositeChromaticAberration = 0.15f;
 		float compositeAmbientOcclusionStrength = 0.65f;
+		bool cameraDofEnabled = false;
+		float cameraDofFocusDistance = 10.0f;
+		float cameraDofAperture = 0.1f;
+		float cameraDofFocalLength = 50.0f;
+		bool cameraMotionBlurEnabled = false;
+		float cameraMotionBlurIntensity = 0.5f;
+		float cameraNearClip = 0.3f;
+		float cameraFarClip = 1000.0f;
 	};
 
 	PostProcessSettings GetPostProcessSettings() {
+		PostProcessSettings settings;
 		for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
 			if (!gameObject.isActive) {
 				continue;
 			}
 			const EditorComponent* pp =
 				EditorComponentUtility::FindComponent(gameObject, EditorComponentType::PostProcess);
-			if (pp == nullptr || !pp->isActive) {
-				continue;
+			if (pp != nullptr && pp->isActive) {
+				settings.bloomIntensity = pp->bloomIntensity;
+				settings.bloomThreshold = pp->bloomThreshold;
+				settings.bloomSoftKnee = pp->bloomSoftKnee;
+				settings.bloomScatter = pp->bloomScatter;
+				settings.finalBrightness = pp->finalBrightness;
+				settings.aaMode = pp->aaMode;
+				settings.ssrEnabled = pp->ssrEnabled;
+				settings.compositeExposure = pp->compositeExposure;
+				settings.compositeWhitePoint = pp->compositeWhitePoint;
+				settings.compositeToneMappingMode = pp->compositeToneMappingMode;
+				settings.compositeBloomIntensity = pp->compositeBloomIntensity;
+				settings.compositeSaturation = pp->compositeSaturation;
+				settings.compositeContrast = pp->compositeContrast;
+				settings.compositeVignetteStrength = pp->compositeVignetteStrength;
+				settings.compositeVignetteRadius = pp->compositeVignetteRadius;
+				settings.compositeFilmGrain = pp->compositeFilmGrain;
+				settings.compositeChromaticAberration = pp->compositeChromaticAberration;
+				settings.compositeAmbientOcclusionStrength = pp->compositeAmbientOcclusionStrength;
 			}
-			PostProcessSettings settings;
-			settings.bloomIntensity = pp->bloomIntensity;
-			settings.bloomThreshold = pp->bloomThreshold;
-			settings.bloomSoftKnee = pp->bloomSoftKnee;
-			settings.bloomScatter = pp->bloomScatter;
-			settings.finalBrightness = pp->finalBrightness;
-			settings.aaMode = pp->aaMode;
-			settings.ssrEnabled = pp->ssrEnabled;
-			settings.compositeExposure = pp->compositeExposure;
-			settings.compositeWhitePoint = pp->compositeWhitePoint;
-			settings.compositeToneMappingMode = pp->compositeToneMappingMode;
-			settings.compositeBloomIntensity = pp->compositeBloomIntensity;
-			settings.compositeSaturation = pp->compositeSaturation;
-			settings.compositeContrast = pp->compositeContrast;
-			settings.compositeVignetteStrength = pp->compositeVignetteStrength;
-			settings.compositeVignetteRadius = pp->compositeVignetteRadius;
-			settings.compositeFilmGrain = pp->compositeFilmGrain;
-			settings.compositeChromaticAberration = pp->compositeChromaticAberration;
-			settings.compositeAmbientOcclusionStrength = pp->compositeAmbientOcclusionStrength;
-			return settings;
+			const EditorComponent* camera =
+				EditorComponentUtility::FindComponent(gameObject, EditorComponentType::Camera);
+			if (camera != nullptr && camera->isActive) {
+				settings.cameraDofEnabled = camera->cameraDofEnabled;
+				settings.cameraDofFocusDistance = camera->cameraDofFocusDistance;
+				settings.cameraDofAperture = camera->cameraDofAperture;
+				settings.cameraDofFocalLength = camera->cameraDofFocalLength;
+			settings.cameraMotionBlurEnabled = camera->cameraMotionBlurEnabled;
+			settings.cameraMotionBlurIntensity = camera->cameraMotionBlurIntensity;
+			settings.cameraNearClip = camera->cameraNearClip;
+			settings.cameraFarClip = camera->cameraFarClip;
+			}
 		}
-		return PostProcessSettings{};
+		return settings;
 	}
 }
 
@@ -635,6 +653,9 @@ void EditorRenderManager::Draw() {
 	auto& postProcessRtvHandle = g_postProcessRtvHandle;
 	auto& postProcessSrvHandleGPU = g_postProcessSrvHandleGPU;
 	auto& fxaaPipelineState = g_fxaaPipelineState;
+	auto& passthroughPipelineState = g_passthroughPipelineState;
+	auto& dofPipelineState = g_depthOfFieldPipelineState;
+	auto& motionBlurPipelineState = g_motionBlurPipelineState;
 	auto& ssaoRenderTargets = g_ssaoRenderTargets;
 	auto& ssaoRtvHandles = g_ssaoRtvHandles;
 	auto& ssaoSrvHandlesGPU = g_ssaoSrvHandlesGPU;
@@ -1263,28 +1284,26 @@ void EditorRenderManager::Draw() {
 	gameScissorRect.right = static_cast<LONG>(g_editorGameX + g_editorGameWidth);
 	gameScissorRect.bottom = static_cast<LONG>(g_editorGameY + g_editorGameHeight);
 
-	bool hasPlanarReflectionPass = false;
-	int32_t planarReflectionSourceGameObjectId = -1;
-	const EditorGameObject* planarReflectionGameObject = nullptr;
-	const EditorComponent* planarReflectionProbeComponent = nullptr;
-	const EditorSceneObject* planarReflectionSceneObject = nullptr;
-	PlanarReflectionCamera scenePlanarReflectionCamera{};
-	PlanarReflectionCamera gamePlanarReflectionCamera{};
-	bool hasScenePlanarReflectionCamera = false;
-	bool hasGamePlanarReflectionCamera = false;
+	struct PlanarReflectionProbeData {
+		int32_t sourceGameObjectId = -1;
+		const EditorGameObject* gameObject = nullptr;
+		const EditorComponent* probeComponent = nullptr;
+		const EditorSceneObject* sceneObject = nullptr;
+		PlanarReflectionCamera sceneCamera{};
+		PlanarReflectionCamera gameCamera{};
+		bool hasSceneCamera = false;
+		bool hasGameCamera = false;
+	};
 
+	std::vector<PlanarReflectionProbeData> planarProbes;
 	for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
-		if (!gameObject.isActive) {
-			continue;
-		}
+		if (!gameObject.isActive) continue;
 
 		const EditorComponent* reflectionProbeComponent =
 			EditorComponentUtility::FindComponent(gameObject, EditorComponentType::ReflectionProbe);
 		if (reflectionProbeComponent == nullptr ||
 			!reflectionProbeComponent->isActive ||
-			reflectionProbeComponent->assetPath != "Planar") {
-			continue;
-		}
+			reflectionProbeComponent->assetPath != "Planar") continue;
 
 		const EditorSceneObject* reflectionSceneObject = nullptr;
 		for (const EditorSceneObject& candidateSceneObject : editorSceneObjects) {
@@ -1299,19 +1318,29 @@ void EditorRenderManager::Draw() {
 			continue;
 		}
 
-		planarReflectionSourceGameObjectId = gameObject.id;
-		planarReflectionGameObject = &gameObject;
-		planarReflectionProbeComponent = reflectionProbeComponent;
-		planarReflectionSceneObject = reflectionSceneObject;
-		hasPlanarReflectionPass = planarReflectionRenderTarget != nullptr &&
-			planarScenePipelineState != nullptr &&
-			planarReflectionPipelineState != nullptr &&
-			materialMaskRenderTarget != nullptr &&
-			(g_isSceneViewVisible || g_isGameViewVisible);
-		break;
+		PlanarReflectionProbeData probeData;
+		probeData.sourceGameObjectId = gameObject.id;
+		probeData.gameObject = &gameObject;
+		probeData.probeComponent = reflectionProbeComponent;
+		probeData.sceneObject = reflectionSceneObject;
+		planarProbes.push_back(probeData);
 	}
 
-	if (hasPlanarReflectionPass) {
+	const D3D12_VIEWPORT planarFullViewport = {
+		0.0f, 0.0f,
+		static_cast<float>(g_renderWidth), static_cast<float>(g_renderHeight),
+		0.0f, 1.0f
+	};
+	const D3D12_RECT planarFullScissor = {0, 0, static_cast<LONG>(g_renderWidth), static_cast<LONG>(g_renderHeight)};
+	const float planarClearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+	if (!planarProbes.empty() &&
+		planarReflectionRenderTarget != nullptr &&
+		planarScenePipelineState != nullptr &&
+		planarReflectionPipelineState != nullptr &&
+		materialMaskRenderTarget != nullptr &&
+		(g_isSceneViewVisible || g_isGameViewVisible)) {
+
 		D3D12_RESOURCE_BARRIER planarReflectionBarrier{};
 		planarReflectionBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		planarReflectionBarrier.Transition.pResource = planarReflectionRenderTarget;
@@ -1330,10 +1359,8 @@ void EditorRenderManager::Draw() {
 			commandList->ResourceBarrier(1, &reflectionDepthBarrier);
 		}
 
-		commandList->ClearRenderTargetView(planarReflectionRtvHandle, hdrClearColor, 0, nullptr);
-
 		//============================================================
-		// Scene / Game ごとの反射カメラ描画
+		// 全プローブの反射カメラ描画 + 合成
 		//============================================================
 
 		auto drawPlanarReflectionView = [&](
@@ -1341,26 +1368,21 @@ void EditorRenderManager::Draw() {
 				const Matrix4x4& sourceCameraWorldMatrix,
 				const Matrix4x4& sourceViewProjectionMatrix,
 				const D3D12_VIEWPORT& targetViewport,
-				const D3D12_RECT& targetScissorRect) {
+				const D3D12_RECT& targetScissorRect,
+				const PlanarReflectionProbeData& probeData,
+				PlanarReflectionCamera& outCamera) {
 			const Vector3 sourceCameraPosition = GetCameraMatrixPosition(sourceCameraWorldMatrix);
 			const PlanarReflectionSurface reflectionSurface = BuildPlanarReflectionSurface(
-				*planarReflectionSceneObject,
-				*planarReflectionGameObject,
-				*planarReflectionProbeComponent,
+				*probeData.sceneObject,
+				*probeData.gameObject,
+				*probeData.probeComponent,
 				sourceCameraPosition);
 			const PlanarReflectionCamera reflectionCamera = MakePlanarReflectionCamera(
 				sourceCameraWorldMatrix,
 				sourceViewProjectionMatrix,
 				reflectionSurface.point,
 				reflectionSurface.normal);
-			if (isGameViewPass) {
-				gamePlanarReflectionCamera = reflectionCamera;
-				hasGamePlanarReflectionCamera = true;
-			}
-			else {
-				scenePlanarReflectionCamera = reflectionCamera;
-				hasScenePlanarReflectionCamera = true;
-			}
+			outCamera = reflectionCamera;
 
 			const Vector4 reflectionClipPlane = {
 				reflectionSurface.normal.x,
@@ -1410,34 +1432,111 @@ void EditorRenderManager::Draw() {
 			drawSceneObjects(
 				isGameViewPass,
 				planarReflectionRtvHandle,
-				planarReflectionSourceGameObjectId);
+				probeData.sourceGameObjectId);
 			defaultDrawPso = graphicsPipelineState.Get();
 
-			// 反射用の行列を通常描画へ残さないよう、そのビューだけを即座に戻す。
 			updateSceneObjectMatrices(
 				sourceViewProjectionMatrix,
 				isGameViewPass);
 			directionalLightData->cameraPosition = savedCameraPosition;
 		};
 
-		if (g_isSceneViewVisible) {
-			drawPlanarReflectionView(
-				false,
-				cameraMatrix,
-				sceneViewProjectionMatrix,
-				viewport,
-				scissorRect);
+		for (size_t probeIndex = 0; probeIndex < planarProbes.size(); ++probeIndex) {
+			const auto& probeData = planarProbes[probeIndex];
+			commandList->ClearRenderTargetView(planarReflectionRtvHandle, hdrClearColor, 0, nullptr);
+
+			PlanarReflectionCamera sceneCamera{};
+			PlanarReflectionCamera gameCamera{};
+
+			if (g_isSceneViewVisible) {
+				drawPlanarReflectionView(
+					false, cameraMatrix, sceneViewProjectionMatrix,
+					viewport, scissorRect, probeData, sceneCamera);
+			}
+			if (g_isGameViewVisible) {
+				drawPlanarReflectionView(
+					true, g_gameCameraMatrix, gameViewProjectionMatrix,
+					gameViewport, gameScissorRect, probeData, gameCamera);
+			}
+
+			// Transition planar RT to shader-readable for composite
+			D3D12_RESOURCE_BARRIER readBarrier{};
+			readBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			readBarrier.Transition.pResource = planarReflectionRenderTarget;
+			readBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+			readBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+			readBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+			commandList->ResourceBarrier(1, &readBarrier);
+
+			// Composite this probe's reflection onto hdrCompositeRenderTarget
+			if (hdrCompositeRenderTarget != nullptr) {
+				D3D12_RESOURCE_BARRIER compHdrBarrier{};
+				compHdrBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				compHdrBarrier.Transition.pResource = hdrCompositeRenderTarget;
+				compHdrBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				compHdrBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+				compHdrBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+				commandList->ResourceBarrier(1, &compHdrBarrier);
+
+				commandList->RSSetViewports(1, &planarFullViewport);
+				commandList->RSSetScissorRects(1, &planarFullScissor);
+				commandList->SetPipelineState(planarReflectionPipelineState.Get());
+
+				if (probeIndex == 0) {
+					commandList->ClearRenderTargetView(hdrCompositeRtvHandle, planarClearColor, 0, nullptr);
+				}
+				commandList->OMSetRenderTargets(1, &hdrCompositeRtvHandle, FALSE, nullptr);
+				commandList->SetGraphicsRootSignature(postProcessRootSignature.Get());
+				ID3D12DescriptorHeap* heaps[] = {srvDescriptorHeap};
+				commandList->SetDescriptorHeaps(1, heaps);
+
+				commandList->SetGraphicsRootDescriptorTable(0,
+					probeIndex == 0 ? hdrSrvHandleGPU : hdrCompositeSrvHandleGPU);
+				commandList->SetGraphicsRootDescriptorTable(1, depthSrvHandleGPU);
+				commandList->SetGraphicsRootDescriptorTable(3, materialMaskSrvHandleGPU);
+
+				float reflectionParams[40] = {};
+				auto copyMatrix = [&](uint32_t start, const Matrix4x4& m) {
+					std::memcpy(&reflectionParams[start], &m.matrix[0][0], sizeof(float) * 16u);
+				};
+				auto copyViewport = [&](uint32_t start, const D3D12_VIEWPORT& v) {
+					reflectionParams[start + 0] = v.TopLeftX;
+					reflectionParams[start + 1] = v.TopLeftY;
+					reflectionParams[start + 2] = v.Width;
+					reflectionParams[start + 3] = v.Height;
+				};
+
+				reflectionParams[0] = 1.0f / static_cast<float>(g_renderWidth);
+				reflectionParams[1] = 1.0f / static_cast<float>(g_renderHeight);
+				reflectionParams[2] = 12.0f;
+				reflectionParams[3] = 1.0f;
+
+				if (g_isSceneViewVisible) {
+					copyMatrix(4, inverseViewProjectionMatrix);
+					copyMatrix(20, sceneCamera.viewProjection);
+					copyViewport(36, viewport);
+				} else if (g_isGameViewVisible) {
+					copyMatrix(4, inverseGameViewProjectionMatrix);
+					copyMatrix(20, gameCamera.viewProjection);
+					copyViewport(36, gameViewport);
+				}
+
+				commandList->SetGraphicsRoot32BitConstants(2, 40, reflectionParams, 0);
+				commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+				commandList->DrawInstanced(3, 1, 0, 0);
+
+				compHdrBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+				compHdrBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+				commandList->ResourceBarrier(1, &compHdrBarrier);
+			}
+
+			// Transition planar RT back to RENDER_TARGET for next probe
+			readBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+			readBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+			commandList->ResourceBarrier(1, &readBarrier);
 		}
 
-		if (g_isGameViewVisible) {
-			drawPlanarReflectionView(
-				true,
-				g_gameCameraMatrix,
-				gameViewProjectionMatrix,
-				gameViewport,
-				gameScissorRect);
-		}
-
+		// Final planar RT transition back to PIXEL_SHADER_RESOURCE
 		planarReflectionBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		planarReflectionBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		commandList->ResourceBarrier(1, &planarReflectionBarrier);
@@ -1451,7 +1550,7 @@ void EditorRenderManager::Draw() {
 	}
 
 	if (g_isSceneViewVisible || g_isGameViewVisible) {
-		if (depthStencilResource != nullptr && !hasPlanarReflectionPass) {
+		if (depthStencilResource != nullptr && planarProbes.empty()) {
 			D3D12_RESOURCE_BARRIER mainDepthBarrier{};
 			mainDepthBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 			mainDepthBarrier.Transition.pResource = depthStencilResource;
@@ -1483,8 +1582,9 @@ void EditorRenderManager::Draw() {
 			commandList->DrawInstanced(static_cast<UINT>(modelData.vertices.size()), 1, 0, 0);
 		}
 
-		drawSceneObjects(false, hdrRtvHandle, -1, planarReflectionSourceGameObjectId);
-		drawReflectionMaskObjects(false, planarReflectionSourceGameObjectId);
+		int32_t firstReflectorId = planarProbes.empty() ? -1 : planarProbes[0].sourceGameObjectId;
+		drawSceneObjects(false, hdrRtvHandle, -1, firstReflectorId);
+		drawReflectionMaskObjects(false, firstReflectorId);
 	}
 
 	if (g_isGameViewVisible) {
@@ -1497,8 +1597,9 @@ void EditorRenderManager::Draw() {
 			hdrRtvHandle,
 			inverseGameViewProjectionMatrix,
 			g_gameCameraPosition);
-		drawSceneObjects(true, hdrRtvHandle, -1, planarReflectionSourceGameObjectId);
-		drawReflectionMaskObjects(true, planarReflectionSourceGameObjectId);
+		int32_t firstReflectorId = planarProbes.empty() ? -1 : planarProbes[0].sourceGameObjectId;
+		drawSceneObjects(true, hdrRtvHandle, -1, firstReflectorId);
+		drawReflectionMaskObjects(true, firstReflectorId);
 	}
 
 	if (materialMaskRenderTarget != nullptr) {
@@ -1514,7 +1615,7 @@ void EditorRenderManager::Draw() {
 
 	// Depth 郢�E�E�E�繝ｻDEPTH_WRITE 遶翫・PIXEL_SHADER_RESOURCE 邵�E�E�E�・�E�E�E�鬩匁E�E��E��E�E�E�驕假�E�E�E��E�E�E� (SSR 邵�E�E�E�・�E�E�E� SSAO 邵�E�E�E�迹夲�E�E�E��E�E�E�・�E�E�E�郢�E�E�E�竏夲�E�E�E�狗ｹ�E�E�E�蛹�E�E�E�竕ｧ邵�E�E�E�・�E�E�E�)
 	if (depthStencilResource != nullptr &&
-		(hasPlanarReflectionPass || g_isSceneViewVisible || g_isGameViewVisible)) {
+		(!planarProbes.empty() || g_isSceneViewVisible || g_isGameViewVisible)) {
 		D3D12_RESOURCE_BARRIER depthBarrier{};
 		depthBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		depthBarrier.Transition.pResource = depthStencilResource;
@@ -1529,7 +1630,7 @@ void EditorRenderManager::Draw() {
 	//================================================================
 
 	if (depthStencilResource != nullptr &&
-		(hasPlanarReflectionPass || g_isSceneViewVisible || g_isGameViewVisible)) {
+		(!planarProbes.empty() || g_isSceneViewVisible || g_isGameViewVisible)) {
 		const D3D12_RESOURCE_STATES computeReadableDepthState = static_cast<D3D12_RESOURCE_STATES>(
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
 			D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -1656,8 +1757,11 @@ void EditorRenderManager::Draw() {
 	fullScissor.bottom = static_cast<LONG>(g_renderHeight);
 
 	float clearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-	D3D12_GPU_DESCRIPTOR_HANDLE hdrPostSourceSrvHandle = hdrSrvHandleGPU;
-	ID3D12Resource* hdrPostSourceResource = hdrRenderTarget;
+	const bool hasPlanarReflections = !planarProbes.empty();
+	D3D12_GPU_DESCRIPTOR_HANDLE hdrPostSourceSrvHandle = hasPlanarReflections
+		? hdrCompositeSrvHandleGPU : hdrSrvHandleGPU;
+	ID3D12Resource* hdrPostSourceResource = hasPlanarReflections
+		? hdrCompositeRenderTarget : hdrRenderTarget;
 
 	//================================================================
 	// SSR (Screen Space Reflection)
@@ -1727,70 +1831,6 @@ void EditorRenderManager::Draw() {
 		ssaoBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		ssaoBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		commandList->ResourceBarrier(1, &ssaoBarrier);
-	}
-
-	// Planar Reflection
-	if (hasPlanarReflectionPass && hdrCompositeRenderTarget != nullptr) {
-		D3D12_RESOURCE_BARRIER compositeBarrier{};
-		compositeBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		compositeBarrier.Transition.pResource = hdrCompositeRenderTarget;
-		compositeBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-		compositeBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		compositeBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-		commandList->ResourceBarrier(1, &compositeBarrier);
-
-		commandList->SetPipelineState(planarReflectionPipelineState.Get());
-		commandList->RSSetViewports(1, &fullViewport);
-		commandList->RSSetScissorRects(1, &fullScissor);
-		commandList->OMSetRenderTargets(1, &hdrCompositeRtvHandle, FALSE, nullptr);
-		commandList->ClearRenderTargetView(hdrCompositeRtvHandle, clearColor, 0, nullptr);
-		commandList->SetGraphicsRootDescriptorTable(0, hdrSrvHandleGPU);
-		commandList->SetGraphicsRootDescriptorTable(1, depthSrvHandleGPU);
-		commandList->SetGraphicsRootDescriptorTable(3, materialMaskSrvHandleGPU);
-
-		float reflectionParams[40] = {};
-		auto copyMatrixToReflectionParams = [&](
-				uint32_t startIndex,
-				const Matrix4x4& matrixValue) {
-			std::memcpy(
-				&reflectionParams[startIndex],
-				&matrixValue.matrix[0][0],
-				sizeof(float) * 16u);
-		};
-		auto copyViewportToReflectionParams = [&](
-				uint32_t startIndex,
-				const D3D12_VIEWPORT& viewportValue) {
-			reflectionParams[startIndex + 0u] = viewportValue.TopLeftX;
-			reflectionParams[startIndex + 1u] = viewportValue.TopLeftY;
-			reflectionParams[startIndex + 2u] = viewportValue.Width;
-			reflectionParams[startIndex + 3u] = viewportValue.Height;
-		};
-
-		reflectionParams[0] = 1.0f / static_cast<float>(g_renderWidth);
-		reflectionParams[1] = 1.0f / static_cast<float>(g_renderHeight);
-		reflectionParams[2] = 12.0f;
-		reflectionParams[3] = 1.0f;
-
-		if (hasScenePlanarReflectionCamera) {
-			copyMatrixToReflectionParams(4u, inverseViewProjectionMatrix);
-			copyMatrixToReflectionParams(20u, scenePlanarReflectionCamera.viewProjection);
-			copyViewportToReflectionParams(36u, viewport);
-		}
-		else if (hasGamePlanarReflectionCamera) {
-			copyMatrixToReflectionParams(4u, inverseGameViewProjectionMatrix);
-			copyMatrixToReflectionParams(20u, gamePlanarReflectionCamera.viewProjection);
-			copyViewportToReflectionParams(36u, gameViewport);
-		}
-
-		commandList->SetGraphicsRoot32BitConstants(2, 40, reflectionParams, 0);
-		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		commandList->DrawInstanced(3, 1, 0, 0);
-
-		compositeBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-		compositeBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		commandList->ResourceBarrier(1, &compositeBarrier);
-		hdrPostSourceSrvHandle = hdrCompositeSrvHandleGPU;
-		hdrPostSourceResource = hdrCompositeRenderTarget;
 	}
 
 	//================================================================
@@ -1886,6 +1926,84 @@ void EditorRenderManager::Draw() {
 
 	if (isQualityBloomExecuted) {
 		finalBloomSrvHandle = g_postProcessQualityManager.GetBloomSrvHandle();
+	}
+
+	//================================================================
+	// Depth of Field: HDR scene color + depth を元に被写界深度ブラー
+	// Always reads from original HDR (hdrRenderTarget), writes to composite RT.
+	//================================================================
+	if (ppSettings.cameraDofEnabled && dofPipelineState != nullptr && hdrCompositeRenderTarget != nullptr) {
+		D3D12_RESOURCE_BARRIER dofBarrier{};
+		dofBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		dofBarrier.Transition.pResource = hdrCompositeRenderTarget;
+		dofBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		dofBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		dofBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		commandList->ResourceBarrier(1, &dofBarrier);
+
+		commandList->RSSetViewports(1, &fullViewport);
+		commandList->RSSetScissorRects(1, &fullScissor);
+		commandList->OMSetRenderTargets(1, &hdrCompositeRtvHandle, FALSE, nullptr);
+		float dofClearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+		commandList->ClearRenderTargetView(hdrCompositeRtvHandle, dofClearColor, 0, nullptr);
+		ID3D12DescriptorHeap* heaps[] = {srvDescriptorHeap};
+		commandList->SetDescriptorHeaps(1, heaps);
+		commandList->SetGraphicsRootSignature(postProcessRootSignature.Get());
+		commandList->SetPipelineState(dofPipelineState.Get());
+		commandList->SetGraphicsRootDescriptorTable(0, hdrSrvHandleGPU);
+		commandList->SetGraphicsRootDescriptorTable(1, depthSrvHandleGPU);
+		float dofParams[4] = {
+			ppSettings.cameraDofFocusDistance,
+			ppSettings.cameraDofAperture * 5.0f,
+			ppSettings.cameraNearClip,
+			ppSettings.cameraFarClip
+		};
+		commandList->SetGraphicsRoot32BitConstants(2, 4, dofParams, 0);
+		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		commandList->DrawInstanced(3, 1, 0, 0);
+
+		dofBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		dofBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		commandList->ResourceBarrier(1, &dofBarrier);
+		hdrPostSourceSrvHandle = hdrCompositeSrvHandleGPU;
+	}
+
+	//================================================================
+	// Motion Blur: velocity を使って移動ブラー
+	// Reads current HDR source (original or DOF output), writes back to hdrRenderTarget.
+	//================================================================
+	if (ppSettings.cameraMotionBlurEnabled && ppSettings.aaMode == 3 && motionBlurPipelineState != nullptr) {
+		D3D12_RESOURCE_BARRIER mbBarrier{};
+		mbBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		mbBarrier.Transition.pResource = hdrRenderTarget;
+		mbBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		mbBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		mbBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		commandList->ResourceBarrier(1, &mbBarrier);
+
+		commandList->RSSetViewports(1, &fullViewport);
+		commandList->RSSetScissorRects(1, &fullScissor);
+		commandList->OMSetRenderTargets(1, &hdrRtvHandle, FALSE, nullptr);
+		float mbClearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+		commandList->ClearRenderTargetView(hdrRtvHandle, mbClearColor, 0, nullptr);
+		ID3D12DescriptorHeap* heaps[] = {srvDescriptorHeap};
+		commandList->SetDescriptorHeaps(1, heaps);
+		commandList->SetGraphicsRootSignature(postProcessRootSignature.Get());
+		commandList->SetPipelineState(motionBlurPipelineState.Get());
+		commandList->SetGraphicsRootDescriptorTable(0, hdrPostSourceSrvHandle);
+		commandList->SetGraphicsRootDescriptorTable(1, g_temporalRenderingManager.GetVelocitySrvHandle());
+		float mbParams[2] = {
+			ppSettings.cameraMotionBlurIntensity,
+			8.0f
+		};
+		commandList->SetGraphicsRoot32BitConstants(2, 2, mbParams, 0);
+		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		commandList->DrawInstanced(3, 1, 0, 0);
+
+		mbBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		mbBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		commandList->ResourceBarrier(1, &mbBarrier);
+		hdrPostSourceSrvHandle = hdrSrvHandleGPU;
 	}
 
 	// Final tone mapping + bloom composite: HDR RT + BloomA 遶翫・LDR RT

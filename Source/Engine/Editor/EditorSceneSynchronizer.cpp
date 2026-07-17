@@ -61,6 +61,33 @@ namespace {
 		sceneObject.materialData->reflectance = reflectionStrength;
 		sceneObject.materialData->ior = rendererComponent != nullptr ? rendererComponent->ior : 1.0f;
 		sceneObject.materialData->emissionStrength = rendererComponent != nullptr ? rendererComponent->emissionStrength : 0.0f;
+		sceneObject.materialData->emissionColor =
+			rendererComponent != nullptr ? rendererComponent->emissionColor : Vector3{1.0f, 1.0f, 1.0f};
+		sceneObject.materialData->normalScale = rendererComponent != nullptr ? rendererComponent->normalScale : 1.0f;
+		sceneObject.materialData->ambientOcclusionStrength =
+			rendererComponent != nullptr ? rendererComponent->ambientOcclusionStrength : 1.0f;
+		sceneObject.materialData->heightScale = rendererComponent != nullptr ? rendererComponent->heightScale : 0.02f;
+		sceneObject.materialData->alphaCutoff = rendererComponent != nullptr ? rendererComponent->alphaCutoff : 0.5f;
+		sceneObject.materialData->clearCoat = rendererComponent != nullptr ? rendererComponent->clearCoat : 0.0f;
+		sceneObject.materialData->clearCoatRoughness =
+			rendererComponent != nullptr ? rendererComponent->clearCoatRoughness : 0.1f;
+		sceneObject.materialData->transmission = rendererComponent != nullptr ? rendererComponent->transmission : 0.0f;
+		sceneObject.materialData->subsurface = rendererComponent != nullptr ? rendererComponent->subsurface : 0.0f;
+		sceneObject.materialData->anisotropy = rendererComponent != nullptr ? rendererComponent->anisotropy : 0.0f;
+		sceneObject.materialData->anisotropyRotation =
+			rendererComponent != nullptr ? rendererComponent->anisotropyRotation : 0.0f;
+		sceneObject.materialData->specularTint = rendererComponent != nullptr ? rendererComponent->specularTint : 0.0f;
+		sceneObject.materialData->sheen = rendererComponent != nullptr ? rendererComponent->sheen : 0.0f;
+		sceneObject.materialData->sheenTint = rendererComponent != nullptr ? rendererComponent->sheenTint : 0.5f;
+		sceneObject.materialData->alphaMode = rendererComponent != nullptr ? rendererComponent->alphaMode : 0;
+		sceneObject.materialData->doubleSided =
+			rendererComponent != nullptr && rendererComponent->doubleSided ? TRUE : FALSE;
+		sceneObject.materialData->uvTiling = rendererComponent != nullptr
+			? Vector2{rendererComponent->uvTiling.x, rendererComponent->uvTiling.y}
+			: Vector2{1.0f, 1.0f};
+		sceneObject.materialData->uvOffset = rendererComponent != nullptr
+			? Vector2{rendererComponent->uvOffset.x, rendererComponent->uvOffset.y}
+			: Vector2{0.0f, 0.0f};
 		sceneObject.materialData->reflectionMode = GetReflectionModeValue(reflectionProbeComponent);
 		sceneObject.materialData->reflectionProbeIntensity =
 			reflectionProbeComponent != nullptr && reflectionProbeComponent->isActive
@@ -290,6 +317,8 @@ void EditorSceneSynchronizer::Update(
 
 			// Renderer 側で画像未指定なら、FBX / OBJ が持つ元マテリアルの画像をそのまま使う。
 			if (rendererTexturePath.empty() &&
+				modelRenderer != nullptr &&
+				modelRenderer->useImportedMaterialTextures &&
 				hasModelData &&
 				!modelData.material.textureFilePath.empty()) {
 				rendererTexturePath = modelData.material.textureFilePath;
@@ -303,6 +332,68 @@ void EditorSceneSynchronizer::Update(
 				sceneObjectManager_->ClearCustomTexture(sceneObjectIndex);
 				sceneObject.materialData->useTexture = FALSE;
 			}
+
+			//============================================================
+			// PBR Map を個別 SRV へ同期
+			//============================================================
+
+			auto synchronizeMaterialTexture = [this, sceneObjectIndex](
+				EditorMaterialTextureSlot textureSlot,
+				const std::string& textureAssetPath,
+				int32_t& useTextureFlag) {
+				if (!textureAssetPath.empty() &&
+					sceneObjectManager_->SetMaterialTexture(sceneObjectIndex, textureSlot, textureAssetPath)) {
+					useTextureFlag = TRUE;
+					return;
+				}
+
+				sceneObjectManager_->ClearMaterialTexture(sceneObjectIndex, textureSlot);
+				useTextureFlag = FALSE;
+			};
+
+			const bool useImportedMaterialTextures =
+				modelRenderer != nullptr && modelRenderer->useImportedMaterialTextures;
+			auto selectMaterialTexturePath = [useImportedMaterialTextures](
+				const std::string& manualTexturePath,
+				const std::string& importedTexturePath) -> const std::string& {
+				// Inspector で指定した画像を優先し、空欄の場合だけ FBX 内の画像を使う。
+				return !manualTexturePath.empty() || !useImportedMaterialTextures
+					? manualTexturePath
+					: importedTexturePath;
+			};
+
+			const EditorComponent emptyRenderer{};
+			const EditorComponent& materialComponent = modelRenderer != nullptr ? *modelRenderer : emptyRenderer;
+			const MaterialData emptyMaterial{};
+			const MaterialData& importedMaterial = hasModelData ? modelData.material : emptyMaterial;
+			synchronizeMaterialTexture(
+				EditorMaterialTextureSlot::Normal,
+				selectMaterialTexturePath(materialComponent.normalTextureAssetPath, importedMaterial.normalTextureFilePath),
+				sceneObject.materialData->useNormalMap);
+			synchronizeMaterialTexture(
+				EditorMaterialTextureSlot::Metallic,
+				selectMaterialTexturePath(materialComponent.metallicTextureAssetPath, importedMaterial.metallicTextureFilePath),
+				sceneObject.materialData->useMetallicMap);
+			synchronizeMaterialTexture(
+				EditorMaterialTextureSlot::Roughness,
+				selectMaterialTexturePath(materialComponent.roughnessTextureAssetPath, importedMaterial.roughnessTextureFilePath),
+				sceneObject.materialData->useRoughnessMap);
+			synchronizeMaterialTexture(
+				EditorMaterialTextureSlot::AmbientOcclusion,
+				selectMaterialTexturePath(materialComponent.ambientOcclusionTextureAssetPath, importedMaterial.ambientOcclusionTextureFilePath),
+				sceneObject.materialData->useAmbientOcclusionMap);
+			synchronizeMaterialTexture(
+				EditorMaterialTextureSlot::Emission,
+				selectMaterialTexturePath(materialComponent.emissionTextureAssetPath, importedMaterial.emissionTextureFilePath),
+				sceneObject.materialData->useEmissionMap);
+			synchronizeMaterialTexture(
+				EditorMaterialTextureSlot::Height,
+				selectMaterialTexturePath(materialComponent.heightTextureAssetPath, importedMaterial.heightTextureFilePath),
+				sceneObject.materialData->useHeightMap);
+			synchronizeMaterialTexture(
+				EditorMaterialTextureSlot::Opacity,
+				selectMaterialTexturePath(materialComponent.opacityTextureAssetPath, importedMaterial.opacityTextureFilePath),
+				sceneObject.materialData->useOpacityMap);
 
 			if (!modelAssetPath.empty() &&
 				!EditorAssetUtility::IsBuiltInPrimitiveAssetPath(modelAssetPath)) {
@@ -319,7 +410,8 @@ void EditorSceneSynchronizer::Update(
 				sceneObjectManager_->ClearCustomModelMesh(sceneObjectIndex);
 			}
 
-			sceneObject.cullMode = 0;
+			sceneObject.cullMode =
+				modelRenderer != nullptr && modelRenderer->doubleSided ? 2 : 0;
 			const std::string& objectName = gameObject.name;
 		if (objectName.find("SkyDome") != std::string::npos ||
 			objectName.find("skydome") != std::string::npos ||

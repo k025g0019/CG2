@@ -49,6 +49,7 @@
 #include "EditorRuntimeManager.h"
 #include "EditorDepthHierarchyManager.h"
 #include "EditorGpuCullingManager.h"
+#include "EditorGBufferManager.h"
 #include "EditorPostProcessQualityManager.h"
 #include "EditorTemporalRenderingManager.h"
 #include "EditorScene.h"
@@ -293,10 +294,14 @@ namespace EditorSharedState {
 		Log(logStream, std::format("Begin CompileShader, path:{}, profile:{}",
 		                           ConvertString(filePath), ConvertString(std::wstring{profile})));
 
-		ComPtr<IDxcBlobEncoding> shaderSource; // shaderSource �͓ǂݍ��� HLSL �t�@�C���{���B
-		HRESULT hr = dxcUtils->LoadFile(filePath.c_str(), nullptr, shaderSource.GetAddressOf());
-		assert(SUCCEEDED(hr));
-
+		ComPtr<IDxcBlobEncoding> shaderSourceSource;
+		HRESULT hr = dxcUtils->LoadFile(filePath.c_str(), nullptr, shaderSourceSource.GetAddressOf());
+		if (FAILED(hr) || shaderSourceSource == nullptr) {
+			Log(logStream, std::format("Failed to load shader file: {}", ConvertString(filePath)));
+			return nullptr;
+		}
+		
+		ComPtr<IDxcBlobEncoding> shaderSource = shaderSourceSource;
 		// shaderSourceBuffer �� DXC �ɓn���\�[�X�R�[�h�̃|�C���^�E�T�C�Y�E�����R�[�h�B
 		DxcBuffer shaderSourceBuffer{};
 		shaderSourceBuffer.Ptr = shaderSource->GetBufferPointer();
@@ -529,8 +534,10 @@ namespace EditorSharedState {
 	constexpr uint32_t kRuntimeTextureCount = 4; // kRuntimeTextureCount �͋N�����ɌŒ�Ŋm�ۂ���W�� Texture ���B
 	constexpr uint32_t kRuntimeSwapChainBufferCount = 2; // kRuntimeSwapChainBufferCount �� SwapChain �� back buffer ���B
 	constexpr uint32_t kRuntimeSpriteIndexCount = 6; // kRuntimeSpriteIndexCount �� Sprite �l�p�`�� 2 �O�p�`�ŕ`�� index ���B
-	constexpr uint32_t kRuntimeShadowMapSize = 2048; // �e�p DepthTexture �̉𑜓x�B
-	constexpr uint32_t kRuntimeShadowSrvDescriptorIndex = 15; // 0 �� ImGui�A1-4 �͌Œ� Texture�A16 �ȍ~�͌� Texture�B
+	constexpr uint32_t kRuntimeShadowMapSize = 4096; // shadow atlas size (4 lights x 2048 each)
+	constexpr uint32_t kRuntimeShadowSrvDescriptorIndex = 15;
+	constexpr uint32_t kMaxShadowLights = 4;
+	constexpr uint32_t kShadowAtlasTiles = 2; // 2x2 grid
 	constexpr uint32_t kRuntimeHdrSrvDescriptorIndex = 16; // HDR RT �� SRV �� DescriptorHeap �� 16 �ԖځB
 	constexpr uint32_t kRuntimeBloomSrvDescriptorIndexA = 17; // Bloom A �� SRV �� 17 �ԖځB
 	constexpr uint32_t kRuntimeBloomSrvDescriptorIndexB = 18; // Bloom B �� SRV �� 18 �ԖځB
@@ -675,6 +682,9 @@ namespace EditorSharedState {
 	inline ComPtr<IDxcBlob> g_planarReflectionPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_sharpenPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_finalCompositePixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_depthOfFieldPixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_motionBlurPixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_passthroughPixelShaderBlob;
 
 
 	inline ComPtr<ID3DBlob> g_signatureBlob; // g_signatureBlob / g_errorBlob �� RootSignature �V���A���C�Y���ʂƎ��s���O�B
@@ -687,6 +697,9 @@ namespace EditorSharedState {
 	inline ComPtr<ID3D12PipelineState> g_planarSurfacePipelineState;
 	inline ComPtr<ID3D12PipelineState> g_objectReflectionMaskPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_cullFrontPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_cullNonePipelineState;
+	inline ComPtr<ID3D12PipelineState> g_transparentPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_transparentCullNonePipelineState;
 	inline ComPtr<ID3D12PipelineState> g_shadowPipelineState;
 
 	// Post-process root signature and pipeline states
@@ -701,7 +714,11 @@ namespace EditorSharedState {
 	inline ComPtr<ID3D12PipelineState> g_planarReflectionPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_sharpenPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_finalCompositePipelineState;
+	inline ComPtr<ID3D12PipelineState> g_depthOfFieldPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_motionBlurPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_passthroughPipelineState;
 	inline EditorDepthHierarchyManager g_depthHierarchyManager;
+	inline EditorGBufferManager g_gBufferManager;
 	inline EditorGpuCullingManager g_gpuCullingManager;
 	inline EditorPostProcessQualityManager g_postProcessQualityManager;
 	inline EditorTemporalRenderingManager g_temporalRenderingManager;
@@ -1278,6 +1295,9 @@ namespace EditorSharedState {
 		// 深度依存の Compute Texture も Scene 描画サイズへ追従させる。
 		const bool isDepthHierarchyResized = g_depthHierarchyManager.Resize(g_renderWidth, g_renderHeight);
 		assert(isDepthHierarchyResized);
+
+		const bool isGBufferResized = g_gBufferManager.Resize(g_renderWidth, g_renderHeight);
+		assert(isGBufferResized);
 
 		const bool isTemporalRenderingResized = g_temporalRenderingManager.Resize(g_renderWidth, g_renderHeight);
 		assert(isTemporalRenderingResized);

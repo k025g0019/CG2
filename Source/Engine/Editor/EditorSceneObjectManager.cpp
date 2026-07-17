@@ -52,6 +52,11 @@ int32_t EditorSceneObjectManager::CreateObject(
 	sceneObject.customTextureUploadResource = nullptr;
 	sceneObject.customTextureSrvGpuHandle = {};
 	sceneObject.customTextureDescriptorIndex = -1;
+	sceneObject.materialTextureAssetPaths.fill("");
+	sceneObject.materialTextureResources.fill(nullptr);
+	sceneObject.materialTextureUploadResources.fill(nullptr);
+	sceneObject.materialTextureSrvGpuHandles.fill({});
+	sceneObject.materialTextureDescriptorIndices.fill(-1);
 	sceneObject.customMeshVertexResource = nullptr;
 	sceneObject.customMeshVertexBufferView = {};
 	sceneObject.customMeshVertexCount = 0u;
@@ -137,6 +142,34 @@ int32_t EditorSceneObjectManager::CreateObject(
 	sceneObject.materialData->reflectionProbeExtent = {1.0f, 1.0f, 1.0f};
 	sceneObject.materialData->materialPadding2 = 0.0f;
 	sceneObject.materialData->uvTransform = MakeIdentity4x4();
+	sceneObject.materialData->normalScale = 1.0f;
+	sceneObject.materialData->ambientOcclusionStrength = 1.0f;
+	sceneObject.materialData->heightScale = 0.02f;
+	sceneObject.materialData->alphaCutoff = 0.5f;
+	sceneObject.materialData->clearCoat = 0.0f;
+	sceneObject.materialData->clearCoatRoughness = 0.1f;
+	sceneObject.materialData->transmission = 0.0f;
+	sceneObject.materialData->subsurface = 0.0f;
+	sceneObject.materialData->anisotropy = 0.0f;
+	sceneObject.materialData->anisotropyRotation = 0.0f;
+	sceneObject.materialData->specularTint = 0.0f;
+	sceneObject.materialData->sheen = 0.0f;
+	sceneObject.materialData->emissionColor = {1.0f, 1.0f, 1.0f};
+	sceneObject.materialData->sheenTint = 0.5f;
+	sceneObject.materialData->useNormalMap = FALSE;
+	sceneObject.materialData->useMetallicMap = FALSE;
+	sceneObject.materialData->useRoughnessMap = FALSE;
+	sceneObject.materialData->useAmbientOcclusionMap = FALSE;
+	sceneObject.materialData->useEmissionMap = FALSE;
+	sceneObject.materialData->useHeightMap = FALSE;
+	sceneObject.materialData->useOpacityMap = FALSE;
+	sceneObject.materialData->alphaMode = 0;
+	sceneObject.materialData->doubleSided = FALSE;
+	sceneObject.materialData->materialExtensionPadding0 = 0.0f;
+	sceneObject.materialData->materialExtensionPadding1 = 0.0f;
+	sceneObject.materialData->materialExtensionPadding2 = 0.0f;
+	sceneObject.materialData->uvTiling = {1.0f, 1.0f};
+	sceneObject.materialData->uvOffset = {0.0f, 0.0f};
 	sceneObject.cullMode = 0;
 	sceneObjects_.push_back(sceneObject);
 
@@ -159,13 +192,112 @@ bool EditorSceneObjectManager::SetCustomTexture(int32_t sceneObjectIndex, const 
 		return true;
 	}
 
-	if (!std::filesystem::exists(textureAssetPath)) {
+	ClearCustomTexture(sceneObjectIndex);
+	const bool isLoaded = LoadTextureResource(
+		textureAssetPath,
+		sceneObject.customTextureResource,
+		sceneObject.customTextureUploadResource,
+		sceneObject.customTextureSrvGpuHandle,
+		sceneObject.customTextureDescriptorIndex);
+
+	if (isLoaded) {
+		sceneObject.textureAssetPath = textureAssetPath;
+	}
+
+	return isLoaded;
+}
+
+bool EditorSceneObjectManager::SetMaterialTexture(
+	int32_t sceneObjectIndex,
+	EditorMaterialTextureSlot textureSlot,
+	const std::string& textureAssetPath) {
+	const int32_t textureSlotIndex = static_cast<int32_t>(textureSlot);
+	if (sceneObjectIndex < 0 ||
+		sceneObjectIndex >= static_cast<int32_t>(sceneObjects_.size()) ||
+		textureSlotIndex < 0 ||
+		textureSlotIndex >= static_cast<int32_t>(EditorMaterialTextureSlot::Count) ||
+		textureAssetPath.empty()) {
 		return false;
 	}
 
-	ClearCustomTexture(sceneObjectIndex);
+	EditorSceneObject& sceneObject = sceneObjects_[static_cast<size_t>(sceneObjectIndex)];
+	const size_t textureSlotArrayIndex = static_cast<size_t>(textureSlotIndex);
+	if (sceneObject.materialTextureAssetPaths[textureSlotArrayIndex] == textureAssetPath &&
+		sceneObject.materialTextureResources[textureSlotArrayIndex] != nullptr &&
+		sceneObject.materialTextureSrvGpuHandles[textureSlotArrayIndex].ptr != 0u) {
+		return true;
+	}
 
-	int32_t descriptorIndex = AcquireCustomTextureDescriptorIndex();
+	ClearMaterialTexture(sceneObjectIndex, textureSlot);
+	const bool isLoaded = LoadTextureResource(
+		textureAssetPath,
+		sceneObject.materialTextureResources[textureSlotArrayIndex],
+		sceneObject.materialTextureUploadResources[textureSlotArrayIndex],
+		sceneObject.materialTextureSrvGpuHandles[textureSlotArrayIndex],
+		sceneObject.materialTextureDescriptorIndices[textureSlotArrayIndex]);
+
+	if (isLoaded) {
+		sceneObject.materialTextureAssetPaths[textureSlotArrayIndex] = textureAssetPath;
+	}
+
+	return isLoaded;
+}
+
+void EditorSceneObjectManager::ClearCustomTexture(int32_t sceneObjectIndex) {
+	if (sceneObjectIndex < 0 ||
+		sceneObjectIndex >= static_cast<int32_t>(sceneObjects_.size())) {
+		return;
+	}
+
+	EditorSceneObject& sceneObject = sceneObjects_[static_cast<size_t>(sceneObjectIndex)];
+	ReleaseTextureResource(
+		sceneObject.customTextureResource,
+		sceneObject.customTextureUploadResource,
+		sceneObject.customTextureSrvGpuHandle,
+		sceneObject.customTextureDescriptorIndex);
+	sceneObject.textureAssetPath.clear();
+}
+
+void EditorSceneObjectManager::ClearMaterialTexture(
+	int32_t sceneObjectIndex,
+	EditorMaterialTextureSlot textureSlot) {
+	const int32_t textureSlotIndex = static_cast<int32_t>(textureSlot);
+	if (sceneObjectIndex < 0 ||
+		sceneObjectIndex >= static_cast<int32_t>(sceneObjects_.size()) ||
+		textureSlotIndex < 0 ||
+		textureSlotIndex >= static_cast<int32_t>(EditorMaterialTextureSlot::Count)) {
+		return;
+	}
+
+	EditorSceneObject& sceneObject = sceneObjects_[static_cast<size_t>(sceneObjectIndex)];
+	const size_t textureSlotArrayIndex = static_cast<size_t>(textureSlotIndex);
+	ReleaseTextureResource(
+		sceneObject.materialTextureResources[textureSlotArrayIndex],
+		sceneObject.materialTextureUploadResources[textureSlotArrayIndex],
+		sceneObject.materialTextureSrvGpuHandles[textureSlotArrayIndex],
+		sceneObject.materialTextureDescriptorIndices[textureSlotArrayIndex]);
+	sceneObject.materialTextureAssetPaths[textureSlotArrayIndex].clear();
+}
+
+void EditorSceneObjectManager::ClearAllMaterialTextures(int32_t sceneObjectIndex) {
+	for (int32_t textureSlotIndex = 0;
+		 textureSlotIndex < static_cast<int32_t>(EditorMaterialTextureSlot::Count);
+		 textureSlotIndex++) {
+		ClearMaterialTexture(sceneObjectIndex, static_cast<EditorMaterialTextureSlot>(textureSlotIndex));
+	}
+}
+
+bool EditorSceneObjectManager::LoadTextureResource(
+	const std::string& textureAssetPath,
+	ID3D12Resource*& textureResource,
+	ID3D12Resource*& uploadResource,
+	D3D12_GPU_DESCRIPTOR_HANDLE& srvGpuHandle,
+	int32_t& descriptorIndex) {
+	if (device_ == nullptr || textureAssetPath.empty() || !std::filesystem::exists(textureAssetPath)) {
+		return false;
+	}
+
+	descriptorIndex = AcquireCustomTextureDescriptorIndex();
 	if (descriptorIndex < 0) {
 		return false;
 	}
@@ -173,59 +305,51 @@ bool EditorSceneObjectManager::SetCustomTexture(int32_t sceneObjectIndex, const 
 	using namespace EditorSharedState;
 
 	DirectX::ScratchImage mipImages = LoadTexture(ConvertString(textureAssetPath));
-	DirectX::TexMetadata textureMetadata = mipImages.GetMetadata();
-	ID3D12Resource* textureResource = CreateTextureResource(device_, textureMetadata);
+	const DirectX::TexMetadata textureMetadata = mipImages.GetMetadata();
+	textureResource = CreateTextureResource(device_, textureMetadata);
 	if (textureResource == nullptr) {
 		ReleaseCustomTextureDescriptorIndex(descriptorIndex);
+		descriptorIndex = -1;
 		return false;
 	}
 
-	HRESULT hr = g_commandAllocator->Reset();
-	if (FAILED(hr)) {
-		textureResource->Release();
-		ReleaseCustomTextureDescriptorIndex(descriptorIndex);
+	HRESULT commandResult = g_commandAllocator->Reset();
+	if (FAILED(commandResult)) {
+		ReleaseTextureResource(textureResource, uploadResource, srvGpuHandle, descriptorIndex);
 		return false;
 	}
 
-	hr = g_commandList->Reset(g_commandAllocator.Get(), nullptr);
-	if (FAILED(hr)) {
-		textureResource->Release();
-		ReleaseCustomTextureDescriptorIndex(descriptorIndex);
+	commandResult = g_commandList->Reset(g_commandAllocator.Get(), nullptr);
+	if (FAILED(commandResult)) {
+		ReleaseTextureResource(textureResource, uploadResource, srvGpuHandle, descriptorIndex);
 		return false;
 	}
 
-	ID3D12Resource* uploadResource = UploadTextureData(device_, g_commandList.Get(), textureResource, mipImages);
+	uploadResource = UploadTextureData(device_, g_commandList.Get(), textureResource, mipImages);
 	if (uploadResource == nullptr) {
-		textureResource->Release();
-		ReleaseCustomTextureDescriptorIndex(descriptorIndex);
+		ReleaseTextureResource(textureResource, uploadResource, srvGpuHandle, descriptorIndex);
 		return false;
 	}
 
-	hr = g_commandList->Close();
-	if (FAILED(hr)) {
-		uploadResource->Release();
-		textureResource->Release();
-		ReleaseCustomTextureDescriptorIndex(descriptorIndex);
+	commandResult = g_commandList->Close();
+	if (FAILED(commandResult)) {
+		ReleaseTextureResource(textureResource, uploadResource, srvGpuHandle, descriptorIndex);
 		return false;
 	}
 
 	ID3D12CommandList* commandLists[] = {g_commandList.Get()};
 	g_commandQueue->ExecuteCommandLists(1, commandLists);
 	g_fenceValue++;
-	hr = g_commandQueue->Signal(g_fence.Get(), g_fenceValue);
-	if (FAILED(hr)) {
-		uploadResource->Release();
-		textureResource->Release();
-		ReleaseCustomTextureDescriptorIndex(descriptorIndex);
+	commandResult = g_commandQueue->Signal(g_fence.Get(), g_fenceValue);
+	if (FAILED(commandResult)) {
+		ReleaseTextureResource(textureResource, uploadResource, srvGpuHandle, descriptorIndex);
 		return false;
 	}
 
 	if (g_fence->GetCompletedValue() < g_fenceValue) {
-		hr = g_fence->SetEventOnCompletion(g_fenceValue, g_fenceEvent);
-		if (FAILED(hr)) {
-			uploadResource->Release();
-			textureResource->Release();
-			ReleaseCustomTextureDescriptorIndex(descriptorIndex);
+		commandResult = g_fence->SetEventOnCompletion(g_fenceValue, g_fenceEvent);
+		if (FAILED(commandResult)) {
+			ReleaseTextureResource(textureResource, uploadResource, srvGpuHandle, descriptorIndex);
 			return false;
 		}
 
@@ -238,44 +362,35 @@ bool EditorSceneObjectManager::SetCustomTexture(int32_t sceneObjectIndex, const 
 	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 	srvDesc.Texture2D.MipLevels = static_cast<UINT>(textureMetadata.mipLevels);
 
-	D3D12_CPU_DESCRIPTOR_HANDLE srvCpuHandle =
+	const D3D12_CPU_DESCRIPTOR_HANDLE srvCpuHandle =
 		GetCPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, static_cast<UINT>(descriptorIndex));
-	D3D12_GPU_DESCRIPTOR_HANDLE srvGpuHandle =
+	srvGpuHandle =
 		GetGPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, static_cast<UINT>(descriptorIndex));
 	device_->CreateShaderResourceView(textureResource, &srvDesc, srvCpuHandle);
-
-	sceneObject.textureAssetPath = textureAssetPath;
-	sceneObject.customTextureResource = textureResource;
-	sceneObject.customTextureUploadResource = uploadResource;
-	sceneObject.customTextureSrvGpuHandle = srvGpuHandle;
-	sceneObject.customTextureDescriptorIndex = descriptorIndex;
 	return true;
 }
 
-void EditorSceneObjectManager::ClearCustomTexture(int32_t sceneObjectIndex) {
-	if (sceneObjectIndex < 0 ||
-		sceneObjectIndex >= static_cast<int32_t>(sceneObjects_.size())) {
-		return;
+void EditorSceneObjectManager::ReleaseTextureResource(
+	ID3D12Resource*& textureResource,
+	ID3D12Resource*& uploadResource,
+	D3D12_GPU_DESCRIPTOR_HANDLE& srvGpuHandle,
+	int32_t& descriptorIndex) {
+	if (uploadResource != nullptr) {
+		uploadResource->Release();
+		uploadResource = nullptr;
 	}
 
-	EditorSceneObject& sceneObject = sceneObjects_[static_cast<size_t>(sceneObjectIndex)];
-	if (sceneObject.customTextureUploadResource != nullptr) {
-		sceneObject.customTextureUploadResource->Release();
-		sceneObject.customTextureUploadResource = nullptr;
+	if (textureResource != nullptr) {
+		textureResource->Release();
+		textureResource = nullptr;
 	}
 
-	if (sceneObject.customTextureResource != nullptr) {
-		sceneObject.customTextureResource->Release();
-		sceneObject.customTextureResource = nullptr;
+	if (descriptorIndex >= 0) {
+		ReleaseCustomTextureDescriptorIndex(descriptorIndex);
 	}
 
-	if (sceneObject.customTextureDescriptorIndex >= 0) {
-		ReleaseCustomTextureDescriptorIndex(sceneObject.customTextureDescriptorIndex);
-	}
-
-	sceneObject.textureAssetPath.clear();
-	sceneObject.customTextureSrvGpuHandle = {};
-	sceneObject.customTextureDescriptorIndex = -1;
+	srvGpuHandle = {};
+	descriptorIndex = -1;
 }
 
 bool EditorSceneObjectManager::SetCustomModelMesh(
@@ -348,6 +463,7 @@ void EditorSceneObjectManager::ReleaseObject(int32_t sceneObjectIndex) {
 
 	EditorSceneObject& sceneObject = sceneObjects_[static_cast<size_t>(sceneObjectIndex)];  // 指定番号の描画用 GPU Resource を解放する
 	ClearCustomTexture(sceneObjectIndex);
+	ClearAllMaterialTextures(sceneObjectIndex);
 	ClearCustomModelMesh(sceneObjectIndex);
 	if (sceneObject.transformationResource != nullptr) {
 		sceneObject.transformationResource->Release();

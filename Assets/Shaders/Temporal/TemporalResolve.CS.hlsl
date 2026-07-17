@@ -38,7 +38,19 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float3 historyColor = gColorHistory.SampleLevel(gLinearClampSampler, previousUv, 0.0f).rgb;
     const float3 clampedHistoryColor = clamp(historyColor, minimumColor, maximumColor);
     const float motionAmount = saturate(length(velocity) * float(gRenderSize.x));
-    const float stableHistoryWeight = lerp(0.92f, 0.72f, motionAmount);
+    const float configuredHistoryWeight = saturate(gTemporalParameters.y);
+    const float stableHistoryWeight = lerp(configuredHistoryWeight, configuredHistoryWeight * 0.78f, motionAmount);
     const float historyWeight = stableHistoryWeight * (1.0f - saturate(reactiveMask));
-    gResolvedColor[pixelPosition] = float4(lerp(currentColor.rgb, clampedHistoryColor, historyWeight), currentColor.a);
+    float3 resolvedColor = lerp(currentColor.rgb, clampedHistoryColor, historyWeight);
+
+    const int2 pixel = int2(pixelPosition);
+    const int2 maxPixel = int2(gRenderSize) - int2(1, 1);
+    const float3 neighborAverage = (
+        gCurrentColor.Load(int3(min(pixel + int2(1, 0), maxPixel), 0)).rgb +
+        gCurrentColor.Load(int3(max(pixel - int2(1, 0), int2(0, 0)), 0)).rgb +
+        gCurrentColor.Load(int3(min(pixel + int2(0, 1), maxPixel), 0)).rgb +
+        gCurrentColor.Load(int3(max(pixel - int2(0, 1), int2(0, 0)), 0)).rgb) * 0.25f;
+    resolvedColor += (resolvedColor - neighborAverage) * saturate(gTemporalParameters.z);
+
+    gResolvedColor[pixelPosition] = float4(resolvedColor, currentColor.a);
 }

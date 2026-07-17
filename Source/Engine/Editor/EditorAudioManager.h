@@ -34,6 +34,9 @@ struct ActiveAudio {
 	AudioClip* clip = nullptr;
 	IXAudio2SourceVoice* voice = nullptr;
 	float volume = 1.0f;
+	float spatialBlend = 0.0f;
+	float minDistance = 1.0f;
+	float maxDistance = 50.0f;
 	bool loop = false;
 	AudioFilterMode filterMode = AudioFilterMode::None;
 	float filterCutoff = 1.0f;

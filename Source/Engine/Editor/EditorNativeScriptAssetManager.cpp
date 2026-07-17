@@ -1,6 +1,4 @@
-﻿#pragma warning(disable : 5045)
-
-#include "EditorNativeScriptAssetManager.h"
+﻿#include "EditorNativeScriptAssetManager.h"
 
 #include <array>
 #include <filesystem>
@@ -9,9 +7,20 @@
 
 namespace {
 	constexpr std::array<unsigned char, 3> kUtf8Bom{{0xEFu, 0xBBu, 0xBFu}};  // 保存時に先頭へ付ける UTF-8 BOM。
+
+	void ReplaceAll(std::string& text, const std::string& oldText, const std::string& newText) {
+		size_t replacePosition = 0U;
+
+		while ((replacePosition = text.find(oldText, replacePosition)) != std::string::npos) {
+			text.replace(replacePosition, oldText.size(), newText);
+			replacePosition += newText.size();
+		}
+	}
 }
 
-EditorNativeScriptAssetResult EditorNativeScriptAssetManager::CreateNativeScriptAsset(const std::string& requestedScriptName, bool isDebugBuild) {
+EditorNativeScriptAssetResult EditorNativeScriptAssetManager::CreateNativeScriptAsset(
+	const std::string& requestedScriptName,
+	bool isDebugBuild) {
 	EditorNativeScriptAssetResult result{};
 	result.sanitizedScriptName = SanitizeScriptName(requestedScriptName);
 
@@ -36,12 +45,20 @@ EditorNativeScriptAssetResult EditorNativeScriptAssetManager::CreateNativeScript
 	result.buildDebugFilePath = (scriptDirectoryPath / "build_debug.bat").generic_string();
 	result.buildReleaseFilePath = (scriptDirectoryPath / "build_release.bat").generic_string();
 	result.dllFilePath =
-		(scriptDirectoryPath / "x64" / (isDebugBuild ? "Debug" : "Release") / (result.sanitizedScriptName + ".dll")).generic_string();
+		(scriptDirectoryPath /
+		 "x64" /
+		 (isDebugBuild ? "Debug" : "Release") /
+		 (result.sanitizedScriptName + ".dll"))
+			.generic_string();
 
-	if (!WriteUtf8BomFile(result.headerFilePath, MakeHeaderText(result.sanitizedScriptName)) ||
-		!WriteUtf8BomFile(result.sourceFilePath, MakeSourceText(result.sanitizedScriptName)) ||
-		!WriteUtf8BomFile(result.buildDebugFilePath, MakeBuildScriptText(result.sanitizedScriptName, true)) ||
-		!WriteUtf8BomFile(result.buildReleaseFilePath, MakeBuildScriptText(result.sanitizedScriptName, false))) {
+	const bool isHeaderWritten = WriteUtf8BomFile(result.headerFilePath, MakeHeaderText(result.sanitizedScriptName));
+	const bool isSourceWritten = WriteUtf8BomFile(result.sourceFilePath, MakeSourceText(result.sanitizedScriptName));
+	const bool isDebugBuildFileWritten =
+		WriteUtf8BomFile(result.buildDebugFilePath, MakeBuildScriptText(result.sanitizedScriptName, true));
+	const bool isReleaseBuildFileWritten =
+		WriteUtf8BomFile(result.buildReleaseFilePath, MakeBuildScriptText(result.sanitizedScriptName, false));
+
+	if (!isHeaderWritten || !isSourceWritten || !isDebugBuildFileWritten || !isReleaseBuildFileWritten) {
 		result.message = "C++ スクリプト雛形の保存に失敗しました。";
 		return result;
 	}
@@ -71,6 +88,7 @@ std::string EditorNativeScriptAssetManager::SanitizeScriptName(const std::string
 
 	if (!sanitizedScriptName.empty()) {
 		const bool startsWithNumber = sanitizedScriptName.front() >= '0' && sanitizedScriptName.front() <= '9';
+
 		if (startsWithNumber) {
 			sanitizedScriptName.insert(sanitizedScriptName.begin(), '_');
 		}
@@ -80,118 +98,255 @@ std::string EditorNativeScriptAssetManager::SanitizeScriptName(const std::string
 }
 
 std::string EditorNativeScriptAssetManager::MakeHeaderText(const std::string& scriptName) {
-	std::ostringstream headerText;
-	headerText
-		<< "#pragma once\r\n"
-		<< "\r\n"
-		<< "#include \"EditorScriptApi.h\"\r\n"
-		<< "\r\n"
-		<< "//================================================================\r\n"
-		<< "// " << scriptName << " のユーザー編集用データ\r\n"
-		<< "//================================================================\r\n"
-		<< "\r\n"
-		<< "class " << scriptName << " {\r\n"
-		<< "public:\r\n"
-		<< "\tfloat moveSpeed = 3.0f;  // Update で移動量を決める基本速度。\r\n"
-		<< "\tfloat rotateSpeed = 1.0f;  // Update で回転量を決める基本速度。\r\n"
-		<< "\tbool isStarted = false;  // Start が呼ばれたかどうかの状態。\r\n"
-		<< "};\r\n";
-	return headerText.str();
+	std::string headerText = R"SCRIPT(#pragma once
+
+#include "EditorNativeScript.h"
+
+#include <string>
+
+//================================================================
+// __SCRIPT_NAME__ - GameObject へ追加する C++ Component
+//================================================================
+
+class __SCRIPT_NAME__ final : public EditorNativeScript {
+public:
+	__SCRIPT_NAME__();  // 公開変数と Input Action 関数を登録する。
+
+	void Start(int32_t gameObjectId) override;
+	void Update(int32_t gameObjectId, float deltaTime) override;
+	void FixedUpdate(int32_t gameObjectId, float fixedDeltaTime) override;
+	void OnCollisionEnter(const EditorScriptPhysicsEvent& physicsEvent) override;
+	void OnTriggerEnter(const EditorScriptPhysicsEvent& physicsEvent) override;
+	void Stop(int32_t gameObjectId) override;
+
+private:
+	float moveSpeed_ = 3.0f;  // Inspector から編集する移動速度。
+	float jumpImpulse_ = 5.0f;  // Inspector から編集するジャンプの瞬間力。
+	std::string startMessage_ = "__SCRIPT_NAME__::Start";  // Inspector から編集する開始ログ。
+	EditorScriptVector2 moveInput_{};  // OnMove が受けた入力を Update まで保持する。
+
+	void OnMove(const EditorScriptInputActionContext& inputContext);
+	void OnJump(const EditorScriptInputActionContext& inputContext);
+	void OnFire(const EditorScriptInputActionContext& inputContext);
+	void OnClick(const EditorScriptInputActionContext& inputContext);
+	void OnValueChanged(const EditorScriptInputActionContext& inputContext);
+};
+)SCRIPT";
+	ReplaceAll(headerText, "__SCRIPT_NAME__", scriptName);
+	return headerText;
 }
 
 std::string EditorNativeScriptAssetManager::MakeSourceText(const std::string& scriptName) {
-	std::ostringstream sourceText;
-	sourceText
-		<< "#include \"" << scriptName << ".h\"\r\n"
-		<< "\r\n"
-		<< "#include <string>\r\n"
-		<< "#include <unordered_map>\r\n"
-		<< "\r\n"
-		<< "namespace {\r\n"
-		<< "\tconst EditorScriptRuntimeApi* runtimeApi = nullptr;  // Editor 本体が渡す C++ 実行 API を保持する。\r\n"
-		<< "\tstd::unordered_map<int32_t, " << scriptName << "> scriptStates;  // GameObject ごとの実行状態を保持する。\r\n"
-		<< "\r\n"
-		<< "\t" << scriptName << "& GetState(int32_t gameObjectId) {\r\n"
-		<< "\t\treturn scriptStates[gameObjectId];\r\n"
-		<< "\t}\r\n"
-		<< "}\r\n"
-		<< "\r\n"
-		<< "extern \"C\" __declspec(dllexport) bool EditorScript_Load(uint32_t apiVersion, const EditorScriptRuntimeApi* api) {\r\n"
-		<< "\tif (apiVersion != kEditorScriptApiVersion || api == nullptr) {\r\n"
-		<< "\t\treturn false;\r\n"
-		<< "\t}\r\n"
-		<< "\r\n"
-		<< "\truntimeApi = api;  // 以後の Start / Update / FixedUpdate から使えるよう保存する。\r\n"
-		<< "\treturn true;\r\n"
-		<< "}\r\n"
-		<< "\r\n"
-		<< "extern \"C\" __declspec(dllexport) void EditorScript_Unload() {\r\n"
-		<< "\tscriptStates.clear();  // DLL 再読込前に GameObject ごとの一時状態を破棄する。\r\n"
-		<< "\truntimeApi = nullptr;\r\n"
-		<< "}\r\n"
-		<< "\r\n"
-		<< "extern \"C\" __declspec(dllexport) void EditorScript_Start(int32_t gameObjectId) {\r\n"
-		<< "\tif (runtimeApi == nullptr) {\r\n"
-		<< "\t\treturn;\r\n"
-		<< "\t}\r\n"
-		<< "\r\n"
-		<< "\t" << scriptName << "& state = GetState(gameObjectId);  // この GameObject 専用の状態を取り出す。\r\n"
-		<< "\tstate.isStarted = true;\r\n"
-		<< "}\r\n"
-		<< "\r\n"
-		<< "extern \"C\" __declspec(dllexport) void EditorScript_Update(int32_t gameObjectId, float deltaTime) {\r\n"
-		<< "\tif (runtimeApi == nullptr) {\r\n"
-		<< "\t\treturn;\r\n"
-		<< "\t}\r\n"
-		<< "\r\n"
-		<< "\t" << scriptName << "& state = GetState(gameObjectId);  // Update 内で使う速度などを持つ状態。\r\n"
-		<< "\tEditorScriptTransform transform = runtimeApi->GetTransform(gameObjectId);  // Editor 側の Transform を取得する。\r\n"
-		<< "\tconst EditorScriptVector2 moveInput = runtimeApi->GetActionVector2(gameObjectId, \"Player\", \"Move\");  // .inputactions の Player/Move を読む。\r\n"
-		<< "\r\n"
-		<< "\t//============================================================\r\n"
-		<< "\t// C++ で書き換える場所\r\n"
-		<< "\t// ここには基礎だけ書いてあるので、詳細な API は component-reference.html を見ること\r\n"
-		<< "\t// 例: 追加 Action は WasActionJustPressed(gameObjectId, \"Player\", \"Jump\") のように読む\r\n"
-		<< "\t// 例: AI センサーは GetAiSensorState(gameObjectId, EditorScriptAiSensorKindVision) のように読む\r\n"
-		<< "\t//============================================================\r\n"
-		<< "\ttransform.position.x += moveInput.x * state.moveSpeed * deltaTime;\r\n"
-		<< "\ttransform.position.z += moveInput.y * state.moveSpeed * deltaTime;\r\n"
-		<< "\r\n"
-		<< "\tif (runtimeApi->WasActionJustPressed(gameObjectId, \"Player\", \"Jump\")) {\r\n"
-		<< "\t\t// ここへジャンプや発射処理を書く。\r\n"
-		<< "\t}\r\n"
-		<< "\r\n"
-		<< "\tif (runtimeApi->IsKeyDown(EditorScriptKeyCodeQ)) {\r\n"
-		<< "\t\ttransform.rotation.y -= state.rotateSpeed * deltaTime;  // 旧来のキー入力も必要なら併用できる。\r\n"
-		<< "\t}\r\n"
-		<< "\r\n"
-		<< "\truntimeApi->SetTransform(gameObjectId, &transform);  // 計算後の Transform を Editor 側へ戻す。\r\n"
-		<< "}\r\n"
-		<< "\r\n"
-		<< "extern \"C\" __declspec(dllexport) void EditorScript_FixedUpdate(int32_t gameObjectId, float fixedDeltaTime) {\r\n"
-		<< "\tif (runtimeApi == nullptr) {\r\n"
-		<< "\t\treturn;\r\n"
-		<< "\t}\r\n"
-		<< "\r\n"
-		<< "\t(void)gameObjectId;  // 今は未使用だが、AddForce や SetVelocity を書く時に使う。\r\n"
-		<< "\t(void)fixedDeltaTime;\r\n"
-		<< "}\r\n"
-		<< "\r\n"
-		<< "extern \"C\" __declspec(dllexport) void EditorScript_OnPhysicsEvent(int32_t gameObjectId, const EditorScriptPhysicsEvent* physicsEvent) {\r\n"
-		<< "\tif (runtimeApi == nullptr || physicsEvent == nullptr) {\r\n"
-		<< "\t\treturn;\r\n"
-		<< "\t}\r\n"
-		<< "\r\n"
-		<< "\tif (physicsEvent->type == EditorScriptPhysicsEventTypeCollisionEnter) {\r\n"
-		<< "\t\t(void)gameObjectId;  // 衝突相手 ID や法線を見て処理を分岐する場所。\r\n"
-		<< "\t}\r\n"
-		<< "}\r\n"
-		<< "\r\n"
-		<< "extern \"C\" __declspec(dllexport) void EditorScript_Stop(int32_t gameObjectId) {\r\n"
-		<< "\tscriptStates.erase(gameObjectId);  // Play 停止や DLL 差し替え時に、この GameObject の一時状態を破棄する。\r\n"
-		<< "\t(void)gameObjectId;\r\n"
-		<< "}\r\n";
-	return sourceText.str();
+	std::string sourceText = R"SCRIPT(#include "__SCRIPT_NAME__.h"
+
+#include <memory>
+#include <string>
+#include <unordered_map>
+
+namespace {
+	const EditorScriptRuntimeApi* runtimeApi = nullptr;  // Editor 本体が渡す実行 API。
+	std::unordered_map<int32_t, std::unique_ptr<__SCRIPT_NAME__>> scriptStates;  // GameObject ごとの C++ Component。
+
+	__SCRIPT_NAME__& GetState(int32_t gameObjectId) {
+		std::unique_ptr<__SCRIPT_NAME__>& scriptState = scriptStates[gameObjectId];
+
+		if (scriptState == nullptr) {
+			scriptState = std::make_unique<__SCRIPT_NAME__>();
+		}
+
+		return *scriptState;
+	}
+
+	__SCRIPT_NAME__& GetMetadataState() {
+		static __SCRIPT_NAME__ metadataState;  // Play 前の Inspector が型情報だけを取得する。
+		return metadataState;
+	}
+}
+
+//================================================================
+// ユーザーが編集する C++ Component 本体
+//================================================================
+
+__SCRIPT_NAME__::__SCRIPT_NAME__() {
+	ExposeFloat("moveSpeed", "移動速度", moveSpeed_, 0.0f, 100.0f, 0.1f);
+	ExposeFloat("jumpImpulse", "ジャンプ力", jumpImpulse_, 0.0f, 100.0f, 0.1f);
+	ExposeString("startMessage", "開始メッセージ", startMessage_);
+
+	BindAction("OnMove", [this](const EditorScriptInputActionContext& inputContext) { OnMove(inputContext); });
+	BindAction("OnJump", [this](const EditorScriptInputActionContext& inputContext) { OnJump(inputContext); });
+	BindAction("OnFire", [this](const EditorScriptInputActionContext& inputContext) { OnFire(inputContext); });
+	BindAction("OnClick", [this](const EditorScriptInputActionContext& inputContext) { OnClick(inputContext); });
+	BindAction("OnValueChanged", [this](const EditorScriptInputActionContext& inputContext) { OnValueChanged(inputContext); });
+}
+
+void __SCRIPT_NAME__::Start(int32_t gameObjectId) {
+	(void)gameObjectId;
+
+	if (runtimeApi != nullptr) {
+		runtimeApi->Log(startMessage_.c_str());
+	}
+}
+
+void __SCRIPT_NAME__::Update(int32_t gameObjectId, float deltaTime) {
+	if (runtimeApi == nullptr) {
+		return;
+	}
+
+	EditorScriptTransform transform = runtimeApi->GetTransform(gameObjectId);
+	transform.position.x += moveInput_.x * moveSpeed_ * deltaTime;
+	transform.position.z += moveInput_.y * moveSpeed_ * deltaTime;
+	runtimeApi->SetTransform(gameObjectId, &transform);
+}
+
+void __SCRIPT_NAME__::FixedUpdate(int32_t gameObjectId, float fixedDeltaTime) {
+	(void)gameObjectId;
+	(void)fixedDeltaTime;  // AddForce など周期を固定した物理処理を書く。
+}
+
+void __SCRIPT_NAME__::OnCollisionEnter(const EditorScriptPhysicsEvent& physicsEvent) {
+	if (runtimeApi != nullptr) {
+		const std::string message = "OnCollisionEnter: other=" + std::to_string(physicsEvent.otherGameObjectId);
+		runtimeApi->Log(message.c_str());
+	}
+}
+
+void __SCRIPT_NAME__::OnTriggerEnter(const EditorScriptPhysicsEvent& physicsEvent) {
+	if (runtimeApi != nullptr) {
+		const std::string message = "OnTriggerEnter: other=" + std::to_string(physicsEvent.otherGameObjectId);
+		runtimeApi->Log(message.c_str());
+	}
+}
+
+void __SCRIPT_NAME__::Stop(int32_t gameObjectId) {
+	(void)gameObjectId;
+	moveInput_ = {};
+}
+
+void __SCRIPT_NAME__::OnMove(const EditorScriptInputActionContext& inputContext) {
+	moveInput_ = inputContext.phase == EditorScriptInputPhaseCanceled
+		? EditorScriptVector2{}
+		: inputContext.vector2Value;
+}
+
+void __SCRIPT_NAME__::OnJump(const EditorScriptInputActionContext& inputContext) {
+	if (runtimeApi == nullptr || inputContext.phase != EditorScriptInputPhasePerformed) {
+		return;
+	}
+
+	const EditorScriptVector3 jumpImpulse{0.0f, jumpImpulse_, 0.0f};
+	runtimeApi->AddImpulse(inputContext.gameObjectId, &jumpImpulse);
+}
+
+void __SCRIPT_NAME__::OnFire(const EditorScriptInputActionContext& inputContext) {
+	if (runtimeApi != nullptr && inputContext.phase == EditorScriptInputPhasePerformed) {
+		runtimeApi->Log("OnFire");
+	}
+}
+
+void __SCRIPT_NAME__::OnClick(const EditorScriptInputActionContext& inputContext) {
+	if (runtimeApi != nullptr && inputContext.phase == EditorScriptInputPhasePerformed) {
+		runtimeApi->Log("OnClick");
+	}
+}
+
+void __SCRIPT_NAME__::OnValueChanged(const EditorScriptInputActionContext& inputContext) {
+	if (runtimeApi == nullptr || inputContext.phase != EditorScriptInputPhasePerformed) {
+		return;
+	}
+
+	if (inputContext.valueType == EditorScriptInputValueTypeButton) {
+		runtimeApi->Log(inputContext.buttonValue > 0.5f ? "OnValueChanged: ON" : "OnValueChanged: OFF");
+		return;
+	}
+
+	const std::string message = "OnValueChanged: " + std::to_string(inputContext.vector2Value.x);
+	runtimeApi->Log(message.c_str());
+}
+
+//================================================================
+// Editor と C++ Component を接続する DLL ABI
+//================================================================
+
+extern "C" __declspec(dllexport) bool EditorScript_Load(
+	uint32_t apiVersion,
+	const EditorScriptRuntimeApi* api) {
+	if (apiVersion != kEditorScriptApiVersion || api == nullptr) {
+		return false;
+	}
+
+	runtimeApi = api;
+	return true;
+}
+
+extern "C" __declspec(dllexport) void EditorScript_Unload() {
+	scriptStates.clear();
+	runtimeApi = nullptr;
+}
+
+extern "C" __declspec(dllexport) void EditorScript_Start(int32_t gameObjectId) {
+	GetState(gameObjectId).Start(gameObjectId);
+}
+
+extern "C" __declspec(dllexport) void EditorScript_Update(int32_t gameObjectId, float deltaTime) {
+	GetState(gameObjectId).Update(gameObjectId, deltaTime);
+}
+
+extern "C" __declspec(dllexport) void EditorScript_FixedUpdate(int32_t gameObjectId, float fixedDeltaTime) {
+	GetState(gameObjectId).FixedUpdate(gameObjectId, fixedDeltaTime);
+}
+
+extern "C" __declspec(dllexport) void EditorScript_OnPhysicsEvent(
+	int32_t gameObjectId,
+	const EditorScriptPhysicsEvent* physicsEvent) {
+	if (physicsEvent == nullptr) {
+		return;
+	}
+
+	GetState(gameObjectId).DispatchPhysicsEvent(*physicsEvent);
+}
+
+extern "C" __declspec(dllexport) void EditorScript_Stop(int32_t gameObjectId) {
+	const auto scriptStateIt = scriptStates.find(gameObjectId);
+
+	if (scriptStateIt != scriptStates.end()) {
+		scriptStateIt->second->Stop(gameObjectId);
+		scriptStates.erase(scriptStateIt);
+	}
+}
+
+extern "C" __declspec(dllexport) int32_t EditorScript_GetFieldCount() {
+	return GetMetadataState().GetFieldCount();
+}
+
+extern "C" __declspec(dllexport) bool EditorScript_GetFieldDescriptor(
+	int32_t fieldIndex,
+	EditorScriptFieldDescriptor* fieldDescriptor) {
+	return fieldDescriptor != nullptr && GetMetadataState().GetFieldDescriptor(fieldIndex, *fieldDescriptor);
+}
+
+extern "C" __declspec(dllexport) bool EditorScript_GetFieldValue(
+	int32_t gameObjectId,
+	const char* fieldName,
+	EditorScriptFieldValue* fieldValue) {
+	return fieldValue != nullptr && GetState(gameObjectId).GetFieldValue(fieldName, *fieldValue);
+}
+
+extern "C" __declspec(dllexport) bool EditorScript_SetFieldValue(
+	int32_t gameObjectId,
+	const char* fieldName,
+	const EditorScriptFieldValue* fieldValue) {
+	return fieldValue != nullptr && GetState(gameObjectId).SetFieldValue(fieldName, *fieldValue);
+}
+
+extern "C" __declspec(dllexport) bool EditorScript_InvokeAction(
+	int32_t gameObjectId,
+	const char* functionName,
+	const EditorScriptInputActionContext* inputContext) {
+	return inputContext != nullptr && GetState(gameObjectId).InvokeAction(functionName, *inputContext);
+}
+)SCRIPT";
+	ReplaceAll(sourceText, "__SCRIPT_NAME__", scriptName);
+	return sourceText;
 }
 
 std::string EditorNativeScriptAssetManager::MakeBuildScriptText(const std::string& scriptName, bool isDebug) {
@@ -213,11 +368,13 @@ std::string EditorNativeScriptAssetManager::MakeBuildScriptText(const std::strin
 		<< "call \"%VSINSTALL%\\Common7\\Tools\\VsDevCmd.bat\" -arch=x64\r\n"
 		<< "if errorlevel 1 exit /b 1\r\n"
 		<< "\r\n"
-		<< "if not exist \"%SCRIPT_DIR%\\x64\\" << configurationDirectory << "\" mkdir \"%SCRIPT_DIR%\\x64\\" << configurationDirectory << "\"\r\n"
+		<< "if not exist \"%SCRIPT_DIR%\\x64\\" << configurationDirectory
+		<< "\" mkdir \"%SCRIPT_DIR%\\x64\\" << configurationDirectory << "\"\r\n"
 		<< "\r\n"
 		<< "cl /nologo /utf-8 /std:c++20 /EHsc " << runtimeOption << " " << optimizationOption
-		<< " /LD /I \"%PROJECT_ROOT%\" \"%SCRIPT_DIR%\\" << scriptName << ".cpp\" "
-		<< "/Fe:\"%SCRIPT_DIR%\\x64\\" << configurationDirectory << "\\" << scriptName << ".dll\"\r\n"
+		<< " /LD /I \"%PROJECT_ROOT%\\Source\\Engine\\Core\" /I \"%PROJECT_ROOT%\" \"%SCRIPT_DIR%\\"
+		<< scriptName << ".cpp\" /Fe:\"%SCRIPT_DIR%\\x64\\" << configurationDirectory << "\\"
+		<< scriptName << ".dll\"\r\n"
 		<< "popd\r\n";
 
 	return buildScriptText.str();

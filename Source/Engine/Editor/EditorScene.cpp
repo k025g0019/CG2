@@ -10,6 +10,8 @@
 
 namespace {
 	constexpr int32_t kInvalidGameObjectId = -1;  // 親なし / 無効 ID を表す値
+	constexpr int32_t kGlareModeCount = 8;  // Glare の mode 0-7 を固定配列で保存する
+	constexpr int32_t kFilterModeCount = 9;  // Filter の mode 0-8 を固定配列で保存する
 	constexpr const char* kEditorComponentTypeNames[] = {
 		"Transform",
 		"ModelRenderer",
@@ -191,6 +193,104 @@ namespace {
 		}
 
 		return elements;
+	}
+
+	void ApplyPostProcessEffectDefaults(EditorComponent& component) {
+		//============================================================
+		// Glare / Filter の種類別初期値
+		//============================================================
+		// 旧Sceneの共有値は残しつつ、Inspector と描画では種類ごとの値を使う。
+
+		component.glareIntensityByMode.fill(component.glareIntensity);
+		component.glareSizeByMode.fill(component.glareSize);
+		component.glareAngleByMode.fill(component.glareAngle);
+		component.glareStreakCountByMode.fill(component.glareStreakCount);
+		component.glareFadeByMode.fill(component.glareFade);
+		component.glareColorModulationByMode.fill(component.glareColorModulation);
+		component.glareCenterByMode.fill(component.glareCenter);
+		component.glareColorByMode.fill({1.0f, 1.0f, 1.0f});
+
+		component.glareIntensityByMode[1] = 1.0f;  // Bloom: 白いにじみ
+		component.glareSizeByMode[1] = 1.0f;
+		component.glareFadeByMode[1] = 0.85f;
+
+		component.glareIntensityByMode[2] = 0.55f;  // Ghost: レンズ内反射
+		component.glareSizeByMode[2] = 1.35f;
+		component.glareFadeByMode[2] = 0.72f;
+		component.glareColorModulationByMode[2] = 0.35f;
+
+		component.glareIntensityByMode[3] = 0.75f;  // 光の筋: 長い線状
+		component.glareSizeByMode[3] = 3.0f;
+		component.glareFadeByMode[3] = 0.82f;
+		component.glareStreakCountByMode[3] = 2;
+
+		component.glareIntensityByMode[4] = 0.45f;  // フォググロー: 広い霧状
+		component.glareSizeByMode[4] = 2.2f;
+		component.glareFadeByMode[4] = 0.65f;
+		component.glareColorByMode[4] = {0.65f, 0.78f, 1.0f};
+
+		component.glareIntensityByMode[5] = 0.65f;  // 単純な星型: 短い放射状
+		component.glareSizeByMode[5] = 1.55f;
+		component.glareFadeByMode[5] = 0.70f;
+		component.glareStreakCountByMode[5] = 6;
+
+		component.glareIntensityByMode[6] = 0.35f;  // サンビーム: 暴れない初期値
+		component.glareSizeByMode[6] = 0.75f;
+		component.glareFadeByMode[6] = 0.88f;
+		component.glareCenterByMode[6] = {0.5f, 0.5f, 0.0f};
+		component.glareColorByMode[6] = {0.55f, 0.75f, 1.0f};
+
+		component.glareIntensityByMode[7] = 0.45f;  // カーネル: 局所強調
+		component.glareSizeByMode[7] = 1.0f;
+		component.glareFadeByMode[7] = 0.85f;
+
+		component.filterStrengthByMode.fill(component.filterStrength);
+		component.filterColorByMode.fill({1.0f, 1.0f, 1.0f});
+		component.filterStrengthByMode[1] = 0.45f;
+		component.filterStrengthByMode[2] = 0.45f;
+		component.filterStrengthByMode[3] = 0.45f;
+		component.filterStrengthByMode[4] = 0.55f;
+		component.filterStrengthByMode[5] = 0.80f;
+		component.filterStrengthByMode[6] = 0.80f;
+		component.filterStrengthByMode[7] = 0.80f;
+		component.filterStrengthByMode[8] = 0.50f;
+		component.filterColorByMode[8] = {0.65f, 0.75f, 1.0f};
+	}
+
+	void ReplaceSceneTokenText(std::string& text, const std::string& sourceText, const std::string& replacementText) {
+		size_t searchPosition = 0U;
+		while ((searchPosition = text.find(sourceText, searchPosition)) != std::string::npos) {
+			text.replace(searchPosition, sourceText.size(), replacementText);
+			searchPosition += replacementText.size();
+		}
+	}
+
+	std::string EncodeSceneToken(const std::string& text) {
+		std::string encodedText = text;  // 可変長 Script 文字列が Scene の区切り記号を壊さないよう符号化する。
+		ReplaceSceneTokenText(encodedText, "%", "%25");
+		ReplaceSceneTokenText(encodedText, "|", "%7C");
+		ReplaceSceneTokenText(encodedText, "\r", "%0D");
+		ReplaceSceneTokenText(encodedText, "\n", "%0A");
+		return encodedText;
+	}
+
+	std::string DecodeSceneToken(const std::string& text) {
+		std::string decodedText = text;
+		ReplaceSceneTokenText(decodedText, "%0A", "\n");
+		ReplaceSceneTokenText(decodedText, "%0D", "\r");
+		ReplaceSceneTokenText(decodedText, "%7C", "|");
+		ReplaceSceneTokenText(decodedText, "%25", "%");
+		return decodedText;
+	}
+
+	void AddDefaultInputEventBindings(EditorComponent& component) {
+		if (component.type != EditorComponentType::PlayerInput || !component.inputEventBindings.empty()) {
+			return;
+		}
+
+		component.inputEventBindings.push_back({"Player", "Move", "OnMove", 1});
+		component.inputEventBindings.push_back({"Player", "Jump", "OnJump", 0});
+		component.inputEventBindings.push_back({"Player", "Fire", "OnFire", 0});
 	}
 
 	int32_t ToInt(const std::string& text) {
@@ -588,7 +688,139 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 			     << component.compositeVignetteRadius << "|"
 			     << component.compositeFilmGrain << "|"
 			     << component.compositeChromaticAberration << "|"
-			     << component.compositeAmbientOcclusionStrength << "\n";
+			     << component.compositeAmbientOcclusionStrength << "|"
+			     << EncodeSceneToken(component.buttonLabel) << "|"
+			     << component.buttonPosition.x << "|"
+			     << component.buttonPosition.y << "|"
+			     << component.buttonSize.x << "|"
+			     << component.buttonSize.y << "|"
+			     << component.buttonInteractable << "|"
+			     << EncodeSceneToken(component.buttonOnClickFunction) << "|"
+			     << component.buttonHoverColor.x << "|"
+			     << component.buttonHoverColor.y << "|"
+			     << component.buttonHoverColor.z << "|"
+			     << component.buttonPressedColor.x << "|"
+			     << component.buttonPressedColor.y << "|"
+			     << component.buttonPressedColor.z << "|"
+			     << component.toggleValue << "|"
+			     << EncodeSceneToken(component.toggleOnValueChangedFunction) << "|"
+			     << component.sliderValue << "|"
+			     << component.sliderMinValue << "|"
+			     << component.sliderMaxValue << "|"
+			     << EncodeSceneToken(component.sliderOnValueChangedFunction) << "|"
+			     << component.audioSpatialBlend << "|"
+			     << component.audioMinDistance << "|"
+			     << component.audioMaxDistance << "|"
+			     << component.smaaThreshold << "|"
+				     << component.smaaCornerRounding << "|"
+				     << component.temporalSharpness << "|"
+				     << component.temporalBlendRatio << "|"
+				     << component.glareMode << "|"
+				     << component.glareIntensity << "|"
+				     << component.glareSize << "|"
+				     << component.glareAngle << "|"
+				     << component.glareStreakCount << "|"
+				     << component.glareFade << "|"
+				     << component.glareColorModulation << "|"
+				     << component.glareCenter.x << "|"
+				     << component.glareCenter.y << "|"
+				     << component.glareCenter.z << "|"
+				     << component.filterMode << "|"
+				     << component.filterStrength << "|"
+				     << EncodeSceneToken(component.normalTextureAssetPath) << "|"
+				     << EncodeSceneToken(component.metallicTextureAssetPath) << "|"
+				     << EncodeSceneToken(component.roughnessTextureAssetPath) << "|"
+				     << EncodeSceneToken(component.ambientOcclusionTextureAssetPath) << "|"
+				     << EncodeSceneToken(component.emissionTextureAssetPath) << "|"
+				     << EncodeSceneToken(component.heightTextureAssetPath) << "|"
+				     << EncodeSceneToken(component.opacityTextureAssetPath) << "|"
+				     << component.emissionColor.x << "|"
+				     << component.emissionColor.y << "|"
+				     << component.emissionColor.z << "|"
+				     << component.normalScale << "|"
+				     << component.ambientOcclusionStrength << "|"
+				     << component.heightScale << "|"
+				     << component.alphaCutoff << "|"
+				     << component.clearCoat << "|"
+				     << component.clearCoatRoughness << "|"
+				     << component.transmission << "|"
+				     << component.subsurface << "|"
+				     << component.anisotropy << "|"
+				     << component.anisotropyRotation << "|"
+				     << component.specularTint << "|"
+				     << component.sheen << "|"
+				     << component.sheenTint << "|"
+				     << component.alphaMode << "|"
+				     << component.doubleSided << "|"
+				     << component.uvTiling.x << "|"
+				     << component.uvTiling.y << "|"
+				     << component.uvOffset.x << "|"
+				     << component.uvOffset.y << "|"
+				     << component.animationClipIndex << "|"
+				     << component.useImportedMaterialTextures << "|"
+				     << EncodeSceneToken(component.uvLayoutTextureAssetPath) << "|"
+				     << component.glareModeMask << "|"
+				     << component.filterModeMask;
+
+			for (int32_t glareModeIndex = 1; glareModeIndex < kGlareModeCount; glareModeIndex++) {
+				file << "|"
+				     << component.glareIntensityByMode[static_cast<size_t>(glareModeIndex)] << "|"
+				     << component.glareSizeByMode[static_cast<size_t>(glareModeIndex)] << "|"
+				     << component.glareAngleByMode[static_cast<size_t>(glareModeIndex)] << "|"
+				     << component.glareStreakCountByMode[static_cast<size_t>(glareModeIndex)] << "|"
+				     << component.glareFadeByMode[static_cast<size_t>(glareModeIndex)] << "|"
+				     << component.glareColorModulationByMode[static_cast<size_t>(glareModeIndex)] << "|"
+				     << component.glareCenterByMode[static_cast<size_t>(glareModeIndex)].x << "|"
+				     << component.glareCenterByMode[static_cast<size_t>(glareModeIndex)].y << "|"
+				     << component.glareCenterByMode[static_cast<size_t>(glareModeIndex)].z << "|"
+				     << component.glareColorByMode[static_cast<size_t>(glareModeIndex)].x << "|"
+				     << component.glareColorByMode[static_cast<size_t>(glareModeIndex)].y << "|"
+				     << component.glareColorByMode[static_cast<size_t>(glareModeIndex)].z;
+			}
+
+			for (int32_t filterModeIndex = 1; filterModeIndex < kFilterModeCount; filterModeIndex++) {
+				file << "|"
+				     << component.filterStrengthByMode[static_cast<size_t>(filterModeIndex)] << "|"
+				     << component.filterColorByMode[static_cast<size_t>(filterModeIndex)].x << "|"
+				     << component.filterColorByMode[static_cast<size_t>(filterModeIndex)].y << "|"
+				     << component.filterColorByMode[static_cast<size_t>(filterModeIndex)].z;
+			}
+
+			file << "\n";
+
+			// C++ Script の公開変数は個数が変わるため、Component 共通行とは別の行で保存する。
+			for (const EditorScriptProperty& scriptProperty : component.scriptProperties) {
+				file << "ScriptProperty|"
+				     << gameObject.id << "|"
+				     << static_cast<int32_t>(component.type) << "|"
+				     << EncodeSceneToken(scriptProperty.name) << "|"
+				     << EncodeSceneToken(scriptProperty.displayName) << "|"
+				     << scriptProperty.type << "|"
+				     << scriptProperty.boolValue << "|"
+				     << scriptProperty.intValue << "|"
+				     << scriptProperty.floatValue << "|"
+				     << scriptProperty.vector2Value.x << "|"
+				     << scriptProperty.vector2Value.y << "|"
+				     << scriptProperty.vector3Value.x << "|"
+				     << scriptProperty.vector3Value.y << "|"
+				     << scriptProperty.vector3Value.z << "|"
+				     << EncodeSceneToken(scriptProperty.stringValue) << "|"
+				     << scriptProperty.minValue << "|"
+				     << scriptProperty.maxValue << "|"
+				     << scriptProperty.step << "|"
+				     << scriptProperty.hasRange << "\n";
+			}
+
+			// PlayerInput は Action 数を固定せず、Action と C++ 関数の接続を 1 行ずつ保存する。
+			for (const EditorInputEventBinding& inputEventBinding : component.inputEventBindings) {
+				file << "InputEventBinding|"
+				     << gameObject.id << "|"
+				     << static_cast<int32_t>(component.type) << "|"
+				     << EncodeSceneToken(inputEventBinding.actionMapName) << "|"
+				     << EncodeSceneToken(inputEventBinding.actionName) << "|"
+				     << EncodeSceneToken(inputEventBinding.functionName) << "|"
+				     << inputEventBinding.valueType << "\n";
+			}
 		}
 	}
 
@@ -653,6 +885,8 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 				}
 
 				EditorComponent component = CreateComponent(ComponentTypeFromIndex(ToInt(elements[2])));  // 保存されていた ComponentType で初期値を作り、保存値で上書きする
+				component.scriptProperties.clear();  // 後続の ScriptProperty 行から保存値を復元する。
+				component.inputEventBindings.clear();  // 後続の InputEventBinding 行を重複させない。
 				component.isActive = ToInt(elements[3]) != 0;
 				component.assetPath = elements[4];
 				component.color = {ToFloat(elements[5]), ToFloat(elements[6]), ToFloat(elements[7])};
@@ -679,6 +913,8 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 					component.hapticStrength = ToFloat(elements[33]);
 					component.hapticDurationMs = ToInt(elements[34]);
 					component.hapticLoop = ToInt(elements[35]) != 0;
+				}
+				if (elements.size() >= 40) {
 					component.audioVolume = ToFloat(elements[36]);
 					component.audioPitch = ToFloat(elements[37]);
 					component.audioLoop = ToInt(elements[38]) != 0;
@@ -702,112 +938,112 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 					component.physicsLayer = ToInt(elements[56]);
 					component.generateContactEvents = ToInt(elements[57]) != 0;
 				}
-					if (elements.size() >= 64) {
-						component.connectedGameObjectId = ToInt(elements[54]);  // Joint の接続先 ID。Scene 内 GameObject と対応させる
-						component.jointAxis = {ToFloat(elements[55]), ToFloat(elements[56]), ToFloat(elements[57])};
-						component.jointMinLimit = ToFloat(elements[58]);
-						component.jointMaxLimit = ToFloat(elements[59]);
-						component.jointMinDistance = ToFloat(elements[60]);
-						component.jointMaxDistance = ToFloat(elements[61]);
-						component.jointSpringFrequency = ToFloat(elements[62]);
-						component.jointSpringDamping = ToFloat(elements[63]);
-					}
-					if (elements.size() >= 69) {
-						component.inputActionMapName = elements[64];
-						component.inputBehavior = ToInt(elements[65]);
-						component.inputMoveEventName = elements[66];
-						component.inputJumpEventName = elements[67];
-						component.inputFireEventName = elements[68];
-					}
-					if (elements.size() >= 83) {
-						component.navAgentRadius = ToFloat(elements[69]);
-						component.navAgentHeight = ToFloat(elements[70]);
-						component.navMaxSpeed = ToFloat(elements[71]);
-						component.navMaxAcceleration = ToFloat(elements[72]);
-						component.navStoppingDistance = ToFloat(elements[73]);
-						component.navAutoRepath = ToInt(elements[74]) != 0;
-						component.navCarve = ToInt(elements[75]) != 0;
-						component.navMaxSlope = ToFloat(elements[76]);
-						component.navMaxClimb = ToFloat(elements[77]);
-						component.navAreaOverride = ToInt(elements[78]) != 0;
-						component.navArea = ToInt(elements[79]);
-						component.navIgnoreFromBuild = ToInt(elements[80]) != 0;
-						component.navBidirectional = ToInt(elements[81]) != 0;
-						component.navCostModifier = ToFloat(elements[82]);
-					}
-					if (elements.size() >= 85) {
-						component.rollingTorque = ToFloat(elements[83]);
-						component.rollingHorsepower = ToFloat(elements[84]);
-					}
-					if (elements.size() >= 96) {
-						component.constraintWeight = ToFloat(elements[85]);
-						component.constraintPositionOffset = {ToFloat(elements[86]), ToFloat(elements[87]), ToFloat(elements[88])};
-						component.constraintRotationOffset = {ToFloat(elements[89]), ToFloat(elements[90]), ToFloat(elements[91])};
-						component.constraintAimAxis = ToInt(elements[92]);
-						component.constraintUpAxis = ToInt(elements[93]);
-						component.constraintRoll = ToFloat(elements[94]);
-						component.constraintFreezeAxisX = ToInt(elements[95]) != 0;
-						component.constraintFreezeAxisY = ToInt(elements[96]) != 0;
-						component.constraintFreezeAxisZ = ToInt(elements[97]) != 0;
-					}
-					if (elements.size() >= 103) {
-						component.animationSpeed = ToFloat(elements[98]);
-						component.animationLoop = ToInt(elements[99]) != 0;
-						component.animationPlayOnAwake = ToInt(elements[100]) != 0;
-						component.animationType = ToInt(elements[101]);
-						component.animationAmplitude = ToFloat(elements[102]);
-					}
-					if (elements.size() >= 108) {
-						component.animatorState = ToInt(elements[103]);
-						component.particleRate = ToFloat(elements[104]);
-						component.particleLifetime = ToFloat(elements[105]);
-						component.particleSpeed = ToFloat(elements[106]);
-						component.particleSize = ToFloat(elements[107]);
-					}
-					if (elements.size() >= 113) {
-						component.metallic = ToFloat(elements[108]);
-						component.roughness = ToFloat(elements[109]);
-						component.ior = ToFloat(elements[110]);
-						component.alpha = ToFloat(elements[111]);
-						component.reflectionStrength = ToFloat(elements[112]);
-					}
-					if (elements.size() >= 115) {
-						component.textureAssetPath = elements[113];
-						component.emissionStrength = ToFloat(elements[114]);
-					}
-					if (elements.size() >= 120) {
-						component.bloomIntensity = ToFloat(elements[115]);
-						component.finalBrightness = ToFloat(elements[116]);
-						component.smaaEnabled = ToInt(elements[117]) != 0;
-						component.taaEnabled = ToInt(elements[118]) != 0;
-						component.ssrEnabled = ToInt(elements[119]) != 0;
-					}
-				if (elements.size() >= 126) {
-					component.skyLowerColor = {ToFloat(elements[120]), ToFloat(elements[121]), ToFloat(elements[122])};
-					component.environmentTextureRotation = ToFloat(elements[123]);
-					component.environmentTextureMipBias = ToFloat(elements[124]);
-					component.environmentTextureEnabled = ToInt(elements[125]) != 0;
+				if (elements.size() >= 68) {
+					component.connectedGameObjectId = ToInt(elements[58]);  // Joint の接続先 ID。Scene 内 GameObject と対応させる
+					component.jointAxis = {ToFloat(elements[59]), ToFloat(elements[60]), ToFloat(elements[61])};
+					component.jointMinLimit = ToFloat(elements[62]);
+					component.jointMaxLimit = ToFloat(elements[63]);
+					component.jointMinDistance = ToFloat(elements[64]);
+					component.jointMaxDistance = ToFloat(elements[65]);
+					component.jointSpringFrequency = ToFloat(elements[66]);
+					component.jointSpringDamping = ToFloat(elements[67]);
 				}
-				if (elements.size() >= 137) {
-					component.cameraFieldOfView = ToFloat(elements[126]);
-					component.cameraNearClip = ToFloat(elements[127]);
-					component.cameraFarClip = ToFloat(elements[128]);
-					component.cameraProjectionMode = ToInt(elements[129]);
-					component.cameraDofEnabled = ToInt(elements[130]) != 0;
-					component.cameraDofFocusDistance = ToFloat(elements[131]);
-					component.cameraDofAperture = ToFloat(elements[132]);
-					component.cameraDofFocalLength = ToFloat(elements[133]);
-					component.cameraMotionBlurEnabled = ToInt(elements[134]) != 0;
-					component.cameraMotionBlurIntensity = ToFloat(elements[135]);
-					component.cameraExposure = ToFloat(elements[136]);
+				if (elements.size() >= 73) {
+					component.inputActionMapName = elements[68];
+					component.inputBehavior = ToInt(elements[69]);
+					component.inputMoveEventName = elements[70];
+					component.inputJumpEventName = elements[71];
+					component.inputFireEventName = elements[72];
 				}
-				if (elements.size() >= 140) {
-					component.bloomThreshold = ToFloat(elements[137]);
-					component.bloomSoftKnee = ToFloat(elements[138]);
-					component.bloomScatter = ToFloat(elements[139]);
+				if (elements.size() >= 87) {
+					component.navAgentRadius = ToFloat(elements[73]);
+					component.navAgentHeight = ToFloat(elements[74]);
+					component.navMaxSpeed = ToFloat(elements[75]);
+					component.navMaxAcceleration = ToFloat(elements[76]);
+					component.navStoppingDistance = ToFloat(elements[77]);
+					component.navAutoRepath = ToInt(elements[78]) != 0;
+					component.navCarve = ToInt(elements[79]) != 0;
+					component.navMaxSlope = ToFloat(elements[80]);
+					component.navMaxClimb = ToFloat(elements[81]);
+					component.navAreaOverride = ToInt(elements[82]) != 0;
+					component.navArea = ToInt(elements[83]);
+					component.navIgnoreFromBuild = ToInt(elements[84]) != 0;
+					component.navBidirectional = ToInt(elements[85]) != 0;
+					component.navCostModifier = ToFloat(elements[86]);
+				}
+				if (elements.size() >= 89) {
+					component.rollingTorque = ToFloat(elements[87]);
+					component.rollingHorsepower = ToFloat(elements[88]);
+				}
+				if (elements.size() >= 102) {
+					component.constraintWeight = ToFloat(elements[89]);
+					component.constraintPositionOffset = {ToFloat(elements[90]), ToFloat(elements[91]), ToFloat(elements[92])};
+					component.constraintRotationOffset = {ToFloat(elements[93]), ToFloat(elements[94]), ToFloat(elements[95])};
+					component.constraintAimAxis = ToInt(elements[96]);
+					component.constraintUpAxis = ToInt(elements[97]);
+					component.constraintRoll = ToFloat(elements[98]);
+					component.constraintFreezeAxisX = ToInt(elements[99]) != 0;
+					component.constraintFreezeAxisY = ToInt(elements[100]) != 0;
+					component.constraintFreezeAxisZ = ToInt(elements[101]) != 0;
+				}
+				if (elements.size() >= 107) {
+					component.animationSpeed = ToFloat(elements[102]);
+					component.animationLoop = ToInt(elements[103]) != 0;
+					component.animationPlayOnAwake = ToInt(elements[104]) != 0;
+					component.animationType = ToInt(elements[105]);
+					component.animationAmplitude = ToFloat(elements[106]);
+				}
+				if (elements.size() >= 112) {
+					component.animatorState = ToInt(elements[107]);
+					component.particleRate = ToFloat(elements[108]);
+					component.particleLifetime = ToFloat(elements[109]);
+					component.particleSpeed = ToFloat(elements[110]);
+					component.particleSize = ToFloat(elements[111]);
+				}
+				if (elements.size() >= 117) {
+					component.metallic = ToFloat(elements[112]);
+					component.roughness = ToFloat(elements[113]);
+					component.ior = ToFloat(elements[114]);
+					component.alpha = ToFloat(elements[115]);
+					component.reflectionStrength = ToFloat(elements[116]);
+				}
+				if (elements.size() >= 119) {
+					component.textureAssetPath = elements[117];
+					component.emissionStrength = ToFloat(elements[118]);
+				}
+				if (elements.size() >= 124) {
+					component.bloomIntensity = ToFloat(elements[119]);
+					component.finalBrightness = ToFloat(elements[120]);
+					component.smaaEnabled = ToInt(elements[121]) != 0;
+					component.taaEnabled = ToInt(elements[122]) != 0;
+					component.ssrEnabled = ToInt(elements[123]) != 0;
+				}
+				if (elements.size() >= 130) {
+					component.skyLowerColor = {ToFloat(elements[124]), ToFloat(elements[125]), ToFloat(elements[126])};
+					component.environmentTextureRotation = ToFloat(elements[127]);
+					component.environmentTextureMipBias = ToFloat(elements[128]);
+					component.environmentTextureEnabled = ToInt(elements[129]) != 0;
 				}
 				if (elements.size() >= 141) {
-					component.aaMode = ToInt(elements[140]);
+					component.cameraFieldOfView = ToFloat(elements[130]);
+					component.cameraNearClip = ToFloat(elements[131]);
+					component.cameraFarClip = ToFloat(elements[132]);
+					component.cameraProjectionMode = ToInt(elements[133]);
+					component.cameraDofEnabled = ToInt(elements[134]) != 0;
+					component.cameraDofFocusDistance = ToFloat(elements[135]);
+					component.cameraDofAperture = ToFloat(elements[136]);
+					component.cameraDofFocalLength = ToFloat(elements[137]);
+					component.cameraMotionBlurEnabled = ToInt(elements[138]) != 0;
+					component.cameraMotionBlurIntensity = ToFloat(elements[139]);
+					component.cameraExposure = ToFloat(elements[140]);
+				}
+				if (elements.size() >= 144) {
+					component.bloomThreshold = ToFloat(elements[141]);
+					component.bloomSoftKnee = ToFloat(elements[142]);
+					component.bloomScatter = ToFloat(elements[143]);
+				}
+				if (elements.size() >= 145) {
+					component.aaMode = ToInt(elements[144]);
 				} else {
 					// 旧形式: smaaEnabled/taaEnabled から aaMode を推定
 					if (component.taaEnabled) {
@@ -818,27 +1054,237 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 						component.aaMode = 0;
 					}
 				}
-				if (elements.size() >= 152) {
-					component.compositeExposure = ToFloat(elements[141]);
-					component.compositeWhitePoint = ToFloat(elements[142]);
-					component.compositeToneMappingMode = ToInt(elements[143]);
-					component.compositeBloomIntensity = ToFloat(elements[144]);
-					component.compositeSaturation = ToFloat(elements[145]);
-					component.compositeContrast = ToFloat(elements[146]);
-					component.compositeVignetteStrength = ToFloat(elements[147]);
-					component.compositeVignetteRadius = ToFloat(elements[148]);
-					component.compositeFilmGrain = ToFloat(elements[149]);
-					component.compositeChromaticAberration = ToFloat(elements[150]);
-					component.compositeAmbientOcclusionStrength = ToFloat(elements[151]);
+				if (elements.size() >= 156) {
+					component.compositeExposure = ToFloat(elements[145]);
+					component.compositeWhitePoint = ToFloat(elements[146]);
+					component.compositeToneMappingMode = ToInt(elements[147]);
+					component.compositeBloomIntensity = ToFloat(elements[148]);
+					component.compositeSaturation = ToFloat(elements[149]);
+					component.compositeContrast = ToFloat(elements[150]);
+					component.compositeVignetteStrength = ToFloat(elements[151]);
+					component.compositeVignetteRadius = ToFloat(elements[152]);
+					component.compositeFilmGrain = ToFloat(elements[153]);
+					component.compositeChromaticAberration = ToFloat(elements[154]);
+					component.compositeAmbientOcclusionStrength = ToFloat(elements[155]);
 				}
-					gameObject.components.push_back(component);
+				if (elements.size() >= 169) {
+					component.buttonLabel = DecodeSceneToken(elements[156]);
+					component.buttonPosition = {ToFloat(elements[157]), ToFloat(elements[158])};
+					component.buttonSize = {ToFloat(elements[159]), ToFloat(elements[160])};
+					component.buttonInteractable = ToInt(elements[161]) != 0;
+					component.buttonOnClickFunction = DecodeSceneToken(elements[162]);
+					component.buttonHoverColor = {ToFloat(elements[163]), ToFloat(elements[164]), ToFloat(elements[165])};
+					component.buttonPressedColor = {ToFloat(elements[166]), ToFloat(elements[167]), ToFloat(elements[168])};
+				}
+			if (elements.size() >= 175) {
+				component.toggleValue = ToInt(elements[169]) != 0;
+				component.toggleOnValueChangedFunction = DecodeSceneToken(elements[170]);
+				component.sliderValue = ToFloat(elements[171]);
+				component.sliderMinValue = ToFloat(elements[172]);
+				component.sliderMaxValue = ToFloat(elements[173]);
+				component.sliderOnValueChangedFunction = DecodeSceneToken(elements[174]);
+			}
+			if (elements.size() >= 178) {
+				component.audioSpatialBlend = ToFloat(elements[175]);
+				component.audioMinDistance = ToFloat(elements[176]);
+				component.audioMaxDistance = ToFloat(elements[177]);
+			}
+				if (elements.size() >= 182) {
+					component.smaaThreshold = ToFloat(elements[178]);
+					component.smaaCornerRounding = ToFloat(elements[179]);
+					component.temporalSharpness = ToFloat(elements[180]);
+					component.temporalBlendRatio = ToFloat(elements[181]);
+				}
+				if (elements.size() >= 194) {
+					component.glareMode = ToInt(elements[182]);
+					component.glareIntensity = ToFloat(elements[183]);
+					component.glareSize = ToFloat(elements[184]);
+					component.glareAngle = ToFloat(elements[185]);
+					component.glareStreakCount = ToInt(elements[186]);
+					component.glareFade = ToFloat(elements[187]);
+					component.glareColorModulation = ToFloat(elements[188]);
+					component.glareCenter = {
+						ToFloat(elements[189]),
+						ToFloat(elements[190]),
+						ToFloat(elements[191])
+					};
+					component.filterMode = ToInt(elements[192]);
+					component.filterStrength = ToFloat(elements[193]);
+				}
+				if (elements.size() >= 223) {
+					component.normalTextureAssetPath = DecodeSceneToken(elements[194]);
+					component.metallicTextureAssetPath = DecodeSceneToken(elements[195]);
+					component.roughnessTextureAssetPath = DecodeSceneToken(elements[196]);
+					component.ambientOcclusionTextureAssetPath = DecodeSceneToken(elements[197]);
+					component.emissionTextureAssetPath = DecodeSceneToken(elements[198]);
+					component.heightTextureAssetPath = DecodeSceneToken(elements[199]);
+					component.opacityTextureAssetPath = DecodeSceneToken(elements[200]);
+					component.emissionColor = {
+						ToFloat(elements[201]),
+						ToFloat(elements[202]),
+						ToFloat(elements[203])
+					};
+					component.normalScale = ToFloat(elements[204]);
+					component.ambientOcclusionStrength = ToFloat(elements[205]);
+					component.heightScale = ToFloat(elements[206]);
+					component.alphaCutoff = ToFloat(elements[207]);
+					component.clearCoat = ToFloat(elements[208]);
+					component.clearCoatRoughness = ToFloat(elements[209]);
+					component.transmission = ToFloat(elements[210]);
+					component.subsurface = ToFloat(elements[211]);
+					component.anisotropy = ToFloat(elements[212]);
+					component.anisotropyRotation = ToFloat(elements[213]);
+					component.specularTint = ToFloat(elements[214]);
+					component.sheen = ToFloat(elements[215]);
+					component.sheenTint = ToFloat(elements[216]);
+					component.alphaMode = ToInt(elements[217]);
+					component.doubleSided = ToInt(elements[218]) != 0;
+					component.uvTiling = {ToFloat(elements[219]), ToFloat(elements[220])};
+					component.uvOffset = {ToFloat(elements[221]), ToFloat(elements[222])};
+				}
+				if (elements.size() >= 224) {
+					component.animationClipIndex = ToInt(elements[223]);
+				}
+				if (elements.size() >= 227) {
+					component.useImportedMaterialTextures = ToInt(elements[224]) != 0;
+					component.uvLayoutTextureAssetPath = DecodeSceneToken(elements[225]);
+					component.glareModeMask = ToInt(elements[226]);
+				}
+				else {
+					// 旧Sceneの単一 Glare を同じ見た目のビットへ変換する。
+					component.glareModeMask = component.glareMode > 0
+						? 1 << component.glareMode
+						: 0;
+				}
+				if (elements.size() >= 228) {
+					component.filterModeMask = ToInt(elements[227]);
+				}
+				else {
+					// 旧Sceneの単一 Filter を同じ見た目のビットへ変換する。
+					component.filterModeMask = component.filterMode > 0
+						? 1 << component.filterMode
+						: 0;
+				}
+
+				ApplyPostProcessEffectDefaults(component);
+
+				size_t postProcessEffectCursor = 228u;
+				for (int32_t glareModeIndex = 1; glareModeIndex < kGlareModeCount; glareModeIndex++) {
+					if (elements.size() < postProcessEffectCursor + 12u) {
+						break;
+					}
+
+					const size_t glareModeArrayIndex = static_cast<size_t>(glareModeIndex);
+					component.glareIntensityByMode[glareModeArrayIndex] = ToFloat(elements[postProcessEffectCursor + 0u]);
+					component.glareSizeByMode[glareModeArrayIndex] = ToFloat(elements[postProcessEffectCursor + 1u]);
+					component.glareAngleByMode[glareModeArrayIndex] = ToFloat(elements[postProcessEffectCursor + 2u]);
+					component.glareStreakCountByMode[glareModeArrayIndex] = ToInt(elements[postProcessEffectCursor + 3u]);
+					component.glareFadeByMode[glareModeArrayIndex] = ToFloat(elements[postProcessEffectCursor + 4u]);
+					component.glareColorModulationByMode[glareModeArrayIndex] = ToFloat(elements[postProcessEffectCursor + 5u]);
+					component.glareCenterByMode[glareModeArrayIndex] = {
+						ToFloat(elements[postProcessEffectCursor + 6u]),
+						ToFloat(elements[postProcessEffectCursor + 7u]),
+						ToFloat(elements[postProcessEffectCursor + 8u])
+					};
+					component.glareColorByMode[glareModeArrayIndex] = {
+						ToFloat(elements[postProcessEffectCursor + 9u]),
+						ToFloat(elements[postProcessEffectCursor + 10u]),
+						ToFloat(elements[postProcessEffectCursor + 11u])
+					};
+					postProcessEffectCursor += 12u;
+				}
+
+				for (int32_t filterModeIndex = 1; filterModeIndex < kFilterModeCount; filterModeIndex++) {
+					if (elements.size() < postProcessEffectCursor + 4u) {
+						break;
+					}
+
+					const size_t filterModeArrayIndex = static_cast<size_t>(filterModeIndex);
+					component.filterStrengthByMode[filterModeArrayIndex] = ToFloat(elements[postProcessEffectCursor + 0u]);
+					component.filterColorByMode[filterModeArrayIndex] = {
+						ToFloat(elements[postProcessEffectCursor + 1u]),
+						ToFloat(elements[postProcessEffectCursor + 2u]),
+						ToFloat(elements[postProcessEffectCursor + 3u])
+					};
+					postProcessEffectCursor += 4u;
+				}
+
+				gameObject.components.push_back(component);
+			break;
+			}
+		}
+		else if (elements[0] == "ScriptProperty" && elements.size() >= 19) {
+			const int32_t ownerId = ToInt(elements[1]);
+			const EditorComponentType componentType = ComponentTypeFromIndex(ToInt(elements[2]));
+
+			for (EditorGameObject& gameObject : loadedGameObjects) {
+				if (gameObject.id != ownerId) {
+					continue;
+				}
+
+				for (EditorComponent& component : gameObject.components) {
+					if (component.type != componentType) {
+						continue;
+					}
+
+					EditorScriptProperty scriptProperty{};
+					scriptProperty.name = DecodeSceneToken(elements[3]);
+					scriptProperty.displayName = DecodeSceneToken(elements[4]);
+					scriptProperty.type = ToInt(elements[5]);
+					scriptProperty.boolValue = ToInt(elements[6]) != 0;
+					scriptProperty.intValue = ToInt(elements[7]);
+					scriptProperty.floatValue = ToFloat(elements[8]);
+					scriptProperty.vector2Value = {ToFloat(elements[9]), ToFloat(elements[10])};
+					scriptProperty.vector3Value = {ToFloat(elements[11]), ToFloat(elements[12]), ToFloat(elements[13])};
+					scriptProperty.stringValue = DecodeSceneToken(elements[14]);
+					scriptProperty.minValue = ToFloat(elements[15]);
+					scriptProperty.maxValue = ToFloat(elements[16]);
+					scriptProperty.step = ToFloat(elements[17]);
+					scriptProperty.hasRange = ToInt(elements[18]) != 0;
+					component.scriptProperties.push_back(scriptProperty);
 					break;
 				}
+
+				break;
+			}
+		}
+		else if (elements[0] == "InputEventBinding" && elements.size() >= 7) {
+			const int32_t ownerId = ToInt(elements[1]);
+			const EditorComponentType componentType = ComponentTypeFromIndex(ToInt(elements[2]));
+
+			for (EditorGameObject& gameObject : loadedGameObjects) {
+				if (gameObject.id != ownerId) {
+					continue;
+				}
+
+				for (EditorComponent& component : gameObject.components) {
+					if (component.type != componentType) {
+						continue;
+					}
+
+					EditorInputEventBinding inputEventBinding{};
+					inputEventBinding.actionMapName = DecodeSceneToken(elements[3]);
+					inputEventBinding.actionName = DecodeSceneToken(elements[4]);
+					inputEventBinding.functionName = DecodeSceneToken(elements[5]);
+					inputEventBinding.valueType = ToInt(elements[6]);
+					component.inputEventBindings.push_back(inputEventBinding);
+					break;
+				}
+
+				break;
+			}
 		}
 	}
 
 	if (!hasSceneData) {
 		return false;
+	}
+
+	// InputEventBinding 行を持たない旧 Scene には、PlayerInput の標準イベントを補完する。
+	for (EditorGameObject& gameObject : loadedGameObjects) {
+		for (EditorComponent& component : gameObject.components) {
+			AddDefaultInputEventBindings(component);
+		}
 	}
 
 	gameObjects_ = loadedGameObjects;  // 読み込み成功後だけ現在 Scene を差し替える
@@ -970,6 +1416,8 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 	component.isActive = true;
 	component.assetPath = "";
 	component.textureAssetPath = "";
+	component.uvLayoutTextureAssetPath = "";
+	component.useImportedMaterialTextures = false;
 	component.color = {1.0f, 1.0f, 1.0f};
 	component.intensity = 1.0f;
 	component.metallic = 0.0f;
@@ -978,6 +1426,24 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 	component.alpha = 1.0f;
 	component.reflectionStrength = 0.0f;
 	component.emissionStrength = 0.0f;
+	component.emissionColor = {1.0f, 1.0f, 1.0f};
+	component.normalScale = 1.0f;
+	component.ambientOcclusionStrength = 1.0f;
+	component.heightScale = 0.02f;
+	component.alphaCutoff = 0.5f;
+	component.clearCoat = 0.0f;
+	component.clearCoatRoughness = 0.1f;
+	component.transmission = 0.0f;
+	component.subsurface = 0.0f;
+	component.anisotropy = 0.0f;
+	component.anisotropyRotation = 0.0f;
+	component.specularTint = 0.0f;
+	component.sheen = 0.0f;
+	component.sheenTint = 0.5f;
+	component.alphaMode = 0;
+	component.doubleSided = false;
+	component.uvTiling = {1.0f, 1.0f};
+	component.uvOffset = {0.0f, 0.0f};
 	component.mass = 1.0f;
 	component.drag = 0.0f;
 	component.useGravity = true;
@@ -1032,6 +1498,9 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.audioPitch = 1.0f;
 		component.audioLoop = false;
 		component.audioPlayOnAwake = true;
+		component.audioSpatialBlend = 1.0f;
+		component.audioMinDistance = 1.0f;
+		component.audioMaxDistance = 50.0f;
 		component.navAgentRadius = 0.5f;
 		component.navAgentHeight = 2.0f;
 		component.navMaxSpeed = 3.5f;
@@ -1062,11 +1531,28 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.animationPlayOnAwake = true;
 		component.animationType = 0;
 		component.animationAmplitude = 1.0f;
+		component.animationClipIndex = 0;
 		component.animatorState = 0;
-	component.particleRate = 10.0f;
-	component.particleLifetime = 2.0f;
-	component.particleSpeed = 5.0f;
-	component.particleSize = 0.5f;
+		component.particleRate = 10.0f;
+		component.particleLifetime = 2.0f;
+		component.particleSpeed = 5.0f;
+		component.particleSize = 0.5f;
+		component.buttonLabel = "Button";
+		component.buttonPosition = {20.0f, 20.0f};
+		component.buttonSize = {160.0f, 48.0f};
+		component.buttonInteractable = true;
+		component.buttonHoverColor = {0.25f, 0.45f, 0.80f};
+		component.buttonPressedColor = {0.15f, 0.30f, 0.60f};
+		component.buttonOnClickFunction = "OnClick";
+		component.toggleValue = false;
+		component.toggleOnValueChangedFunction = "OnValueChanged";
+		component.sliderValue = 0.5f;
+		component.sliderMinValue = 0.0f;
+		component.sliderMaxValue = 1.0f;
+		component.sliderOnValueChangedFunction = "OnValueChanged";
+		component.scriptProperties.clear();
+		component.inputEventBindings.clear();
+		AddDefaultInputEventBindings(component);
 
 	if (type == EditorComponentType::PostProcess) {
 		component.bloomIntensity = 1.0f;
@@ -1074,6 +1560,23 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.bloomSoftKnee = 0.5f;
 		component.bloomScatter = 0.72f;
 		component.aaMode = 1;
+		component.smaaThreshold = 0.10f;
+		component.smaaCornerRounding = 25.0f;
+		component.temporalSharpness = 0.08f;
+		component.temporalBlendRatio = 0.90f;
+		component.glareMode = 1;
+		component.glareModeMask = 1 << 1;
+		component.glareIntensity = 1.0f;
+		component.glareSize = 1.0f;
+		component.glareAngle = 0.0f;
+		component.glareStreakCount = 4;
+		component.glareFade = 0.85f;
+		component.glareColorModulation = 0.15f;
+		component.glareCenter = {0.5f, 0.5f, 0.0f};
+		component.filterMode = 0;
+		component.filterModeMask = 0;
+		component.filterStrength = 1.0f;
+		ApplyPostProcessEffectDefaults(component);
 		component.finalBrightness = 1.0f;
 		component.smaaEnabled = true;
 		component.taaEnabled = true;
@@ -1287,8 +1790,9 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.animationSpeed = 1.0f;
 		component.animationLoop = true;
 		component.animationPlayOnAwake = true;
-		component.animationType = 1;
+		component.animationType = 0;
 		component.animationAmplitude = 0.5f;
+		component.animationClipIndex = 0;
 	}
 	else if (type == EditorComponentType::Animator) {
 		component.animationSpeed = 1.0f;

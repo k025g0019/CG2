@@ -145,6 +145,8 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
 	<None Include="Assets\Shaders\PostProcess\Bloom\BloomDownsample.PS.hlsl" />
 	<None Include="Assets\Shaders\PostProcess\Bloom\BloomPrefilter.PS.hlsl" />
 	<None Include="Assets\Shaders\PostProcess\Bloom\BloomUpsample.PS.hlsl" />
+	<None Include="Assets\Shaders\PostProcess\Filter.PS.hlsl" />
+	<None Include="Assets\Shaders\PostProcess\Glare.PS.hlsl" />
 	<None Include="Assets\Shaders\PostProcess\SMAA\SMAABlendWeight.PS.hlsl" />
 	<None Include="Assets\Shaders\PostProcess\SMAA\SMAACommon.hlsli" />
 	<None Include="Assets\Shaders\PostProcess\SMAA\SMAAEdgeDetection.PS.hlsl" />
@@ -392,9 +394,11 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
     <ClCompile Include="Source\Engine\Editor\EditorPhysicsManager.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorRenderManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorDepthHierarchyManager.cpp" />
+	<ClCompile Include="Source\Engine\Renderer\EditorGBufferManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorGpuCullingManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorPostProcessQualityManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorTemporalRenderingManager.cpp" />
+	<ClCompile Include="Source\Engine\Renderer\EditorPlanarReflectionManager.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorRollingMoveManager.cpp">
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
@@ -530,9 +534,11 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
     <ClInclude Include="Source\Engine\Editor\EditorPhysicsManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorRenderManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorDepthHierarchyManager.h" />
+	<ClInclude Include="Source\Engine\Renderer\EditorGBufferManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorGpuCullingManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorPostProcessQualityManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorTemporalRenderingManager.h" />
+	<ClInclude Include="Source\Engine\Renderer\EditorPlanarReflectionManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorRollingMoveManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorRuntimeManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorScene.h" />
@@ -544,7 +550,8 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
     <ClInclude Include="Source\Engine\Editor\EditorSceneViewManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorSelectionManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorScriptManager.h" />
-    <ClInclude Include="Source\Engine\Editor\EditorScriptApi.h" />
+    <ClInclude Include="Source\Engine\Core\EditorNativeScript.h" />
+    <ClInclude Include="Source\Engine\Core\EditorScriptApi.h" />
     <ClInclude Include="Source\Engine\Editor\EditorPlatformManager.h" />
     <ClInclude Include="Source\Engine\Core\GameScene.h" />
     <ClInclude Include="Engine\Input\InputAction.h" />

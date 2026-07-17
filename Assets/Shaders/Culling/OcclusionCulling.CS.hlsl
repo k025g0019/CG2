@@ -84,6 +84,15 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         return;
     }
 
+    // 画面端にまたがる物体は、Hi-Z の少数サンプルだけでは安全に遮蔽判定できない。
+    // ここで無理に saturate して判定すると、モデルの一部がカメラ外へ出た瞬間に全体が消える。
+    if (minimumUv.x < 0.0f || minimumUv.y < 0.0f ||
+        maximumUv.x > 1.0f || maximumUv.y > 1.0f)
+    {
+        gVisibility[objectIndex] = 1u;
+        return;
+    }
+
     minimumUv = saturate(minimumUv);
     maximumUv = saturate(maximumUv);
     const float2 centerUv = (minimumUv + maximumUv) * 0.5f;

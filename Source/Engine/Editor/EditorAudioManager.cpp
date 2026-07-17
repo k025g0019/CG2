@@ -99,6 +99,9 @@ void EditorAudioManager::Start() {
 		active.gameObjectId = gameObject.id;
 		active.clip = clip;
 		active.volume = audioSource->audioVolume;
+		active.spatialBlend = audioSource->audioSpatialBlend;
+		active.minDistance = audioSource->audioMinDistance;
+		active.maxDistance = audioSource->audioMaxDistance;
 		active.loop = audioSource->audioLoop;
 		active.filterComponentId = -1;
 
@@ -161,6 +164,38 @@ void EditorAudioManager::Update(float deltaTime) {
 
 		if (it->volume != audioSource->audioVolume) {
 			it->volume = audioSource->audioVolume;
+		}
+
+		// 3D spatial audio: panning + distance attenuation
+		if (it->spatialBlend > 0.0f && it->voice != nullptr) {
+			const Vector3 listenerPos = GetListenerPosition();
+			const float dx = listenerPos.x - gameObject->translate.x;
+			const float dy = listenerPos.y - gameObject->translate.y;
+			const float dz = listenerPos.z - gameObject->translate.z;
+			const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+
+			const float minDist = std::max(it->minDistance, 0.01f);
+			const float maxDist = std::max(it->maxDistance, minDist + 0.01f);
+			const float t = std::min(std::max((distance - minDist) / (maxDist - minDist), 0.0f), 1.0f);
+			const float distanceAtten = 1.0f - t;
+
+			const float volume3d = it->volume * distanceAtten;
+			const float volume2d = it->volume;
+			const float finalVolume = volume2d * (1.0f - it->spatialBlend) + volume3d * it->spatialBlend;
+			it->voice->SetVolume(finalVolume);
+
+			// Stereo panning (mono source → stereo output)
+			if (it->clip != nullptr && it->clip->channelCount == 1u) {
+				const float angle = std::atan2(dx, dz);
+				const float pan = std::min(std::max(angle / 3.14159f, -1.0f), 1.0f);
+				const float leftFactor = (1.0f - pan) * 0.5f;
+				const float rightFactor = (1.0f + pan) * 0.5f;
+				const float finalLeft = 1.0f * (1.0f - it->spatialBlend) + leftFactor * it->spatialBlend;
+				const float finalRight = 1.0f * (1.0f - it->spatialBlend) + rightFactor * it->spatialBlend;
+				const float matrix[2] = { finalLeft, finalRight };
+				it->voice->SetOutputMatrix(nullptr, 1, 2, matrix);
+			}
+		} else {
 			it->voice->SetVolume(it->volume);
 		}
 

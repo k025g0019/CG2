@@ -6,6 +6,7 @@
 #include "EditorSharedState.h"
 #include "ThirdParty/imgui-docking/imgui-docking/imgui_internal.h"
 
+#include <algorithm>
 #include <cmath>
 
 using namespace EditorSharedState;
@@ -154,6 +155,118 @@ namespace {
 				farZ);
 		}
 	}
+
+	ImVec4 ToImGuiColor(const Vector3& color, float alpha) {
+		return ImVec4(
+			(std::clamp)(color.x, 0.0f, 1.0f),
+			(std::clamp)(color.y, 0.0f, 1.0f),
+			(std::clamp)(color.z, 0.0f, 1.0f),
+			(std::clamp)(alpha, 0.0f, 1.0f));
+	}
+
+	void DrawGameViewUiControls(const ImVec2& gameContentPosition, float gameWidth, float gameHeight) {
+		ImGui::PushClipRect(
+			gameContentPosition,
+			ImVec2(gameContentPosition.x + gameWidth, gameContentPosition.y + gameHeight),
+			true);
+
+		for (EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
+			if (!gameObject.isActive) {
+				continue;
+			}
+
+			for (EditorComponent& component : gameObject.components) {
+				if (component.type != EditorComponentType::Button &&
+					component.type != EditorComponentType::Toggle &&
+					component.type != EditorComponentType::Slider) {
+					continue;
+				}
+
+				EditorComponent* uiComponent = &component;
+				if (!uiComponent->isActive) {
+					continue;
+				}
+
+				const ImVec2 buttonPosition{
+					gameContentPosition.x + uiComponent->buttonPosition.x,
+					gameContentPosition.y + uiComponent->buttonPosition.y};
+				const ImVec2 buttonSize{
+					(std::max)(uiComponent->buttonSize.x, 1.0f),
+					(std::max)(uiComponent->buttonSize.y, 1.0f)};
+				const char* buttonLabel =
+					uiComponent->buttonLabel.empty() ? "UI" : uiComponent->buttonLabel.c_str();
+
+				ImGui::SetCursorScreenPos(buttonPosition);
+				ImGui::PushID(uiComponent);
+				ImGui::PushStyleColor(ImGuiCol_Button, ToImGuiColor(uiComponent->color, uiComponent->intensity));
+				ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ToImGuiColor(uiComponent->buttonHoverColor, uiComponent->intensity));
+				ImGui::PushStyleColor(ImGuiCol_ButtonActive, ToImGuiColor(uiComponent->buttonPressedColor, uiComponent->intensity));
+				ImGui::PushStyleColor(ImGuiCol_FrameBg, ToImGuiColor(uiComponent->color, uiComponent->intensity));
+				ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ToImGuiColor(uiComponent->buttonHoverColor, uiComponent->intensity));
+				ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ToImGuiColor(uiComponent->buttonPressedColor, uiComponent->intensity));
+
+				const bool canInteract = uiComponent->buttonInteractable && g_editorRuntimeManager.IsPlaying();
+				if (!canInteract) {
+					ImGui::BeginDisabled();
+				}
+
+				if (uiComponent->type == EditorComponentType::Button) {
+					const bool isClicked = ImGui::Button(buttonLabel, buttonSize);
+					if (isClicked && canInteract) {
+						g_editorRuntimeManager.GetScriptManager().QueueUiEvent(
+							gameObject.id,
+							uiComponent->buttonOnClickFunction);
+					}
+				}
+
+				if (uiComponent->type == EditorComponentType::Toggle) {
+					bool toggleValue = uiComponent->toggleValue;
+					const bool wasChanged = ImGui::Checkbox(buttonLabel, &toggleValue);
+					if (wasChanged && canInteract) {
+						uiComponent->toggleValue = toggleValue;
+						g_editorRuntimeManager.GetScriptManager().QueueUiEvent(
+							gameObject.id,
+							uiComponent->toggleOnValueChangedFunction,
+							EditorScriptInputValueTypeButton,
+							uiComponent->toggleValue ? 1.0f : 0.0f,
+							EditorScriptVector2{});
+					}
+				}
+
+				if (uiComponent->type == EditorComponentType::Slider) {
+					float sliderMinValue = uiComponent->sliderMinValue;
+					float sliderMaxValue = uiComponent->sliderMaxValue;
+					if (sliderMaxValue < sliderMinValue) {
+						std::swap(sliderMinValue, sliderMaxValue);
+					}
+
+					ImGui::TextUnformatted(buttonLabel);
+					ImGui::SetNextItemWidth(buttonSize.x);
+					float sliderValue = uiComponent->sliderValue;
+					const bool wasChanged =
+						ImGui::SliderFloat("##Slider", &sliderValue, sliderMinValue, sliderMaxValue);
+					if (wasChanged && canInteract) {
+						uiComponent->sliderValue = sliderValue;
+						g_editorRuntimeManager.GetScriptManager().QueueUiEvent(
+							gameObject.id,
+							uiComponent->sliderOnValueChangedFunction,
+							EditorScriptInputValueTypeVector2,
+							0.0f,
+							EditorScriptVector2{uiComponent->sliderValue, 0.0f});
+					}
+				}
+
+				if (!canInteract) {
+					ImGui::EndDisabled();
+				}
+
+				ImGui::PopStyleColor(6);
+				ImGui::PopID();
+			}
+		}
+
+		ImGui::PopClipRect();
+	}
 }
 
 void EditorGameViewManager::Initialize() {
@@ -223,6 +336,7 @@ void EditorGameViewManager::Draw() {
 		cameraText);
 
 	ImGui::Dummy(ImVec2(g_editorGameWidth, g_editorGameHeight));  // ウィンドウの内容領域を GameView の描画領域として確保する。
+	DrawGameViewUiControls(gameContentPosition, g_editorGameWidth, g_editorGameHeight);
 	ImGui::End();
 #endif
 }

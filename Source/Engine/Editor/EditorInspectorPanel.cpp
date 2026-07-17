@@ -697,6 +697,76 @@ namespace {
 		return isChanged;
 	}
 
+	bool DrawVector2Row(const char* label, EditorScriptVector2& value, float speed, float minValue, float maxValue) {
+		bool isChanged = false;
+		ImGui::PushID(label);
+
+		if (BeginPropertyTable("Vector2Row", 2)) {
+			SetupTwoColumnPropertyTable();
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted(label);
+			ImGui::TableNextColumn();
+			const ImGuiStyle& style = ImGui::GetStyle();
+			float inputWidth =
+				(ImGui::GetContentRegionAvail().x - kAxisLabelWidth * 2.0f - style.ItemInnerSpacing.x * 3.0f) / 2.0f;
+			inputWidth = (std::max)(inputWidth, 48.0f);
+
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted("X");
+			ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+			ImGui::SetNextItemWidth(inputWidth);
+			isChanged |= ImGui::DragFloat("##X", &value.x, speed, minValue, maxValue, "%.3f");
+
+			ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted("Y");
+			ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+			ImGui::SetNextItemWidth(inputWidth);
+			isChanged |= ImGui::DragFloat("##Y", &value.y, speed, minValue, maxValue, "%.3f");
+			ImGui::EndTable();
+		}
+
+		ImGui::PopID();
+		return isChanged;
+	}
+
+	bool DrawVector2Row(const char* label, Vector2& value, float speed, float minValue, float maxValue) {
+		bool isChanged = false;
+		ImGui::PushID(label);
+
+		if (BeginPropertyTable("MaterialVector2Row", 2)) {
+			SetupTwoColumnPropertyTable();
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted(label);
+			ImGui::TableNextColumn();
+			const ImGuiStyle& style = ImGui::GetStyle();
+			float inputWidth =
+				(ImGui::GetContentRegionAvail().x - kAxisLabelWidth * 2.0f - style.ItemInnerSpacing.x * 3.0f) / 2.0f;
+			inputWidth = (std::max)(inputWidth, 48.0f);
+
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted("X");
+			ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+			ImGui::SetNextItemWidth(inputWidth);
+			isChanged |= ImGui::DragFloat("##X", &value.x, speed, minValue, maxValue, "%.3f");
+
+			ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted("Y");
+			ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+			ImGui::SetNextItemWidth(inputWidth);
+			isChanged |= ImGui::DragFloat("##Y", &value.y, speed, minValue, maxValue, "%.3f");
+			ImGui::EndTable();
+		}
+
+		ImGui::PopID();
+		return isChanged;
+	}
+
 	bool DrawFloatRow(const char* label, float& value, float speed, float minValue, float maxValue) {
 		bool isChanged = false;  // float 入力が変更されたか
 		ImGui::PushID(label);
@@ -1134,13 +1204,11 @@ namespace {
 
 		if (ImGui::BeginTable(
 			    "GameObjectTagLayer",
-			    4,
+			    2,
 			    ImGuiTableFlags_SizingStretchProp |
 			    ImGuiTableFlags_NoSavedSettings)) {
-			ImGui::TableSetupColumn("タグ名", ImGuiTableColumnFlags_WidthFixed, 42.0f);
-			ImGui::TableSetupColumn("タグ", ImGuiTableColumnFlags_WidthStretch);
-			ImGui::TableSetupColumn("レイヤー名", ImGuiTableColumnFlags_WidthFixed, 58.0f);
-			ImGui::TableSetupColumn("レイヤー", ImGuiTableColumnFlags_WidthStretch);
+			ImGui::TableSetupColumn("項目名", ImGuiTableColumnFlags_WidthFixed, 64.0f);
+			ImGui::TableSetupColumn("値", ImGuiTableColumnFlags_WidthStretch);
 
 			ImGui::TableNextRow();
 			ImGui::TableNextColumn();
@@ -1151,6 +1219,7 @@ namespace {
 			ImGui::SetNextItemWidth(-1.0f);
 			ImGui::Combo("##Tag", &selectedTagIndex, tagItems, _countof(tagItems));
 
+			ImGui::TableNextRow();
 			ImGui::TableNextColumn();
 			ImGui::AlignTextToFramePadding();
 			ImGui::TextUnformatted("レイヤー");
@@ -1338,8 +1407,35 @@ namespace {
 			ImVec2(160.0f, 160.0f));
 	}
 
-	void DrawRendererComponent(
+	bool DrawMaterialTexturePicker(
 		const EditorInspectorPanelContext& context,
+		const char* label,
+		std::string& textureAssetPath) {
+		bool isChanged = DrawStringInputRow(label, textureAssetPath);
+		const bool isImageSelected =
+			!context.selectedAssetPath.empty() &&
+			(EditorAssetUtility::HasExtension(context.selectedAssetPath, ".png") ||
+			 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".jpg") ||
+			 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".jpeg") ||
+			 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".dds") ||
+			 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".tga") ||
+			 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".hdr"));
+
+		ImGui::PushID(label);
+		if (isImageSelected && ImGui::Button("選択中画像を設定", ImVec2(-1.0f, 0.0f))) {
+			textureAssetPath = context.selectedAssetPath;
+			isChanged = true;
+		}
+		if (!textureAssetPath.empty() && ImGui::Button("画像を解除", ImVec2(-1.0f, 0.0f))) {
+			textureAssetPath.clear();
+			isChanged = true;
+		}
+		ImGui::PopID();
+		return isChanged;
+	}
+
+	void DrawRendererComponent(
+		EditorInspectorPanelContext& context,
 		const EditorGameObject& gameObject,
 		EditorComponent& component,
 		const char* fallbackMaterialName) {
@@ -1350,36 +1446,95 @@ namespace {
 			hasModelData && !modelData.material.name.empty() ? modelData.material.name : fallbackMaterialName;
 		const std::string texturePath =
 			hasModelData && !modelData.material.textureFilePath.empty() ? modelData.material.textureFilePath : "なし";
-		const std::string uvLayoutTexturePath =
-			hasModelData && !modelData.material.uvLayoutTextureFilePath.empty() ? modelData.material.uvLayoutTextureFilePath : "なし";
+		std::string effectiveBaseColorTexturePath = component.textureAssetPath;
+
+		if (effectiveBaseColorTexturePath.empty() && component.useImportedMaterialTextures &&
+			hasModelData && !modelData.material.textureFilePath.empty()) {
+			effectiveBaseColorTexturePath = modelData.material.textureFilePath;
+		}
 
 		DrawTextRow("アセット", modelAssetPath.empty() ? "未設定" : modelAssetPath.c_str());
 		DrawSubHeader("マテリアル");
 		DrawReadOnlyFieldRow("要素 0", materialName.c_str());
-		DrawTextRow("テクスチャ", texturePath.c_str());
-		DrawTextRow("UV確認画像", uvLayoutTexturePath.c_str());
-		DrawTextRow("設定画像", component.textureAssetPath.empty() ? "未設定" : component.textureAssetPath.c_str());
+		DrawTextRow("FBX内テクスチャ", texturePath.c_str());
+		DrawTextRow(
+			"現在の描画画像",
+			effectiveBaseColorTexturePath.empty() ? "未設定（ベースカラーのみ）" : effectiveBaseColorTexturePath.c_str());
 		int32_t materialCount = static_cast<int32_t>(modelData.materials.size());
 		DrawIntRow("マテリアル数", materialCount);
-		DrawColor3Row("色", component.color);
+
+		//============================================================
+		// 基本サーフェス
+		//============================================================
+
+		const char* alphaModeItems[] = {"不透明", "アルファマスク", "半透明"};
+		component.alphaMode = (std::clamp)(component.alphaMode, 0, 2);
+		DrawComboRow("描画方式", component.alphaMode, alphaModeItems, static_cast<int32_t>(_countof(alphaModeItems)));
+		DrawCheckboxRow("両面描画", component.doubleSided);
+		DrawColor3Row("ベースカラー", component.color);
 		DrawFloatRow("強さ", component.intensity, 0.01f, 0.0f, 10.0f);
 		DrawFloatRow("メタリック", component.metallic, 0.01f, 0.0f, 1.0f);
 		DrawFloatRow("粗さ", component.roughness, 0.01f, 0.0f, 1.0f);
 		DrawFloatRow("屈折率", component.ior, 0.01f, 1.0f, 3.0f);
 		DrawFloatRow("アルファ", component.alpha, 0.01f, 0.0f, 1.0f);
-		DrawFloatRow("反射", component.reflectionStrength, 0.01f, 0.0f, 1.0f);
-		DrawFloatRow("放射", component.emissionStrength, 0.01f, 0.0f, 10.0f);
-		DrawStringInputRow("画像パス", component.textureAssetPath);
-		if (!context.selectedAssetPath.empty() &&
-			(EditorAssetUtility::HasExtension(context.selectedAssetPath, ".png") ||
-			 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".jpg") ||
-			 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".jpeg"))) {
-			if (ImGui::Button("選択中画像を設定", ImVec2(-1.0f, 0.0f))) {
-				component.textureAssetPath = context.selectedAssetPath;
-			}
+		if (component.alphaMode == 1) {
+			DrawFloatRow("アルファ境界", component.alphaCutoff, 0.01f, 0.0f, 1.0f);
 		}
-		if (!component.textureAssetPath.empty()) {
-			DrawTexturePreviewByPath(context, "設定画像プレビュー", component.textureAssetPath);
+		DrawFloatRow("反射", component.reflectionStrength, 0.01f, 0.0f, 1.0f);
+		DrawColor3Row("放射色", component.emissionColor);
+		DrawFloatRow("放射", component.emissionStrength, 0.01f, 0.0f, 50.0f);
+
+		bool isTexturePathChanged = false;
+		if (ImGui::TreeNodeEx("PBR テクスチャ", ImGuiTreeNodeFlags_DefaultOpen)) {
+			isTexturePathChanged |= DrawCheckboxRow("FBX内画像を自動使用", component.useImportedMaterialTextures);
+			DrawTextRow(
+				"画像の使い分け",
+				"ベースカラー画像はモデルへ描画します。UV確認画像はInspectorのプレビューだけに使い、モデルへは描画しません。");
+			isTexturePathChanged |= DrawMaterialTexturePicker(
+				context,
+				"ベースカラー画像（描画用）",
+				component.textureAssetPath);
+			isTexturePathChanged |= DrawMaterialTexturePicker(
+				context,
+				"UV確認画像（プレビュー専用）",
+				component.uvLayoutTextureAssetPath);
+			isTexturePathChanged |= DrawMaterialTexturePicker(context, "法線", component.normalTextureAssetPath);
+			isTexturePathChanged |= DrawMaterialTexturePicker(context, "メタリック", component.metallicTextureAssetPath);
+			isTexturePathChanged |= DrawMaterialTexturePicker(context, "粗さ", component.roughnessTextureAssetPath);
+			isTexturePathChanged |= DrawMaterialTexturePicker(context, "アンビエントオクルージョン", component.ambientOcclusionTextureAssetPath);
+			isTexturePathChanged |= DrawMaterialTexturePicker(context, "放射", component.emissionTextureAssetPath);
+			isTexturePathChanged |= DrawMaterialTexturePicker(context, "高さ", component.heightTextureAssetPath);
+			isTexturePathChanged |= DrawMaterialTexturePicker(context, "不透明度", component.opacityTextureAssetPath);
+			DrawVector2Row("UV繰り返し", component.uvTiling, 0.01f, -100.0f, 100.0f);
+			DrawVector2Row("UVオフセット", component.uvOffset, 0.01f, -100.0f, 100.0f);
+			DrawFloatRow("法線強度", component.normalScale, 0.01f, -2.0f, 2.0f);
+			DrawFloatRow("AO強度", component.ambientOcclusionStrength, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("高さ強度", component.heightScale, 0.001f, -0.2f, 0.2f);
+			ImGui::TreePop();
+		}
+
+		if (ImGui::TreeNodeEx("高度なPBR", ImGuiTreeNodeFlags_DefaultOpen)) {
+			DrawFloatRow("クリアコート", component.clearCoat, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("コート粗さ", component.clearCoatRoughness, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("透過", component.transmission, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("表面下散乱", component.subsurface, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("異方性", component.anisotropy, 0.01f, -1.0f, 1.0f);
+			DrawFloatRow("異方性回転", component.anisotropyRotation, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("鏡面色", component.specularTint, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("シーン", component.sheen, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("シーン色", component.sheenTint, 0.01f, 0.0f, 1.0f);
+			ImGui::TreePop();
+		}
+
+		if (isTexturePathChanged) {
+			context.sceneSynchronizer.Update(context.textureFilePaths, context.selectedPlacedSceneObjectIndex);
+		}
+		if (!effectiveBaseColorTexturePath.empty()) {
+			DrawTexturePreviewByPath(context, "描画用ベースカラー画像プレビュー", effectiveBaseColorTexturePath);
+		}
+
+		if (!component.uvLayoutTextureAssetPath.empty()) {
+			DrawTexturePreviewByPath(context, "UV確認画像プレビュー（描画には未使用）", component.uvLayoutTextureAssetPath);
 		}
 
 		if (hasModelData) {
@@ -1398,14 +1553,18 @@ namespace {
 			DrawTextRow("元粗さ", roughnessText.c_str());
 			DrawTextRow("元屈折率", iorText.c_str());
 			DrawTextRow("元反射", reflectionText.c_str());
-		}
 
-		if (hasModelData && !modelData.material.textureFilePath.empty()) {
-			DrawTexturePreviewByPath(context, "テクスチャプレビュー", modelData.material.textureFilePath);
-		}
-
-		if (hasModelData && !modelData.material.uvLayoutTextureFilePath.empty()) {
-			DrawTexturePreviewByPath(context, "UV確認画像プレビュー", modelData.material.uvLayoutTextureFilePath);
+			if (ImGui::TreeNodeEx("FBX PBR テクスチャ", ImGuiTreeNodeFlags_DefaultOpen)) {
+				DrawTextRow("ベースカラー", modelData.material.textureFilePath.empty() ? "なし" : modelData.material.textureFilePath.c_str());
+				DrawTextRow("法線", modelData.material.normalTextureFilePath.empty() ? "なし" : modelData.material.normalTextureFilePath.c_str());
+				DrawTextRow("メタリック", modelData.material.metallicTextureFilePath.empty() ? "なし" : modelData.material.metallicTextureFilePath.c_str());
+				DrawTextRow("粗さ", modelData.material.roughnessTextureFilePath.empty() ? "なし" : modelData.material.roughnessTextureFilePath.c_str());
+				DrawTextRow("AO", modelData.material.ambientOcclusionTextureFilePath.empty() ? "なし" : modelData.material.ambientOcclusionTextureFilePath.c_str());
+				DrawTextRow("放射", modelData.material.emissionTextureFilePath.empty() ? "なし" : modelData.material.emissionTextureFilePath.c_str());
+				DrawTextRow("高さ", modelData.material.heightTextureFilePath.empty() ? "なし" : modelData.material.heightTextureFilePath.c_str());
+				DrawTextRow("不透明度", modelData.material.opacityTextureFilePath.empty() ? "なし" : modelData.material.opacityTextureFilePath.c_str());
+				ImGui::TreePop();
+			}
 		}
 
 		DrawSubHeader("モデル情報");
@@ -1641,20 +1800,77 @@ namespace {
 
 		void DrawPlayerInputComponent(EditorInspectorPanelContext& context, EditorComponent& component) {
 			const char* behaviorItems[] = {"Invoke C++ Events"};
+			const char* valueTypeItems[] = {"Button", "Vector2"};
 			component.inputBehavior = (std::clamp)(component.inputBehavior, 0, static_cast<int32_t>(_countof(behaviorItems)) - 1);
 
-			DrawTextRow("説明", "新 Input System 風の Player Input です。Actions は Project の Assets 配下に作成し、そこから割り当てます。");
-			DrawTextRow("手順1", "下の Project タブで .inputactions を作成し、Inspector の Input Actions で ActionMap / Action / Path を設定します。");
-			DrawTextRow("手順2", "この GameObject に PlayerInput を付け、Actions にその .inputactions を割り当てます。");
-			DrawTextRow("手順3", "Play 中は Move で移動、Jump で上方向速度、Fire でイベント取得が動きます。");
+			DrawTextRow("説明", "Input Actions の ActionMap / Action を、同じ GameObject の C++ 関数へ接続します。");
 			DrawTextRow("Actions", component.assetPath.empty() ? "未設定" : component.assetPath.c_str());
 			DrawStringInputRow("Actions パス", component.assetPath);
 			DrawStringInputRow("Default Map", component.inputActionMapName);
 			DrawComboRow("Behavior", component.inputBehavior, behaviorItems, static_cast<int32_t>(_countof(behaviorItems)));
 			DrawSubHeader("Events");
-			DrawStringInputRow("Move", component.inputMoveEventName);
-			DrawStringInputRow("Jump", component.inputJumpEventName);
-			DrawStringInputRow("Fire", component.inputFireEventName);
+
+			int32_t removeEventIndex = -1;
+			for (size_t eventIndex = 0U; eventIndex < component.inputEventBindings.size(); eventIndex++) {
+				EditorInputEventBinding& eventBinding = component.inputEventBindings[eventIndex];
+				ImGui::PushID(static_cast<int32_t>(eventIndex));
+				ImGui::SeparatorText(("イベント " + std::to_string(eventIndex + 1U)).c_str());
+				DrawStringInputRow("Action Map", eventBinding.actionMapName);
+				DrawStringInputRow("Action", eventBinding.actionName);
+				DrawStringInputRow("C++ 関数", eventBinding.functionName);
+				eventBinding.valueType = (std::clamp)(eventBinding.valueType, 0, 1);
+				DrawComboRow("値の型", eventBinding.valueType, valueTypeItems, static_cast<int32_t>(_countof(valueTypeItems)));
+
+				if (ImGui::Button("このイベントを削除", ImVec2(-1.0f, 0.0f))) {
+					removeEventIndex = static_cast<int32_t>(eventIndex);
+				}
+
+				ImGui::PopID();
+			}
+
+			if (removeEventIndex >= 0) {
+				component.inputEventBindings.erase(component.inputEventBindings.begin() + removeEventIndex);
+			}
+
+			if (ImGui::Button("イベントを追加", ImVec2(-1.0f, 0.0f))) {
+				component.inputEventBindings.push_back({component.inputActionMapName, "NewAction", "OnNewAction", 0});
+			}
+
+			if (!component.assetPath.empty()) {
+				if (ImGui::Button("Actions から不足イベントを追加", ImVec2(-1.0f, 0.0f))) {
+					const std::vector<InputActionsAssetEntry> actionEntries = LoadInputActionsEntries(component.assetPath);
+
+					for (const InputActionsAssetEntry& actionEntry : actionEntries) {
+						const auto eventIt = std::find_if(
+							component.inputEventBindings.begin(),
+							component.inputEventBindings.end(),
+							[&actionEntry](const EditorInputEventBinding& eventBinding) {
+								return eventBinding.actionMapName == actionEntry.actionMapName &&
+									eventBinding.actionName == actionEntry.actionName;
+							});
+
+						if (eventIt == component.inputEventBindings.end()) {
+							component.inputEventBindings.push_back({
+								actionEntry.actionMapName,
+								actionEntry.actionName,
+								"On" + actionEntry.actionName,
+								actionEntry.isVector2 ? 1 : 0});
+						}
+					}
+				}
+			}
+
+			for (const EditorInputEventBinding& eventBinding : component.inputEventBindings) {
+				if (eventBinding.actionName == "Move") {
+					component.inputMoveEventName = eventBinding.functionName;
+				}
+				else if (eventBinding.actionName == "Jump") {
+					component.inputJumpEventName = eventBinding.functionName;
+				}
+				else if (eventBinding.actionName == "Fire") {
+					component.inputFireEventName = eventBinding.functionName;
+				}
+			}
 
 			if (ImGui::Button("Create Actions...", ImVec2(-1.0f, 0.0f))) {
 				CreatePlayerInputActionsAsset(context, component);
@@ -1673,9 +1889,7 @@ namespace {
 				}
 			}
 
-			DrawTextRow("C++ 取得例1", "runtimeApi->GetActionVector2(gameObjectId, \"Player\", \"Move\")");
-			DrawTextRow("C++ 取得例2", "runtimeApi->WasActionJustPressed(gameObjectId, \"Player\", \"Jump\")");
-			DrawTextRow("追加 Action", "Project の Input Actions アセットを編集して ActionMap / Action / Path を増やし、C++ 側でその名前を使います。");
+			DrawTextRow("C++ 側", "BindAction(\"OnMove\", ...) の登録名と、上の C++ 関数名を一致させます。");
 		}
 
 	void DrawHapticSourceComponent(EditorComponent& component) {
@@ -1725,7 +1939,12 @@ namespace {
 				ImGui::TableNextColumn();
 				ImGui::SetNextItemWidth(-1.0f);
 				if (ImGui::InputText("##DllPath", dllPathBuffer, sizeof(dllPathBuffer))) {
-					component.assetPath = dllPathBuffer;  // DLL を手入力で差し替えたい時のため、直接パス編集も許可する。
+					const std::string nextDllPath = dllPathBuffer;
+
+					if (component.assetPath != nextDllPath) {
+						component.assetPath = nextDllPath;  // DLL を差し替えた時は、新しい型情報を読み直す。
+						component.scriptProperties.clear();
+					}
 				}
 				ImGui::EndTable();
 			}
@@ -1736,7 +1955,13 @@ namespace {
 		if (!context.selectedAssetPath.empty() && context.selectedAssetPath.find(".dll") != std::string::npos) {
 			if (ImGui::Button("選択中 DLL を設定", ImVec2(-1.0f, 0.0f))) {
 				component.assetPath = context.selectedAssetPath;  // Project で選んだ DLL をそのまま Script に割り当てる。
+				component.scriptProperties.clear();
 			}
+		}
+
+		EditorScriptManager& scriptManager = context.runtimeManager.GetScriptManager();
+		if (!component.assetPath.empty()) {
+			scriptManager.RefreshExposedFields(component);
 		}
 
 		{
@@ -1750,6 +1975,61 @@ namespace {
 			DrawTextRow("状態メッセージ", debugInfo.lastStatusMessage.empty() ? "なし" : debugInfo.lastStatusMessage.c_str());
 		}
 
+		DrawSubHeader("公開変数");
+		if (component.scriptProperties.empty()) {
+			DrawTextRow("状態", "公開変数なし。DLLをビルドすると Expose... で登録した変数が表示されます。");
+		}
+
+		for (size_t propertyIndex = 0U; propertyIndex < component.scriptProperties.size(); propertyIndex++) {
+			EditorScriptProperty& scriptProperty = component.scriptProperties[propertyIndex];
+			const char* propertyLabel = scriptProperty.displayName.empty()
+				? scriptProperty.name.c_str()
+				: scriptProperty.displayName.c_str();
+			const float minValue = scriptProperty.hasRange ? scriptProperty.minValue : 0.0f;
+			const float maxValue = scriptProperty.hasRange ? scriptProperty.maxValue : 0.0f;
+			const float step = (std::max)(scriptProperty.step, 0.001f);
+			ImGui::PushID(static_cast<int32_t>(propertyIndex));
+
+			switch (scriptProperty.type) {
+			case EditorScriptFieldTypeBool:
+				DrawCheckboxRow(propertyLabel, scriptProperty.boolValue);
+				break;
+			case EditorScriptFieldTypeInt32:
+				DrawIntRow(propertyLabel, scriptProperty.intValue);
+
+				if (scriptProperty.hasRange) {
+					scriptProperty.intValue = (std::clamp)(
+						scriptProperty.intValue,
+						static_cast<int32_t>(scriptProperty.minValue),
+						static_cast<int32_t>(scriptProperty.maxValue));
+				}
+				break;
+			case EditorScriptFieldTypeFloat:
+				DrawFloatRow(propertyLabel, scriptProperty.floatValue, step, minValue, maxValue);
+				break;
+			case EditorScriptFieldTypeVector2:
+				DrawVector2Row(propertyLabel, scriptProperty.vector2Value, step, minValue, maxValue);
+				break;
+			case EditorScriptFieldTypeVector3:
+				DrawVector3Row(propertyLabel, scriptProperty.vector3Value, step, minValue, maxValue);
+				break;
+			case EditorScriptFieldTypeString:
+				DrawStringInputRow(propertyLabel, scriptProperty.stringValue);
+				break;
+			default:
+				DrawTextRow(propertyLabel, "未対応の型");
+				break;
+			}
+
+			ImGui::PopID();
+		}
+
+		if (!component.assetPath.empty()) {
+			if (ImGui::Button("DLL から公開変数を読み込む", ImVec2(-1.0f, 0.0f))) {
+				scriptManager.RefreshExposedFields(component);
+			}
+		}
+
 		DrawSubHeader("C++ スクリプト生成");
 		ImGui::InputText("クラス名", requestedScriptName, sizeof(requestedScriptName));
 
@@ -1760,6 +2040,7 @@ namespace {
 
 			if (result.isSucceeded) {
 				component.assetPath = result.dllFilePath;  // 生成直後から Script Component は想定 DLL を参照する。
+				component.scriptProperties.clear();
 				context.selectedAssetPath = result.sourceFilePath;  // Project ではまず .cpp を選択状態にして編集へ入りやすくする。
 				std::string nextDefaultName = gameObject.name + "Script";
 				for (char& letter : nextDefaultName) {
@@ -1856,6 +2137,42 @@ namespace {
 		DrawTextRow("説明", description);
 		DrawColor3Row("色", component.color);
 		DrawFloatRow("透明度", component.intensity, 0.01f, 0.0f, 1.0f);
+	}
+
+	void DrawButtonComponent(EditorComponent& component) {
+		DrawTextRow("説明", "Game View 上に表示し、クリック時に C++ Script の関数を呼びます。");
+		DrawStringInputRow("表示文字", component.buttonLabel);
+		DrawVector2Row("位置", component.buttonPosition, 0.5f, -10000.0f, 10000.0f);
+		DrawVector2Row("サイズ", component.buttonSize, 0.5f, 1.0f, 4096.0f);
+		DrawColor3Row("通常色", component.color);
+		DrawColor3Row("ホバー色", component.buttonHoverColor);
+		DrawColor3Row("押下色", component.buttonPressedColor);
+		DrawCheckboxRow("操作可能", component.buttonInteractable);
+		DrawStringInputRow("クリック関数", component.buttonOnClickFunction);
+	}
+
+	void DrawToggleComponent(EditorComponent& component) {
+		DrawTextRow("説明", "Game View 上に ON / OFF を表示し、変更時に C++ Script の関数を呼びます。");
+		DrawStringInputRow("表示文字", component.buttonLabel);
+		DrawVector2Row("位置", component.buttonPosition, 0.5f, -10000.0f, 10000.0f);
+		DrawVector2Row("サイズ", component.buttonSize, 0.5f, 1.0f, 4096.0f);
+		DrawCheckboxRow("現在値", component.toggleValue);
+		DrawColor3Row("通常色", component.color);
+		DrawCheckboxRow("操作可能", component.buttonInteractable);
+		DrawStringInputRow("変更関数", component.toggleOnValueChangedFunction);
+	}
+
+	void DrawSliderComponent(EditorComponent& component) {
+		DrawTextRow("説明", "Game View 上に数値バーを表示し、変更時に C++ Script の関数を呼びます。");
+		DrawStringInputRow("表示文字", component.buttonLabel);
+		DrawVector2Row("位置", component.buttonPosition, 0.5f, -10000.0f, 10000.0f);
+		DrawVector2Row("サイズ", component.buttonSize, 0.5f, 1.0f, 4096.0f);
+		DrawFloatRow("最小値", component.sliderMinValue, 0.01f, -100000.0f, 100000.0f);
+		DrawFloatRow("最大値", component.sliderMaxValue, 0.01f, -100000.0f, 100000.0f);
+		DrawFloatRow("現在値", component.sliderValue, 0.01f, component.sliderMinValue, component.sliderMaxValue);
+		DrawColor3Row("色", component.color);
+		DrawCheckboxRow("操作可能", component.buttonInteractable);
+		DrawStringInputRow("変更関数", component.sliderOnValueChangedFunction);
 	}
 
 	void DrawNavMeshAgentComponent(
@@ -2100,9 +2417,12 @@ namespace {
 		DrawCheckboxRow("ループ", component.animationLoop);
 		DrawCheckboxRow("自動再生", component.animationPlayOnAwake);
 		const char* animTypes[] = {"FBX Clip", "Float", "Rotate", "Pulse", "Bob"};
-		int32_t clamped = (std::max)(0, (std::min)(component.animationType, 4));
-		DrawIntRow("種類", component.animationType);
-		DrawTextRow("種類の意味", animTypes[clamped]);
+		component.animationType = (std::clamp)(component.animationType, 0, 4);
+		DrawComboRow(
+			"種類",
+			component.animationType,
+			animTypes,
+			static_cast<int32_t>(_countof(animTypes)));
 		if (component.animationType >= 1) {
 			DrawFloatRow("振幅", component.animationAmplitude, 0.01f, 0.0f, 10.0f);
 		}
@@ -2118,9 +2438,33 @@ namespace {
 		int32_t clipCount = static_cast<int32_t>(modelData.animationClips.size());
 		DrawIntRow("クリップ数", clipCount);
 		if (hasModelData && !modelData.animationClips.empty()) {
-			DrawTextRow("先頭クリップ", modelData.animationClips.front().name.c_str());
-			const std::string clipDurationText = std::to_string(modelData.animationClips.front().durationSeconds);
-			DrawTextRow("先頭クリップ長さ", clipDurationText.c_str());
+			component.animationClipIndex = (std::clamp)(
+				component.animationClipIndex,
+				0,
+				clipCount - 1);
+			std::vector<const char*> clipNames{};
+			clipNames.reserve(modelData.animationClips.size());
+
+			for (const ModelAnimationClipData& animationClip : modelData.animationClips) {
+				clipNames.push_back(animationClip.name.c_str());
+			}
+
+			DrawComboRow(
+				"再生クリップ",
+				component.animationClipIndex,
+				clipNames.data(),
+				static_cast<int32_t>(clipNames.size()));
+			const ModelAnimationClipData& selectedClip = modelData.animationClips[
+				static_cast<size_t>(component.animationClipIndex)];
+			const std::string clipDurationText = std::to_string(selectedClip.durationSeconds);
+			int32_t keyframeCount = static_cast<int32_t>(selectedClip.keyframes.size());
+			DrawTextRow("クリップ長さ", clipDurationText.c_str());
+			DrawIntRow("Transform キー数", keyframeCount);
+			DrawTextRow(
+				"アニメーション対象",
+				selectedClip.animatedNodeName.empty()
+					? "Transform カーブなし"
+					: selectedClip.animatedNodeName.c_str());
 		}
 	}
 
@@ -2232,12 +2576,237 @@ namespace {
 		DrawTextRow("説明", "画面全体のポストプロセス効果を調整します。このコンポーネントを追加した GameObject の設定が有効になります。");
 		const char* aaItems[] = {"None", "FXAA", "SMAA", "Temporal"};
 		DrawComboRow("アンチエイリアス", component.aaMode, aaItems, static_cast<int32_t>(_countof(aaItems)));
+		if (component.aaMode == 2) {
+			DrawFloatRow("SMAA しきい値", component.smaaThreshold, 0.001f, 0.001f, 0.5f);
+			DrawFloatRow("SMAA 角丸め", component.smaaCornerRounding, 1.0f, 0.0f, 100.0f);
+		}
+		if (component.aaMode == 3) {
+			DrawFloatRow("Temporal シャープ", component.temporalSharpness, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("Temporal 履歴ブレンド", component.temporalBlendRatio, 0.01f, 0.0f, 0.98f);
+		}
 		DrawCheckboxRow("SSR", component.ssrEnabled);
 		ImGui::Separator();
-		DrawFloatRow("Bloom 強さ", component.bloomIntensity, 0.01f, 0.0f, 10.0f);
-		DrawFloatRow("Bloom しきい値", component.bloomThreshold, 0.01f, 0.0f, 10.0f);
-		DrawFloatRow("Bloom 遷移幅", component.bloomSoftKnee, 0.01f, 0.0f, 1.0f);
-		DrawFloatRow("Bloom にじみ", component.bloomScatter, 0.01f, 0.0f, 1.0f);
+		DrawTextRow("グレア", "明るい部分から、にじみ・ゴースト・光条・放射状の光を生成します。");
+		const char* glareItems[] = {
+			"無効",
+			"ブルーム",
+			"ゴースト",
+			"光の筋",
+			"フォググロー",
+			"単純な星型",
+			"サンビーム",
+			"カーネル"
+		};
+		if (component.glareModeMask == 0 &&
+			component.glareMode > 0 &&
+			component.glareMode < static_cast<int32_t>(_countof(glareItems))) {
+			component.glareModeMask = 1 << component.glareMode;
+		}
+
+		ImGui::PushID("グレア追加");
+		if (BeginPropertyTable("GlareAddRow", 2)) {
+			SetupTwoColumnPropertyTable();
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted("効果を追加");
+			ImGui::TableNextColumn();
+			ImGui::SetNextItemWidth(-1.0f);
+
+			if (ImGui::BeginCombo("##Value", "追加するグレア")) {
+				for (int32_t glareModeIndex = 1;
+					glareModeIndex < static_cast<int32_t>(_countof(glareItems));
+					glareModeIndex++) {
+					const int32_t glareModeBit = 1 << glareModeIndex;
+					const bool isAlreadyAdded = (component.glareModeMask & glareModeBit) != 0;
+
+					if (ImGui::Selectable(
+						glareItems[glareModeIndex],
+						isAlreadyAdded)) {
+						component.glareModeMask |= glareModeBit;
+					}
+				}
+
+				ImGui::EndCombo();
+			}
+
+			ImGui::EndTable();
+		}
+
+		ImGui::PopID();
+
+		if (component.glareModeMask == 0) {
+			DrawTextRow("追加済みグレア", "なし");
+		}
+		else {
+			DrawTextRow("合成順", "追加済みのグレアを、下に並んでいる上から順番に直列合成します。");
+			DrawFloatRow("明部しきい値", component.bloomThreshold, 0.01f, 0.0f, 10.0f);
+			DrawFloatRow("しきい値遷移", component.bloomSoftKnee, 0.01f, 0.0f, 1.0f);
+
+			for (int32_t glareModeIndex = 1;
+				glareModeIndex < static_cast<int32_t>(_countof(glareItems));
+				glareModeIndex++) {
+				const int32_t glareModeBit = 1 << glareModeIndex;
+
+				if ((component.glareModeMask & glareModeBit) == 0) {
+					continue;
+				}
+
+				ImGui::PushID(glareItems[glareModeIndex]);
+				const bool isOpen = ImGui::TreeNodeEx(
+					glareItems[glareModeIndex],
+					ImGuiTreeNodeFlags_DefaultOpen |
+					ImGuiTreeNodeFlags_Framed |
+					ImGuiTreeNodeFlags_SpanAvailWidth);
+
+				if (isOpen) {
+					const size_t glareArrayIndex = static_cast<size_t>(glareModeIndex);
+					if (ImGui::Button("このグレアを削除", ImVec2(-1.0f, 0.0f))) {
+						component.glareModeMask &= ~glareModeBit;
+					}
+
+					DrawFloatRow("強さ", component.glareIntensityByMode[glareArrayIndex], 0.01f, 0.0f, 10.0f);
+					DrawColor3Row("色", component.glareColorByMode[glareArrayIndex]);
+
+					if (glareModeIndex == 1) {
+						DrawFloatRow("にじみ", component.glareSizeByMode[glareArrayIndex], 0.01f, 0.0f, 1.0f);
+					}
+
+					if (glareModeIndex >= 2) {
+						const char* sizeLabel = glareModeIndex == 6 ? "長さ" : "広がり";
+						DrawFloatRow(sizeLabel, component.glareSizeByMode[glareArrayIndex], 0.01f, 0.1f, 8.0f);
+						DrawFloatRow("減衰", component.glareFadeByMode[glareArrayIndex], 0.01f, 0.0f, 1.0f);
+					}
+
+					if (glareModeIndex == 2 || glareModeIndex == 3 || glareModeIndex == 5) {
+						DrawFloatRow("角度", component.glareAngleByMode[glareArrayIndex], 1.0f, -180.0f, 180.0f);
+						DrawFloatRow("色ずれ", component.glareColorModulationByMode[glareArrayIndex], 0.01f, 0.0f, 1.0f);
+					}
+
+					if (glareModeIndex == 3 || glareModeIndex == 5) {
+						if (DrawIntRow("光条数", component.glareStreakCountByMode[glareArrayIndex])) {
+							component.glareStreakCountByMode[glareArrayIndex] =
+								(std::clamp)(component.glareStreakCountByMode[glareArrayIndex], 2, 8);
+						}
+					}
+
+					if (glareModeIndex == 6) {
+						DrawFloatRow("光源位置 X", component.glareCenterByMode[glareArrayIndex].x, 0.01f, 0.0f, 1.0f);
+						DrawFloatRow("光源位置 Y", component.glareCenterByMode[glareArrayIndex].y, 0.01f, 0.0f, 1.0f);
+					}
+
+					ImGui::TreePop();
+				}
+
+				ImGui::PopID();
+			}
+		}
+
+		component.glareMode = 0;
+		for (int32_t glareModeIndex = 1; glareModeIndex < static_cast<int32_t>(_countof(glareItems)); glareModeIndex++) {
+			if ((component.glareModeMask & (1 << glareModeIndex)) != 0) {
+				component.glareMode = glareModeIndex;
+				break;
+			}
+		}
+
+		ImGui::Separator();
+		DrawTextRow("フィルター", "画面へ畳み込みフィルターを適用します。輪郭抽出系は強さで元画像との混合量を調整できます。");
+		const char* filterItems[] = {
+			"無効",
+			"ソフト化",
+			"ボックスシャープ",
+			"ダイヤモンドシャープ",
+			"ラプラス",
+			"ソーベル",
+			"プリウィット",
+			"キルシュ",
+			"影"
+		};
+		if (component.filterModeMask == 0 &&
+			component.filterMode > 0 &&
+			component.filterMode < static_cast<int32_t>(_countof(filterItems))) {
+			component.filterModeMask = 1 << component.filterMode;
+		}
+
+		ImGui::PushID("フィルター追加");
+		if (BeginPropertyTable("FilterAddRow", 2)) {
+			SetupTwoColumnPropertyTable();
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted("効果を追加");
+			ImGui::TableNextColumn();
+			ImGui::SetNextItemWidth(-1.0f);
+
+			if (ImGui::BeginCombo("##Value", "追加するフィルター")) {
+				for (int32_t filterModeIndex = 1;
+					filterModeIndex < static_cast<int32_t>(_countof(filterItems));
+					filterModeIndex++) {
+					const int32_t filterModeBit = 1 << filterModeIndex;
+					const bool isAlreadyAdded = (component.filterModeMask & filterModeBit) != 0;
+
+					if (ImGui::Selectable(
+						filterItems[filterModeIndex],
+						isAlreadyAdded)) {
+						component.filterModeMask |= filterModeBit;
+					}
+				}
+
+				ImGui::EndCombo();
+			}
+
+			ImGui::EndTable();
+		}
+		ImGui::PopID();
+
+		if (component.filterModeMask == 0) {
+			DrawTextRow("追加済みフィルター", "なし");
+		}
+		else {
+			DrawTextRow("合成順", "追加済みのフィルターを、下に並んでいる上から順番に直列合成します。");
+
+			for (int32_t filterModeIndex = 1;
+				filterModeIndex < static_cast<int32_t>(_countof(filterItems));
+				filterModeIndex++) {
+				const int32_t filterModeBit = 1 << filterModeIndex;
+
+				if ((component.filterModeMask & filterModeBit) == 0) {
+					continue;
+				}
+
+				ImGui::PushID(filterItems[filterModeIndex]);
+				const bool isOpen = ImGui::TreeNodeEx(
+					filterItems[filterModeIndex],
+					ImGuiTreeNodeFlags_DefaultOpen |
+					ImGuiTreeNodeFlags_Framed |
+					ImGuiTreeNodeFlags_SpanAvailWidth);
+
+				if (isOpen) {
+					const size_t filterArrayIndex = static_cast<size_t>(filterModeIndex);
+					if (ImGui::Button("このフィルターを削除", ImVec2(-1.0f, 0.0f))) {
+						component.filterModeMask &= ~filterModeBit;
+					}
+
+					DrawFloatRow("強さ", component.filterStrengthByMode[filterArrayIndex], 0.01f, 0.0f, 2.0f);
+					DrawColor3Row("色", component.filterColorByMode[filterArrayIndex]);
+					ImGui::TreePop();
+				}
+
+				ImGui::PopID();
+			}
+		}
+
+		component.filterMode = 0;
+		for (int32_t filterModeIndex = 1;
+			filterModeIndex < static_cast<int32_t>(_countof(filterItems));
+			filterModeIndex++) {
+			if ((component.filterModeMask & (1 << filterModeIndex)) != 0) {
+				component.filterMode = filterModeIndex;
+				break;
+			}
+		}
+
 		ImGui::Separator();
 		DrawFloatRow("最終明るさ", component.finalBrightness, 0.01f, 0.0f, 4.0f);
 		ImGui::Separator();
@@ -2431,6 +3000,9 @@ namespace {
 			DrawFloatRow("ピッチ", component.audioPitch, 0.01f, 0.0f, 3.0f);
 			DrawCheckboxRow("ループ", component.audioLoop);
 			DrawCheckboxRow("自動再生", component.audioPlayOnAwake);
+			DrawFloatRow("空間ブレンド", component.audioSpatialBlend, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("最小距離", component.audioMinDistance, 0.1f, 0.0f, 1000.0f);
+			DrawFloatRow("最大距離", component.audioMaxDistance, 0.1f, 0.0f, 10000.0f);
 			break;
 		case EditorComponentType::AudioReverbZone:
 			DrawAudioFilterComponent(component, "範囲内の音へリバーブを加えるコンポーネントです。");
@@ -2770,9 +3342,6 @@ namespace {
 		case EditorComponentType::GraphicRaycaster:
 		case EditorComponentType::RawImage:
 		case EditorComponentType::TextMeshProUGUI:
-		case EditorComponentType::Button:
-		case EditorComponentType::Toggle:
-		case EditorComponentType::Slider:
 		case EditorComponentType::Scrollbar:
 		case EditorComponentType::Dropdown:
 		case EditorComponentType::TMPDropdown:
@@ -2788,6 +3357,15 @@ namespace {
 		case EditorComponentType::AspectRatioFitter:
 		case EditorComponentType::LayoutElement:
 			DrawUIComponent(component, "UI 表示用コンポーネントです。");
+			break;
+		case EditorComponentType::Button:
+			DrawButtonComponent(component);
+			break;
+		case EditorComponentType::Toggle:
+			DrawToggleComponent(component);
+			break;
+		case EditorComponentType::Slider:
+			DrawSliderComponent(component);
 			break;
 		case EditorComponentType::Transform:
 		case EditorComponentType::Count:

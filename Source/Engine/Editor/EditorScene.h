@@ -1,7 +1,9 @@
 ﻿#pragma once
 
+#include "EditorScriptApi.h"
 #include "Vector.h"
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -344,11 +346,47 @@ enum class EditorComponentType {
 	Count,
 };
 
+//============================================================
+// C++ Script / PlayerInput の可変長データ
+//============================================================
+
+struct EditorScriptProperty {
+	std::string name;  // C++ 側で ExposeFloat などへ渡した変数名。
+	std::string displayName;  // Inspector に表示する日本語名。
+	int32_t type = 0;  // EditorScriptFieldType と同じ値を保存する。
+	bool boolValue = false;  // bool 公開変数の保存値。
+	int32_t intValue = 0;  // int32_t 公開変数の保存値。
+	float floatValue = 0.0f;  // float 公開変数の保存値。
+	EditorScriptVector2 vector2Value{0.0f, 0.0f};  // Vector2 公開変数の保存値。DLL 境界と同じ型を使う。
+	Vector3 vector3Value{0.0f, 0.0f, 0.0f};  // Vector3 公開変数の保存値。
+	std::string stringValue;  // std::string 公開変数の保存値。
+	float minValue = 0.0f;  // Inspector の入力下限。
+	float maxValue = 0.0f;  // Inspector の入力上限。
+	float step = 0.1f;  // Inspector のドラッグ変化量。
+	bool hasRange = false;  // minValue / maxValue を使うなら true。
+};
+
+struct EditorInputEventBinding {
+	std::string actionMapName;  // Input Actions 内の ActionMap 名。
+	std::string actionName;  // Input Actions 内の Action 名。
+	std::string functionName;  // C++ Script で BindAction した関数名。
+	int32_t valueType = 0;  // 0=Button、1=Vector2。
+};
+
 struct EditorComponent {
 	EditorComponentType type;  // Component の種類
 	bool isActive;  // Inspector の有効チェック
 	std::string assetPath;  // Model / Sprite / Audio などの Asset パス
 	std::string textureAssetPath;  // Renderer が明示的に使う画像パス
+	std::string normalTextureAssetPath;  // Renderer が使う Normal Map の画像パス
+	std::string metallicTextureAssetPath;  // Renderer が使う Metallic Map の画像パス
+	std::string roughnessTextureAssetPath;  // Renderer が使う Roughness Map の画像パス
+	std::string ambientOcclusionTextureAssetPath;  // Renderer が使う AO Map の画像パス
+	std::string emissionTextureAssetPath;  // Renderer が使う Emission Map の画像パス
+	std::string heightTextureAssetPath;  // Renderer が使う Height Map の画像パス
+	std::string opacityTextureAssetPath;  // Renderer が使う Opacity Map の画像パス
+	std::string uvLayoutTextureAssetPath;  // UV 配置を確認するだけの画像パス。描画用 Base Color とは分離する
+	bool useImportedMaterialTextures;  // true なら手動画像が空のスロットへ FBX 内画像を自動適用する
 	Vector3 color;  // Renderer / Light で使う色
 	float intensity;  // Light や Material の強さ
 	float metallic;  // Renderer の金属感。0 は非金属、1 は金属
@@ -357,6 +395,24 @@ struct EditorComponent {
 	float alpha;  // Renderer の透明度。1 は不透明
 	float reflectionStrength;  // Renderer の反射強度
 	float emissionStrength;  // Renderer の放射強度。0 より大きいと自発光する
+	Vector3 emissionColor;  // Renderer の放射色。Emission Map にも掛ける
+	float normalScale;  // Normal Map の凹凸強度
+	float ambientOcclusionStrength;  // AO Map が間接光へ与える強度
+	float heightScale;  // Height Map から作る視差量
+	float alphaCutoff;  // Mask 描画で破棄する Alpha 境界
+	float clearCoat;  // クリアコート層の強度
+	float clearCoatRoughness;  // クリアコート層の粗さ
+	float transmission;  // 材質を透過する環境光の割合
+	float subsurface;  // 表面下へ回り込む拡散光の割合
+	float anisotropy;  // 接線方向へ伸びる反射の強度
+	float anisotropyRotation;  // 異方性方向の回転量
+	float specularTint;  // 鏡面色へベースカラーを混ぜる割合
+	float sheen;  // 布の縁に出る反射の強度
+	float sheenTint;  // Sheen 色へベースカラーを混ぜる割合
+	int32_t alphaMode;  // 0=不透明、1=マスク、2=半透明
+	bool doubleSided;  // true なら両面描画する
+	EditorScriptVector2 uvTiling;  // Material Texture の UV 繰り返し数
+	EditorScriptVector2 uvOffset;  // Material Texture の UV 開始位置
 	float mass;  // RigidBody の質量
 	float drag;  // RigidBody の速度減衰
 	bool useGravity;  // RigidBody に重力を使うか
@@ -411,6 +467,9 @@ struct EditorComponent {
 		float audioPitch;  // AudioSource のピッチ (1=通常)
 		bool audioLoop;  // AudioSource のループ再生
 		bool audioPlayOnAwake;  // Awake 時に自動再生
+		float audioSpatialBlend;  // 3D空間ブレンド (0=2D, 1=3D)
+		float audioMinDistance;  // 3D最小距離
+		float audioMaxDistance;  // 3D最大距離
 		float navAgentRadius;  // NavigationAgent / NavMeshSurface の Agent 半径
 		float navAgentHeight;  // NavigationAgent / NavMeshSurface の Agent 高さ
 		float navMaxSpeed;  // NavigationAgent の最大速度
@@ -441,6 +500,7 @@ struct EditorComponent {
 	bool animationPlayOnAwake;  // Animation の自動再生
 	int32_t animationType;  // 0=FBX Clip, 1=Float, 2=Rotate, 3=Pulse, 4=Bob
 	float animationAmplitude;  // プロシージャルアニメーションの振幅
+	int32_t animationClipIndex;  // Animation が再生する FBX Clip の配列番号
 	int32_t animatorState;  // Animator の現在状態インデックス
 	float particleRate;  // ParticleSystem の発生レート (個/秒)
 	float particleLifetime;  // ParticleSystem のパーティクル寿命 (秒)
@@ -452,6 +512,32 @@ struct EditorComponent {
 	float bloomSoftKnee;  // Bloom しきい値遷移の softness
 	float bloomScatter;  // Bloom のにじみ広がり (0=狭, 1=広)
 	int32_t aaMode;  // 0=None, 1=FXAA, 2=SMAA, 3=Temporal
+	float smaaThreshold;  // SMAA が輪郭として扱う輝度差
+	float smaaCornerRounding;  // SMAA の角部分の丸め量
+	float temporalSharpness;  // Temporal 後に戻す輪郭の強さ
+	float temporalBlendRatio;  // Temporal の履歴色を混ぜる割合
+	int32_t glareMode;  // 0=無効、1=Bloom、2=Ghosts、3=Streaks、4=Fog Glow、5=Simple Star、6=Sun Beams、7=Kernel
+	int32_t glareModeMask;  // bit 1-7 に有効な Glare 方式を保持し、複数方式を直列合成する
+	float glareIntensity;  // Glare を元画像へ加算する強さ
+	float glareSize;  // Glare の広がり。サンプル間隔と光条の長さに使う
+	float glareAngle;  // Streaks / Simple Star の基準角度（度）
+	int32_t glareStreakCount;  // 光の筋を放射する方向数
+	float glareFade;  // 光条が中心から離れるほど減衰する割合
+	float glareColorModulation;  // Ghosts / Streaks の色ずれ量
+	Vector3 glareCenter;  // Sun Beams の光源位置。x/y は画面 UV、z は予約値
+	std::array<float, 8> glareIntensityByMode;  // Glare 種類ごとの強さ。index は glareMode と同じ
+	std::array<float, 8> glareSizeByMode;  // Glare 種類ごとの広がり / 長さ
+	std::array<float, 8> glareAngleByMode;  // Glare 種類ごとの角度（度）
+	std::array<int32_t, 8> glareStreakCountByMode;  // Glare 種類ごとの光条数
+	std::array<float, 8> glareFadeByMode;  // Glare 種類ごとの減衰
+	std::array<float, 8> glareColorModulationByMode;  // Glare 種類ごとの色ずれ
+	std::array<Vector3, 8> glareCenterByMode;  // Glare 種類ごとの画面上の中心位置 / 予約値
+	std::array<Vector3, 8> glareColorByMode;  // Glare 種類ごとの色
+	int32_t filterMode;  // 0=無効、1=Soften、2=Box Sharpen、3=Diamond Sharpen、4=Laplace、5=Sobel、6=Prewitt、7=Kirsch、8=Shadow
+	int32_t filterModeMask;  // bit 1-8 に有効な Filter を保持し、追加順相当の固定順で直列合成する
+	float filterStrength;  // Filter 結果を元画像へ混ぜる強さ
+	std::array<float, 9> filterStrengthByMode;  // Filter 種類ごとの強さ。index は filterMode と同じ
+	std::array<Vector3, 9> filterColorByMode;  // Filter 種類ごとの色。輪郭抽出の色付けにも使う
 	float finalBrightness;  // 最終合成の明るさ
 	bool smaaEnabled;  // SMAA 有効（旧aaMode）
 	bool taaEnabled;  // TAA 有効（旧aaMode）
@@ -485,6 +571,21 @@ struct EditorComponent {
 	bool cameraMotionBlurEnabled;  // モーションブラー有効
 	float cameraMotionBlurIntensity;  // ブラー強度
 	float cameraExposure;  // 露出補正 (EV)
+	std::string buttonLabel;  // Game View に表示する Button の文字。
+	EditorScriptVector2 buttonPosition;  // Game View 左上からの Button 表示位置。
+	EditorScriptVector2 buttonSize;  // Game View 上の Button サイズ。
+	bool buttonInteractable;  // false なら見えるがクリックできない。
+	Vector3 buttonHoverColor;  // マウスが乗った時の Button 色。
+	Vector3 buttonPressedColor;  // 押している間の Button 色。
+	std::string buttonOnClickFunction;  // クリック時に C++ Script へ通知する関数名。
+	bool toggleValue;  // Toggle の現在値。
+	std::string toggleOnValueChangedFunction;  // Toggle 変更時に C++ Script へ通知する関数名。
+	float sliderValue;  // Slider の現在値。
+	float sliderMinValue;  // Slider の最小値。
+	float sliderMaxValue;  // Slider の最大値。
+	std::string sliderOnValueChangedFunction;  // Slider 変更時に C++ Script へ通知する関数名。
+	std::vector<EditorScriptProperty> scriptProperties;  // DLL が公開した変数と GameObject ごとの保存値。
+	std::vector<EditorInputEventBinding> inputEventBindings;  // Input Action と C++ 関数名の接続一覧。
 	};
 
 struct EditorGameObject {

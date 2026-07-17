@@ -79,6 +79,63 @@ struct EditorScriptTransform {
 	EditorScriptVector3 scale;
 };
 
+//================================================================
+// Inspector 公開変数と Input Action 通知
+//================================================================
+
+enum EditorScriptFieldType : int32_t {
+	EditorScriptFieldTypeBool = 0,
+	EditorScriptFieldTypeInt32 = 1,
+	EditorScriptFieldTypeFloat = 2,
+	EditorScriptFieldTypeVector2 = 3,
+	EditorScriptFieldTypeVector3 = 4,
+	EditorScriptFieldTypeString = 5,
+};
+
+enum EditorScriptInputPhase : int32_t {
+	EditorScriptInputPhaseStarted = 0,
+	EditorScriptInputPhasePerformed = 1,
+	EditorScriptInputPhaseCanceled = 2,
+};
+
+enum EditorScriptInputValueType : int32_t {
+	EditorScriptInputValueTypeButton = 0,
+	EditorScriptInputValueTypeVector2 = 1,
+};
+
+struct EditorScriptFieldValue {
+	int32_t type;
+	bool boolValue;
+	uint8_t reservedPadding[3];
+	int32_t intValue;
+	float floatValue;
+	EditorScriptVector2 vector2Value;
+	EditorScriptVector3 vector3Value;
+	char stringValue[256];
+};
+
+struct EditorScriptFieldDescriptor {
+	char name[64];
+	char displayName[64];
+	EditorScriptFieldValue defaultValue;
+	float minValue;
+	float maxValue;
+	float step;
+	bool hasRange;
+	uint8_t reservedPadding[3];
+};
+
+struct EditorScriptInputActionContext {
+	int32_t gameObjectId;
+	int32_t phase;
+	int32_t valueType;
+	float buttonValue;
+	EditorScriptVector2 vector2Value;
+	char actionMapName[64];
+	char actionName[64];
+	char bindingPath[128];
+};
+
 struct EditorScriptPhysicsEvent {
 	int32_t type;
 	int32_t selfGameObjectId;
@@ -183,4 +240,9 @@ extern "C" {
 	typedef void(__cdecl* EditorScriptFixedUpdateFn)(int32_t gameObjectId, float fixedDeltaTime);
 	typedef void(__cdecl* EditorScriptPhysicsEventFn)(int32_t gameObjectId, const EditorScriptPhysicsEvent* physicsEvent);
 	typedef void(__cdecl* EditorScriptStopFn)(int32_t gameObjectId);
+	typedef int32_t(__cdecl* EditorScriptGetFieldCountFn)();
+	typedef bool(__cdecl* EditorScriptGetFieldDescriptorFn)(int32_t fieldIndex, EditorScriptFieldDescriptor* fieldDescriptor);
+	typedef bool(__cdecl* EditorScriptGetFieldValueFn)(int32_t gameObjectId, const char* fieldName, EditorScriptFieldValue* fieldValue);
+	typedef bool(__cdecl* EditorScriptSetFieldValueFn)(int32_t gameObjectId, const char* fieldName, const EditorScriptFieldValue* fieldValue);
+	typedef bool(__cdecl* EditorScriptInvokeActionFn)(int32_t gameObjectId, const char* functionName, const EditorScriptInputActionContext* inputContext);
 }

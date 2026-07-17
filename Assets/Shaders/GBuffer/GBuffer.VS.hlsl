@@ -1,36 +1,36 @@
-﻿struct GBufferTransform
+﻿struct TransformationMatrix
 {
     row_major float4x4 WVP;
     row_major float4x4 World;
     row_major float4x4 lightWVP;
+    float4 reflectionClipPlane;
+    float4 reflectionClipParams;
 };
 
-ConstantBuffer<GBufferTransform> gTransform : register(b0);
+ConstantBuffer<TransformationMatrix> gTransformationMatrix : register(b0);
 
-struct VSInput
+struct VertexShaderInput
 {
     float4 position : POSITION0;
     float2 texcoord : TEXCOORD0;
     float3 normal : NORMAL0;
 };
 
-struct VSOutput
+struct VertexShaderOutput
 {
     float4 position : SV_POSITION;
     float2 texcoord : TEXCOORD0;
-    float3 normal : TEXCOORD1;
-    float3 worldPosition : TEXCOORD2;
-    float4 shadowPosition : TEXCOORD3;
+    float3 normal : NORMAL0;
+    float3 worldPosition : TEXCOORD1;
 };
 
-VSOutput main(VSInput input)
+VertexShaderOutput main(VertexShaderInput input)
 {
-    VSOutput output;
-    const float4 worldPosition = mul(input.position, gTransform.World);
-    output.position = mul(input.position, gTransform.WVP);
+    VertexShaderOutput output;
+    const float4 worldPosition = mul(input.position, gTransformationMatrix.World);
+    output.position = mul(input.position, gTransformationMatrix.WVP);
     output.texcoord = input.texcoord;
-    output.normal = normalize(mul(float4(input.normal, 0.0f), gTransform.World).xyz);
+    output.normal = normalize(mul(float4(input.normal, 0.0f), gTransformationMatrix.World).xyz);
     output.worldPosition = worldPosition.xyz;
-    output.shadowPosition = mul(input.position, gTransform.lightWVP);
     return output;
 }

@@ -12,5 +12,5 @@ if errorlevel 1 exit /b 1
 
 if not exist "%SCRIPT_DIR%\x64\Release" mkdir "%SCRIPT_DIR%\x64\Release"
 
-cl /nologo /utf-8 /std:c++20 /EHsc /MD /O2 /LD /I "%PROJECT_ROOT%" "%SCRIPT_DIR%\NewNativeScript.cpp" /Fe:"%SCRIPT_DIR%\x64\Release\NewNativeScript.dll"
+cl /nologo /utf-8 /std:c++20 /EHsc /MD /O2 /LD /I "%PROJECT_ROOT%\Source\Engine\Core" /I "%PROJECT_ROOT%" "%SCRIPT_DIR%\NewNativeScript.cpp" /Fe:"%SCRIPT_DIR%\x64\Release\NewNativeScript.dll"
 popd

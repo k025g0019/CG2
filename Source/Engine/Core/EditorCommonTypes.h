@@ -58,10 +58,38 @@ struct Material {
 	Vector3 reflectionProbeExtent;  // Reflection Probe のワールド半径。各軸の Box 半分サイズ
 	float materialPadding2;  // HLSL cbuffer の 16byte 境界合わせ
 	Matrix4x4 uvTransform;  // UV の移動 / 回転 / 拡縮行列
+	float normalScale;  // 法線マップの凹凸強度
+	float ambientOcclusionStrength;  // AO マップが間接光を暗くする強度
+	float heightScale;  // Height マップから作る視差量
+	float alphaCutoff;  // Mask 描画で破棄する Alpha の境界
+	float clearCoat;  // 表面を覆う透明なクリアコート層の強度
+	float clearCoatRoughness;  // クリアコート層だけに使う粗さ
+	float transmission;  // 環境光を透過・屈折させる割合
+	float subsurface;  // 薄い材質へ回り込む拡散光の割合
+	float anisotropy;  // 接線方向へ伸びる異方性反射の強度
+	float anisotropyRotation;  // 異方性反射の接線方向を回す量
+	float specularTint;  // 非金属の鏡面色へベースカラーを混ぜる割合
+	float sheen;  // 布の縁に出る柔らかい反射の強度
+	Vector3 emissionColor;  // 放射マップと放射強度へ掛ける色
+	float sheenTint;  // Sheen の色へベースカラーを混ぜる割合
+	int32_t useNormalMap;  // 0 以外なら t7 の Normal Map を使う
+	int32_t useMetallicMap;  // 0 以外なら t8 の Metallic Map を使う
+	int32_t useRoughnessMap;  // 0 以外なら t9 の Roughness Map を使う
+	int32_t useAmbientOcclusionMap;  // 0 以外なら t10 の AO Map を使う
+	int32_t useEmissionMap;  // 0 以外なら t11 の Emission Map を使う
+	int32_t useHeightMap;  // 0 以外なら t12 の Height Map を使う
+	int32_t useOpacityMap;  // 0 以外なら t13 の Opacity Map を使う
+	int32_t alphaMode;  // 0=Opaque、1=Masked、2=Transparent
+	int32_t doubleSided;  // 0 以外なら Inspector 上で両面材質として扱う
+	float materialExtensionPadding0;  // HLSL cbuffer の 16byte 境界合わせ
+	float materialExtensionPadding1;  // HLSL cbuffer の 16byte 境界合わせ
+	float materialExtensionPadding2;  // HLSL cbuffer の 16byte 境界合わせ
+	Vector2 uvTiling;  // UV の繰り返し回数
+	Vector2 uvOffset;  // UV の開始位置
 };
 
 static_assert(offsetof(Material, uvTransform) == 96u, "Material と HLSL cbuffer の uvTransform 開始位置が一致していません。");
-static_assert(sizeof(Material) == 160u, "Material と HLSL cbuffer のサイズが一致していません。");
+static_assert(sizeof(Material) == 288u, "Material と HLSL cbuffer のサイズが一致していません。");
 
 constexpr int32_t kMaxEmissiveLights = 8;
 
@@ -73,28 +101,36 @@ struct EmissiveLight {
 };
 
 struct DirectionalLight {
-	Vector4 color;  // ライト色
-	Vector3 direction;  // 光が向かう方向
-	float intensity;  // 光の強さ
-	Vector3 position;  // Point / Spot / Area 用のライト位置
-	float range;  // Point / Spot / Area の影響距離
-	Vector3 skyUpperColor;  // 天頂側の空色
-	float skyIntensity;  // 天球全体の明るさ
-	Vector3 skyLowerColor;  // 地平線 / 下側の空色
-	float skyEmission;  // 天球が自発光として足す強さ
-	float ambientIntensity;  // 影側へ足す環境光の強さ
-	float horizonSharpness;  // 上下の空色の切り替わり具合
-	float reflectionIntensity;  // 反射へ混ぜる環境光の強さ
-	float spotCosInner;  // Spot の内側コーン。cos 値で持つ
-	float spotCosOuter;  // Spot の外側コーン。cos 値で持つ
-	int32_t lightType;  // 0: Sun / 1: Point / 2: Spot / 3: Area
-	float areaRadius;  // Area の見た目上の広がり。今は減衰の柔らかさへ使う
-	Vector3 cameraPosition;  // PBR の反射とハイライトを計算する時のカメラ位置
-	float padding3;  // 16byte 境界合わせ用
-	float environmentTextureEnabled;  // 1 なら環境テクスチャを Skybox / IBL に使う
-	float environmentTextureIntensity;  // 環境テクスチャの寄与
-	float environmentTextureRotation;  // 水平回転角。ラジアン
-	float environmentTextureMipBias;  // 反射時の mip バイアス
+	Vector4 color;
+	Vector3 direction;
+	float intensity;
+	Vector3 position;
+	float range;
+	Vector3 skyUpperColor;
+	float skyIntensity;
+	Vector3 skyLowerColor;
+	float skyEmission;
+	float ambientIntensity;
+	float horizonSharpness;
+	float reflectionIntensity;
+	float spotCosInner;
+	float spotCosOuter;
+	int32_t lightType;
+	float areaRadius;
+	Vector3 cameraPosition;
+	float padding3;
+	float environmentTextureEnabled;
+	float environmentTextureIntensity;
+	float environmentTextureRotation;
+	float environmentTextureMipBias;
+	float shadowTileIndex;  // -1 = no shadow, 0-3 = atlas tile
+	float shadowTileUvScaleX;
+	float shadowTileUvScaleY;
+	float shadowTileUvBiasX;
+	float shadowTileUvBiasY;
+	float shadowEnabled;
+	float shadowPadding0, shadowPadding1, shadowPadding2;
+	Matrix4x4 shadowVP;
 };
 
 struct EmissiveLightArray {
@@ -121,6 +157,13 @@ struct Sprite {
 struct MaterialData {
 	std::string name;  // マテリアル名。FBX / MTL に名前があれば保持する
 	std::string textureFilePath;  // mtl / FBX から読んだ texture ファイルパス
+	std::string normalTextureFilePath;  // FBX から読んだ法線マップのファイルパス
+	std::string metallicTextureFilePath;  // FBX から読んだメタリックマップのファイルパス
+	std::string roughnessTextureFilePath;  // FBX から読んだ粗さマップのファイルパス
+	std::string ambientOcclusionTextureFilePath;  // FBX から読んだ AO マップのファイルパス
+	std::string emissionTextureFilePath;  // FBX から読んだ放射マップのファイルパス
+	std::string heightTextureFilePath;  // FBX から読んだ高さ・変位マップのファイルパス
+	std::string opacityTextureFilePath;  // FBX から読んだ不透明度マップのファイルパス
 	std::string uvLayoutTextureFilePath;  // UV 確認用画像や UV 展開画像のパス
 	Vector3 baseColor;  // 元アセットが持つ基本色。なければ白
 	float intensity;  // 元アセットが持つ強さ。なければ 1
@@ -131,9 +174,18 @@ struct MaterialData {
 	float alpha;  // 元アセットが持つ透明度。1 なら不透明
 };
 
+struct ModelAnimationKeyframeData {
+	float timeSeconds;  // クリップ開始からの経過秒
+	Vector3 translation;  // FBX Node のローカル平行移動
+	Vector3 rotation;  // FBX Node のローカル回転。各軸ラジアン
+	Vector3 scale;  // FBX Node のローカル拡縮
+};
+
 struct ModelAnimationClipData {
 	std::string name;  // FBX の AnimationStack 名や Clip 名
 	float durationSeconds;  // クリップ長。取得できない場合は 0
+	std::string animatedNodeName;  // Transform Key を取得した FBX Node 名
+	std::vector<ModelAnimationKeyframeData> keyframes;  // クリップを時間順にサンプリングした Transform Key
 };
 
 struct ModelData {

@@ -14,6 +14,8 @@ struct FinalCompositeConstants
     float chromaticAberration;
     float ambientOcclusionStrength;
     float padding;
+    float3 bloomTint;
+    float padding1;
 };
 
 ConstantBuffer<FinalCompositeConstants> gFinalComposite : register(b0);
@@ -50,7 +52,7 @@ float4 main(PixelShaderInput input) : SV_TARGET0
         1.0f,
         ambientOcclusion,
         saturate(gFinalComposite.ambientOcclusionStrength));
-    color += bloomColor * max(gFinalComposite.bloomIntensity, 0.0f);
+    color += bloomColor * max(gFinalComposite.bloomIntensity, 0.0f) * max(gFinalComposite.bloomTint, 0.0f);
 
     const float whitePoint = max(gFinalComposite.whitePoint, 0.0001f);
 

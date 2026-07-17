@@ -26,6 +26,6 @@ float4 main(PixelShaderInput input) : SV_TARGET0
     const float bottomDistance = SearchEdgeLength(gEdgeTexture, gLinearSampler, input.texcoord, float2(0.0f, 1.0f), gTexelSize);
     const float horizontalWeight = edge.g * saturate((leftDistance + rightDistance) / 16.0f);
     const float verticalWeight = edge.r * saturate((topDistance + bottomDistance) / 16.0f);
-    const float cornerReduction = 1.0f - saturate(gCornerRounding) * min(horizontalWeight, verticalWeight) * 0.5f;
+    const float cornerReduction = 1.0f - saturate(gCornerRounding / 100.0f) * min(horizontalWeight, verticalWeight) * 0.5f;
     return float4(horizontalWeight, verticalWeight, horizontalWeight, verticalWeight) * cornerReduction;
 }

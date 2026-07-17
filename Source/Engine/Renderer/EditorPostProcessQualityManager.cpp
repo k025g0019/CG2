@@ -10,12 +10,14 @@ namespace {
 	constexpr uint32_t kSmaaEdgePipelineIndex = 3u;
 	constexpr uint32_t kSmaaWeightPipelineIndex = 4u;
 	constexpr uint32_t kSmaaNeighborhoodPipelineIndex = 5u;
-	constexpr uint32_t kRootConstantCount = 8u;
+	constexpr uint32_t kGlarePipelineIndex = 6u;
+	constexpr uint32_t kFilterPipelineIndex = 7u;
+	constexpr uint32_t kRootConstantCount = EditorPostProcessQualityManager::kRootConstantCount;
 
 
 	DXGI_FORMAT GetResourceFormat(uint32_t resourceIndex) {
-		constexpr uint32_t kSmaaEdgeResourceIndex = 7u;
-		constexpr uint32_t kSmaaWeightResourceIndex = 8u;
+		constexpr uint32_t kSmaaEdgeResourceIndex = 11u;
+		constexpr uint32_t kSmaaWeightResourceIndex = 12u;
 
 		if (resourceIndex == kSmaaEdgeResourceIndex) {
 			return DXGI_FORMAT_R8G8_UNORM;
@@ -133,7 +135,7 @@ bool EditorPostProcessQualityManager::ExecuteBloom(
 	// HDR の明部を抽出し、4 段の解像度へ縮小する
 	//================================================================
 
-	std::array<float, 8u> constants{};
+	std::array<float, kRootConstantCount> constants{};
 	constants[0] = 1.0f / static_cast<float>(renderWidth_);
 	constants[1] = 1.0f / static_cast<float>(renderHeight_);
 	constants[2] = bloomThreshold;
@@ -225,17 +227,19 @@ bool EditorPostProcessQualityManager::ExecuteBloom(
 
 bool EditorPostProcessQualityManager::ExecuteSmaa(
 	ID3D12GraphicsCommandList* commandList,
-	D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle) {
+	D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle,
+	float threshold,
+	float cornerRounding) {
 
 	if (!isInitialized_ || commandList == nullptr || sourceColorSrvHandle.ptr == 0u) {
 		return false;
 	}
 
-	std::array<float, 8u> constants{};
+	std::array<float, kRootConstantCount> constants{};
 	constants[0] = 1.0f / static_cast<float>(renderWidth_);
 	constants[1] = 1.0f / static_cast<float>(renderHeight_);
-	constants[2] = 0.075f;
-	constants[3] = 0.25f;
+	constants[2] = (std::clamp)(threshold, 0.001f, 0.5f);
+	constants[3] = (std::clamp)(cornerRounding, 0.0f, 100.0f);
 
 	//================================================================
 	// Edge Detection -> Blend Weight -> Neighborhood Blend
@@ -274,6 +278,114 @@ bool EditorPostProcessQualityManager::ExecuteSmaa(
 	return true;
 }
 
+bool EditorPostProcessQualityManager::ExecuteGlare(
+	ID3D12GraphicsCommandList* commandList,
+	D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle,
+	int32_t glareMode,
+	float intensity,
+	float size,
+	float angleDegrees,
+	int32_t streakCount,
+	float fade,
+	float colorModulation,
+	float centerX,
+	float centerY,
+	float colorR,
+	float colorG,
+	float colorB,
+	bool preserveSource) {
+
+	if (!isInitialized_ || commandList == nullptr || sourceColorSrvHandle.ptr == 0u || glareMode <= 1) {
+		return false;
+	}
+
+	//================================================================
+	// Bloom で抽出済みの明部から、選択した Glare 形状を作る
+	//================================================================
+
+	std::array<float, kRootConstantCount> constants{};
+	constants[0] = 1.0f / static_cast<float>(renderWidth_);
+	constants[1] = 1.0f / static_cast<float>(renderHeight_);
+	constants[2] = static_cast<float>(glareMode);
+	constants[3] = (std::max)(intensity, 0.0f);
+	constants[4] = (std::clamp)(size, 0.1f, 8.0f);
+	constants[5] = angleDegrees * 3.1415926535f / 180.0f;
+	constants[6] = static_cast<float>((std::clamp)(streakCount, 2, 8));
+	constants[7] = (std::clamp)(fade, 0.0f, 1.0f);
+	constants[8] = (std::clamp)(colorModulation, 0.0f, 1.0f);
+	constants[9] = (std::clamp)(centerX, 0.0f, 1.0f);
+	constants[10] = (std::clamp)(centerY, 0.0f, 1.0f);
+	constants[11] = preserveSource ? 1.0f : 0.0f;
+	constants[12] = (std::max)(colorR, 0.0f);
+	constants[13] = (std::max)(colorG, 0.0f);
+	constants[14] = (std::max)(colorB, 0.0f);
+
+	const ResourceType destinationResourceType =
+		sourceColorSrvHandle.ptr == srvHandles_[static_cast<size_t>(ResourceType::GlareOutputA)].ptr
+		? ResourceType::GlareOutputB
+		: ResourceType::GlareOutputA;
+
+	const bool isGlareExecuted = DrawPass(
+		commandList,
+		kGlarePipelineIndex,
+		destinationResourceType,
+		sourceColorSrvHandle,
+		sourceColorSrvHandle,
+		constants);
+
+	if (isGlareExecuted) {
+		lastGlareOutputResourceType_ = destinationResourceType;
+	}
+
+	return isGlareExecuted;
+}
+
+bool EditorPostProcessQualityManager::ExecuteFilter(
+	ID3D12GraphicsCommandList* commandList,
+	D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle,
+	int32_t filterMode,
+	float strength,
+	float colorR,
+	float colorG,
+	float colorB) {
+
+	if (!isInitialized_ || commandList == nullptr || sourceColorSrvHandle.ptr == 0u || filterMode <= 0) {
+		return false;
+	}
+
+	//================================================================
+	// Blender の Filter ノード相当の 3x3 畳み込みを適用する
+	//================================================================
+
+	std::array<float, kRootConstantCount> constants{};
+	constants[0] = 1.0f / static_cast<float>(renderWidth_);
+	constants[1] = 1.0f / static_cast<float>(renderHeight_);
+	constants[2] = static_cast<float>((std::clamp)(filterMode, 1, 8));
+	constants[3] = (std::clamp)(strength, 0.0f, 2.0f);
+	constants[4] = (std::max)(colorR, 0.0f);
+	constants[5] = (std::max)(colorG, 0.0f);
+	constants[6] = (std::max)(colorB, 0.0f);
+
+	const ResourceType destinationResourceType =
+		sourceColorSrvHandle.ptr == srvHandles_[static_cast<size_t>(ResourceType::FilterOutputA)].ptr
+		? ResourceType::FilterOutputB
+		: ResourceType::FilterOutputA;
+
+	const bool isFilterExecuted = DrawPass(
+		commandList,
+		kFilterPipelineIndex,
+		destinationResourceType,
+		sourceColorSrvHandle,
+		sourceColorSrvHandle,
+		constants);
+
+	if (isFilterExecuted) {
+		lastFilterOutputResourceType_ = destinationResourceType;
+	}
+
+	return isFilterExecuted;
+}
+
 void EditorPostProcessQualityManager::Finalize() {
 	ReleaseSizeDependentResources();
 
@@ -292,6 +404,14 @@ void EditorPostProcessQualityManager::Finalize() {
 
 D3D12_GPU_DESCRIPTOR_HANDLE EditorPostProcessQualityManager::GetBloomSrvHandle() const {
 	return srvHandles_[static_cast<size_t>(ResourceType::BloomUp0)];
+}
+
+D3D12_GPU_DESCRIPTOR_HANDLE EditorPostProcessQualityManager::GetGlareSrvHandle() const {
+	return srvHandles_[static_cast<size_t>(lastGlareOutputResourceType_)];
+}
+
+D3D12_GPU_DESCRIPTOR_HANDLE EditorPostProcessQualityManager::GetFilterSrvHandle() const {
+	return srvHandles_[static_cast<size_t>(lastFilterOutputResourceType_)];
 }
 
 D3D12_GPU_DESCRIPTOR_HANDLE EditorPostProcessQualityManager::GetSmaaOutputSrvHandle() const {
@@ -369,6 +489,8 @@ bool EditorPostProcessQualityManager::CreateRootSignatureAndPipelineStates(
 		DXGI_FORMAT_R8G8_UNORM,
 		DXGI_FORMAT_R8G8B8A8_UNORM,
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
+		DXGI_FORMAT_R16G16B16A16_FLOAT,
+		DXGI_FORMAT_R16G16B16A16_FLOAT,
 	};
 
 	for (uint32_t pipelineIndex = 0u; pipelineIndex < kPipelineCount; pipelineIndex++) {
@@ -440,6 +562,10 @@ bool EditorPostProcessQualityManager::CreateSizeDependentResources(
 		renderWidth,
 		renderWidth,
 		renderWidth,
+		renderWidth,
+		renderWidth,
+		renderWidth,
+		renderWidth,
 	};
 	const std::array<uint32_t, static_cast<size_t>(ResourceType::Count)> resourceHeights = {
 		bloomHeight0,
@@ -449,6 +575,10 @@ bool EditorPostProcessQualityManager::CreateSizeDependentResources(
 		bloomHeight0,
 		(std::max)(1u, bloomHeight0 / 2u),
 		(std::max)(1u, bloomHeight0 / 4u),
+		renderHeight,
+		renderHeight,
+		renderHeight,
+		renderHeight,
 		renderHeight,
 		renderHeight,
 		renderHeight,
@@ -517,6 +647,8 @@ void EditorPostProcessQualityManager::ReleaseSizeDependentResources() {
 	srvHandles_.fill({});
 	resourceWidths_.fill(0u);
 	resourceHeights_.fill(0u);
+	lastGlareOutputResourceType_ = ResourceType::GlareOutputA;
+	lastFilterOutputResourceType_ = ResourceType::FilterOutputA;
 	renderWidth_ = 0u;
 	renderHeight_ = 0u;
 }
@@ -527,7 +659,7 @@ bool EditorPostProcessQualityManager::DrawPass(
 	ResourceType destinationResourceType,
 	D3D12_GPU_DESCRIPTOR_HANDLE source0SrvHandle,
 	D3D12_GPU_DESCRIPTOR_HANDLE source1SrvHandle,
-	const std::array<float, 8u>& constants) {
+	const std::array<float, kRootConstantCount>& constants) {
 
 	if (pipelineIndex >= pipelineStates_.size() || source0SrvHandle.ptr == 0u ||
 		source1SrvHandle.ptr == 0u) {

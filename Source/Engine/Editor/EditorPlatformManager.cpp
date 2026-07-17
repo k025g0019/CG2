@@ -1018,6 +1018,12 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	ComPtr<IDxcBlob> objectReflectionMaskPixelShaderBlob = CompileShader(
 		L"Assets/Shaders/Object3dReflectionMask.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
+	ComPtr<IDxcBlob> gBufferVertexShaderBlob = CompileShader(
+		L"Assets/Shaders/GBuffer/GBuffer.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> gBufferPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/GBuffer/GBuffer.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
 
 	Log(std::string("Object3d VS size=") + std::to_string(vertexShaderBlob != nullptr ? vertexShaderBlob->GetBufferSize() : 0ull) +
 	    " PS size=" + std::to_string(pixelShaderBlob != nullptr ? pixelShaderBlob->GetBufferSize() : 0ull));
@@ -1087,6 +1093,12 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	ComPtr<IDxcBlob> smaaNeighborhoodPixelShaderBlob = CompileShader(
 		L"Assets/Shaders/PostProcess/SMAA/SMAANeighborhoodBlend.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
+	ComPtr<IDxcBlob> glarePixelShaderBlob = CompileShader(
+		L"Assets/Shaders/PostProcess/Glare.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> filterPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/PostProcess/Filter.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
 	ComPtr<IDxcBlob> depthPyramidComputeShaderBlob = CompileShader(
 		L"Assets/Shaders/Depth/DepthPyramid.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
@@ -1142,6 +1154,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	if (vertexShaderBlob == nullptr ||
 		pixelShaderBlob == nullptr ||
 		objectReflectionMaskPixelShaderBlob == nullptr ||
+		gBufferVertexShaderBlob == nullptr ||
+		gBufferPixelShaderBlob == nullptr ||
 		shadowVertexShaderBlob == nullptr ||
 		fullscreenVertexShaderBlob == nullptr ||
 		toneMappingPixelShaderBlob == nullptr ||
@@ -1163,6 +1177,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		smaaEdgePixelShaderBlob == nullptr ||
 		smaaWeightPixelShaderBlob == nullptr ||
 		smaaNeighborhoodPixelShaderBlob == nullptr ||
+		glarePixelShaderBlob == nullptr ||
+		filterPixelShaderBlob == nullptr ||
 		depthPyramidComputeShaderBlob == nullptr ||
 		depthDownsampleComputeShaderBlob == nullptr ||
 		reconstructNormalComputeShaderBlob == nullptr ||
@@ -1230,12 +1246,23 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	iblBrdfLutRange[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
 	iblBrdfLutRange[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
+	// t7-t13 は Normal / Metallic / Roughness / AO / Emission / Height / Opacity の順で使う。
+	D3D12_DESCRIPTOR_RANGE materialMapDescriptorRanges[7][1] = {};
+	for (int32_t materialMapIndex = 0; materialMapIndex < 7; materialMapIndex++) {
+		materialMapDescriptorRanges[materialMapIndex][0].BaseShaderRegister =
+			static_cast<UINT>(7 + materialMapIndex);
+		materialMapDescriptorRanges[materialMapIndex][0].NumDescriptors = 1;
+		materialMapDescriptorRanges[materialMapIndex][0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+		materialMapDescriptorRanges[materialMapIndex][0].OffsetInDescriptorsFromTableStart =
+			D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+	}
+
 	// descriptionRootSignature �� Shader �ւ� CBV / SRV / Sampler �̊��蓖�Ē�`�B
 	D3D12_ROOT_SIGNATURE_DESC descriptionRootSignature{};
 	descriptionRootSignature.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
-	// rootParameters �� 0:Material�A1:Transform�A2:DirectionalLight�A3:Texture SRV�A4:Shadow�A5:EmissiveLights�A6:Environment�A7-10:IBL
-	D3D12_ROOT_PARAMETER rootParameters[11] = {};
+	// 0-10 は既存描画、11-17 は PBR Material Map の個別 SRV。
+	D3D12_ROOT_PARAMETER rootParameters[18] = {};
 
 	rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 	rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -1291,6 +1318,15 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	rootParameters[10].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	rootParameters[10].DescriptorTable.pDescriptorRanges = iblBrdfLutRange;
 	rootParameters[10].DescriptorTable.NumDescriptorRanges = _countof(iblBrdfLutRange);
+
+	for (int32_t materialMapIndex = 0; materialMapIndex < 7; materialMapIndex++) {
+		const int32_t rootParameterIndex = 11 + materialMapIndex;
+		rootParameters[rootParameterIndex].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+		rootParameters[rootParameterIndex].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+		rootParameters[rootParameterIndex].DescriptorTable.pDescriptorRanges =
+			materialMapDescriptorRanges[materialMapIndex];
+		rootParameters[rootParameterIndex].DescriptorTable.NumDescriptorRanges = 1;
+	}
 
 	descriptionRootSignature.pParameters = rootParameters;
 	descriptionRootSignature.NumParameters = _countof(rootParameters);
@@ -1374,33 +1410,40 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	sphereMaterialData->materialPadding2 = 0.0f;
 	sphereMaterialData->uvTransform = MakeIdentity4x4();
 
-	ID3D12Resource* directionalLightResource = CreateBufferResource(device.Get(), sizeof(DirectionalLight));
+	ID3D12Resource* directionalLightResource = CreateBufferResource(device.Get(), sizeof(DirectionalLight) * kMaxShadowLights);
 	// directionalLightResource は PixelShader に渡す平行�E源定数バッファ、E
 	DirectionalLight* directionalLightData = nullptr;
 	// directionalLightData は Inspector から色・向き・強さを書き換える mapped ポインタ、E
 	directionalLightResource->Map(0, nullptr, reinterpret_cast<void**>(&directionalLightData));
-	directionalLightData->color = {1.0f, 1.0f, 1.0f, 1.0f};
-	directionalLightData->direction = {0.0f, -1.0f, 0.0f};
-	directionalLightData->intensity = 1.0f;
-	directionalLightData->position = {0.0f, 3.0f, -3.0f};
-	directionalLightData->range = 15.0f;
-	directionalLightData->skyUpperColor = {0.45f, 0.58f, 0.78f};
-	directionalLightData->skyIntensity = 1.0f;
-	directionalLightData->skyLowerColor = {0.12f, 0.14f, 0.18f};
-	directionalLightData->skyEmission = 0.08f;
-	directionalLightData->ambientIntensity = 0.35f;
-	directionalLightData->horizonSharpness = 1.0f;
-	directionalLightData->reflectionIntensity = 0.60f;
-	directionalLightData->spotCosInner = std::cos(20.0f * 3.1415926f / 180.0f);
-	directionalLightData->spotCosOuter = std::cos(35.0f * 3.1415926f / 180.0f);
-	directionalLightData->lightType = 0;
-	directionalLightData->areaRadius = 1.0f;
-	directionalLightData->cameraPosition = {0.0f, 0.0f, -5.0f};
-	directionalLightData->padding3 = 0.0f;
-	directionalLightData->environmentTextureEnabled = 0.0f;
-	directionalLightData->environmentTextureIntensity = 1.0f;
-	directionalLightData->environmentTextureRotation = 0.0f;
-	directionalLightData->environmentTextureMipBias = 0.0f;
+	for (uint32_t i = 0; i < kMaxShadowLights; i++) {
+		directionalLightData[i].color = {0.0f, 0.0f, 0.0f, 1.0f};
+		directionalLightData[i].direction = {0.0f, -1.0f, 0.0f};
+		directionalLightData[i].intensity = 0.0f;
+		directionalLightData[i].position = {0.0f, 0.0f, 0.0f};
+		directionalLightData[i].range = 0.0f;
+		directionalLightData[i].skyUpperColor = {0.0f, 0.0f, 0.0f};
+		directionalLightData[i].skyIntensity = 0.0f;
+		directionalLightData[i].skyLowerColor = {0.0f, 0.0f, 0.0f};
+		directionalLightData[i].skyEmission = 0.0f;
+		directionalLightData[i].ambientIntensity = 0.0f;
+		directionalLightData[i].horizonSharpness = 1.0f;
+		directionalLightData[i].reflectionIntensity = 0.0f;
+		directionalLightData[i].spotCosInner = std::cos(20.0f * 3.1415926f / 180.0f);
+		directionalLightData[i].spotCosOuter = std::cos(30.0f * 3.1415926f / 180.0f);
+		directionalLightData[i].lightType = 0;
+		directionalLightData[i].areaRadius = 0.0f;
+		directionalLightData[i].cameraPosition = {0.0f, 0.0f, -5.0f};
+		directionalLightData[i].environmentTextureEnabled = 0.0f;
+		directionalLightData[i].environmentTextureIntensity = 0.0f;
+		directionalLightData[i].environmentTextureRotation = 0.0f;
+		directionalLightData[i].environmentTextureMipBias = 0.0f;
+		directionalLightData[i].shadowTileIndex = -1.0f;
+		directionalLightData[i].shadowTileUvScaleX = 0.0f;
+		directionalLightData[i].shadowTileUvScaleY = 0.0f;
+		directionalLightData[i].shadowTileUvBiasX = 0.0f;
+		directionalLightData[i].shadowTileUvBiasY = 0.0f;
+		directionalLightData[i].shadowEnabled = -1.0f;
+	}
 
 	ID3D12Resource* emissiveLightResource = CreateBufferResource(device.Get(), sizeof(EmissiveLightArray));
 	EmissiveLightArray* emissiveLightData = nullptr;
@@ -1602,6 +1645,61 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	}
 
 	Log(logStream, "Init Stage: cull front pso created");
+
+	// 両面材質は通常の深度書き込みを維持したまま Back/Front の両方を描く。
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC cullNonePipelineStateDesc = graphicsPipelineStateDesc;
+	cullNonePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+
+	ComPtr<ID3D12PipelineState> cullNonePipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&cullNonePipelineStateDesc,
+		IID_PPV_ARGS(cullNonePipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || cullNonePipelineState == nullptr) {
+		Log(logStream, std::format("CullNone PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	Log(logStream, "Init Stage: cull none pso created");
+
+	// 半透明は Source Alpha で HDR 色を合成し、背後を隠さないよう Depth 書き込みを止める。
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC transparentPipelineStateDesc = graphicsPipelineStateDesc;
+	transparentPipelineStateDesc.BlendState.RenderTarget[0].BlendEnable = TRUE;
+	transparentPipelineStateDesc.BlendState.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
+	transparentPipelineStateDesc.BlendState.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+	transparentPipelineStateDesc.BlendState.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+	transparentPipelineStateDesc.BlendState.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+	transparentPipelineStateDesc.BlendState.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+	transparentPipelineStateDesc.BlendState.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+	transparentPipelineStateDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+
+	ComPtr<ID3D12PipelineState> transparentPipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&transparentPipelineStateDesc,
+		IID_PPV_ARGS(transparentPipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || transparentPipelineState == nullptr) {
+		Log(logStream, std::format("Transparent PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC transparentCullNonePipelineStateDesc = transparentPipelineStateDesc;
+	transparentCullNonePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+
+	ComPtr<ID3D12PipelineState> transparentCullNonePipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&transparentCullNonePipelineStateDesc,
+		IID_PPV_ARGS(transparentCullNonePipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || transparentCullNonePipelineState == nullptr) {
+		Log(logStream, std::format("Transparent CullNone PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	Log(logStream, "Init Stage: transparent pso created");
 
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC shadowPipelineStateDesc{};
 	shadowPipelineStateDesc.pRootSignature = rootSignature.Get();
@@ -1874,6 +1972,24 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		return;
 	}
 
+	const bool isGBufferInitialized = g_gBufferManager.Initialize(
+		device.Get(),
+		srvDescriptorHeap,
+		srvSize,
+		rootSignature.Get(),
+		gBufferVertexShaderBlob.Get(),
+		gBufferPixelShaderBlob.Get(),
+		inputElementDescs,
+		_countof(inputElementDescs),
+		renderWidth,
+		renderHeight);
+
+	if (!isGBufferInitialized) {
+		Log(logStream, "GBuffer initialization failed");
+		RequestInitializationFailure();
+		return;
+	}
+
 	const bool isDepthHierarchyInitialized = g_depthHierarchyManager.Initialize(
 		device.Get(),
 		srvDescriptorHeap,
@@ -1925,6 +2041,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			smaaEdgePixelShaderBlob.Get(),
 			smaaWeightPixelShaderBlob.Get(),
 			smaaNeighborhoodPixelShaderBlob.Get(),
+			glarePixelShaderBlob.Get(),
+			filterPixelShaderBlob.Get(),
 		};
 	const bool isPostProcessQualityInitialized = g_postProcessQualityManager.Initialize(
 		device.Get(),
@@ -2684,6 +2802,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_planarSurfacePipelineState = planarSurfacePipelineState;
 	g_objectReflectionMaskPipelineState = objectReflectionMaskPipelineState;
 	g_cullFrontPipelineState = cullFrontPipelineState;
+	g_cullNonePipelineState = cullNonePipelineState;
+	g_transparentPipelineState = transparentPipelineState;
+	g_transparentCullNonePipelineState = transparentCullNonePipelineState;
 	g_shadowPipelineState = shadowPipelineState;
 	g_postProcessRootSignature = postProcessRootSignature;
 	g_toneMappingPipelineState = toneMappingPipelineState;
@@ -3069,6 +3190,7 @@ int EditorPlatformManager::Finalize() {
 	g_postProcessQualityManager.Finalize();
 	g_temporalRenderingManager.Finalize();
 	g_depthHierarchyManager.Finalize();
+	g_gBufferManager.Finalize();
 	srvDescriptorHeap->Release();
 	dsvDescriptorHeap->Release();
 	rtvDescriptorHeap->Release();

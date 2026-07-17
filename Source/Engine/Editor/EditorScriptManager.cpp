@@ -1667,9 +1667,16 @@ EditorScriptAnimationState EditorScriptManager::GetAnimationStateInternal(int32_
 
 	animationState.clipCount = static_cast<int32_t>(modelData.animationClips.size());
 	if (!modelData.animationClips.empty()) {
-		animationState.currentClipDuration = modelData.animationClips.front().durationSeconds;
+		const int32_t maximumClipIndex = animationState.clipCount - 1;
+		const int32_t clipIndex = (std::clamp)(
+			animationComponent->animationClipIndex,
+			0,
+			maximumClipIndex);
+		const ModelAnimationClipData& selectedClip = modelData.animationClips[
+			static_cast<size_t>(clipIndex)];
+		animationState.currentClipDuration = selectedClip.durationSeconds;
 		CopyStringToFixedBuffer(
-			modelData.animationClips.front().name,
+			selectedClip.name,
 			animationState.currentClipName,
 			sizeof(animationState.currentClipName));
 	}

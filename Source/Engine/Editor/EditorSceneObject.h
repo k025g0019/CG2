@@ -7,6 +7,7 @@
 #pragma warning(pop)
 
 #include <cstdint>
+#include <array>
 #include <string>
 
 #pragma warning(push)
@@ -44,6 +45,24 @@ enum class EditorModelMeshType {
 	Count,
 };
 
+//============================================================
+// PBR Material が追加で参照する画像スロット
+//============================================================
+
+enum class EditorMaterialTextureSlot : int32_t {
+	Normal = 0,
+	Metallic,
+	Roughness,
+	AmbientOcclusion,
+	Emission,
+	Height,
+	Opacity,
+	Count,
+};
+
+constexpr size_t kEditorMaterialTextureSlotCount =
+	static_cast<size_t>(EditorMaterialTextureSlot::Count);
+
 struct EditorSceneObject {
 	EditorSceneObjectType type;  // モデル描画かスプライト描画かを選ぶ種類
 	EditorModelMeshType meshType;  // Model の場合に使う基本形メッシュ種類
@@ -64,6 +83,11 @@ struct EditorSceneObject {
 	ID3D12Resource* customTextureUploadResource;  // customTextureResource へ転送する中間 Upload Buffer
 	D3D12_GPU_DESCRIPTOR_HANDLE customTextureSrvGpuHandle;  // Draw 時にそのまま渡す個別 Texture SRV
 	int32_t customTextureDescriptorIndex;  // SRV Heap 内の割り当て番号
+	std::array<std::string, kEditorMaterialTextureSlotCount> materialTextureAssetPaths;  // PBR Map ごとの画像パス
+	std::array<ID3D12Resource*, kEditorMaterialTextureSlotCount> materialTextureResources;  // PBR Map ごとの Texture Resource
+	std::array<ID3D12Resource*, kEditorMaterialTextureSlotCount> materialTextureUploadResources;  // PBR Map 転送用 Upload Buffer
+	std::array<D3D12_GPU_DESCRIPTOR_HANDLE, kEditorMaterialTextureSlotCount> materialTextureSrvGpuHandles;  // PBR Map ごとの SRV
+	std::array<int32_t, kEditorMaterialTextureSlotCount> materialTextureDescriptorIndices;  // PBR Map ごとの SRV 番号
 	ID3D12Resource* customMeshVertexResource;  // 読み込んだ実メッシュを GPU へ渡す頂点バッファ
 	D3D12_VERTEX_BUFFER_VIEW customMeshVertexBufferView;  // 実メッシュ描画時に IASetVertexBuffers へ渡す View
 	uint32_t customMeshVertexCount;  // DrawInstanced に渡す実メッシュの頂点数

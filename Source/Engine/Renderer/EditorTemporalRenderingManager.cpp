@@ -93,7 +93,9 @@ bool EditorTemporalRenderingManager::Execute(
 	D3D12_GPU_DESCRIPTOR_HANDLE materialMaskSrvHandle,
 	const float* inverseViewProjectionMatrix,
 	const float* viewProjectionMatrix,
-	const float* cameraPosition) {
+	const float* cameraPosition,
+	float sharpness,
+	float blendRatio) {
 
 	if (!isInitialized_ || commandList == nullptr || sourceColorSrvHandle.ptr == 0u ||
 		sceneDepthSrvHandle.ptr == 0u || reconstructedNormalSrvHandle.ptr == 0u ||
@@ -240,6 +242,13 @@ bool EditorTemporalRenderingManager::Execute(
 	//================================================================
 	// 色履歴を近傍色へ制限してゴーストを抑え、次フレーム深度を保存
 	//================================================================
+
+	const float temporalHistoryBlend = (std::clamp)(blendRatio, 0.0f, 0.98f);
+	const float temporalSharpness = (std::clamp)(sharpness, 0.0f, 1.0f);
+	std::memcpy(&constants[36], &historyValidValue, sizeof(float));
+	std::memcpy(&constants[37], &temporalHistoryBlend, sizeof(float));
+	std::memcpy(&constants[38], &temporalSharpness, sizeof(float));
+	constants[39] = 0u;
 
 	if (!Dispatch(
 		commandList,

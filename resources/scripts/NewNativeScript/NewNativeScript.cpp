@@ -36,6 +36,8 @@ NewNativeScript::NewNativeScript() {
 	BindAction("OnMove", [this](const EditorScriptInputActionContext& inputContext) { OnMove(inputContext); });
 	BindAction("OnJump", [this](const EditorScriptInputActionContext& inputContext) { OnJump(inputContext); });
 	BindAction("OnFire", [this](const EditorScriptInputActionContext& inputContext) { OnFire(inputContext); });
+	BindAction("OnClick", [this](const EditorScriptInputActionContext& inputContext) { OnClick(inputContext); });
+	BindAction("OnValueChanged", [this](const EditorScriptInputActionContext& inputContext) { OnValueChanged(inputContext); });
 }
 
 void NewNativeScript::Start(int32_t gameObjectId) {
@@ -100,6 +102,26 @@ void NewNativeScript::OnFire(const EditorScriptInputActionContext& inputContext)
 	if (runtimeApi != nullptr && inputContext.phase == EditorScriptInputPhasePerformed) {
 		runtimeApi->Log("OnFire");
 	}
+}
+
+void NewNativeScript::OnClick(const EditorScriptInputActionContext& inputContext) {
+	if (runtimeApi != nullptr && inputContext.phase == EditorScriptInputPhasePerformed) {
+		runtimeApi->Log("OnClick");
+	}
+}
+
+void NewNativeScript::OnValueChanged(const EditorScriptInputActionContext& inputContext) {
+	if (runtimeApi == nullptr || inputContext.phase != EditorScriptInputPhasePerformed) {
+		return;
+	}
+
+	if (inputContext.valueType == EditorScriptInputValueTypeButton) {
+		runtimeApi->Log(inputContext.buttonValue > 0.5f ? "OnValueChanged: ON" : "OnValueChanged: OFF");
+		return;
+	}
+
+	const std::string message = "OnValueChanged: " + std::to_string(inputContext.vector2Value.x);
+	runtimeApi->Log(message.c_str());
 }
 
 //================================================================

@@ -36,7 +36,9 @@ public:
 		D3D12_GPU_DESCRIPTOR_HANDLE materialMaskSrvHandle,
 		const float* inverseViewProjectionMatrix,
 		const float* viewProjectionMatrix,
-		const float* cameraPosition);
+		const float* cameraPosition,
+		float sharpness = 0.08f,
+		float blendRatio = 0.90f);
 
 	void Finalize();
 

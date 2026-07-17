@@ -10,14 +10,22 @@ Texture2D<float2> gBRDFLUT : register(t6);
 
 SamplerState gIblSampler : register(s2);
 
-float3 EvaluateIBL(float3 N, float3 V, float3 albedo, float metallic, float roughness, float ao, float iblIntensity, float prefilterMipCount)
+float3 EvaluateIBLWithF0(
+    float3 N,
+    float3 V,
+    float3 albedo,
+    float metallic,
+    float roughness,
+    float ao,
+    float iblIntensity,
+    float prefilterMipCount,
+    float3 F0)
 {
     N = normalize(N);
     V = normalize(V);
 
     float NdotV = saturate(dot(N, V));
 
-    float3 F0 = GetF0(albedo, metallic);
     float3 F = FresnelSchlickRoughness(NdotV, F0, roughness);
 
     float3 kS = F;
@@ -39,6 +47,20 @@ float3 EvaluateIBL(float3 N, float3 V, float3 albedo, float metallic, float roug
     float3 ibl = (kD * diffuseIBL + specularIBL) * ao;
 
     return ibl * iblIntensity;
+}
+
+float3 EvaluateIBL(float3 N, float3 V, float3 albedo, float metallic, float roughness, float ao, float iblIntensity, float prefilterMipCount)
+{
+    return EvaluateIBLWithF0(
+        N,
+        V,
+        albedo,
+        metallic,
+        roughness,
+        ao,
+        iblIntensity,
+        prefilterMipCount,
+        GetF0(albedo, metallic));
 }
 
 float3 SampleEnvironment(float3 direction)

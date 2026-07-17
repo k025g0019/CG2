@@ -5,8 +5,10 @@
 #include "EditorAssetUtility.h"
 #include "EditorComponentUtility.h"
 #include "EditorSharedState.h"
+#include "EditorPlanarReflectionManager.h"
 #include "Log.h"
 
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -58,48 +60,6 @@ namespace {
 		return Normalize(worldRight);
 	}
 
-	Matrix4x4 MakePlanarReflectionMatrix(const Vector3& planePoint, const Vector3& planeNormal) {
-		const Vector3 normal = Normalize(planeNormal);
-		const float planeDistance = Dot(planePoint, normal);
-
-		// ワールド座標を平面の反対側へ移す、行ベクトル用の反射行列。
-		// View 行列を組み直さず、この行列を元の ViewProjection より前へ掛ける。
-		Matrix4x4 reflectionMatrix = MakeIdentity4x4();
-		reflectionMatrix.matrix[0][0] = 1.0f - 2.0f * normal.x * normal.x;
-		reflectionMatrix.matrix[0][1] = -2.0f * normal.x * normal.y;
-		reflectionMatrix.matrix[0][2] = -2.0f * normal.x * normal.z;
-		reflectionMatrix.matrix[1][0] = -2.0f * normal.y * normal.x;
-		reflectionMatrix.matrix[1][1] = 1.0f - 2.0f * normal.y * normal.y;
-		reflectionMatrix.matrix[1][2] = -2.0f * normal.y * normal.z;
-		reflectionMatrix.matrix[2][0] = -2.0f * normal.z * normal.x;
-		reflectionMatrix.matrix[2][1] = -2.0f * normal.z * normal.y;
-		reflectionMatrix.matrix[2][2] = 1.0f - 2.0f * normal.z * normal.z;
-		reflectionMatrix.matrix[3][0] = 2.0f * planeDistance * normal.x;
-		reflectionMatrix.matrix[3][1] = 2.0f * planeDistance * normal.y;
-		reflectionMatrix.matrix[3][2] = 2.0f * planeDistance * normal.z;
-
-		return reflectionMatrix;
-	}
-
-	//================================================================
-	// 平面反射に使う面の情報
-	//================================================================
-
-	enum class PlanarReflectionAxis {
-		X,
-		Y,
-		Z,
-	};
-
-	struct PlanarReflectionSurface {
-		Vector3 normal;  // normal はカメラ側を向く反射面のワールド法線。
-		Vector3 tangent;  // tangent は反射面の横方向。
-		Vector3 bitangent;  // bitangent は反射面の縦方向。
-		Vector3 point;  // point は実際に反射させる表面上のワールド座標。
-		float halfExtentTangent;  // halfExtentTangent は横方向の反射範囲の半分。
-		float halfExtentBitangent;  // halfExtentBitangent は縦方向の反射範囲の半分。
-	};
-
 	Vector3 GetPlanarReflectionLocalMeshSize(const EditorSceneObject& sceneObject) {
 		// FBX / OBJ は読み込み時に計算した実メッシュのローカル AABB を使う。
 		if (sceneObject.usesCustomMesh &&
@@ -134,112 +94,46 @@ namespace {
 		return {0.0f, 0.0f, 0.0f};
 	}
 
-	PlanarReflectionAxis GetPlanarReflectionAxis(
-		const EditorSceneObject& sceneObject,
-		const EditorGameObject& gameObject) {
-		const Vector3 localMeshSize = GetPlanarReflectionLocalMeshSize(sceneObject);
-		const Vector3 worldMeshSize = {
-			std::abs(localMeshSize.x * gameObject.scale.x),
-			std::abs(localMeshSize.y * gameObject.scale.y),
-			std::abs(localMeshSize.z * gameObject.scale.z)
-		};
 
-		// 同じ厚さなら床として最も一般的な Y 面を優先する。
-		PlanarReflectionAxis reflectionAxis = PlanarReflectionAxis::Y;
-		float minimumThickness = worldMeshSize.y;
-
-		if (worldMeshSize.x < minimumThickness) {
-			reflectionAxis = PlanarReflectionAxis::X;
-			minimumThickness = worldMeshSize.x;
-		}
-
-		if (worldMeshSize.z < minimumThickness) {
-			reflectionAxis = PlanarReflectionAxis::Z;
-		}
-
-		return reflectionAxis;
+	void ClearDisabledSceneLight(DirectionalLight& light) {
+		light = {};
+		light.color = {0.0f, 0.0f, 0.0f, 1.0f};  // 無効ライトは色の寄与を持たせない。
+		light.direction = {0.0f, -1.0f, 0.0f};  // 方向ベクトルだけは正規化不能を避けるため保持する。
+		light.intensity = 0.0f;  // Light コンポーネントがない時は直接光を完全に消す。
+		light.position = {0.0f, 0.0f, 0.0f};
+		light.range = 0.0f;
+		light.skyUpperColor = {0.0f, 0.0f, 0.0f};  // Environment コンポーネントがない時の空色。
+		light.skyIntensity = 0.0f;
+		light.skyLowerColor = {0.0f, 0.0f, 0.0f};
+		light.skyEmission = 0.0f;
+		light.ambientIntensity = 0.0f;  // 環境光未配置時にモデル固定の明るさが出ないようにする。
+		light.horizonSharpness = 1.0f;
+		light.reflectionIntensity = 0.0f;
+		light.spotCosInner = std::cos(20.0f * (3.14159265f / 180.0f));
+		light.spotCosOuter = std::cos(30.0f * (3.14159265f / 180.0f));
+		light.lightType = 0;
+		light.areaRadius = 0.0f;
+		light.cameraPosition = {0.0f, 0.0f, -5.0f};
+		light.environmentTextureEnabled = 0.0f;  // HDRI / IBL は Environment で明示した時だけ使う。
+		light.environmentTextureIntensity = 0.0f;
+		light.environmentTextureRotation = 0.0f;
+		light.environmentTextureMipBias = 0.0f;
+		light.shadowTileIndex = -1.0f;
+		light.shadowTileUvScaleX = 0.0f;
+		light.shadowTileUvScaleY = 0.0f;
+		light.shadowTileUvBiasX = 0.0f;
+		light.shadowTileUvBiasY = 0.0f;
+		light.shadowEnabled = -1.0f;  // Shader 側でライト列の終端として扱う。
 	}
 
-	PlanarReflectionSurface BuildPlanarReflectionSurface(
-		const EditorSceneObject& sceneObject,
-		const EditorGameObject& gameObject,
-		const EditorComponent& reflectionProbeComponent,
-		const Vector3& cameraPosition) {
-		const Vector3 localMeshSize = GetPlanarReflectionLocalMeshSize(sceneObject);
-		const Vector3 localMeshCenter = GetPlanarReflectionLocalMeshCenter(sceneObject);
-		const PlanarReflectionAxis reflectionAxis = GetPlanarReflectionAxis(sceneObject, gameObject);
-		const Matrix4x4 objectWorldMatrix = MakeAffineMatrix(
-			gameObject.scale,
-			gameObject.rotate,
-			gameObject.translate);
-		const Vector3 localReflectionCenter = Add(
-			localMeshCenter,
-			reflectionProbeComponent.colliderCenter);
-		const Vector3 reflectionVolumeCenter = Transform(
-			localReflectionCenter,
-			objectWorldMatrix);
-
-		const Vector3 objectRight = GetRightDirectionFromRotation(gameObject.rotate);
-		const Vector3 objectUp = GetUpDirectionFromRotation(gameObject.rotate);
-		const Vector3 objectForward = GetForwardDirectionFromRotation(gameObject.rotate);
-
-		PlanarReflectionSurface reflectionSurface{};
-		float surfaceHalfThickness = 0.0f;
-
-		switch (reflectionAxis) {
-		case PlanarReflectionAxis::X:
-			reflectionSurface.normal = objectRight;
-			reflectionSurface.tangent = objectUp;
-			reflectionSurface.bitangent = objectForward;
-			reflectionSurface.halfExtentTangent = std::abs(
-				localMeshSize.y * gameObject.scale.y) * 0.5f;
-			reflectionSurface.halfExtentBitangent = std::abs(
-				localMeshSize.z * gameObject.scale.z) * 0.5f;
-			surfaceHalfThickness = std::abs(localMeshSize.x * gameObject.scale.x) * 0.5f;
-			break;
-
-		case PlanarReflectionAxis::Z:
-			reflectionSurface.normal = objectForward;
-			reflectionSurface.tangent = objectRight;
-			reflectionSurface.bitangent = objectUp;
-			reflectionSurface.halfExtentTangent = std::abs(
-				localMeshSize.x * gameObject.scale.x) * 0.5f;
-			reflectionSurface.halfExtentBitangent = std::abs(
-				localMeshSize.y * gameObject.scale.y) * 0.5f;
-			surfaceHalfThickness = std::abs(localMeshSize.z * gameObject.scale.z) * 0.5f;
-			break;
-
-		case PlanarReflectionAxis::Y:
-		default:
-			reflectionSurface.normal = objectUp;
-			reflectionSurface.tangent = objectRight;
-			reflectionSurface.bitangent = objectForward;
-			reflectionSurface.halfExtentTangent = std::abs(
-				localMeshSize.x * gameObject.scale.x) * 0.5f;
-			reflectionSurface.halfExtentBitangent = std::abs(
-				localMeshSize.z * gameObject.scale.z) * 0.5f;
-			surfaceHalfThickness = std::abs(localMeshSize.y * gameObject.scale.y) * 0.5f;
-			break;
+	int32_t CollectSceneLights(DirectionalLight* lightsOut) {
+		for (int32_t i = 0; i < kMaxShadowLights; i++) {
+			ClearDisabledSceneLight(lightsOut[i]);
 		}
 
-		// 薄い Box を床や壁にした場合は、カメラに近い外側の面を反射面にする。
-		const Vector3 cameraFromCenter = Subtract(cameraPosition, reflectionVolumeCenter);
-		if (Dot(cameraFromCenter, reflectionSurface.normal) < 0.0f) {
-			reflectionSurface.normal = Multiply(-1.0f, reflectionSurface.normal);
-		}
-
-		reflectionSurface.point = Add(
-			reflectionVolumeCenter,
-			Multiply(surfaceHalfThickness, reflectionSurface.normal));
-		reflectionSurface.halfExtentTangent = (std::max)(reflectionSurface.halfExtentTangent, 0.05f);
-		reflectionSurface.halfExtentBitangent = (std::max)(reflectionSurface.halfExtentBitangent, 0.05f);
-
-		return reflectionSurface;
-	}
-
-	void ApplySceneLightToDirectionalBuffer(DirectionalLight& directionalLightData) {
+		int32_t count = 0;
 		for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
-			if (!gameObject.isActive) {
+			if (!gameObject.isActive || count >= kMaxShadowLights) {
 				continue;
 			}
 
@@ -248,40 +142,32 @@ namespace {
 					continue;
 				}
 
-				directionalLightData.color = {
-					component.color.x,
-					component.color.y,
-					component.color.z,
-					1.0f
-				};
-				directionalLightData.intensity = component.intensity;
-				directionalLightData.position = gameObject.translate;
-				directionalLightData.range = (std::max)(component.colliderRadius, 0.01f);
-				directionalLightData.areaRadius = (std::max)(component.colliderSize.z, 0.01f);
-				directionalLightData.lightType = GetLightTypeFromComponent(component);
+				DirectionalLight& dl = lightsOut[count];
+				dl = {};
+				dl.color = {component.color.x, component.color.y, component.color.z, 1.0f};
+				dl.intensity = component.intensity;
+				dl.position = gameObject.translate;
+				dl.range = (std::max)(component.colliderRadius, 0.01f);
+				dl.areaRadius = (std::max)(component.colliderSize.z, 0.01f);
+				dl.lightType = GetLightTypeFromComponent(component);
 
 				const float innerAngleRadian = component.colliderSize.x * (3.14159265f / 180.0f);
 				const float outerAngleRadian = component.colliderSize.y * (3.14159265f / 180.0f);
-				directionalLightData.spotCosInner = std::cos(innerAngleRadian);
-				directionalLightData.spotCosOuter = std::cos(outerAngleRadian);
+				dl.spotCosInner = std::cos(innerAngleRadian);
+				dl.spotCosOuter = std::cos(outerAngleRadian);
 
 				Vector3 forwardDirection = GetForwardDirectionFromRotation(gameObject.rotate);
 				if (Length(forwardDirection) <= 0.0001f) {
 					forwardDirection = {0.0f, -1.0f, 0.0f};
 				}
-
-				directionalLightData.direction = Normalize(forwardDirection);
-				return;
+				dl.direction = Normalize(forwardDirection);
+				dl.shadowEnabled = 1.0f;
+				count++;
+				break;
 			}
 		}
 
-		directionalLightData.color = {1.0f, 1.0f, 1.0f, 1.0f};
-		directionalLightData.direction = Normalize({0.35f, -1.0f, 0.25f});
-		directionalLightData.intensity = 0.0f;
-		directionalLightData.position = {0.0f, 3.0f, -3.0f};
-		directionalLightData.range = 25.0f;
-		directionalLightData.lightType = 0;
-		directionalLightData.areaRadius = 1.0f;
+		return count;
 	}
 
 	void ApplyEnvironmentComponent(DirectionalLight* directionalLightData) {
@@ -444,49 +330,6 @@ namespace {
 		return viewMatrix;
 	}
 
-	//================================================================
-	// 平面反射に使うカメラ
-	//================================================================
-
-	struct PlanarReflectionCamera {
-		Matrix4x4 viewProjection;  // viewProjection は反射後のカメラでシーンを描く行列。
-		Matrix4x4 inverseViewProjection;  // inverseViewProjection は反射空間の空と方向を復元する行列。
-		Vector3 position;  // position は PBR の視線方向計算へ渡す反射カメラのワールド位置。
-	};
-
-	Vector3 GetCameraMatrixPosition(const Matrix4x4& cameraWorldMatrix) {
-		return {
-			cameraWorldMatrix.matrix[3][0],
-			cameraWorldMatrix.matrix[3][1],
-			cameraWorldMatrix.matrix[3][2]
-		};
-	}
-
-	PlanarReflectionCamera MakePlanarReflectionCamera(
-		const Matrix4x4& sourceCameraWorldMatrix,
-		const Matrix4x4& sourceViewProjectionMatrix,
-		const Vector3& planePoint,
-		const Vector3& planeNormal) {
-		const Vector3 sourceCameraPosition = GetCameraMatrixPosition(sourceCameraWorldMatrix);
-		const Matrix4x4 reflectionMatrix = MakePlanarReflectionMatrix(
-			planePoint,
-			planeNormal);
-
-		PlanarReflectionCamera reflectionCamera{};
-		reflectionCamera.position = Transform(
-			sourceCameraPosition,
-			reflectionMatrix);
-
-		// 反射行列は鏡像の反転と倍率を、元カメラと同じ射影へ保持する。
-		// LookAt の再構築で反射空間の handedness を失わせない。
-		reflectionCamera.viewProjection = Multiply(
-			reflectionMatrix,
-			sourceViewProjectionMatrix);
-		reflectionCamera.inverseViewProjection = Inverse(reflectionCamera.viewProjection);
-
-		return reflectionCamera;
-	}
-
 	Matrix4x4 MakeLightViewProjectionMatrix(
 		const std::vector<EditorSceneObject>& editorSceneObjects,
 		const Transforms& legacyTransform,
@@ -528,24 +371,51 @@ namespace {
 	}
 
 	struct PostProcessSettings {
-		float bloomIntensity = 1.0f;
+		bool hasPostProcessComponent = false;  // PostProcess コンポーネントがある時だけ任意エフェクトを有効にする。
+		float bloomIntensity = 0.0f;
 		float bloomThreshold = 1.0f;
 		float bloomSoftKnee = 0.5f;
 		float bloomScatter = 0.72f;
 		float finalBrightness = 1.0f;
-		int32_t aaMode = 1;
+		float sharpenStrength = 0.0f;
+		int32_t aaMode = 0;
+		float smaaThreshold = 0.10f;
+		float smaaCornerRounding = 25.0f;
+		float temporalSharpness = 0.08f;
+		float temporalBlendRatio = 0.90f;
+		int32_t glareModeMask = 0;
+		float glareIntensity = 0.0f;
+		float glareSize = 1.0f;
+		float glareAngle = 0.0f;
+		int32_t glareStreakCount = 4;
+		float glareFade = 0.85f;
+		float glareColorModulation = 0.15f;
+		Vector3 glareCenter = {0.5f, 0.5f, 0.0f};
+		std::array<float, 8> glareIntensityByMode{};
+		std::array<float, 8> glareSizeByMode{};
+		std::array<float, 8> glareAngleByMode{};
+		std::array<int32_t, 8> glareStreakCountByMode{};
+		std::array<float, 8> glareFadeByMode{};
+		std::array<float, 8> glareColorModulationByMode{};
+		std::array<Vector3, 8> glareCenterByMode{};
+		std::array<Vector3, 8> glareColorByMode{};
+		int32_t filterMode = 0;
+		int32_t filterModeMask = 0;
+		float filterStrength = 1.0f;
+		std::array<float, 9> filterStrengthByMode{};
+		std::array<Vector3, 9> filterColorByMode{};
 		bool ssrEnabled = false;
 		float compositeExposure = 1.0f;
 		float compositeWhitePoint = 3.0f;
 		int32_t compositeToneMappingMode = 3;
-		float compositeBloomIntensity = 0.70f;
-		float compositeSaturation = 1.08f;
-		float compositeContrast = 1.05f;
-		float compositeVignetteStrength = 0.18f;
+		float compositeBloomIntensity = 0.0f;
+		float compositeSaturation = 1.0f;
+		float compositeContrast = 1.0f;
+		float compositeVignetteStrength = 0.0f;
 		float compositeVignetteRadius = 0.92f;
-		float compositeFilmGrain = 0.25f;
-		float compositeChromaticAberration = 0.15f;
-		float compositeAmbientOcclusionStrength = 0.65f;
+		float compositeFilmGrain = 0.0f;
+		float compositeChromaticAberration = 0.0f;
+		float compositeAmbientOcclusionStrength = 0.0f;
 		bool cameraDofEnabled = false;
 		float cameraDofFocusDistance = 10.0f;
 		float cameraDofAperture = 0.1f;
@@ -556,8 +426,22 @@ namespace {
 		float cameraFarClip = 1000.0f;
 	};
 
+	void InitializePostProcessModeDefaults(PostProcessSettings& settings) {
+		settings.glareIntensityByMode.fill(settings.glareIntensity);
+		settings.glareSizeByMode.fill(settings.glareSize);
+		settings.glareAngleByMode.fill(settings.glareAngle);
+		settings.glareStreakCountByMode.fill(settings.glareStreakCount);
+		settings.glareFadeByMode.fill(settings.glareFade);
+		settings.glareColorModulationByMode.fill(settings.glareColorModulation);
+		settings.glareCenterByMode.fill(settings.glareCenter);
+		settings.glareColorByMode.fill({1.0f, 1.0f, 1.0f});
+		settings.filterStrengthByMode.fill(settings.filterStrength);
+		settings.filterColorByMode.fill({1.0f, 1.0f, 1.0f});
+	}
+
 	PostProcessSettings GetPostProcessSettings() {
 		PostProcessSettings settings;
+		InitializePostProcessModeDefaults(settings);
 		for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
 			if (!gameObject.isActive) {
 				continue;
@@ -565,12 +449,38 @@ namespace {
 			const EditorComponent* pp =
 				EditorComponentUtility::FindComponent(gameObject, EditorComponentType::PostProcess);
 			if (pp != nullptr && pp->isActive) {
+				settings.hasPostProcessComponent = true;
 				settings.bloomIntensity = pp->bloomIntensity;
 				settings.bloomThreshold = pp->bloomThreshold;
 				settings.bloomSoftKnee = pp->bloomSoftKnee;
 				settings.bloomScatter = pp->bloomScatter;
 				settings.finalBrightness = pp->finalBrightness;
 				settings.aaMode = pp->aaMode;
+				settings.smaaThreshold = pp->smaaThreshold;
+				settings.smaaCornerRounding = pp->smaaCornerRounding;
+				settings.temporalSharpness = pp->temporalSharpness;
+				settings.temporalBlendRatio = pp->temporalBlendRatio;
+				settings.glareModeMask = pp->glareModeMask;
+				settings.glareIntensity = pp->glareIntensity;
+				settings.glareSize = pp->glareSize;
+				settings.glareAngle = pp->glareAngle;
+				settings.glareStreakCount = pp->glareStreakCount;
+				settings.glareFade = pp->glareFade;
+				settings.glareColorModulation = pp->glareColorModulation;
+				settings.glareCenter = pp->glareCenter;
+				settings.glareIntensityByMode = pp->glareIntensityByMode;
+				settings.glareSizeByMode = pp->glareSizeByMode;
+				settings.glareAngleByMode = pp->glareAngleByMode;
+				settings.glareStreakCountByMode = pp->glareStreakCountByMode;
+				settings.glareFadeByMode = pp->glareFadeByMode;
+				settings.glareColorModulationByMode = pp->glareColorModulationByMode;
+				settings.glareCenterByMode = pp->glareCenterByMode;
+				settings.glareColorByMode = pp->glareColorByMode;
+				settings.filterMode = pp->filterMode;
+				settings.filterModeMask = pp->filterModeMask;
+				settings.filterStrength = pp->filterStrength;
+				settings.filterStrengthByMode = pp->filterStrengthByMode;
+				settings.filterColorByMode = pp->filterColorByMode;
 				settings.ssrEnabled = pp->ssrEnabled;
 				settings.compositeExposure = pp->compositeExposure;
 				settings.compositeWhitePoint = pp->compositeWhitePoint;
@@ -591,10 +501,10 @@ namespace {
 				settings.cameraDofFocusDistance = camera->cameraDofFocusDistance;
 				settings.cameraDofAperture = camera->cameraDofAperture;
 				settings.cameraDofFocalLength = camera->cameraDofFocalLength;
-			settings.cameraMotionBlurEnabled = camera->cameraMotionBlurEnabled;
-			settings.cameraMotionBlurIntensity = camera->cameraMotionBlurIntensity;
-			settings.cameraNearClip = camera->cameraNearClip;
-			settings.cameraFarClip = camera->cameraFarClip;
+				settings.cameraMotionBlurEnabled = camera->cameraMotionBlurEnabled;
+				settings.cameraMotionBlurIntensity = camera->cameraMotionBlurIntensity;
+				settings.cameraNearClip = camera->cameraNearClip;
+				settings.cameraFarClip = camera->cameraFarClip;
 			}
 		}
 		return settings;
@@ -749,8 +659,7 @@ void EditorRenderManager::Draw() {
 		hasLoggedFirstRenderEnter = true;
 	}
 
-	ApplySceneLightToDirectionalBuffer(*directionalLightData);
-	// Inspector 邵�E�E�E�・�E�E�E�驍ｱ・�E�E�E�鬮�E�E�E�繝ｻ・�E�E�E�邵�E�E�E�繝ｻLight Component 郢�E�E�E�蜑�E�E�E�E��E�E�E�鄙ｫ繝ｵ郢晢�E�E�E��E�E�E�郢晢�E�E�E��E�E�E�郢晢�E�E�E��E�E�E�邵�E�E�E�・�E�E�E�陞ｳ貁E�E��E�帷�E�E�E��E�E�E�・�E�E�E�郢晏現竏郁愾閧�E�E�E�荳十E�E��E��E�E�E�蜷�E�E�E�・狗ｸ�E�E�E�繝ｻ
+	int32_t lightCount = CollectSceneLights(directionalLightData);
 
 	emissiveLightData->count = 0;
 	for (const EditorSceneObject& emissiveObject : editorSceneObjects) {
@@ -798,21 +707,33 @@ void EditorRenderManager::Draw() {
 	// worldViewProjectionMatrix 邵�E�E�E�・�E�E�E� 3D 郢晢�E�E�E��E�E�E�郢昴・�E�E�E�晉�E�E��E�E�E�繝ｻSceneView 邵�E�E�E�・�E�E�E�隰壼供�E�E�E�E�・�E�E�E�邵�E�E�E�蜷�E�E�E�・・WVP邵�E�E�E�繝ｻ
 	Matrix4x4 gameViewProjectionMatrix = Multiply(g_gameViewMatrix, g_gameProjectionMatrix);
 	Matrix4x4 inverseGameViewProjectionMatrix = Inverse(gameViewProjectionMatrix);
-	Matrix4x4 lightViewProjectionMatrix = MakeLightViewProjectionMatrix(
-		editorSceneObjects,
-		transform,
-		directionalLightData,
-		isLegacyPreviewVisible);
-	// lightViewProjectionMatrix 邵�E�E�E�・�E�E�E�陟厄�E�E�E��E�E�E�騾匁E�E��E��E�E�E� DepthTexture 邵�E�E�E�・�E�E�E�隰�E�E�E�荳奁E�E��E��E�E�E�邵�E�E�E�貁E�E��E��E�E�E�∫�E�E�E��E�E�E�・�E�E�E�郢晢�E�E�E��E�E�E�郢�E�E�E�・�E�E�E�郢晞メ・�E�E�E�荵溘○髯�E�E�E�謔溘�E邵�E�E�E�繝ｻ
+	// Compute per-light shadow VP matrices and assign atlas tiles
+	Matrix4x4 lightViewProjectionMatrixPerLight[kMaxShadowLights];
+	const float tileScale = 1.0f / static_cast<float>(kShadowAtlasTiles);
+	for (int32_t lightIdx = 0; lightIdx < lightCount; lightIdx++) {
+		lightViewProjectionMatrixPerLight[lightIdx] = MakeLightViewProjectionMatrix(
+			editorSceneObjects, transform,
+			&directionalLightData[lightIdx],
+			isLegacyPreviewVisible);
+		directionalLightData[lightIdx].shadowVP = lightViewProjectionMatrixPerLight[lightIdx];
+
+		int32_t tileX = lightIdx % kShadowAtlasTiles;
+		int32_t tileY = lightIdx / kShadowAtlasTiles;
+		directionalLightData[lightIdx].shadowTileIndex = static_cast<float>(lightIdx);
+		directionalLightData[lightIdx].shadowTileUvScaleX = tileScale;
+		directionalLightData[lightIdx].shadowTileUvScaleY = tileScale;
+		directionalLightData[lightIdx].shadowTileUvBiasX = static_cast<float>(tileX) * tileScale;
+		directionalLightData[lightIdx].shadowTileUvBiasY = static_cast<float>(tileY) * tileScale;
+	}
 	Matrix4x4 uvTransformMatrix = MakeAffineMatrix(uvTransform.scale, uvTransform.rotate, uvTransform.translate);
 	// uvTransformMatrix 邵�E�E�E�・�E�E�E� Material 邵�E�E�E�・�E�E�E�雋ゑ�E�E�E��E�E�E�邵�E�E�E�繝ｻUV 陞溽判驪�E�E�E�髯�E�E�E�謔溘�E邵�E�E�E�繝ｻ
 	spriteTransformationMatrixData->WVP = spriteWorldViewProjectionMatrix;
 	// 隴鯉ｽ�E�E�E�郢晏干�E�E�E�樒ｹ晁侭�E�E�E�礼�E�E�E�晢�E�E�E��E�E�E�騾匁E�E��E��E�E�E�邵�E�E�E�・�E�E�E�陞ｳ螢�E�E�E�辟夂ｹ晁E��E繝｣郢晁E�E��E�斐＜邵�E�E�E�・�E�E�E�闔�E�E�E�E��E�E�E�繝ｵ郢晢�E�E�E��E�E�E�郢晢�E�E�E��E�E�E�郢晢�E�E�E��E�E�E�邵�E�E�E�・�E�E�E�髯�E�E�E�謔溘�E郢�E�E�E�蜻亥�E�E�E�檎ｸ�E�E�E�蟠趣�E�E�E��E�E�E�・�E�E�E�郢�E�E�E��E�E�E�邵�E�E�E�繝ｻ
 	spriteTransformationMatrixData->World = spriteWorldMatrix;
-	spriteTransformationMatrixData->lightWVP = Multiply(spriteWorldMatrix, lightViewProjectionMatrix);
+	spriteTransformationMatrixData->lightWVP = Multiply(spriteWorldMatrix, lightViewProjectionMatrixPerLight[0]);
 	sphereTransformationMatrixData->WVP = worldViewProjectionMatrix;
 	sphereTransformationMatrixData->World = worldMatrix;
-	sphereTransformationMatrixData->lightWVP = Multiply(worldMatrix, lightViewProjectionMatrix);
+	sphereTransformationMatrixData->lightWVP = Multiply(worldMatrix, lightViewProjectionMatrixPerLight[0]);
 
 	spriteMaterialData->uvTransform = uvTransformMatrix;
 	// Sprite 邵�E�E�E�・�E�E�E� 3D 郢晢�E�E�E��E�E�E�郢昴・�E�E�E�晉�E�E��E�E�E�・�E�E�E� Material 邵�E�E�E�・�E�E�E�陷�E�E�E�蠕個ｧ UV 陞溽判驪�E�E�E�郢�E�E�E�雋樊ｸ夊ｭ擾�E�E�E��E�E�E�邵�E�E�E�蜷�E�E�E�・狗ｸ�E�E�E�繝ｻ
@@ -844,7 +765,7 @@ void EditorRenderManager::Draw() {
 				targetTransformationData->World = sceneObjectWorldMatrix;
 				targetTransformationData->lightWVP = Multiply(
 					sceneObjectWorldMatrix,
-					lightViewProjectionMatrix);
+					lightViewProjectionMatrixPerLight[0]);
 				targetTransformationData->reflectionClipPlane = reflectionClipPlane;
 				targetTransformationData->reflectionClipParams = {
 					reflectionClipEnabled ? 1.0f : 0.0f,
@@ -855,7 +776,9 @@ void EditorRenderManager::Draw() {
 			}
 
 			if (sceneObject.materialData != nullptr) {
-				sceneObject.materialData->uvTransform = uvTransformMatrix;
+				// GameObject のモデルは FBX / OBJ が持つ UV をそのまま使う。
+				// 旧プレビュー用の共通 UV 操作をここへ流すと、貼った画像全体が勝手にずれる。
+				sceneObject.materialData->uvTransform = MakeIdentity4x4();
 			}
 		}
 	};
@@ -979,7 +902,6 @@ void EditorRenderManager::Draw() {
 	};
 
 	if (shadowMapResource != nullptr && shadowPipelineState != nullptr) {
-		// 陟厄�E�E�E��E�E�E�郢昜ｻ�E�E�E�縺帷�E�E�E��E�E�E�・�E�E�E� color 郢�E�E�E�蜻亥�E�E�E�檎ｸ�E�E�E�荵昶・邵�E�E�E�竏墁E�E��E��E�E�E��E�E�E�・�E�E�E�郢晞メ・�E�E�E�荵溘○邵�E�E�E�・�E�E�E� depth 邵�E�E�E�・�E�E�E�邵�E�E�E�莉｣・・shadowMapResource 邵�E�E�E�・�E�E�E�髫�E�E�E�蛟ｬ鮖ｸ邵�E�E�E�蜷�E�E�E�・狗ｸ�E�E�E�繝ｻ
 		D3D12_RESOURCE_BARRIER shadowBarrier{};
 		shadowBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		shadowBarrier.Transition.pResource = shadowMapResource;
@@ -988,24 +910,58 @@ void EditorRenderManager::Draw() {
 		shadowBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 		commandList->ResourceBarrier(1, &shadowBarrier);
 
+		const float tileSize = static_cast<float>(kRuntimeShadowMapSize) / static_cast<float>(kShadowAtlasTiles);
 		D3D12_VIEWPORT shadowViewport{};
-		shadowViewport.Width = static_cast<float>(kRuntimeShadowMapSize);
-		shadowViewport.Height = static_cast<float>(kRuntimeShadowMapSize);
+		shadowViewport.Width = tileSize;
+		shadowViewport.Height = tileSize;
 		shadowViewport.MinDepth = 0.0f;
 		shadowViewport.MaxDepth = 1.0f;
-
-		D3D12_RECT shadowScissorRect{};
-		shadowScissorRect.right = static_cast<LONG>(kRuntimeShadowMapSize);
-		shadowScissorRect.bottom = static_cast<LONG>(kRuntimeShadowMapSize);
 
 		commandList->SetGraphicsRootSignature(rootSignature.Get());
 		commandList->SetPipelineState(shadowPipelineState.Get());
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		commandList->RSSetViewports(1, &shadowViewport);
-		commandList->RSSetScissorRects(1, &shadowScissorRect);
-		commandList->OMSetRenderTargets(0, nullptr, FALSE, &shadowDsvHandle);
-		commandList->ClearDepthStencilView(shadowDsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-		drawShadowObjects();
+
+		for (int32_t lightIdx = 0; lightIdx < lightCount; lightIdx++) {
+			int32_t tileX = lightIdx % kShadowAtlasTiles;
+			int32_t tileY = lightIdx / kShadowAtlasTiles;
+			shadowViewport.TopLeftX = static_cast<float>(tileX) * tileSize;
+			shadowViewport.TopLeftY = static_cast<float>(tileY) * tileSize;
+			D3D12_RECT shadowScissorRect{
+				static_cast<LONG>(shadowViewport.TopLeftX),
+				static_cast<LONG>(shadowViewport.TopLeftY),
+				static_cast<LONG>(shadowViewport.TopLeftX + tileSize),
+				static_cast<LONG>(shadowViewport.TopLeftY + tileSize)
+			};
+			commandList->RSSetViewports(1, &shadowViewport);
+			commandList->RSSetScissorRects(1, &shadowScissorRect);
+			commandList->OMSetRenderTargets(0, nullptr, FALSE, &shadowDsvHandle);
+
+			D3D12_RECT clearRects[] = {shadowScissorRect};
+			commandList->ClearDepthStencilView(shadowDsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 1, clearRects);
+
+			for (EditorSceneObject& sceneObject : editorSceneObjects) {
+				if (sceneObject.transformationData != nullptr) {
+					Matrix4x4 objWorld = MakeAffineMatrix(
+						sceneObject.transform.scale,
+						sceneObject.transform.rotate,
+						sceneObject.transform.translate);
+					sceneObject.transformationData->lightWVP = Multiply(objWorld, lightViewProjectionMatrixPerLight[lightIdx]);
+				}
+			}
+			sphereTransformationMatrixData->lightWVP = Multiply(worldMatrix, lightViewProjectionMatrixPerLight[lightIdx]);
+			drawShadowObjects();
+		}
+
+		for (EditorSceneObject& sceneObject : editorSceneObjects) {
+			if (sceneObject.transformationData != nullptr) {
+				Matrix4x4 objWorld = MakeAffineMatrix(
+					sceneObject.transform.scale,
+					sceneObject.transform.rotate,
+					sceneObject.transform.translate);
+				sceneObject.transformationData->lightWVP = Multiply(objWorld, lightViewProjectionMatrixPerLight[0]);
+			}
+		}
+		sphereTransformationMatrixData->lightWVP = Multiply(worldMatrix, lightViewProjectionMatrixPerLight[0]);
 
 		shadowBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 		shadowBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
@@ -1113,6 +1069,20 @@ void EditorRenderManager::Draw() {
 	};
 
 	ID3D12PipelineState* defaultDrawPso = graphicsPipelineState.Get();
+	auto bindMaterialTextureHandles = [commandList](
+		const EditorSceneObject& sceneObject,
+		D3D12_GPU_DESCRIPTOR_HANDLE fallbackTextureHandle) {
+		for (int32_t materialMapIndex = 0;
+			 materialMapIndex < static_cast<int32_t>(EditorMaterialTextureSlot::Count);
+			 materialMapIndex++) {
+			const D3D12_GPU_DESCRIPTOR_HANDLE materialMapHandle =
+				sceneObject.materialTextureSrvGpuHandles[static_cast<size_t>(materialMapIndex)].ptr != 0u
+				? sceneObject.materialTextureSrvGpuHandles[static_cast<size_t>(materialMapIndex)]
+				: fallbackTextureHandle;
+			commandList->SetGraphicsRootDescriptorTable(11 + materialMapIndex, materialMapHandle);
+		}
+	};
+
 	auto drawSceneObjects = [&](bool isGameViewPass, const D3D12_CPU_DESCRIPTOR_HANDLE& targetRtvHandle, int32_t skipGameObjectId, int32_t planarSurfaceGameObjectId = -1) {
 		commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, &dsvHandle);
 		const bool isPlanarReflectionDraw = targetRtvHandle.ptr == planarReflectionRtvHandle.ptr;
@@ -1160,6 +1130,7 @@ void EditorRenderManager::Draw() {
 				commandList->SetGraphicsRootDescriptorTable(8, iblPrefilterSrvHandleGPU);
 				commandList->SetGraphicsRootDescriptorTable(9, iblEnvironmentSrvHandleGPU);
 				commandList->SetGraphicsRootDescriptorTable(10, iblBrdfLutSrvHandleGPU);
+				bindMaterialTextureHandles(sceneObject, textureHandle);
 				commandList->IASetVertexBuffers(0, 1, &spriteVertexBufferView);
 				commandList->IASetIndexBuffer(&spriteIndexBufferView);
 				commandList->DrawIndexedInstanced(_countof(spriteIndices), 1, 0, 0, 0);
@@ -1174,8 +1145,22 @@ void EditorRenderManager::Draw() {
 				if (sceneObject.gameObjectId == planarSurfaceGameObjectId && planarSurfacePipelineState != nullptr) {
 					commandList->SetPipelineState(planarSurfacePipelineState.Get());
 				}
+				else if (sceneObject.materialData != nullptr &&
+					sceneObject.materialData->alphaMode == 2 &&
+					sceneObject.cullMode == 2 &&
+					g_transparentCullNonePipelineState != nullptr) {
+					commandList->SetPipelineState(g_transparentCullNonePipelineState.Get());
+				}
+				else if (sceneObject.materialData != nullptr &&
+					sceneObject.materialData->alphaMode == 2 &&
+					g_transparentPipelineState != nullptr) {
+					commandList->SetPipelineState(g_transparentPipelineState.Get());
+				}
 				else if (sceneObject.cullMode == 1 && g_cullFrontPipelineState != nullptr) {
 					commandList->SetPipelineState(g_cullFrontPipelineState.Get());
+				}
+				else if (sceneObject.cullMode == 2 && g_cullNonePipelineState != nullptr) {
+					commandList->SetPipelineState(g_cullNonePipelineState.Get());
 				}
 				else {
 					commandList->SetPipelineState(defaultDrawPso);
@@ -1195,6 +1180,7 @@ void EditorRenderManager::Draw() {
 				commandList->SetGraphicsRootDescriptorTable(8, iblPrefilterSrvHandleGPU);
 				commandList->SetGraphicsRootDescriptorTable(9, iblEnvironmentSrvHandleGPU);
 				commandList->SetGraphicsRootDescriptorTable(10, iblBrdfLutSrvHandleGPU);
+				bindMaterialTextureHandles(sceneObject, textureHandle);
 				if (sceneObject.usesCustomMesh &&
 					sceneObject.customMeshVertexResource != nullptr &&
 					sceneObject.customMeshVertexCount > 0u) {
@@ -1284,47 +1270,10 @@ void EditorRenderManager::Draw() {
 	gameScissorRect.right = static_cast<LONG>(g_editorGameX + g_editorGameWidth);
 	gameScissorRect.bottom = static_cast<LONG>(g_editorGameY + g_editorGameHeight);
 
-	struct PlanarReflectionProbeData {
-		int32_t sourceGameObjectId = -1;
-		const EditorGameObject* gameObject = nullptr;
-		const EditorComponent* probeComponent = nullptr;
-		const EditorSceneObject* sceneObject = nullptr;
-		PlanarReflectionCamera sceneCamera{};
-		PlanarReflectionCamera gameCamera{};
-		bool hasSceneCamera = false;
-		bool hasGameCamera = false;
-	};
-
-	std::vector<PlanarReflectionProbeData> planarProbes;
-	for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
-		if (!gameObject.isActive) continue;
-
-		const EditorComponent* reflectionProbeComponent =
-			EditorComponentUtility::FindComponent(gameObject, EditorComponentType::ReflectionProbe);
-		if (reflectionProbeComponent == nullptr ||
-			!reflectionProbeComponent->isActive ||
-			reflectionProbeComponent->assetPath != "Planar") continue;
-
-		const EditorSceneObject* reflectionSceneObject = nullptr;
-		for (const EditorSceneObject& candidateSceneObject : editorSceneObjects) {
-			if (candidateSceneObject.gameObjectId == gameObject.id) {
-				reflectionSceneObject = &candidateSceneObject;
-				break;
-			}
-		}
-
-		if (reflectionSceneObject == nullptr) {
-			Log(std::format("Planar Reflection skipped: render object not found. id={}, name={}", gameObject.id, gameObject.name));
-			continue;
-		}
-
-		PlanarReflectionProbeData probeData;
-		probeData.sourceGameObjectId = gameObject.id;
-		probeData.gameObject = &gameObject;
-		probeData.probeComponent = reflectionProbeComponent;
-		probeData.sceneObject = reflectionSceneObject;
-		planarProbes.push_back(probeData);
-	}
+	EditorPlanarReflectionManager planarManager;
+	planarManager.CollectProbes(g_editorScene, editorSceneObjects);
+	planarManager.UpdateCameras(cameraMatrix, sceneViewProjectionMatrix,
+		g_gameCameraMatrix, gameViewProjectionMatrix);
 
 	const D3D12_VIEWPORT planarFullViewport = {
 		0.0f, 0.0f,
@@ -1334,7 +1283,9 @@ void EditorRenderManager::Draw() {
 	const D3D12_RECT planarFullScissor = {0, 0, static_cast<LONG>(g_renderWidth), static_cast<LONG>(g_renderHeight)};
 	const float planarClearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
-	if (!planarProbes.empty() &&
+	auto& planarViews = planarManager.GetViews();
+
+	if (planarManager.HasProbes() &&
 		planarReflectionRenderTarget != nullptr &&
 		planarScenePipelineState != nullptr &&
 		planarReflectionPipelineState != nullptr &&
@@ -1363,100 +1314,67 @@ void EditorRenderManager::Draw() {
 		// 全プローブの反射カメラ描画 + 合成
 		//============================================================
 
-		auto drawPlanarReflectionView = [&](
-				bool isGameViewPass,
-				const Matrix4x4& sourceCameraWorldMatrix,
-				const Matrix4x4& sourceViewProjectionMatrix,
-				const D3D12_VIEWPORT& targetViewport,
-				const D3D12_RECT& targetScissorRect,
-				const PlanarReflectionProbeData& probeData,
-				PlanarReflectionCamera& outCamera) {
-			const Vector3 sourceCameraPosition = GetCameraMatrixPosition(sourceCameraWorldMatrix);
-			const PlanarReflectionSurface reflectionSurface = BuildPlanarReflectionSurface(
-				*probeData.sceneObject,
-				*probeData.gameObject,
-				*probeData.probeComponent,
-				sourceCameraPosition);
-			const PlanarReflectionCamera reflectionCamera = MakePlanarReflectionCamera(
-				sourceCameraWorldMatrix,
-				sourceViewProjectionMatrix,
-				reflectionSurface.point,
-				reflectionSurface.normal);
-			outCamera = reflectionCamera;
+		for (size_t probeIndex = 0; probeIndex < planarViews.size(); ++probeIndex) {
+			const auto& view = planarViews[probeIndex];
+			const auto& reflCam = g_isSceneViewVisible ? view.sceneCam : view.gameCam;
 
-			const Vector4 reflectionClipPlane = {
-				reflectionSurface.normal.x,
-				reflectionSurface.normal.y,
-				reflectionSurface.normal.z,
-				-Dot(reflectionSurface.normal, reflectionSurface.point) + 0.002f
-			};
-
-			const Vector3 savedCameraPosition = directionalLightData->cameraPosition;
-			directionalLightData->cameraPosition = reflectionCamera.position;
-
-			commandList->ClearDepthStencilView(
-				dsvHandle,
-				D3D12_CLEAR_FLAG_DEPTH,
-				1.0f,
-				0,
-				1,
-				&targetScissorRect);
-			commandList->RSSetViewports(1, &targetViewport);
-			commandList->RSSetScissorRects(1, &targetScissorRect);
-			drawSkybox(
-				targetViewport,
-				targetScissorRect,
-				planarReflectionRtvHandle,
-				reflectionCamera.inverseViewProjection,
-				reflectionCamera.position);
-
-			commandList->SetGraphicsRootSignature(rootSignature.Get());
-			commandList->SetPipelineState(planarScenePipelineState.Get());
-			commandList->SetGraphicsRootConstantBufferView(
-				2,
-				directionalLightResource->GetGPUVirtualAddress());
-			commandList->SetGraphicsRootConstantBufferView(
-				5,
-				emissiveLightResource->GetGPUVirtualAddress());
-			commandList->SetDescriptorHeaps(1, descriptorHeaps);
-			commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);
-			commandList->SetGraphicsRootDescriptorTable(6, environmentSrvHandleGPU);
-			commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-			updateSceneObjectMatrices(
-				reflectionCamera.viewProjection,
-				isGameViewPass,
-				true,
-				reflectionClipPlane);
-			defaultDrawPso = planarScenePipelineState.Get();
-			drawSceneObjects(
-				isGameViewPass,
-				planarReflectionRtvHandle,
-				probeData.sourceGameObjectId);
-			defaultDrawPso = graphicsPipelineState.Get();
-
-			updateSceneObjectMatrices(
-				sourceViewProjectionMatrix,
-				isGameViewPass);
-			directionalLightData->cameraPosition = savedCameraPosition;
-		};
-
-		for (size_t probeIndex = 0; probeIndex < planarProbes.size(); ++probeIndex) {
-			const auto& probeData = planarProbes[probeIndex];
 			commandList->ClearRenderTargetView(planarReflectionRtvHandle, hdrClearColor, 0, nullptr);
 
-			PlanarReflectionCamera sceneCamera{};
-			PlanarReflectionCamera gameCamera{};
-
+			// Draw scene from reflection camera
 			if (g_isSceneViewVisible) {
-				drawPlanarReflectionView(
-					false, cameraMatrix, sceneViewProjectionMatrix,
-					viewport, scissorRect, probeData, sceneCamera);
+				const Vector3 savedCameraPosition = directionalLightData->cameraPosition;
+				directionalLightData->cameraPosition = reflCam.position;
+
+				commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 1, &scissorRect);
+				commandList->RSSetViewports(1, &viewport);
+				commandList->RSSetScissorRects(1, &scissorRect);
+				drawSkybox(viewport, scissorRect, planarReflectionRtvHandle,
+					reflCam.inverseViewProjection, reflCam.position);
+
+				commandList->SetGraphicsRootSignature(rootSignature.Get());
+				commandList->SetPipelineState(planarScenePipelineState.Get());
+				commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
+				commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource->GetGPUVirtualAddress());
+				commandList->SetDescriptorHeaps(1, descriptorHeaps);
+				commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);
+				commandList->SetGraphicsRootDescriptorTable(6, environmentSrvHandleGPU);
+				commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+				updateSceneObjectMatrices(reflCam.viewProjection, false, true, reflCam.clipPlane);
+				defaultDrawPso = planarScenePipelineState.Get();
+				drawSceneObjects(false, planarReflectionRtvHandle, view.sourceId);
+				defaultDrawPso = graphicsPipelineState.Get();
+
+				updateSceneObjectMatrices(sceneViewProjectionMatrix, false);
+				directionalLightData->cameraPosition = savedCameraPosition;
 			}
 			if (g_isGameViewVisible) {
-				drawPlanarReflectionView(
-					true, g_gameCameraMatrix, gameViewProjectionMatrix,
-					gameViewport, gameScissorRect, probeData, gameCamera);
+				const auto& gameCam = view.gameCam;
+				const Vector3 savedCameraPosition = directionalLightData->cameraPosition;
+				directionalLightData->cameraPosition = gameCam.position;
+
+				commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 1, &gameScissorRect);
+				commandList->RSSetViewports(1, &gameViewport);
+				commandList->RSSetScissorRects(1, &gameScissorRect);
+				drawSkybox(gameViewport, gameScissorRect, planarReflectionRtvHandle,
+					gameCam.inverseViewProjection, gameCam.position);
+
+				commandList->SetGraphicsRootSignature(rootSignature.Get());
+				commandList->SetPipelineState(planarScenePipelineState.Get());
+				commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
+				commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource->GetGPUVirtualAddress());
+				commandList->SetDescriptorHeaps(1, descriptorHeaps);
+				commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);
+				commandList->SetGraphicsRootDescriptorTable(6, environmentSrvHandleGPU);
+				commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+				updateSceneObjectMatrices(gameCam.viewProjection, true, true, gameCam.clipPlane);
+				defaultDrawPso = planarScenePipelineState.Get();
+				drawSceneObjects(true, planarReflectionRtvHandle, view.sourceId);
+				defaultDrawPso = graphicsPipelineState.Get();
+
+				updateSceneObjectMatrices(gameViewProjectionMatrix, true);
+				directionalLightData->cameraPosition = savedCameraPosition;
 			}
 
 			// Transition planar RT to shader-readable for composite
@@ -1513,11 +1431,11 @@ void EditorRenderManager::Draw() {
 
 				if (g_isSceneViewVisible) {
 					copyMatrix(4, inverseViewProjectionMatrix);
-					copyMatrix(20, sceneCamera.viewProjection);
+					copyMatrix(20, reflCam.viewProjection);
 					copyViewport(36, viewport);
 				} else if (g_isGameViewVisible) {
 					copyMatrix(4, inverseGameViewProjectionMatrix);
-					copyMatrix(20, gameCamera.viewProjection);
+					copyMatrix(20, view.gameCam.viewProjection);
 					copyViewport(36, gameViewport);
 				}
 
@@ -1550,7 +1468,7 @@ void EditorRenderManager::Draw() {
 	}
 
 	if (g_isSceneViewVisible || g_isGameViewVisible) {
-		if (depthStencilResource != nullptr && planarProbes.empty()) {
+		if (depthStencilResource != nullptr && !planarManager.HasProbes()) {
 			D3D12_RESOURCE_BARRIER mainDepthBarrier{};
 			mainDepthBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 			mainDepthBarrier.Transition.pResource = depthStencilResource;
@@ -1582,7 +1500,7 @@ void EditorRenderManager::Draw() {
 			commandList->DrawInstanced(static_cast<UINT>(modelData.vertices.size()), 1, 0, 0);
 		}
 
-		int32_t firstReflectorId = planarProbes.empty() ? -1 : planarProbes[0].sourceGameObjectId;
+		int32_t firstReflectorId = planarViews.empty() ? -1 : planarViews[0].sourceId;
 		drawSceneObjects(false, hdrRtvHandle, -1, firstReflectorId);
 		drawReflectionMaskObjects(false, firstReflectorId);
 	}
@@ -1597,9 +1515,89 @@ void EditorRenderManager::Draw() {
 			hdrRtvHandle,
 			inverseGameViewProjectionMatrix,
 			g_gameCameraPosition);
-		int32_t firstReflectorId = planarProbes.empty() ? -1 : planarProbes[0].sourceGameObjectId;
+		int32_t firstReflectorId = planarViews.empty() ? -1 : planarViews[0].sourceId;
 		drawSceneObjects(true, hdrRtvHandle, -1, firstReflectorId);
 		drawReflectionMaskObjects(true, firstReflectorId);
+	}
+
+	//================================================================
+	// GBuffer: 不透明モデルの材質値と法線マップ適用後の法線を保存
+	//================================================================
+
+	auto drawGBufferObjects = [&](bool isGameViewPass) {
+		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
+			if (sceneObject.type != EditorSceneObjectType::Model ||
+				sceneObject.cullMode == 1 ||
+				sceneObject.materialData == nullptr ||
+				sceneObject.materialData->alphaMode == 2) {
+				continue;
+			}
+
+			ID3D12Resource* transformationResource = isGameViewPass
+				? sceneObject.gameTransformationResource
+				: sceneObject.transformationResource;
+
+			if (transformationResource == nullptr || sceneObject.materialResource == nullptr) {
+				continue;
+			}
+
+			size_t meshTypeIndex = static_cast<size_t>(sceneObject.meshType);
+
+			if (meshTypeIndex >= kEditorModelMeshTypeCount ||
+				primitiveVertexCounts[meshTypeIndex] == 0u) {
+				meshTypeIndex = static_cast<size_t>(EditorModelMeshType::Plane);
+			}
+
+			g_gBufferManager.BindPipelineState(
+				commandList.Get(),
+				sceneObject.cullMode == 2);
+			commandList->SetGraphicsRootConstantBufferView(
+				0,
+				sceneObject.materialResource->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootConstantBufferView(
+				1,
+				transformationResource->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootConstantBufferView(
+				2,
+				directionalLightResource->GetGPUVirtualAddress());
+
+			const D3D12_GPU_DESCRIPTOR_HANDLE textureHandle =
+				sceneObject.customTextureSrvGpuHandle.ptr != 0u
+				? sceneObject.customTextureSrvGpuHandle
+				: textureSrvHandlesGPU[2];
+			commandList->SetGraphicsRootDescriptorTable(3, textureHandle);
+			bindMaterialTextureHandles(sceneObject, textureHandle);
+
+			if (sceneObject.usesCustomMesh &&
+				sceneObject.customMeshVertexResource != nullptr &&
+				sceneObject.customMeshVertexCount > 0u) {
+				commandList->IASetVertexBuffers(0, 1, &sceneObject.customMeshVertexBufferView);
+				commandList->DrawInstanced(sceneObject.customMeshVertexCount, 1, 0, 0);
+			}
+			else {
+				commandList->IASetVertexBuffers(0, 1, &primitiveVertexBufferViews[meshTypeIndex]);
+				commandList->DrawInstanced(primitiveVertexCounts[meshTypeIndex], 1, 0, 0);
+			}
+		}
+	};
+
+	if ((g_isSceneViewVisible || g_isGameViewVisible) &&
+		g_gBufferManager.Begin(commandList.Get(), dsvHandle)) {
+		commandList->SetDescriptorHeaps(1, descriptorHeaps);
+
+		if (g_isSceneViewVisible) {
+			commandList->RSSetViewports(1, &viewport);
+			commandList->RSSetScissorRects(1, &scissorRect);
+			drawGBufferObjects(false);
+		}
+
+		if (g_isGameViewVisible) {
+			commandList->RSSetViewports(1, &gameViewport);
+			commandList->RSSetScissorRects(1, &gameScissorRect);
+			drawGBufferObjects(true);
+		}
+
+		g_gBufferManager.End(commandList.Get());
 	}
 
 	if (materialMaskRenderTarget != nullptr) {
@@ -1615,7 +1613,7 @@ void EditorRenderManager::Draw() {
 
 	// Depth 郢�E�E�E�繝ｻDEPTH_WRITE 遶翫・PIXEL_SHADER_RESOURCE 邵�E�E�E�・�E�E�E�鬩匁E�E��E��E�E�E�驕假�E�E�E��E�E�E� (SSR 邵�E�E�E�・�E�E�E� SSAO 邵�E�E�E�迹夲�E�E�E��E�E�E�・�E�E�E�郢�E�E�E�竏夲�E�E�E�狗ｹ�E�E�E�蛹�E�E�E�竕ｧ邵�E�E�E�・�E�E�E�)
 	if (depthStencilResource != nullptr &&
-		(!planarProbes.empty() || g_isSceneViewVisible || g_isGameViewVisible)) {
+		(!planarViews.empty() || g_isSceneViewVisible || g_isGameViewVisible)) {
 		D3D12_RESOURCE_BARRIER depthBarrier{};
 		depthBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		depthBarrier.Transition.pResource = depthStencilResource;
@@ -1630,7 +1628,7 @@ void EditorRenderManager::Draw() {
 	//================================================================
 
 	if (depthStencilResource != nullptr &&
-		(!planarProbes.empty() || g_isSceneViewVisible || g_isGameViewVisible)) {
+		(!planarViews.empty() || g_isSceneViewVisible || g_isGameViewVisible)) {
 		const D3D12_RESOURCE_STATES computeReadableDepthState = static_cast<D3D12_RESOURCE_STATES>(
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
 			D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -1757,7 +1755,7 @@ void EditorRenderManager::Draw() {
 	fullScissor.bottom = static_cast<LONG>(g_renderHeight);
 
 	float clearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-	const bool hasPlanarReflections = !planarProbes.empty();
+	const bool hasPlanarReflections = !planarViews.empty();
 	D3D12_GPU_DESCRIPTOR_HANDLE hdrPostSourceSrvHandle = hasPlanarReflections
 		? hdrCompositeSrvHandleGPU : hdrSrvHandleGPU;
 	ID3D12Resource* hdrPostSourceResource = hasPlanarReflections
@@ -1790,7 +1788,9 @@ void EditorRenderManager::Draw() {
 		float ssaoClearColor[4] = {1.0f, 0.0f, 0.0f, 0.0f};
 		commandList->ClearRenderTargetView(ssaoRtvHandles[0], ssaoClearColor, 0, nullptr);
 		commandList->SetGraphicsRootDescriptorTable(0, depthSrvHandleGPU);
-		commandList->SetGraphicsRootDescriptorTable(1, shadowMapSrvGpuHandle);
+		commandList->SetGraphicsRootDescriptorTable(
+			1,
+			g_gBufferManager.GetNormalSrvHandle());
 		float ssaoParams[8] = {
 			1.0f / static_cast<float>(g_renderWidth),
 			1.0f / static_cast<float>(g_renderHeight),
@@ -1842,7 +1842,11 @@ void EditorRenderManager::Draw() {
 	// Compute: SSR と時間方向の履歴解決
 	//================================================================
 
-	if (ppSettings.aaMode == 3 &&
+	const bool shouldExecuteTemporalOrSsr =
+		ppSettings.hasPostProcessComponent &&
+		(ppSettings.aaMode == 3 || ppSettings.ssrEnabled);
+
+	if (shouldExecuteTemporalOrSsr &&
 		hdrPostSourceResource != nullptr &&
 		depthStencilResource != nullptr &&
 		materialMaskRenderTarget != nullptr &&
@@ -1871,7 +1875,7 @@ void EditorRenderManager::Draw() {
 			static_cast<UINT>(temporalInputBarriers.size()),
 			temporalInputBarriers.data());
 
-		const bool useSceneCamera = g_isSceneViewVisible;
+		const bool useSceneCamera = g_isSceneViewVisible && !g_isGameViewVisible;
 		const Matrix4x4& temporalInverseViewProjection = useSceneCamera
 			? inverseViewProjectionMatrix
 			: inverseGameViewProjectionMatrix;
@@ -1890,12 +1894,16 @@ void EditorRenderManager::Draw() {
 			commandList.Get(),
 			hdrPostSourceSrvHandle,
 			depthSrvHandleGPU,
-			g_depthHierarchyManager.GetReconstructedNormalSrvHandle(),
+			g_gBufferManager.IsReady()
+				? g_gBufferManager.GetNormalSrvHandle()
+				: g_depthHierarchyManager.GetReconstructedNormalSrvHandle(),
 			g_depthHierarchyManager.GetDepthPyramidSrvHandle(ssrDepthLevel),
 			materialMaskSrvHandleGPU,
 			&temporalInverseViewProjection.matrix[0][0],
 			&temporalViewProjection.matrix[0][0],
-			&temporalCameraPosition.x);
+			&temporalCameraPosition.x,
+			ppSettings.temporalSharpness,
+			ppSettings.temporalBlendRatio);
 
 		for (D3D12_RESOURCE_BARRIER& temporalInputBarrier : temporalInputBarriers) {
 			temporalInputBarrier.Transition.StateBefore = shaderReadState;
@@ -1915,17 +1923,59 @@ void EditorRenderManager::Draw() {
 	// 多段Bloomを実行し、失敗時は既存Bloomを最終合成に使う
 	//================================================================
 	D3D12_GPU_DESCRIPTOR_HANDLE finalBloomSrvHandle = bloomSrvHandlesGPU[0];
-	const bool isQualityBloomExecuted = ppSettings.bloomIntensity > 0.0f &&
+	const size_t bloomModeIndex = 1u;
+	const float bloomOutputIntensity = ppSettings.bloomIntensity * ppSettings.glareIntensityByMode[bloomModeIndex];
+	const bool isQualityBloomExecuted =
+		ppSettings.hasPostProcessComponent &&
+		ppSettings.glareModeMask != 0 &&
+		bloomOutputIntensity > 0.0f &&
 		g_postProcessQualityManager.ExecuteBloom(
 			commandList.Get(),
 			hdrPostSourceSrvHandle,
-			ppSettings.bloomIntensity,
+			bloomOutputIntensity,
 			ppSettings.bloomThreshold,
 			ppSettings.bloomSoftKnee,
-			ppSettings.bloomScatter);
+			ppSettings.glareSizeByMode[bloomModeIndex]);
 
 	if (isQualityBloomExecuted) {
 		finalBloomSrvHandle = g_postProcessQualityManager.GetBloomSrvHandle();
+	}
+
+	//================================================================
+	// Blender 風 Glare: Bloom 明部を Ghosts / Streaks / Fog Glow 等へ変換する
+	//================================================================
+
+	if (isQualityBloomExecuted) {
+		bool preserveGlareSource = (ppSettings.glareModeMask & (1 << 1)) != 0;
+
+		for (int32_t glareModeIndex = 2; glareModeIndex <= 7; glareModeIndex++) {
+			if ((ppSettings.glareModeMask & (1 << glareModeIndex)) == 0) {
+				continue;
+			}
+
+			const size_t glareArrayIndex = static_cast<size_t>(glareModeIndex);
+			const bool isGlareExecuted = g_postProcessQualityManager.ExecuteGlare(
+				commandList.Get(),
+				finalBloomSrvHandle,
+				glareModeIndex,
+				ppSettings.glareIntensityByMode[glareArrayIndex],
+				ppSettings.glareSizeByMode[glareArrayIndex],
+				ppSettings.glareAngleByMode[glareArrayIndex],
+				ppSettings.glareStreakCountByMode[glareArrayIndex],
+				ppSettings.glareFadeByMode[glareArrayIndex],
+				ppSettings.glareColorModulationByMode[glareArrayIndex],
+				ppSettings.glareCenterByMode[glareArrayIndex].x,
+				ppSettings.glareCenterByMode[glareArrayIndex].y,
+				ppSettings.glareColorByMode[glareArrayIndex].x,
+				ppSettings.glareColorByMode[glareArrayIndex].y,
+				ppSettings.glareColorByMode[glareArrayIndex].z,
+				preserveGlareSource);
+
+			if (isGlareExecuted) {
+				finalBloomSrvHandle = g_postProcessQualityManager.GetGlareSrvHandle();
+				preserveGlareSource = true;
+			}
+		}
 	}
 
 	//================================================================
@@ -2028,11 +2078,11 @@ void EditorRenderManager::Draw() {
 		commandList->SetGraphicsRootDescriptorTable(0, hdrPostSourceSrvHandle);
 		commandList->SetGraphicsRootDescriptorTable(1, finalBloomSrvHandle);
 		commandList->SetGraphicsRootDescriptorTable(3, ssaoSrvHandlesGPU[1]);
-		float finalCompositeParams[12] = {
-			ppSettings.compositeExposure,
+		float finalCompositeParams[16] = {
+			ppSettings.compositeExposure * ppSettings.finalBrightness,
 			ppSettings.compositeWhitePoint,
 			static_cast<float>(ppSettings.compositeToneMappingMode),
-			ppSettings.compositeBloomIntensity,
+			isQualityBloomExecuted ? ppSettings.compositeBloomIntensity : 0.0f,
 			ppSettings.compositeSaturation,
 			ppSettings.compositeContrast,
 			ppSettings.compositeVignetteStrength,
@@ -2040,9 +2090,13 @@ void EditorRenderManager::Draw() {
 			ppSettings.compositeFilmGrain,
 			ppSettings.compositeChromaticAberration,
 			ppSettings.compositeAmbientOcclusionStrength,
+			0.0f,
+			ppSettings.glareColorByMode[bloomModeIndex].x,
+			ppSettings.glareColorByMode[bloomModeIndex].y,
+			ppSettings.glareColorByMode[bloomModeIndex].z,
 			0.0f
 		};
-		commandList->SetGraphicsRoot32BitConstants(2u, 12u, finalCompositeParams, 0u);
+		commandList->SetGraphicsRoot32BitConstants(2u, 16u, finalCompositeParams, 0u);
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		commandList->DrawInstanced(3, 1, 0, 0);
 
@@ -2052,12 +2106,42 @@ void EditorRenderManager::Draw() {
 	}
 
 	//================================================================
+	// Blender 風 Filter: ToneMapping 後の画面へ 3x3 畳み込みを適用する
+	//================================================================
+
+	D3D12_GPU_DESCRIPTOR_HANDLE filteredPostProcessSrvHandle = postProcessSrvHandleGPU;
+	const int32_t filterModeMask = ppSettings.filterModeMask != 0
+		? ppSettings.filterModeMask
+		: (ppSettings.filterMode > 0 ? 1 << ppSettings.filterMode : 0);
+	for (int32_t filterModeIndex = 1; filterModeIndex <= 8; filterModeIndex++) {
+		if ((filterModeMask & (1 << filterModeIndex)) == 0) {
+			continue;
+		}
+
+		const bool isFilterExecuted = g_postProcessQualityManager.ExecuteFilter(
+			commandList.Get(),
+			filteredPostProcessSrvHandle,
+			filterModeIndex,
+			ppSettings.filterStrengthByMode[static_cast<size_t>(filterModeIndex)],
+			ppSettings.filterColorByMode[static_cast<size_t>(filterModeIndex)].x,
+			ppSettings.filterColorByMode[static_cast<size_t>(filterModeIndex)].y,
+			ppSettings.filterColorByMode[static_cast<size_t>(filterModeIndex)].z);
+
+		if (isFilterExecuted) {
+			filteredPostProcessSrvHandle = g_postProcessQualityManager.GetFilterSrvHandle();
+		}
+	}
+
+	//================================================================
 	// 闕ｳ・�E�E�E�: Sharpen
 	// ToneMapping 陟募�E�E�E�後�E騾匁E�E��E��E�E�E�陷剁E�E��E�奁E�E��E�定氣莉｣・�E�E�E�邵�E�E�E�・�E�E�E�邵�E�E�E�螟ｧ・�E�E�E�霈披�E�E�E�驍ｱ・�E�E�E�郢�E�E�E�竏壺�E�E�E�邵�E�E�E�竏ｵ諤咎お繝ｻFXAA 邵�E�E�E�・�E�E�E�雋ゑ�E�E�E��E�E�E�邵�E�E�E�蜷�E�E�E��E�E�E�繝ｻ
 	//================================================================
 	bool isSharpenExecuted = false;
 
-	if (hdrCompositeRenderTarget != nullptr && sharpenPipelineState != nullptr) {
+	if (ppSettings.hasPostProcessComponent &&
+		ppSettings.sharpenStrength > 0.0f &&
+		hdrCompositeRenderTarget != nullptr &&
+		sharpenPipelineState != nullptr) {
 		D3D12_RESOURCE_BARRIER sharpenBarrier{};
 		sharpenBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		sharpenBarrier.Transition.pResource = hdrCompositeRenderTarget;
@@ -2072,12 +2156,12 @@ void EditorRenderManager::Draw() {
 		commandList->ClearRenderTargetView(hdrCompositeRtvHandle, clearColor, 0, nullptr);
 		commandList->SetGraphicsRootSignature(postProcessRootSignature.Get());
 		commandList->SetPipelineState(sharpenPipelineState.Get());
-		commandList->SetGraphicsRootDescriptorTable(0, postProcessSrvHandleGPU);
+		commandList->SetGraphicsRootDescriptorTable(0, filteredPostProcessSrvHandle);
 		commandList->SetGraphicsRootDescriptorTable(1, finalBloomSrvHandle);
 		float sharpenParams[4] = {
 			1.0f / static_cast<float>(g_renderWidth),
 			1.0f / static_cast<float>(g_renderHeight),
-			0.06f,
+			ppSettings.sharpenStrength,
 			0.0f
 		};
 		commandList->SetGraphicsRoot32BitConstants(2, 4, sharpenParams, 0);
@@ -2095,12 +2179,14 @@ void EditorRenderManager::Draw() {
 	//================================================================
 	D3D12_GPU_DESCRIPTOR_HANDLE finalAntialiasSourceSrvHandle = isSharpenExecuted
 		? hdrCompositeSrvHandleGPU
-		: postProcessSrvHandleGPU;
+		: filteredPostProcessSrvHandle;
 	bool isSmaaExecuted = false;
 	if (ppSettings.aaMode == 2) {
 		isSmaaExecuted = g_postProcessQualityManager.ExecuteSmaa(
 			commandList.Get(),
-			finalAntialiasSourceSrvHandle);
+			finalAntialiasSourceSrvHandle,
+			ppSettings.smaaThreshold,
+			ppSettings.smaaCornerRounding);
 	}
 
 	if (isSmaaExecuted) {
@@ -2125,7 +2211,7 @@ void EditorRenderManager::Draw() {
 		ID3D12DescriptorHeap* heaps[] = {srvDescriptorHeap};
 		commandList->SetDescriptorHeaps(1, heaps);
 		commandList->SetGraphicsRootSignature(postProcessRootSignature.Get());
-		commandList->SetPipelineState(fxaaPipelineState.Get());
+		commandList->SetPipelineState(ppSettings.aaMode == 1 ? fxaaPipelineState.Get() : passthroughPipelineState.Get());
 		commandList->SetGraphicsRootDescriptorTable(0, finalAntialiasSourceSrvHandle);
 		commandList->SetGraphicsRootDescriptorTable(1, finalBloomSrvHandle);
 		float fxaaParams[4];

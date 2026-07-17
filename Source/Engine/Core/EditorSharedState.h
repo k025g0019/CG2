@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #pragma warning(push, 0)
 #include <Windows.h>
@@ -49,6 +49,7 @@
 #include "EditorRuntimeManager.h"
 #include "EditorDepthHierarchyManager.h"
 #include "EditorGpuCullingManager.h"
+#include "EditorGBufferManager.h"
 #include "EditorPostProcessQualityManager.h"
 #include "EditorTemporalRenderingManager.h"
 #include "EditorScene.h"
@@ -533,8 +534,10 @@ namespace EditorSharedState {
 	constexpr uint32_t kRuntimeTextureCount = 4; // kRuntimeTextureCount �͋N�����ɌŒ�Ŋm�ۂ���W�� Texture ���B
 	constexpr uint32_t kRuntimeSwapChainBufferCount = 2; // kRuntimeSwapChainBufferCount �� SwapChain �� back buffer ���B
 	constexpr uint32_t kRuntimeSpriteIndexCount = 6; // kRuntimeSpriteIndexCount �� Sprite �l�p�`�� 2 �O�p�`�ŕ`�� index ���B
-	constexpr uint32_t kRuntimeShadowMapSize = 2048; // �e�p DepthTexture �̉𑜓x�B
-	constexpr uint32_t kRuntimeShadowSrvDescriptorIndex = 15; // 0 �� ImGui�A1-4 �͌Œ� Texture�A16 �ȍ~�͌� Texture�B
+	constexpr uint32_t kRuntimeShadowMapSize = 4096; // shadow atlas size (4 lights x 2048 each)
+	constexpr uint32_t kRuntimeShadowSrvDescriptorIndex = 15;
+	constexpr uint32_t kMaxShadowLights = 4;
+	constexpr uint32_t kShadowAtlasTiles = 2; // 2x2 grid
 	constexpr uint32_t kRuntimeHdrSrvDescriptorIndex = 16; // HDR RT �� SRV �� DescriptorHeap �� 16 �ԖځB
 	constexpr uint32_t kRuntimeBloomSrvDescriptorIndexA = 17; // Bloom A �� SRV �� 17 �ԖځB
 	constexpr uint32_t kRuntimeBloomSrvDescriptorIndexB = 18; // Bloom B �� SRV �� 18 �ԖځB
@@ -694,6 +697,9 @@ namespace EditorSharedState {
 	inline ComPtr<ID3D12PipelineState> g_planarSurfacePipelineState;
 	inline ComPtr<ID3D12PipelineState> g_objectReflectionMaskPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_cullFrontPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_cullNonePipelineState;
+	inline ComPtr<ID3D12PipelineState> g_transparentPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_transparentCullNonePipelineState;
 	inline ComPtr<ID3D12PipelineState> g_shadowPipelineState;
 
 	// Post-process root signature and pipeline states
@@ -712,6 +718,7 @@ namespace EditorSharedState {
 	inline ComPtr<ID3D12PipelineState> g_motionBlurPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_passthroughPipelineState;
 	inline EditorDepthHierarchyManager g_depthHierarchyManager;
+	inline EditorGBufferManager g_gBufferManager;
 	inline EditorGpuCullingManager g_gpuCullingManager;
 	inline EditorPostProcessQualityManager g_postProcessQualityManager;
 	inline EditorTemporalRenderingManager g_temporalRenderingManager;
@@ -1288,6 +1295,9 @@ namespace EditorSharedState {
 		// 深度依存の Compute Texture も Scene 描画サイズへ追従させる。
 		const bool isDepthHierarchyResized = g_depthHierarchyManager.Resize(g_renderWidth, g_renderHeight);
 		assert(isDepthHierarchyResized);
+
+		const bool isGBufferResized = g_gBufferManager.Resize(g_renderWidth, g_renderHeight);
+		assert(isGBufferResized);
 
 		const bool isTemporalRenderingResized = g_temporalRenderingManager.Resize(g_renderWidth, g_renderHeight);
 		assert(isTemporalRenderingResized);

@@ -38,6 +38,8 @@
 	<None Include="Assets\Shaders\PostProcess\Bloom\BloomDownsample.PS.hlsl" />
 	<None Include="Assets\Shaders\PostProcess\Bloom\BloomPrefilter.PS.hlsl" />
 	<None Include="Assets\Shaders\PostProcess\Bloom\BloomUpsample.PS.hlsl" />
+	<None Include="Assets\Shaders\PostProcess\Filter.PS.hlsl" />
+	<None Include="Assets\Shaders\PostProcess\Glare.PS.hlsl" />
 	<None Include="Assets\Shaders\PostProcess\SMAA\SMAABlendWeight.PS.hlsl" />
 	<None Include="Assets\Shaders\PostProcess\SMAA\SMAACommon.hlsli" />
 	<None Include="Assets\Shaders\PostProcess\SMAA\SMAAEdgeDetection.PS.hlsl" />
@@ -247,6 +249,9 @@
     <ClCompile Include="Source\Engine\Renderer\EditorDepthHierarchyManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
+	<ClCompile Include="Source\Engine\Renderer\EditorGBufferManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
 	<ClCompile Include="Source\Engine\Renderer\EditorGpuCullingManager.cpp">
 	  <Filter>ソース ファイル</Filter>
 	</ClCompile>
@@ -1281,6 +1286,9 @@
     <ClInclude Include="Source\Engine\Renderer\EditorDepthHierarchyManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
+	<ClInclude Include="Source\Engine\Renderer\EditorGBufferManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
 	<ClInclude Include="Source\Engine\Renderer\EditorGpuCullingManager.h">
 	  <Filter>ヘッダー ファイル</Filter>
 	</ClInclude>

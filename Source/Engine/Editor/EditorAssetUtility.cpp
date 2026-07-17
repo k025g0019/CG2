@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -32,7 +33,7 @@ namespace {
 		modelData.material.reflectance = 0.0f;
 		modelData.material.ior = 1.0f;
 		modelData.material.alpha = 1.0f;
-		modelData.material.uvLayoutTextureFilePath = "resources/uvChecker.png";
+		modelData.material.uvLayoutTextureFilePath.clear();
 		modelData.materials.clear();
 		modelData.animationClips.clear();
 		modelData.localBoundsCenter = {0.0f, 0.0f, 0.0f};
@@ -254,6 +255,7 @@ namespace {
 			return "";
 		}
 
+		std::string fallbackTexturePath;
 		const int32_t fileTextureCount = property.GetSrcObjectCount();
 		for (int32_t textureIndex = 0; textureIndex < fileTextureCount; ++textureIndex) {
 			FbxObject* textureObject = property.GetSrcObject(textureIndex);
@@ -270,12 +272,43 @@ namespace {
 
 			const char* fileName = fileTexture->GetFileName();
 			if (fileName != nullptr && fileName[0] != '\0') {
-				return MakeTexturePathRelativeToAsset(assetPath, fileName);
+				const std::string resolvedTexturePath = MakeTexturePathRelativeToAsset(assetPath, fileName);
+				if (std::filesystem::exists(std::filesystem::path(resolvedTexturePath))) {
+					return resolvedTexturePath;
+				}
+
+				fallbackTexturePath = resolvedTexturePath;
 			}
 
 			const char* relativeFileName = fileTexture->GetRelativeFileName();
 			if (relativeFileName != nullptr && relativeFileName[0] != '\0') {
-				return MakeTexturePathRelativeToAsset(assetPath, relativeFileName);
+				const std::string resolvedTexturePath = MakeTexturePathRelativeToAsset(assetPath, relativeFileName);
+				if (std::filesystem::exists(std::filesystem::path(resolvedTexturePath))) {
+					return resolvedTexturePath;
+				}
+
+				// 元PCの絶対パスより、FBX横を基準にした相対パスを優先して保持する。
+				fallbackTexturePath = resolvedTexturePath;
+			}
+		}
+
+		return fallbackTexturePath;
+	}
+
+	std::string TryGetFirstFbxTexturePath(
+		FbxSurfaceMaterial* surfaceMaterial,
+		const std::string& assetPath,
+		std::initializer_list<const char*> propertyNames) {
+		if (surfaceMaterial == nullptr) {
+			return "";
+		}
+
+		// DCC と FBX Exporter でプロパティ名が異なるため、用途ごとの候補を順に調べる。
+		for (const char* propertyName : propertyNames) {
+			const FbxProperty property = surfaceMaterial->FindProperty(propertyName, false);
+			const std::string texturePath = TryGetFbxTexturePath(property, assetPath);
+			if (!texturePath.empty()) {
+				return texturePath;
 			}
 		}
 
@@ -301,7 +334,7 @@ namespace {
 		materialData.reflectance = 0.0f;
 		materialData.ior = 1.0f;
 		materialData.alpha = 1.0f;
-		materialData.uvLayoutTextureFilePath = "resources/uvChecker.png";
+		materialData.uvLayoutTextureFilePath.clear();
 
 		const FbxProperty diffuseProperty = surfaceMaterial->FindProperty("DiffuseColor", false);
 		if (diffuseProperty.IsValid()) {
@@ -321,10 +354,39 @@ namespace {
 			materialData.textureFilePath = TryGetFbxTexturePath(baseColorProperty, assetPath);
 		}
 
-		if (materialData.textureFilePath.empty()) {
-			const FbxProperty emissiveProperty = surfaceMaterial->FindProperty("EmissiveColor", false);
-			materialData.textureFilePath = TryGetFbxTexturePath(emissiveProperty, assetPath);
-		}
+
+		//============================================================
+		// FBX PBR テクスチャ
+		//============================================================
+
+		materialData.normalTextureFilePath = TryGetFirstFbxTexturePath(
+			surfaceMaterial,
+			assetPath,
+			{"NormalMap", "Normal", "Bump"});
+		materialData.metallicTextureFilePath = TryGetFirstFbxTexturePath(
+			surfaceMaterial,
+			assetPath,
+			{"Metalness", "Metallic", "MetallicFactor"});
+		materialData.roughnessTextureFilePath = TryGetFirstFbxTexturePath(
+			surfaceMaterial,
+			assetPath,
+			{"Roughness", "RoughnessFactor"});
+		materialData.ambientOcclusionTextureFilePath = TryGetFirstFbxTexturePath(
+			surfaceMaterial,
+			assetPath,
+			{"AmbientOcclusion", "Occlusion", "AO"});
+		materialData.emissionTextureFilePath = TryGetFirstFbxTexturePath(
+			surfaceMaterial,
+			assetPath,
+			{"EmissiveColor", "EmissionColor", "Emission"});
+		materialData.heightTextureFilePath = TryGetFirstFbxTexturePath(
+			surfaceMaterial,
+			assetPath,
+			{"DisplacementColor", "Displacement", "Height", "Bump"});
+		materialData.opacityTextureFilePath = TryGetFirstFbxTexturePath(
+			surfaceMaterial,
+			assetPath,
+			{"TransparencyFactor", "TransparentColor", "Opacity"});
 
 		const FbxProperty transparencyProperty = surfaceMaterial->FindProperty("TransparencyFactor", false);
 		if (transparencyProperty.IsValid()) {
@@ -378,6 +440,62 @@ namespace {
 		modelData.materials.push_back(materialData);
 	}
 
+	bool HasFbxTransformAnimation(FbxNode* node, FbxAnimLayer* animationLayer) {
+		if (node == nullptr || animationLayer == nullptr) {
+			return false;
+		}
+
+		const char* curveChannels[] = {
+			FBXSDK_CURVENODE_COMPONENT_X,
+			FBXSDK_CURVENODE_COMPONENT_Y,
+			FBXSDK_CURVENODE_COMPONENT_Z,
+		};
+
+		for (const char* curveChannel : curveChannels) {
+			if (node->LclTranslation.GetCurve(animationLayer, curveChannel) != nullptr ||
+				node->LclRotation.GetCurve(animationLayer, curveChannel) != nullptr ||
+				node->LclScaling.GetCurve(animationLayer, curveChannel) != nullptr) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	FbxNode* FindFbxAnimatedNode(
+		FbxNode* node,
+		FbxAnimLayer* animationLayer,
+		FbxNode*& firstAnimatedNode) {
+		if (node == nullptr) {
+			return nullptr;
+		}
+
+		if (HasFbxTransformAnimation(node, animationLayer)) {
+			if (firstAnimatedNode == nullptr) {
+				firstAnimatedNode = node;
+			}
+
+			// Mesh Node 自身の Transform Key は GameObject Transform へ安全に適用できる。
+			if (node->GetMesh() != nullptr) {
+				return node;
+			}
+		}
+
+		const int32_t childCount = static_cast<int32_t>(node->GetChildCount());
+		for (int32_t childIndex = 0; childIndex < childCount; childIndex++) {
+			FbxNode* meshAnimatedNode = FindFbxAnimatedNode(
+				node->GetChild(childIndex),
+				animationLayer,
+				firstAnimatedNode);
+
+			if (meshAnimatedNode != nullptr && meshAnimatedNode->GetMesh() != nullptr) {
+				return meshAnimatedNode;
+			}
+		}
+
+		return firstAnimatedNode;
+	}
+
 	void AppendFbxAnimationClips(ModelData& modelData, FbxScene* scene) {
 		if (scene == nullptr) {
 			return;
@@ -387,21 +505,79 @@ namespace {
 		scene->FillAnimStackNameArray(animationStackNames);
 		const int32_t animationStackCount = animationStackNames.Size();
 		for (int32_t animationStackIndex = 0; animationStackIndex < animationStackCount; ++animationStackIndex) {
+			const char* clipName = animationStackNames[animationStackIndex] != nullptr
+				? animationStackNames[animationStackIndex]->Buffer()
+				: nullptr;
+			FbxAnimStack* animationStack = static_cast<FbxAnimStack*>(
+				clipName != nullptr ? scene->FindSrcObject(clipName) : nullptr);
+			if (animationStack == nullptr) {
+				continue;
+			}
+
 			ModelAnimationClipData clipData{};
-			const char* clipName = animationStackNames[animationStackIndex]->Buffer();
 			clipData.name = clipName != nullptr && clipName[0] != '\0' ? clipName : "Clip";
 			FbxTakeInfo* takeInfo = clipName != nullptr ? scene->GetTakeInfo(clipName) : nullptr;
-			if (takeInfo != nullptr) {
-				clipData.durationSeconds = static_cast<float>(takeInfo->mLocalTimeSpan.GetDuration().GetSecondDouble());
-			}
-			else {
-				clipData.durationSeconds = 0.0f;
+			const FbxTimeSpan clipTimeSpan = takeInfo != nullptr
+				? takeInfo->mLocalTimeSpan
+				: animationStack->GetLocalTimeSpan();
+			clipData.durationSeconds = static_cast<float>(
+				clipTimeSpan.GetDuration().GetSecondDouble());
+
+			scene->SetCurrentAnimationStack(animationStack);
+			FbxAnimLayer* animationLayer = static_cast<FbxAnimLayer*>(animationStack->GetMember(0));
+			FbxNode* firstAnimatedNode = nullptr;
+			FbxNode* animatedNode = FindFbxAnimatedNode(
+				scene->GetRootNode(),
+				animationLayer,
+				firstAnimatedNode);
+
+			if (animatedNode != nullptr && clipData.durationSeconds > 0.0f) {
+				clipData.animatedNodeName = animatedNode->GetName();
+				const double sourceFrameRate = FbxTime::GetFrameRate(
+					scene->GetGlobalSettings().GetTimeMode());
+				const float sampleFrameRate = (std::clamp)(
+					static_cast<float>(sourceFrameRate),
+					15.0f,
+					60.0f);
+				const int32_t sampleCount = (std::min)(
+					static_cast<int32_t>(std::ceil(clipData.durationSeconds * sampleFrameRate)) + 1,
+					3600);
+				const double clipStartSeconds = clipTimeSpan.GetStart().GetSecondDouble();
+
+				for (int32_t sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+					const float keyframeTime = (std::min)(
+						static_cast<float>(sampleIndex) / sampleFrameRate,
+						clipData.durationSeconds);
+					FbxTime sampleTime{};
+					sampleTime.SetSecondDouble(
+						clipStartSeconds + static_cast<double>(keyframeTime));
+					const FbxAMatrix localTransform = animatedNode->EvaluateLocalTransform(sampleTime);
+					const FbxVector4 translation = localTransform.GetT();
+					const FbxVector4 rotationDegrees = localTransform.GetR();
+					const FbxVector4 scale = localTransform.GetS();
+
+					ModelAnimationKeyframeData keyframe{};
+					keyframe.timeSeconds = keyframeTime;
+					keyframe.translation = {
+						-static_cast<float>(translation[0]),
+						static_cast<float>(translation[1]),
+						static_cast<float>(translation[2])};
+					keyframe.rotation = {
+						static_cast<float>(rotationDegrees[0]) * (3.14159265f / 180.0f),
+						-static_cast<float>(rotationDegrees[1]) * (3.14159265f / 180.0f),
+						-static_cast<float>(rotationDegrees[2]) * (3.14159265f / 180.0f)};
+					keyframe.scale = {
+						static_cast<float>(scale[0]),
+						static_cast<float>(scale[1]),
+						static_cast<float>(scale[2])};
+					clipData.keyframes.push_back(keyframe);
+				}
 			}
 
 			modelData.animationClips.push_back(clipData);
 		}
 
-		for (int32_t animationStackIndex = 0; animationStackIndex < animationStackCount; ++animationStackIndex) {
+		for (int32_t animationStackIndex = 0; animationStackIndex < animationStackCount; animationStackIndex++) {
 			delete animationStackNames[animationStackIndex];
 		}
 	}

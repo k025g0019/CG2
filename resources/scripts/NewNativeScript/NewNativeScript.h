@@ -28,4 +28,6 @@ private:
 	void OnMove(const EditorScriptInputActionContext& inputContext);
 	void OnJump(const EditorScriptInputActionContext& inputContext);
 	void OnFire(const EditorScriptInputActionContext& inputContext);
+	void OnClick(const EditorScriptInputActionContext& inputContext);
+	void OnValueChanged(const EditorScriptInputActionContext& inputContext);
 };

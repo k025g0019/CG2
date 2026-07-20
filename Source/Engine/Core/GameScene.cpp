@@ -26,6 +26,7 @@ void GameScene::Initialize(_In_ HINSTANCE instanceHandle) {
 	hierarchyWindowManager_.Initialize();  // GameObject ツリーを表示する Hierarchy 担当。
 	inspectorWindowManager_.Initialize();  // 選択中 GameObject / Component を編集する Inspector 担当。
 	bottomPanelWindowManager_.Initialize();  // Project と Console を下部にまとめて表示する BottomPanel 担当。
+	animationWindowManager_.Initialize();  // Property Animation Clip を Timeline で編集する独立 Window 担当。
 	renderManager_.Initialize();  // DirectX12 の描画コマンドを積む Renderer 担当。
 }
 
@@ -55,6 +56,7 @@ void GameScene::Update() {
 	hierarchyWindowManager_.Update();  // Hierarchy は Draw 中に選択・ドラッグを処理するため Update は空実装。
 	inspectorWindowManager_.Update();  // Inspector は Draw 中に Component 値を編集するため Update は空実装。
 	bottomPanelWindowManager_.Update();  // BottomPanel は Draw 中に Project / Console を操作するため Update は空実装。
+	animationWindowManager_.Update();  // Timeline Preview の時間進行と Record 中の Key 化を更新する。
 	renderManager_.Update();  // Renderer は Draw で GPU コマンドを発行するため Update は空実装。
 }
 
@@ -77,6 +79,7 @@ void GameScene::Draw() {
 	hierarchyWindowManager_.Draw();  // GameObject 階層を描画し、選択や親子付けの入力を処理する。
 	inspectorWindowManager_.Draw();  // 選択中 GameObject の Transform / Component / 環境設定を描画する。
 	bottomPanelWindowManager_.Draw();  // Project アセット一覧と Console ログを描画する。
+	animationWindowManager_.Draw();  // Animation Clip の Timeline、Track、Keyframe、Event を描画する。
 	imguiFrameManager_.Draw();  // ImGui の DrawData を確定し、Renderer が GPU に送れる状態にする。
 	renderManager_.Draw();  // 3D/2D オブジェクト、ImGui、Present、Fence 待ちまでを実行する。
 }

@@ -502,10 +502,50 @@ struct EditorComponent {
 	float animationAmplitude;  // プロシージャルアニメーションの振幅
 	int32_t animationClipIndex;  // Animation が再生する FBX Clip の配列番号
 	int32_t animatorState;  // Animator の現在状態インデックス
+	bool animatorApplyRootMotion;  // true なら Clip の移動差分を GameObject の Transform へ適用する
+	bool animatorAutoVelocity;  // true なら Rigidbody 速度から MoveX / MoveY / Speed を自動更新する
+	float animatorTransitionDuration;  // 既定状態遷移で前後の Pose を混ぜる秒数
+	float animatorMoveX;  // Animator のローカル左右入力。-1 が左、1 が右
+	float animatorMoveY;  // Animator のローカル前後入力。-1 が後、1 が前
+	float animatorSpeedParameter;  // Animator の移動速度 Parameter
+	int32_t animatorIdleClipIndex;  // 方向入力がない時に使う Clip
+	int32_t animatorForwardClipIndex;  // 前方向へ移動する時に使う Clip
+	int32_t animatorBackwardClipIndex;  // 後方向へ移動する時に使う Clip
+	int32_t animatorLeftClipIndex;  // 左方向へ移動する時に使う Clip
+	int32_t animatorRightClipIndex;  // 右方向へ移動する時に使う Clip
 	float particleRate;  // ParticleSystem の発生レート (個/秒)
 	float particleLifetime;  // ParticleSystem のパーティクル寿命 (秒)
 	float particleSpeed;  // ParticleSystem の初期速度
 	float particleSize;  // ParticleSystem のパーティクルサイズ
+	int32_t particleMaxCount;  // 同じ Emitter が同時に保持できる最大 Particle 数
+	int32_t particleBurstCount;  // 再生開始時に一度だけ発生させる Particle 数
+	int32_t particleShape;  // 0=Point、1=Sphere、2=Cone、3=Box
+	int32_t particleSimulationSpace;  // 0=World、1=Local
+	float particleDuration;  // 1 周分の発生時間。Loop 無効時はこの時間で発生を停止する
+	float particleStartDelay;  // Play 開始から発生開始までの待機秒数
+	float particleGravity;  // Particle へ毎秒加える下方向加速度
+	float particleDrag;  // Particle 速度を毎秒減衰させる係数
+	float particleEndSize;  // 寿命終了時の Particle サイズ
+	float particleShapeRadius;  // Sphere / Cone 発生位置の半径
+	float particleShapeAngle;  // Cone の開き角度（度）
+	float particleSpeedRandomness;  // 初速度へ加える 0 から 1 のランダム幅
+	float particleLifetimeRandomness;  // 寿命へ加える 0 から 1 のランダム幅
+	float particleSizeRandomness;  // 初期サイズへ加える 0 から 1 のランダム幅
+	float particleRotationSpeed;  // Particle の Y 軸回転速度（度/秒）
+	bool particleLooping;  // true なら Duration 終了後に Emitter を再開する
+	bool particleCollision;  // true なら簡易 Ground 衝突で Particle を跳ね返す
+	Vector3 particleEndColor;  // 寿命終了時の Particle 色
+	Vector3 particleDirection;  // Emitter の基準放出方向
+	Vector3 particleBoxSize;  // Box Shape の発生範囲
+	float particleStartAlpha;  // 発生時の不透明度
+	float particleEndAlpha;  // 寿命終了時の不透明度
+	float particleEmissionStrength;  // Particle Material の放射強度
+	float particleEndSpeedMultiplier;  // 寿命終了時に初速度へ掛ける倍率
+	float particleNoiseStrength;  // 乱流が速度へ加える加速度
+	float particleNoiseFrequency;  // 乱流方向が変化する周波数
+	float particleCollisionBounce;  // Ground 衝突時に残す Y 速度の割合
+	float particleCollisionFriction;  // Ground 衝突時に減らす水平速度の割合
+	bool particlePrewarm;  // Loop Effect を開始時から進行済みの見た目にする
 	// PostProcess 設定
 	float bloomIntensity;  // Bloom の強さ。0 で Bloom OFF
 	float bloomThreshold;  // Bloom 輝度しきい値

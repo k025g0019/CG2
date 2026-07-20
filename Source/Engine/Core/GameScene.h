@@ -5,6 +5,7 @@
 #pragma warning(pop)
 
 #include "EditorBottomPanelWindowManager.h"
+#include "EditorAnimationWindowManager.h"
 #include "EditorDockingManager.h"
 #include "EditorFrameInputManager.h"
 #include "EditorGameViewManager.h"
@@ -44,6 +45,7 @@ private:
 	EditorHierarchyWindowManager hierarchyWindowManager_;  // Hierarchy ウィンドウと GameObject ツリー操作を扱う Manager。
 	EditorInspectorWindowManager inspectorWindowManager_;  // Inspector ウィンドウと Component 編集を扱う Manager。
 	EditorBottomPanelWindowManager bottomPanelWindowManager_;  // Project / Console の下部パネル表示を扱う Manager。
+	EditorAnimationWindowManager animationWindowManager_;  // Timeline、Keyframe、Preview、Animation Event の編集を扱う Manager。
 	EditorRenderManager renderManager_;  // SceneObject / Sprite / ImGui を GPU に描画する Manager。
 };
 

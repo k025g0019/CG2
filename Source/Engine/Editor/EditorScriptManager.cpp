@@ -149,12 +149,14 @@ void EditorScriptManager::Initialize(
 	EditorScene* editorScene,
 	EditorInputManager* inputManager,
 	EditorAnimationManager* animationManager,
+	EditorEffectManager* effectManager,
 	EditorAIManager* aiManager,
 	EditorPhysicsManager* physicsManager,
 	std::vector<std::string>* consoleMessages) {
 	editorScene_ = editorScene;  // RuntimeManager と同じ Scene を参照し、Play 中だけ Script を処理する。
 	inputManager_ = inputManager;  // PlayerInput の Action 名を DLL Script から問い合わせる時に使う。
 	animationManager_ = animationManager;  // Animation の再生状態と現在時刻を DLL Script から読む時に使う。
+	effectManager_ = effectManager;  // ParticleSystem / VisualEffect を DLL Script から再生する時に使う。
 	aiManager_ = aiManager;  // AI センサーや音声 / 顔検知の状態を DLL Script から読む時に使う。
 	physicsManager_ = physicsManager;  // DLL Script から Jolt の AddForce / SetVelocity を呼ぶための入口。
 	consoleMessages_ = consoleMessages;  // DLL ログや読込失敗を Console へ出す先。
@@ -260,6 +262,35 @@ void EditorScriptManager::FixedUpdate(float fixedDeltaTime) {
 
 void EditorScriptManager::SetPhysicsEvents(const std::vector<EditorJoltPhysicsManager::PhysicsEvent>& physicsEvents) {
 	physicsEvents_ = physicsEvents;  // Jolt の接触イベントを Script 実行前に受け取り、FixedUpdate から参照できるようにする。
+}
+
+void EditorScriptManager::DispatchAnimationEvent(
+	int32_t gameObjectId,
+	const std::string& eventName,
+	float eventTime,
+	const std::string& effectAssetPath,
+	const Vector3& localOffset) {
+	// 同じ GameObject に複数の Script Component がある場合は、各 DLL へ同じ Event を通知する。
+	for (const ScriptBinding& scriptBinding : scriptBindings_) {
+		if (scriptBinding.gameObjectId != gameObjectId) {
+			continue;
+		}
+
+		ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
+		if (scriptModule == nullptr ||
+			!scriptModule->isLoaded ||
+			scriptModule->animationEventFunction == nullptr) {
+			continue;
+		}
+
+		const EditorScriptAnimationEvent scriptAnimationEvent{
+			eventName.c_str(),
+			effectAssetPath.c_str(),
+			eventTime,
+			{localOffset.x, localOffset.y, localOffset.z},
+		};
+		scriptModule->animationEventFunction(gameObjectId, &scriptAnimationEvent);
+	}
 }
 
 void EditorScriptManager::Stop() {
@@ -589,6 +620,225 @@ EditorScriptAnimationState EditorScriptManager::ScriptGetAnimationStateBridge(in
 	return gActiveScriptManager->GetAnimationStateInternal(gameObjectId);
 }
 
+bool EditorScriptManager::ScriptSetAnimatorFloatBridge(
+	int32_t gameObjectId,
+	const char* parameterName,
+	float value) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->SetAnimatorFloatInternal(gameObjectId, parameterName, value);
+}
+
+bool EditorScriptManager::ScriptSetAnimatorIntBridge(
+	int32_t gameObjectId,
+	const char* parameterName,
+	int32_t value) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->SetAnimatorIntInternal(gameObjectId, parameterName, value);
+}
+
+bool EditorScriptManager::ScriptSetAnimatorBoolBridge(
+	int32_t gameObjectId,
+	const char* parameterName,
+	bool value) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->SetAnimatorBoolInternal(gameObjectId, parameterName, value);
+}
+
+bool EditorScriptManager::ScriptSetAnimatorTriggerBridge(
+	int32_t gameObjectId,
+	const char* parameterName) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->SetAnimatorTriggerInternal(gameObjectId, parameterName);
+}
+
+bool EditorScriptManager::ScriptSetAnimatorVector2Bridge(
+	int32_t gameObjectId,
+	const char* parameterName,
+	const EditorScriptVector2* value) {
+	return gActiveScriptManager != nullptr && value != nullptr &&
+		gActiveScriptManager->SetAnimatorVector2Internal(gameObjectId, parameterName, *value);
+}
+
+bool EditorScriptManager::ScriptSetAnimatorVector3Bridge(
+	int32_t gameObjectId,
+	const char* parameterName,
+	const EditorScriptVector3* value) {
+	return gActiveScriptManager != nullptr && value != nullptr &&
+		gActiveScriptManager->SetAnimatorVector3Internal(gameObjectId, parameterName, *value);
+}
+
+bool EditorScriptManager::ScriptPlayAnimationActionBridge(
+	int32_t gameObjectId,
+	int32_t clipIndex,
+	float blendIn,
+	float blendOut,
+	float playbackSpeed,
+	int32_t priority,
+	bool loop) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->animationManager_ != nullptr &&
+		gActiveScriptManager->animationManager_->PlayAction(
+			gameObjectId,
+			clipIndex,
+			blendIn,
+			blendOut,
+			playbackSpeed,
+			priority,
+			loop);
+}
+
+bool EditorScriptManager::ScriptPlayEffectBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->effectManager_ != nullptr &&
+		gActiveScriptManager->effectManager_->PlayEffect(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptPlayEffectAtBridge(
+	int32_t gameObjectId,
+	const char* effectAssetPath,
+	const EditorScriptVector3* localOffset) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->effectManager_ != nullptr &&
+		effectAssetPath != nullptr &&
+		localOffset != nullptr &&
+		gActiveScriptManager->effectManager_->PlayEffectAt(
+			gameObjectId,
+			effectAssetPath,
+			ToEditorVector3(*localOffset));
+}
+
+void EditorScriptManager::ScriptStopEffectBridge(int32_t gameObjectId) {
+	if (gActiveScriptManager != nullptr && gActiveScriptManager->effectManager_ != nullptr) {
+		gActiveScriptManager->effectManager_->StopEffect(gameObjectId);
+	}
+}
+
+int32_t EditorScriptManager::ScriptGetAliveParticleCountBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->effectManager_ != nullptr
+		? gActiveScriptManager->effectManager_->GetAliveParticleCount(gameObjectId)
+		: 0;
+}
+
+bool EditorScriptManager::ScriptGetAnimatorFloatBridge(
+	int32_t gameObjectId,
+	const char* parameterName,
+	float* value) {
+	return gActiveScriptManager != nullptr && value != nullptr &&
+		gActiveScriptManager->GetAnimatorFloatInternal(gameObjectId, parameterName, *value);
+}
+
+bool EditorScriptManager::ScriptGetAnimatorIntBridge(
+	int32_t gameObjectId,
+	const char* parameterName,
+	int32_t* value) {
+	return gActiveScriptManager != nullptr && value != nullptr &&
+		gActiveScriptManager->GetAnimatorIntInternal(gameObjectId, parameterName, *value);
+}
+
+bool EditorScriptManager::ScriptGetAnimatorBoolBridge(
+	int32_t gameObjectId,
+	const char* parameterName,
+	bool* value) {
+	return gActiveScriptManager != nullptr && value != nullptr &&
+		gActiveScriptManager->GetAnimatorBoolInternal(gameObjectId, parameterName, *value);
+}
+
+bool EditorScriptManager::ScriptGetAnimatorVector2Bridge(
+	int32_t gameObjectId,
+	const char* parameterName,
+	EditorScriptVector2* value) {
+	return gActiveScriptManager != nullptr && value != nullptr &&
+		gActiveScriptManager->GetAnimatorVector2Internal(gameObjectId, parameterName, *value);
+}
+
+bool EditorScriptManager::ScriptGetAnimatorVector3Bridge(
+	int32_t gameObjectId,
+	const char* parameterName,
+	EditorScriptVector3* value) {
+	return gActiveScriptManager != nullptr && value != nullptr &&
+		gActiveScriptManager->GetAnimatorVector3Internal(gameObjectId, parameterName, *value);
+}
+
+bool EditorScriptManager::ScriptResetAnimatorTriggerBridge(
+	int32_t gameObjectId,
+	const char* parameterName) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->ResetAnimatorTriggerInternal(gameObjectId, parameterName);
+}
+
+bool EditorScriptManager::ScriptPlayAnimationBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->animationManager_ != nullptr &&
+		gActiveScriptManager->animationManager_->PlayAnimation(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptStopAnimationBridge(int32_t gameObjectId) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->animationManager_ == nullptr ||
+		!gActiveScriptManager->animationManager_->IsAnimationPlaying(gameObjectId)) {
+		return false;
+	}
+
+	gActiveScriptManager->animationManager_->StopAnimation(gameObjectId);
+	return true;
+}
+
+bool EditorScriptManager::ScriptIsAnimationPlayingBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->animationManager_ != nullptr &&
+		gActiveScriptManager->animationManager_->IsAnimationPlaying(gameObjectId);
+}
+
+float EditorScriptManager::ScriptGetAnimationTimeBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->animationManager_ != nullptr
+		? gActiveScriptManager->animationManager_->GetAnimationTime(gameObjectId)
+		: 0.0f;
+}
+
+bool EditorScriptManager::ScriptSetAnimationTimeBridge(int32_t gameObjectId, float playbackTime) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->animationManager_ != nullptr &&
+		gActiveScriptManager->animationManager_->SetAnimationTime(gameObjectId, playbackTime);
+}
+
+bool EditorScriptManager::ScriptSetAnimationSpeedBridge(int32_t gameObjectId, float playbackSpeed) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->animationManager_ != nullptr &&
+		gActiveScriptManager->animationManager_->SetAnimationSpeed(gameObjectId, playbackSpeed);
+}
+
+bool EditorScriptManager::ScriptGetAnimatorStateNameBridge(
+	int32_t gameObjectId,
+	char* stateName,
+	int32_t stateNameCapacity) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->animationManager_ == nullptr ||
+		stateName == nullptr || stateNameCapacity <= 0) {
+		return false;
+	}
+
+	CopyStringToFixedBuffer(
+		gActiveScriptManager->animationManager_->GetAnimatorStateName(gameObjectId),
+		stateName,
+		static_cast<size_t>(stateNameCapacity));
+	return true;
+}
+
+bool EditorScriptManager::ScriptIsEffectPlayingBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->effectManager_ != nullptr &&
+		gActiveScriptManager->effectManager_->IsEffectPlaying(gameObjectId);
+}
+
+int32_t EditorScriptManager::ScriptFindGameObjectByNameBridge(const char* gameObjectName) {
+	return gActiveScriptManager != nullptr
+		? gActiveScriptManager->FindGameObjectByNameInternal(gameObjectName)
+		: -1;
+}
+
+bool EditorScriptManager::ScriptSetGameObjectActiveBridge(int32_t gameObjectId, bool isActive) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->SetGameObjectActiveInternal(gameObjectId, isActive);
+}
+
+bool EditorScriptManager::ScriptIsGameObjectActiveBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->IsGameObjectActiveInternal(gameObjectId);
+}
+
 void EditorScriptManager::BuildScriptBindings() {
 	scriptBindings_.clear();
 
@@ -648,6 +898,34 @@ void EditorScriptManager::BuildRuntimeApi() {
 	runtimeApi_.GetAiSensorState = ScriptGetAiSensorStateBridge;
 	runtimeApi_.GetMaterialState = ScriptGetMaterialStateBridge;
 	runtimeApi_.GetAnimationState = ScriptGetAnimationStateBridge;
+	runtimeApi_.SetAnimatorFloat = ScriptSetAnimatorFloatBridge;
+	runtimeApi_.SetAnimatorInt = ScriptSetAnimatorIntBridge;
+	runtimeApi_.SetAnimatorBool = ScriptSetAnimatorBoolBridge;
+	runtimeApi_.SetAnimatorTrigger = ScriptSetAnimatorTriggerBridge;
+	runtimeApi_.SetAnimatorVector2 = ScriptSetAnimatorVector2Bridge;
+	runtimeApi_.SetAnimatorVector3 = ScriptSetAnimatorVector3Bridge;
+	runtimeApi_.PlayAnimationAction = ScriptPlayAnimationActionBridge;
+	runtimeApi_.PlayEffect = ScriptPlayEffectBridge;
+	runtimeApi_.PlayEffectAt = ScriptPlayEffectAtBridge;
+	runtimeApi_.StopEffect = ScriptStopEffectBridge;
+	runtimeApi_.GetAliveParticleCount = ScriptGetAliveParticleCountBridge;
+	runtimeApi_.GetAnimatorFloat = ScriptGetAnimatorFloatBridge;
+	runtimeApi_.GetAnimatorInt = ScriptGetAnimatorIntBridge;
+	runtimeApi_.GetAnimatorBool = ScriptGetAnimatorBoolBridge;
+	runtimeApi_.GetAnimatorVector2 = ScriptGetAnimatorVector2Bridge;
+	runtimeApi_.GetAnimatorVector3 = ScriptGetAnimatorVector3Bridge;
+	runtimeApi_.ResetAnimatorTrigger = ScriptResetAnimatorTriggerBridge;
+	runtimeApi_.PlayAnimation = ScriptPlayAnimationBridge;
+	runtimeApi_.StopAnimation = ScriptStopAnimationBridge;
+	runtimeApi_.IsAnimationPlaying = ScriptIsAnimationPlayingBridge;
+	runtimeApi_.GetAnimationTime = ScriptGetAnimationTimeBridge;
+	runtimeApi_.SetAnimationTime = ScriptSetAnimationTimeBridge;
+	runtimeApi_.SetAnimationSpeed = ScriptSetAnimationSpeedBridge;
+	runtimeApi_.GetAnimatorStateName = ScriptGetAnimatorStateNameBridge;
+	runtimeApi_.IsEffectPlaying = ScriptIsEffectPlayingBridge;
+	runtimeApi_.FindGameObjectByName = ScriptFindGameObjectByNameBridge;
+	runtimeApi_.SetGameObjectActive = ScriptSetGameObjectActiveBridge;
+	runtimeApi_.IsGameObjectActive = ScriptIsGameObjectActiveBridge;
 }
 
 void EditorScriptManager::StartBindingsForModule(ScriptModule& scriptModule) {
@@ -1148,6 +1426,8 @@ bool EditorScriptManager::LoadModule(const std::string& dllPath) {
 		reinterpret_cast<EditorScriptFixedUpdateFn>(GetProcAddress(moduleHandle, "EditorScript_FixedUpdate"));
 	scriptModule.physicsEventFunction =
 		reinterpret_cast<EditorScriptPhysicsEventFn>(GetProcAddress(moduleHandle, "EditorScript_OnPhysicsEvent"));
+	scriptModule.animationEventFunction =
+		reinterpret_cast<EditorScriptAnimationEventFn>(GetProcAddress(moduleHandle, "EditorScript_OnAnimationEvent"));
 	scriptModule.stopFunction =
 		reinterpret_cast<EditorScriptStopFn>(GetProcAddress(moduleHandle, "EditorScript_Stop"));
 	scriptModule.getFieldCountFunction =
@@ -1196,6 +1476,7 @@ void EditorScriptManager::UnloadModule(ScriptModule& scriptModule) {
 	scriptModule.updateFunction = nullptr;
 	scriptModule.fixedUpdateFunction = nullptr;
 	scriptModule.physicsEventFunction = nullptr;
+	scriptModule.animationEventFunction = nullptr;
 	scriptModule.stopFunction = nullptr;
 	scriptModule.getFieldCountFunction = nullptr;
 	scriptModule.getFieldDescriptorFunction = nullptr;
@@ -1632,16 +1913,22 @@ EditorScriptAnimationState EditorScriptManager::GetAnimationStateInternal(int32_
 
 	const EditorComponent* animationComponent =
 		EditorComponentUtility::FindComponent(*gameObject, EditorComponentType::Animation);
-	if (animationComponent == nullptr) {
+	const EditorComponent* animatorComponent =
+		EditorComponentUtility::FindComponent(*gameObject, EditorComponentType::Animator);
+	const EditorComponent* activeAnimationComponent = animationComponent != nullptr
+		? animationComponent
+		: animatorComponent;
+
+	if (activeAnimationComponent == nullptr) {
 		return animationState;
 	}
 
 	animationState.hasComponent = true;
-	animationState.isLoop = animationComponent->animationLoop;
-	animationState.playOnAwake = animationComponent->animationPlayOnAwake;
-	animationState.animationType = animationComponent->animationType;
-	animationState.animationSpeed = animationComponent->animationSpeed;
-	animationState.animationAmplitude = animationComponent->animationAmplitude;
+	animationState.isLoop = activeAnimationComponent->animationLoop;
+	animationState.playOnAwake = activeAnimationComponent->animationPlayOnAwake;
+	animationState.animationType = activeAnimationComponent->animationType;
+	animationState.animationSpeed = activeAnimationComponent->animationSpeed;
+	animationState.animationAmplitude = activeAnimationComponent->animationAmplitude;
 	animationState.isPlaying = false;
 	animationState.currentTime = 0.0f;
 
@@ -1650,10 +1937,13 @@ EditorScriptAnimationState EditorScriptManager::GetAnimationStateInternal(int32_
 		animationState.currentTime = animationManager_->GetAnimationTime(gameObjectId);
 	}
 	else {
-		animationState.isPlaying = isStarted_ && animationComponent->isActive;
+		animationState.isPlaying = isStarted_ && activeAnimationComponent->isActive;
 	}
 
-	std::string animationAssetPath = animationComponent->assetPath;
+	std::string animationAssetPath = activeAnimationComponent->assetPath;
+	if (animatorComponent != nullptr && EditorAssetUtility::HasExtension(animationAssetPath, ".animgraph")) {
+		animationAssetPath.clear();
+	}
 	if (animationAssetPath.empty()) {
 		animationAssetPath = GetRenderableModelAssetPath(*gameObject);
 	}
@@ -1669,7 +1959,7 @@ EditorScriptAnimationState EditorScriptManager::GetAnimationStateInternal(int32_
 	if (!modelData.animationClips.empty()) {
 		const int32_t maximumClipIndex = animationState.clipCount - 1;
 		const int32_t clipIndex = (std::clamp)(
-			animationComponent->animationClipIndex,
+			activeAnimationComponent->animationClipIndex,
 			0,
 			maximumClipIndex);
 		const ModelAnimationClipData& selectedClip = modelData.animationClips[
@@ -1682,4 +1972,149 @@ EditorScriptAnimationState EditorScriptManager::GetAnimationStateInternal(int32_
 	}
 
 	return animationState;
+}
+
+bool EditorScriptManager::SetAnimatorFloatInternal(
+	int32_t gameObjectId,
+	const char* parameterName,
+	float value) {
+	return animationManager_ != nullptr && parameterName != nullptr &&
+		animationManager_->SetFloat(gameObjectId, parameterName, value);
+}
+
+bool EditorScriptManager::SetAnimatorIntInternal(
+	int32_t gameObjectId,
+	const char* parameterName,
+	int32_t value) {
+	return animationManager_ != nullptr && parameterName != nullptr &&
+		animationManager_->SetInt(gameObjectId, parameterName, value);
+}
+
+bool EditorScriptManager::SetAnimatorBoolInternal(
+	int32_t gameObjectId,
+	const char* parameterName,
+	bool value) {
+	return animationManager_ != nullptr && parameterName != nullptr &&
+		animationManager_->SetBool(gameObjectId, parameterName, value);
+}
+
+bool EditorScriptManager::SetAnimatorTriggerInternal(
+	int32_t gameObjectId,
+	const char* parameterName) {
+	return animationManager_ != nullptr && parameterName != nullptr &&
+		animationManager_->SetTrigger(gameObjectId, parameterName);
+}
+
+bool EditorScriptManager::SetAnimatorVector2Internal(
+	int32_t gameObjectId,
+	const char* parameterName,
+	const EditorScriptVector2& value) {
+	return animationManager_ != nullptr && parameterName != nullptr &&
+		animationManager_->SetVector2(gameObjectId, parameterName, {value.x, value.y});
+}
+
+bool EditorScriptManager::SetAnimatorVector3Internal(
+	int32_t gameObjectId,
+	const char* parameterName,
+	const EditorScriptVector3& value) {
+	return animationManager_ != nullptr && parameterName != nullptr &&
+		animationManager_->SetVector3(gameObjectId, parameterName, {value.x, value.y, value.z});
+}
+
+bool EditorScriptManager::GetAnimatorFloatInternal(
+	int32_t gameObjectId,
+	const char* parameterName,
+	float& value) const {
+	return animationManager_ != nullptr && parameterName != nullptr &&
+		animationManager_->GetFloat(gameObjectId, parameterName, value);
+}
+
+bool EditorScriptManager::GetAnimatorIntInternal(
+	int32_t gameObjectId,
+	const char* parameterName,
+	int32_t& value) const {
+	return animationManager_ != nullptr && parameterName != nullptr &&
+		animationManager_->GetInt(gameObjectId, parameterName, value);
+}
+
+bool EditorScriptManager::GetAnimatorBoolInternal(
+	int32_t gameObjectId,
+	const char* parameterName,
+	bool& value) const {
+	return animationManager_ != nullptr && parameterName != nullptr &&
+		animationManager_->GetBool(gameObjectId, parameterName, value);
+}
+
+bool EditorScriptManager::GetAnimatorVector2Internal(
+	int32_t gameObjectId,
+	const char* parameterName,
+	EditorScriptVector2& value) const {
+	Vector2 editorValue{};
+	const bool isFound = animationManager_ != nullptr && parameterName != nullptr &&
+		animationManager_->GetVector2(gameObjectId, parameterName, editorValue);
+
+	if (isFound) {
+		value = {editorValue.x, editorValue.y};
+	}
+
+	return isFound;
+}
+
+bool EditorScriptManager::GetAnimatorVector3Internal(
+	int32_t gameObjectId,
+	const char* parameterName,
+	EditorScriptVector3& value) const {
+	Vector3 editorValue{};
+	const bool isFound = animationManager_ != nullptr && parameterName != nullptr &&
+		animationManager_->GetVector3(gameObjectId, parameterName, editorValue);
+
+	if (isFound) {
+		value = ToScriptVector3(editorValue);
+	}
+
+	return isFound;
+}
+
+bool EditorScriptManager::ResetAnimatorTriggerInternal(
+	int32_t gameObjectId,
+	const char* parameterName) {
+	return animationManager_ != nullptr && parameterName != nullptr &&
+		animationManager_->ResetTrigger(gameObjectId, parameterName);
+}
+
+int32_t EditorScriptManager::FindGameObjectByNameInternal(const char* gameObjectName) const {
+	if (editorScene_ == nullptr || gameObjectName == nullptr) {
+		return -1;
+	}
+
+	for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
+		if (gameObject.name == gameObjectName) {
+			return gameObject.id;
+		}
+	}
+
+	return -1;
+}
+
+bool EditorScriptManager::SetGameObjectActiveInternal(int32_t gameObjectId, bool isActive) {
+	if (editorScene_ == nullptr) {
+		return false;
+	}
+
+	EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+	if (gameObject == nullptr) {
+		return false;
+	}
+
+	gameObject->isActive = isActive;
+	return true;
+}
+
+bool EditorScriptManager::IsGameObjectActiveInternal(int32_t gameObjectId) const {
+	if (editorScene_ == nullptr) {
+		return false;
+	}
+
+	const EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+	return gameObject != nullptr && gameObject->isActive;
 }

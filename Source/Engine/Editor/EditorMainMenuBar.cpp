@@ -498,6 +498,8 @@ void EditorMainMenuBar::Draw(
 	}
 
 	if (ImGui::BeginMenu("ウィンドウ")) {
+		ImGui::MenuItem("アニメーション", nullptr, &g_isAnimationWindowVisible);
+
 		if (ImGui::MenuItem("Console 表示")) {
 			g_isConsoleCleared = false;
 		}

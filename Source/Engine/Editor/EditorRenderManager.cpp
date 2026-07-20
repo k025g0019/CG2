@@ -1728,13 +1728,23 @@ void EditorRenderManager::Draw() {
 			const Matrix4x4& cullingViewProjection = g_isSceneViewVisible
 				? sceneViewProjectionMatrix
 				: gameViewProjectionMatrix;
+			const D3D12_VIEWPORT& cullingViewport = g_isSceneViewVisible
+				? viewport
+				: gameViewport;
+			const float inverseRenderWidth = 1.0f / static_cast<float>((std::max)(g_renderWidth, 1u));
+			const float inverseRenderHeight = 1.0f / static_cast<float>((std::max)(g_renderHeight, 1u));
+
 			g_gpuCullingManager.Execute(
 				commandList.Get(),
 				gpuCullingInputs,
 				g_depthHierarchyManager.GetDepthPyramidSrvHandle(cullingDepthLevel),
 				&cullingViewProjection.matrix[0][0],
 				g_depthHierarchyManager.GetDepthPyramidWidth(cullingDepthLevel),
-				g_depthHierarchyManager.GetDepthPyramidHeight(cullingDepthLevel));
+				g_depthHierarchyManager.GetDepthPyramidHeight(cullingDepthLevel),
+				cullingViewport.TopLeftX * inverseRenderWidth,
+				cullingViewport.TopLeftY * inverseRenderHeight,
+				cullingViewport.Width * inverseRenderWidth,
+				cullingViewport.Height * inverseRenderHeight);
 		}
 
 		depthComputeBarrier.Transition.StateBefore = computeReadableDepthState;

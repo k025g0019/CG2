@@ -305,6 +305,16 @@ extern "C" __declspec(dllexport) void EditorScript_OnPhysicsEvent(
 	GetState(gameObjectId).DispatchPhysicsEvent(*physicsEvent);
 }
 
+extern "C" __declspec(dllexport) void EditorScript_OnAnimationEvent(
+	int32_t gameObjectId,
+	const EditorScriptAnimationEvent* animationEvent) {
+	if (animationEvent == nullptr) {
+		return;
+	}
+
+	GetState(gameObjectId).OnAnimationEvent(*animationEvent);
+}
+
 extern "C" __declspec(dllexport) void EditorScript_Stop(int32_t gameObjectId) {
 	const auto scriptStateIt = scriptStates.find(gameObjectId);
 

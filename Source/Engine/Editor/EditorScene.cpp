@@ -786,6 +786,54 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 				     << component.filterColorByMode[static_cast<size_t>(filterModeIndex)].z;
 			}
 
+			// Animation / Effect の拡張値は既存 Scene と互換を保つため、必ず共通行の末尾へ追加する。
+			file << "|" << component.animatorApplyRootMotion
+			     << "|" << component.animatorAutoVelocity
+			     << "|" << component.animatorTransitionDuration
+			     << "|" << component.animatorMoveX
+			     << "|" << component.animatorMoveY
+			     << "|" << component.animatorSpeedParameter
+			     << "|" << component.animatorIdleClipIndex
+			     << "|" << component.animatorForwardClipIndex
+			     << "|" << component.animatorBackwardClipIndex
+			     << "|" << component.animatorLeftClipIndex
+			     << "|" << component.animatorRightClipIndex
+			     << "|" << component.particleMaxCount
+			     << "|" << component.particleBurstCount
+			     << "|" << component.particleShape
+			     << "|" << component.particleSimulationSpace
+			     << "|" << component.particleDuration
+			     << "|" << component.particleStartDelay
+			     << "|" << component.particleGravity
+			     << "|" << component.particleDrag
+			     << "|" << component.particleEndSize
+			     << "|" << component.particleShapeRadius
+			     << "|" << component.particleShapeAngle
+			     << "|" << component.particleSpeedRandomness
+			     << "|" << component.particleLifetimeRandomness
+			     << "|" << component.particleSizeRandomness
+			     << "|" << component.particleRotationSpeed
+			     << "|" << component.particleLooping
+			     << "|" << component.particleCollision
+			     << "|" << component.particleEndColor.x
+			     << "|" << component.particleEndColor.y
+			     << "|" << component.particleEndColor.z
+			     << "|" << component.particleDirection.x
+			     << "|" << component.particleDirection.y
+			     << "|" << component.particleDirection.z
+			     << "|" << component.particleBoxSize.x
+			     << "|" << component.particleBoxSize.y
+			     << "|" << component.particleBoxSize.z
+			     << "|" << component.particleStartAlpha
+			     << "|" << component.particleEndAlpha
+			     << "|" << component.particleEmissionStrength
+			     << "|" << component.particleEndSpeedMultiplier
+			     << "|" << component.particleNoiseStrength
+			     << "|" << component.particleNoiseFrequency
+			     << "|" << component.particleCollisionBounce
+			     << "|" << component.particleCollisionFriction
+			     << "|" << component.particlePrewarm;
+
 			file << "\n";
 
 			// C++ Script の公開変数は個数が変わるため、Component 共通行とは別の行で保存する。
@@ -1209,6 +1257,62 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 					postProcessEffectCursor += 4u;
 				}
 
+				// 旧 Scene はここで要素が終わる。新しい拡張値が全てある時だけまとめて復元する。
+				if (elements.size() >= postProcessEffectCursor + 37u) {
+					component.animatorApplyRootMotion = ToInt(elements[postProcessEffectCursor + 0u]) != 0;
+					component.animatorAutoVelocity = ToInt(elements[postProcessEffectCursor + 1u]) != 0;
+					component.animatorTransitionDuration = ToFloat(elements[postProcessEffectCursor + 2u]);
+					component.animatorMoveX = ToFloat(elements[postProcessEffectCursor + 3u]);
+					component.animatorMoveY = ToFloat(elements[postProcessEffectCursor + 4u]);
+					component.animatorSpeedParameter = ToFloat(elements[postProcessEffectCursor + 5u]);
+					component.animatorIdleClipIndex = ToInt(elements[postProcessEffectCursor + 6u]);
+					component.animatorForwardClipIndex = ToInt(elements[postProcessEffectCursor + 7u]);
+					component.animatorBackwardClipIndex = ToInt(elements[postProcessEffectCursor + 8u]);
+					component.animatorLeftClipIndex = ToInt(elements[postProcessEffectCursor + 9u]);
+					component.animatorRightClipIndex = ToInt(elements[postProcessEffectCursor + 10u]);
+					component.particleMaxCount = ToInt(elements[postProcessEffectCursor + 11u]);
+					component.particleBurstCount = ToInt(elements[postProcessEffectCursor + 12u]);
+					component.particleShape = ToInt(elements[postProcessEffectCursor + 13u]);
+					component.particleSimulationSpace = ToInt(elements[postProcessEffectCursor + 14u]);
+					component.particleDuration = ToFloat(elements[postProcessEffectCursor + 15u]);
+					component.particleStartDelay = ToFloat(elements[postProcessEffectCursor + 16u]);
+					component.particleGravity = ToFloat(elements[postProcessEffectCursor + 17u]);
+					component.particleDrag = ToFloat(elements[postProcessEffectCursor + 18u]);
+					component.particleEndSize = ToFloat(elements[postProcessEffectCursor + 19u]);
+					component.particleShapeRadius = ToFloat(elements[postProcessEffectCursor + 20u]);
+					component.particleShapeAngle = ToFloat(elements[postProcessEffectCursor + 21u]);
+					component.particleSpeedRandomness = ToFloat(elements[postProcessEffectCursor + 22u]);
+					component.particleLifetimeRandomness = ToFloat(elements[postProcessEffectCursor + 23u]);
+					component.particleSizeRandomness = ToFloat(elements[postProcessEffectCursor + 24u]);
+					component.particleRotationSpeed = ToFloat(elements[postProcessEffectCursor + 25u]);
+					component.particleLooping = ToInt(elements[postProcessEffectCursor + 26u]) != 0;
+					component.particleCollision = ToInt(elements[postProcessEffectCursor + 27u]) != 0;
+					component.particleEndColor = {
+						ToFloat(elements[postProcessEffectCursor + 28u]),
+						ToFloat(elements[postProcessEffectCursor + 29u]),
+						ToFloat(elements[postProcessEffectCursor + 30u])};
+					component.particleDirection = {
+						ToFloat(elements[postProcessEffectCursor + 31u]),
+						ToFloat(elements[postProcessEffectCursor + 32u]),
+						ToFloat(elements[postProcessEffectCursor + 33u])};
+					component.particleBoxSize = {
+						ToFloat(elements[postProcessEffectCursor + 34u]),
+						ToFloat(elements[postProcessEffectCursor + 35u]),
+						ToFloat(elements[postProcessEffectCursor + 36u])};
+				}
+
+				if (elements.size() >= postProcessEffectCursor + 46u) {
+					component.particleStartAlpha = ToFloat(elements[postProcessEffectCursor + 37u]);
+					component.particleEndAlpha = ToFloat(elements[postProcessEffectCursor + 38u]);
+					component.particleEmissionStrength = ToFloat(elements[postProcessEffectCursor + 39u]);
+					component.particleEndSpeedMultiplier = ToFloat(elements[postProcessEffectCursor + 40u]);
+					component.particleNoiseStrength = ToFloat(elements[postProcessEffectCursor + 41u]);
+					component.particleNoiseFrequency = ToFloat(elements[postProcessEffectCursor + 42u]);
+					component.particleCollisionBounce = ToFloat(elements[postProcessEffectCursor + 43u]);
+					component.particleCollisionFriction = ToFloat(elements[postProcessEffectCursor + 44u]);
+					component.particlePrewarm = ToInt(elements[postProcessEffectCursor + 45u]) != 0;
+				}
+
 				gameObject.components.push_back(component);
 			break;
 			}
@@ -1533,10 +1637,50 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.animationAmplitude = 1.0f;
 		component.animationClipIndex = 0;
 		component.animatorState = 0;
+		component.animatorApplyRootMotion = false;
+		component.animatorAutoVelocity = true;
+		component.animatorTransitionDuration = 0.15f;
+		component.animatorMoveX = 0.0f;
+		component.animatorMoveY = 0.0f;
+		component.animatorSpeedParameter = 0.0f;
+		component.animatorIdleClipIndex = 0;
+		component.animatorForwardClipIndex = 0;
+		component.animatorBackwardClipIndex = 0;
+		component.animatorLeftClipIndex = 0;
+		component.animatorRightClipIndex = 0;
 		component.particleRate = 10.0f;
 		component.particleLifetime = 2.0f;
 		component.particleSpeed = 5.0f;
 		component.particleSize = 0.5f;
+		component.particleMaxCount = 256;
+		component.particleBurstCount = 0;
+		component.particleShape = 0;
+		component.particleSimulationSpace = 0;
+		component.particleDuration = 5.0f;
+		component.particleStartDelay = 0.0f;
+		component.particleGravity = 0.0f;
+		component.particleDrag = 0.0f;
+		component.particleEndSize = 0.0f;
+		component.particleShapeRadius = 1.0f;
+		component.particleShapeAngle = 25.0f;
+		component.particleSpeedRandomness = 0.2f;
+		component.particleLifetimeRandomness = 0.1f;
+		component.particleSizeRandomness = 0.1f;
+		component.particleRotationSpeed = 0.0f;
+		component.particleLooping = true;
+		component.particleCollision = false;
+		component.particleEndColor = {1.0f, 1.0f, 1.0f};
+		component.particleDirection = {0.0f, 1.0f, 0.0f};
+		component.particleBoxSize = {1.0f, 1.0f, 1.0f};
+		component.particleStartAlpha = 1.0f;
+		component.particleEndAlpha = 0.0f;
+		component.particleEmissionStrength = 1.0f;
+		component.particleEndSpeedMultiplier = 1.0f;
+		component.particleNoiseStrength = 0.0f;
+		component.particleNoiseFrequency = 1.0f;
+		component.particleCollisionBounce = 0.35f;
+		component.particleCollisionFriction = 0.2f;
+		component.particlePrewarm = false;
 		component.buttonLabel = "Button";
 		component.buttonPosition = {20.0f, 20.0f};
 		component.buttonSize = {160.0f, 48.0f};
@@ -1797,12 +1941,36 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 	else if (type == EditorComponentType::Animator) {
 		component.animationSpeed = 1.0f;
 		component.animatorState = 0;
+		component.animatorAutoVelocity = true;
+		component.animatorTransitionDuration = 0.15f;
 	}
 	else if (type == EditorComponentType::ParticleSystem) {
 		component.particleRate = 10.0f;
 		component.particleLifetime = 2.0f;
 		component.particleSpeed = 5.0f;
 		component.particleSize = 0.5f;
+		component.particleMaxCount = 256;
+		component.particleDuration = 5.0f;
+		component.particleLooping = true;
+		component.particleDirection = {0.0f, 1.0f, 0.0f};
+		component.particleBoxSize = {1.0f, 1.0f, 1.0f};
+		component.particleShapeRadius = 1.0f;
+		component.particleShapeAngle = 25.0f;
+		component.particleEndColor = component.color;
+	}
+	else if (type == EditorComponentType::VisualEffect) {
+		component.particleRate = 24.0f;
+		component.particleLifetime = 1.5f;
+		component.particleSpeed = 3.0f;
+		component.particleSize = 0.25f;
+		component.particleEndSize = 0.0f;
+		component.particleMaxCount = 512;
+		component.particleBurstCount = 16;
+		component.particleDuration = 2.0f;
+		component.particleLooping = true;
+		component.particleShape = 1;
+		component.particleShapeRadius = 0.5f;
+		component.particleEndColor = component.color;
 	}
 
 	return component;

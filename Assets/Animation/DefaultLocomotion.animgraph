@@ -1,0 +1,71 @@
+﻿{
+  "entryState": 0,
+  "parameters": [
+    { "name": "MoveX", "type": "Float", "float": 0.0 },
+    { "name": "MoveY", "type": "Float", "float": 0.0 },
+    { "name": "Speed", "type": "Float", "float": 0.0 },
+    { "name": "Grounded", "type": "Bool", "bool": true },
+    { "name": "Attack", "type": "Trigger", "bool": false }
+  ],
+  "states": [
+    {
+      "name": "Locomotion",
+      "clip": 0,
+      "speed": 1.0,
+      "loop": true,
+      "blendType": "Blend2DDirectional",
+      "parameterX": "MoveX",
+      "parameterY": "MoveY",
+      "samples": [
+        { "clip": 0, "x": 0.0, "y": 0.0, "speed": 1.0 },
+        { "clip": 1, "x": 0.0, "y": 1.0, "speed": 1.0 },
+        { "clip": 2, "x": 0.0, "y": -1.0, "speed": 1.0 },
+        { "clip": 3, "x": -1.0, "y": 0.0, "speed": 1.0 },
+        { "clip": 4, "x": 1.0, "y": 0.0, "speed": 1.0 },
+        { "clip": 5, "x": -0.707, "y": 0.707, "speed": 1.0 },
+        { "clip": 6, "x": 0.707, "y": 0.707, "speed": 1.0 },
+        { "clip": 7, "x": -0.707, "y": -0.707, "speed": 1.0 },
+        { "clip": 8, "x": 0.707, "y": -0.707, "speed": 1.0 }
+      ]
+    },
+    {
+      "name": "Attack",
+      "clip": 9,
+      "speed": 1.0,
+      "loop": false,
+      "blendType": "Clip"
+    }
+  ],
+  "transitions": [
+    {
+      "source": -1,
+      "destination": 1,
+      "blendDuration": 0.08,
+      "hasExitTime": false,
+      "canInterrupt": true,
+      "conditions": [
+        { "parameter": "Attack", "operator": "Triggered" }
+      ]
+    },
+    {
+      "source": 1,
+      "destination": 0,
+      "blendDuration": 0.12,
+      "exitTime": 0.95,
+      "hasExitTime": true,
+      "canInterrupt": false,
+      "conditions": []
+    }
+  ],
+  "events": [
+    {
+      "clip": 9,
+      "time": 0.2,
+      "name": "AttackEffect",
+      "effect": "Assets/Effects/DefaultBurst.effect",
+      "offsetX": 0.0,
+      "offsetY": 0.8,
+      "offsetZ": 0.8
+    }
+  ]
+}

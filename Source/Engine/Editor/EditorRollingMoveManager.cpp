@@ -11,6 +11,7 @@ namespace {
 	constexpr float kRollingMinimumTorque = 0.0001f;  // 0 トルクでは駆動しない
 	constexpr float kRollingHorsepowerToWatt = 745.7f;  // 馬力を角速度上限計算へ使うため W に変換する
 	constexpr float kRollingAngularSpeedEpsilon = 0.05f;  // 上限付近で毎フレーム張り付いて震えないよう少し余裕を見る
+	constexpr float kRollingParallelThreshold = 0.98f;  // 基準軸と進行方向がほぼ平行なら別軸へ切り替える
 
 	Vector3 MakeLocalDirectionToWorld(const EditorGameObject& gameObject, const Vector3& localDirection) {
 		const Vector3 movementRotate = {
@@ -24,17 +25,34 @@ namespace {
 		return Transform(localDirection, rotateMatrix);
 	}
 
-	Vector3 MakeHorizontalDirection(const Vector3& direction) {
-		Vector3 horizontalDirection = direction;  // 転がり移動は床へ沿わせるため、上下成分を除いた水平向きを使う。
-		horizontalDirection.y = 0.0f;
-		return Normalize(horizontalDirection);
-	}
-
 	float DotVector3(const Vector3& firstVector, const Vector3& secondVector) {
 		return
 			(firstVector.x * secondVector.x) +
 			(firstVector.y * secondVector.y) +
 			(firstVector.z * secondVector.z);
+	}
+
+	Vector3 MakeRollingReferenceAxis(const EditorGameObject& gameObject, const Vector3& worldDirection) {
+		const Matrix4x4 rotateMatrix = MakeAffineMatrix(
+			{1.0f, 1.0f, 1.0f},
+			gameObject.rotate,
+			{0.0f, 0.0f, 0.0f});  // 進行方向と同じローカル基準で回転軸を作るため、姿勢全体の回転を使う。
+
+		Vector3 referenceAxis = Normalize(Transform({0.0f, 1.0f, 0.0f}, rotateMatrix));  // まずはローカル上方向を基準軸として使う。
+		if (std::fabs(DotVector3(referenceAxis, worldDirection)) >= kRollingParallelThreshold) {
+			referenceAxis = Normalize(Transform({1.0f, 0.0f, 0.0f}, rotateMatrix));  // 上方向と平行に近い時はローカル右方向へ切り替える。
+		}
+
+		if (std::fabs(DotVector3(referenceAxis, worldDirection)) >= kRollingParallelThreshold) {
+			referenceAxis = Normalize(Transform({0.0f, 0.0f, 1.0f}, rotateMatrix));  // まだ平行ならローカル前方向を使う。
+		}
+
+		return referenceAxis;
+	}
+
+	Vector3 MakeRollingAxis(const EditorGameObject& gameObject, const Vector3& worldDirection) {
+		const Vector3 referenceAxis = MakeRollingReferenceAxis(gameObject, worldDirection);
+		return Normalize(Cross(referenceAxis, worldDirection));  // 進行方向へ接線速度を作れる直交軸を、外積から求める。
 	}
 
 	Vector3 SubtractVector3(const Vector3& firstVector, const Vector3& secondVector) {
@@ -93,7 +111,7 @@ void EditorRollingMoveManager::Update(float deltaTime) {
 		}
 
 		Vector3 worldDirection = MakeLocalDirectionToWorld(gameObject, normalizedLocalDirection);
-		worldDirection = MakeHorizontalDirection(worldDirection);  // 転がり移動は常に床上の水平向きとして扱う。
+		worldDirection = Normalize(worldDirection);  // RollingMove の進行方向は Inspector の Vector3 をそのまま 3 次元で使う。
 		if (Length(worldDirection) <= kRollingMinimumDirectionLength) {
 			continue;
 		}
@@ -120,7 +138,7 @@ void EditorRollingMoveManager::Update(float deltaTime) {
 			continue;
 		}
 
-		const Vector3 rollingAxis = Normalize(Vector3{-worldDirection.z, 0.0f, worldDirection.x});  // 前進方向へ転がるには、横軸まわりの角速度が必要
+		const Vector3 rollingAxis = MakeRollingAxis(gameObject, worldDirection);  // Y 成分を含む進行方向でも、外積から正しい回転軸を作る。
 		if (Length(rollingAxis) <= kRollingMinimumDirectionLength) {
 			continue;
 		}

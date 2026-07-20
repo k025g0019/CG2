@@ -4,6 +4,7 @@
 #include "EditorAIManager.h"
 #include "EditorAudioManager.h"
 #include "EditorConstraintManager.h"
+#include "Source/Engine/Effect/EditorEffectManager.h"
 #include "EditorInputManager.h"
 #include "EditorLocalMoveManager.h"
 #include "EditorNavigationManager.h"
@@ -37,6 +38,8 @@ public:
 	const EditorScriptManager& GetScriptManager() const;  // 読み取り専用版
 	EditorAnimationManager& GetAnimationManager();  // Inspector から Animation 状態を見るために返す
 	const EditorAnimationManager& GetAnimationManager() const;  // 読み取り専用版
+	EditorEffectManager& GetEffectManager();  // Inspector / Script から Effect の実行状態を操作するために返す
+	const EditorEffectManager& GetEffectManager() const;  // 読み取り専用版
 
 private:
 	EditorScene* editorScene_ = nullptr;  // Play 実行対象の Scene
@@ -46,6 +49,7 @@ private:
 	EditorAIManager aiManager_;  // AI Component の実行担当
 	EditorAudioManager audioManager_;  // AudioSource Component の実行担当
 	EditorConstraintManager constraintManager_;  // Constraint 系 Component の実行担当
+	EditorEffectManager effectManager_;  // ParticleSystem / VisualEffect と Animation Event の実行担当
 	EditorScriptManager scriptManager_;  // Script / MonoBehaviour Component の実行入口
 	EditorInputManager inputManager_;  // Input Component の実行担当
 	EditorLocalMoveManager localMoveManager_;  // ローカル移動 Component の実行担当

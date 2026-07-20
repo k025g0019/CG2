@@ -57,10 +57,15 @@ bool EditorGpuCullingManager::Execute(
 	D3D12_GPU_DESCRIPTOR_HANDLE depthPyramidSrvHandle,
 	const float* viewProjectionMatrix,
 	uint32_t depthPyramidWidth,
-	uint32_t depthPyramidHeight) {
+	uint32_t depthPyramidHeight,
+	float viewportUvOffsetX,
+	float viewportUvOffsetY,
+	float viewportUvScaleX,
+	float viewportUvScaleY) {
 
 	if (!isInitialized_ || commandList == nullptr || depthPyramidSrvHandle.ptr == 0u ||
-		viewProjectionMatrix == nullptr || depthPyramidWidth == 0u || depthPyramidHeight == 0u) {
+		viewProjectionMatrix == nullptr || depthPyramidWidth == 0u || depthPyramidHeight == 0u ||
+		viewportUvScaleX <= 0.0f || viewportUvScaleY <= 0.0f) {
 		return false;
 	}
 
@@ -105,6 +110,15 @@ bool EditorGpuCullingManager::Execute(
 	float depthBias = 0.0015f;
 	std::memcpy(&constants[3], &depthBias, sizeof(float));
 	std::memcpy(&constants[4], viewProjectionMatrix, sizeof(float) * 16u);
+
+	// Depth Pyramid はウィンドウ全体を持つため、Scene / Game View の局所 UV を全体 UV へ変換する。
+	const std::array<float, 4u> viewportUvTransform = {
+		viewportUvOffsetX,
+		viewportUvOffsetY,
+		viewportUvScaleX,
+		viewportUvScaleY
+	};
+	std::memcpy(&constants[20], viewportUvTransform.data(), sizeof(float) * viewportUvTransform.size());
 
 	commandList->SetComputeRootSignature(computeRootSignature_.Get());
 

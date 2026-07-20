@@ -1179,8 +1179,8 @@ bool EditorAssetUtility::IsRenderTextureAssetPath(const std::string& path) {
 
 EditorRenderTextureAsset EditorAssetUtility::MakeDefaultRenderTextureAsset() {
 	EditorRenderTextureAsset asset{};
-	asset.width = 1280;
-	asset.height = 720;
+	asset.width = 1920;
+	asset.height = 1080;
 	asset.useHdr = true;
 	asset.useDepth = true;
 	asset.clearColor = {0.0f, 0.0f, 0.0f, 1.0f};

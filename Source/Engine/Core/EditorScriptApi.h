@@ -148,6 +148,17 @@ struct EditorScriptPhysicsEvent {
 	uint8_t reservedPadding[3];
 };
 
+//================================================================
+// Animation Graph から C++ Script へ渡す Event
+//================================================================
+
+struct EditorScriptAnimationEvent {
+	const char* name;  // .animgraph の Event に設定した任意のイベント名。
+	const char* effectAssetPath;  // Event と同時に再生する .effect。未設定なら空文字列。
+	float time;  // Clip 先頭からイベント位置までの秒数。
+	EditorScriptVector3 localOffset;  // GameObject 基準で Effect を発生させるローカル位置。
+};
+
 struct EditorScriptAiSensorState {
 	bool hasComponent;
 	bool isActive;
@@ -230,6 +241,41 @@ struct EditorScriptRuntimeApi {
 	EditorScriptAiSensorState (*GetAiSensorState)(int32_t gameObjectId, int32_t sensorKind);
 	EditorScriptMaterialState (*GetMaterialState)(int32_t gameObjectId);
 	EditorScriptAnimationState (*GetAnimationState)(int32_t gameObjectId);
+	bool (*SetAnimatorFloat)(int32_t gameObjectId, const char* parameterName, float value);
+	bool (*SetAnimatorInt)(int32_t gameObjectId, const char* parameterName, int32_t value);
+	bool (*SetAnimatorBool)(int32_t gameObjectId, const char* parameterName, bool value);
+	bool (*SetAnimatorTrigger)(int32_t gameObjectId, const char* parameterName);
+	bool (*SetAnimatorVector2)(int32_t gameObjectId, const char* parameterName, const EditorScriptVector2* value);
+	bool (*SetAnimatorVector3)(int32_t gameObjectId, const char* parameterName, const EditorScriptVector3* value);
+	bool (*PlayAnimationAction)(
+		int32_t gameObjectId,
+		int32_t clipIndex,
+		float blendIn,
+		float blendOut,
+		float playbackSpeed,
+		int32_t priority,
+		bool loop);
+	bool (*PlayEffect)(int32_t gameObjectId);
+	bool (*PlayEffectAt)(int32_t gameObjectId, const char* effectAssetPath, const EditorScriptVector3* localOffset);
+	void (*StopEffect)(int32_t gameObjectId);
+	int32_t (*GetAliveParticleCount)(int32_t gameObjectId);
+	bool (*GetAnimatorFloat)(int32_t gameObjectId, const char* parameterName, float* value);
+	bool (*GetAnimatorInt)(int32_t gameObjectId, const char* parameterName, int32_t* value);
+	bool (*GetAnimatorBool)(int32_t gameObjectId, const char* parameterName, bool* value);
+	bool (*GetAnimatorVector2)(int32_t gameObjectId, const char* parameterName, EditorScriptVector2* value);
+	bool (*GetAnimatorVector3)(int32_t gameObjectId, const char* parameterName, EditorScriptVector3* value);
+	bool (*ResetAnimatorTrigger)(int32_t gameObjectId, const char* parameterName);
+	bool (*PlayAnimation)(int32_t gameObjectId);
+	bool (*StopAnimation)(int32_t gameObjectId);
+	bool (*IsAnimationPlaying)(int32_t gameObjectId);
+	float (*GetAnimationTime)(int32_t gameObjectId);
+	bool (*SetAnimationTime)(int32_t gameObjectId, float playbackTime);
+	bool (*SetAnimationSpeed)(int32_t gameObjectId, float playbackSpeed);
+	bool (*GetAnimatorStateName)(int32_t gameObjectId, char* stateName, int32_t stateNameCapacity);
+	bool (*IsEffectPlaying)(int32_t gameObjectId);
+	int32_t (*FindGameObjectByName)(const char* gameObjectName);
+	bool (*SetGameObjectActive)(int32_t gameObjectId, bool isActive);
+	bool (*IsGameObjectActive)(int32_t gameObjectId);
 };
 
 extern "C" {
@@ -239,6 +285,7 @@ extern "C" {
 	typedef void(__cdecl* EditorScriptUpdateFn)(int32_t gameObjectId, float deltaTime);
 	typedef void(__cdecl* EditorScriptFixedUpdateFn)(int32_t gameObjectId, float fixedDeltaTime);
 	typedef void(__cdecl* EditorScriptPhysicsEventFn)(int32_t gameObjectId, const EditorScriptPhysicsEvent* physicsEvent);
+	typedef void(__cdecl* EditorScriptAnimationEventFn)(int32_t gameObjectId, const EditorScriptAnimationEvent* animationEvent);
 	typedef void(__cdecl* EditorScriptStopFn)(int32_t gameObjectId);
 	typedef int32_t(__cdecl* EditorScriptGetFieldCountFn)();
 	typedef bool(__cdecl* EditorScriptGetFieldDescriptorFn)(int32_t fieldIndex, EditorScriptFieldDescriptor* fieldDescriptor);

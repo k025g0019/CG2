@@ -47,7 +47,11 @@ public:
 		D3D12_GPU_DESCRIPTOR_HANDLE depthPyramidSrvHandle,
 		const float* viewProjectionMatrix,
 		uint32_t depthPyramidWidth,
-		uint32_t depthPyramidHeight);
+		uint32_t depthPyramidHeight,
+		float viewportUvOffsetX,
+		float viewportUvOffsetY,
+		float viewportUvScaleX,
+		float viewportUvScaleY);
 
 	void ResolveReadback();
 	void Finalize();

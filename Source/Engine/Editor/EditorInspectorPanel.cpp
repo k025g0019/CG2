@@ -5,6 +5,7 @@
 #include "EditorComponentUtility.h"
 #include "EditorNativeScriptAssetManager.h"
 #include "EditorSharedState.h"
+#include "Source/Engine/Animation/PropertyAnimationClip.h"
 
 #include <algorithm>
 #include <cctype>
@@ -2409,14 +2410,28 @@ namespace {
 		ModelData modelData{};
 		std::string animationAssetPath;
 		const bool hasModelData = TryLoadModelDataForComponent(gameObject, component, modelData, animationAssetPath);
-		const EditorAnimationManager& animationManager = context.runtimeManager.GetAnimationManager();
+		PropertyAnimationClip propertyAnimationClip{};
+		const bool hasPropertyAnimationClip =
+			EditorAssetUtility::HasExtension(component.assetPath, ".animclip") &&
+			propertyAnimationClip.LoadFromJson(component.assetPath);
+		EditorAnimationManager& animationManager = context.runtimeManager.GetAnimationManager();
 
-		DrawTextRow("説明", "Animation Clip の再生設定です。");
+		DrawTextRow("説明", "FBX Clip または Transform / Light / Material の Property Animation Clip を再生します。");
 		DrawTextRow("アセット", animationAssetPath.empty() ? "未設定 (プロシージャル)" : animationAssetPath.c_str());
+		DrawStringInputRow("Animation Clip パス", component.assetPath);
+
+		if (!context.selectedAssetPath.empty() &&
+			(EditorAssetUtility::HasExtension(context.selectedAssetPath, ".animclip") ||
+			 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".fbx")) &&
+			ImGui::Button("選択中 Animation Clip を設定", ImVec2(-1.0f, 0.0f))) {
+			component.assetPath = context.selectedAssetPath;
+			component.animationType = 0;
+		}
+
 		DrawFloatRow("速度", component.animationSpeed, 0.1f, 0.0f, 10.0f);
 		DrawCheckboxRow("ループ", component.animationLoop);
 		DrawCheckboxRow("自動再生", component.animationPlayOnAwake);
-		const char* animTypes[] = {"FBX Clip", "Float", "Rotate", "Pulse", "Bob"};
+		const char* animTypes[] = {"FBX / Property Clip", "Float", "Rotate", "Pulse", "Bob"};
 		component.animationType = (std::clamp)(component.animationType, 0, 4);
 		DrawComboRow(
 			"種類",
@@ -2434,7 +2449,38 @@ namespace {
 		const std::string currentTimeText = std::to_string(currentTime);
 		DrawTextRow("現在時間", currentTimeText.c_str());
 
+		if (context.runtimeManager.IsPlaying()) {
+			if (ImGui::Button("先頭から再生", ImVec2(-1.0f, 0.0f))) {
+				animationManager.PlayAnimation(gameObject.id);
+			}
+
+			if (ImGui::Button("再生を停止", ImVec2(-1.0f, 0.0f))) {
+				animationManager.StopAnimation(gameObject.id);
+			}
+		}
+
 		DrawSubHeader("クリップ");
+		if (hasPropertyAnimationClip) {
+			DrawTextRow("種類", "Property Animation Clip");
+			DrawTextRow("名前", propertyAnimationClip.name.c_str());
+			DrawTextRow("長さ (秒)", std::to_string(propertyAnimationClip.durationSeconds).c_str());
+			DrawTextRow("サンプルレート", std::to_string(propertyAnimationClip.sampleRate).c_str());
+			int32_t trackCount = static_cast<int32_t>(propertyAnimationClip.tracks.size());
+			int32_t eventCount = static_cast<int32_t>(propertyAnimationClip.events.size());
+			DrawIntRow("プロパティ数", trackCount);
+			DrawIntRow("イベント数", eventCount);
+
+			if (ImGui::CollapsingHeader("アニメーション対象", ImGuiTreeNodeFlags_DefaultOpen)) {
+				for (size_t trackIndex = 0u; trackIndex < propertyAnimationClip.tracks.size(); trackIndex++) {
+					const PropertyAnimationTrack& track = propertyAnimationClip.tracks[trackIndex];
+					const std::string rowName = "Track " + std::to_string(trackIndex);
+					DrawTextRow(rowName.c_str(), GetAnimationPropertyTargetName(track.target));
+				}
+			}
+
+			return;
+		}
+
 		int32_t clipCount = static_cast<int32_t>(modelData.animationClips.size());
 		DrawIntRow("クリップ数", clipCount);
 		if (hasModelData && !modelData.animationClips.empty()) {
@@ -2468,11 +2514,100 @@ namespace {
 		}
 	}
 
-	void DrawAnimatorComponent(EditorComponent& component) {
-		DrawTextRow("説明", "Animator Controller の状態管理です。");
-		DrawFloatRow("速度", component.animationSpeed, 0.1f, 0.0f, 10.0f);
-		DrawIntRow("状態", component.animatorState);
-		DrawTextRow("注", "状態 = 0:Float / 1:Rotate / 2:Pulse / 3:Bob");
+	void DrawAnimatorComponent(
+		EditorInspectorPanelContext& context,
+		EditorGameObject& gameObject,
+		EditorComponent& component) {
+		DrawTextRow("説明", "Animation Graph、State Machine、Blend Tree、Action、Root Motion、Animation Event を実行します。");
+		DrawStringInputRow("Graph アセット", component.assetPath);
+
+		if (!context.selectedAssetPath.empty() &&
+			EditorAssetUtility::HasExtension(context.selectedAssetPath, ".animgraph") &&
+			ImGui::Button("選択中 Animation Graph を設定", ImVec2(-1.0f, 0.0f))) {
+			component.assetPath = context.selectedAssetPath;
+		}
+
+		if (ImGui::CollapsingHeader("再生設定", ImGuiTreeNodeFlags_DefaultOpen)) {
+			DrawFloatRow("再生速度", component.animationSpeed, 0.05f, 0.0f, 10.0f);
+			DrawCheckboxRow("Root Motion を適用", component.animatorApplyRootMotion);
+			DrawCheckboxRow("移動速度を自動取得", component.animatorAutoVelocity);
+			DrawFloatRow("既定遷移秒", component.animatorTransitionDuration, 0.01f, 0.0f, 5.0f);
+		}
+
+		if (ImGui::CollapsingHeader("標準パラメータ", ImGuiTreeNodeFlags_DefaultOpen)) {
+			if (component.animatorAutoVelocity) {
+				DrawTextRow("入力元", "RigidBody / CharacterController / ローカル移動 / 転がり移動の速度");
+				DrawTextRow("MoveX", std::to_string(component.animatorMoveX).c_str());
+				DrawTextRow("MoveY", std::to_string(component.animatorMoveY).c_str());
+				DrawTextRow("Speed", std::to_string(component.animatorSpeedParameter).c_str());
+			}
+			else {
+				DrawFloatRow("MoveX 左右", component.animatorMoveX, 0.01f, -1.0f, 1.0f);
+				DrawFloatRow("MoveY 前後", component.animatorMoveY, 0.01f, -1.0f, 1.0f);
+				DrawFloatRow("Speed", component.animatorSpeedParameter, 0.01f, 0.0f, 100.0f);
+			}
+		}
+
+		if (ImGui::CollapsingHeader("既定 Directional Blend")) {
+			DrawTextRow("注", "Graph 未設定・読み込み失敗時に使用します。FBX 内 Animation Clip の番号を設定します。");
+			DrawIntRow("停止 Clip", component.animatorIdleClipIndex);
+			DrawIntRow("前 Clip", component.animatorForwardClipIndex);
+			DrawIntRow("後 Clip", component.animatorBackwardClipIndex);
+			DrawIntRow("左 Clip", component.animatorLeftClipIndex);
+			DrawIntRow("右 Clip", component.animatorRightClipIndex);
+		}
+
+		if (context.runtimeManager.IsPlaying()) {
+			EditorAnimationManager& animationManager = context.runtimeManager.GetAnimationManager();
+			DrawTextRow(
+				"実行中 State",
+				animationManager.GetAnimatorStateName(gameObject.id).c_str());
+			DrawTextRow(
+				"実時間",
+				std::to_string(animationManager.GetAnimationTime(gameObject.id)).c_str());
+
+			std::vector<std::pair<std::string, AnimatorParameterValue>> parameters;
+			if (animationManager.GetAnimatorParameters(gameObject.id, parameters) &&
+				ImGui::CollapsingHeader("実行中パラメータ", ImGuiTreeNodeFlags_DefaultOpen)) {
+				for (auto& parameterPair : parameters) {
+					const std::string& parameterName = parameterPair.first;
+					AnimatorParameterValue& parameter = parameterPair.second;
+					ImGui::PushID(parameterName.c_str());
+
+					if (parameter.type == AnimatorParameterType::Float) {
+						if (DrawFloatRow(parameterName.c_str(), parameter.floatValue, 0.01f, -10000.0f, 10000.0f)) {
+							animationManager.SetFloat(gameObject.id, parameterName, parameter.floatValue);
+						}
+					}
+					else if (parameter.type == AnimatorParameterType::Int) {
+						if (DrawIntRow(parameterName.c_str(), parameter.intValue)) {
+							animationManager.SetInt(gameObject.id, parameterName, parameter.intValue);
+						}
+					}
+					else if (parameter.type == AnimatorParameterType::Bool) {
+						if (DrawCheckboxRow(parameterName.c_str(), parameter.boolValue)) {
+							animationManager.SetBool(gameObject.id, parameterName, parameter.boolValue);
+						}
+					}
+					else if (parameter.type == AnimatorParameterType::Trigger) {
+						if (ImGui::Button((parameterName + " を発火").c_str(), ImVec2(-1.0f, 0.0f))) {
+							animationManager.SetTrigger(gameObject.id, parameterName);
+						}
+					}
+					else if (parameter.type == AnimatorParameterType::Vector2) {
+						if (DrawVector2Row(parameterName.c_str(), parameter.vector2Value, 0.01f, -10000.0f, 10000.0f)) {
+							animationManager.SetVector2(gameObject.id, parameterName, parameter.vector2Value);
+						}
+					}
+					else if (parameter.type == AnimatorParameterType::Vector3 &&
+						DrawVector3Row(parameterName.c_str(), parameter.vector3Value, 0.01f, -10000.0f, 10000.0f)) {
+						animationManager.SetVector3(gameObject.id, parameterName, parameter.vector3Value);
+					}
+
+					ImGui::PopID();
+				}
+			}
+		}
 	}
 
 	void DrawAvatarMaskComponent(EditorComponent& component) {
@@ -2519,19 +2654,116 @@ namespace {
 		DrawTextRow("状態", component.isActive ? "有効" : "無効");
 	}
 
-	void DrawParticleSystemComponent(EditorComponent& component) {
-		DrawTextRow("説明", "パーティクルを発生させるエフェクトコンポーネントです。");
-		DrawFloatRow("発生レート", component.particleRate, 1.0f, 0.0f, 1000.0f);
-		DrawFloatRow("寿命", component.particleLifetime, 0.1f, 0.1f, 60.0f);
-		DrawFloatRow("速度", component.particleSpeed, 0.1f, 0.0f, 100.0f);
-		DrawFloatRow("サイズ", component.particleSize, 0.01f, 0.01f, 10.0f);
-		DrawColor3Row("色", component.color);
-		DrawCheckboxRow("自動再生", component.animationPlayOnAwake);
+	void DrawParticleSystemComponent(
+		EditorInspectorPanelContext& context,
+		EditorGameObject& gameObject,
+		EditorComponent& component,
+		const char* description) {
+		DrawTextRow("説明", description);
+		DrawStringInputRow("Effect Asset / Model", component.assetPath);
+
+		if (!context.selectedAssetPath.empty() &&
+			EditorAssetUtility::HasExtension(context.selectedAssetPath, ".effect") &&
+			ImGui::Button("選択中 Effect Asset を設定", ImVec2(-1.0f, 0.0f))) {
+			component.assetPath = context.selectedAssetPath;
+		}
+
+		if (EditorAssetUtility::HasExtension(component.assetPath, ".effect")) {
+			DrawTextRow("共有設定", "Play 時は .effect 内の値を読み込み、下の個別値より優先します。");
+		}
+
+		if (ImGui::CollapsingHeader("メイン", ImGuiTreeNodeFlags_DefaultOpen)) {
+			DrawCheckboxRow("自動再生", component.animationPlayOnAwake);
+			DrawCheckboxRow("ループ", component.particleLooping);
+			DrawFloatRow("再生時間", component.particleDuration, 0.1f, 0.01f, 3600.0f);
+			DrawFloatRow("開始遅延", component.particleStartDelay, 0.1f, 0.0f, 3600.0f);
+			DrawCheckboxRow("プリウォーム", component.particlePrewarm);
+			DrawFloatRow("寿命", component.particleLifetime, 0.1f, 0.01f, 60.0f);
+			DrawFloatRow("寿命のばらつき", component.particleLifetimeRandomness, 0.01f, 0.0f, 1.0f);
+			DrawIntRow("最大数", component.particleMaxCount);
+		}
+
+		if (ImGui::CollapsingHeader("発生", ImGuiTreeNodeFlags_DefaultOpen)) {
+			DrawFloatRow("1秒当たり", component.particleRate, 1.0f, 0.0f, 10000.0f);
+			DrawIntRow("開始バースト", component.particleBurstCount);
+		}
+
+		if (ImGui::CollapsingHeader("形状", ImGuiTreeNodeFlags_DefaultOpen)) {
+			const char* shapeItems[] = {"点", "球", "コーン", "ボックス"};
+			DrawComboRow("形状", component.particleShape, shapeItems, static_cast<int32_t>(_countof(shapeItems)));
+			const char* simulationSpaceItems[] = {"ワールド", "ローカル"};
+			DrawComboRow(
+				"シミュレーション空間",
+				component.particleSimulationSpace,
+				simulationSpaceItems,
+				static_cast<int32_t>(_countof(simulationSpaceItems)));
+			DrawFloatRow("半径", component.particleShapeRadius, 0.01f, 0.0f, 1000.0f);
+			DrawFloatRow("コーン角度", component.particleShapeAngle, 1.0f, 0.0f, 89.0f);
+			DrawVector3Row("ボックス範囲", component.particleBoxSize, 0.01f, 0.0f, 1000.0f);
+			DrawVector3Row("放出方向", component.particleDirection, 0.01f, -1.0f, 1.0f);
+		}
+
+		if (ImGui::CollapsingHeader("移動", ImGuiTreeNodeFlags_DefaultOpen)) {
+			DrawFloatRow("初速度", component.particleSpeed, 0.1f, 0.0f, 1000.0f);
+			DrawFloatRow("速度のばらつき", component.particleSpeedRandomness, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("重力", component.particleGravity, 0.1f, -100.0f, 100.0f);
+			DrawFloatRow("空気抵抗", component.particleDrag, 0.01f, 0.0f, 100.0f);
+			DrawFloatRow("終了速度倍率", component.particleEndSpeedMultiplier, 0.01f, 0.0f, 10.0f);
+			DrawFloatRow("回転速度", component.particleRotationSpeed, 1.0f, -3600.0f, 3600.0f);
+			DrawFloatRow("乱流の強さ", component.particleNoiseStrength, 0.01f, 0.0f, 1000.0f);
+			DrawFloatRow("乱流の周波数", component.particleNoiseFrequency, 0.01f, 0.0f, 100.0f);
+			DrawCheckboxRow("地面衝突", component.particleCollision);
+
+			if (component.particleCollision) {
+				DrawFloatRow("反発", component.particleCollisionBounce, 0.01f, 0.0f, 1.0f);
+				DrawFloatRow("摩擦", component.particleCollisionFriction, 0.01f, 0.0f, 1.0f);
+			}
+		}
+
+		if (ImGui::CollapsingHeader("寿命による見た目", ImGuiTreeNodeFlags_DefaultOpen)) {
+			DrawFloatRow("開始サイズ", component.particleSize, 0.01f, 0.001f, 100.0f);
+			DrawFloatRow("終了サイズ", component.particleEndSize, 0.01f, 0.0f, 100.0f);
+			DrawFloatRow("サイズのばらつき", component.particleSizeRandomness, 0.01f, 0.0f, 1.0f);
+			DrawColor3Row("開始色", component.color);
+			DrawColor3Row("終了色", component.particleEndColor);
+			DrawFloatRow("開始アルファ", component.particleStartAlpha, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("終了アルファ", component.particleEndAlpha, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("放射強度", component.particleEmissionStrength, 0.05f, 0.0f, 1000.0f);
+		}
+
+		if (ImGui::CollapsingHeader("描画モデル")) {
+			if (!context.selectedAssetPath.empty() &&
+				(EditorAssetUtility::HasExtension(context.selectedAssetPath, ".fbx") ||
+				 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".obj")) &&
+				ImGui::Button("選択中モデルを Particle に設定", ImVec2(-1.0f, 0.0f))) {
+				component.assetPath = context.selectedAssetPath;
+			}
+		}
+
+		if (context.runtimeManager.IsPlaying()) {
+			if (ImGui::Button("エフェクトを再生", ImVec2(-1.0f, 0.0f))) {
+				context.runtimeManager.GetEffectManager().PlayEffect(gameObject.id);
+			}
+
+			if (ImGui::Button("新規発生を停止", ImVec2(-1.0f, 0.0f))) {
+				context.runtimeManager.GetEffectManager().StopEffect(gameObject.id);
+			}
+
+			DrawTextRow(
+				"現在の生存数",
+				std::to_string(context.runtimeManager.GetEffectManager().GetAliveParticleCount(gameObject.id)).c_str());
+		}
 	}
 
-	void DrawVisualEffectComponent(EditorComponent& component) {
-		DrawTextRow("説明", "VFX Graph 相当のエフェクトコンポーネントです。");
-		DrawTextRow("アセット", component.assetPath.empty() ? "未設定" : component.assetPath.c_str());
+	void DrawVisualEffectComponent(
+		EditorInspectorPanelContext& context,
+		EditorGameObject& gameObject,
+		EditorComponent& component) {
+		DrawParticleSystemComponent(
+			context,
+			gameObject,
+			component,
+			"Animation Event や C++ Script から再生できる、再利用可能な Visual Effect Emitter です。");
 	}
 
 	void DrawFlareLayerComponent(EditorComponent& component) {
@@ -3116,7 +3348,7 @@ namespace {
 			DrawAnimationComponent(context, gameObject, component);
 			break;
 		case EditorComponentType::Animator:
-			DrawAnimatorComponent(component);
+			DrawAnimatorComponent(context, gameObject, component);
 			break;
 		case EditorComponentType::AvatarMask:
 			DrawAvatarMaskComponent(component);
@@ -3311,10 +3543,14 @@ namespace {
 			DrawHapticSourceComponent(component);
 			break;
 		case EditorComponentType::ParticleSystem:
-			DrawParticleSystemComponent(component);
+			DrawParticleSystemComponent(
+				context,
+				gameObject,
+				component,
+				"発生率、形状、寿命、色、移動、衝突を組み合わせる Particle Emitter です。");
 			break;
 		case EditorComponentType::VisualEffect:
-			DrawVisualEffectComponent(component);
+			DrawVisualEffectComponent(context, gameObject, component);
 			break;
 		case EditorComponentType::LensFlare:
 			DrawLensFlareComponent(component);

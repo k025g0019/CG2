@@ -7,6 +7,7 @@
 #include "EditorPhysicsManager.h"
 #include "EditorScene.h"
 #include "EditorScriptApi.h"
+#include "Source/Engine/Effect/EditorEffectManager.h"
 
 #include <array>
 #include <cstdint>
@@ -39,6 +40,7 @@ public:
 		EditorScene* editorScene,
 		EditorInputManager* inputManager,
 		EditorAnimationManager* animationManager,
+		EditorEffectManager* effectManager,
 		EditorAIManager* aiManager,
 		EditorPhysicsManager* physicsManager,
 		std::vector<std::string>* consoleMessages);  // Script 実行対象 Scene、入力、AI、物理、Console を受け取る
@@ -46,6 +48,12 @@ public:
 	void Update(const uint8_t* keyState, float deltaTime);  // 毎フレームの Script 更新を呼ぶ
 	void FixedUpdate(float fixedDeltaTime);  // 固定時間更新の Script を呼ぶ
 	void SetPhysicsEvents(const std::vector<EditorJoltPhysicsManager::PhysicsEvent>& physicsEvents);  // 衝突イベントを Script 側へ渡す
+	void DispatchAnimationEvent(
+		int32_t gameObjectId,
+		const std::string& eventName,
+		float eventTime,
+		const std::string& effectAssetPath,
+		const Vector3& localOffset);  // Animation Graph Event を対象 GameObject の C++ Script へ即時通知する。
 	void Stop();  // Play 停止時に Script の Stop を呼ぶ
 	bool IsStarted() const;  // Start 済みかどうかを返す
 	ScriptDebugInfo GetDebugInfo(int32_t gameObjectId) const;  // Inspector 用に DLL の現在状態を返す
@@ -75,6 +83,7 @@ private:
 		EditorScriptUpdateFn updateFunction = nullptr;  // 毎フレーム更新関数
 		EditorScriptFixedUpdateFn fixedUpdateFunction = nullptr;  // 固定更新関数
 		EditorScriptPhysicsEventFn physicsEventFunction = nullptr;  // 接触イベント通知関数
+		EditorScriptAnimationEventFn animationEventFunction = nullptr;  // Animation Graph の任意イベント通知関数
 		EditorScriptStopFn stopFunction = nullptr;  // Play 停止時の終了関数
 		EditorScriptGetFieldCountFn getFieldCountFunction = nullptr;  // DLL が公開する Inspector 変数数を返す
 		EditorScriptGetFieldDescriptorFn getFieldDescriptorFunction = nullptr;  // 公開変数の型と表示名を返す
@@ -102,6 +111,7 @@ private:
 	EditorScene* editorScene_ = nullptr;  // Script Component を探す対象 Scene
 	EditorInputManager* inputManager_ = nullptr;  // PlayerInput Action を読む入力 API
 	EditorAnimationManager* animationManager_ = nullptr;  // Animation の再生状態と現在時刻を読む API
+	EditorEffectManager* effectManager_ = nullptr;  // Effect の再生・停止・生存数 API
 	EditorAIManager* aiManager_ = nullptr;  // AI センサー状態を読む AI API
 	EditorPhysicsManager* physicsManager_ = nullptr;  // AddForce / SetVelocity へ接続する物理 API
 	std::vector<std::string>* consoleMessages_ = nullptr;  // Script のログやエラーを出す Console
@@ -159,6 +169,21 @@ private:
 	EditorScriptAiSensorState GetAiSensorStateInternal(int32_t gameObjectId, int32_t sensorKind) const;  // DLL API 用に AI センサー状態を返す
 	EditorScriptMaterialState GetMaterialStateInternal(int32_t gameObjectId) const;  // DLL API 用に Material 情報を返す
 	EditorScriptAnimationState GetAnimationStateInternal(int32_t gameObjectId) const;  // DLL API 用に Animation 情報を返す
+	bool SetAnimatorFloatInternal(int32_t gameObjectId, const char* parameterName, float value);  // DLL API 用に Animator Float を設定する
+	bool SetAnimatorIntInternal(int32_t gameObjectId, const char* parameterName, int32_t value);  // DLL API 用に Animator Int を設定する
+	bool SetAnimatorBoolInternal(int32_t gameObjectId, const char* parameterName, bool value);  // DLL API 用に Animator Bool を設定する
+	bool SetAnimatorTriggerInternal(int32_t gameObjectId, const char* parameterName);  // DLL API 用に Animator Trigger を発火する
+	bool SetAnimatorVector2Internal(int32_t gameObjectId, const char* parameterName, const EditorScriptVector2& value);  // DLL API 用に Animator Vector2 を設定する
+	bool SetAnimatorVector3Internal(int32_t gameObjectId, const char* parameterName, const EditorScriptVector3& value);  // DLL API 用に Animator Vector3 を設定する
+	bool GetAnimatorFloatInternal(int32_t gameObjectId, const char* parameterName, float& value) const;  // DLL API 用に Animator Float を取得する
+	bool GetAnimatorIntInternal(int32_t gameObjectId, const char* parameterName, int32_t& value) const;  // DLL API 用に Animator Int を取得する
+	bool GetAnimatorBoolInternal(int32_t gameObjectId, const char* parameterName, bool& value) const;  // DLL API 用に Animator Bool / Trigger を取得する
+	bool GetAnimatorVector2Internal(int32_t gameObjectId, const char* parameterName, EditorScriptVector2& value) const;  // DLL API 用に Animator Vector2 を取得する
+	bool GetAnimatorVector3Internal(int32_t gameObjectId, const char* parameterName, EditorScriptVector3& value) const;  // DLL API 用に Animator Vector3 を取得する
+	bool ResetAnimatorTriggerInternal(int32_t gameObjectId, const char* parameterName);  // DLL API 用に Trigger を解除する
+	int32_t FindGameObjectByNameInternal(const char* gameObjectName) const;  // DLL API 用に名前から GameObject ID を探す
+	bool SetGameObjectActiveInternal(int32_t gameObjectId, bool isActive);  // DLL API 用に GameObject の有効状態を変更する
+	bool IsGameObjectActiveInternal(int32_t gameObjectId) const;  // DLL API 用に GameObject の有効状態を取得する
 
 	static void ScriptLogBridge(const char* message);  // DLL からのログを現在の ScriptManager へ流す
 	static bool ScriptIsKeyDownBridge(int32_t keyCode);  // DLL からのキー押下判定を現在の ScriptManager へ流す
@@ -179,6 +204,34 @@ private:
 	static EditorScriptAiSensorState ScriptGetAiSensorStateBridge(int32_t gameObjectId, int32_t sensorKind);  // DLL からの AI センサー取得を現在の ScriptManager へ流す
 	static EditorScriptMaterialState ScriptGetMaterialStateBridge(int32_t gameObjectId);  // DLL からの Material 取得を現在の ScriptManager へ流す
 	static EditorScriptAnimationState ScriptGetAnimationStateBridge(int32_t gameObjectId);  // DLL からの Animation 取得を現在の ScriptManager へ流す
+	static bool ScriptSetAnimatorFloatBridge(int32_t gameObjectId, const char* parameterName, float value);
+	static bool ScriptSetAnimatorIntBridge(int32_t gameObjectId, const char* parameterName, int32_t value);
+	static bool ScriptSetAnimatorBoolBridge(int32_t gameObjectId, const char* parameterName, bool value);
+	static bool ScriptSetAnimatorTriggerBridge(int32_t gameObjectId, const char* parameterName);
+	static bool ScriptSetAnimatorVector2Bridge(int32_t gameObjectId, const char* parameterName, const EditorScriptVector2* value);
+	static bool ScriptSetAnimatorVector3Bridge(int32_t gameObjectId, const char* parameterName, const EditorScriptVector3* value);
+	static bool ScriptPlayAnimationActionBridge(int32_t gameObjectId, int32_t clipIndex, float blendIn, float blendOut, float playbackSpeed, int32_t priority, bool loop);
+	static bool ScriptPlayEffectBridge(int32_t gameObjectId);
+	static bool ScriptPlayEffectAtBridge(int32_t gameObjectId, const char* effectAssetPath, const EditorScriptVector3* localOffset);
+	static void ScriptStopEffectBridge(int32_t gameObjectId);
+	static int32_t ScriptGetAliveParticleCountBridge(int32_t gameObjectId);
+	static bool ScriptGetAnimatorFloatBridge(int32_t gameObjectId, const char* parameterName, float* value);
+	static bool ScriptGetAnimatorIntBridge(int32_t gameObjectId, const char* parameterName, int32_t* value);
+	static bool ScriptGetAnimatorBoolBridge(int32_t gameObjectId, const char* parameterName, bool* value);
+	static bool ScriptGetAnimatorVector2Bridge(int32_t gameObjectId, const char* parameterName, EditorScriptVector2* value);
+	static bool ScriptGetAnimatorVector3Bridge(int32_t gameObjectId, const char* parameterName, EditorScriptVector3* value);
+	static bool ScriptResetAnimatorTriggerBridge(int32_t gameObjectId, const char* parameterName);
+	static bool ScriptPlayAnimationBridge(int32_t gameObjectId);
+	static bool ScriptStopAnimationBridge(int32_t gameObjectId);
+	static bool ScriptIsAnimationPlayingBridge(int32_t gameObjectId);
+	static float ScriptGetAnimationTimeBridge(int32_t gameObjectId);
+	static bool ScriptSetAnimationTimeBridge(int32_t gameObjectId, float playbackTime);
+	static bool ScriptSetAnimationSpeedBridge(int32_t gameObjectId, float playbackSpeed);
+	static bool ScriptGetAnimatorStateNameBridge(int32_t gameObjectId, char* stateName, int32_t stateNameCapacity);
+	static bool ScriptIsEffectPlayingBridge(int32_t gameObjectId);
+	static int32_t ScriptFindGameObjectByNameBridge(const char* gameObjectName);
+	static bool ScriptSetGameObjectActiveBridge(int32_t gameObjectId, bool isActive);
+	static bool ScriptIsGameObjectActiveBridge(int32_t gameObjectId);
 };
 
 #pragma warning(pop)

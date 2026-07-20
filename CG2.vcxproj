@@ -57,7 +57,7 @@
       <WarningLevel>EnableAllWarnings</WarningLevel>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_WINDOWS;USE_IMGUI;NOMINMAX;BTCPP_LIBRARY_VERSION=&quot;4.9.0&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>ThirdParty\imgui-docking\imgui-docking;ThirdParty\imgui-docking\imgui-docking\backends;ThirdParty\ImGuizmo-master\ImGuizmo-master\src;ThirdParty\FeelKitHaptics;ThirdParty\JoltPhysics-5.5.0;ThirdParty\AI\BehaviorTree.CPP-4.9.0\include;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\tinyxml2;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\minicoro;ThirdParty\AI\OpenSteer-master\include;ThirdParty\AI\recastnavigation-1.6.0\Detour\Include;ThirdParty\AI\recastnavigation-1.6.0\DetourCrowd\Include;ThirdParty\AI\recastnavigation-1.6.0\Recast\Include;ThirdParty\meshoptimizer\src;ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include;ThirdParty\Shader\FidelityFX-SDK-v1.1.4\ffx-api\include;Source\Engine\Core;Source\Engine\Editor;Source\Engine\Physics;Source\Engine\Audio;Source\Engine\Input;Source\Engine\Navigation;Source\Engine\Renderer;.;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>ThirdParty\imgui-docking\imgui-docking;ThirdParty\imgui-docking\imgui-docking\backends;ThirdParty\ImGuizmo-master\ImGuizmo-master\src;ThirdParty\FeelKitHaptics;ThirdParty\JoltPhysics-5.5.0;ThirdParty\AI\BehaviorTree.CPP-4.9.0\include;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\tinyxml2;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\minicoro;ThirdParty\AI\OpenSteer-master\include;ThirdParty\AI\recastnavigation-1.6.0\Detour\Include;ThirdParty\AI\recastnavigation-1.6.0\DetourCrowd\Include;ThirdParty\AI\recastnavigation-1.6.0\Recast\Include;ThirdParty\meshoptimizer\src;ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include;ThirdParty\Shader\FidelityFX-SDK-v1.1.4\ffx-api\include;Source\Engine\Animation;Source\Engine\Core;Source\Engine\Editor;Source\Engine\Effect;Source\Engine\Physics;Source\Engine\Audio;Source\Engine\Input;Source\Engine\Navigation;Source\Engine\Renderer;.;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 /external:anglebrackets /external:W0 %(AdditionalOptions)</AdditionalOptions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
@@ -96,7 +96,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_WINDOWS;USE_IMGUI;NOMINMAX;BTCPP_LIBRARY_VERSION=&quot;4.9.0&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>ThirdParty\imgui-docking\imgui-docking;ThirdParty\imgui-docking\imgui-docking\backends;ThirdParty\ImGuizmo-master\ImGuizmo-master\src;ThirdParty\FeelKitHaptics;ThirdParty\JoltPhysics-5.5.0;ThirdParty\AI\BehaviorTree.CPP-4.9.0\include;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\tinyxml2;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\minicoro;ThirdParty\AI\OpenSteer-master\include;ThirdParty\AI\recastnavigation-1.6.0\Detour\Include;ThirdParty\AI\recastnavigation-1.6.0\DetourCrowd\Include;ThirdParty\AI\recastnavigation-1.6.0\Recast\Include;ThirdParty\meshoptimizer\src;ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include;ThirdParty\Shader\FidelityFX-SDK-v1.1.4\ffx-api\include;Source\Engine\Core;Source\Engine\Editor;Source\Engine\Physics;Source\Engine\Audio;Source\Engine\Input;Source\Engine\Navigation;Source\Engine\Renderer;.;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>ThirdParty\imgui-docking\imgui-docking;ThirdParty\imgui-docking\imgui-docking\backends;ThirdParty\ImGuizmo-master\ImGuizmo-master\src;ThirdParty\FeelKitHaptics;ThirdParty\JoltPhysics-5.5.0;ThirdParty\AI\BehaviorTree.CPP-4.9.0\include;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\tinyxml2;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\minicoro;ThirdParty\AI\OpenSteer-master\include;ThirdParty\AI\recastnavigation-1.6.0\Detour\Include;ThirdParty\AI\recastnavigation-1.6.0\DetourCrowd\Include;ThirdParty\AI\recastnavigation-1.6.0\Recast\Include;ThirdParty\meshoptimizer\src;ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include;ThirdParty\Shader\FidelityFX-SDK-v1.1.4\ffx-api\include;Source\Engine\Animation;Source\Engine\Core;Source\Engine\Editor;Source\Engine\Effect;Source\Engine\Physics;Source\Engine\Audio;Source\Engine\Input;Source\Engine\Navigation;Source\Engine\Renderer;.;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 /external:anglebrackets /external:W0 %(AdditionalOptions)</AdditionalOptions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
@@ -176,6 +176,11 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
     </None>
   </ItemGroup>
   <ItemGroup>
+	<ClCompile Include="Source\Engine\Animation\AnimationGraph.cpp" />
+	<ClCompile Include="Source\Engine\Animation\PropertyAnimationClip.cpp" />
+	<ClCompile Include="Source\Engine\Editor\EditorAnimationWindowManager.cpp" />
+	<ClCompile Include="Source\Engine\Effect\EffectAsset.cpp" />
+	<ClCompile Include="Source\Engine\Effect\EditorEffectManager.cpp" />
     <ClCompile Include="Source\Engine\Core\ApplicationWindow.cpp" />
     <ClCompile Include="Source\Engine\Physics\BoxCollision.cpp" />
     <ClCompile Include="Source\Engine\Core\CrashHandler.cpp" />
@@ -504,6 +509,11 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
     <ClCompile Include="Source\Engine\Core\Vector.cpp" />
   </ItemGroup>
   <ItemGroup>
+	<ClInclude Include="Source\Engine\Animation\AnimationGraph.h" />
+	<ClInclude Include="Source\Engine\Animation\PropertyAnimationClip.h" />
+	<ClInclude Include="Source\Engine\Editor\EditorAnimationWindowManager.h" />
+	<ClInclude Include="Source\Engine\Effect\EffectAsset.h" />
+	<ClInclude Include="Source\Engine\Effect\EditorEffectManager.h" />
     <ClInclude Include="Source\Engine\Core\ApplicationWindow.h" />
     <ClInclude Include="Source\Engine\Physics\BoxCollision.h" />
     <ClInclude Include="Source\Engine\Core\CrashHandler.h" />

@@ -70,7 +70,10 @@ namespace {
 			EditorAssetUtility::HasExtension(assetPath, ".json") ||
 			EditorAssetUtility::HasExtension(assetPath, ".scene") ||
 			EditorAssetUtility::HasExtension(assetPath, ".prefab") ||
-			EditorAssetUtility::HasExtension(assetPath, ".inputactions");
+			EditorAssetUtility::HasExtension(assetPath, ".inputactions") ||
+			EditorAssetUtility::HasExtension(assetPath, ".animgraph") ||
+			EditorAssetUtility::HasExtension(assetPath, ".animclip") ||
+			EditorAssetUtility::HasExtension(assetPath, ".effect");
 	}
 
 	std::string MakeDefaultPlayerInputActionsText() {
@@ -80,6 +83,102 @@ namespace {
 			"Action|Player|Move|Vector2|2DVector|W|S|A|D\r\n"
 			"Action|Player|Jump|Button|Key|Space\r\n"
 			"Action|Player|Fire|Button|Mouse|LeftButton\r\n";
+	}
+
+	std::string MakeDefaultAnimationGraphText() {
+		// FBX の Clip 番号はモデルごとに異なるため、作成直後は Clip 0 だけで安全に再生できる構成にする。
+		return
+			"{\r\n"
+			"  \"entryState\": 0,\r\n"
+			"  \"parameters\": [\r\n"
+			"    { \"name\": \"MoveX\", \"type\": \"Float\", \"float\": 0.0 },\r\n"
+			"    { \"name\": \"MoveY\", \"type\": \"Float\", \"float\": 0.0 },\r\n"
+			"    { \"name\": \"Speed\", \"type\": \"Float\", \"float\": 0.0 }\r\n"
+			"  ],\r\n"
+			"  \"states\": [\r\n"
+			"    {\r\n"
+			"      \"name\": \"Locomotion\",\r\n"
+			"      \"blendType\": \"Blend2DDirectional\",\r\n"
+			"      \"parameterX\": \"MoveX\",\r\n"
+			"      \"parameterY\": \"MoveY\",\r\n"
+			"      \"loop\": true,\r\n"
+			"      \"samples\": [\r\n"
+			"        { \"clip\": 0, \"x\": 0.0, \"y\": 0.0, \"speed\": 1.0 },\r\n"
+			"        { \"clip\": 0, \"x\": 0.0, \"y\": 1.0, \"speed\": 1.0 },\r\n"
+			"        { \"clip\": 0, \"x\": 0.0, \"y\": -1.0, \"speed\": 1.0 },\r\n"
+			"        { \"clip\": 0, \"x\": -1.0, \"y\": 0.0, \"speed\": 1.0 },\r\n"
+			"        { \"clip\": 0, \"x\": 1.0, \"y\": 0.0, \"speed\": 1.0 }\r\n"
+			"      ]\r\n"
+			"    }\r\n"
+			"  ],\r\n"
+			"  \"transitions\": [],\r\n"
+			"  \"events\": []\r\n"
+			"}\r\n";
+	}
+
+	std::string MakeDefaultEffectAssetText() {
+		return
+			"{\r\n"
+			"  \"renderAsset\": \"resources/en.fbx\",\r\n"
+			"  \"playOnAwake\": true,\r\n"
+			"  \"looping\": true,\r\n"
+			"  \"duration\": 2.0,\r\n"
+			"  \"startDelay\": 0.0,\r\n"
+			"  \"emissionRate\": 10.0,\r\n"
+			"  \"burstCount\": 0,\r\n"
+			"  \"maxCount\": 256,\r\n"
+			"  \"lifetime\": 1.0,\r\n"
+			"  \"speed\": 1.0,\r\n"
+			"  \"startSize\": 0.2,\r\n"
+			"  \"endSize\": 0.0,\r\n"
+			"  \"shape\": 1,\r\n"
+			"  \"shapeRadius\": 0.5,\r\n"
+			"  \"shapeAngle\": 25.0,\r\n"
+			"  \"simulationSpace\": 0,\r\n"
+			"  \"gravity\": 0.0,\r\n"
+			"  \"drag\": 0.0,\r\n"
+			"  \"rotationSpeed\": 0.0,\r\n"
+			"  \"speedRandomness\": 0.15,\r\n"
+			"  \"lifetimeRandomness\": 0.1,\r\n"
+			"  \"sizeRandomness\": 0.1,\r\n"
+			"  \"startAlpha\": 1.0,\r\n"
+			"  \"endAlpha\": 0.0,\r\n"
+			"  \"emissionStrength\": 1.0,\r\n"
+			"  \"endSpeedMultiplier\": 0.35,\r\n"
+			"  \"noiseStrength\": 0.0,\r\n"
+			"  \"noiseFrequency\": 1.0,\r\n"
+			"  \"collision\": false,\r\n"
+			"  \"collisionBounce\": 0.35,\r\n"
+			"  \"collisionFriction\": 0.2,\r\n"
+			"  \"prewarm\": false,\r\n"
+			"  \"startColor\": { \"x\": 1.0, \"y\": 0.8, \"z\": 0.2 },\r\n"
+			"  \"endColor\": { \"x\": 1.0, \"y\": 0.1, \"z\": 0.0 },\r\n"
+			"  \"direction\": { \"x\": 0.0, \"y\": 1.0, \"z\": 0.0 },\r\n"
+			"  \"boxSize\": { \"x\": 1.0, \"y\": 1.0, \"z\": 1.0 }\r\n"
+			"}\r\n";
+	}
+
+	std::string MakeDefaultPropertyAnimationClipText() {
+		// Additive の位置カーブなので、作成直後にどの GameObject へ付けても元配置を壊さず上下動を確認できる。
+		return
+			"{\r\n"
+			"  \"name\": \"NewAnimationClip\",\r\n"
+			"  \"duration\": 2.0,\r\n"
+			"  \"sampleRate\": 30.0,\r\n"
+			"  \"loop\": true,\r\n"
+			"  \"tracks\": [\r\n"
+			"    {\r\n"
+			"      \"property\": \"Transform.LocalPositionY\",\r\n"
+			"      \"writeMode\": \"Additive\",\r\n"
+			"      \"keys\": [\r\n"
+			"        { \"time\": 0.0, \"value\": 0.0, \"outTangent\": 2.0, \"interpolation\": \"CubicHermite\" },\r\n"
+			"        { \"time\": 1.0, \"value\": 1.0, \"inTangent\": 0.0, \"outTangent\": 0.0, \"interpolation\": \"CubicHermite\" },\r\n"
+			"        { \"time\": 2.0, \"value\": 0.0, \"inTangent\": -2.0, \"interpolation\": \"CubicHermite\" }\r\n"
+			"      ]\r\n"
+			"    }\r\n"
+			"  ],\r\n"
+			"  \"events\": []\r\n"
+			"}\r\n";
 	}
 
 	std::string GetProjectAssetCreateDirectory(const std::string& selectedAssetPath) {
@@ -120,6 +219,29 @@ namespace {
 		}
 
 		return (baseDirectoryPath / "InGameInputAction.inputactions").generic_string();
+	}
+
+	std::string MakeUniqueTextAssetPath(
+		const std::string& directoryPath,
+		const std::string& baseName,
+		const std::string& extension) {
+		const std::filesystem::path baseDirectoryPath(directoryPath);
+
+		for (int32_t fileIndex = 0; fileIndex < 1000; ++fileIndex) {
+			std::string candidateName = baseName;
+
+			if (fileIndex > 0) {
+				candidateName += std::to_string(fileIndex);
+			}
+
+			const std::filesystem::path candidatePath = baseDirectoryPath / (candidateName + extension);
+
+			if (!std::filesystem::exists(candidatePath)) {
+				return candidatePath.generic_string();
+			}
+		}
+
+		return (baseDirectoryPath / (baseName + extension)).generic_string();
 	}
 
 	std::string MakeUniqueFolderPath(const std::string& directoryPath, const std::string& baseFolderName) {
@@ -409,6 +531,60 @@ void EditorBottomPanel::Draw(
 						consoleMessages.push_back("Asset: Failed to create Input Actions");
 					}
 				}
+
+				if (ImGui::MenuItem("Animation Graph")) {
+					const std::string createDirectoryPath = GetProjectAssetCreateDirectory(selectedAssetPath);
+					std::filesystem::create_directories(createDirectoryPath);
+					const std::string filePath = MakeUniqueTextAssetPath(
+						createDirectoryPath,
+						"NewAnimationGraph",
+						".animgraph");
+
+					if (WriteUtf8BomTextFile(filePath, MakeDefaultAnimationGraphText())) {
+						selectedAssetPath = filePath;
+						g_selectedAssetPath = filePath;
+						consoleMessages.push_back("Asset: Animation Graph を作成 " + filePath);
+					}
+					else {
+						consoleMessages.push_back("Asset: Animation Graph の作成に失敗");
+					}
+				}
+
+				if (ImGui::MenuItem("Animation Clip")) {
+					const std::string createDirectoryPath = GetProjectAssetCreateDirectory(selectedAssetPath);
+					std::filesystem::create_directories(createDirectoryPath);
+					const std::string filePath = MakeUniqueTextAssetPath(
+						createDirectoryPath,
+						"NewAnimationClip",
+						".animclip");
+
+					if (WriteUtf8BomTextFile(filePath, MakeDefaultPropertyAnimationClipText())) {
+						selectedAssetPath = filePath;
+						g_selectedAssetPath = filePath;
+						consoleMessages.push_back("Asset: Animation Clip を作成 " + filePath);
+					}
+					else {
+						consoleMessages.push_back("Asset: Animation Clip の作成に失敗");
+					}
+				}
+
+				if (ImGui::MenuItem("Effect Asset")) {
+					const std::string createDirectoryPath = GetProjectAssetCreateDirectory(selectedAssetPath);
+					std::filesystem::create_directories(createDirectoryPath);
+					const std::string filePath = MakeUniqueTextAssetPath(
+						createDirectoryPath,
+						"NewEffect",
+						".effect");
+
+					if (WriteUtf8BomTextFile(filePath, MakeDefaultEffectAssetText())) {
+						selectedAssetPath = filePath;
+						g_selectedAssetPath = filePath;
+						consoleMessages.push_back("Asset: Effect Asset を作成 " + filePath);
+					}
+					else {
+						consoleMessages.push_back("Asset: Effect Asset の作成に失敗");
+					}
+				}
 				ImGui::EndPopup();
 			}
 
@@ -537,6 +713,15 @@ void EditorBottomPanel::Draw(
 						}
 						else if (EditorAssetUtility::HasExtension(relativePath, ".inputactions")) {
 							assetIcon = "INPUT";
+						}
+						else if (EditorAssetUtility::HasExtension(relativePath, ".animgraph")) {
+							assetIcon = "ANIM";
+						}
+						else if (EditorAssetUtility::HasExtension(relativePath, ".animclip")) {
+							assetIcon = "CLIP";
+						}
+						else if (EditorAssetUtility::HasExtension(relativePath, ".effect")) {
+							assetIcon = "FX";
 						}
 						else if (EditorAssetUtility::HasExtension(relativePath, ".json")) {
 							assetIcon = "JSON";

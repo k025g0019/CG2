@@ -185,6 +185,11 @@ void EditorHierarchyPanel::Draw(
 	ImGui::Separator();
 
 	for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
+		// EffectSystem が Play 中だけ生成する描画粒子は、利用者が編集する Scene オブジェクトではない。
+		if (gameObject.name.rfind("__EffectParticle_", 0u) == 0u) {
+			continue;
+		}
+
 		// 親なし GameObject だけをルートノードとして描画する
 		if (gameObject.parentId == -1) {
 			DrawGameObjectNode(
@@ -231,6 +236,11 @@ void EditorHierarchyPanel::DrawGameObjectNode(
 	int32_t& selectedSceneObject) {
 	EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
 	if (gameObject == nullptr) {
+		return;
+	}
+
+	// 一時 Particle が親子付けされた場合も Hierarchy へ表示しない。
+	if (gameObject->name.rfind("__EffectParticle_", 0u) == 0u) {
 		return;
 	}
 

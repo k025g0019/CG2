@@ -18,7 +18,7 @@ cbuffer CullingConstants : register(b0)
     uint2 gDepthPyramidSize;
     float gDepthBias;
     row_major float4x4 gViewProjection;
-    float4 gUnusedParameters;
+    float4 gViewportUvTransform; // xy: 全体RT内の左上UV、zw: 全体RTに対するViewportのUVサイズ
 };
 
 //================================================================
@@ -64,9 +64,9 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         }
 
         const float3 ndc = clipPosition.xyz / clipPosition.w;
-        const float2 screenUv = float2(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f);
-        minimumUv = min(minimumUv, screenUv);
-        maximumUv = max(maximumUv, screenUv);
+        const float2 viewportUv = float2(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f);
+        minimumUv = min(minimumUv, viewportUv);
+        maximumUv = max(maximumUv, viewportUv);
         nearestObjectDepth = min(nearestObjectDepth, ndc.z);
     }
 
@@ -108,9 +108,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     [unroll]
     for (uint sampleIndex = 0u; sampleIndex < 5u; sampleIndex++)
     {
+        const float2 depthPyramidUv =
+            gViewportUvTransform.xy + sampleUvs[sampleIndex] * gViewportUvTransform.zw;
         conservativeOccluderDepth = max(
             conservativeOccluderDepth,
-            gDepthPyramid.SampleLevel(gPointClampSampler, sampleUvs[sampleIndex], 0.0f).x);
+            gDepthPyramid.SampleLevel(gPointClampSampler, depthPyramidUv, 0.0f).x);
     }
 
     const bool isOccluded = nearestObjectDepth > conservativeOccluderDepth + gDepthBias;

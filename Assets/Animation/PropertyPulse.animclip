@@ -1,0 +1,54 @@
+﻿{
+  "name": "PropertyPulse",
+  "duration": 2.0,
+  "sampleRate": 30.0,
+  "loop": true,
+  "tracks": [
+    {
+      "property": "Transform.LocalPositionY",
+      "writeMode": "Additive",
+      "keys": [
+        { "time": 0.0, "value": 0.0, "outTangent": 2.0, "interpolation": "CubicHermite" },
+        { "time": 1.0, "value": 1.0, "inTangent": 0.0, "outTangent": 0.0, "interpolation": "CubicHermite" },
+        { "time": 2.0, "value": 0.0, "inTangent": -2.0, "interpolation": "CubicHermite" }
+      ]
+    },
+    {
+      "property": "Transform.LocalRotationY",
+      "writeMode": "Additive",
+      "keys": [
+        { "time": 0.0, "value": 0.0, "interpolation": "Linear" },
+        { "time": 2.0, "value": 360.0, "interpolation": "Linear" }
+      ]
+    },
+    {
+      "property": "Material.EmissionStrength",
+      "writeMode": "Override",
+      "keys": [
+        { "time": 0.0, "value": 0.0, "interpolation": "Linear" },
+        { "time": 0.5, "value": 4.0, "interpolation": "Linear" },
+        { "time": 1.0, "value": 0.0, "interpolation": "Linear" },
+        { "time": 1.5, "value": 4.0, "interpolation": "Linear" },
+        { "time": 2.0, "value": 0.0, "interpolation": "Linear" }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "time": 0.5,
+      "name": "PulseEffect",
+      "effect": "Assets/Effects/DefaultBurst.effect",
+      "offsetX": 0.0,
+      "offsetY": 0.5,
+      "offsetZ": 0.0
+    },
+    {
+      "time": 1.5,
+      "name": "PulseEffect",
+      "effect": "Assets/Effects/DefaultBurst.effect",
+      "offsetX": 0.0,
+      "offsetY": 0.5,
+      "offsetZ": 0.0
+    }
+  ]
+}

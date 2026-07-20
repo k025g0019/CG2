@@ -3,10 +3,11 @@
 void EditorRuntimeManager::Initialize(EditorScene* editorScene, std::vector<std::string>* consoleMessages) {
 	editorScene_ = editorScene;  // Play / Stop のたびに操作する Scene
 	consoleMessages_ = consoleMessages;  // Runtime 内のイベントログ出力先
+	effectManager_.Initialize(editorScene_, consoleMessages_);
 	aiManager_.Initialize(editorScene_, &physicsManager_, consoleMessages_);
-	scriptManager_.Initialize(editorScene_, &inputManager_, &animationManager_, &aiManager_, &physicsManager_, consoleMessages_);
+	scriptManager_.Initialize(editorScene_, &inputManager_, &animationManager_, &effectManager_, &aiManager_, &physicsManager_, consoleMessages_);
 	inputManager_.Initialize(editorScene_, consoleMessages_);
-	animationManager_.Initialize(editorScene_);
+	animationManager_.Initialize(editorScene_, &effectManager_, &scriptManager_, consoleMessages_);
 	audioManager_.Initialize(editorScene_);
 	constraintManager_.Initialize(editorScene_);
 	physicsManager_.Initialize(editorScene_, consoleMessages_);
@@ -22,11 +23,9 @@ void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 		return;
 	}
 
-	scriptManager_.Update(keyState, deltaTime);
-	animationManager_.Update(deltaTime);
-	audioManager_.Update(deltaTime);
+	// Input Action を最初に確定し、同じフレームの Script と移動 Component から読めるようにする。
 	inputManager_.Update(keyState, deltaTime);
-	constraintManager_.Update(deltaTime);
+	scriptManager_.Update(keyState, deltaTime);
 	localMoveManager_.Update(deltaTime);
 	rollingMoveManager_.Update(deltaTime);
 	aiManager_.Update(deltaTime);
@@ -50,6 +49,12 @@ void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 	if (fixedStepCount >= 1) {
 		scriptManager_.FixedUpdate(fixedTimeStep);  // 物理結果の後に FixedUpdate を呼び、OnCollision 相当の判定に使える順へそろえる
 	}
+
+	// Physics で確定した速度と Transform を Animator が読み、その Event から同じフレームの Effect を発生させる。
+	animationManager_.Update(deltaTime);
+	constraintManager_.Update(deltaTime);
+	effectManager_.Update(deltaTime);
+	audioManager_.Update(deltaTime);
 }
 #pragma warning(pop)
 
@@ -59,6 +64,7 @@ void EditorRuntimeManager::Draw() {
 	}
 
 	inputManager_.Draw();
+	effectManager_.Draw();
 	audioManager_.Draw();
 	aiManager_.Draw();
 	localMoveManager_.Draw();
@@ -75,6 +81,10 @@ void EditorRuntimeManager::TogglePlay() {
 	if (isPlaying_) {
 		// Stop 時は Play 開始前の Scene に戻す
 		physicsManager_.StopSimulation();
+		effectManager_.Stop();
+		animationManager_.Stop();
+		audioManager_.Stop();
+		scriptManager_.Stop();
 		localMoveManager_.Stop();
 		rollingMoveManager_.Stop();
 		aiManager_.Stop();
@@ -83,9 +93,6 @@ void EditorRuntimeManager::TogglePlay() {
 			*editorScene_ = sceneBackup_;
 		}
 
-		animationManager_.Stop();
-		audioManager_.Stop();
-		scriptManager_.Stop();
 		isPlaying_ = false;
 		hasSceneBackup_ = false;
 		return;
@@ -94,8 +101,9 @@ void EditorRuntimeManager::TogglePlay() {
 	sceneBackup_ = *editorScene_;  // Play 開始前の編集状態を保存する
 	hasSceneBackup_ = true;
 	isPlaying_ = true;
-	scriptManager_.Initialize(editorScene_, &inputManager_, &animationManager_, &aiManager_, &physicsManager_, consoleMessages_);
+	scriptManager_.Initialize(editorScene_, &inputManager_, &animationManager_, &effectManager_, &aiManager_, &physicsManager_, consoleMessages_);
 	physicsManager_.StartSimulation();
+	effectManager_.Start();
 	animationManager_.Start();
 	localMoveManager_.Start();
 	rollingMoveManager_.Start();
@@ -123,4 +131,12 @@ EditorAnimationManager& EditorRuntimeManager::GetAnimationManager() {
 
 const EditorAnimationManager& EditorRuntimeManager::GetAnimationManager() const {
 	return animationManager_;
+}
+
+EditorEffectManager& EditorRuntimeManager::GetEffectManager() {
+	return effectManager_;
+}
+
+const EditorEffectManager& EditorRuntimeManager::GetEffectManager() const {
+	return effectManager_;
 }

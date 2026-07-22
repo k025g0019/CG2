@@ -1,7 +1,4 @@
-Texture2D gParticleTexture : register(t0);
-SamplerState gSampler : register(s0);
-
-struct PSInput
+﻿struct PSInput
 {
     float4 position : SV_POSITION;
     float2 texcoord : TEXCOORD0;
@@ -10,6 +7,7 @@ struct PSInput
 
 float4 main(PSInput input) : SV_TARGET0
 {
-    const float4 textureColor = gParticleTexture.Sample(gSampler, input.texcoord);
-    return textureColor * input.color;
+    const float2 centerOffset = input.texcoord * 2.0f - 1.0f;
+    const float circleAlpha = saturate(1.0f - dot(centerOffset, centerOffset));
+    return float4(input.color.rgb, input.color.a * circleAlpha);
 }

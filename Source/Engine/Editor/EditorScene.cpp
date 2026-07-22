@@ -176,6 +176,7 @@ namespace {
 		"RollingMove",
 		"PostProcess",
 		"Environment",
+		"FreeTransform",
 	};
 	constexpr int32_t kEditorComponentTypeCount =
 		static_cast<int32_t>(sizeof(kEditorComponentTypeNames) / sizeof(kEditorComponentTypeNames[0]));
@@ -832,7 +833,25 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 			     << "|" << component.particleNoiseFrequency
 			     << "|" << component.particleCollisionBounce
 			     << "|" << component.particleCollisionFriction
-			     << "|" << component.particlePrewarm;
+			     << "|" << component.particlePrewarm
+			     << "|" << component.freeMoveSpeed
+			     << "|" << component.freeRotateSpeed
+			     << "|" << component.freeMoveAxes
+			     << "|" << component.freeRotateAxes
+			     << "|" << component.freeUseLocalSpace
+			     << "|" << component.freeRotationInput.x
+			     << "|" << component.freeRotationInput.y
+			     << "|" << component.freeRotationInput.z
+			     << "|" << component.particleMotionType
+			     << "|" << component.particleMotionCenter.x
+			     << "|" << component.particleMotionCenter.y
+			     << "|" << component.particleMotionCenter.z
+			     << "|" << component.particleAngularSpeed
+			     << "|" << component.particleRadialAcceleration
+			     << "|" << component.particleWaveAmplitude
+			     << "|" << component.particleWaveFrequency
+			     << "|" << component.particleAttractorStrength
+			     << "|" << EncodeSceneToken(component.particleRenderAssetPath);
 
 			file << "\n";
 
@@ -1310,7 +1329,35 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 					component.particleNoiseFrequency = ToFloat(elements[postProcessEffectCursor + 42u]);
 					component.particleCollisionBounce = ToFloat(elements[postProcessEffectCursor + 43u]);
 					component.particleCollisionFriction = ToFloat(elements[postProcessEffectCursor + 44u]);
-					component.particlePrewarm = ToInt(elements[postProcessEffectCursor + 45u]) != 0;
+				component.particlePrewarm = ToInt(elements[postProcessEffectCursor + 45u]) != 0;
+				}
+
+				if (elements.size() >= postProcessEffectCursor + 56u) {
+					component.freeMoveSpeed = ToFloat(elements[postProcessEffectCursor + 46u]);
+					component.freeRotateSpeed = ToFloat(elements[postProcessEffectCursor + 47u]);
+					component.freeMoveAxes = ToInt(elements[postProcessEffectCursor + 48u]);
+					component.freeRotateAxes = ToInt(elements[postProcessEffectCursor + 49u]);
+					component.freeUseLocalSpace = ToInt(elements[postProcessEffectCursor + 50u]) != 0;
+					component.freeRotationInput = {
+						ToFloat(elements[postProcessEffectCursor + 51u]),
+						ToFloat(elements[postProcessEffectCursor + 52u]),
+						ToFloat(elements[postProcessEffectCursor + 53u])
+					};
+				}
+
+				if (elements.size() >= postProcessEffectCursor + 66u) {
+					component.particleMotionType = ToInt(elements[postProcessEffectCursor + 56u]);
+					component.particleMotionCenter = {
+						ToFloat(elements[postProcessEffectCursor + 57u]),
+						ToFloat(elements[postProcessEffectCursor + 58u]),
+						ToFloat(elements[postProcessEffectCursor + 59u])
+					};
+					component.particleAngularSpeed = ToFloat(elements[postProcessEffectCursor + 60u]);
+					component.particleRadialAcceleration = ToFloat(elements[postProcessEffectCursor + 61u]);
+					component.particleWaveAmplitude = ToFloat(elements[postProcessEffectCursor + 62u]);
+					component.particleWaveFrequency = ToFloat(elements[postProcessEffectCursor + 63u]);
+					component.particleAttractorStrength = ToFloat(elements[postProcessEffectCursor + 64u]);
+					component.particleRenderAssetPath = DecodeSceneToken(elements[postProcessEffectCursor + 65u]);
 				}
 
 				gameObject.components.push_back(component);
@@ -1681,6 +1728,20 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.particleCollisionBounce = 0.35f;
 		component.particleCollisionFriction = 0.2f;
 		component.particlePrewarm = false;
+		component.particleMotionType = 0;
+		component.particleMotionCenter = {0.0f, 0.0f, 0.0f};
+		component.particleAngularSpeed = 45.0f;
+		component.particleRadialAcceleration = 0.0f;
+		component.particleWaveAmplitude = 0.0f;
+		component.particleWaveFrequency = 1.0f;
+		component.particleAttractorStrength = 0.0f;
+		component.particleRenderAssetPath.clear();
+		component.freeMoveSpeed = 5.0f;
+		component.freeRotateSpeed = 90.0f;
+		component.freeMoveAxes = 7;  // X|Y|Z all
+		component.freeRotateAxes = 7;  // X|Y|Z all
+		component.freeUseLocalSpace = true;
+		component.freeRotationInput = {0.0f, 0.0f, 0.0f};
 		component.buttonLabel = "Button";
 		component.buttonPosition = {20.0f, 20.0f};
 		component.buttonSize = {160.0f, 48.0f};

@@ -42,10 +42,16 @@ public:
 	float noiseFrequency = 1.0f;  // 乱流ノイズの時間周波数。
 	float collisionBounce = 0.35f;  // Ground 衝突後に残す垂直速度率。
 	float collisionFriction = 0.2f;  // Ground 衝突で失う水平速度率。
+	float angularSpeed = 45.0f;  // 軌道・渦運動の角速度（度/秒）。
+	float radialAcceleration = 0.0f;  // 中心から外向きへ加える加速度。
+	float waveAmplitude = 0.0f;  // 波運動の加速度振幅。
+	float waveFrequency = 1.0f;  // 波・雲運動の周波数。
+	float attractorStrength = 0.0f;  // 中心へ引き寄せる加速度。
 	int32_t maxCount = 256;  // 同一 Emitter が保持できる最大 Particle 数。
 	int32_t burstCount = 0;  // 周回開始時にまとめて発生する個数。
 	int32_t shape = 0;  // 0=Point、1=Sphere、2=Cone、3=Box。
 	int32_t simulationSpace = 0;  // 0=World、1=Local。
+	int32_t motionType = 0;  // 0=直線、1=軌道、2=渦、3=波、4=吸引、5=雲、6=爆発。
 	bool playOnAwake = true;  // Play 開始時に自動再生する。
 	bool looping = true;  // Duration 終了後に再び発生する。
 	bool collision = false;  // 現在は Ground 簡易衝突を有効にする。
@@ -54,6 +60,7 @@ public:
 	Vector3 endColor{1.0f, 0.35f, 0.05f};  // 寿命終了時の線形 RGB。
 	Vector3 direction{0.0f, 1.0f, 0.0f};  // Point 以外でも基準にする初速度方向。
 	Vector3 boxSize{1.0f, 1.0f, 1.0f};  // Box Shape の全幅。
+	Vector3 motionCenter{0.0f, 0.0f, 0.0f};  // Emitter から見た運動中心。
 };
 
 #pragma warning(pop)

@@ -81,10 +81,16 @@ bool EffectAsset::LoadFromJson(const std::string& filePath) {
 	loadedAsset.noiseFrequency = (std::max)(ReadFloat(rootValue, "noiseFrequency", loadedAsset.noiseFrequency), 0.0f);
 	loadedAsset.collisionBounce = (std::clamp)(ReadFloat(rootValue, "collisionBounce", loadedAsset.collisionBounce), 0.0f, 1.0f);
 	loadedAsset.collisionFriction = (std::clamp)(ReadFloat(rootValue, "collisionFriction", loadedAsset.collisionFriction), 0.0f, 1.0f);
-	loadedAsset.maxCount = (std::clamp)(ReadInt(rootValue, "maxCount", loadedAsset.maxCount), 1, 4096);
+	loadedAsset.angularSpeed = ReadFloat(rootValue, "angularSpeed", loadedAsset.angularSpeed);
+	loadedAsset.radialAcceleration = ReadFloat(rootValue, "radialAcceleration", loadedAsset.radialAcceleration);
+	loadedAsset.waveAmplitude = ReadFloat(rootValue, "waveAmplitude", loadedAsset.waveAmplitude);
+	loadedAsset.waveFrequency = (std::max)(ReadFloat(rootValue, "waveFrequency", loadedAsset.waveFrequency), 0.0f);
+	loadedAsset.attractorStrength = (std::max)(ReadFloat(rootValue, "attractorStrength", loadedAsset.attractorStrength), 0.0f);
+	loadedAsset.maxCount = (std::max)(ReadInt(rootValue, "maxCount", loadedAsset.maxCount), 1);
 	loadedAsset.burstCount = (std::clamp)(ReadInt(rootValue, "burstCount", loadedAsset.burstCount), 0, loadedAsset.maxCount);
 	loadedAsset.shape = (std::clamp)(ReadInt(rootValue, "shape", loadedAsset.shape), 0, 3);
 	loadedAsset.simulationSpace = (std::clamp)(ReadInt(rootValue, "simulationSpace", loadedAsset.simulationSpace), 0, 1);
+	loadedAsset.motionType = (std::clamp)(ReadInt(rootValue, "motionType", loadedAsset.motionType), 0, 6);
 	loadedAsset.playOnAwake = ReadBool(rootValue, "playOnAwake", loadedAsset.playOnAwake);
 	loadedAsset.looping = ReadBool(rootValue, "looping", loadedAsset.looping);
 	loadedAsset.collision = ReadBool(rootValue, "collision", loadedAsset.collision);
@@ -93,6 +99,7 @@ bool EffectAsset::LoadFromJson(const std::string& filePath) {
 	loadedAsset.endColor = ReadVector3(rootValue, "endColor", loadedAsset.endColor);
 	loadedAsset.direction = ReadVector3(rootValue, "direction", loadedAsset.direction);
 	loadedAsset.boxSize = ReadVector3(rootValue, "boxSize", loadedAsset.boxSize);
+	loadedAsset.motionCenter = ReadVector3(rootValue, "motionCenter", loadedAsset.motionCenter);
 	*this = std::move(loadedAsset);
 	return true;
 }
@@ -125,6 +132,13 @@ void EffectAsset::ApplyToComponent(EditorComponent& component) const {
 	component.particleNoiseFrequency = noiseFrequency;
 	component.particleCollisionBounce = collisionBounce;
 	component.particleCollisionFriction = collisionFriction;
+	component.particleMotionType = motionType;
+	component.particleMotionCenter = motionCenter;
+	component.particleAngularSpeed = angularSpeed;
+	component.particleRadialAcceleration = radialAcceleration;
+	component.particleWaveAmplitude = waveAmplitude;
+	component.particleWaveFrequency = waveFrequency;
+	component.particleAttractorStrength = attractorStrength;
 	component.particleMaxCount = maxCount;
 	component.particleBurstCount = burstCount;
 	component.particleShape = shape;
@@ -133,5 +147,5 @@ void EffectAsset::ApplyToComponent(EditorComponent& component) const {
 	component.particleEndColor = endColor;
 	component.particleDirection = direction;
 	component.particleBoxSize = boxSize;
-	component.assetPath = renderAssetPath;
+	component.particleRenderAssetPath = renderAssetPath;
 }

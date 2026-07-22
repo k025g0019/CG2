@@ -16,6 +16,9 @@
 	<ClCompile Include="Source\Engine\Effect\EditorEffectManager.cpp">
 	  <Filter>ソース ファイル</Filter>
 	</ClCompile>
+	<ClCompile Include="Source\Engine\Effect\EditorEffekseerManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
     <Filter Include="ソース ファイル">
       <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
       <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
@@ -51,10 +54,21 @@
 	<ClInclude Include="Source\Engine\Effect\EditorEffectManager.h">
 	  <Filter>ヘッダー ファイル</Filter>
 	</ClInclude>
+	<ClInclude Include="Source\Engine\Effect\EditorEffekseerManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
     <None Include=".editorconfig" />
     <None Include="Assets\Input\InGameInputAction.json">
       <Filter>リソース ファイル</Filter>
     </None>
+	<None Include="Assets\Shaders\Particle\ParticleClear.CS.hlsl" />
+	<None Include="Assets\Shaders\Particle\ParticleCommon.hlsli" />
+	<None Include="Assets\Shaders\Particle\ParticleUpdate.CS.hlsl" />
+	<None Include="Assets\Shaders\Particle\ParticleSpawn.CS.hlsl" />
+	<None Include="Assets\Shaders\Particle\Particle.VS.hlsl" />
+	<None Include="Assets\Shaders\Particle\Particle.PS.hlsl" />
+	<None Include="Assets\Shaders\Particle\ParticleModel.VS.hlsl" />
+	<None Include="Assets\Shaders\Particle\ParticleModel.PS.hlsl" />
 	<None Include="Assets\Shaders\Object3d.VS.hlsl" />
 	<None Include="Assets\Shaders\Object3d.PS.hlsl" />
 	<None Include="Assets\Shaders\Object3dReflectionMask.PS.hlsl" />
@@ -283,6 +297,9 @@
 	  <Filter>ソース ファイル</Filter>
 	</ClCompile>
 	<ClCompile Include="Source\Engine\Renderer\EditorGpuCullingManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Renderer\EditorGpuParticleManager.cpp">
 	  <Filter>ソース ファイル</Filter>
 	</ClCompile>
 	<ClCompile Include="Source\Engine\Renderer\EditorPostProcessQualityManager.cpp">
@@ -1320,6 +1337,9 @@
 	  <Filter>ヘッダー ファイル</Filter>
 	</ClInclude>
 	<ClInclude Include="Source\Engine\Renderer\EditorGpuCullingManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Renderer\EditorGpuParticleManager.h">
 	  <Filter>ヘッダー ファイル</Filter>
 	</ClInclude>
 	<ClInclude Include="Source\Engine\Renderer\EditorPostProcessQualityManager.h">

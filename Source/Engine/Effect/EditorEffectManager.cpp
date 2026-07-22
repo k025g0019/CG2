@@ -32,20 +32,6 @@ namespace {
 			startValue.z + (endValue.z - startValue.z) * rate};
 	}
 
-	bool IsModelAssetPath(const std::string& assetPath) {
-		const size_t extensionOffset = assetPath.find_last_of('.');
-
-		if (extensionOffset == std::string::npos) {
-			return false;
-		}
-
-		std::string extension = assetPath.substr(extensionOffset);
-		std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char character) {
-			return static_cast<char>(std::tolower(character));
-		});
-		return extension == ".fbx" || extension == ".obj";
-	}
-
 	bool IsEffectAssetPath(const std::string& assetPath) {
 		const size_t extensionOffset = assetPath.find_last_of('.');
 
@@ -58,6 +44,20 @@ namespace {
 			return static_cast<char>(std::tolower(character));
 		});
 		return extension == ".effect";
+	}
+
+	bool IsEffekseerAssetPath(const std::string& assetPath) {
+		const size_t extensionOffset = assetPath.find_last_of('.');
+
+		if (extensionOffset == std::string::npos) {
+			return false;
+		}
+
+		std::string extension = assetPath.substr(extensionOffset);
+		std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char character) {
+			return static_cast<char>(std::tolower(character));
+		});
+		return extension == ".efk" || extension == ".efkefc";
 	}
 }
 
@@ -72,7 +72,9 @@ void EditorEffectManager::Start() {
 	emitterRuntimes_.clear();
 	effectAssetCache_.clear();
 	particles_.clear();
+	pendingGpuParticleSpawns_.clear();
 	particleSerial_ = 0u;
+	lastDeltaTime_ = 0.0f;
 	randomEngine_.seed(0x434732u);
 	isStarted_ = true;
 
@@ -94,6 +96,8 @@ void EditorEffectManager::Update(float deltaTime) {
 		return;
 	}
 
+	lastDeltaTime_ = deltaTime;
+
 	// Particle を先に進めることで、このフレームで生成した Particle の寿命を減らさない。
 	UpdateParticles(deltaTime);
 	const std::vector<EmitterSnapshot> emitters = CollectEmitterSnapshots();
@@ -103,13 +107,17 @@ void EditorEffectManager::Update(float deltaTime) {
 void EditorEffectManager::Stop() {
 	if (editorScene_ != nullptr) {
 		for (const ParticleRuntime& particle : particles_) {
-			editorScene_->DeleteGameObject(particle.particleGameObjectId);
+			if (particle.particleGameObjectId >= 0) {
+				editorScene_->DeleteGameObject(particle.particleGameObjectId);
+			}
 		}
 	}
 
 	particles_.clear();
+	pendingGpuParticleSpawns_.clear();
 	emitterRuntimes_.clear();
 	effectAssetCache_.clear();
+	lastDeltaTime_ = 0.0f;
 	isStarted_ = false;
 }
 
@@ -203,6 +211,18 @@ int32_t EditorEffectManager::GetAliveParticleCount(int32_t gameObjectId) const {
 		}));
 }
 
+const std::vector<EditorEffectManager::GpuParticleSpawn>& EditorEffectManager::GetPendingGpuParticleSpawns() const {
+	return pendingGpuParticleSpawns_;
+}
+
+void EditorEffectManager::ClearPendingGpuParticleSpawns() {
+	pendingGpuParticleSpawns_.clear();
+}
+
+float EditorEffectManager::GetLastDeltaTime() const {
+	return lastDeltaTime_;
+}
+
 uint64_t EditorEffectManager::MakeEmitterKey(
 	int32_t gameObjectId,
 	EditorComponentType componentType) {
@@ -228,7 +248,7 @@ std::vector<EditorEffectManager::EmitterSnapshot> EditorEffectManager::CollectEm
 				component.type == EditorComponentType::ParticleSystem ||
 				component.type == EditorComponentType::VisualEffect;
 
-			if (!isEffectComponent || !component.isActive) {
+			if (!isEffectComponent || !component.isActive || IsEffekseerAssetPath(component.assetPath)) {
 				continue;
 			}
 
@@ -315,80 +335,8 @@ void EditorEffectManager::UpdateEmitters(
 }
 
 void EditorEffectManager::UpdateParticles(float deltaTime) {
-	std::vector<int32_t> expiredGameObjectIds;
-
 	for (ParticleRuntime& particle : particles_) {
 		particle.age += deltaTime;
-
-		if (particle.age >= particle.lifetime) {
-			expiredGameObjectIds.push_back(particle.particleGameObjectId);
-			continue;
-		}
-
-		EditorGameObject* particleGameObject = editorScene_->FindGameObject(particle.particleGameObjectId);
-		if (particleGameObject == nullptr) {
-			particle.age = particle.lifetime;
-			continue;
-		}
-
-		particle.velocity.y -= particle.gravity * deltaTime;
-		const float noiseTime = particle.age * particle.noiseFrequency;
-		particle.velocity.x += std::sin(noiseTime + particle.noisePhase.x) * particle.noiseStrength * deltaTime;
-		particle.velocity.y += std::sin(noiseTime * 1.17f + particle.noisePhase.y) * particle.noiseStrength * deltaTime;
-		particle.velocity.z += std::sin(noiseTime * 0.83f + particle.noisePhase.z) * particle.noiseStrength * deltaTime;
-		const float dragRate = (std::clamp)(1.0f - particle.drag * deltaTime, 0.0f, 1.0f);
-		particle.velocity.x *= dragRate;
-		particle.velocity.y *= dragRate;
-		particle.velocity.z *= dragRate;
-		const float lifetimeRate = (std::clamp)(particle.age / particle.lifetime, 0.0f, 1.0f);
-		const float speedMultiplier = 1.0f + (particle.endSpeedMultiplier - 1.0f) * lifetimeRate;
-		particle.localPosition.x += particle.velocity.x * speedMultiplier * deltaTime;
-		particle.localPosition.y += particle.velocity.y * speedMultiplier * deltaTime;
-		particle.localPosition.z += particle.velocity.z * speedMultiplier * deltaTime;
-
-		Vector3 worldPosition = particle.localPosition;
-		if (particle.useLocalSpace) {
-			const EditorGameObject* ownerGameObject = editorScene_->FindGameObject(particle.ownerGameObjectId);
-
-			if (ownerGameObject != nullptr) {
-				worldPosition.x += ownerGameObject->translate.x;
-				worldPosition.y += ownerGameObject->translate.y;
-				worldPosition.z += ownerGameObject->translate.z;
-			}
-		}
-
-		if (particle.useCollision && worldPosition.y < 0.0f) {
-			worldPosition.y = 0.0f;
-			particle.localPosition.y = particle.useLocalSpace
-				? worldPosition.y - (editorScene_->FindGameObject(particle.ownerGameObjectId) != nullptr
-					? editorScene_->FindGameObject(particle.ownerGameObjectId)->translate.y
-					: 0.0f)
-				: 0.0f;
-			particle.velocity.y = std::abs(particle.velocity.y) * particle.collisionBounce;
-			const float horizontalSpeedRate = 1.0f - particle.collisionFriction;
-			particle.velocity.x *= horizontalSpeedRate;
-			particle.velocity.z *= horizontalSpeedRate;
-		}
-
-		const float size = particle.startSize + (particle.endSize - particle.startSize) * lifetimeRate;
-		particleGameObject->translate = worldPosition;
-		particleGameObject->rotate.y += particle.rotationSpeed * deltaTime;
-		particleGameObject->scale = {size, size, size};
-
-		EditorComponent* rendererComponent = EditorComponentUtility::FindComponent(
-			*particleGameObject,
-			EditorComponentType::ModelRenderer);
-
-		if (rendererComponent != nullptr) {
-			rendererComponent->color = LerpVector3(particle.startColor, particle.endColor, lifetimeRate);
-			rendererComponent->alpha = particle.startAlpha + (particle.endAlpha - particle.startAlpha) * lifetimeRate;
-			rendererComponent->emissionColor = rendererComponent->color;
-			rendererComponent->emissionStrength = particle.emissionStrength;
-		}
-	}
-
-	for (int32_t gameObjectId : expiredGameObjectIds) {
-		editorScene_->DeleteGameObject(gameObjectId);
 	}
 
 	particles_.erase(
@@ -433,7 +381,7 @@ void EditorEffectManager::SpawnParticles(
 	const EmitterSnapshot& emitter,
 	int32_t spawnCount) {
 	const int32_t aliveCount = GetAliveParticleCount(emitter.ownerGameObjectId);
-	const int32_t maximumCount = (std::clamp)(emitter.component.particleMaxCount, 1, 4096);
+	const int32_t maximumCount = (std::max)(emitter.component.particleMaxCount, 1);
 	const int32_t allowedSpawnCount = (std::clamp)(spawnCount, 0, maximumCount - aliveCount);
 
 	for (int32_t particleIndex = 0; particleIndex < allowedSpawnCount; particleIndex++) {
@@ -464,57 +412,11 @@ bool EditorEffectManager::SpawnParticle(const EmitterSnapshot& emitter) {
 			emitter.ownerPosition.x + spawnOffset.x,
 			emitter.ownerPosition.y + spawnOffset.y,
 			emitter.ownerPosition.z + spawnOffset.z};
-	const std::string modelAssetPath = IsModelAssetPath(emitter.component.assetPath)
-		? emitter.component.assetPath
-		: "resources/en.fbx";
-	const std::string particleName =
-		"__EffectParticle_" + std::to_string(emitter.ownerGameObjectId) + "_" + std::to_string(particleSerial_++);
-	const int32_t particleGameObjectId = editorScene_->CreateGameObject(particleName);
-
-	if (!editorScene_->AddComponent(particleGameObjectId, EditorComponentType::MeshFilter) ||
-		!editorScene_->AddComponent(particleGameObjectId, EditorComponentType::ModelRenderer)) {
-		editorScene_->DeleteGameObject(particleGameObjectId);
-		return false;
-	}
-
-	EditorGameObject* particleGameObject = editorScene_->FindGameObject(particleGameObjectId);
-	if (particleGameObject == nullptr) {
-		return false;
-	}
-
-	particleGameObject->translate = useLocalSpace
-		? Vector3{
-			emitter.ownerPosition.x + initialPosition.x,
-			emitter.ownerPosition.y + initialPosition.y,
-			emitter.ownerPosition.z + initialPosition.z}
-		: initialPosition;
-	particleGameObject->scale = {startSize, startSize, startSize};
-	EditorComponent* meshFilter = EditorComponentUtility::FindComponent(
-		*particleGameObject,
-		EditorComponentType::MeshFilter);
-	EditorComponent* modelRenderer = EditorComponentUtility::FindComponent(
-		*particleGameObject,
-		EditorComponentType::ModelRenderer);
-
-	if (meshFilter != nullptr) {
-		meshFilter->assetPath = modelAssetPath;
-	}
-
-	if (modelRenderer != nullptr) {
-		modelRenderer->assetPath = modelAssetPath;
-		modelRenderer->color = emitter.component.color;
-		modelRenderer->emissionColor = emitter.component.color;
-		modelRenderer->emissionStrength = emitter.component.particleEmissionStrength;
-		modelRenderer->alpha = emitter.component.particleStartAlpha;
-		modelRenderer->roughness = 0.65f;
-		modelRenderer->alphaMode = 2;
-		modelRenderer->doubleSided = true;
-	}
 
 	ParticleRuntime particle{};
 	particle.emitterKey = emitter.key;
 	particle.ownerGameObjectId = emitter.ownerGameObjectId;
-	particle.particleGameObjectId = particleGameObjectId;
+	particle.particleGameObjectId = -1;
 	particle.lifetime = (std::max)(emitter.component.particleLifetime * lifetimeRandomScale, 0.01f);
 	particle.startSize = startSize;
 	particle.endSize = (std::max)(emitter.component.particleEndSize, 0.0f);
@@ -543,6 +445,41 @@ bool EditorEffectManager::SpawnParticle(const EmitterSnapshot& emitter) {
 	particle.startColor = emitter.component.color;
 	particle.endColor = emitter.component.particleEndColor;
 	particles_.push_back(particle);
+
+	GpuParticleSpawn gpuSpawn{};
+	gpuSpawn.position = useLocalSpace
+		? Vector3{
+			emitter.ownerPosition.x + initialPosition.x,
+			emitter.ownerPosition.y + initialPosition.y,
+			emitter.ownerPosition.z + initialPosition.z}
+		: initialPosition;
+	gpuSpawn.lifetime = particle.lifetime;
+	gpuSpawn.velocity = particle.velocity;
+	gpuSpawn.startSize = particle.startSize;
+	gpuSpawn.startColor = particle.startColor;
+	gpuSpawn.startAlpha = particle.startAlpha;
+	gpuSpawn.endColor = particle.endColor;
+	gpuSpawn.endAlpha = particle.endAlpha;
+	gpuSpawn.endSize = particle.endSize;
+	gpuSpawn.gravity = particle.gravity;
+	gpuSpawn.drag = particle.drag;
+	gpuSpawn.noiseStrength = particle.noiseStrength;
+	gpuSpawn.noiseFrequency = particle.noiseFrequency;
+	gpuSpawn.motionType = (std::clamp)(emitter.component.particleMotionType, 0, 6);
+	gpuSpawn.motionCenter = {
+		emitter.ownerPosition.x + emitter.component.particleMotionCenter.x,
+		emitter.ownerPosition.y + emitter.component.particleMotionCenter.y,
+		emitter.ownerPosition.z + emitter.component.particleMotionCenter.z};
+	gpuSpawn.angularSpeed = emitter.component.particleAngularSpeed * (kPi / 180.0f);
+	gpuSpawn.radialAcceleration = emitter.component.particleRadialAcceleration;
+	gpuSpawn.waveAmplitude = (std::max)(emitter.component.particleWaveAmplitude, 0.0f);
+	gpuSpawn.waveFrequency = (std::max)(emitter.component.particleWaveFrequency, 0.0f);
+	gpuSpawn.attractorStrength = (std::max)(emitter.component.particleAttractorStrength, 0.0f);
+	gpuSpawn.rotation = RandomRange(0.0f, kPi * 2.0f);
+	gpuSpawn.rotationSpeed = particle.rotationSpeed;
+	gpuSpawn.emissionStrength = particle.emissionStrength;
+	gpuSpawn.renderAssetPath = emitter.component.particleRenderAssetPath;
+	pendingGpuParticleSpawns_.push_back(gpuSpawn);
 	return true;
 }
 
@@ -573,7 +510,7 @@ Vector3 EditorEffectManager::MakeSpawnOffset(const EditorComponent& component) {
 Vector3 EditorEffectManager::MakeSpawnDirection(const EditorComponent& component) {
 	Vector3 direction = NormalizeEffectVector(component.particleDirection);
 
-	if (component.particleShape == 1) {
+	if (component.particleShape == 1 || component.particleMotionType == 6) {
 		direction = NormalizeEffectVector({
 			RandomRange(-1.0f, 1.0f),
 			RandomRange(-1.0f, 1.0f),

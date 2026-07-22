@@ -49,6 +49,7 @@
 #include "EditorRuntimeManager.h"
 #include "EditorDepthHierarchyManager.h"
 #include "EditorGpuCullingManager.h"
+#include "EditorGpuParticleManager.h"
 #include "EditorGBufferManager.h"
 #include "EditorPostProcessQualityManager.h"
 #include "EditorTemporalRenderingManager.h"
@@ -720,6 +721,7 @@ namespace EditorSharedState {
 	inline EditorDepthHierarchyManager g_depthHierarchyManager;
 	inline EditorGBufferManager g_gBufferManager;
 	inline EditorGpuCullingManager g_gpuCullingManager;
+	inline EditorGpuParticleManager g_gpuParticleManager;
 	inline EditorPostProcessQualityManager g_postProcessQualityManager;
 	inline EditorTemporalRenderingManager g_temporalRenderingManager;
 	// IBL uses existing root signature with added descriptor ranges

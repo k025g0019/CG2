@@ -344,6 +344,7 @@ namespace {
 		{"入力・イベント", "入力", EditorComponentType::Input},
 		{"ゲームプレイ", "ローカル移動", EditorComponentType::LocalMove},
 		{"ゲームプレイ", "ローリング移動", EditorComponentType::RollingMove},
+		{"ゲームプレイ", "自由移動/回転", EditorComponentType::FreeTransform},
 		{"ナビゲーション", "NavMesh エージェント", EditorComponentType::NavigationAgent},
 		{"ナビゲーション", "NavMesh 障害物", EditorComponentType::NavMeshObstacle},
 		{"ナビゲーション", "NavMesh サーフェス", EditorComponentType::NavMeshSurface},
@@ -2328,6 +2329,29 @@ namespace {
 		DrawTextRow("条件", "Dynamic の Rigidbody と十分な摩擦が必要です。SphereCollider の半径を見た目とそろえると自然に転がります。");
 	}
 
+	void DrawFreeTransformComponent(EditorComponent& component) {
+		DrawTextRow("説明", "velocity 方向へ力無関係に移動・回転します。軸ごとに有効/無効を指定できます。");
+		DrawVector3Row("移動入力", component.velocity, 0.01f, 0.0f, 0.0f);
+		DrawFloatRow("移動速度", component.freeMoveSpeed, 0.1f, 0.0f, 100.0f);
+		DrawVector3Row("回転入力(deg/s)", component.freeRotationInput, 1.0f, 0.0f, 0.0f);
+		DrawFloatRow("回転速度", component.freeRotateSpeed, 1.0f, 0.0f, 360.0f);
+		bool moveX = (component.freeMoveAxes & 1) != 0;
+		bool moveY = (component.freeMoveAxes & 2) != 0;
+		bool moveZ = (component.freeMoveAxes & 4) != 0;
+		DrawCheckboxRow("移動 X", moveX);
+		DrawCheckboxRow("移動 Y", moveY);
+		DrawCheckboxRow("移動 Z", moveZ);
+		component.freeMoveAxes = (moveX ? 1 : 0) | (moveY ? 2 : 0) | (moveZ ? 4 : 0);
+		bool rotX = (component.freeRotateAxes & 1) != 0;
+		bool rotY = (component.freeRotateAxes & 2) != 0;
+		bool rotZ = (component.freeRotateAxes & 4) != 0;
+		DrawCheckboxRow("回転 X", rotX);
+		DrawCheckboxRow("回転 Y", rotY);
+		DrawCheckboxRow("回転 Z", rotZ);
+		component.freeRotateAxes = (rotX ? 1 : 0) | (rotY ? 2 : 0) | (rotZ ? 4 : 0);
+		DrawCheckboxRow("ローカル空間", component.freeUseLocalSpace);
+	}
+
 	void DrawAimConstraintComponent(EditorComponent& component) {
 		DrawTextRow("説明", "指定対象へ向きを合わせる Constraint です。");
 		DrawIntRow("ターゲット ID", component.connectedGameObjectId);
@@ -2660,16 +2684,22 @@ namespace {
 		EditorComponent& component,
 		const char* description) {
 		DrawTextRow("説明", description);
-		DrawStringInputRow("Effect Asset / Model", component.assetPath);
+		DrawStringInputRow("Effect Asset", component.assetPath);
 
 		if (!context.selectedAssetPath.empty() &&
-			EditorAssetUtility::HasExtension(context.selectedAssetPath, ".effect") &&
+			(EditorAssetUtility::HasExtension(context.selectedAssetPath, ".effect") ||
+			 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".efk") ||
+			 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".efkefc")) &&
 			ImGui::Button("選択中 Effect Asset を設定", ImVec2(-1.0f, 0.0f))) {
 			component.assetPath = context.selectedAssetPath;
 		}
 
 		if (EditorAssetUtility::HasExtension(component.assetPath, ".effect")) {
 			DrawTextRow("共有設定", "Play 時は .effect 内の値を読み込み、下の個別値より優先します。");
+		}
+		else if (EditorAssetUtility::HasExtension(component.assetPath, ".efk") ||
+			EditorAssetUtility::HasExtension(component.assetPath, ".efkefc")) {
+			DrawTextRow("実行方式", "Effekseer 1.70e の公式 DX12 Runtime で再生します。");
 		}
 
 		if (ImGui::CollapsingHeader("メイン", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -2704,6 +2734,20 @@ namespace {
 		}
 
 		if (ImGui::CollapsingHeader("移動", ImGuiTreeNodeFlags_DefaultOpen)) {
+			const char* motionItems[] = {
+				"直線",
+				"軌道",
+				"渦",
+				"波",
+				"吸引",
+				"雲",
+				"爆発"
+			};
+			DrawComboRow(
+				"運動方式",
+				component.particleMotionType,
+				motionItems,
+				static_cast<int32_t>(_countof(motionItems)));
 			DrawFloatRow("初速度", component.particleSpeed, 0.1f, 0.0f, 1000.0f);
 			DrawFloatRow("速度のばらつき", component.particleSpeedRandomness, 0.01f, 0.0f, 1.0f);
 			DrawFloatRow("重力", component.particleGravity, 0.1f, -100.0f, 100.0f);
@@ -2712,6 +2756,28 @@ namespace {
 			DrawFloatRow("回転速度", component.particleRotationSpeed, 1.0f, -3600.0f, 3600.0f);
 			DrawFloatRow("乱流の強さ", component.particleNoiseStrength, 0.01f, 0.0f, 1000.0f);
 			DrawFloatRow("乱流の周波数", component.particleNoiseFrequency, 0.01f, 0.0f, 100.0f);
+
+			if (component.particleMotionType == 1 ||
+				component.particleMotionType == 2 ||
+				component.particleMotionType == 4 ||
+				component.particleMotionType == 5) {
+				DrawVector3Row("運動中心", component.particleMotionCenter, 0.01f, -10000.0f, 10000.0f);
+			}
+
+			if (component.particleMotionType == 1 || component.particleMotionType == 2) {
+				DrawFloatRow("角速度", component.particleAngularSpeed, 1.0f, -3600.0f, 3600.0f);
+				DrawFloatRow("半径方向加速度", component.particleRadialAcceleration, 0.1f, -1000.0f, 1000.0f);
+			}
+
+			if (component.particleMotionType == 3 || component.particleMotionType == 5) {
+				DrawFloatRow("波の振幅", component.particleWaveAmplitude, 0.1f, 0.0f, 1000.0f);
+				DrawFloatRow("波の周波数", component.particleWaveFrequency, 0.01f, 0.0f, 100.0f);
+			}
+
+			if (component.particleMotionType == 4) {
+				DrawFloatRow("吸引力", component.particleAttractorStrength, 0.1f, 0.0f, 1000.0f);
+			}
+
 			DrawCheckboxRow("地面衝突", component.particleCollision);
 
 			if (component.particleCollision) {
@@ -2732,26 +2798,34 @@ namespace {
 		}
 
 		if (ImGui::CollapsingHeader("描画モデル")) {
+			DrawStringInputRow("FBX / OBJ", component.particleRenderAssetPath);
+
 			if (!context.selectedAssetPath.empty() &&
 				(EditorAssetUtility::HasExtension(context.selectedAssetPath, ".fbx") ||
 				 EditorAssetUtility::HasExtension(context.selectedAssetPath, ".obj")) &&
 				ImGui::Button("選択中モデルを Particle に設定", ImVec2(-1.0f, 0.0f))) {
-				component.assetPath = context.selectedAssetPath;
+				component.particleRenderAssetPath = context.selectedAssetPath;
 			}
+
+			DrawTextRow(
+				"動作",
+				component.particleRenderAssetPath.empty()
+					? "未設定時はカメラ向きの板ポリゴンを GPU インスタンシングします。"
+					: "指定モデルを Particle 1 個の形として GPU インスタンシングします。");
 		}
 
 		if (context.runtimeManager.IsPlaying()) {
 			if (ImGui::Button("エフェクトを再生", ImVec2(-1.0f, 0.0f))) {
-				context.runtimeManager.GetEffectManager().PlayEffect(gameObject.id);
+				context.runtimeManager.PlayEffect(gameObject.id);
 			}
 
 			if (ImGui::Button("新規発生を停止", ImVec2(-1.0f, 0.0f))) {
-				context.runtimeManager.GetEffectManager().StopEffect(gameObject.id);
+				context.runtimeManager.StopEffect(gameObject.id);
 			}
 
 			DrawTextRow(
 				"現在の生存数",
-				std::to_string(context.runtimeManager.GetEffectManager().GetAliveParticleCount(gameObject.id)).c_str());
+				std::to_string(context.runtimeManager.GetAliveEffectCount(gameObject.id)).c_str());
 		}
 	}
 
@@ -3529,6 +3603,9 @@ namespace {
 			break;
 		case EditorComponentType::RollingMove:
 			DrawRollingMoveComponent(component);
+			break;
+		case EditorComponentType::FreeTransform:
+			DrawFreeTransformComponent(component);
 			break;
 		case EditorComponentType::PlayableDirector:
 			DrawPlayableDirectorComponent(component);

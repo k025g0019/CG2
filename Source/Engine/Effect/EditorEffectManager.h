@@ -14,6 +14,33 @@
 
 class EditorEffectManager {
 public:
+	struct GpuParticleSpawn {
+		Vector3 position{0.0f, 0.0f, 0.0f};  // GPU Particle の発生位置。
+		float lifetime = 1.0f;  // Particle が消えるまでの秒数。
+		Vector3 velocity{0.0f, 0.0f, 0.0f};  // GPU Compute Shader が積分する初速度。
+		float startSize = 1.0f;  // 発生時サイズ。
+		Vector3 startColor{1.0f, 1.0f, 1.0f};  // 発生時色。
+		float startAlpha = 1.0f;  // 発生時不透明度。
+		Vector3 endColor{1.0f, 1.0f, 1.0f};  // 寿命終了時色。
+		float endAlpha = 0.0f;  // 寿命終了時不透明度。
+		float endSize = 0.0f;  // 寿命終了時サイズ。
+		float gravity = 0.0f;  // Y マイナス方向の加速度。
+		float drag = 0.0f;  // 速度減衰。
+		float noiseStrength = 0.0f;  // GPU 側で足す簡易乱流の強さ。
+		float noiseFrequency = 1.0f;  // 乱流の時間周波数。
+		int32_t motionType = 0;  // 0=直線、1=軌道、2=渦、3=波、4=吸引、5=雲、6=爆発。
+		Vector3 motionCenter{0.0f, 0.0f, 0.0f};  // 軌道・渦・吸引運動のワールド中心。
+		float angularSpeed = 0.0f;  // 軌道・渦運動の角速度（ラジアン/秒）。
+		float radialAcceleration = 0.0f;  // 中心から外向きへ加える加速度。
+		float waveAmplitude = 0.0f;  // 波運動の加速度振幅。
+		float waveFrequency = 1.0f;  // 波・雲運動の時間周波数。
+		float attractorStrength = 0.0f;  // 中心へ引く加速度。
+		float rotation = 0.0f;  // 描画モデルの現在回転角（ラジアン）。
+		float rotationSpeed = 0.0f;  // 描画モデルの回転速度（ラジアン/秒）。
+		float emissionStrength = 0.0f;  // HDR色へ加える放射強度。
+		std::string renderAssetPath;  // 空なら板、FBX / OBJ ならその Mesh を GPU インスタンシングする。
+	};
+
 	void Initialize(EditorScene* editorScene, std::vector<std::string>* consoleMessages);  // Effect の生成先 Scene とログ出力先を受け取る。
 	void Start();  // 自動再生 Emitter を初期化する。
 	void Update(float deltaTime);  // Emitter の発生判定と Particle の移動・消滅を処理する。
@@ -28,6 +55,9 @@ public:
 	void StopEffect(int32_t gameObjectId);  // 指定 Emitter の発生を止め、既存 Particle は寿命まで残す。
 	bool IsEffectPlaying(int32_t gameObjectId) const;  // Emitter が発生中、または所有 Particle が生存中なら true を返す。
 	int32_t GetAliveParticleCount(int32_t gameObjectId) const;  // Inspector / C++ Script 用に生存数を返す。
+	const std::vector<GpuParticleSpawn>& GetPendingGpuParticleSpawns() const;  // Renderer がこのフレームに GPU へ積む発生要求。
+	void ClearPendingGpuParticleSpawns();  // Renderer が GPU へ転送した Spawn 要求を消す。
+	float GetLastDeltaTime() const;  // Render 側 Compute Shader に渡す直近 Update 秒。
 
 private:
 	struct EmitterRuntime {
@@ -77,8 +107,10 @@ private:
 	std::unordered_map<uint64_t, EmitterRuntime> emitterRuntimes_;  // Emitter ごとの再生状態。
 	std::unordered_map<std::string, EffectAsset> effectAssetCache_;  // Play 中に読み込んだ共有 .effect を再利用する。
 	std::vector<ParticleRuntime> particles_;  // 現在生存している Particle。
+	std::vector<GpuParticleSpawn> pendingGpuParticleSpawns_;  // GPU StructuredBuffer へ追加する新規 Particle。
 	std::mt19937 randomEngine_{0x434732u};  // Play ごとに再現可能な乱数系列。
 	uint32_t particleSerial_ = 0u;  // 一時 GameObject 名を重複させない連番。
+	float lastDeltaTime_ = 0.0f;  // Render 側で GPU Particle を同じ秒数だけ進めるための値。
 	bool isStarted_ = false;  // Play 中だけ Update を有効にする。
 
 	static uint64_t MakeEmitterKey(int32_t gameObjectId, EditorComponentType componentType);  // GameObject と Component 種類を 1 つのキーへまとめる。

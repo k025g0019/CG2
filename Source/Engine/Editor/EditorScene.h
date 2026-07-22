@@ -342,6 +342,8 @@ enum class EditorComponentType {
 	PostProcess,
 	// 環境光 / HDRI 設定
 	Environment,
+	// 自由移動/回転（力無関係、軸指定可）
+	FreeTransform,
 	// Component 種類数。範囲チェックに使う
 	Count,
 };
@@ -546,6 +548,14 @@ struct EditorComponent {
 	float particleCollisionBounce;  // Ground 衝突時に残す Y 速度の割合
 	float particleCollisionFriction;  // Ground 衝突時に減らす水平速度の割合
 	bool particlePrewarm;  // Loop Effect を開始時から進行済みの見た目にする
+	int32_t particleMotionType;  // 0=直線、1=軌道、2=渦、3=波、4=吸引、5=雲、6=爆発
+	Vector3 particleMotionCenter;  // 軌道・渦・吸引運動の中心を Emitter からの相対位置で指定する
+	float particleAngularSpeed;  // 軌道・渦運動の角速度（度/秒）
+	float particleRadialAcceleration;  // 中心から外向きへ加える加速度。負なら中心へ寄る
+	float particleWaveAmplitude;  // 波運動で上下へ揺らす加速度の大きさ
+	float particleWaveFrequency;  // 波運動と雲のうねりが 1 秒間に変化する回数
+	float particleAttractorStrength;  // 吸引運動で中心へ加える加速度
+	std::string particleRenderAssetPath;  // Particle 1 個の描画形状に使う FBX / OBJ。空なら板ポリゴン
 	// PostProcess 設定
 	float bloomIntensity;  // Bloom の強さ。0 で Bloom OFF
 	float bloomThreshold;  // Bloom 輝度しきい値
@@ -626,6 +636,13 @@ struct EditorComponent {
 	std::string sliderOnValueChangedFunction;  // Slider 変更時に C++ Script へ通知する関数名。
 	std::vector<EditorScriptProperty> scriptProperties;  // DLL が公開した変数と GameObject ごとの保存値。
 	std::vector<EditorInputEventBinding> inputEventBindings;  // Input Action と C++ 関数名の接続一覧。
+	// FreeTransform 設定
+	float freeMoveSpeed;
+	float freeRotateSpeed;
+	int32_t freeMoveAxes;  // bit 0=X, 1=Y, 2=Z
+	int32_t freeRotateAxes;  // bit 0=X, 1=Y, 2=Z
+	bool freeUseLocalSpace;
+	Vector3 freeRotationInput;  // deg/sec per axis
 	};
 
 struct EditorGameObject {

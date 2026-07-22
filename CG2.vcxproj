@@ -44,13 +44,13 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\include;$(IncludePath)</IncludePath>
-    <LibraryPath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release;C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\Effekseer;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\EffekseerRendererDX12;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\EffekseerRendererCommon;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\EffekseerRendererLLGI;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\3rdParty\LLGI\src;C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\Effekseer\Debug;$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\EffekseerRendererDX12\Debug;$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\3rdParty\LLGI\src\Debug;C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release;C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\include;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\Effekseer;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\EffekseerRendererDX12;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\EffekseerRendererCommon;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\EffekseerRendererLLGI;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\3rdParty\LLGI\src;C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\include;$(IncludePath)</IncludePath>
     <ExternalIncludePath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;$(ExternalIncludePath)</ExternalIncludePath>
-    <LibraryPath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release;C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib;$(LibraryPath)</LibraryPath>
+    <LibraryPath>$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\Effekseer\Release;$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\EffekseerRendererDX12\Release;$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\3rdParty\LLGI\src\Release;C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release;C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
@@ -72,7 +72,7 @@
       <EntryPointSymbol>WinMainCRTStartup</EntryPointSymbol>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <TreatLinkerWarningAsErrors>true</TreatLinkerWarningAsErrors>
-      <AdditionalDependencies>libfbxsdk.lib;onnxruntime.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>EffekseerRendererDX12.lib;Effekseer.lib;LLGI.lib;libfbxsdk.lib;onnxruntime.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <EnableDpiAwareness>PerMonitorHighDPIAware</EnableDpiAwareness>
@@ -108,7 +108,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
       <SubSystem>Windows</SubSystem>
       <EntryPointSymbol>WinMainCRTStartup</EntryPointSymbol>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>libfbxsdk.lib;onnxruntime.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>EffekseerRendererDX12.lib;Effekseer.lib;LLGI.lib;libfbxsdk.lib;onnxruntime.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <EnableDpiAwareness>PerMonitorHighDPIAware</EnableDpiAwareness>
@@ -128,6 +128,14 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
   <ItemGroup>
     <None Include=".editorconfig" />
     <None Include="Assets\Input\InGameInputAction.json" />
+	<None Include="Assets\Shaders\Particle\ParticleClear.CS.hlsl" />
+	<None Include="Assets\Shaders\Particle\ParticleCommon.hlsli" />
+	<None Include="Assets\Shaders\Particle\ParticleUpdate.CS.hlsl" />
+	<None Include="Assets\Shaders\Particle\ParticleSpawn.CS.hlsl" />
+	<None Include="Assets\Shaders\Particle\Particle.VS.hlsl" />
+	<None Include="Assets\Shaders\Particle\Particle.PS.hlsl" />
+	<None Include="Assets\Shaders\Particle\ParticleModel.VS.hlsl" />
+	<None Include="Assets\Shaders\Particle\ParticleModel.PS.hlsl" />
 	<None Include="Assets\Shaders\Object3d.PS.hlsl">
 	  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	</None>
@@ -181,6 +189,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
 	<ClCompile Include="Source\Engine\Editor\EditorAnimationWindowManager.cpp" />
 	<ClCompile Include="Source\Engine\Effect\EffectAsset.cpp" />
 	<ClCompile Include="Source\Engine\Effect\EditorEffectManager.cpp" />
+	<ClCompile Include="Source\Engine\Effect\EditorEffekseerManager.cpp" />
     <ClCompile Include="Source\Engine\Core\ApplicationWindow.cpp" />
     <ClCompile Include="Source\Engine\Physics\BoxCollision.cpp" />
     <ClCompile Include="Source\Engine\Core\CrashHandler.cpp" />
@@ -401,6 +410,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
 	<ClCompile Include="Source\Engine\Renderer\EditorDepthHierarchyManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorGBufferManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorGpuCullingManager.cpp" />
+	<ClCompile Include="Source\Engine\Renderer\EditorGpuParticleManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorPostProcessQualityManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorTemporalRenderingManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorPlanarReflectionManager.cpp" />
@@ -410,6 +420,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
     </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorRuntimeManager.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorAudioManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorFreeTransformManager.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorScene.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorSceneCameraController.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorSceneLifecycleManager.cpp" />
@@ -514,6 +525,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
 	<ClInclude Include="Source\Engine\Editor\EditorAnimationWindowManager.h" />
 	<ClInclude Include="Source\Engine\Effect\EffectAsset.h" />
 	<ClInclude Include="Source\Engine\Effect\EditorEffectManager.h" />
+	<ClInclude Include="Source\Engine\Effect\EditorEffekseerManager.h" />
     <ClInclude Include="Source\Engine\Core\ApplicationWindow.h" />
     <ClInclude Include="Source\Engine\Physics\BoxCollision.h" />
     <ClInclude Include="Source\Engine\Core\CrashHandler.h" />
@@ -536,6 +548,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
     <ClInclude Include="Source\Engine\Editor\EditorInputManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorJoltPhysicsManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorLocalMoveManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorFreeTransformManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorMainMenuBar.h" />
     <ClInclude Include="Source\Engine\Editor\EditorMainMenuManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorMeshCollision.h" />
@@ -546,6 +559,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
 	<ClInclude Include="Source\Engine\Renderer\EditorDepthHierarchyManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorGBufferManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorGpuCullingManager.h" />
+	<ClInclude Include="Source\Engine\Renderer\EditorGpuParticleManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorPostProcessQualityManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorTemporalRenderingManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorPlanarReflectionManager.h" />

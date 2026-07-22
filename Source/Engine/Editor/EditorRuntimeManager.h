@@ -3,8 +3,10 @@
 #include "EditorAnimationManager.h"
 #include "EditorAIManager.h"
 #include "EditorAudioManager.h"
+#include "EditorFreeTransformManager.h"
 #include "EditorConstraintManager.h"
 #include "Source/Engine/Effect/EditorEffectManager.h"
+#include "Source/Engine/Effect/EditorEffekseerManager.h"
 #include "EditorInputManager.h"
 #include "EditorLocalMoveManager.h"
 #include "EditorNavigationManager.h"
@@ -40,6 +42,11 @@ public:
 	const EditorAnimationManager& GetAnimationManager() const;  // 読み取り専用版
 	EditorEffectManager& GetEffectManager();  // Inspector / Script から Effect の実行状態を操作するために返す
 	const EditorEffectManager& GetEffectManager() const;  // 読み取り専用版
+	EditorEffekseerManager& GetEffekseerManager();  // Platform / Renderer から公式 Effekseer Runtime を操作する。
+	const EditorEffekseerManager& GetEffekseerManager() const;  // 読み取り専用版。
+	bool PlayEffect(int32_t gameObjectId);  // .effect と .efk を拡張子に応じて再生する。
+	void StopEffect(int32_t gameObjectId);  // 内蔵 GPU Particle と Effekseer の両方を停止する。
+	int32_t GetAliveEffectCount(int32_t gameObjectId) const;  // 両実行系の生存数を合算する。
 
 private:
 	EditorScene* editorScene_ = nullptr;  // Play 実行対象の Scene
@@ -48,8 +55,10 @@ private:
 	EditorAnimationManager animationManager_;  // Animation Component の実行担当
 	EditorAIManager aiManager_;  // AI Component の実行担当
 	EditorAudioManager audioManager_;  // AudioSource Component の実行担当
+	EditorFreeTransformManager freeTransformManager_;  // FreeTransform Component の実行担当
 	EditorConstraintManager constraintManager_;  // Constraint 系 Component の実行担当
 	EditorEffectManager effectManager_;  // ParticleSystem / VisualEffect と Animation Event の実行担当
+	EditorEffekseerManager effekseerManager_;  // .efk / .efkefc の公式 DX12 Runtime 実行担当
 	EditorScriptManager scriptManager_;  // Script / MonoBehaviour Component の実行入口
 	EditorInputManager inputManager_;  // Input Component の実行担当
 	EditorLocalMoveManager localMoveManager_;  // ローカル移動 Component の実行担当

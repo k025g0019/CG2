@@ -1150,6 +1150,27 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	ComPtr<IDxcBlob> buildIndirectArgsComputeShaderBlob = CompileShader(
 		L"Assets/Shaders/Culling/BuildIndirectArgs.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
+	ComPtr<IDxcBlob> particleClearComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Particle/ParticleClear.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> particleUpdateComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Particle/ParticleUpdate.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> particleSpawnComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Particle/ParticleSpawn.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> particleVertexShaderBlob = CompileShader(
+		L"Assets/Shaders/Particle/Particle.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> particlePixelShaderBlob = CompileShader(
+		L"Assets/Shaders/Particle/Particle.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> particleModelVertexShaderBlob = CompileShader(
+		L"Assets/Shaders/Particle/ParticleModel.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> particleModelPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/Particle/ParticleModel.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
 
 	if (vertexShaderBlob == nullptr ||
 		pixelShaderBlob == nullptr ||
@@ -1195,7 +1216,14 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		copyDepthComputeShaderBlob == nullptr ||
 		frustumCullingComputeShaderBlob == nullptr ||
 		occlusionCullingComputeShaderBlob == nullptr ||
-		buildIndirectArgsComputeShaderBlob == nullptr) {
+		buildIndirectArgsComputeShaderBlob == nullptr ||
+		particleClearComputeShaderBlob == nullptr ||
+		particleUpdateComputeShaderBlob == nullptr ||
+		particleSpawnComputeShaderBlob == nullptr ||
+		particleVertexShaderBlob == nullptr ||
+		particlePixelShaderBlob == nullptr ||
+		particleModelVertexShaderBlob == nullptr ||
+		particleModelPixelShaderBlob == nullptr) {
 		RequestInitializationFailure();  // �K�{�V�F�[�_�[�� 1 �ł��������� PSO �쐬�֐i�߂Ȃ��B
 		return;
 	}
@@ -2069,6 +2097,37 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	if (!isGpuCullingInitialized) {
 		Log(logStream, "GPU culling initialization failed");
+		RequestInitializationFailure();
+		return;
+	}
+
+	const bool isGpuParticleInitialized = g_gpuParticleManager.Initialize(
+		device.Get(),
+		particleClearComputeShaderBlob.Get(),
+		particleUpdateComputeShaderBlob.Get(),
+		particleSpawnComputeShaderBlob.Get(),
+		particleVertexShaderBlob.Get(),
+		particlePixelShaderBlob.Get(),
+		particleModelVertexShaderBlob.Get(),
+		particleModelPixelShaderBlob.Get(),
+		DXGI_FORMAT_R16G16B16A16_FLOAT,
+		DXGI_FORMAT_D24_UNORM_S8_UINT);
+
+	if (!isGpuParticleInitialized) {
+		Log(logStream, "GPU particle initialization failed");
+		RequestInitializationFailure();
+		return;
+	}
+
+	const bool isEffekseerInitialized = g_editorRuntimeManager.GetEffekseerManager().InitializeGraphics(
+		device.Get(),
+		commandQueue.Get(),
+		kRuntimeSwapChainBufferCount,
+		DXGI_FORMAT_R16G16B16A16_FLOAT,
+		DXGI_FORMAT_D24_UNORM_S8_UINT);
+
+	if (!isEffekseerInitialized) {
+		Log(logStream, "Effekseer DX12 initialization failed");
 		RequestInitializationFailure();
 		return;
 	}
@@ -3186,7 +3245,9 @@ int EditorPlatformManager::Finalize() {
 	}
 	modelVertexResource->Release();
 	vertexResource->Release();
+	g_editorRuntimeManager.GetEffekseerManager().FinalizeGraphics();
 	g_gpuCullingManager.Finalize();
+	g_gpuParticleManager.Finalize();
 	g_postProcessQualityManager.Finalize();
 	g_temporalRenderingManager.Finalize();
 	g_depthHierarchyManager.Finalize();

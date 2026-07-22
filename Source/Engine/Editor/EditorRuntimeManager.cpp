@@ -4,11 +4,13 @@ void EditorRuntimeManager::Initialize(EditorScene* editorScene, std::vector<std:
 	editorScene_ = editorScene;  // Play / Stop のたびに操作する Scene
 	consoleMessages_ = consoleMessages;  // Runtime 内のイベントログ出力先
 	effectManager_.Initialize(editorScene_, consoleMessages_);
+	effekseerManager_.InitializeScene(editorScene_, consoleMessages_);
 	aiManager_.Initialize(editorScene_, &physicsManager_, consoleMessages_);
 	scriptManager_.Initialize(editorScene_, &inputManager_, &animationManager_, &effectManager_, &aiManager_, &physicsManager_, consoleMessages_);
 	inputManager_.Initialize(editorScene_, consoleMessages_);
 	animationManager_.Initialize(editorScene_, &effectManager_, &scriptManager_, consoleMessages_);
 	audioManager_.Initialize(editorScene_);
+	freeTransformManager_.Initialize(editorScene_);
 	constraintManager_.Initialize(editorScene_);
 	physicsManager_.Initialize(editorScene_, consoleMessages_);
 	localMoveManager_.Initialize(editorScene_, &physicsManager_);
@@ -54,7 +56,9 @@ void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 	animationManager_.Update(deltaTime);
 	constraintManager_.Update(deltaTime);
 	effectManager_.Update(deltaTime);
+	effekseerManager_.Update(deltaTime);
 	audioManager_.Update(deltaTime);
+	freeTransformManager_.Update(deltaTime, keyState);
 }
 #pragma warning(pop)
 
@@ -82,6 +86,7 @@ void EditorRuntimeManager::TogglePlay() {
 		// Stop 時は Play 開始前の Scene に戻す
 		physicsManager_.StopSimulation();
 		effectManager_.Stop();
+		effekseerManager_.Stop();
 		animationManager_.Stop();
 		audioManager_.Stop();
 		scriptManager_.Stop();
@@ -104,6 +109,7 @@ void EditorRuntimeManager::TogglePlay() {
 	scriptManager_.Initialize(editorScene_, &inputManager_, &animationManager_, &effectManager_, &aiManager_, &physicsManager_, consoleMessages_);
 	physicsManager_.StartSimulation();
 	effectManager_.Start();
+	effekseerManager_.Start();
 	animationManager_.Start();
 	localMoveManager_.Start();
 	rollingMoveManager_.Start();
@@ -139,4 +145,28 @@ EditorEffectManager& EditorRuntimeManager::GetEffectManager() {
 
 const EditorEffectManager& EditorRuntimeManager::GetEffectManager() const {
 	return effectManager_;
+}
+
+EditorEffekseerManager& EditorRuntimeManager::GetEffekseerManager() {
+	return effekseerManager_;
+}
+
+const EditorEffekseerManager& EditorRuntimeManager::GetEffekseerManager() const {
+	return effekseerManager_;
+}
+
+bool EditorRuntimeManager::PlayEffect(int32_t gameObjectId) {
+	const bool hasBuiltInEffect = effectManager_.PlayEffect(gameObjectId);
+	const bool hasEffekseerEffect = effekseerManager_.PlayEffect(gameObjectId);
+	return hasBuiltInEffect || hasEffekseerEffect;
+}
+
+void EditorRuntimeManager::StopEffect(int32_t gameObjectId) {
+	effectManager_.StopEffect(gameObjectId);
+	effekseerManager_.StopEffect(gameObjectId);
+}
+
+int32_t EditorRuntimeManager::GetAliveEffectCount(int32_t gameObjectId) const {
+	return effectManager_.GetAliveParticleCount(gameObjectId) +
+		effekseerManager_.GetAliveEffectCount(gameObjectId);
 }

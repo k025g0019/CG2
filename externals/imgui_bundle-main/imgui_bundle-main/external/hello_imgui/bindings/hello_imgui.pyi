@@ -1,1 +1,0 @@
-../../../bindings/imgui_bundle/hello_imgui.pyi

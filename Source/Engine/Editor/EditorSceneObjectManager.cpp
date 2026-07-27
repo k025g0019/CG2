@@ -293,7 +293,16 @@ bool EditorSceneObjectManager::LoadTextureResource(
 	ID3D12Resource*& uploadResource,
 	D3D12_GPU_DESCRIPTOR_HANDLE& srvGpuHandle,
 	int32_t& descriptorIndex) {
-	if (device_ == nullptr || textureAssetPath.empty() || !std::filesystem::exists(textureAssetPath)) {
+	using namespace EditorSharedState;
+
+	if (device_ == nullptr ||
+		textureAssetPath.empty() ||
+		!std::filesystem::exists(textureAssetPath) ||
+		g_commandAllocator == nullptr ||
+		g_commandList == nullptr ||
+		g_commandQueue == nullptr ||
+		g_fence == nullptr ||
+		g_fenceEvent == nullptr) {
 		return false;
 	}
 

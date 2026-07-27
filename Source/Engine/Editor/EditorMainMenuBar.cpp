@@ -429,22 +429,22 @@ void EditorMainMenuBar::Draw(
 
 		if (ImGui::BeginMenu("3D Object")) {
 			if (ImGui::MenuItem("Cube")) {
-				CreatePrimitiveGameObject("resources/UVCube.fbx");
+				CreatePrimitiveGameObject("resources/editorDefault/UVCube.fbx");
 			}
 			if (ImGui::MenuItem("Box")) {
-				CreatePrimitiveGameObject("resources/box.fbx");
+				CreatePrimitiveGameObject("resources/editorDefault/box.fbx");
 			}
 			if (ImGui::MenuItem("Cylinder")) {
 				CreatePrimitiveGameObject("resources/cylinder.fbx");
 			}
 			if (ImGui::MenuItem("Cone")) {
-				CreatePrimitiveGameObject("resources/cone.fbx");
+				CreatePrimitiveGameObject("resources/editorDefault/cone.fbx");
 			}
 			if (ImGui::MenuItem("Torus")) {
 				CreatePrimitiveGameObject("resources/Torus.fbx");
 			}
 			if (ImGui::MenuItem("Ico")) {
-				CreatePrimitiveGameObject("resources/ICOCube.fbx");
+				CreatePrimitiveGameObject("resources/editorDefault/ICOCube.fbx");
 			}
 			if (ImGui::MenuItem("Sphere")) {
 				CreatePrimitiveGameObject("resources/sphere.fbx");

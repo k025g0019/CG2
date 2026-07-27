@@ -136,6 +136,11 @@ namespace EditorSharedState {
 	}
 
 	inline DirectX::ScratchImage LoadTexture(const std::wstring& filePath) {
+		DirectX::ScratchImage emptyImage{};
+		if (filePath.empty() || !std::filesystem::exists(filePath)) {
+			return emptyImage;
+		}
+
 		// metadata �͓ǂݍ��񂾉摜�̕��E�����E�`�����󂯎��B
 		DirectX::TexMetadata metadata{};
 
@@ -160,7 +165,9 @@ namespace EditorSharedState {
 			hr = DirectX::LoadFromWICFile(filePath.c_str(), DirectX::WIC_FLAGS_FORCE_SRGB, &metadata, image);
 			useSrgbMipFilter = true;
 		}
-		assert(SUCCEEDED(hr));
+		if (FAILED(hr) || image.GetImageCount() == 0u || image.GetImages() == nullptr) {
+			return emptyImage;
+		}
 
 		// mipImages �� GPU �T���v�����O�p�� mipmap ��ǉ������摜�f�[�^�B
 		DirectX::ScratchImage mipImages{};
@@ -175,12 +182,23 @@ namespace EditorSharedState {
 			mipFilter,
 			0,
 			mipImages);
-		assert(SUCCEEDED(hr));
+		if (FAILED(hr)) {
+			return image;
+		}
 
 		return mipImages;
 	}
 
 	inline ID3D12Resource* CreateTextureResource(ID3D12Device* device, const DirectX::TexMetadata& metadata) {
+		if (device == nullptr ||
+			metadata.width == 0u ||
+			metadata.height == 0u ||
+			metadata.mipLevels == 0u ||
+			metadata.arraySize == 0u ||
+			metadata.format == DXGI_FORMAT_UNKNOWN) {
+			return nullptr;
+		}
+
 		// resourceDesc �� metadata �ɍ��킹�� 2D Texture Resource �̐ݒ�B
 		D3D12_RESOURCE_DESC resourceDesc{};
 		resourceDesc.Width = static_cast<UINT>(metadata.width);
@@ -205,7 +223,9 @@ namespace EditorSharedState {
 			D3D12_RESOURCE_STATE_COPY_DEST,
 			nullptr,
 			IID_PPV_ARGS(&resource));
-		assert(SUCCEEDED(hr));
+		if (FAILED(hr)) {
+			return nullptr;
+		}
 
 		return resource;
 	}
@@ -215,6 +235,14 @@ namespace EditorSharedState {
 		ID3D12GraphicsCommandList* commandList,
 		ID3D12Resource* texture,
 		const DirectX::ScratchImage& mipImages) {
+		if (device == nullptr ||
+			commandList == nullptr ||
+			texture == nullptr ||
+			mipImages.GetImageCount() == 0u ||
+			mipImages.GetImages() == nullptr) {
+			return nullptr;
+		}
+
 		std::vector<D3D12_SUBRESOURCE_DATA> subresources; // subresources �� mipmap �e�i�� UpdateSubresources �ɓn�����߂̔z��B
 		subresources.reserve(mipImages.GetImageCount());
 
@@ -232,9 +260,12 @@ namespace EditorSharedState {
 		// intermediateSize �͑S mip �� GPU Texture �փR�s�[���邽�߂ɕK�v�� UploadBuffer �T�C�Y�B
 		ID3D12Resource* intermediateResource = CreateBufferResource(device, intermediateSize);
 		// intermediateResource �� texture �փR�s�[���邽�߂̈ꎞ UploadBuffer�B
+		if (intermediateResource == nullptr) {
+			return nullptr;
+		}
 
 		// UpdateSubresources �� UploadBuffer ���� Default Heap Texture �փR�s�[���߂�ςށB
-		UpdateSubresources(
+		const UINT64 uploadedSize = UpdateSubresources(
 			commandList,
 			texture,
 			intermediateResource,
@@ -242,6 +273,10 @@ namespace EditorSharedState {
 			0,
 			static_cast<UINT>(subresources.size()),
 			subresources.data());
+		if (uploadedSize == 0u) {
+			intermediateResource->Release();
+			return nullptr;
+		}
 
 		// barrier �� Texture ���R�s�[���Ԃ��� Shader �ǂݎ���Ԃ֕ς��閽�߁B
 		D3D12_RESOURCE_BARRIER barrier{};
@@ -256,6 +291,10 @@ namespace EditorSharedState {
 	}
 
 	inline ID3D12Resource* CreateBufferResource(ID3D12Device* device, size_t sizeInBytes) {
+		if (device == nullptr || sizeInBytes == 0u) {
+			return nullptr;
+		}
+
 		// uploadHeapProperties �� CPU ���� Map ���ď������߂� Upload Heap �w��B
 		D3D12_HEAP_PROPERTIES uploadHeapProperties{};
 		uploadHeapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
@@ -280,7 +319,9 @@ namespace EditorSharedState {
 			D3D12_RESOURCE_STATE_GENERIC_READ,
 			nullptr,
 			IID_PPV_ARGS(&resource));
-		assert(SUCCEEDED(hr));
+		if (FAILED(hr)) {
+			return nullptr;
+		}
 
 		return resource;
 	}
@@ -402,7 +443,9 @@ namespace EditorSharedState {
 		ModelData modelData{};
 
 		std::ifstream file(directoryPath + "/" + filename); // file �� directoryPath/filename �� .obj �t�@�C���B
-		assert(file.is_open());
+		if (!file.is_open()) {
+			return modelData;
+		}
 
 		std::vector<Vector4> positions; // positions / texcoords / normals �� OBJ �� v / vt / vn ���ꎞ�ۑ�����z��B
 		std::vector<Vector2> texcoords;
@@ -483,36 +526,100 @@ namespace EditorSharedState {
 		// soundData �� WAV ����ǂݎ�����`������ PCM �o�b�t�@��Ԃ��B
 		SoundData soundData{};
 
+		if (filePath == nullptr) {
+			return soundData;
+		}
+
 		std::ifstream file(filePath, std::ios_base::binary); // file �� WAV ���o�C�i���Ƃ��ēǂޓ��� stream�B
-		assert(file.is_open());
+		if (!file.is_open()) {
+			return soundData;
+		}
 
 		// riff �� WAV �t�@�C���擪�� RIFF/WAVE �w�b�_�B
 		RiffHeader riff{};
 		file.read(reinterpret_cast<char*>(&riff), sizeof(riff));
-		assert(std::strncmp(riff.chunk.id, "RIFF", 4) == 0);
-		assert(std::strncmp(riff.type, "WAVE", 4) == 0);
+		if (!file ||
+			std::strncmp(riff.chunk.id, "RIFF", 4) != 0 ||
+			std::strncmp(riff.type, "WAVE", 4) != 0) {
+			return soundData;
+		}
 
 		// format �� "fmt " �`�����N�BXAudio2 �� SourceVoice �쐬�Ɏg���B
 		FormatChunk format{};
-		file.read(reinterpret_cast<char*>(&format), sizeof(ChunkHeader));
-		assert(std::strncmp(format.chunk.id, "fmt ", 4) == 0);
-		assert(format.chunk.size >= 0);
-		assert(static_cast<size_t>(format.chunk.size) <= sizeof(format.format));
-		file.read(reinterpret_cast<char*>(&format.format), format.chunk.size);
+		bool hasFormatChunk = false;
+		ChunkHeader chunk{};
+		while (file.read(reinterpret_cast<char*>(&chunk), sizeof(chunk))) {
+			if (chunk.size < 0) {
+				return soundData;
+			}
+
+			if (std::strncmp(chunk.id, "fmt ", 4) == 0) {
+				format.chunk = chunk;
+				const size_t formatReadSize =
+					(std::min)(static_cast<size_t>(chunk.size), sizeof(format.format));
+				file.read(reinterpret_cast<char*>(&format.format), static_cast<std::streamsize>(formatReadSize));
+				if (!file) {
+					return soundData;
+				}
+
+				if (static_cast<size_t>(chunk.size) > formatReadSize) {
+					file.seekg(
+						static_cast<std::streamoff>(static_cast<size_t>(chunk.size) - formatReadSize),
+						std::ios_base::cur);
+					if (!file) {
+						return soundData;
+					}
+				}
+
+				hasFormatChunk = true;
+				break;
+			}
+
+			file.seekg(static_cast<std::streamoff>(chunk.size), std::ios_base::cur);
+			if (!file) {
+				return soundData;
+			}
+		}
+
+		if (!hasFormatChunk ||
+			format.format.nChannels == 0u ||
+			format.format.nSamplesPerSec == 0u ||
+			format.format.nBlockAlign == 0u ||
+			format.format.wBitsPerSample == 0u ||
+			format.format.nAvgBytesPerSec == 0u) {
+			return soundData;
+		}
 
 		// data �� PCM �{�̂����� "data" �`�����N��T�����߂̃w�b�_�B
 		ChunkHeader data{};
-		file.read(reinterpret_cast<char*>(&data), sizeof(data));
-		while (std::strncmp(data.id, "data", 4) != 0) {
-			file.seekg(data.size, std::ios_base::cur); // data �ȊO�̃`�����N�̓T�C�Y�������ǂݔ�΂��Ď��̃`�����N������B
-			file.read(reinterpret_cast<char*>(&data), sizeof(data));
+		bool hasDataChunk = false;
+		while (file.read(reinterpret_cast<char*>(&data), sizeof(data))) {
+			if (data.size < 0) {
+				return soundData;
+			}
+
+			if (std::strncmp(data.id, "data", 4) == 0) {
+				hasDataChunk = true;
+				break;
+			}
+
+			file.seekg(static_cast<std::streamoff>(data.size), std::ios_base::cur); // data �ȊO�̃`�����N�̓T�C�Y�������ǂݔ�΂��Ď��̃`�����N������B
+			if (!file) {
+				return soundData;
+			}
 		}
 
-		assert(data.size >= 0);
+		if (!hasDataChunk || data.size <= 0) {
+			return soundData;
+		}
 
 		uint32_t dataSize = static_cast<uint32_t>(data.size); // dataSize �� PCM �o�b�t�@�̃o�C�g���B
-		auto pBuffer = new char[dataSize]; // pBuffer �� XAudio2 �ɓn�� PCM �f�[�^�BSoundUnload �ŉ������B
-		file.read(pBuffer, dataSize);
+		auto pBuffer = new char[static_cast<size_t>(dataSize)]; // pBuffer �� XAudio2 �ɓn�� PCM �f�[�^�BSoundUnload �ŉ������B
+		file.read(pBuffer, static_cast<std::streamsize>(dataSize));
+		if (!file) {
+			delete[] pBuffer;
+			return soundData;
+		}
 
 		soundData.wfex = format.format; // �ǂݍ��񂾌`������ PCM �o�b�t�@�� SoundData �ɋl�߂�B
 		soundData.pBuffer = reinterpret_cast<BYTE*>(pBuffer);
@@ -521,10 +628,14 @@ namespace EditorSharedState {
 	}
 
 	inline void SoundUnload(SoundData* soundData) {
-		assert(soundData != nullptr); // soundData->pBuffer �� SoundLoadWave �� new[] ���� PCM �o�b�t�@�B
+		if (soundData == nullptr) {
+			return;
+		}
+
 		delete[] soundData->pBuffer;
 		soundData->pBuffer = nullptr;
 		soundData->bufferSize = 0u;
+		soundData->wfex = {};
 	}
 }
 

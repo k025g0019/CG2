@@ -1,5 +1,5 @@
 ﻿{
-  "renderAsset": "resources/en.fbx",
+  "renderAsset": "resources/editorDefault/en.fbx",
   "playOnAwake": false,
   "looping": false,
   "duration": 0.35,

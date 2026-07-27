@@ -607,6 +607,57 @@ namespace {
 		return normalizedPath;
 	}
 
+	std::string ResolveEditorDefaultAssetPath(const std::string& path) {
+		const std::string normalizedPath = NormalizeAssetPath(path);
+
+		if (normalizedPath == "resources/uvchecker.png" ||
+			normalizedPath.ends_with("/resources/uvchecker.png")) {
+			return "resources/editorDefault/uvChecker.png";
+		}
+
+		if (normalizedPath == "resources/monsterball.png" ||
+			normalizedPath.ends_with("/resources/monsterball.png")) {
+			return "resources/editorDefault/monsterBall.png";
+		}
+
+		if (normalizedPath == "resources/ball.png" ||
+			normalizedPath.ends_with("/resources/ball.png")) {
+			return "resources/editorDefault/ball.png";
+		}
+
+		if (normalizedPath == "resources/sibahu.png" ||
+			normalizedPath.ends_with("/resources/sibahu.png")) {
+			return "resources/editorDefault/sibahu.png";
+		}
+
+		if (normalizedPath == "resources/uvcube.fbx" ||
+			normalizedPath.ends_with("/resources/uvcube.fbx")) {
+			return "resources/editorDefault/UVCube.fbx";
+		}
+
+		if (normalizedPath == "resources/box.fbx" ||
+			normalizedPath.ends_with("/resources/box.fbx")) {
+			return "resources/editorDefault/box.fbx";
+		}
+
+		if (normalizedPath == "resources/cone.fbx" ||
+			normalizedPath.ends_with("/resources/cone.fbx")) {
+			return "resources/editorDefault/cone.fbx";
+		}
+
+		if (normalizedPath == "resources/icocube.fbx" ||
+			normalizedPath.ends_with("/resources/icocube.fbx")) {
+			return "resources/editorDefault/ICOCube.fbx";
+		}
+
+		if (normalizedPath == "resources/en.fbx" ||
+			normalizedPath.ends_with("/resources/en.fbx")) {
+			return "resources/editorDefault/en.fbx";
+		}
+
+		return path;
+	}
+
 	bool MatchesBuiltInPrimitivePath(const std::string& normalizedPath, const char* builtInPath) {
 		if (builtInPath == nullptr) {
 			return false;
@@ -620,11 +671,13 @@ namespace {
 	bool TryGetBuiltInPrimitiveMeshType(
 		const std::string& normalizedPath,
 		EditorModelMeshType& meshType) {
-		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/uvcube.fbx")) {
+		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/uvcube.fbx") ||
+			MatchesBuiltInPrimitivePath(normalizedPath, "resources/editordefault/uvcube.fbx")) {
 			meshType = EditorModelMeshType::Cube;
 			return true;
 		}
-		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/box.fbx")) {
+		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/box.fbx") ||
+			MatchesBuiltInPrimitivePath(normalizedPath, "resources/editordefault/box.fbx")) {
 			meshType = EditorModelMeshType::Box;
 			return true;
 		}
@@ -632,7 +685,8 @@ namespace {
 			meshType = EditorModelMeshType::Cylinder;
 			return true;
 		}
-		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/cone.fbx")) {
+		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/cone.fbx") ||
+			MatchesBuiltInPrimitivePath(normalizedPath, "resources/editordefault/cone.fbx")) {
 			meshType = EditorModelMeshType::Cone;
 			return true;
 		}
@@ -641,7 +695,8 @@ namespace {
 			meshType = EditorModelMeshType::Torus;
 			return true;
 		}
-		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/icocube.fbx")) {
+		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/icocube.fbx") ||
+			MatchesBuiltInPrimitivePath(normalizedPath, "resources/editordefault/icocube.fbx")) {
 			meshType = EditorModelMeshType::Ico;
 			return true;
 		}
@@ -1101,11 +1156,24 @@ std::string EditorAssetUtility::GetFilename(const std::string& path) {
 }
 
 int32_t EditorAssetUtility::GetTextureIndex(const std::vector<std::string>& textureFilePaths, const std::string& path) {
+	const std::filesystem::path requestedPath(path);
+	const std::filesystem::path resolvedRequestedPath(ResolveEditorDefaultAssetPath(path));
+	const std::string normalizedRequestedPath = NormalizeAssetPath(requestedPath.lexically_normal().generic_string());
+	const std::string normalizedResolvedRequestedPath =
+		NormalizeAssetPath(resolvedRequestedPath.lexically_normal().generic_string());
+
 	for (uint32_t textureIndex = 0;
 		 textureIndex < static_cast<uint32_t>(textureFilePaths.size());
 		 textureIndex++) {
 		// 登録済みテクスチャパスと完全一致した番号を返す
 		if (textureFilePaths[textureIndex] == path) {
+			return static_cast<int32_t>(textureIndex);
+		}
+
+		const std::filesystem::path registeredPath(textureFilePaths[textureIndex]);
+		const std::string normalizedRegisteredPath = NormalizeAssetPath(registeredPath.lexically_normal().generic_string());
+		if (normalizedRegisteredPath == normalizedRequestedPath ||
+			normalizedRegisteredPath == normalizedResolvedRequestedPath) {
 			return static_cast<int32_t>(textureIndex);
 		}
 	}
@@ -1134,10 +1202,16 @@ bool EditorAssetUtility::LoadModelAsset(const std::string& path, ModelData& mode
 		return false;
 	}
 
-	const std::filesystem::path filePath(path);
+	std::filesystem::path filePath(path);
 	std::error_code fileError;
 	if (!std::filesystem::exists(filePath, fileError) || fileError) {
-		return false;
+		const std::filesystem::path resolvedFilePath(ResolveEditorDefaultAssetPath(path));
+		fileError.clear();
+		if (!std::filesystem::exists(resolvedFilePath, fileError) || fileError) {
+			return false;
+		}
+
+		filePath = resolvedFilePath;
 	}
 
 	const std::string normalizedPath = NormalizeAssetPath(filePath.generic_string());

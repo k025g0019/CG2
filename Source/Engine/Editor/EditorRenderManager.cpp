@@ -1113,6 +1113,14 @@ void EditorRenderManager::Draw() {
 			}
 
 			if (sceneObject.type == EditorSceneObjectType::Sprite) {
+				// 平行投影で頂点の表裏が反転しても Sprite 全体が破棄されないよう、両面 PSO を使う。
+				if (g_cullNonePipelineState != nullptr) {
+					commandList->SetPipelineState(g_cullNonePipelineState.Get());
+				}
+				else {
+					commandList->SetPipelineState(defaultDrawPso);
+				}
+
 				int32_t textureIndex =
 					(std::clamp)(sceneObject.textureIndex, 0, static_cast<int32_t>(_countof(textureFilePaths)) - 1);
 				D3D12_GPU_DESCRIPTOR_HANDLE textureHandle =

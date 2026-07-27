@@ -48,7 +48,10 @@ namespace {
 			rendererColor.y * rendererIntensity,
 			rendererColor.z * rendererIntensity,
 			rendererComponent != nullptr ? rendererComponent->alpha : 1.0f};
-		sceneObject.materialData->enableLighting = isModelRenderer ? TRUE : FALSE;
+		const int32_t lightingMode = rendererComponent != nullptr
+			? (std::clamp)(rendererComponent->lightingMode, 0, 3)
+			: 3;
+		sceneObject.materialData->enableLighting = isModelRenderer ? lightingMode : 0;
 		sceneObject.materialData->useTexture = isModelRenderer ? FALSE : TRUE;  // Mesh は初期状態を白い面、Sprite は画像表示にする。
 		sceneObject.materialData->metallic = rendererComponent != nullptr ? rendererComponent->metallic : 0.0f;
 		sceneObject.materialData->roughness = rendererComponent != nullptr ? rendererComponent->roughness : 0.5f;
@@ -257,6 +260,15 @@ void EditorSceneSynchronizer::Update(
 		sceneObject.transform.rotate = gameObject.rotate;
 		sceneObject.transform.scale = gameObject.scale;
 		sceneObject.name = gameObject.name;
+
+		// Material ConstantBuffer の Map に失敗した SceneObject は描画更新を中止する。
+		// ここを通したまま materialData を参照すると null 読み取りで落ちる。
+		if (sceneObject.materialData == nullptr) {
+			sceneObjectManager_->ClearCustomTexture(sceneObjectIndex);
+			sceneObjectManager_->ClearAllMaterialTextures(sceneObjectIndex);
+			continue;
+		}
+
 		if (sceneObject.type == EditorSceneObjectType::Sprite) {
 			// Sprite は SpriteRenderer の assetPath に合わせて textureIndex を更新する
 			const EditorComponent* spriteRenderer =

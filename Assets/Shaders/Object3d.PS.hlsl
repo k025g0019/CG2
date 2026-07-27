@@ -379,6 +379,62 @@ float4 main(PixelShaderInput input) : SV_TARGET0
     float3 albedo = material.baseColor;
     float metallic = material.metallic;
     float roughness = material.roughness;
+
+    //============================================================
+    // 課題用の基本ライティング
+    //============================================================
+
+    if (gMaterial.enableLighting == 1 || gMaterial.enableLighting == 2)
+    {
+        float3 classicDirect = 0.0f;
+
+        for (int lightIdx = 0; lightIdx < 4; lightIdx++)
+        {
+            DirectionalLightData light = gDirectionalLight.lights[lightIdx];
+            if (light.shadowEnabled < -0.5f) break;
+            if (light.shadowEnabled < 0.5f && light.intensity < 0.0001f) continue;
+
+            float3 lightDirection = float3(0.0f, 1.0f, 0.0f);
+            float lightIntensity = 0.0f;
+            BuildLightInfo(input.worldPosition, lightDirection, lightIntensity, light);
+
+            float3 L = dot(lightDirection, lightDirection) > 0.000001f
+                ? normalize(lightDirection)
+                : float3(0.0f, 1.0f, 0.0f);
+            float rawNdotL = dot(N, L);
+            float diffuseFactor = saturate(rawNdotL);
+
+            if (gMaterial.enableLighting == 2)
+            {
+                diffuseFactor = saturate(rawNdotL * 0.5f + 0.5f);
+                diffuseFactor *= diffuseFactor;
+            }
+
+            float shadowVisibility = GetShadowVisibility(N, L, input.worldPosition, light);
+            float3 radiance = light.color.rgb * max(lightIntensity, 0.0f);
+            classicDirect += albedo * diffuseFactor * radiance * shadowVisibility;
+        }
+
+        float skyBlend = saturate(N.y * 0.5f + 0.5f);
+        float3 ambientColor = lerp(
+            LIGHT_PRIMARY.skyLowerColor,
+            LIGHT_PRIMARY.skyUpperColor,
+            skyBlend);
+        float3 classicAmbient =
+            albedo *
+            ambientColor *
+            max(LIGHT_PRIMARY.ambientIntensity, 0.0f);
+        float3 emissionMap = gMaterial.useEmissionMap != 0
+            ? gEmissionMap.Sample(gTextureSampler, materialUv).rgb
+            : float3(1.0f, 1.0f, 1.0f);
+        float3 emission =
+            emissionMap *
+            max(gMaterial.emissionColor, 0.0f) *
+            material.emissionStrength;
+
+        return float4(classicDirect + classicAmbient + emission, material.alpha);
+    }
+
     const float proceduralVariation = ComputeProceduralMicroVariation(input.worldPosition, N);
     const float fidelityPhase = proceduralVariation * A_2PI;
     const float hashVariation = frac(sin(dot(input.worldPosition, float3(12.9898f, 78.233f, 45.164f)) + fidelityPhase) * 43758.5453f);

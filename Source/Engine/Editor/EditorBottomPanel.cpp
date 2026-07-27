@@ -119,7 +119,7 @@ namespace {
 	std::string MakeDefaultEffectAssetText() {
 		return
 			"{\r\n"
-			"  \"renderAsset\": \"resources/en.fbx\",\r\n"
+			"  \"renderAsset\": \"resources/editorDefault/en.fbx\",\r\n"
 			"  \"playOnAwake\": true,\r\n"
 			"  \"looping\": true,\r\n"
 			"  \"duration\": 2.0,\r\n"

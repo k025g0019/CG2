@@ -1470,8 +1470,15 @@ namespace {
 		//============================================================
 
 		const char* alphaModeItems[] = {"不透明", "アルファマスク", "半透明"};
+		const char* lightingModeItems[] = {"Lightingなし", "Lambert", "Half Lambert", "PBR"};
 		component.alphaMode = (std::clamp)(component.alphaMode, 0, 2);
+		component.lightingMode = (std::clamp)(component.lightingMode, 0, 3);
 		DrawComboRow("描画方式", component.alphaMode, alphaModeItems, static_cast<int32_t>(_countof(alphaModeItems)));
+		DrawComboRow(
+			"Lighting方式",
+			component.lightingMode,
+			lightingModeItems,
+			static_cast<int32_t>(_countof(lightingModeItems)));
 		DrawCheckboxRow("両面描画", component.doubleSided);
 		DrawColor3Row("ベースカラー", component.color);
 		DrawFloatRow("強さ", component.intensity, 0.01f, 0.0f, 10.0f);

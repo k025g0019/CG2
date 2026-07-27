@@ -395,6 +395,7 @@ struct EditorComponent {
 	float roughness;  // Renderer の粗さ。0 は鏡面、1 は粗い
 	float ior;  // Renderer の屈折率。ガラスや水の見た目調整に使う
 	float alpha;  // Renderer の透明度。1 は不透明
+	int32_t lightingMode;  // 0=Lightingなし、1=Lambert、2=Half Lambert、3=PBR
 	float reflectionStrength;  // Renderer の反射強度
 	float emissionStrength;  // Renderer の放射強度。0 より大きいと自発光する
 	Vector3 emissionColor;  // Renderer の放射色。Emission Map にも掛ける
@@ -678,7 +679,7 @@ class EditorScene {
 public:
 	EditorScene();
 
-	void InitializeDefaultScene();  // 空 Scene と ID 採番を初期状態へ戻す
+	void InitializeDefaultScene();  // Environment / Camera / Point Light を持つ初期 Scene を作る
 	int32_t CreateGameObject(const std::string& name);  // Transform だけを持つ GameObject を作成する
 	int32_t DuplicateGameObject(int32_t gameObjectId);  // 既存 GameObject をコピーして新しい ID を付ける
 	bool DeleteGameObject(int32_t gameObjectId);  // 指定 ID の GameObject と子を削除する

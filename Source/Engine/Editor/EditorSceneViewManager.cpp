@@ -725,11 +725,13 @@ void EditorSceneViewManager::Draw() {
 					static_cast<size_t>(payload->DataSize - 1));
 				g_selectedAssetPath = droppedAsset;
 
-				// droppedTextureIndex が 0 以上なら登録済みテクスチャなので Sprite として配置する。
-				int32_t droppedTextureIndex =
-					EditorAssetUtility::GetTextureIndex(g_editorTextureFilePaths, droppedAsset);
+				// 起動時の固定テクスチャ一覧にない画像も Sprite として配置できるよう、拡張子で判定する。
+				bool isSpriteAsset =
+					EditorAssetUtility::HasExtension(droppedAsset, ".png") ||
+					EditorAssetUtility::HasExtension(droppedAsset, ".jpg") ||
+					EditorAssetUtility::HasExtension(droppedAsset, ".jpeg");
 
-				if (droppedTextureIndex >= 0) {
+				if (isSpriteAsset) {
 					// 画像アセットは SpriteRenderer 付き GameObject として配置する。
 					g_editorAssetFactory.CreateSpriteGameObject(
 						droppedAsset,

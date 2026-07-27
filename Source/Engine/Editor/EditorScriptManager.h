@@ -128,6 +128,7 @@ private:
 	std::vector<QueuedUiEvent> queuedUiEvents_;  // Game View UI から来たイベントを Update まで保持する
 	std::array<uint8_t, 256> currentKeyState_{};  // DLL Script から参照する最新キー状態
 	std::array<uint8_t, 256> previousKeyState_{};  // 押した瞬間判定用の 1 フレーム前キー状態
+	int32_t hotReloadCheckFrameTimer_ = 0;  // DLL 更新日時の確認を毎フレーム実行しないための残りフレーム数
 	uint64_t reloadGeneration_ = 0;  // 作業 DLL コピー名を毎回変えるための通し番号
 	EditorScriptRuntimeApi runtimeApi_{};  // DLL へ渡す関数ポインタ群
 

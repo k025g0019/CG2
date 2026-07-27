@@ -15,6 +15,7 @@
 
 namespace {
 	EditorScriptManager* gActiveScriptManager = nullptr;  // DLL API の関数ポインタから現在の ScriptManager を逆参照する。
+	constexpr int32_t kHotReloadCheckFrameInterval = 30;  // Play 中の DLL 更新確認を 30 フレーム間隔へ抑える。
 
 	bool HasRunnableScriptComponent(const EditorGameObject& gameObject) {
 		const EditorComponent* scriptComponent =
@@ -173,6 +174,7 @@ void EditorScriptManager::Initialize(
 	queuedUiEvents_.clear();
 	currentKeyState_.fill(0);
 	previousKeyState_.fill(0);
+	hotReloadCheckFrameTimer_ = 0;
 	reloadGeneration_ = 0;
 	BuildRuntimeApi();
 	gActiveScriptManager = this;
@@ -203,7 +205,15 @@ void EditorScriptManager::Update(const uint8_t* keyState, float deltaTime) {
 	}
 
 	CopyKeyState(keyState);
-	HotReloadChangedModules();
+
+	if (hotReloadCheckFrameTimer_ <= 0) {
+		HotReloadChangedModules();
+		hotReloadCheckFrameTimer_ = kHotReloadCheckFrameInterval;
+	}
+	else {
+		hotReloadCheckFrameTimer_--;
+	}
+
 	lastDeltaTime_ = deltaTime;  // DLL 側の Update にそのまま渡す秒数。
 
 	// Inspector で編集した公開変数は、Input Action と Update のどちらよりも先に反映する。
@@ -311,6 +321,7 @@ void EditorScriptManager::Stop() {
 	queuedUiEvents_.clear();
 	currentKeyState_.fill(0);
 	previousKeyState_.fill(0);
+	hotReloadCheckFrameTimer_ = 0;
 }
 
 bool EditorScriptManager::IsStarted() const {

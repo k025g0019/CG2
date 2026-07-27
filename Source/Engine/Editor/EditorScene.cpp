@@ -177,6 +177,7 @@ namespace {
 		"PostProcess",
 		"Environment",
 		"FreeTransform",
+		"AutoConvexCollision",
 	};
 	constexpr int32_t kEditorComponentTypeCount =
 		static_cast<int32_t>(sizeof(kEditorComponentTypeNames) / sizeof(kEditorComponentTypeNames[0]));
@@ -355,11 +356,59 @@ EditorScene::EditorScene() : nextGameObjectId_(1) {
 }
 
 void EditorScene::InitializeDefaultScene() {
-	gameObjects_.clear();  // 起動時は GameObject を置かない空 Scene にする
+	gameObjects_.clear();
 	undoStack_.clear();
 	redoStack_.clear();
 	nextGameObjectId_ = 1;
 	ResetPhysicsSettings(physicsSettings_);
+
+	//============================================================
+	// 起動時に必要な撮影・照明環境
+	//============================================================
+
+	const int32_t environmentGameObjectId = CreateGameObject("Environment Light");
+	AddComponent(environmentGameObjectId, EditorComponentType::Environment);
+
+	const int32_t cameraGameObjectId = CreateGameObject("Main Camera");
+	AddComponent(cameraGameObjectId, EditorComponentType::Camera);
+	EditorGameObject* cameraGameObject = FindGameObject(cameraGameObjectId);
+
+	if (cameraGameObject != nullptr) {
+		cameraGameObject->translate = {0.0f, 2.0f, -6.0f};
+		cameraGameObject->rotate = {0.25f, 0.0f, 0.0f};
+	}
+
+	const int32_t pointLightGameObjectId = CreateGameObject("Point Light");
+	AddComponent(pointLightGameObjectId, EditorComponentType::Light);
+	EditorGameObject* pointLightGameObject = FindGameObject(pointLightGameObjectId);
+
+	if (pointLightGameObject != nullptr) {
+		pointLightGameObject->translate = {2.0f, 3.0f, -2.0f};
+	}
+
+	//============================================================
+	// 課題確認用 Sprite
+	//============================================================
+
+	const int32_t spriteGameObjectId = CreateGameObject("Sprite");
+	AddComponent(spriteGameObjectId, EditorComponentType::SpriteRenderer);
+	EditorGameObject* spriteGameObject = FindGameObject(spriteGameObjectId);
+
+	if (spriteGameObject != nullptr) {
+		// 中心原点の単位四角形を、資料の左上 (0, 0) から 640x360 の表示へ合わせる。
+		spriteGameObject->translate = {320.0f, 180.0f, 0.0f};
+		spriteGameObject->scale = {640.0f, 360.0f, 1.0f};
+
+		for (EditorComponent& component : spriteGameObject->components) {
+			if (component.type == EditorComponentType::SpriteRenderer) {
+				component.assetPath = "resources/editorDefault/uvChecker.png";
+			}
+		}
+	}
+
+	// 初期配置そのものは利用者の操作ではないため Undo 履歴へ残さない。
+	undoStack_.clear();
+	redoStack_.clear();
 }
 
 int32_t EditorScene::CreateGameObject(const std::string& name) {
@@ -851,7 +900,8 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 			     << "|" << component.particleWaveAmplitude
 			     << "|" << component.particleWaveFrequency
 			     << "|" << component.particleAttractorStrength
-			     << "|" << EncodeSceneToken(component.particleRenderAssetPath);
+			     << "|" << EncodeSceneToken(component.particleRenderAssetPath)
+			     << "|" << component.lightingMode;
 
 			file << "\n";
 
@@ -1360,6 +1410,11 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 					component.particleRenderAssetPath = DecodeSceneToken(elements[postProcessEffectCursor + 65u]);
 				}
 
+				if (elements.size() >= postProcessEffectCursor + 67u) {
+					component.lightingMode =
+						(std::clamp)(ToInt(elements[postProcessEffectCursor + 66u]), 0, 3);
+				}
+
 				gameObject.components.push_back(component);
 			break;
 			}
@@ -1575,6 +1630,7 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 	component.roughness = 0.5f;
 	component.ior = 1.0f;
 	component.alpha = 1.0f;
+	component.lightingMode = 3;
 	component.reflectionStrength = 0.0f;
 	component.emissionStrength = 0.0f;
 	component.emissionColor = {1.0f, 1.0f, 1.0f};

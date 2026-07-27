@@ -124,22 +124,22 @@ void EditorHierarchyPanel::Draw(
 
 		if (ImGui::BeginMenu("3D Object")) {
 			if (ImGui::MenuItem("Cube")) {
-				createPrimitiveGameObject("resources/UVCube.fbx");
+				createPrimitiveGameObject("resources/editorDefault/UVCube.fbx");
 			}
 			if (ImGui::MenuItem("Box")) {
-				createPrimitiveGameObject("resources/box.fbx");
+				createPrimitiveGameObject("resources/editorDefault/box.fbx");
 			}
 			if (ImGui::MenuItem("Cylinder")) {
 				createPrimitiveGameObject("resources/cylinder.fbx");
 			}
 			if (ImGui::MenuItem("Cone")) {
-				createPrimitiveGameObject("resources/cone.fbx");
+				createPrimitiveGameObject("resources/editorDefault/cone.fbx");
 			}
 			if (ImGui::MenuItem("Torus")) {
 				createPrimitiveGameObject("resources/to-tasu.fbx");
 			}
 			if (ImGui::MenuItem("Ico")) {
-				createPrimitiveGameObject("resources/ICOCube.fbx");
+				createPrimitiveGameObject("resources/editorDefault/ICOCube.fbx");
 			}
 			if (ImGui::MenuItem("Sphere")) {
 				createPrimitiveGameObject("resources/sphere.fbx");

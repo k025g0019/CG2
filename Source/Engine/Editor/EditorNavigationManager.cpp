@@ -115,6 +115,13 @@ namespace {
 	}
 
 	bool TryGetModelAssetPath(const EditorGameObject& gameObject, std::string& assetPath) {
+		const EditorComponent* autoConvexCollision =
+			EditorComponentUtility::FindComponent(gameObject, EditorComponentType::AutoConvexCollision);
+		if (autoConvexCollision != nullptr && autoConvexCollision->isActive && !autoConvexCollision->assetPath.empty()) {
+			assetPath = autoConvexCollision->assetPath;
+			return true;
+		}
+
 		const EditorComponent* meshCollider = EditorComponentUtility::FindComponent(gameObject, EditorComponentType::MeshCollider);
 		if (meshCollider != nullptr && meshCollider->isActive && !meshCollider->assetPath.empty()) {
 			assetPath = meshCollider->assetPath;
@@ -137,17 +144,17 @@ namespace {
 	}
 
 	bool TryCalculateModelBounds(const std::string& assetPath, Vector3& localCenter, Vector3& localSize) {
-		ModelData modelData{};
-		if (!EditorAssetUtility::LoadModelAsset(assetPath, modelData) || modelData.vertices.empty()) {
+		const ModelData* modelData = EditorAssetUtility::GetSharedModelAssetData(assetPath, false);
+		if (modelData == nullptr || modelData->vertices.empty()) {
 			return false;
 		}
 
 		Vector3 minPosition = {
-			modelData.vertices[0].position.x,
-			modelData.vertices[0].position.y,
-			modelData.vertices[0].position.z};
+			modelData->vertices[0].position.x,
+			modelData->vertices[0].position.y,
+			modelData->vertices[0].position.z};
 		Vector3 maxPosition = minPosition;
-		for (const VertexData& vertex : modelData.vertices) {
+		for (const VertexData& vertex : modelData->vertices) {
 			const Vector3 position = {
 				vertex.position.x,
 				vertex.position.y,
@@ -217,6 +224,17 @@ namespace {
 	}
 
 	bool TryBuildObstacleFromCollider(const EditorGameObject& gameObject, EditorNavigationManager::NavigationObstacle& navigationObstacle) {
+		const EditorComponent* autoConvexCollision =
+			EditorComponentUtility::FindComponent(gameObject, EditorComponentType::AutoConvexCollision);
+		if (autoConvexCollision != nullptr && autoConvexCollision->isActive) {
+			if (TryMakeMeshObstacle(gameObject, navigationObstacle)) {
+				return true;
+			}
+
+			ApplyBoxObstacleFromComponent(gameObject, *autoConvexCollision, navigationObstacle);
+			return true;
+		}
+
 		const EditorComponent* meshCollider = EditorComponentUtility::FindComponent(gameObject, EditorComponentType::MeshCollider);
 		if (meshCollider != nullptr && meshCollider->isActive) {
 			if (TryMakeMeshObstacle(gameObject, navigationObstacle)) {

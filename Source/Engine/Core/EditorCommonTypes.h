@@ -41,7 +41,7 @@ struct VertexData {
 
 struct Material {
 	Vector4 color;  // 描画色
-	int32_t enableLighting;  // 0 ならライト無効、0 以外ならライト有効
+	int32_t enableLighting;  // 0=Lightingなし、1=Lambert、2=Half Lambert、3=PBR
 	int32_t useTexture;  // 0 なら Texture を使わず、Component の色だけで描画する
 	float metallic;  // 金属感。0 は非金属、1 は金属
 	float roughness;  // 粗さ。0 は鏡面、1 は粗い

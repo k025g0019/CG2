@@ -250,6 +250,15 @@ void EditorSceneObjectManager::ClearCustomTexture(int32_t sceneObjectIndex) {
 	}
 
 	EditorSceneObject& sceneObject = sceneObjects_[static_cast<size_t>(sceneObjectIndex)];
+
+	if (sceneObject.customTextureResource == nullptr &&
+		sceneObject.customTextureUploadResource == nullptr &&
+		sceneObject.customTextureSrvGpuHandle.ptr == 0u &&
+		sceneObject.customTextureDescriptorIndex < 0 &&
+		sceneObject.textureAssetPath.empty()) {
+		return;
+	}
+
 	ReleaseTextureResource(
 		sceneObject.customTextureResource,
 		sceneObject.customTextureUploadResource,
@@ -271,6 +280,15 @@ void EditorSceneObjectManager::ClearMaterialTexture(
 
 	EditorSceneObject& sceneObject = sceneObjects_[static_cast<size_t>(sceneObjectIndex)];
 	const size_t textureSlotArrayIndex = static_cast<size_t>(textureSlotIndex);
+
+	if (sceneObject.materialTextureResources[textureSlotArrayIndex] == nullptr &&
+		sceneObject.materialTextureUploadResources[textureSlotArrayIndex] == nullptr &&
+		sceneObject.materialTextureSrvGpuHandles[textureSlotArrayIndex].ptr == 0u &&
+		sceneObject.materialTextureDescriptorIndices[textureSlotArrayIndex] < 0 &&
+		sceneObject.materialTextureAssetPaths[textureSlotArrayIndex].empty()) {
+		return;
+	}
+
 	ReleaseTextureResource(
 		sceneObject.materialTextureResources[textureSlotArrayIndex],
 		sceneObject.materialTextureUploadResources[textureSlotArrayIndex],
@@ -293,7 +311,16 @@ bool EditorSceneObjectManager::LoadTextureResource(
 	ID3D12Resource*& uploadResource,
 	D3D12_GPU_DESCRIPTOR_HANDLE& srvGpuHandle,
 	int32_t& descriptorIndex) {
-	if (device_ == nullptr || textureAssetPath.empty() || !std::filesystem::exists(textureAssetPath)) {
+	using namespace EditorSharedState;
+
+	if (device_ == nullptr ||
+		textureAssetPath.empty() ||
+		!std::filesystem::exists(textureAssetPath) ||
+		g_commandAllocator == nullptr ||
+		g_commandList == nullptr ||
+		g_commandQueue == nullptr ||
+		g_fence == nullptr ||
+		g_fenceEvent == nullptr) {
 		return false;
 	}
 

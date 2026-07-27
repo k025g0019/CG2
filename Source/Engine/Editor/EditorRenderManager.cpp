@@ -10,12 +10,24 @@
 
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
+#include <format>
 #include <limits>
 
 using namespace EditorSharedState;
 
 namespace {
+	void AppendHashBytes(std::uint64_t& hash, const void* data, size_t byteCount) {
+		constexpr std::uint64_t kFnvPrime = 1099511628211ull;
+		const std::uint8_t* bytes = static_cast<const std::uint8_t*>(data);
+
+		for (size_t byteIndex = 0u; byteIndex < byteCount; byteIndex++) {
+			hash ^= static_cast<std::uint64_t>(bytes[byteIndex]);
+			hash *= kFnvPrime;
+		}
+	}
+
 	int32_t GetLightTypeFromComponent(const EditorComponent& component) {
 		if (component.assetPath == "Sun") {
 			return 0;
@@ -520,6 +532,8 @@ void EditorRenderManager::Update() {
 void EditorRenderManager::Draw() {
 	static bool hasLoggedFirstRenderEnter = false; // 隴崢陋ｻ譏ｴ繝ｻ Draw 邵�E�E�E�・�E�E�E�陷茨�E�E�E��E�E�E�郢�E�E�E�蠕娯螺邵�E�E�E�荵晢�E�E�E�・1 陜玲�E�E�E��E�E�E�笁E�E��E�邵�E�E�E�鬘鯉ｽ�E�E�E�蛟ｬ鮖ｸ邵�E�E�E�蜷�E�E�E�・狗ｸ�E�E�E�繝ｻ
 	static bool hasLoggedFirstPresent = false;
+	static bool hasSubmittedShadowMap = false;
+	static std::uint64_t submittedShadowStateHash = 0u;
 	// 隴崢陋ｻ譏ｴ繝ｻ Present 邵�E�E�E�・�E�E�E�邵�E�E�E�・�E�E�E�陋ｻ・�E�E�E�鬩墓鱒�E�E�E�E�邵�E�E�E�貁E�E��E��E�郢�E�E�E�繝ｻ1 陜玲�E�E�E��E�E�E�笁E�E��E�邵�E�E�E�鬘鯉ｽ�E�E�E�蛟ｬ鮖ｸ邵�E�E�E�蜷�E�E�E�・狗ｸ�E�E�E�繝ｻ
 
 	auto& hr = g_hr; // hr 邵�E�E�E�・�E�E�E� DirectX API 邵�E�E�E�・�E�E�E�隰御�E�E�E�吝℡郢�E�E�E�雋槫�E�E�E��E�E�E�邵�E�E�E�螟ｧ蜿咏ｹ�E�E�E�蜿�E�E�E�繝ｻ隴帙�EHRESULT邵�E�E�E�繝ｻ
@@ -706,6 +720,52 @@ void EditorRenderManager::Draw() {
 	// worldViewProjectionMatrix 邵�E�E�E�・�E�E�E� 3D 郢晢�E�E�E��E�E�E�郢昴・�E�E�E�晉�E�E��E�E�E�繝ｻSceneView 邵�E�E�E�・�E�E�E�隰壼供�E�E�E�E�・�E�E�E�邵�E�E�E�蜷�E�E�E�・・WVP邵�E�E�E�繝ｻ
 	Matrix4x4 gameViewProjectionMatrix = Multiply(g_gameViewMatrix, g_gameProjectionMatrix);
 	Matrix4x4 inverseGameViewProjectionMatrix = Inverse(gameViewProjectionMatrix);
+
+	//================================================================
+	// 描画機能ごとの必要リソース判定
+	//================================================================
+	const PostProcessSettings ppSettings = GetPostProcessSettings();
+	const bool shouldRenderAmbientOcclusion =
+		ppSettings.hasPostProcessComponent &&
+		ppSettings.compositeAmbientOcclusionStrength > 0.0f;
+	const bool shouldExecuteTemporalOrSsr =
+		ppSettings.hasPostProcessComponent &&
+		(ppSettings.aaMode == 3 || ppSettings.ssrEnabled);
+
+	size_t gpuCullingCandidateCount = 0u;
+
+	for (const EditorSceneObject& sceneObject : editorSceneObjects) {
+		if (sceneObject.type == EditorSceneObjectType::Model &&
+			sceneObject.transformationData != nullptr) {
+			gpuCullingCandidateCount++;
+		}
+	}
+
+	// 少数オブジェクトでは全画面 Hi-Z 生成と readback の方が高コストになる。
+	constexpr size_t kGpuCullingMinimumObjectCount = 256u;
+	const bool shouldUseGpuCulling =
+		gpuCullingCandidateCount >= kGpuCullingMinimumObjectCount;
+
+	EditorPlanarReflectionManager planarManager;
+	planarManager.CollectProbes(g_editorScene, editorSceneObjects);
+	planarManager.UpdateCameras(
+		cameraMatrix,
+		viewMatrix,
+		projectionMatrix,
+		g_gameCameraMatrix,
+		g_gameViewMatrix,
+		g_gameProjectionMatrix);
+
+	auto& planarViews = planarManager.GetViews();
+	const bool shouldRenderMaterialMask =
+		planarManager.HasProbes() || shouldExecuteTemporalOrSsr;
+	const bool shouldRenderGBuffer =
+		shouldRenderAmbientOcclusion || shouldExecuteTemporalOrSsr;
+	const bool shouldBuildDepthHierarchy =
+		shouldUseGpuCulling || shouldExecuteTemporalOrSsr;
+	bool hasPlanarReflectionCapture = false;
+	bool hasPlanarReflectionComposite = false;
+
 	// Compute per-light shadow VP matrices and assign atlas tiles
 	Matrix4x4 lightViewProjectionMatrixPerLight[kMaxShadowLights];
 	const float tileScale = 1.0f / static_cast<float>(kShadowAtlasTiles);
@@ -724,6 +784,87 @@ void EditorRenderManager::Draw() {
 		directionalLightData[lightIdx].shadowTileUvBiasX = static_cast<float>(tileX) * tileScale;
 		directionalLightData[lightIdx].shadowTileUvBiasY = static_cast<float>(tileY) * tileScale;
 	}
+
+	//================================================================
+	// シャドウマップの更新判定
+	//================================================================
+	constexpr std::uint64_t kFnvOffsetBasis = 14695981039346656037ull;
+	std::uint64_t shadowStateHash = kFnvOffsetBasis;
+	AppendHashBytes(shadowStateHash, &lightCount, sizeof(lightCount));
+
+	for (int32_t lightIndex = 0; lightIndex < lightCount; lightIndex++) {
+		AppendHashBytes(
+			shadowStateHash,
+			&lightViewProjectionMatrixPerLight[lightIndex],
+			sizeof(Matrix4x4));
+	}
+
+	for (const EditorSceneObject& sceneObject : editorSceneObjects) {
+		if (sceneObject.type != EditorSceneObjectType::Model ||
+			sceneObject.transformationResource == nullptr ||
+			sceneObject.transformationData == nullptr) {
+			continue;
+		}
+
+		AppendHashBytes(shadowStateHash, &sceneObject.gameObjectId, sizeof(sceneObject.gameObjectId));
+		const Matrix4x4 shadowCasterWorldMatrix = MakeAffineMatrix(
+			sceneObject.transform.scale,
+			sceneObject.transform.rotate,
+			sceneObject.transform.translate);
+		AppendHashBytes(
+			shadowStateHash,
+			&shadowCasterWorldMatrix,
+			sizeof(shadowCasterWorldMatrix));
+
+		if (sceneObject.usesCustomMesh &&
+			sceneObject.customMeshVertexResource != nullptr &&
+			sceneObject.customMeshVertexCount > 0u) {
+			AppendHashBytes(
+				shadowStateHash,
+				&sceneObject.customMeshVertexBufferView,
+				sizeof(D3D12_VERTEX_BUFFER_VIEW));
+			AppendHashBytes(
+				shadowStateHash,
+				&sceneObject.customMeshVertexCount,
+				sizeof(sceneObject.customMeshVertexCount));
+		}
+		else {
+			size_t meshTypeIndex = static_cast<size_t>(sceneObject.meshType);
+
+			if (meshTypeIndex >= kEditorModelMeshTypeCount ||
+				primitiveVertexCounts[meshTypeIndex] == 0u) {
+				meshTypeIndex = static_cast<size_t>(EditorModelMeshType::Plane);
+			}
+
+			AppendHashBytes(shadowStateHash, &meshTypeIndex, sizeof(meshTypeIndex));
+			AppendHashBytes(
+				shadowStateHash,
+				&primitiveVertexBufferViews[meshTypeIndex],
+				sizeof(D3D12_VERTEX_BUFFER_VIEW));
+			AppendHashBytes(
+				shadowStateHash,
+				&primitiveVertexCounts[meshTypeIndex],
+				sizeof(primitiveVertexCounts[meshTypeIndex]));
+		}
+	}
+
+	AppendHashBytes(
+		shadowStateHash,
+		&isLegacyPreviewVisible,
+		sizeof(isLegacyPreviewVisible));
+
+	if (isLegacyPreviewVisible) {
+		AppendHashBytes(shadowStateHash, &worldMatrix, sizeof(worldMatrix));
+		AppendHashBytes(
+			shadowStateHash,
+			&modelVertexBufferView,
+			sizeof(D3D12_VERTEX_BUFFER_VIEW));
+	}
+
+	const bool shouldRenderShadowMap =
+		!hasSubmittedShadowMap || shadowStateHash != submittedShadowStateHash;
+	bool hasRecordedShadowMapUpdate = false;
+
 	Matrix4x4 uvTransformMatrix = MakeAffineMatrix(uvTransform.scale, uvTransform.rotate, uvTransform.translate);
 	// uvTransformMatrix 邵�E�E�E�・�E�E�E� Material 邵�E�E�E�・�E�E�E�雋ゑ�E�E�E��E�E�E�邵�E�E�E�繝ｻUV 陞溽判驪�E�E�E�髯�E�E�E�謔溘�E邵�E�E�E�繝ｻ
 	spriteTransformationMatrixData->WVP = spriteWorldViewProjectionMatrix;
@@ -787,9 +928,18 @@ void EditorRenderManager::Draw() {
 
 	hr = commandAllocator->Reset();
 	// CommandAllocator / CommandList 郢�E�E�E�蜑�E�E�E�E��E�E�E�鄙ｫ繝ｵ郢晢�E�E�E��E�E�E�郢晢�E�E�E��E�E�E�郢晢�E�E�E��E�E�E�邵�E�E�E�・�E�E�E�隰�E�E�E�蜀怜�E髫�E�E�E�蛟ｬ鮖ｸ騾匁E�E��E��E�E�E�邵�E�E�E�・�E�E�E� Reset 邵�E�E�E�蜷�E�E�E�・狗ｸ�E�E�E�繝ｻ
-	assert(SUCCEEDED(hr));
+	if (FAILED(hr)) {
+		Log(g_logStream, std::format("CommandAllocator Reset failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		g_isDrawRequested = false;
+		return;
+	}
+
 	hr = commandList->Reset(commandAllocator.Get(), graphicsPipelineState.Get());
-	assert(SUCCEEDED(hr));
+	if (FAILED(hr)) {
+		Log(g_logStream, std::format("CommandList Reset failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		g_isDrawRequested = false;
+		return;
+	}
 
 	D3D12_GPU_DESCRIPTOR_HANDLE environmentSrvHandleGPU =
 		g_environmentTextureSrvHandleGPU.ptr != 0u
@@ -900,7 +1050,10 @@ void EditorRenderManager::Draw() {
 		}
 	};
 
-	if (shadowMapResource != nullptr && shadowPipelineState != nullptr) {
+	if (shouldRenderShadowMap &&
+		lightCount > 0 &&
+		shadowMapResource != nullptr &&
+		shadowPipelineState != nullptr) {
 		D3D12_RESOURCE_BARRIER shadowBarrier{};
 		shadowBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		shadowBarrier.Transition.pResource = shadowMapResource;
@@ -940,11 +1093,9 @@ void EditorRenderManager::Draw() {
 
 			for (EditorSceneObject& sceneObject : editorSceneObjects) {
 				if (sceneObject.transformationData != nullptr) {
-					Matrix4x4 objWorld = MakeAffineMatrix(
-						sceneObject.transform.scale,
-						sceneObject.transform.rotate,
-						sceneObject.transform.translate);
-					sceneObject.transformationData->lightWVP = Multiply(objWorld, lightViewProjectionMatrixPerLight[lightIdx]);
+					sceneObject.transformationData->lightWVP = Multiply(
+						sceneObject.transformationData->World,
+						lightViewProjectionMatrixPerLight[lightIdx]);
 				}
 			}
 			sphereTransformationMatrixData->lightWVP = Multiply(worldMatrix, lightViewProjectionMatrixPerLight[lightIdx]);
@@ -953,11 +1104,9 @@ void EditorRenderManager::Draw() {
 
 		for (EditorSceneObject& sceneObject : editorSceneObjects) {
 			if (sceneObject.transformationData != nullptr) {
-				Matrix4x4 objWorld = MakeAffineMatrix(
-					sceneObject.transform.scale,
-					sceneObject.transform.rotate,
-					sceneObject.transform.translate);
-				sceneObject.transformationData->lightWVP = Multiply(objWorld, lightViewProjectionMatrixPerLight[0]);
+				sceneObject.transformationData->lightWVP = Multiply(
+					sceneObject.transformationData->World,
+					lightViewProjectionMatrixPerLight[0]);
 			}
 		}
 		sphereTransformationMatrixData->lightWVP = Multiply(worldMatrix, lightViewProjectionMatrixPerLight[0]);
@@ -965,6 +1114,7 @@ void EditorRenderManager::Draw() {
 		shadowBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 		shadowBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		commandList->ResourceBarrier(1, &shadowBarrier);
+		hasRecordedShadowMapUpdate = true;
 	}
 
 	//================================================================
@@ -999,7 +1149,7 @@ void EditorRenderManager::Draw() {
 	commandList->ClearRenderTargetView(hdrRtvHandle, hdrClearColor, 0, nullptr);
 
 	D3D12_RESOURCE_BARRIER materialMaskBarrier{};
-	if (materialMaskRenderTarget != nullptr) {
+	if (shouldRenderMaterialMask && materialMaskRenderTarget != nullptr) {
 		materialMaskBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		materialMaskBarrier.Transition.pResource = materialMaskRenderTarget;
 		materialMaskBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
@@ -1085,7 +1235,8 @@ void EditorRenderManager::Draw() {
 	auto drawSceneObjects = [&](bool isGameViewPass, const D3D12_CPU_DESCRIPTOR_HANDLE& targetRtvHandle, int32_t skipGameObjectId, int32_t planarSurfaceGameObjectId = -1) {
 		commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, &dsvHandle);
 		const bool isPlanarReflectionDraw = targetRtvHandle.ptr == planarReflectionRtvHandle.ptr;
-		const bool useGpuCullingForPass = !isPlanarReflectionDraw &&
+		const bool useGpuCullingForPass = shouldUseGpuCulling &&
+			!isPlanarReflectionDraw &&
 			((!isGameViewPass && g_isSceneViewVisible) ||
 			(isGameViewPass && !g_isSceneViewVisible && g_isGameViewVisible));
 
@@ -1113,6 +1264,14 @@ void EditorRenderManager::Draw() {
 			}
 
 			if (sceneObject.type == EditorSceneObjectType::Sprite) {
+				// 平行投影で頂点の表裏が反転しても Sprite 全体が破棄されないよう、両面 PSO を使う。
+				if (g_cullNonePipelineState != nullptr) {
+					commandList->SetPipelineState(g_cullNonePipelineState.Get());
+				}
+				else {
+					commandList->SetPipelineState(defaultDrawPso);
+				}
+
 				int32_t textureIndex =
 					(std::clamp)(sceneObject.textureIndex, 0, static_cast<int32_t>(_countof(textureFilePaths)) - 1);
 				D3D12_GPU_DESCRIPTOR_HANDLE textureHandle =
@@ -1195,7 +1354,9 @@ void EditorRenderManager::Draw() {
 	};
 
 	auto drawReflectionMaskObjects = [&](bool isGameViewPass, int32_t planarMaskGameObjectId) {
-		if (materialMaskRenderTarget == nullptr || objectReflectionMaskPipelineState == nullptr) {
+		if (!shouldRenderMaterialMask ||
+			materialMaskRenderTarget == nullptr ||
+			objectReflectionMaskPipelineState == nullptr) {
 			return;
 		}
 
@@ -1309,21 +1470,7 @@ void EditorRenderManager::Draw() {
 	gameScissorRect.right = static_cast<LONG>(g_editorGameX + g_editorGameWidth);
 	gameScissorRect.bottom = static_cast<LONG>(g_editorGameY + g_editorGameHeight);
 
-	EditorPlanarReflectionManager planarManager;
-	planarManager.CollectProbes(g_editorScene, editorSceneObjects);
-	planarManager.UpdateCameras(
-		cameraMatrix,
-		viewMatrix,
-		projectionMatrix,
-		g_gameCameraMatrix,
-		g_gameViewMatrix,
-		g_gameProjectionMatrix);
-
 	const float planarClearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-
-	auto& planarViews = planarManager.GetViews();
-	bool hasPlanarReflectionCapture = false;
-	bool hasPlanarReflectionComposite = false;
 
 	if (planarManager.HasProbes() &&
 		planarReflectionRenderTarget != nullptr &&
@@ -1585,7 +1732,8 @@ void EditorRenderManager::Draw() {
 		}
 	};
 
-	if ((g_isSceneViewVisible || g_isGameViewVisible) &&
+	if (shouldRenderGBuffer &&
+		(g_isSceneViewVisible || g_isGameViewVisible) &&
 		g_gBufferManager.Begin(commandList.Get(), dsvHandle)) {
 		commandList->SetDescriptorHeaps(1, descriptorHeaps);
 
@@ -1604,7 +1752,7 @@ void EditorRenderManager::Draw() {
 		g_gBufferManager.End(commandList.Get());
 	}
 
-	if (materialMaskRenderTarget != nullptr) {
+	if (shouldRenderMaterialMask && materialMaskRenderTarget != nullptr) {
 		materialMaskBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		materialMaskBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		commandList->ResourceBarrier(1, &materialMaskBarrier);
@@ -1709,7 +1857,8 @@ void EditorRenderManager::Draw() {
 	// Compute: 深度ピラミッドとワールド法線の生成
 	//================================================================
 
-	if (depthStencilResource != nullptr &&
+	if (shouldBuildDepthHierarchy &&
+		depthStencilResource != nullptr &&
 		(!planarViews.empty() || g_isSceneViewVisible || g_isGameViewVisible)) {
 		const D3D12_RESOURCE_STATES computeReadableDepthState = static_cast<D3D12_RESOURCE_STATES>(
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
@@ -1733,100 +1882,102 @@ void EditorRenderManager::Draw() {
 			depthSrvHandleGPU,
 			&depthInverseViewProjection.matrix[0][0]);
 
-		//================================================================
-		// GPU Occlusion Culling 用のワールド AABB を作る
-		//================================================================
+		if (shouldUseGpuCulling) {
+			//============================================================
+			// GPU Occlusion Culling 用のワールド AABB を作る
+			//============================================================
 
-		std::vector<EditorGpuCullingInput> gpuCullingInputs;
-		gpuCullingInputs.reserve(editorSceneObjects.size());
+			std::vector<EditorGpuCullingInput> gpuCullingInputs;
+			gpuCullingInputs.reserve(gpuCullingCandidateCount);
 
-		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
-			if (sceneObject.type != EditorSceneObjectType::Model ||
-				sceneObject.transformationData == nullptr) {
-				continue;
-			}
-
-			const Vector3 localBoundsCenter = GetPlanarReflectionLocalMeshCenter(sceneObject);
-			const Vector3 localBoundsSize = GetPlanarReflectionLocalMeshSize(sceneObject);
-			const Vector3 localBoundsExtent = {
-				localBoundsSize.x * 0.5f,
-				localBoundsSize.y * 0.5f,
-				localBoundsSize.z * 0.5f
-			};
-			Vector3 worldMinimum = {
-				(std::numeric_limits<float>::max)(),
-				(std::numeric_limits<float>::max)(),
-				(std::numeric_limits<float>::max)()
-			};
-			Vector3 worldMaximum = {
-				-(std::numeric_limits<float>::max)(),
-				-(std::numeric_limits<float>::max)(),
-				-(std::numeric_limits<float>::max)()
-			};
-
-			for (uint32_t cornerIndex = 0u; cornerIndex < 8u; cornerIndex++) {
-				const Vector3 localCorner = {
-					localBoundsCenter.x + ((cornerIndex & 1u) != 0u ? localBoundsExtent.x : -localBoundsExtent.x),
-					localBoundsCenter.y + ((cornerIndex & 2u) != 0u ? localBoundsExtent.y : -localBoundsExtent.y),
-					localBoundsCenter.z + ((cornerIndex & 4u) != 0u ? localBoundsExtent.z : -localBoundsExtent.z)
-				};
-				const Vector3 worldCorner = Transform(localCorner, sceneObject.transformationData->World);
-				worldMinimum.x = (std::min)(worldMinimum.x, worldCorner.x);
-				worldMinimum.y = (std::min)(worldMinimum.y, worldCorner.y);
-				worldMinimum.z = (std::min)(worldMinimum.z, worldCorner.z);
-				worldMaximum.x = (std::max)(worldMaximum.x, worldCorner.x);
-				worldMaximum.y = (std::max)(worldMaximum.y, worldCorner.y);
-				worldMaximum.z = (std::max)(worldMaximum.z, worldCorner.z);
-			}
-
-			uint32_t vertexCount = sceneObject.customMeshVertexCount;
-
-			if (!sceneObject.usesCustomMesh || vertexCount == 0u) {
-				size_t meshTypeIndex = static_cast<size_t>(sceneObject.meshType);
-
-				if (meshTypeIndex >= kEditorModelMeshTypeCount) {
-					meshTypeIndex = static_cast<size_t>(EditorModelMeshType::Plane);
+			for (const EditorSceneObject& sceneObject : editorSceneObjects) {
+				if (sceneObject.type != EditorSceneObjectType::Model ||
+					sceneObject.transformationData == nullptr) {
+					continue;
 				}
 
-				vertexCount = primitiveVertexCounts[meshTypeIndex];
+				const Vector3 localBoundsCenter = GetPlanarReflectionLocalMeshCenter(sceneObject);
+				const Vector3 localBoundsSize = GetPlanarReflectionLocalMeshSize(sceneObject);
+				const Vector3 localBoundsExtent = {
+					localBoundsSize.x * 0.5f,
+					localBoundsSize.y * 0.5f,
+					localBoundsSize.z * 0.5f
+				};
+				Vector3 worldMinimum = {
+					(std::numeric_limits<float>::max)(),
+					(std::numeric_limits<float>::max)(),
+					(std::numeric_limits<float>::max)()
+				};
+				Vector3 worldMaximum = {
+					-(std::numeric_limits<float>::max)(),
+					-(std::numeric_limits<float>::max)(),
+					-(std::numeric_limits<float>::max)()
+				};
+
+				for (uint32_t cornerIndex = 0u; cornerIndex < 8u; cornerIndex++) {
+					const Vector3 localCorner = {
+						localBoundsCenter.x + ((cornerIndex & 1u) != 0u ? localBoundsExtent.x : -localBoundsExtent.x),
+						localBoundsCenter.y + ((cornerIndex & 2u) != 0u ? localBoundsExtent.y : -localBoundsExtent.y),
+						localBoundsCenter.z + ((cornerIndex & 4u) != 0u ? localBoundsExtent.z : -localBoundsExtent.z)
+					};
+					const Vector3 worldCorner = Transform(localCorner, sceneObject.transformationData->World);
+					worldMinimum.x = (std::min)(worldMinimum.x, worldCorner.x);
+					worldMinimum.y = (std::min)(worldMinimum.y, worldCorner.y);
+					worldMinimum.z = (std::min)(worldMinimum.z, worldCorner.z);
+					worldMaximum.x = (std::max)(worldMaximum.x, worldCorner.x);
+					worldMaximum.y = (std::max)(worldMaximum.y, worldCorner.y);
+					worldMaximum.z = (std::max)(worldMaximum.z, worldCorner.z);
+				}
+
+				uint32_t vertexCount = sceneObject.customMeshVertexCount;
+
+				if (!sceneObject.usesCustomMesh || vertexCount == 0u) {
+					size_t meshTypeIndex = static_cast<size_t>(sceneObject.meshType);
+
+					if (meshTypeIndex >= kEditorModelMeshTypeCount) {
+						meshTypeIndex = static_cast<size_t>(EditorModelMeshType::Plane);
+					}
+
+					vertexCount = primitiveVertexCounts[meshTypeIndex];
+				}
+
+				gpuCullingInputs.push_back({
+					(worldMinimum.x + worldMaximum.x) * 0.5f,
+					(worldMinimum.y + worldMaximum.y) * 0.5f,
+					(worldMinimum.z + worldMaximum.z) * 0.5f,
+					(worldMaximum.x - worldMinimum.x) * 0.5f,
+					(worldMaximum.y - worldMinimum.y) * 0.5f,
+					(worldMaximum.z - worldMinimum.z) * 0.5f,
+					sceneObject.gameObjectId,
+					vertexCount
+				});
 			}
 
-			gpuCullingInputs.push_back({
-				(worldMinimum.x + worldMaximum.x) * 0.5f,
-				(worldMinimum.y + worldMaximum.y) * 0.5f,
-				(worldMinimum.z + worldMaximum.z) * 0.5f,
-				(worldMaximum.x - worldMinimum.x) * 0.5f,
-				(worldMaximum.y - worldMinimum.y) * 0.5f,
-				(worldMaximum.z - worldMinimum.z) * 0.5f,
-				sceneObject.gameObjectId,
-				vertexCount
-			});
-		}
+			const uint32_t depthLevelCount = g_depthHierarchyManager.GetActiveLevelCount();
 
-		const uint32_t depthLevelCount = g_depthHierarchyManager.GetActiveLevelCount();
+			if (depthLevelCount > 0u) {
+				const uint32_t cullingDepthLevel = (std::min)(4u, depthLevelCount - 1u);
+				const Matrix4x4& cullingViewProjection = g_isSceneViewVisible
+					? sceneViewProjectionMatrix
+					: gameViewProjectionMatrix;
+				const D3D12_VIEWPORT& cullingViewport = g_isSceneViewVisible
+					? viewport
+					: gameViewport;
+				const float inverseRenderWidth = 1.0f / static_cast<float>((std::max)(g_renderWidth, 1u));
+				const float inverseRenderHeight = 1.0f / static_cast<float>((std::max)(g_renderHeight, 1u));
 
-		if (depthLevelCount > 0u) {
-			const uint32_t cullingDepthLevel = (std::min)(4u, depthLevelCount - 1u);
-			const Matrix4x4& cullingViewProjection = g_isSceneViewVisible
-				? sceneViewProjectionMatrix
-				: gameViewProjectionMatrix;
-			const D3D12_VIEWPORT& cullingViewport = g_isSceneViewVisible
-				? viewport
-				: gameViewport;
-			const float inverseRenderWidth = 1.0f / static_cast<float>((std::max)(g_renderWidth, 1u));
-			const float inverseRenderHeight = 1.0f / static_cast<float>((std::max)(g_renderHeight, 1u));
-
-			g_gpuCullingManager.Execute(
-				commandList.Get(),
-				gpuCullingInputs,
-				g_depthHierarchyManager.GetDepthPyramidSrvHandle(cullingDepthLevel),
-				&cullingViewProjection.matrix[0][0],
-				g_depthHierarchyManager.GetDepthPyramidWidth(cullingDepthLevel),
-				g_depthHierarchyManager.GetDepthPyramidHeight(cullingDepthLevel),
-				cullingViewport.TopLeftX * inverseRenderWidth,
-				cullingViewport.TopLeftY * inverseRenderHeight,
-				cullingViewport.Width * inverseRenderWidth,
-				cullingViewport.Height * inverseRenderHeight);
+				g_gpuCullingManager.Execute(
+					commandList.Get(),
+					gpuCullingInputs,
+					g_depthHierarchyManager.GetDepthPyramidSrvHandle(cullingDepthLevel),
+					&cullingViewProjection.matrix[0][0],
+					g_depthHierarchyManager.GetDepthPyramidWidth(cullingDepthLevel),
+					g_depthHierarchyManager.GetDepthPyramidHeight(cullingDepthLevel),
+					cullingViewport.TopLeftX * inverseRenderWidth,
+					cullingViewport.TopLeftY * inverseRenderHeight,
+					cullingViewport.Width * inverseRenderWidth,
+					cullingViewport.Height * inverseRenderHeight);
+			}
 		}
 
 		depthComputeBarrier.Transition.StateBefore = computeReadableDepthState;
@@ -1859,7 +2010,8 @@ void EditorRenderManager::Draw() {
 	commandList->SetDescriptorHeaps(1, descriptorHeaps);
 
 	// SSAO: Scene Depth 遶翫・SSAO A 遶翫・SSAO B
-	if (depthStencilResource != nullptr &&
+	if (shouldRenderAmbientOcclusion &&
+		depthStencilResource != nullptr &&
 		ssaoRenderTargets[0] != nullptr &&
 		ssaoRenderTargets[1] != nullptr &&
 		ssaoPipelineState != nullptr &&
@@ -1925,17 +2077,8 @@ void EditorRenderManager::Draw() {
 	}
 
 	//================================================================
-	// ポストプロセス設定の読み取り
-	//================================================================
-	const PostProcessSettings ppSettings = GetPostProcessSettings();
-
-	//================================================================
 	// Compute: SSR と時間方向の履歴解決
 	//================================================================
-
-	const bool shouldExecuteTemporalOrSsr =
-		ppSettings.hasPostProcessComponent &&
-		(ppSettings.aaMode == 3 || ppSettings.ssrEnabled);
 
 	if (shouldExecuteTemporalOrSsr &&
 		hdrPostSourceResource != nullptr &&
@@ -2362,14 +2505,27 @@ void EditorRenderManager::Draw() {
 	commandList->ResourceBarrier(1, &backBufferBarrier);
 
 	hr = commandList->Close(); // CommandList 郢�E�E�E�蟶晏陶邵�E�E�E�蛟･�E�E�E�・娜U 邵�E�E�E�・�E�E�E�陞ｳ貁E�E��E�・�E�E�E�蠕後堤�E�E�E��E�E�E�髦�E�E�E�・玖ｿ�E�E�E�・�E�E�E�隲�E�E�E�荵昶・驕抵�E�E�E��E�E�E�陞ｳ螢�E�E�E�笘�E�E�E�E��E�E�E�荵敖繝ｻ
-	assert(SUCCEEDED(hr));
+	if (FAILED(hr)) {
+		Log(g_logStream, std::format("CommandList Close failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		g_isDrawRequested = false;
+		return;
+	}
 
 	// commandLists 邵�E�E�E�・�E�E�E� ExecuteCommandLists 邵�E�E�E�・�E�E�E�雋ゑ�E�E�E��E�E�E�邵�E�E�E�蜻守ｷ帝匁E�E��E��E�E�E� CommandList 鬩滓ｦ翫・邵�E�E�E�繝ｻ
 	ID3D12CommandList* commandLists[] = {commandList.Get()};
 	commandQueue->ExecuteCommandLists(1, commandLists);
 
+	if (hasRecordedShadowMapUpdate) {
+		submittedShadowStateHash = shadowStateHash;
+		hasSubmittedShadowMap = true;
+	}
+
 	hr = swapChain->Present(1, 0); // Present 邵�E�E�E�・�E�E�E�隰�E�E�E�蜀怜�E雋ょ現竏ｩ back buffer 郢�E�E�E�繝ｻWindow 邵�E�E�E�・�E�E�E�髯�E�E�E�・�E�E�E�驕会ｽ�E�E�E�邵�E�E�E�蜷�E�E�E�・狗ｸ�E�E�E�繝ｻ
-	assert(SUCCEEDED(hr));
+	if (FAILED(hr)) {
+		Log(g_logStream, std::format("SwapChain Present failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		g_isDrawRequested = false;
+		return;
+	}
 
 	if (!hasLoggedFirstPresent) {
 		Log(g_logStream, "EditorRenderManager first present completed");
@@ -2378,12 +2534,20 @@ void EditorRenderManager::Draw() {
 
 	fenceValue++; // fenceValue 郢�E�E�E�蟶敖・�E�E�E�郢�E�E�E�竏堋竏ｽ・�E�E�E�髮∝ｱ鍋ｸ�E�E�E�・�E�E�E�隰�E�E�E�蜀怜�E陞ｳ蠕｡・�E�E�E�繝ｻ・�E�E�E�蜥�E�E�E�・�E�E�E�・�E�E�E�郢�E�E�E�繝ｻGPU 邵�E�E�E�・�E�E�E�髫�E�E�E�蛟ｬ鮖ｸ邵�E�E�E�蜷�E�E�E�・狗ｸ�E�E�E�繝ｻ
 	hr = commandQueue->Signal(fence.Get(), fenceValue);
-	assert(SUCCEEDED(hr));
+	if (FAILED(hr)) {
+		Log(g_logStream, std::format("CommandQueue Signal failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		g_isDrawRequested = false;
+		return;
+	}
 
 	// GPU 邵�E�E�E�蠕｡・�E�E�E�髮∝ｱ鍋ｸ�E�E�E�・�E�E�E�隰�E�E�E�蜀怜�E郢�E�E�E�蝣�E�E�E�・�E�E�E�繧・斡郢�E�E�E�荵昶穐邵�E�E�E�・�E�E�E�陟輔�E笁E�E��E�邵�E�E�E�竏ｵ・�E�E�E�・�E�E�E�郢晁E�E��E�釁E�E��E��E�晢�E�E�E��E�E�E�郢晢�E�E�E��E�E�E�邵�E�E�E�・�E�E�E�郢晢�E�E�E��E�E�E�郢�E�E�E�・�E�E�E�郢晢�E�E�E��E�E�E�郢�E�E�E�・�E�E�E�郢�E�E�E�蜻亥�E�E�E�檎ｸ�E�E�E�閧�E�E�E�驪�E�E�E�邵�E�E�E�蛹�E�E�E�窶�E�E�E�郢�E�E�E�繧・�E�E�E��E�E�E�迚吶・邵�E�E�E�・�E�E�E�邵�E�E�E�蜷�E�E�E�・狗ｸ�E�E�E�繝ｻ
 	if (fence->GetCompletedValue() < fenceValue) {
 		hr = fence->SetEventOnCompletion(fenceValue, fenceEvent);
-		assert(SUCCEEDED(hr));
+		if (FAILED(hr)) {
+			Log(g_logStream, std::format("Fence SetEventOnCompletion failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+			g_isDrawRequested = false;
+			return;
+		}
 		if (fenceEvent != nullptr) {
 			WaitForSingleObject(fenceEvent, INFINITE);
 		}

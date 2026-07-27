@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
@@ -11,6 +12,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #pragma warning(push, 0)
@@ -585,9 +587,12 @@ namespace {
 	struct CachedModelAsset {
 		ModelData modelData;  // 読み込み済みメッシュ。描画と MeshCollider で共有する。
 		std::filesystem::file_time_type lastWriteTime{};  // ファイル更新を検知してキャッシュを作り直す。
+		std::chrono::steady_clock::time_point nextValidationTime{};  // 毎フレームのファイルシステム確認を避ける。
+		bool includesAnimation = false;  // true なら FBX Animation のサンプリングまで完了している。
 	};
 
 	std::unordered_map<std::string, CachedModelAsset> g_cachedModelAssets;  // 同じ asset を毎フレーム再パースしないための簡易キャッシュ。
+	std::unordered_map<std::string, std::string> g_modelCacheKeyByRequestedPath;  // 旧 resources path と移動後 path を同じ cache entry へ結ぶ。
 
 	std::string ToLowerText(const std::string& text) {
 		std::string lowerText = text;
@@ -607,6 +612,57 @@ namespace {
 		return normalizedPath;
 	}
 
+	std::string ResolveEditorDefaultAssetPath(const std::string& path) {
+		const std::string normalizedPath = NormalizeAssetPath(path);
+
+		if (normalizedPath == "resources/uvchecker.png" ||
+			normalizedPath.ends_with("/resources/uvchecker.png")) {
+			return "resources/editorDefault/uvChecker.png";
+		}
+
+		if (normalizedPath == "resources/monsterball.png" ||
+			normalizedPath.ends_with("/resources/monsterball.png")) {
+			return "resources/editorDefault/monsterBall.png";
+		}
+
+		if (normalizedPath == "resources/ball.png" ||
+			normalizedPath.ends_with("/resources/ball.png")) {
+			return "resources/editorDefault/ball.png";
+		}
+
+		if (normalizedPath == "resources/sibahu.png" ||
+			normalizedPath.ends_with("/resources/sibahu.png")) {
+			return "resources/editorDefault/sibahu.png";
+		}
+
+		if (normalizedPath == "resources/uvcube.fbx" ||
+			normalizedPath.ends_with("/resources/uvcube.fbx")) {
+			return "resources/editorDefault/UVCube.fbx";
+		}
+
+		if (normalizedPath == "resources/box.fbx" ||
+			normalizedPath.ends_with("/resources/box.fbx")) {
+			return "resources/editorDefault/box.fbx";
+		}
+
+		if (normalizedPath == "resources/cone.fbx" ||
+			normalizedPath.ends_with("/resources/cone.fbx")) {
+			return "resources/editorDefault/cone.fbx";
+		}
+
+		if (normalizedPath == "resources/icocube.fbx" ||
+			normalizedPath.ends_with("/resources/icocube.fbx")) {
+			return "resources/editorDefault/ICOCube.fbx";
+		}
+
+		if (normalizedPath == "resources/en.fbx" ||
+			normalizedPath.ends_with("/resources/en.fbx")) {
+			return "resources/editorDefault/en.fbx";
+		}
+
+		return path;
+	}
+
 	bool MatchesBuiltInPrimitivePath(const std::string& normalizedPath, const char* builtInPath) {
 		if (builtInPath == nullptr) {
 			return false;
@@ -620,11 +676,13 @@ namespace {
 	bool TryGetBuiltInPrimitiveMeshType(
 		const std::string& normalizedPath,
 		EditorModelMeshType& meshType) {
-		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/uvcube.fbx")) {
+		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/uvcube.fbx") ||
+			MatchesBuiltInPrimitivePath(normalizedPath, "resources/editordefault/uvcube.fbx")) {
 			meshType = EditorModelMeshType::Cube;
 			return true;
 		}
-		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/box.fbx")) {
+		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/box.fbx") ||
+			MatchesBuiltInPrimitivePath(normalizedPath, "resources/editordefault/box.fbx")) {
 			meshType = EditorModelMeshType::Box;
 			return true;
 		}
@@ -632,7 +690,8 @@ namespace {
 			meshType = EditorModelMeshType::Cylinder;
 			return true;
 		}
-		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/cone.fbx")) {
+		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/cone.fbx") ||
+			MatchesBuiltInPrimitivePath(normalizedPath, "resources/editordefault/cone.fbx")) {
 			meshType = EditorModelMeshType::Cone;
 			return true;
 		}
@@ -641,7 +700,8 @@ namespace {
 			meshType = EditorModelMeshType::Torus;
 			return true;
 		}
-		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/icocube.fbx")) {
+		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/icocube.fbx") ||
+			MatchesBuiltInPrimitivePath(normalizedPath, "resources/editordefault/icocube.fbx")) {
 			meshType = EditorModelMeshType::Ico;
 			return true;
 		}
@@ -860,7 +920,7 @@ namespace {
 		return !modelData.vertices.empty();
 	}
 
-	bool LoadFbxModel(const std::string& assetPath, ModelData& modelData) {
+	bool LoadFbxModel(const std::string& assetPath, ModelData& modelData, bool includeAnimation) {
 		InitializeDefaultMaterialData(modelData);
 		FbxManager* fbxManager = FbxManager::Create();
 		if (fbxManager == nullptr) {
@@ -928,7 +988,9 @@ namespace {
 			}
 		};
 		appendMaterialNode(appendMaterialNode, scene->GetRootNode());
-		AppendFbxAnimationClips(modelData, scene);
+		if (includeAnimation) {
+			AppendFbxAnimationClips(modelData, scene);
+		}
 
 		auto appendMeshNode = [&](auto&& appendMeshNodeSelf, FbxNode* node) -> void {
 			if (node == nullptr) {
@@ -1101,11 +1163,24 @@ std::string EditorAssetUtility::GetFilename(const std::string& path) {
 }
 
 int32_t EditorAssetUtility::GetTextureIndex(const std::vector<std::string>& textureFilePaths, const std::string& path) {
+	const std::filesystem::path requestedPath(path);
+	const std::filesystem::path resolvedRequestedPath(ResolveEditorDefaultAssetPath(path));
+	const std::string normalizedRequestedPath = NormalizeAssetPath(requestedPath.lexically_normal().generic_string());
+	const std::string normalizedResolvedRequestedPath =
+		NormalizeAssetPath(resolvedRequestedPath.lexically_normal().generic_string());
+
 	for (uint32_t textureIndex = 0;
 		 textureIndex < static_cast<uint32_t>(textureFilePaths.size());
 		 textureIndex++) {
 		// 登録済みテクスチャパスと完全一致した番号を返す
 		if (textureFilePaths[textureIndex] == path) {
+			return static_cast<int32_t>(textureIndex);
+		}
+
+		const std::filesystem::path registeredPath(textureFilePaths[textureIndex]);
+		const std::string normalizedRegisteredPath = NormalizeAssetPath(registeredPath.lexically_normal().generic_string());
+		if (normalizedRegisteredPath == normalizedRequestedPath ||
+			normalizedRegisteredPath == normalizedResolvedRequestedPath) {
 			return static_cast<int32_t>(textureIndex);
 		}
 	}
@@ -1128,48 +1203,89 @@ bool EditorAssetUtility::IsBuiltInPrimitiveAssetPath(const std::string& path) {
 	return TryGetBuiltInPrimitiveMeshType(NormalizeAssetPath(path), meshType);
 }
 
-bool EditorAssetUtility::LoadModelAsset(const std::string& path, ModelData& modelData) {
-	modelData = {};
+const ModelData* EditorAssetUtility::GetModelAssetData(const std::string& path, bool includeAnimation) {
 	if (path.empty()) {
-		return false;
+		return nullptr;
 	}
 
-	const std::filesystem::path filePath(path);
+	std::filesystem::path filePath(path);
 	std::error_code fileError;
 	if (!std::filesystem::exists(filePath, fileError) || fileError) {
-		return false;
+		const std::filesystem::path resolvedFilePath(ResolveEditorDefaultAssetPath(path));
+		fileError.clear();
+		if (!std::filesystem::exists(resolvedFilePath, fileError) || fileError) {
+			return nullptr;
+		}
+
+		filePath = resolvedFilePath;
 	}
 
 	const std::string normalizedPath = NormalizeAssetPath(filePath.generic_string());
+	const std::string normalizedRequestedPath = NormalizeAssetPath(std::filesystem::path(path).lexically_normal().generic_string());
 	const std::filesystem::file_time_type lastWriteTime = std::filesystem::last_write_time(filePath, fileError);
 	if (!fileError) {
 		auto cacheIterator = g_cachedModelAssets.find(normalizedPath);
 		if (cacheIterator != g_cachedModelAssets.end() &&
-			cacheIterator->second.lastWriteTime == lastWriteTime) {
-			modelData = cacheIterator->second.modelData;
-			return !modelData.vertices.empty();
+			cacheIterator->second.lastWriteTime == lastWriteTime &&
+			(!includeAnimation || cacheIterator->second.includesAnimation)) {
+			cacheIterator->second.nextValidationTime = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+			g_modelCacheKeyByRequestedPath[normalizedRequestedPath] = normalizedPath;
+			g_modelCacheKeyByRequestedPath[normalizedPath] = normalizedPath;
+			return cacheIterator->second.modelData.vertices.empty() ? nullptr : &cacheIterator->second.modelData;
 		}
 	}
 
 	ModelData loadedModelData{};
 	bool isLoaded = false;
+	const bool isFbxAsset = HasExtension(path, ".fbx");
 	if (HasExtension(path, ".obj")) {
 		isLoaded = LoadObjModel(filePath.generic_string(), loadedModelData);
 	}
-	else if (HasExtension(path, ".fbx")) {
-		isLoaded = LoadFbxModel(filePath.generic_string(), loadedModelData);
+	else if (isFbxAsset) {
+		isLoaded = LoadFbxModel(filePath.generic_string(), loadedModelData, includeAnimation);
 	}
 
 	if (!isLoaded) {
-		return false;
+		return nullptr;
 	}
 
 	OptimizeModelVertices(loadedModelData);
 
 	CachedModelAsset& cachedAsset = g_cachedModelAssets[normalizedPath];
-	cachedAsset.modelData = loadedModelData;
+	cachedAsset.modelData = std::move(loadedModelData);
 	cachedAsset.lastWriteTime = lastWriteTime;
-	modelData = cachedAsset.modelData;
+	cachedAsset.nextValidationTime = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+	cachedAsset.includesAnimation = !isFbxAsset || includeAnimation;
+	g_modelCacheKeyByRequestedPath[normalizedRequestedPath] = normalizedPath;
+	g_modelCacheKeyByRequestedPath[normalizedPath] = normalizedPath;
+	return cachedAsset.modelData.vertices.empty() ? nullptr : &cachedAsset.modelData;
+}
+
+const ModelData* EditorAssetUtility::GetSharedModelAssetData(const std::string& path, bool includeAnimation) {
+	const std::string requestedCacheKey =
+		NormalizeAssetPath(std::filesystem::path(path).lexically_normal().generic_string());
+	auto aliasIterator = g_modelCacheKeyByRequestedPath.find(requestedCacheKey);
+	const std::string& modelCacheKey =
+		aliasIterator != g_modelCacheKeyByRequestedPath.end() ? aliasIterator->second : requestedCacheKey;
+	auto cacheIterator = g_cachedModelAssets.find(modelCacheKey);
+
+	if (cacheIterator != g_cachedModelAssets.end() &&
+		(!includeAnimation || cacheIterator->second.includesAnimation) &&
+		std::chrono::steady_clock::now() < cacheIterator->second.nextValidationTime) {
+		return cacheIterator->second.modelData.vertices.empty() ? nullptr : &cacheIterator->second.modelData;
+	}
+
+	return GetModelAssetData(path, includeAnimation);
+}
+
+bool EditorAssetUtility::LoadModelAsset(const std::string& path, ModelData& modelData) {
+	modelData = {};
+	const ModelData* cachedModelData = GetModelAssetData(path, true);
+	if (cachedModelData == nullptr) {
+		return false;
+	}
+
+	modelData = *cachedModelData;
 	return !modelData.vertices.empty();
 }
 

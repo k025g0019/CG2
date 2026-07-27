@@ -429,22 +429,22 @@ void EditorMainMenuBar::Draw(
 
 		if (ImGui::BeginMenu("3D Object")) {
 			if (ImGui::MenuItem("Cube")) {
-				CreatePrimitiveGameObject("resources/UVCube.fbx");
+				CreatePrimitiveGameObject("resources/editorDefault/UVCube.fbx");
 			}
 			if (ImGui::MenuItem("Box")) {
-				CreatePrimitiveGameObject("resources/box.fbx");
+				CreatePrimitiveGameObject("resources/editorDefault/box.fbx");
 			}
 			if (ImGui::MenuItem("Cylinder")) {
 				CreatePrimitiveGameObject("resources/cylinder.fbx");
 			}
 			if (ImGui::MenuItem("Cone")) {
-				CreatePrimitiveGameObject("resources/cone.fbx");
+				CreatePrimitiveGameObject("resources/editorDefault/cone.fbx");
 			}
 			if (ImGui::MenuItem("Torus")) {
 				CreatePrimitiveGameObject("resources/Torus.fbx");
 			}
 			if (ImGui::MenuItem("Ico")) {
-				CreatePrimitiveGameObject("resources/ICOCube.fbx");
+				CreatePrimitiveGameObject("resources/editorDefault/ICOCube.fbx");
 			}
 			if (ImGui::MenuItem("Sphere")) {
 				CreatePrimitiveGameObject("resources/sphere.fbx");
@@ -484,6 +484,10 @@ void EditorMainMenuBar::Draw(
 
 		if (ImGui::MenuItem("球の当たり判定", nullptr, false, canAddComponent)) {
 			AddComponentToSelectedGameObject(EditorComponentType::SphereCollider, "球の当たり判定", consoleMessages);
+		}
+
+		if (ImGui::MenuItem("Auto Convex Collision", nullptr, false, canAddComponent)) {
+			AddComponentToSelectedGameObject(EditorComponentType::AutoConvexCollision, "Auto Convex Collision", consoleMessages);
 		}
 
 		if (ImGui::MenuItem("プレイヤー入力", nullptr, false, canAddComponent)) {

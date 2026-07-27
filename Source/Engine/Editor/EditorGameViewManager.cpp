@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 using namespace EditorSharedState;
 
@@ -334,6 +335,35 @@ void EditorGameViewManager::Draw() {
 		ImVec2(g_editorGameX + 20.0f, g_editorGameY + 38.0f),
 		g_isGameViewUsingSceneCamera ? IM_COL32(255, 210, 130, 255) : IM_COL32(170, 215, 255, 255),
 		cameraText);
+
+	char gameFpsText[64]{};
+	const float gameFrameRate = ImGui::GetIO().Framerate;
+	const float gameFrameTimeMilliseconds = gameFrameRate > 0.0f ? 1000.0f / gameFrameRate : 0.0f;
+	std::snprintf(
+		gameFpsText,
+		_countof(gameFpsText),
+		"%.1f FPS  %.2f ms",
+		gameFrameRate,
+		gameFrameTimeMilliseconds);
+	const ImVec2 gameFpsTextSize = ImGui::CalcTextSize(gameFpsText);
+	const ImVec2 gameFpsTextPosition{
+		g_editorGameX + 18.0f,
+		g_editorGameY + g_editorGameHeight - gameFpsTextSize.y - 14.0f};
+	const ImVec2 gameFpsBackgroundMin{
+		gameFpsTextPosition.x - 8.0f,
+		gameFpsTextPosition.y - 5.0f};
+	const ImVec2 gameFpsBackgroundMax{
+		gameFpsTextPosition.x + gameFpsTextSize.x + 8.0f,
+		gameFpsTextPosition.y + gameFpsTextSize.y + 5.0f};
+	gameDrawList->AddRectFilled(
+		gameFpsBackgroundMin,
+		gameFpsBackgroundMax,
+		IM_COL32(12, 18, 24, 205),
+		5.0f);
+	gameDrawList->AddText(
+		gameFpsTextPosition,
+		IM_COL32(210, 245, 210, 255),
+		gameFpsText);
 
 	ImGui::Dummy(ImVec2(g_editorGameWidth, g_editorGameHeight));  // ウィンドウの内容領域を GameView の描画領域として確保する。
 	DrawGameViewUiControls(gameContentPosition, g_editorGameWidth, g_editorGameHeight);

@@ -1,15 +1,49 @@
 ﻿#include "EditorSceneSynchronizer.h"
 
 #include "EditorAssetUtility.h"
-#include "EditorComponentUtility.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cmath>
+#include <unordered_map>
 
 #pragma warning(disable : 5045)
 
 namespace {
+	struct SynchronizedGameObjectData {
+		const EditorGameObject* gameObject = nullptr;
+		const EditorComponent* modelRenderer = nullptr;
+		const EditorComponent* spriteRenderer = nullptr;
+		const EditorComponent* meshFilter = nullptr;
+		const EditorComponent* reflectionProbe = nullptr;
+	};
+
+	SynchronizedGameObjectData CollectSynchronizedGameObjectData(const EditorGameObject& gameObject) {
+		SynchronizedGameObjectData synchronizedData{};
+		synchronizedData.gameObject = &gameObject;
+
+		for (const EditorComponent& component : gameObject.components) {
+			switch (component.type) {
+			case EditorComponentType::ModelRenderer:
+				synchronizedData.modelRenderer = &component;
+				break;
+			case EditorComponentType::SpriteRenderer:
+				synchronizedData.spriteRenderer = &component;
+				break;
+			case EditorComponentType::MeshFilter:
+				synchronizedData.meshFilter = &component;
+				break;
+			case EditorComponentType::ReflectionProbe:
+				synchronizedData.reflectionProbe = &component;
+				break;
+			default:
+				break;
+			}
+		}
+
+		return synchronizedData;
+	}
+
 	float GetReflectionModeValue(const EditorComponent* reflectionProbeComponent) {
 		if (reflectionProbeComponent == nullptr || !reflectionProbeComponent->isActive) {
 			return 0.0f;
@@ -48,7 +82,10 @@ namespace {
 			rendererColor.y * rendererIntensity,
 			rendererColor.z * rendererIntensity,
 			rendererComponent != nullptr ? rendererComponent->alpha : 1.0f};
-		sceneObject.materialData->enableLighting = isModelRenderer ? TRUE : FALSE;
+		const int32_t lightingMode = rendererComponent != nullptr
+			? (std::clamp)(rendererComponent->lightingMode, 0, 3)
+			: 3;
+		sceneObject.materialData->enableLighting = isModelRenderer ? lightingMode : 0;
 		sceneObject.materialData->useTexture = isModelRenderer ? FALSE : TRUE;  // Mesh は初期状態を白い面、Sprite は画像表示にする。
 		sceneObject.materialData->metallic = rendererComponent != nullptr ? rendererComponent->metallic : 0.0f;
 		sceneObject.materialData->roughness = rendererComponent != nullptr ? rendererComponent->roughness : 0.5f;
@@ -142,6 +179,18 @@ void EditorSceneSynchronizer::Update(
 	}
 
 	std::vector<EditorSceneObject>& sceneObjects = sceneObjectManager_->GetSceneObjects();  // 描画用 SceneObject 配列を直接編集する
+	const std::vector<EditorGameObject>& gameObjects = editorScene_->GetGameObjects();
+	std::vector<SynchronizedGameObjectData> synchronizedGameObjects;
+	std::unordered_map<int32_t, size_t> synchronizedGameObjectIndices;
+	synchronizedGameObjects.reserve(gameObjects.size());
+	synchronizedGameObjectIndices.reserve(gameObjects.size());
+
+	// Component 配列はここで 1 度だけ走査し、以降は ID 索引から参照する。
+	for (const EditorGameObject& gameObject : gameObjects) {
+		const size_t synchronizedIndex = synchronizedGameObjects.size();
+		synchronizedGameObjects.push_back(CollectSynchronizedGameObjectData(gameObject));
+		synchronizedGameObjectIndices.emplace(gameObject.id, synchronizedIndex);
+	}
 
 	// 後ろから削除することで erase 後の index ずれを避ける
 	for (int32_t sceneObjectIndex = static_cast<int32_t>(sceneObjects.size()) - 1;
@@ -149,20 +198,21 @@ void EditorSceneSynchronizer::Update(
 	     sceneObjectIndex--) {
 		const EditorSceneObject& sceneObject =
 			sceneObjects[static_cast<size_t>(sceneObjectIndex)];
-		// 紐づく GameObject が消えていないか確認する
-		const EditorGameObject* gameObject =
-			editorScene_->FindGameObject(sceneObject.gameObjectId);
-		bool shouldRemove = gameObject == nullptr;
+		// 紐づく GameObject が消えていないか ID 索引から確認する
+		const auto synchronizedGameObjectIterator =
+			synchronizedGameObjectIndices.find(sceneObject.gameObjectId);
+		bool shouldRemove = synchronizedGameObjectIterator == synchronizedGameObjectIndices.end();
 
 		// Renderer Component が外された SceneObject は描画対象から消す
-		if (!shouldRemove && gameObject != nullptr) {
+		if (!shouldRemove) {
+			const SynchronizedGameObjectData& synchronizedData =
+				synchronizedGameObjects[synchronizedGameObjectIterator->second];
+
 			if (sceneObject.type == EditorSceneObjectType::Model) {
-				shouldRemove =
-					!editorScene_->HasComponent(gameObject->id, EditorComponentType::ModelRenderer);
+				shouldRemove = synchronizedData.modelRenderer == nullptr;
 			}
 			else {
-				shouldRemove =
-					!editorScene_->HasComponent(gameObject->id, EditorComponentType::SpriteRenderer);
+				shouldRemove = synchronizedData.spriteRenderer == nullptr;
 			}
 		}
 
@@ -183,12 +233,27 @@ void EditorSceneSynchronizer::Update(
 		}
 	}
 
+	std::unordered_map<int32_t, int32_t> sceneObjectIndices;
+	sceneObjectIndices.reserve(sceneObjects.size() + synchronizedGameObjects.size());
+
+	for (int32_t sceneObjectIndex = 0;
+		 sceneObjectIndex < static_cast<int32_t>(sceneObjects.size());
+		 sceneObjectIndex++) {
+		sceneObjectIndices.emplace(
+			sceneObjects[static_cast<size_t>(sceneObjectIndex)].gameObjectId,
+			sceneObjectIndex);
+	}
+
 	// GameObject 側に Renderer があれば、対応する SceneObject を作る / 更新する
-	for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
-		bool hasModelRenderer =
-			editorScene_->HasComponent(gameObject.id, EditorComponentType::ModelRenderer);
-		bool hasSpriteRenderer =
-			editorScene_->HasComponent(gameObject.id, EditorComponentType::SpriteRenderer);
+	for (const SynchronizedGameObjectData& synchronizedData : synchronizedGameObjects) {
+		const EditorGameObject& gameObject = *synchronizedData.gameObject;
+		const EditorComponent* modelRenderer = synchronizedData.modelRenderer;
+		const EditorComponent* spriteRenderer = synchronizedData.spriteRenderer;
+		const EditorComponent* meshFilter = synchronizedData.meshFilter;
+		const EditorComponent* reflectionProbe = synchronizedData.reflectionProbe;
+		const bool hasModelRenderer = modelRenderer != nullptr;
+		const bool hasSpriteRenderer = spriteRenderer != nullptr;
+
 		if (!hasModelRenderer && !hasSpriteRenderer) {
 			continue;
 		}
@@ -198,14 +263,11 @@ void EditorSceneSynchronizer::Update(
 			hasModelRenderer ? EditorSceneObjectType::Model : EditorSceneObjectType::Sprite;
 		int32_t sceneObjectIndex = -1;
 
-		// 既に GameObject と紐づく SceneObject があるか探す
-		for (int32_t findIndex = 0;
-		     findIndex < static_cast<int32_t>(sceneObjects.size());
-		     findIndex++) {
-			if (sceneObjects[static_cast<size_t>(findIndex)].gameObjectId == gameObject.id) {
-				sceneObjectIndex = findIndex;
-				break;
-			}
+		// 既に GameObject と紐づく SceneObject があるか ID 索引から探す
+		const auto sceneObjectIterator = sceneObjectIndices.find(gameObject.id);
+
+		if (sceneObjectIterator != sceneObjectIndices.end()) {
+			sceneObjectIndex = sceneObjectIterator->second;
 		}
 
 		if (sceneObjectIndex < 0) {
@@ -213,8 +275,6 @@ void EditorSceneSynchronizer::Update(
 			EditorModelMeshType meshType = EditorModelMeshType::Plane;  // ModelRenderer の assetPath から基本形を選ぶ
 			if (sceneObjectType == EditorSceneObjectType::Sprite) {
 				textureIndex = 0;
-				const EditorComponent* spriteRenderer =
-					EditorComponentUtility::FindComponent(gameObject, EditorComponentType::SpriteRenderer);
 				if (spriteRenderer != nullptr && !spriteRenderer->assetPath.empty()) {
 					// assetPath が登録済み texture にあればその番号を使う
 					int32_t foundTextureIndex =
@@ -225,10 +285,6 @@ void EditorSceneSynchronizer::Update(
 				}
 			}
 			else {
-				const EditorComponent* modelRenderer =
-					EditorComponentUtility::FindComponent(gameObject, EditorComponentType::ModelRenderer);
-				const EditorComponent* meshFilter =
-					EditorComponentUtility::FindComponent(gameObject, EditorComponentType::MeshFilter);
 				if (modelRenderer != nullptr && !modelRenderer->assetPath.empty()) {
 					meshType = EditorAssetUtility::GetModelMeshType(modelRenderer->assetPath);
 				}
@@ -248,6 +304,7 @@ void EditorSceneSynchronizer::Update(
 
 			sceneObjects[static_cast<size_t>(sceneObjectIndex)].gameObjectId = gameObject.id;  // 作成した SceneObject と GameObject を ID で紐づける
 			sceneObjects[static_cast<size_t>(sceneObjectIndex)].meshType = meshType;
+			sceneObjectIndices.emplace(gameObject.id, sceneObjectIndex);
 		}
 
 		// GameObject の Transform を描画用 SceneObject へコピーする
@@ -257,12 +314,17 @@ void EditorSceneSynchronizer::Update(
 		sceneObject.transform.rotate = gameObject.rotate;
 		sceneObject.transform.scale = gameObject.scale;
 		sceneObject.name = gameObject.name;
+
+		// Material ConstantBuffer の Map に失敗した SceneObject は描画更新を中止する。
+		// ここを通したまま materialData を参照すると null 読み取りで落ちる。
+		if (sceneObject.materialData == nullptr) {
+			sceneObjectManager_->ClearCustomTexture(sceneObjectIndex);
+			sceneObjectManager_->ClearAllMaterialTextures(sceneObjectIndex);
+			continue;
+		}
+
 		if (sceneObject.type == EditorSceneObjectType::Sprite) {
 			// Sprite は SpriteRenderer の assetPath に合わせて textureIndex を更新する
-			const EditorComponent* spriteRenderer =
-				EditorComponentUtility::FindComponent(gameObject, EditorComponentType::SpriteRenderer);
-			const EditorComponent* reflectionProbe =
-				EditorComponentUtility::FindComponent(gameObject, EditorComponentType::ReflectionProbe);
 			ApplyRendererMaterial(sceneObject, spriteRenderer, reflectionProbe, false);
 			if (spriteRenderer != nullptr && !spriteRenderer->assetPath.empty()) {
 				int32_t foundTextureIndex =
@@ -282,15 +344,8 @@ void EditorSceneSynchronizer::Update(
 			}
 		}
 		else {
-			const EditorComponent* modelRenderer =
-				EditorComponentUtility::FindComponent(gameObject, EditorComponentType::ModelRenderer);
-			const EditorComponent* meshFilter =
-				EditorComponentUtility::FindComponent(gameObject, EditorComponentType::MeshFilter);
-			const EditorComponent* reflectionProbe =
-				EditorComponentUtility::FindComponent(gameObject, EditorComponentType::ReflectionProbe);
 			std::string modelAssetPath;  // 実メッシュ描画に使うモデルパス。ModelRenderer を優先し、なければ MeshFilter を使う。
-			ModelData modelData{};  // FBX / OBJ が持つ元マテリアルやテクスチャ参照を取得する。
-			bool hasModelData = false;
+			const ModelData* modelData = nullptr;  // キャッシュをコピーせず、描画に必要な Mesh / Material だけを参照する。
 			ApplyRendererMaterial(sceneObject, modelRenderer, reflectionProbe, true);
 			sceneObject.textureIndex = 2;  // Shader には Texture SRV が必要なので渡すが、Model Material 側では Texture を無効化する。
 
@@ -312,16 +367,16 @@ void EditorSceneSynchronizer::Update(
 			}
 
 			if (!modelAssetPath.empty()) {
-				hasModelData = EditorAssetUtility::LoadModelAsset(modelAssetPath, modelData);
+				modelData = EditorAssetUtility::GetSharedModelAssetData(modelAssetPath, false);
 			}
 
 			// Renderer 側で画像未指定なら、FBX / OBJ が持つ元マテリアルの画像をそのまま使う。
 			if (rendererTexturePath.empty() &&
 				modelRenderer != nullptr &&
 				modelRenderer->useImportedMaterialTextures &&
-				hasModelData &&
-				!modelData.material.textureFilePath.empty()) {
-				rendererTexturePath = modelData.material.textureFilePath;
+				modelData != nullptr &&
+				!modelData->material.textureFilePath.empty()) {
+				rendererTexturePath = modelData->material.textureFilePath;
 			}
 
 			if (!rendererTexturePath.empty() &&
@@ -365,7 +420,7 @@ void EditorSceneSynchronizer::Update(
 			const EditorComponent emptyRenderer{};
 			const EditorComponent& materialComponent = modelRenderer != nullptr ? *modelRenderer : emptyRenderer;
 			const MaterialData emptyMaterial{};
-			const MaterialData& importedMaterial = hasModelData ? modelData.material : emptyMaterial;
+			const MaterialData& importedMaterial = modelData != nullptr ? modelData->material : emptyMaterial;
 			synchronizeMaterialTexture(
 				EditorMaterialTextureSlot::Normal,
 				selectMaterialTexturePath(materialComponent.normalTextureAssetPath, importedMaterial.normalTextureFilePath),
@@ -398,8 +453,8 @@ void EditorSceneSynchronizer::Update(
 			if (!modelAssetPath.empty() &&
 				!EditorAssetUtility::IsBuiltInPrimitiveAssetPath(modelAssetPath)) {
 				if (sceneObject.assetPath != modelAssetPath || !sceneObject.usesCustomMesh) {
-					if (hasModelData) {
-						sceneObjectManager_->SetCustomModelMesh(sceneObjectIndex, modelAssetPath, modelData);
+					if (modelData != nullptr) {
+						sceneObjectManager_->SetCustomModelMesh(sceneObjectIndex, modelAssetPath, *modelData);
 					}
 					else {
 						sceneObjectManager_->ClearCustomModelMesh(sceneObjectIndex);  // 読み込み失敗時に前回メッシュを残すと見た目だけ古いモデルが残る。

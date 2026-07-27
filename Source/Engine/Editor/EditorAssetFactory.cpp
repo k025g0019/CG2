@@ -1,4 +1,4 @@
-#include "EditorAssetFactory.h"
+﻿#include "EditorAssetFactory.h"
 
 #include "EditorAssetUtility.h"
 #include "EditorComponentUtility.h"
@@ -48,18 +48,17 @@ namespace {
 		const std::string& assetPath,
 		Vector3& colliderCenter,
 		Vector3& colliderSize) {
-		ModelData modelData{};  // FBX / OBJ の実頂点から、物理用の初期外形を作る。
-		if (!EditorAssetUtility::LoadModelAsset(assetPath, modelData) ||
-			modelData.vertices.empty()) {
+		const ModelData* modelData = EditorAssetUtility::GetSharedModelAssetData(assetPath, false);  // 描画キャッシュから Bounds だけを参照する。
+		if (modelData == nullptr || modelData->vertices.empty()) {
 			return false;
 		}
 
 		Vector3 minimumPosition = {
-			modelData.vertices[0].position.x,
-			modelData.vertices[0].position.y,
-			modelData.vertices[0].position.z};
+			modelData->vertices[0].position.x,
+			modelData->vertices[0].position.y,
+			modelData->vertices[0].position.z};
 		Vector3 maximumPosition = minimumPosition;
-		for (const VertexData& vertex : modelData.vertices) {
+		for (const VertexData& vertex : modelData->vertices) {
 			minimumPosition.x = (std::min)(minimumPosition.x, vertex.position.x);
 			minimumPosition.y = (std::min)(minimumPosition.y, vertex.position.y);
 			minimumPosition.z = (std::min)(minimumPosition.z, vertex.position.z);
@@ -152,9 +151,12 @@ void EditorAssetFactory::CreateModelGameObject(
 		gameObject->translate = position;
 		gameObject->scale = {1.0f, 1.0f, 1.0f};
 		for (EditorComponent& component : gameObject->components) {
-			if (component.type == EditorComponentType::MeshFilter ||
-				component.type == EditorComponentType::ModelRenderer) {
+			if (component.type == EditorComponentType::MeshFilter) {
 				component.assetPath = assetPath;
+			}
+			else if (component.type == EditorComponentType::ModelRenderer) {
+				component.assetPath = assetPath;
+				component.lightingMode = 2;  // 配置直後から面の向きが分かる Half Lambert を使う。
 			}
 			else if (component.type == EditorComponentType::BoxCollider) {
 				component.colliderSize = GetPrimitiveColliderSize(meshType);
@@ -192,11 +194,11 @@ void EditorAssetFactory::CreateSpriteGameObject(
 		textureIndex = 0;  // 見つからない場合は先頭 Texture を仮に使う
 	}
 
-	// Sprite は 128x128 の見た目で SceneObject を作る
+	// 課題資料と同じ 640x360 の見た目で Sprite を作る。
 	selectedPlacedSceneObjectIndex = sceneObjectManager_->CreateObject(
 		EditorSceneObjectType::Sprite,
 		textureIndex,
-		Transforms{{128.0f, 128.0f, 1.0f}, {0.0f, 0.0f, 0.0f}, position},
+		Transforms{{640.0f, 360.0f, 1.0f}, {0.0f, 0.0f, 0.0f}, position},
 		EditorAssetUtility::GetFilename(assetPath));
 	if (selectedPlacedSceneObjectIndex < 0) {
 		return;
@@ -213,10 +215,11 @@ void EditorAssetFactory::CreateSpriteGameObject(
 	// GameObject の Transform と Renderer の AssetPath を初期化する
 	if (EditorGameObject* gameObject = editorScene_->FindGameObject(selectedGameObjectId)) {
 		gameObject->translate = position;
-		gameObject->scale = {128.0f, 128.0f, 1.0f};
+		gameObject->scale = {640.0f, 360.0f, 1.0f};
 		for (EditorComponent& component : gameObject->components) {
 			if (component.type == EditorComponentType::SpriteRenderer) {
 				component.assetPath = assetPath;
+				component.textureAssetPath = assetPath;  // 任意画像を動的 Texture として読み込む。
 			}
 		}
 	}

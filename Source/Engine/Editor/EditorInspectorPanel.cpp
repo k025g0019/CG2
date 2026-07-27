@@ -263,6 +263,7 @@ namespace {
 		{"3D物理", "球の当たり判定", EditorComponentType::SphereCollider},
 		{"3D物理", "カプセル当たり判定", EditorComponentType::CapsuleCollider},
 		{"3D物理", "メッシュ当たり判定", EditorComponentType::MeshCollider},
+		{"3D物理", "Auto Convex Collision", EditorComponentType::AutoConvexCollision},
 		{"3D物理", "地形の当たり判定", EditorComponentType::TerrainCollider},
 		{"3D物理", "車輪の当たり判定", EditorComponentType::WheelCollider},
 		{"3D物理", "キャラクターコントローラー", EditorComponentType::CharacterController},
@@ -1377,17 +1378,17 @@ namespace {
 		return GetRenderableModelAssetPath(gameObject);
 	}
 
-	bool TryLoadModelDataForComponent(
+	const ModelData* GetModelDataForComponent(
 		const EditorGameObject& gameObject,
 		const EditorComponent& component,
-		ModelData& modelData,
+		bool includeAnimation,
 		std::string& assetPath) {
 		assetPath = GetModelAssetPathForComponent(gameObject, component);
 		if (assetPath.empty()) {
-			return false;
+			return nullptr;
 		}
 
-		return EditorAssetUtility::LoadModelAsset(assetPath, modelData);
+		return EditorAssetUtility::GetSharedModelAssetData(assetPath, includeAnimation);
 	}
 
 	void DrawTexturePreviewByPath(
@@ -1441,9 +1442,11 @@ namespace {
 		const EditorGameObject& gameObject,
 		EditorComponent& component,
 		const char* fallbackMaterialName) {
-		ModelData modelData{};
 		std::string modelAssetPath;
-		const bool hasModelData = TryLoadModelDataForComponent(gameObject, component, modelData, modelAssetPath);
+		const ModelData* loadedModelData = GetModelDataForComponent(gameObject, component, false, modelAssetPath);
+		const ModelData emptyModelData{};
+		const ModelData& modelData = loadedModelData != nullptr ? *loadedModelData : emptyModelData;
+		const bool hasModelData = loadedModelData != nullptr;
 		const std::string materialName =
 			hasModelData && !modelData.material.name.empty() ? modelData.material.name : fallbackMaterialName;
 		const std::string texturePath =
@@ -1470,8 +1473,15 @@ namespace {
 		//============================================================
 
 		const char* alphaModeItems[] = {"不透明", "アルファマスク", "半透明"};
+		const char* lightingModeItems[] = {"Lightingなし", "Lambert", "Half Lambert", "PBR"};
 		component.alphaMode = (std::clamp)(component.alphaMode, 0, 2);
+		component.lightingMode = (std::clamp)(component.lightingMode, 0, 3);
 		DrawComboRow("描画方式", component.alphaMode, alphaModeItems, static_cast<int32_t>(_countof(alphaModeItems)));
+		DrawComboRow(
+			"Lighting方式",
+			component.lightingMode,
+			lightingModeItems,
+			static_cast<int32_t>(_countof(lightingModeItems)));
 		DrawCheckboxRow("両面描画", component.doubleSided);
 		DrawColor3Row("ベースカラー", component.color);
 		DrawFloatRow("強さ", component.intensity, 0.01f, 0.0f, 10.0f);
@@ -2405,9 +2415,11 @@ namespace {
 	}
 
 	void DrawMeshColliderComponent(const EditorGameObject& gameObject, EditorComponent& component) {
-		ModelData modelData{};
 		std::string collisionAssetPath;
-		const bool hasModelData = TryLoadModelDataForComponent(gameObject, component, modelData, collisionAssetPath);
+		const ModelData* loadedModelData = GetModelDataForComponent(gameObject, component, false, collisionAssetPath);
+		const ModelData emptyModelData{};
+		const ModelData& modelData = loadedModelData != nullptr ? *loadedModelData : emptyModelData;
+		const bool hasModelData = loadedModelData != nullptr;
 		const std::string renderAssetPath = GetRenderableModelAssetPath(gameObject);
 		const char* meshSourceLabel =
 			component.assetPath.empty() ? "描画メッシュを流用" : "当たり判定メッシュを個別使用";
@@ -2430,10 +2442,40 @@ namespace {
 		DrawTextRow("BVH", hasModelData ? "生成対象" : "未生成");
 	}
 
+	void DrawAutoConvexCollisionComponent(const EditorGameObject& gameObject, EditorComponent& component) {
+		std::string collisionAssetPath;
+		const ModelData* loadedModelData = GetModelDataForComponent(gameObject, component, false, collisionAssetPath);
+		const ModelData emptyModelData{};
+		const ModelData& modelData = loadedModelData != nullptr ? *loadedModelData : emptyModelData;
+		const bool hasModelData = loadedModelData != nullptr;
+		const std::string renderAssetPath = GetRenderableModelAssetPath(gameObject);
+		const char* meshSourceLabel =
+			component.assetPath.empty() ? "描画メッシュを流用" : "凸包生成メッシュを個別使用";
+
+		DrawTextRow("説明", "FBX / OBJ の位置頂点だけを抜き出し、Play 開始時に凸包を自動生成します。");
+		DrawTextRow("メッシュ", collisionAssetPath.empty() ? "未設定" : collisionAssetPath.c_str());
+		DrawTextRow("参照元", meshSourceLabel);
+		if (!component.assetPath.empty() && !renderAssetPath.empty()) {
+			DrawTextRow("描画メッシュ", renderAssetPath.c_str());
+		}
+
+		DrawColliderCommonRows(component);
+		DrawVector3Row("中心", component.colliderCenter, 0.01f, 0.0f, 0.0f);
+		DrawVector3Row("サイズ", component.colliderSize, 0.01f, 0.01f, 100.0f);
+
+		DrawSubHeader("Auto Convex");
+		int32_t sourceVertexCount = static_cast<int32_t>(modelData.vertices.size());
+		DrawIntRow("入力頂点数", sourceVertexCount);
+		DrawTextRow("生成状態", hasModelData ? "Play 開始時に自動生成" : "メッシュ未設定");
+		DrawTextRow("判定形状", "Jolt ConvexHullShape");
+	}
+
 	void DrawAnimationComponent(EditorInspectorPanelContext& context, const EditorGameObject& gameObject, EditorComponent& component) {
-		ModelData modelData{};
 		std::string animationAssetPath;
-		const bool hasModelData = TryLoadModelDataForComponent(gameObject, component, modelData, animationAssetPath);
+		const ModelData* loadedModelData = GetModelDataForComponent(gameObject, component, true, animationAssetPath);
+		const ModelData emptyModelData{};
+		const ModelData& modelData = loadedModelData != nullptr ? *loadedModelData : emptyModelData;
+		const bool hasModelData = loadedModelData != nullptr;
 		PropertyAnimationClip propertyAnimationClip{};
 		const bool hasPropertyAnimationClip =
 			EditorAssetUtility::HasExtension(component.assetPath, ".animclip") &&
@@ -3358,6 +3400,9 @@ namespace {
 		case EditorComponentType::TilemapCollider2D:
 		case EditorComponentType::CustomCollider2D:
 			DrawMeshColliderComponent(gameObject, component);
+			break;
+		case EditorComponentType::AutoConvexCollision:
+			DrawAutoConvexCollisionComponent(gameObject, component);
 			break;
 		case EditorComponentType::WheelCollider:
 			DrawTextRow("説明", "車輪用の 3D 当たり判定です。");

@@ -6,17 +6,31 @@
 #include "EditorSharedState.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 using namespace EditorSharedState;
 
 namespace {
 	constexpr unsigned char kUtf8Bom[] = {0xEFu, 0xBBu, 0xBFu};  // 作成アセットは UTF-8 BOM 付きで保存する。
+	constexpr std::chrono::milliseconds kProjectAssetRefreshInterval{1000};  // 外部ツールによる追加も最大 1 秒で Project へ反映する。
+	std::vector<std::string> cachedProjectAssetPaths;  // 毎フレームの Assets / resources 全走査を避ける索引。
+	std::unordered_map<std::string, std::vector<std::filesystem::path>> cachedProjectChildDirectories;
+	std::unordered_set<std::string> cachedProjectDirectories;
+	std::chrono::steady_clock::time_point nextProjectAssetRefreshTime{};
+	bool isProjectAssetCacheDirty = true;
+
+	void InvalidateProjectAssetCache() {
+		isProjectAssetCacheDirty = true;
+	}
 
 	void SyncSelectionToScene() {
 		// 現在の GameObject 選択を SceneView の旧選択番号へ同期する。
@@ -119,7 +133,7 @@ namespace {
 	std::string MakeDefaultEffectAssetText() {
 		return
 			"{\r\n"
-			"  \"renderAsset\": \"resources/en.fbx\",\r\n"
+			"  \"renderAsset\": \"resources/editorDefault/en.fbx\",\r\n"
 			"  \"playOnAwake\": true,\r\n"
 			"  \"looping\": true,\r\n"
 			"  \"duration\": 2.0,\r\n"
@@ -269,7 +283,13 @@ namespace {
 
 		file.write(reinterpret_cast<const char*>(kUtf8Bom), static_cast<std::streamsize>(sizeof(kUtf8Bom)));
 		file.write(fileText.data(), static_cast<std::streamsize>(fileText.size()));
-		return file.good();
+		const bool isWritten = file.good();
+
+		if (isWritten) {
+			InvalidateProjectAssetCache();
+		}
+
+		return isWritten;
 	}
 
 	bool LoadSceneFromAssetPath(const std::string& assetPath, std::vector<std::string>& consoleMessages) {
@@ -338,14 +358,23 @@ namespace {
 		}
 
 		consoleMessages.push_back("Asset: 削除 " + deletingAssetPath);
+		InvalidateProjectAssetCache();
 		selectedAssetPath.clear();
 		if (g_selectedAssetPath == deletingAssetPath) {
 			g_selectedAssetPath.clear();
 		}
 	}
 
-	std::vector<std::string> CollectProjectAssetPaths() {
+	const std::vector<std::string>& CollectProjectAssetPaths() {
+		const std::chrono::steady_clock::time_point currentTime = std::chrono::steady_clock::now();
+
+		if (!isProjectAssetCacheDirty && currentTime < nextProjectAssetRefreshTime) {
+			return cachedProjectAssetPaths;
+		}
+
 		std::vector<std::string> assetPaths;  // assetPaths は Project グリッドに表示する Assets / resources 内ファイル。
+		std::unordered_map<std::string, std::vector<std::filesystem::path>> projectChildDirectories;
+		std::unordered_set<std::string> projectDirectories;
 		const std::vector<std::filesystem::path> rootPaths = {
 			std::filesystem::path("Assets"),
 			std::filesystem::path("resources"),
@@ -360,6 +389,8 @@ namespace {
 				continue;
 			}
 
+			projectDirectories.insert(rootPath.generic_string());
+
 			for (const std::filesystem::directory_entry& entry :
 			     std::filesystem::recursive_directory_iterator(
 				     rootPath,
@@ -367,6 +398,13 @@ namespace {
 				     fileError)) {
 				if (fileError) {
 					break;
+				}
+
+				if (entry.is_directory(fileError)) {
+					const std::filesystem::path directoryPath = entry.path();
+					projectDirectories.insert(directoryPath.generic_string());
+					projectChildDirectories[directoryPath.parent_path().generic_string()].push_back(directoryPath);
+					continue;
 				}
 
 				if (!entry.is_regular_file(fileError)) {
@@ -383,56 +421,51 @@ namespace {
 
 		std::sort(assetPaths.begin(), assetPaths.end());
 		assetPaths.erase(std::unique(assetPaths.begin(), assetPaths.end()), assetPaths.end());
-		return assetPaths;
+
+		for (auto& childDirectoryPair : projectChildDirectories) {
+			std::vector<std::filesystem::path>& childDirectories = childDirectoryPair.second;
+			std::sort(childDirectories.begin(), childDirectories.end());
+		}
+
+		cachedProjectAssetPaths = std::move(assetPaths);
+		cachedProjectChildDirectories = std::move(projectChildDirectories);
+		cachedProjectDirectories = std::move(projectDirectories);
+		nextProjectAssetRefreshTime = currentTime + kProjectAssetRefreshInterval;
+		isProjectAssetCacheDirty = false;
+		return cachedProjectAssetPaths;
 	}
 
-	bool IsAssetInSelectedProjectFolder(const std::string& assetPath, const std::string& selectedAssetPath) {
+	bool IsAssetInSelectedProjectFolder(
+		const std::string& assetPath,
+		const std::string& selectedAssetPath,
+		bool isSelectedPathFolder) {
 		// 左ツリーでフォルダーを選んでいる時だけ、その配下アセットに Project グリッドを絞る。
-		if (selectedAssetPath.empty()) {
+		if (selectedAssetPath.empty() || !isSelectedPathFolder) {
 			return true;
 		}
 
-		std::error_code fileError;
 		const std::filesystem::path selectedPath(selectedAssetPath);
-		if (!std::filesystem::exists(selectedPath, fileError) ||
-			!std::filesystem::is_directory(selectedPath, fileError)) {
-			return true;
-		}
-
 		const std::string folderPrefix = selectedPath.generic_string() + "/";
 		return assetPath == selectedPath.generic_string() ||
 			assetPath.rfind(folderPrefix, 0) == 0;
 	}
 
 	void DrawProjectFolderNode(const std::filesystem::path& folderPath, std::string& selectedAssetPath) {
-		std::error_code fileError;
-		if (!std::filesystem::exists(folderPath, fileError) ||
-			!std::filesystem::is_directory(folderPath, fileError)) {
+		const std::string folderPathText = folderPath.generic_string();
+
+		if (!cachedProjectDirectories.contains(folderPathText)) {
 			return;
 		}
 
-		const std::string folderPathText = folderPath.generic_string();
 		const bool isSelected = selectedAssetPath == folderPathText;
+		const auto childDirectoryIterator = cachedProjectChildDirectories.find(folderPathText);
+		const bool hasChildDirectory =
+			childDirectoryIterator != cachedProjectChildDirectories.end() &&
+			!childDirectoryIterator->second.empty();
 		ImGuiTreeNodeFlags treeNodeFlags =
 			ImGuiTreeNodeFlags_OpenOnArrow |
 			ImGuiTreeNodeFlags_OpenOnDoubleClick |
 			(isSelected ? ImGuiTreeNodeFlags_Selected : 0);
-
-		bool hasChildDirectory = false;
-		for (const std::filesystem::directory_entry& childEntry :
-		     std::filesystem::directory_iterator(
-			     folderPath,
-			     std::filesystem::directory_options::skip_permission_denied,
-			     fileError)) {
-			if (fileError) {
-				break;
-			}
-
-			if (childEntry.is_directory(fileError)) {
-				hasChildDirectory = true;
-				break;
-			}
-		}
 
 		if (!hasChildDirectory) {
 			treeNodeFlags |= ImGuiTreeNodeFlags_Leaf;
@@ -446,23 +479,7 @@ namespace {
 
 		if (isOpened) {
 			if (hasChildDirectory) {
-				std::vector<std::filesystem::path> childDirectories;
-				for (const std::filesystem::directory_entry& childEntry :
-				     std::filesystem::directory_iterator(
-					     folderPath,
-					     std::filesystem::directory_options::skip_permission_denied,
-					     fileError)) {
-					if (fileError) {
-						break;
-					}
-
-					if (childEntry.is_directory(fileError)) {
-						childDirectories.push_back(childEntry.path());
-					}
-				}
-
-				std::sort(childDirectories.begin(), childDirectories.end());
-				for (const std::filesystem::path& childDirectoryPath : childDirectories) {
+				for (const std::filesystem::path& childDirectoryPath : childDirectoryIterator->second) {
 					DrawProjectFolderNode(childDirectoryPath, selectedAssetPath);
 				}
 			}
@@ -608,6 +625,7 @@ void EditorBottomPanel::Draw(
 					std::error_code fileError;
 					const bool isCreated = std::filesystem::create_directories(folderPath, fileError);
 					if (isCreated && !fileError) {
+						InvalidateProjectAssetCache();
 						selectedAssetPath = folderPath;
 						g_selectedAssetPath = folderPath;
 						consoleMessages.push_back("Asset: Folder created " + folderPath);
@@ -627,6 +645,8 @@ void EditorBottomPanel::Draw(
 				ImGui::EndPopup();
 			}
 
+			const std::vector<std::string>& assetPaths = CollectProjectAssetPaths();
+
 			ImGui::BeginChild("Folders", ImVec2(180.0f, 0.0f), ImGuiChildFlags_Borders);  // 左側の簡易フォルダツリー
 			DrawProjectFolderNode(std::filesystem::path("Assets"), selectedAssetPath);
 			DrawProjectFolderNode(std::filesystem::path("resources"), selectedAssetPath);
@@ -634,10 +654,14 @@ void EditorBottomPanel::Draw(
 			ImGui::SameLine();
 			ImGui::BeginChild("Assets", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);  // 右側のアセットグリッド
 			if (ImGui::BeginTable("AssetGrid", 4, ImGuiTableFlags_SizingStretchSame)) {
-				std::vector<std::string> assetPaths = CollectProjectAssetPaths();
+				std::error_code selectedPathError;
+				const bool isSelectedPathFolder =
+					!selectedAssetPath.empty() &&
+					std::filesystem::is_directory(selectedAssetPath, selectedPathError) &&
+					!selectedPathError;
 
 				for (const std::string& relativePath : assetPaths) {
-					if (!IsAssetInSelectedProjectFolder(relativePath, selectedAssetPath)) {
+					if (!IsAssetInSelectedProjectFolder(relativePath, selectedAssetPath, isSelectedPathFolder)) {
 						continue;
 					}
 

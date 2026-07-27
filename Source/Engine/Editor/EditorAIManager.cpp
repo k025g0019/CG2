@@ -1,4 +1,4 @@
-#include "EditorAIManager.h"
+﻿#include "EditorAIManager.h"
 
 #include "EditorAssetUtility.h"
 #include "EditorComponentUtility.h"
@@ -39,20 +39,6 @@ namespace {
 	constexpr int32_t kGoapHasTarget = 1;  // GOAP の世界状態: 対象がいる。
 	constexpr int32_t kGoapHasPath = 2;  // GOAP の世界状態: 経路を作れる。
 	constexpr int32_t kGoapInRange = 3;  // GOAP の世界状態: 対象へ届く距離。
-	constexpr const char* kDefaultBehaviorTreeXml = R"(
-<root BTCPP_format="4">
-	<BehaviorTree ID="MainTree">
-		<Fallback>
-			<Sequence>
-				<CanSeeTarget/>
-				<MoveToTarget/>
-			</Sequence>
-			<Patrol/>
-		</Fallback>
-	</BehaviorTree>
-</root>
-)";
-
 	bool IsAiAgentType(EditorComponentType type) {
 		return
 			type == EditorComponentType::AIBehaviorTree ||
@@ -424,6 +410,7 @@ namespace {
 			(component.type == EditorComponentType::BoxCollider ||
 			 component.type == EditorComponentType::SphereCollider ||
 			 component.type == EditorComponentType::CapsuleCollider ||
+			 component.type == EditorComponentType::AutoConvexCollision ||
 			 component.type == EditorComponentType::MeshCollider ||
 			 component.type == EditorComponentType::NavMeshObstacle ||
 			 component.type == EditorComponentType::AIDynamicObstacle);
@@ -859,6 +846,29 @@ Vector3 EditorAIManager::MakeBehaviorTreeDirection(
 	Vector3 treeDirection{};  // BehaviorTree.CPP の Action ノードが最終的に出す移動方向。
 	bool treeActionSelected = false;  // Tree が何かしらの行動を選んだかどうか。
 	const bool sensorCanSeeTarget = visibleTargets_[gameObject.id];  // 視界センサーの前回結果。
+	const bool hasCustomBehaviorTree =
+		EditorAssetUtility::HasExtension(aiComponent.assetPath, ".xml") &&
+		std::filesystem::exists(aiComponent.assetPath);
+
+	// 標準 Tree は CanSeeTarget -> MoveToTarget / Patrol の固定構成なので、毎フレームの XML 解析を省く。
+	if (!hasCustomBehaviorTree) {
+		bool canSeeTarget = false;
+
+		if (targetGameObject != nullptr) {
+			const float distance = DistanceXZ(gameObject.translate, targetGameObject->translate);
+			const float sightRange = (std::max)(aiComponent.colliderRadius, aiComponent.navStoppingDistance);
+			const bool canSeeByDistance = sightRange > 0.0f && distance <= sightRange;
+			canSeeTarget = sensorCanSeeTarget || canSeeByDistance;
+		}
+
+		if (canSeeTarget) {
+			return MakePathfindingDirection(gameObject, aiComponent, targetGameObject);
+		}
+
+		EditorComponent patrolComponent = aiComponent;
+		patrolComponent.inputBehavior = 2;
+		return MakeBehaviorModeDirection(gameObject, patrolComponent, targetGameObject, deltaTime);
+	}
 
 	BT::BehaviorTreeFactory factory;
 	factory.registerSimpleCondition(
@@ -936,10 +946,7 @@ Vector3 EditorAIManager::MakeBehaviorTreeDirection(
 		});
 
 	try {
-		BT::Tree tree =
-			EditorAssetUtility::HasExtension(aiComponent.assetPath, ".xml") && std::filesystem::exists(aiComponent.assetPath)
-				? factory.createTreeFromFile(aiComponent.assetPath)
-				: factory.createTreeFromText(kDefaultBehaviorTreeXml);
+		BT::Tree tree = factory.createTreeFromFile(aiComponent.assetPath);
 		tree.tickOnce();
 	}
 	catch (const std::exception&) {

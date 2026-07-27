@@ -923,6 +923,7 @@ private:
 
 	EditorComponent* FindMainCollider(EditorGameObject& gameObject) const {
 		const EditorComponentType colliderTypes[] = {
+			EditorComponentType::AutoConvexCollision,
 			EditorComponentType::BoxCollider,
 			EditorComponentType::SphereCollider,
 			EditorComponentType::CapsuleCollider,
@@ -970,6 +971,7 @@ private:
 		const EditorGameObject& gameObject,
 		EditorComponent& collider) const {
 		if (collider.type != EditorComponentType::MeshCollider &&
+			collider.type != EditorComponentType::AutoConvexCollision &&
 			collider.type != EditorComponentType::TerrainCollider) {
 			return;
 		}
@@ -999,6 +1001,9 @@ private:
 		    collider.type == EditorComponentType::CharacterController) {
 			return CreateCapsuleBody(gameObject, collider, rigidBody, isDynamic);
 		}
+		if (collider.type == EditorComponentType::AutoConvexCollision) {
+			return CreateAutoConvexBody(gameObject, collider, rigidBody, isDynamic);
+		}
 		if (collider.type == EditorComponentType::MeshCollider ||
 		    collider.type == EditorComponentType::TerrainCollider) {
 			return CreateMeshBody(gameObject, collider, rigidBody, isDynamic);
@@ -1024,6 +1029,61 @@ private:
 			MakeJoltObjectLayer(collider.physicsLayer, isDynamic));
 		ApplyBodySettings(settings, collider, rigidBody);
 		return AddBody(settings, isDynamic);
+	}
+
+	JPH::BodyID CreateAutoConvexBody(
+		const EditorGameObject& gameObject,
+		const EditorComponent& collider,
+		const EditorComponent* rigidBody,
+		bool isDynamic) {
+		JPH::Array<JPH::Vec3> hullPoints;
+		if (!BuildConvexHullPointsFromModelAsset(gameObject, collider, hullPoints)) {
+			PushConsoleMessage("物理: Auto Convex 生成に失敗したため Box 近似にします " + gameObject.name);
+			return CreateBoxBody(gameObject, collider, rigidBody, isDynamic);
+		}
+
+		float maximumExtent = kJoltMinimumShapeSize;
+		for (const JPH::Vec3& hullPoint : hullPoints) {
+			maximumExtent = (std::max)(maximumExtent, std::fabs(hullPoint.GetX()));
+			maximumExtent = (std::max)(maximumExtent, std::fabs(hullPoint.GetY()));
+			maximumExtent = (std::max)(maximumExtent, std::fabs(hullPoint.GetZ()));
+		}
+
+		const float toleranceRates[] = {0.0001f, 0.0005f, 0.001f, 0.005f, 0.01f};
+		JPH::RefConst<JPH::Shape> hullShape;
+		for (float toleranceRate : toleranceRates) {
+			JPH::ConvexHullShapeSettings hullSettings(hullPoints, 0.0f);
+			hullSettings.mHullTolerance = (std::max)(maximumExtent * toleranceRate, 0.00001f);
+			JPH::ShapeSettings::ShapeResult hullResult = hullSettings.Create();
+			if (!hullResult.HasError()) {
+				hullShape = hullResult.Get();
+				break;
+			}
+		}
+
+		if (hullShape == nullptr) {
+			PushConsoleMessage("物理: Auto Convex が無効なため Box 近似にします " + gameObject.name);
+			return CreateBoxBody(gameObject, collider, rigidBody, isDynamic);
+		}
+
+		JPH::BodyCreationSettings settings(
+			hullShape,
+			GetBodyPosition(gameObject, collider.colliderCenter),
+			MakeJoltRotation(gameObject.rotate),
+			isDynamic ? JPH::EMotionType::Dynamic : JPH::EMotionType::Static,
+			MakeJoltObjectLayer(collider.physicsLayer, isDynamic));
+		ApplyBodySettings(settings, collider, rigidBody);
+		const JPH::BodyID bodyId = AddBody(settings, isDynamic);
+
+		if (!bodyId.IsInvalid()) {
+			PushConsoleMessage(
+				"物理: Auto Convex Collision を生成 " +
+				gameObject.name +
+				" 入力頂点=" +
+				std::to_string(hullPoints.size()));
+		}
+
+		return bodyId;
 	}
 
 	JPH::BodyID CreateSphereBody(
@@ -1134,9 +1194,8 @@ private:
 			return false;
 		}
 
-		ModelData modelData{};
-		if (!EditorAssetUtility::LoadModelAsset(modelAssetPath, modelData) ||
-			modelData.vertices.size() < 3u) {
+		const ModelData* modelData = EditorAssetUtility::GetSharedModelAssetData(modelAssetPath, false);
+		if (modelData == nullptr || modelData->vertices.size() < 3u) {
 			return false;
 		}
 
@@ -1146,13 +1205,13 @@ private:
 			gameObject.scale.z};
 
 		for (size_t vertexIndex = 0;
-		     vertexIndex < modelData.vertices.size();
-		     vertexIndex += 3u) {
-			if (modelData.vertices.size() - vertexIndex < 3u) {
+			     vertexIndex < modelData->vertices.size();
+			     vertexIndex += 3u) {
+			if (modelData->vertices.size() - vertexIndex < 3u) {
 				break;
 			}
 
-			const VertexData* triangleVertices = modelData.vertices.data() + vertexIndex;
+			const VertexData* triangleVertices = modelData->vertices.data() + vertexIndex;
 			const VertexData& firstVertex = triangleVertices[0];
 			const VertexData& secondVertex = triangleVertices[1];
 			const VertexData& thirdVertex = triangleVertices[2];
@@ -1185,9 +1244,8 @@ private:
 			return false;
 		}
 
-		ModelData modelData{};  // ConvexHull は頂点群から Jolt が外側形状を作る。
-		if (!EditorAssetUtility::LoadModelAsset(modelAssetPath, modelData) ||
-			modelData.vertices.size() < 4u) {
+		const ModelData* modelData = EditorAssetUtility::GetSharedModelAssetData(modelAssetPath, false);  // 描画情報をコピーせず位置だけを見る。
+		if (modelData == nullptr || modelData->vertices.size() < 4u) {
 			return false;
 		}
 
@@ -1195,12 +1253,49 @@ private:
 			gameObject.scale.x,
 			gameObject.scale.y,
 			gameObject.scale.z};
-		hullPoints.reserve(modelData.vertices.size());
-		for (const VertexData& vertex : modelData.vertices) {
-			hullPoints.push_back(JPH::Vec3(
+		std::vector<Vector3> uniquePositions;
+		uniquePositions.reserve(modelData->vertices.size());
+		for (const VertexData& vertex : modelData->vertices) {
+			const Vector3 position = {
 				(vertex.position.x - collider.colliderCenter.x) * objectScale.x,
 				(vertex.position.y - collider.colliderCenter.y) * objectScale.y,
-				(vertex.position.z - collider.colliderCenter.z) * objectScale.z));
+				(vertex.position.z - collider.colliderCenter.z) * objectScale.z};
+
+			if (std::isfinite(position.x) &&
+				std::isfinite(position.y) &&
+				std::isfinite(position.z)) {
+				uniquePositions.push_back(position);
+			}
+		}
+
+		std::sort(
+			uniquePositions.begin(),
+			uniquePositions.end(),
+			[](const Vector3& firstPosition, const Vector3& secondPosition) {
+				if (firstPosition.x != secondPosition.x) {
+					return firstPosition.x < secondPosition.x;
+				}
+				if (firstPosition.y != secondPosition.y) {
+					return firstPosition.y < secondPosition.y;
+				}
+
+				return firstPosition.z < secondPosition.z;
+			});
+		uniquePositions.erase(
+			std::unique(
+				uniquePositions.begin(),
+				uniquePositions.end(),
+				[](const Vector3& firstPosition, const Vector3& secondPosition) {
+					return
+						firstPosition.x == secondPosition.x &&
+						firstPosition.y == secondPosition.y &&
+						firstPosition.z == secondPosition.z;
+				}),
+			uniquePositions.end());
+
+		hullPoints.reserve(uniquePositions.size());
+		for (const Vector3& position : uniquePositions) {
+			hullPoints.push_back(JPH::Vec3(position.x, position.y, position.z));
 		}
 
 		return hullPoints.size() >= 4u;
@@ -1238,24 +1333,27 @@ private:
 		Vector3& colliderSize) const {
 		const EditorComponent* meshCollider =
 			EditorComponentUtility::FindComponent(gameObject, EditorComponentType::MeshCollider);
+		const EditorComponent* autoConvexCollision =
+			EditorComponentUtility::FindComponent(gameObject, EditorComponentType::AutoConvexCollision);
 		const std::string modelAssetPath =
-			meshCollider != nullptr ? GetCollisionModelAssetPath(gameObject, *meshCollider) : GetRenderModelAssetPath(gameObject);
+			autoConvexCollision != nullptr && autoConvexCollision->isActive ? GetCollisionModelAssetPath(gameObject, *autoConvexCollision) :
+			meshCollider != nullptr && meshCollider->isActive ? GetCollisionModelAssetPath(gameObject, *meshCollider) :
+			GetRenderModelAssetPath(gameObject);
 		if (modelAssetPath.empty()) {
 			return false;
 		}
 
-		ModelData modelData{};  // 実メッシュの外形を、動的 MeshCollider の Box 近似サイズにも使う。
-		if (!EditorAssetUtility::LoadModelAsset(modelAssetPath, modelData) ||
-			modelData.vertices.empty()) {
+		const ModelData* modelData = EditorAssetUtility::GetSharedModelAssetData(modelAssetPath, false);  // Bounds だけをキャッシュから参照する。
+		if (modelData == nullptr || modelData->vertices.empty()) {
 			return false;
 		}
 
 		Vector3 minimumPosition = {
-			modelData.vertices[0].position.x,
-			modelData.vertices[0].position.y,
-			modelData.vertices[0].position.z};
+			modelData->vertices[0].position.x,
+			modelData->vertices[0].position.y,
+			modelData->vertices[0].position.z};
 		Vector3 maximumPosition = minimumPosition;
-		for (const VertexData& vertex : modelData.vertices) {
+		for (const VertexData& vertex : modelData->vertices) {
 			minimumPosition.x = (std::min)(minimumPosition.x, vertex.position.x);
 			minimumPosition.y = (std::min)(minimumPosition.y, vertex.position.y);
 			minimumPosition.z = (std::min)(minimumPosition.z, vertex.position.z);
@@ -1331,11 +1429,12 @@ private:
 		// Dynamic な MeshCollider は三角形ベースの静的地形へ高速で当たる場面が多く、
 		// Inspector の既定値が離散のままだとユーザー設定前に貫通しやすい。
 		// そのため MeshCollider を動かす時は、最低限 LinearCast を強制してすり抜けを抑える。
-		const bool shouldForceContinuousForMesh =
-			collider.type == EditorComponentType::MeshCollider &&
+		const bool shouldForceContinuousForGeneratedMesh =
+			(collider.type == EditorComponentType::MeshCollider ||
+			 collider.type == EditorComponentType::AutoConvexCollision) &&
 			!rigidBody->isKinematic;
 		settings.mMotionQuality =
-			(rigidBody->collisionDetectionMode == 1 || shouldForceContinuousForMesh) ?
+			(rigidBody->collisionDetectionMode == 1 || shouldForceContinuousForGeneratedMesh) ?
 				JPH::EMotionQuality::LinearCast :
 				JPH::EMotionQuality::Discrete;
 		settings.mAllowedDOFs = MakeAllowedDofs(*rigidBody);
@@ -1429,14 +1528,14 @@ private:
 			return;
 		}
 
-		ModelData modelData{};  // ConvexHull の接触を、実三角形 BVH で検証するための元データ。
-		if (!EditorAssetUtility::LoadModelAsset(modelAssetPath, modelData)) {
+		const ModelData* modelData = EditorAssetUtility::GetSharedModelAssetData(modelAssetPath, false);  // BVH は頂点列だけを参照する。
+		if (modelData == nullptr) {
 			return;
 		}
 
 		PreciseMeshCollisionBody preciseMeshCollisionBody{};
 		preciseMeshCollisionBody.gameObjectId = gameObject.id;
-		if (!preciseMeshCollisionBody.collisionMesh.BuildFromModelData(modelData, collider.colliderCenter, gameObject.scale, shapeCenterOfMass)) {
+		if (!preciseMeshCollisionBody.collisionMesh.BuildFromModelData(*modelData, collider.colliderCenter, gameObject.scale, shapeCenterOfMass)) {
 			return;
 		}
 

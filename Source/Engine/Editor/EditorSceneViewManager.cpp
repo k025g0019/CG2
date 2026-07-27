@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <numbers>
 
 using namespace EditorSharedState;
@@ -199,6 +200,7 @@ namespace {
 
 	const EditorComponent* FindDebugCollider(const EditorGameObject& gameObject) {
 		const EditorComponentType colliderTypes[] = {
+			EditorComponentType::AutoConvexCollision,
 			EditorComponentType::BoxCollider,
 			EditorComponentType::SphereCollider,
 			EditorComponentType::CapsuleCollider,
@@ -369,7 +371,7 @@ namespace {
 				DrawCapsuleColliderDebug(sceneDrawList, gameObject, *collider, debugColor);
 			}
 			else {
-				// MeshCollider / TerrainCollider は Jolt 側も Box 近似で初期表示するため、SceneView でも外枠を表示する。
+				// 複雑形状 Collider は生成元メッシュの外枠を Scene View の目安として表示する。
 				DrawBoxColliderDebug(sceneDrawList, gameObject, *collider, debugColor);
 			}
 		}
@@ -725,11 +727,13 @@ void EditorSceneViewManager::Draw() {
 					static_cast<size_t>(payload->DataSize - 1));
 				g_selectedAssetPath = droppedAsset;
 
-				// droppedTextureIndex が 0 以上なら登録済みテクスチャなので Sprite として配置する。
-				int32_t droppedTextureIndex =
-					EditorAssetUtility::GetTextureIndex(g_editorTextureFilePaths, droppedAsset);
+				// 起動時の固定テクスチャ一覧にない画像も Sprite として配置できるよう、拡張子で判定する。
+				bool isSpriteAsset =
+					EditorAssetUtility::HasExtension(droppedAsset, ".png") ||
+					EditorAssetUtility::HasExtension(droppedAsset, ".jpg") ||
+					EditorAssetUtility::HasExtension(droppedAsset, ".jpeg");
 
-				if (droppedTextureIndex >= 0) {
+				if (isSpriteAsset) {
 					// 画像アセットは SpriteRenderer 付き GameObject として配置する。
 					g_editorAssetFactory.CreateSpriteGameObject(
 						droppedAsset,
@@ -791,6 +795,35 @@ void EditorSceneViewManager::Draw() {
 		ImVec2(g_editorSceneX + g_editorSceneWidth - 92.0f, g_editorSceneY + 6.0f),
 		IM_COL32(180, 220, 255, 255),
 		"Perspective");
+
+	char sceneFpsText[64]{};
+	const float sceneFrameRate = ImGui::GetIO().Framerate;
+	const float sceneFrameTimeMilliseconds = sceneFrameRate > 0.0f ? 1000.0f / sceneFrameRate : 0.0f;
+	std::snprintf(
+		sceneFpsText,
+		_countof(sceneFpsText),
+		"%.1f FPS  %.2f ms",
+		sceneFrameRate,
+		sceneFrameTimeMilliseconds);
+	const ImVec2 sceneFpsTextSize = ImGui::CalcTextSize(sceneFpsText);
+	const ImVec2 sceneFpsTextPosition{
+		g_editorSceneX + 54.0f,
+		g_editorSceneY + g_editorSceneHeight - sceneFpsTextSize.y - 14.0f};
+	const ImVec2 sceneFpsBackgroundMin{
+		sceneFpsTextPosition.x - 8.0f,
+		sceneFpsTextPosition.y - 5.0f};
+	const ImVec2 sceneFpsBackgroundMax{
+		sceneFpsTextPosition.x + sceneFpsTextSize.x + 8.0f,
+		sceneFpsTextPosition.y + sceneFpsTextSize.y + 5.0f};
+	sceneDrawList->AddRectFilled(
+		sceneFpsBackgroundMin,
+		sceneFpsBackgroundMax,
+		IM_COL32(12, 18, 24, 205),
+		5.0f);
+	sceneDrawList->AddText(
+		sceneFpsTextPosition,
+		IM_COL32(210, 245, 210, 255),
+		sceneFpsText);
 
 	// Scene タブだけ床グリッドを表示する。Game / Asset Store では補助線を出さない。
 	if (isSceneTabActive) {

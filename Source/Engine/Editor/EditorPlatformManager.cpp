@@ -49,6 +49,20 @@ namespace {
 		AddPrimitiveTriangle(vertices, c, b, d);
 	}
 
+	std::vector<VertexData> CreatePlaneVertices() {
+		std::vector<VertexData> vertices;
+		vertices.reserve(6u);
+
+		AddPrimitiveQuad(
+			vertices,
+			MakePrimitiveVertex(-0.5f, 0.0f, -0.5f, 0.0f, 1.0f, {0.0f, 1.0f, 0.0f}),
+			MakePrimitiveVertex(-0.5f, 0.0f, 0.5f, 0.0f, 0.0f, {0.0f, 1.0f, 0.0f}),
+			MakePrimitiveVertex(0.5f, 0.0f, -0.5f, 1.0f, 1.0f, {0.0f, 1.0f, 0.0f}),
+			MakePrimitiveVertex(0.5f, 0.0f, 0.5f, 1.0f, 0.0f, {0.0f, 1.0f, 0.0f}));
+
+		return vertices;
+	}
+
 	std::vector<VertexData> CreateBoxVertices(const Vector3& halfSize) {
 		std::vector<VertexData> vertices; // vertices は Box 6 面刁E�E三角形頂点、E
 		vertices.reserve(36);
@@ -298,7 +312,12 @@ namespace {
 
 		switch (meshType) {
 		case EditorModelMeshType::Plane:
-			return fallbackPlaneModelData;
+			if (!fallbackPlaneModelData.vertices.empty()) {
+				return fallbackPlaneModelData;
+			}
+
+			modelData.vertices = CreatePlaneVertices();
+			break;
 		case EditorModelMeshType::Cube:
 			modelData.vertices = CreateBoxVertices(Vector3{0.5f, 0.5f, 0.5f});
 			break;
@@ -511,6 +530,20 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	SoundData soundData = SoundLoadWave("resources/sound/maou_19_12345.wav");
 	// soundData は起動確認用 wav の PCM チE�Eタとフォーマット情報、E
 	IXAudio2SourceVoice* sourceVoice = nullptr; // sourceVoice は soundData を�E生キューへ積�E Voice、E
+	if (soundData.pBuffer == nullptr ||
+		soundData.bufferSize == 0u ||
+		soundData.wfex.nChannels == 0u ||
+		soundData.wfex.nSamplesPerSec == 0u ||
+		soundData.wfex.nBlockAlign == 0u ||
+		soundData.wfex.wBitsPerSample == 0u ||
+		soundData.wfex.nAvgBytesPerSec == 0u) {
+		SoundUnload(&soundData);
+		masterVoice->DestroyVoice();
+		xAudio2->Release();
+		RequestInitializationFailure();
+		return;
+	}
+
 	hr = xAudio2->CreateSourceVoice(&sourceVoice, &soundData.wfex);
 	assert(SUCCEEDED(hr));
 
@@ -530,6 +563,14 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	soundBuffer.Flags = XAUDIO2_END_OF_STREAM;
 	hr = sourceVoice->SubmitSourceBuffer(&soundBuffer);
 	assert(SUCCEEDED(hr));
+	if (FAILED(hr)) {
+		sourceVoice->DestroyVoice();
+		SoundUnload(&soundData);
+		masterVoice->DestroyVoice();
+		xAudio2->Release();
+		RequestInitializationFailure();
+		return;
+	}
 
 	//================================================================
 	// DirectX12 の初期匁E
@@ -588,10 +629,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 #ifdef _DEBUG
 	ComPtr<ID3D12InfoQueue> infoQueue; // infoQueue は DirectX12 の重大エラーをデバッガ停止に変えるため�E診断キュー、E
 	if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(infoQueue.GetAddressOf())))) {
-		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, true);
-		// 破損�Eエラー・警告をそ�E場で止め、原因箁E��を追ぁE��すくする、E
-		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, true);
-		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, true);
+		// Keep Debug Layer messages in the Visual Studio output without raising 0x0000087A exceptions.
+		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, FALSE);
+		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, FALSE);
+		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, FALSE);
 
 		// denyIds は既知のノイズ警告を Debug 出力から除外するため�E ID 一覧、E
 		D3D12_MESSAGE_ID denyIds[] = {
@@ -863,14 +904,17 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	UINT srvSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
 	// HDR RT (full resolution, R16G16B16A16_FLOAT) ? RTV index 2
-	ID3D12Resource* hdrRenderTarget = createRenderTargetResource(renderWidth, renderHeight, DXGI_FORMAT_R16G16B16A16_FLOAT);
+	ID3D12Resource* hdrRenderTarget = createRenderTargetResource(renderWidth, renderHeight,
+	                                                             DXGI_FORMAT_R16G16B16A16_FLOAT);
 	D3D12_CPU_DESCRIPTOR_HANDLE hdrRtvHandle = GetCPUDescriptorHandle(rtvDescriptorHeap, rtvSize, 2);
 	D3D12_RENDER_TARGET_VIEW_DESC hdrRtvDesc{};
 	hdrRtvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 	hdrRtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
 	device->CreateRenderTargetView(hdrRenderTarget, &hdrRtvDesc, hdrRtvHandle);
-	D3D12_CPU_DESCRIPTOR_HANDLE hdrSrvHandleCPU = GetCPUDescriptorHandle(srvDescriptorHeap, srvSize, kRuntimeHdrSrvDescriptorIndex);
-	D3D12_GPU_DESCRIPTOR_HANDLE hdrSrvHandleGPU = GetGPUDescriptorHandle(srvDescriptorHeap, srvSize, kRuntimeHdrSrvDescriptorIndex);
+	D3D12_CPU_DESCRIPTOR_HANDLE hdrSrvHandleCPU = GetCPUDescriptorHandle(
+		srvDescriptorHeap, srvSize, kRuntimeHdrSrvDescriptorIndex);
+	D3D12_GPU_DESCRIPTOR_HANDLE hdrSrvHandleGPU = GetGPUDescriptorHandle(
+		srvDescriptorHeap, srvSize, kRuntimeHdrSrvDescriptorIndex);
 	D3D12_SHADER_RESOURCE_VIEW_DESC hdrSrvDesc{};
 	hdrSrvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 	hdrSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -896,7 +940,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	}
 
 	// ToneMap ��� LDR RT �́AFXAA ���ŏI BackBuffer �֏o���O�ɓǂޒ��� RenderTexture�B
-	ID3D12Resource* postProcessRenderTarget = createRenderTargetResource(renderWidth, renderHeight, DXGI_FORMAT_R8G8B8A8_UNORM);
+	ID3D12Resource* postProcessRenderTarget = createRenderTargetResource(
+		renderWidth, renderHeight, DXGI_FORMAT_R8G8B8A8_UNORM);
 	D3D12_CPU_DESCRIPTOR_HANDLE postProcessRtvHandle = GetCPUDescriptorHandle(rtvDescriptorHeap, rtvSize, 5u);
 	D3D12_RENDER_TARGET_VIEW_DESC postProcessRtvDesc{};
 	postProcessRtvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -1016,7 +1061,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		logStream);
 
 	ComPtr<IDxcBlob> objectReflectionMaskPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/Object3dReflectionMask.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Object3dReflectionMask.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> gBufferVertexShaderBlob = CompileShader(
 		L"Assets/Shaders/GBuffer/GBuffer.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
@@ -1025,8 +1071,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		L"Assets/Shaders/GBuffer/GBuffer.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
 
-	Log(std::string("Object3d VS size=") + std::to_string(vertexShaderBlob != nullptr ? vertexShaderBlob->GetBufferSize() : 0ull) +
-	    " PS size=" + std::to_string(pixelShaderBlob != nullptr ? pixelShaderBlob->GetBufferSize() : 0ull));
+	Log(std::string("Object3d VS size=") + std::to_string(vertexShaderBlob != nullptr
+		                                                      ? vertexShaderBlob->GetBufferSize()
+		                                                      : 0ull) +
+		" PS size=" + std::to_string(pixelShaderBlob != nullptr ? pixelShaderBlob->GetBufferSize() : 0ull));
 
 	ComPtr<IDxcBlob> shadowVertexShaderBlob = CompileShader(
 		L"Assets/Shaders/ShadowDepth.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
@@ -1034,16 +1082,20 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	// Post-process shader compilation
 	ComPtr<IDxcBlob> fullscreenVertexShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/FullScreen.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/FullScreen.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> toneMappingPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/ToneMapping.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/ToneMapping.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> bloomExtractPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/BloomExtract.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/BloomExtract.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> bloomBlurPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/BloomBlur.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/BloomBlur.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> fxaaPixelShaderBlob = CompileShader(
 		L"Assets/Shaders/PostProcess/FXAA.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
@@ -1052,112 +1104,147 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		L"Assets/Shaders/AO/GTAO.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> ssaoBlurPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/Shadow/ContactShadow.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Shadow/ContactShadow.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> skyboxPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/Skybox.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/Skybox.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> planarReflectionPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/Reflection/PlanarReflection.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Reflection/PlanarReflection.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> sharpenPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/Sharpen.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/Sharpen.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> finalCompositePixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/FinalComposite.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/FinalComposite.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> passthroughPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/Passthrough.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/Passthrough.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> depthOfFieldPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/DepthOfField.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/DepthOfField.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> motionBlurPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/MotionBlur.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/MotionBlur.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> bloomPrefilterPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/Bloom/BloomPrefilter.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/Bloom/BloomPrefilter.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> bloomDownsamplePixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/Bloom/BloomDownsample.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/Bloom/BloomDownsample.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> bloomUpsamplePixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/Bloom/BloomUpsample.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/Bloom/BloomUpsample.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> smaaEdgePixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/SMAA/SMAAEdgeDetection.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/SMAA/SMAAEdgeDetection.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> smaaWeightPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/SMAA/SMAABlendWeight.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/SMAA/SMAABlendWeight.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> smaaNeighborhoodPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/SMAA/SMAANeighborhoodBlend.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/SMAA/SMAANeighborhoodBlend.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> glarePixelShaderBlob = CompileShader(
 		L"Assets/Shaders/PostProcess/Glare.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> filterPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/Filter.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/Filter.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> depthPyramidComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Depth/DepthPyramid.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Depth/DepthPyramid.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> depthDownsampleComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Depth/DepthDownsample.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Depth/DepthDownsample.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> reconstructNormalComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Depth/ReconstructNormal.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Depth/ReconstructNormal.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> cameraVelocityComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Temporal/CameraVelocity.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Temporal/CameraVelocity.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> velocityDilateComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Temporal/VelocityDilate.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Temporal/VelocityDilate.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> disocclusionMaskComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Temporal/DisocclusionMask.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Temporal/DisocclusionMask.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> reactiveMaskComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Temporal/ReactiveMask.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Temporal/ReactiveMask.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> ssrTraceComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Reflection/SSRTrace.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Reflection/SSRTrace.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> ssrResolveComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Reflection/SSRResolve.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Reflection/SSRResolve.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> ssrTemporalResolveComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Reflection/SSRTemporalResolve.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Reflection/SSRTemporalResolve.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> ssrDenoiseComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Reflection/SSRDenoise.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Reflection/SSRDenoise.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> ssrCompositeComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Reflection/SSRComposite.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Reflection/SSRComposite.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> temporalResolveComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Temporal/TemporalResolve.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Temporal/TemporalResolve.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> copyDepthComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Temporal/CopyDepth.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Temporal/CopyDepth.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> frustumCullingComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Culling/FrustumCulling.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Culling/FrustumCulling.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> occlusionCullingComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Culling/OcclusionCulling.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Culling/OcclusionCulling.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> buildIndirectArgsComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Culling/BuildIndirectArgs.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Culling/BuildIndirectArgs.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> particleClearComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Particle/ParticleClear.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Particle/ParticleClear.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> particleUpdateComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Particle/ParticleUpdate.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Particle/ParticleUpdate.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> particleSpawnComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Particle/ParticleSpawn.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Particle/ParticleSpawn.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> particleVertexShaderBlob = CompileShader(
 		L"Assets/Shaders/Particle/Particle.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
@@ -1166,10 +1253,12 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		L"Assets/Shaders/Particle/Particle.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> particleModelVertexShaderBlob = CompileShader(
-		L"Assets/Shaders/Particle/ParticleModel.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Particle/ParticleModel.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> particleModelPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/Particle/ParticleModel.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Particle/ParticleModel.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 
 	if (vertexShaderBlob == nullptr ||
@@ -1224,7 +1313,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		particlePixelShaderBlob == nullptr ||
 		particleModelVertexShaderBlob == nullptr ||
 		particleModelPixelShaderBlob == nullptr) {
-		RequestInitializationFailure();  // �K�{�V�F�[�_�[�� 1 �ł��������� PSO �쐬�֐i�߂Ȃ��B
+		RequestInitializationFailure(); // �K�{�V�F�[�_�[�� 1 �ł��������� PSO �쐬�֐i�߂Ȃ��B
 		return;
 	}
 
@@ -1438,7 +1527,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	sphereMaterialData->materialPadding2 = 0.0f;
 	sphereMaterialData->uvTransform = MakeIdentity4x4();
 
-	ID3D12Resource* directionalLightResource = CreateBufferResource(device.Get(), sizeof(DirectionalLight) * kMaxShadowLights);
+	ID3D12Resource* directionalLightResource = CreateBufferResource(device.Get(),
+	                                                                sizeof(DirectionalLight) * kMaxShadowLights);
 	// directionalLightResource は PixelShader に渡す平行�E源定数バッファ、E
 	DirectionalLight* directionalLightData = nullptr;
 	// directionalLightData は Inspector から色・向き・強さを書き換える mapped ポインタ、E
@@ -1832,12 +1922,21 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	hr = D3D12SerializeRootSignature(
 		&postProcessRootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1,
 		postProcessSignatureBlob.GetAddressOf(), postProcessErrorBlob.GetAddressOf());
-	if (FAILED(hr)) {
+	if (FAILED(hr) || postProcessSignatureBlob == nullptr) {
+		Log(logStream, std::format(
+			"PostProcess RootSignature serialize failed. hr=0x{:08X}",
+			static_cast<uint32_t>(hr)));
+
 		if (postProcessErrorBlob != nullptr) {
-			Log(reinterpret_cast<char*>(postProcessErrorBlob->GetBufferPointer()));
+			const auto* errorMessage = reinterpret_cast<const char*>(postProcessErrorBlob->GetBufferPointer());
+			Log(logStream, std::string(errorMessage, postProcessErrorBlob->GetBufferSize()));
 		}
-		assert(false);
+
+		RequestInitializationFailure();
+		return;
 	}
+
+	Log(logStream, "Init Stage: post-process root signature serialized");
 
 	ComPtr<ID3D12RootSignature> postProcessRootSignature;
 	hr = device->CreateRootSignature(
@@ -1850,8 +1949,11 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		return;
 	}
 
+	Log(logStream, "Init Stage: post-process root signature created");
+
 	// Post-process PSOs share common state (no depth, no culling, no vertex buffer)
-	auto CreatePostProcessPSO = [&](const char* psoName, IDxcBlob* psBlob, DXGI_FORMAT rtvFormat) -> ComPtr<ID3D12PipelineState> {
+	auto CreatePostProcessPSO = [&](const char* psoName, IDxcBlob* psBlob,
+	                                DXGI_FORMAT rtvFormat) -> ComPtr<ID3D12PipelineState> {
 		if (psBlob == nullptr || fullscreenVertexShaderBlob == nullptr) {
 			Log(std::string("CreatePostProcessPSO skipped: ") + psoName + " shader blob is null");
 			return nullptr;
@@ -1859,8 +1961,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 		D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
 		desc.pRootSignature = postProcessRootSignature.Get();
-		desc.VS = { fullscreenVertexShaderBlob->GetBufferPointer(), fullscreenVertexShaderBlob->GetBufferSize() };
-		desc.PS = { psBlob->GetBufferPointer(), psBlob->GetBufferSize() };
+		desc.VS = {fullscreenVertexShaderBlob->GetBufferPointer(), fullscreenVertexShaderBlob->GetBufferSize()};
+		desc.PS = {psBlob->GetBufferPointer(), psBlob->GetBufferSize()};
 		D3D12_BLEND_DESC blendDesc{};
 		blendDesc.RenderTarget[0].BlendEnable = FALSE;
 		blendDesc.RenderTarget[0].LogicOpEnable = FALSE;
@@ -1901,6 +2003,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		if (FAILED(h) || pso == nullptr) {
 			Log(logStream, std::format("{} PSO Create failed. hr=0x{:08X}", psoName, static_cast<uint32_t>(h)));
 		}
+		else {
+			Log(logStream, std::format("Init Stage: {} pso created", psoName));
+		}
 
 		return pso;
 	};
@@ -1908,8 +2013,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	ComPtr<ID3D12PipelineState> toneMappingPipelineState = CreatePostProcessPSO(
 		"ToneMapping", toneMappingPixelShaderBlob.Get(), DXGI_FORMAT_R8G8B8A8_UNORM);
 	Log(std::string("ToneMap VS size=") + std::to_string(fullscreenVertexShaderBlob->GetBufferSize()) +
-	     " PS size=" + std::to_string(toneMappingPixelShaderBlob->GetBufferSize()) +
-	     " PSO=" + std::string(toneMappingPipelineState ? "non-null" : "NULL"));
+		" PS size=" + std::to_string(toneMappingPixelShaderBlob->GetBufferSize()) +
+		" PSO=" + std::string(toneMappingPipelineState ? "non-null" : "NULL"));
 	if (toneMappingPipelineState == nullptr) {
 		RequestInitializationFailure();
 		return;
@@ -2134,6 +2239,16 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	ModelData modelData = LoadObjFile("resources", "plane.obj");
 	// modelData は旧プレビューと既定アセチE��用に読み込む plane.obj の頂点チE�Eタ、E
+	if (modelData.vertices.empty()) {
+		Log(logStream, "resources/plane.obj is missing or invalid; using the procedural plane.");
+		modelData.vertices = CreatePlaneVertices();
+	}
+
+	if (modelData.material.textureFilePath.empty() ||
+		!std::filesystem::exists(modelData.material.textureFilePath)) {
+		modelData.material.textureFilePath = "resources/editorDefault/uvChecker.png";
+	}
+
 	constexpr uint32_t kSubdivision = 64; // kSubdivision は旧琁E�Eレビューを作る緯度・経度刁E��数、E
 	constexpr float kLonEvery = 2.0f * std::numbers::pi_v<float> / static_cast<float>(kSubdivision);
 	// kLonEvery / kLatEvery は琁E��チE��ュ 1 セグメントあたりの角度、E
@@ -2239,9 +2354,21 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	ID3D12Resource* vertexResource = CreateBufferResource(device.Get(), sizeof(VertexData) * vertices.size());
 	// vertexResource は旧琁E�Eレビューの頂点めEGPU へ渡ぁEUpload Buffer、E
+	if (vertexResource == nullptr) {
+		Log(logStream, "Sphere vertex buffer creation failed.");
+		RequestInitializationFailure();
+		return;
+	}
+
 	VertexData* mappedVertexData = nullptr; // mappedVertexData は vertexResource に CPU から頂点を書き込むためのポインタ、E
 	hr = vertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedVertexData));
-	assert(SUCCEEDED(hr));
+	if (FAILED(hr) || mappedVertexData == nullptr) {
+		Log(logStream, std::format("Sphere vertex buffer Map failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		vertexResource->Release();
+		RequestInitializationFailure();
+		return;
+	}
+
 	std::memcpy(mappedVertexData, vertices.data(), sizeof(VertexData) * vertices.size());
 
 	// vertexBufferView は旧琁E�Eレビューの頂点 Buffer めEDraw に渡す情報、E
@@ -2253,11 +2380,22 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	// modelVertexResource は plane.obj の頂点めEGPU へ渡ぁEUpload Buffer、E
 	ID3D12Resource* modelVertexResource = CreateBufferResource(device.Get(),
 	                                                           sizeof(VertexData) * modelData.vertices.size());
+	if (modelVertexResource == nullptr) {
+		Log(logStream, "Plane vertex buffer creation failed.");
+		RequestInitializationFailure();
+		return;
+	}
 
 	VertexData* mappedModelVertexData = nullptr;
 	// mappedModelVertexData は modelVertexResource に CPU から頂点を書き込むためのポインタ、E
 	hr = modelVertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedModelVertexData));
-	assert(SUCCEEDED(hr));
+	if (FAILED(hr) || mappedModelVertexData == nullptr) {
+		Log(logStream, std::format("Plane vertex buffer Map failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		modelVertexResource->Release();
+		RequestInitializationFailure();
+		return;
+	}
+
 	std::memcpy(mappedModelVertexData, modelData.vertices.data(), sizeof(VertexData) * modelData.vertices.size());
 
 	// modelVertexBufferView は plane.obj の頂点 Buffer めEDraw に渡す情報、E
@@ -2359,11 +2497,20 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	// textureFilePaths は起動時に GPU へアチE�Eロードする標準テクスチャ一覧、E
 	std::wstring textureFilePaths[] = {
-		L"resources/uvChecker.png",
-		L"resources/monsterBall.png",
+		L"resources/editorDefault/uvChecker.png",
+		L"resources/editorDefault/monsterBall.png",
 		ConvertString(modelData.material.textureFilePath),
-		L"resources/ball.png",
+		L"resources/editorDefault/ball.png",
 	};
+	const std::wstring fallbackTextureFilePath = L"resources/editorDefault/uvChecker.png";
+	for (std::wstring& textureFilePath : textureFilePaths) {
+		if (textureFilePath.empty() || !std::filesystem::exists(textureFilePath)) {
+			Log(logStream, std::format(
+				"Texture '{}' is missing; using resources/editorDefault/uvChecker.png.",
+				ConvertString(textureFilePath)));
+			textureFilePath = fallbackTextureFilePath;
+		}
+	}
 
 	std::string textureFilePathStrings[_countof(textureFilePaths)];
 	// textureFilePathStrings は Project パネルで扱ぁE��すい UTF-8 版パス、E
@@ -2385,8 +2532,23 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	ID3D12Resource* textureResources[_countof(textureFilePaths)] = {nullptr};
 	for (uint32_t textureIndex = 0; textureIndex < _countof(textureFilePaths); ++textureIndex) {
 		mipImages[textureIndex] = LoadTexture(textureFilePaths[textureIndex]);
+		if (mipImages[textureIndex].GetImageCount() == 0u) {
+			Log(logStream, std::format(
+				"Texture load failed: {}",
+				ConvertString(textureFilePaths[textureIndex])));
+			RequestInitializationFailure();
+			return;
+		}
+
 		textureMetadatas[textureIndex] = mipImages[textureIndex].GetMetadata();
 		textureResources[textureIndex] = CreateTextureResource(device.Get(), textureMetadatas[textureIndex]);
+		if (textureResources[textureIndex] == nullptr) {
+			Log(logStream, std::format(
+				"Texture resource creation failed: {}",
+				ConvertString(textureFilePaths[textureIndex])));
+			RequestInitializationFailure();
+			return;
+		}
 	}
 
 	// cameraMatrix はエチE��ターカメラ Transform から作るワールド行�E、E
@@ -2522,6 +2684,13 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		// UploadTextureData は textureResources に mipImages をコピ�Eする命令めECommandList へ積�E、E
 		intermediateResources[textureIndex] = UploadTextureData(
 			device.Get(), commandList.Get(), textureResources[textureIndex], mipImages[textureIndex]);
+		if (intermediateResources[textureIndex] == nullptr) {
+			Log(logStream, std::format(
+				"Texture upload failed: {}",
+				ConvertString(textureFilePaths[textureIndex])));
+			RequestInitializationFailure();
+			return;
+		}
 	}
 
 	UINT srvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -2610,8 +2779,11 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	};
 
 	// DDS が存在すれば読み込む
-	auto loadIblCube = [&](const std::wstring& path, ID3D12Resource*& outRes, D3D12_CPU_DESCRIPTOR_HANDLE srvCPU, uint32_t* mipCount) {
-		if (!std::filesystem::exists(path)) return;
+	auto loadIblCube = [&](const std::wstring& path, ID3D12Resource*& outRes, D3D12_CPU_DESCRIPTOR_HANDLE srvCPU,
+	                       uint32_t* mipCount) {
+		if (!std::filesystem::exists(path)) {
+			return;
+		}
 		DirectX::ScratchImage img = LoadTexture(path);
 		const auto& meta = img.GetMetadata();
 		outRes = CreateTextureResource(device.Get(), meta);
@@ -2621,21 +2793,36 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 		bool isCube = (meta.arraySize >= 6);
 		srv.ViewDimension = isCube ? D3D12_SRV_DIMENSION_TEXTURECUBE : D3D12_SRV_DIMENSION_TEXTURE2D;
-		if (isCube) srv.TextureCube.MipLevels = static_cast<UINT>(meta.mipLevels);
-		else srv.Texture2D.MipLevels = static_cast<UINT>(meta.mipLevels);
+		if (isCube) {
+			srv.TextureCube.MipLevels = static_cast<UINT>(meta.mipLevels);
+		}
+		else {
+			srv.Texture2D.MipLevels = static_cast<UINT>(meta.mipLevels);
+		}
 		device->CreateShaderResourceView(outRes, &srv, srvCPU);
-		if (mipCount) *mipCount = static_cast<uint32_t>(meta.mipLevels);
+		if (mipCount) {
+			*mipCount = static_cast<uint32_t>(meta.mipLevels);
+		}
 	};
 
-	auto makePlaceholder = [&](uint32_t w, uint32_t h, uint32_t arraySize, DXGI_FORMAT fmt, bool isCube, ID3D12Resource*& outRes, D3D12_CPU_DESCRIPTOR_HANDLE srvCPU) {
+	auto makePlaceholder = [&](uint32_t w, uint32_t h, uint32_t arraySize, DXGI_FORMAT fmt, bool isCube,
+	                           ID3D12Resource*& outRes, D3D12_CPU_DESCRIPTOR_HANDLE srvCPU) {
 		D3D12_RESOURCE_DESC d{};
 		d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-		d.Width = w; d.Height = h; d.MipLevels = 1;
+		d.Width = w;
+		d.Height = h;
+		d.MipLevels = 1;
 		d.DepthOrArraySize = static_cast<UINT16>(arraySize);
-		d.Format = fmt; d.SampleDesc.Count = 1;
-		D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
-		HRESULT hr = device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&outRes));
-		if (FAILED(hr) || !outRes) { outRes = nullptr; return; }
+		d.Format = fmt;
+		d.SampleDesc.Count = 1;
+		D3D12_HEAP_PROPERTIES hp{};
+		hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+		HRESULT hr = device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST,
+		                                             nullptr, IID_PPV_ARGS(&outRes));
+		if (FAILED(hr) || !outRes) {
+			outRes = nullptr;
+			return;
+		}
 		uint32_t bytesPerPixel = (fmt == DXGI_FORMAT_R16G16_FLOAT) ? 4 : 8;
 		uint32_t pitch = w * bytesPerPixel;
 		uint32_t sliceSize = pitch * h;
@@ -2643,23 +2830,26 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		std::vector<uint8_t> data(totalSize);
 		// Fill with neutral gray: (0.5,0.5,0.5,1.0) for RGBA or (1.0,0.0) for RG
 		if (fmt == DXGI_FORMAT_R16G16_FLOAT) {
-			const uint16_t half1 = 0x3C00; // 1.0 in half-float
-			const uint16_t half0 = 0x0000; // 0.0 in half-float
+			constexpr uint16_t half1 = 0x3C00; // 1.0 in half-float
+			constexpr uint16_t half0 = 0x0000; // 0.0 in half-float
 			uint8_t pix[4];
 			memcpy(pix + 0, &half1, 2);
 			memcpy(pix + 2, &half0, 2);
-			for (size_t j = 0; j < totalSize; j += 4)
+			for (size_t j = 0; j < totalSize; j += 4) {
 				memcpy(&data[j], pix, 4);
-		} else {
-			const uint16_t half05 = 0x3800; // 0.5 in half-float
-			const uint16_t half1  = 0x3C00; // 1.0 in half-float
+			}
+		}
+		else {
+			constexpr uint16_t half05 = 0x3800; // 0.5 in half-float
+			constexpr uint16_t half1 = 0x3C00; // 1.0 in half-float
 			uint8_t pix[8];
 			memcpy(pix + 0, &half05, 2);
 			memcpy(pix + 2, &half05, 2);
 			memcpy(pix + 4, &half05, 2);
 			memcpy(pix + 6, &half1, 2);
-			for (size_t j = 0; j < totalSize; j += 8)
+			for (size_t j = 0; j < totalSize; j += 8) {
 				memcpy(&data[j], pix, 8);
+			}
 		}
 		UINT subResourceCount = arraySize;
 		std::vector<D3D12_SUBRESOURCE_DATA> srd(subResourceCount);
@@ -2670,7 +2860,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		}
 		UINT64 uploadBufferSize = GetRequiredIntermediateSize(outRes, 0, subResourceCount);
 		ID3D12Resource* uploadHeap = nullptr;
-		D3D12_HEAP_PROPERTIES uploadHp{}; uploadHp.Type = D3D12_HEAP_TYPE_UPLOAD;
+		D3D12_HEAP_PROPERTIES uploadHp{};
+		uploadHp.Type = D3D12_HEAP_TYPE_UPLOAD;
 		D3D12_RESOURCE_DESC bufDesc{};
 		bufDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
 		bufDesc.Width = uploadBufferSize;
@@ -2679,7 +2870,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		bufDesc.MipLevels = 1;
 		bufDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 		bufDesc.SampleDesc.Count = 1;
-		if (SUCCEEDED(device->CreateCommittedResource(&uploadHp, D3D12_HEAP_FLAG_NONE, &bufDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&uploadHeap))) && uploadHeap) {
+		if (SUCCEEDED(
+			device->CreateCommittedResource(&uploadHp, D3D12_HEAP_FLAG_NONE, &bufDesc, D3D12_RESOURCE_STATE_GENERIC_READ
+				, nullptr, IID_PPV_ARGS(&uploadHeap))) && uploadHeap) {
 			UpdateSubresources(commandList.Get(), outRes, uploadHeap, 0, 0, subResourceCount, srd.data());
 			D3D12_RESOURCE_BARRIER barrier{};
 			barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -2693,40 +2886,66 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		srv.Format = fmt;
 		srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 		srv.ViewDimension = isCube ? D3D12_SRV_DIMENSION_TEXTURECUBE : D3D12_SRV_DIMENSION_TEXTURE2D;
-		if (isCube) srv.TextureCube.MipLevels = 1;
-		else srv.Texture2D.MipLevels = 1;
+		if (isCube) {
+			srv.TextureCube.MipLevels = 1;
+		}
+		else {
+			srv.Texture2D.MipLevels = 1;
+		}
 		device->CreateShaderResourceView(outRes, &srv, srvCPU);
 	};
 
 	loadIblCube(iblFiles[0], iblIrradianceCube, iblIrradianceSrvHandleCPU, nullptr);
-	if (iblIrradianceCube == nullptr) makePlaceholder(2, 2, 6, DXGI_FORMAT_R16G16B16A16_FLOAT, true, iblIrradianceCube, iblIrradianceSrvHandleCPU);
+	if (iblIrradianceCube == nullptr) {
+		makePlaceholder(2, 2, 6, DXGI_FORMAT_R16G16B16A16_FLOAT, true, iblIrradianceCube, iblIrradianceSrvHandleCPU);
+	}
 
 	loadIblCube(iblFiles[1], iblPrefilterCube, iblPrefilterSrvHandleCPU, &iblPrefilterMipCount);
-	if (iblPrefilterCube == nullptr) makePlaceholder(2, 2, 6, DXGI_FORMAT_R16G16B16A16_FLOAT, true, iblPrefilterCube, iblPrefilterSrvHandleCPU);
+	if (iblPrefilterCube == nullptr) {
+		makePlaceholder(2, 2, 6, DXGI_FORMAT_R16G16B16A16_FLOAT, true, iblPrefilterCube, iblPrefilterSrvHandleCPU);
+	}
 
 	loadIblCube(iblFiles[2], iblEnvironmentCube, iblEnvironmentSrvHandleCPU, nullptr);
 	g_iblEnvironmentCubeLoaded = iblEnvironmentCube != nullptr;
-	if (iblEnvironmentCube == nullptr) makePlaceholder(2, 2, 6, DXGI_FORMAT_R16G16B16A16_FLOAT, true, iblEnvironmentCube, iblEnvironmentSrvHandleCPU);
+	if (iblEnvironmentCube == nullptr) {
+		makePlaceholder(2, 2, 6, DXGI_FORMAT_R16G16B16A16_FLOAT, true, iblEnvironmentCube, iblEnvironmentSrvHandleCPU);
+	}
 
 	loadIblCube(iblFiles[3], iblBrdfLut, iblBrdfLutSrvHandleCPU, nullptr);
-	if (iblBrdfLut == nullptr) makePlaceholder(2, 2, 1, DXGI_FORMAT_R16G16_FLOAT, false, iblBrdfLut, iblBrdfLutSrvHandleCPU);
+	if (iblBrdfLut == nullptr) {
+		makePlaceholder(2, 2, 1, DXGI_FORMAT_R16G16_FLOAT, false, iblBrdfLut, iblBrdfLutSrvHandleCPU);
+	}
 
 	// IBL Upload を実行・同期（DDS があってもプレースホルダーでも Upload が発生している）
 	{
 		hr = commandList->Close();
-		assert(SUCCEEDED(hr));
-		ID3D12CommandList* uploadLists[] = { commandList.Get() };
+		if (FAILED(hr)) {
+			Log(logStream, std::format("IBL CommandList Close failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+			RequestInitializationFailure();
+			return;
+		}
+
+		ID3D12CommandList* uploadLists[] = {commandList.Get()};
 		commandQueue->ExecuteCommandLists(1, uploadLists);
 		fenceValue++;
 		hr = commandQueue->Signal(fence.Get(), fenceValue);
-		assert(SUCCEEDED(hr));
+		if (FAILED(hr)) {
+			Log(logStream, std::format("IBL CommandQueue Signal failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+			RequestInitializationFailure();
+			return;
+		}
+
 		if (fence->GetCompletedValue() < fenceValue) {
 			hr = fence->SetEventOnCompletion(fenceValue, fenceEvent);
-			assert(SUCCEEDED(hr));
+			if (FAILED(hr)) {
+				Log(logStream, std::format("IBL Fence SetEventOnCompletion failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+				RequestInitializationFailure();
+				return;
+			}
+
 			WaitForSingleObject(fenceEvent, INFINITE);
 		}
-		commandAllocator->Reset();
-		commandList->Reset(commandAllocator.Get(), nullptr);
+		// The renderer owns the next Reset. Keep the initialization command list closed here.
 	}
 
 #ifdef USE_IMGUI
@@ -3291,14 +3510,26 @@ int EditorPlatformManager::Finalize() {
 		g_environmentTextureUploadResource->Release();
 		g_environmentTextureUploadResource = nullptr;
 	}
-if (g_environmentTextureResource != nullptr) {
+	if (g_environmentTextureResource != nullptr) {
 		g_environmentTextureResource->Release();
 		g_environmentTextureResource = nullptr;
 	}
-	if (g_iblIrradianceCube != nullptr) { g_iblIrradianceCube->Release(); g_iblIrradianceCube = nullptr; }
-	if (g_iblPrefilterCube != nullptr) { g_iblPrefilterCube->Release(); g_iblPrefilterCube = nullptr; }
-	if (g_iblEnvironmentCube != nullptr) { g_iblEnvironmentCube->Release(); g_iblEnvironmentCube = nullptr; }
-	if (g_iblBRDFLUT != nullptr) { g_iblBRDFLUT->Release(); g_iblBRDFLUT = nullptr; }
+	if (g_iblIrradianceCube != nullptr) {
+		g_iblIrradianceCube->Release();
+		g_iblIrradianceCube = nullptr;
+	}
+	if (g_iblPrefilterCube != nullptr) {
+		g_iblPrefilterCube->Release();
+		g_iblPrefilterCube = nullptr;
+	}
+	if (g_iblEnvironmentCube != nullptr) {
+		g_iblEnvironmentCube->Release();
+		g_iblEnvironmentCube = nullptr;
+	}
+	if (g_iblBRDFLUT != nullptr) {
+		g_iblBRDFLUT->Release();
+		g_iblBRDFLUT = nullptr;
+	}
 	if (hdrRenderTarget != nullptr) {
 		hdrRenderTarget->Release();
 		hdrRenderTarget = nullptr;

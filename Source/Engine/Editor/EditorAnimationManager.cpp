@@ -26,6 +26,14 @@ namespace {
 			return modelRenderer->assetPath;
 		}
 
+		const EditorComponent* skinnedMeshRenderer = EditorComponentUtility::FindComponent(
+			gameObject,
+			EditorComponentType::SkinnedMeshRenderer);
+
+		if (skinnedMeshRenderer != nullptr && !skinnedMeshRenderer->assetPath.empty()) {
+			return skinnedMeshRenderer->assetPath;
+		}
+
 		const EditorComponent* meshFilter = EditorComponentUtility::FindComponent(
 			gameObject,
 			EditorComponentType::MeshFilter);
@@ -266,6 +274,93 @@ float EditorAnimationManager::GetAnimationTime(int32_t gameObjectId) const {
 
 	const auto timeIterator = animationTimes_.find(gameObjectId);
 	return timeIterator != animationTimes_.end() ? timeIterator->second : 0.0f;
+}
+
+bool EditorAnimationManager::GetAnimatorSkinningState(
+	int32_t gameObjectId,
+	int32_t& clipIndex,
+	float& playbackTime) const {
+	const auto runtimeIterator = animatorRuntimes_.find(gameObjectId);
+	if (runtimeIterator == animatorRuntimes_.end()) {
+		return false;
+	}
+
+	const AnimatorRuntimeInstance& runtime = runtimeIterator->second;
+	if (runtime.action.isActive && runtime.action.clipIndex >= 0) {
+		clipIndex = runtime.action.clipIndex;
+		playbackTime = runtime.action.playbackTime;
+		return true;
+	}
+
+	if (runtime.currentState < 0 ||
+		runtime.currentState >= static_cast<int32_t>(runtime.graph.states.size())) {
+		return false;
+	}
+
+	const AnimationGraphState& currentState =
+		runtime.graph.states[static_cast<size_t>(runtime.currentState)];
+	const AnimationBlendSample* selectedSample = nullptr;
+	auto getParameterValue = [&runtime](const std::string& parameterName) {
+		const auto parameterIterator = runtime.parameters.find(parameterName);
+		return parameterIterator != runtime.parameters.end()
+			? parameterIterator->second.floatValue
+			: 0.0f;
+	};
+
+	if (currentState.blendTreeType == AnimationBlendTreeType::Direct) {
+		float highestWeight = -(std::numeric_limits<float>::max)();
+
+		for (const AnimationBlendSample& sample : currentState.blendSamples) {
+			const float sampleWeight = getParameterValue(sample.weightParameter);
+
+			if (sampleWeight > highestWeight) {
+				highestWeight = sampleWeight;
+				selectedSample = &sample;
+			}
+		}
+	}
+	else if (currentState.blendTreeType == AnimationBlendTreeType::Blend1D) {
+		const float parameterValue = getParameterValue(currentState.blendParameter);
+		float nearestDistance = (std::numeric_limits<float>::max)();
+
+		for (const AnimationBlendSample& sample : currentState.blendSamples) {
+			const float sampleDistance = std::abs(sample.position.x - parameterValue);
+
+			if (sampleDistance < nearestDistance) {
+				nearestDistance = sampleDistance;
+				selectedSample = &sample;
+			}
+		}
+	}
+	else if (currentState.blendTreeType == AnimationBlendTreeType::Blend2DDirectional ||
+		currentState.blendTreeType == AnimationBlendTreeType::Blend2DCartesian) {
+		const Vector2 parameterPoint{
+			getParameterValue(currentState.blendParameterX),
+			getParameterValue(currentState.blendParameterY)};
+		float nearestDistance = (std::numeric_limits<float>::max)();
+
+		for (const AnimationBlendSample& sample : currentState.blendSamples) {
+			const float differenceX = sample.position.x - parameterPoint.x;
+			const float differenceY = sample.position.y - parameterPoint.y;
+			const float sampleDistance =
+				differenceX * differenceX + differenceY * differenceY;
+
+			if (sampleDistance < nearestDistance) {
+				nearestDistance = sampleDistance;
+				selectedSample = &sample;
+			}
+		}
+	}
+
+	if (selectedSample != nullptr) {
+		clipIndex = selectedSample->clipIndex;
+		playbackTime = runtime.stateTime * selectedSample->playbackSpeed;
+		return true;
+	}
+
+	clipIndex = currentState.clipIndex;
+	playbackTime = runtime.stateTime * currentState.playbackSpeed;
+	return clipIndex >= 0;
 }
 
 std::string EditorAnimationManager::GetAnimatorStateName(int32_t gameObjectId) const {
@@ -1057,6 +1152,7 @@ void EditorAnimationManager::UpdateAutomaticParameters(
 		EditorComponentType::RigidBody,
 		EditorComponentType::CharacterController,
 		EditorComponentType::LocalMove,
+		EditorComponentType::RailMovement,
 		EditorComponentType::RollingMove};
 
 	for (EditorComponentType componentType : velocityComponentTypes) {

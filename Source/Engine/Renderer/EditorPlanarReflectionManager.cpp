@@ -5,6 +5,7 @@
 #include "EditorSharedState.h"
 
 #include <cmath>
+#include <limits>
 
 using namespace EditorSharedState;
 
@@ -15,30 +16,6 @@ namespace {
 			rotation,
 			{0.0f, 0.0f, 0.0f});
 		return Normalize(Transform(direction, rotationMatrix));
-	}
-
-	Vector3 GetLocalMeshSize(const EditorSceneObject& sceneObject) {
-		if (sceneObject.usesCustomMesh && Length(sceneObject.customMeshLocalBoundsSize) > 0.0001f) {
-			return sceneObject.customMeshLocalBoundsSize;
-		}
-
-		switch (sceneObject.meshType) {
-		case EditorModelMeshType::Plane:
-			return {1.0f, 1.0f, 0.0f};
-		case EditorModelMeshType::Box:
-			return {1.6f, 0.7f, 1.0f};
-		default:
-			return {1.0f, 1.0f, 1.0f};
-		}
-	}
-
-	Vector3 GetLocalMeshCenter(const EditorSceneObject& sceneObject) {
-		// FBX / OBJ の原点と実形状の中心が異なる場合も、鏡面を見た目へ正確に合わせる。
-		if (sceneObject.usesCustomMesh && Length(sceneObject.customMeshLocalBoundsSize) > 0.0001f) {
-			return sceneObject.customMeshLocalBoundsCenter;
-		}
-
-		return {0.0f, 0.0f, 0.0f};
 	}
 
 	Matrix4x4 MakeReflectionMatrix(const Vector3& planePoint, const Vector3& planeNormal) {
@@ -130,6 +107,7 @@ void EditorPlanarReflectionManager::CollectProbes(
 		ProbeView probeView{};
 		probeView.sourceId = gameObject.id;
 		probeView.gameObject = &gameObject;
+		probeView.component = component;
 		probeView.sceneObject = sceneObject;
 		views_.push_back(probeView);
 	}
@@ -144,46 +122,62 @@ void EditorPlanarReflectionManager::UpdateCameras(
 	const Matrix4x4& gameProjectionMatrix) {
 	for (ProbeView& probeView : views_) {
 		const EditorGameObject& gameObject = *probeView.gameObject;
-		const EditorSceneObject& sceneObject = *probeView.sceneObject;
-		const Vector3 localMeshSize = GetLocalMeshSize(sceneObject);
-		const Vector3 localMeshCenter = GetLocalMeshCenter(sceneObject);
+		const EditorComponent& component = *probeView.component;
 		const Matrix4x4 reflectorWorld = MakeAffineMatrix(
 			gameObject.scale,
 			gameObject.rotate,
 			gameObject.translate);
-		const Vector3 reflectorCenter = Transform(localMeshCenter, reflectorWorld);
-		const Vector3 localRight = TransformDirectionByRotation(gameObject.rotate, {1.0f, 0.0f, 0.0f});
+
+		// Reflection Probe のローカル Y 面を反射面とする。
+		// メッシュの最薄軸から推測すると、FBX の余白や非一様スケールで反射位置が変わる。
+		const Vector3 reflectorCenter = Transform(component.colliderCenter, reflectorWorld);
 		const Vector3 localUp = TransformDirectionByRotation(gameObject.rotate, {0.0f, 1.0f, 0.0f});
-		const Vector3 localForward = TransformDirectionByRotation(gameObject.rotate, {0.0f, 0.0f, 1.0f});
-		const float scaledSizeX = std::abs(localMeshSize.x * gameObject.scale.x);
-		const float scaledSizeY = std::abs(localMeshSize.y * gameObject.scale.y);
-		const float scaledSizeZ = std::abs(localMeshSize.z * gameObject.scale.z);
-
-		Vector3 planeNormal = localUp;
-		float halfThickness = scaledSizeY * 0.5f;
-
-		if (scaledSizeX <= scaledSizeY && scaledSizeX <= scaledSizeZ) {
-			planeNormal = localRight;
-			halfThickness = scaledSizeX * 0.5f;
-		}
-		else if (scaledSizeZ <= scaledSizeX && scaledSizeZ <= scaledSizeY) {
-			planeNormal = localForward;
-			halfThickness = scaledSizeZ * 0.5f;
-		}
+		const float halfThickness = 0.0f;  // Center を反射面そのものとし、Probe 範囲の厚みで位置をずらさない。
 
 		probeView.sceneCam = BuildReflectionCamera(
 			sceneCameraWorld,
 			sceneViewMatrix,
 			sceneProjectionMatrix,
 			reflectorCenter,
-			planeNormal,
+			localUp,
 			halfThickness);
 		probeView.gameCam = BuildReflectionCamera(
 			gameCameraWorld,
 			gameViewMatrix,
 			gameProjectionMatrix,
 			reflectorCenter,
-			planeNormal,
+			localUp,
 			halfThickness);
 	}
+}
+
+const EditorPlanarReflectionManager::ProbeView*
+EditorPlanarReflectionManager::FindNearestView(const Vector3& cameraPosition) const {
+	const ProbeView* nearestView = nullptr;
+	float nearestDistanceSquared = (std::numeric_limits<float>::max)();
+
+	for (const ProbeView& probeView : views_) {
+		if (probeView.gameObject == nullptr || probeView.component == nullptr) {
+			continue;
+		}
+
+		const Matrix4x4 reflectorWorld = MakeAffineMatrix(
+			probeView.gameObject->scale,
+			probeView.gameObject->rotate,
+			probeView.gameObject->translate);
+		const Vector3 reflectorCenter = Transform(
+			probeView.component->colliderCenter,
+			reflectorWorld);
+		const Vector3 cameraOffset = Subtract(cameraPosition, reflectorCenter);
+		const float distanceSquared = Dot(cameraOffset, cameraOffset);
+
+		if (distanceSquared >= nearestDistanceSquared) {
+			continue;
+		}
+
+		nearestDistanceSquared = distanceSquared;
+		nearestView = &probeView;
+	}
+
+	return nearestView;
 }

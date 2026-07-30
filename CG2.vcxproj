@@ -141,9 +141,24 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
 	<None Include="Assets\Shaders\Particle\Particle.PS.hlsl" />
 	<None Include="Assets\Shaders\Particle\ParticleModel.VS.hlsl" />
 	<None Include="Assets\Shaders\Particle\ParticleModel.PS.hlsl" />
+	<None Include="Assets\Shaders\Transparency\WeightedOIT.PS.hlsl" />
+	<None Include="Assets\Shaders\Transparency\WeightedOITComposite.PS.hlsl" />
+	<None Include="Assets\Shaders\Transparency\RefractiveSurface.PS.hlsl" />
+	<None Include="Assets\Shaders\Temporal\SkinnedMotionVector.VS.hlsl" />
+	<None Include="Assets\Shaders\Water\UnderwaterCaustics.PS.hlsl" />
+	<None Include="Assets\Shaders\Common\SurfaceDeformation.hlsli" />
+	<None Include="Assets\Shaders\Common\AnalyticAtmosphere.hlsli" />
 	<None Include="Assets\Shaders\Object3d.PS.hlsl">
 	  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	</None>
+	<None Include="Assets\Shaders\Water\OceanSpectrum.hlsli">
+	  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	</None>
+	<None Include="Assets\Shaders\Water\OceanFftSampling.hlsli" />
+	<None Include="Assets\Shaders\Water\OceanFFT_UpdateSpectrum.CS.hlsl" />
+	<None Include="Assets\Shaders\Water\OceanFFT_Row.CS.hlsl" />
+	<None Include="Assets\Shaders\Water\OceanFFT_Transpose.CS.hlsl" />
+	<None Include="Assets\Shaders\Water\OceanFFT_Finalize.CS.hlsl" />
 	<None Include="Assets\Shaders\Object3dReflectionMask.PS.hlsl" />
     <None Include="Assets\Shaders\Object3d.VS.hlsl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -159,6 +174,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
 	<None Include="Assets\Shaders\PostProcess\Bloom\BloomPrefilter.PS.hlsl" />
 	<None Include="Assets\Shaders\PostProcess\Bloom\BloomUpsample.PS.hlsl" />
 	<None Include="Assets\Shaders\PostProcess\Filter.PS.hlsl" />
+	<None Include="Assets\Shaders\PostProcess\AutoExposure.PS.hlsl" />
 	<None Include="Assets\Shaders\PostProcess\Glare.PS.hlsl" />
 	<None Include="Assets\Shaders\PostProcess\SMAA\SMAABlendWeight.PS.hlsl" />
 	<None Include="Assets\Shaders\PostProcess\SMAA\SMAACommon.hlsli" />
@@ -187,6 +203,9 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
     <None Include="Assets\Shaders\ShadowDepth.VS.hlsl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Include="Assets\Shaders\Shadow\AlphaCutoutShadowDepth.PS.hlsl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
   <ItemGroup>
 	<ClCompile Include="Source\Engine\Animation\AnimationGraph.cpp" />
@@ -208,6 +227,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
     <ClCompile Include="Source\Engine\Editor\EditorComponentUtility.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorDockingManager.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorFrameInputManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorGameBuildManager.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorGameViewManager.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorHierarchyPanel.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorHierarchyWindowManager.cpp" />
@@ -219,7 +239,12 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
     <ClCompile Include="Source\Engine\Editor\EditorInspectorWindowManager.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorInputManager.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorJoltPhysicsManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorLocalMoveManager.cpp" />
+	<ClCompile Include="Source\Engine\Editor\EditorLocalMoveManager.cpp" />
+	<ClCompile Include="Source\Engine\Editor\EditorRailMovementManager.cpp" />
+	<ClCompile Include="Source\Engine\Editor\EditorWaveSpawnerManager.cpp" />
+	<ClCompile Include="Source\Engine\Editor\EditorGameplayEventManager.cpp" />
+	<ClCompile Include="Source\Engine\Editor\EditorUiBindingManager.cpp" />
+	<ClCompile Include="Source\Engine\Editor\EditorGameplayToolsWindowManager.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorMainMenuBar.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorMainMenuManager.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorMeshCollision.cpp" />
@@ -410,11 +435,13 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorOceanSystem.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorPhysicsManager.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorRenderManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorDepthHierarchyManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorGBufferManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorGpuCullingManager.cpp" />
+	<ClCompile Include="Source\Engine\Renderer\EditorOceanFftManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorGpuParticleManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorPostProcessQualityManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorTemporalRenderingManager.cpp" />
@@ -543,6 +570,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
     <ClInclude Include="Source\Engine\Editor\EditorComponentUtility.h" />
     <ClInclude Include="Source\Engine\Editor\EditorDockingManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorFrameInputManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorGameBuildManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorGameViewManager.h" />
 	<ClInclude Include="Source\Engine\Core\EditorSharedState.h" />
     <ClInclude Include="Source\Engine\Editor\EditorHierarchyPanel.h" />
@@ -552,18 +580,25 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
     <ClInclude Include="Source\Engine\Editor\EditorInspectorWindowManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorInputManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorJoltPhysicsManager.h" />
-    <ClInclude Include="Source\Engine\Editor\EditorLocalMoveManager.h" />
+	<ClInclude Include="Source\Engine\Editor\EditorLocalMoveManager.h" />
+	<ClInclude Include="Source\Engine\Editor\EditorRailMovementManager.h" />
+	<ClInclude Include="Source\Engine\Editor\EditorWaveSpawnerManager.h" />
+	<ClInclude Include="Source\Engine\Editor\EditorGameplayEventManager.h" />
+	<ClInclude Include="Source\Engine\Editor\EditorUiBindingManager.h" />
+	<ClInclude Include="Source\Engine\Editor\EditorGameplayToolsWindowManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorFreeTransformManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorMainMenuBar.h" />
     <ClInclude Include="Source\Engine\Editor\EditorMainMenuManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorMeshCollision.h" />
     <ClInclude Include="Source\Engine\Editor\EditorNativeScriptAssetManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorNavigationManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorOceanSystem.h" />
     <ClInclude Include="Source\Engine\Editor\EditorPhysicsManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorRenderManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorDepthHierarchyManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorGBufferManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorGpuCullingManager.h" />
+	<ClInclude Include="Source\Engine\Renderer\EditorOceanFftManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorGpuParticleManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorPostProcessQualityManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorTemporalRenderingManager.h" />

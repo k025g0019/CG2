@@ -10,10 +10,12 @@ RWTexture2D<float> gPreviousDepth : register(u0);
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
-    if (any(dispatchThreadId.xy >= gRenderSize))
+    uint2 pixelPosition;
+
+    if (!ResolveViewportDispatchPixel(dispatchThreadId.xy, pixelPosition))
     {
         return;
     }
 
-    gPreviousDepth[dispatchThreadId.xy] = gSceneDepth.Load(int3(dispatchThreadId.xy, 0));
+    gPreviousDepth[pixelPosition] = gSceneDepth.Load(int3(pixelPosition, 0));
 }

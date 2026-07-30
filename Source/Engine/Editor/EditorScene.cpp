@@ -9,6 +9,8 @@
 #pragma warning(disable : 5045)
 
 namespace {
+	constexpr unsigned char kSceneUtf8Bom[] = {0xEFu, 0xBBu, 0xBFu};  // Scene は UTF-8 BOM 付きで保存する。
+
 	constexpr int32_t kInvalidGameObjectId = -1;  // 親なし / 無効 ID を表す値
 	constexpr int32_t kGlareModeCount = 8;  // Glare の mode 0-7 を固定配列で保存する
 	constexpr int32_t kFilterModeCount = 9;  // Filter の mode 0-8 を固定配列で保存する
@@ -178,6 +180,20 @@ namespace {
 		"Environment",
 		"FreeTransform",
 		"AutoConvexCollision",
+		"Ocean",
+		"Buoyancy",
+		"RailMovement",
+		"Health",
+		"LegacyRailShooterEnemy",
+		"LegacyRailShooterShip",
+		"LegacyRailShooterEnemyMotion",
+		"LegacyRailShooterStage",
+		"SceneButton",
+		"Foliage",
+		"WaveSpawner",
+		"TimelineEvent",
+		"ThresholdState",
+		"UIValueBinding",
 	};
 	constexpr int32_t kEditorComponentTypeCount =
 		static_cast<int32_t>(sizeof(kEditorComponentTypeNames) / sizeof(kEditorComponentTypeNames[0]));
@@ -544,10 +560,14 @@ bool EditorScene::HasComponent(int32_t gameObjectId, EditorComponentType type) c
 //============================================================
 
 bool EditorScene::SaveScene(const std::string& filePath) const {
-	std::ofstream file(filePath);  // Scene を独自の | 区切りテキストとして保存する
+	std::ofstream file(filePath, std::ios::binary | std::ios::trunc);  // Scene を UTF-8 BOM 付きの | 区切りテキストとして保存する
 	if (!file.is_open()) {
 		return false;
 	}
+
+	file.write(
+		reinterpret_cast<const char*>(kSceneUtf8Bom),
+		static_cast<std::streamsize>(sizeof(kSceneUtf8Bom)));
 
 	file << "PhysicsSettings|"
 	     << physicsSettings_.gravity.x << "|"
@@ -901,7 +921,186 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 			     << "|" << component.particleWaveFrequency
 			     << "|" << component.particleAttractorStrength
 			     << "|" << EncodeSceneToken(component.particleRenderAssetPath)
-			     << "|" << component.lightingMode;
+			     << "|" << component.lightingMode
+			     << "|" << component.oceanGridResolution
+			     << "|" << component.oceanSize
+			     << "|" << component.oceanWaveHeight
+			     << "|" << component.oceanMaxWaveHeight
+			     << "|" << component.oceanWaveLength
+			     << "|" << component.oceanWaveSpeed
+			     << "|" << component.oceanTimeScale
+			     << "|" << component.oceanChoppiness
+			     << "|" << component.oceanPrimaryDirection.x
+			     << "|" << component.oceanPrimaryDirection.y
+			     << "|" << component.oceanSecondaryDirection.x
+			     << "|" << component.oceanSecondaryDirection.y
+			     << "|" << component.oceanSecondaryWaveScale
+			     << "|" << component.oceanRippleScale
+			     << "|" << component.oceanRippleStrength
+			     << "|" << component.oceanFoamStrength
+			     << "|" << component.oceanRoughness
+			     << "|" << component.oceanReflectionStrength
+			     << "|" << component.oceanShallowColor.x
+			     << "|" << component.oceanShallowColor.y
+			     << "|" << component.oceanShallowColor.z
+			     << "|" << component.oceanDeepColor.x
+			     << "|" << component.oceanDeepColor.y
+			     << "|" << component.oceanDeepColor.z
+			     << "|" << component.buoyancyOceanGameObjectId
+			     << "|" << component.buoyancyCenterOffset.x
+			     << "|" << component.buoyancyCenterOffset.y
+			     << "|" << component.buoyancyCenterOffset.z
+			     << "|" << component.buoyancyHullSize.x
+			     << "|" << component.buoyancyHullSize.y
+			     << "|" << component.buoyancyHullSize.z
+			     << "|" << component.buoyancyStrength
+			     << "|" << component.buoyancyMaxSubmersion
+			     << "|" << component.buoyancyDamping
+			     << "|" << component.buoyancyWaterDrag
+			     << "|" << component.buoyancyAngularDrag
+			     << "|" << component.buoyancyNormalInfluence
+			     << "|" << (component.buoyancyUseCenterPoint ? 1 : 0)
+			     << "|" << component.oceanWindSpeed
+			     << "|" << component.oceanWaterDepth
+			     << "|" << component.oceanDirectionSpread
+			     << "|" << component.oceanSwellStrength
+			     << "|" << component.oceanSpectrumSeed
+			     << "|" << component.oceanCrestSharpness
+			     << "|" << component.oceanFoamThreshold
+			     << "|" << component.oceanDetailNormalStrength
+			     << "|" << component.oceanAbsorptionDistance
+			     << "|" << component.oceanRefractionDistortion
+			     << "|" << component.railPathGameObjectId
+			     << "|" << component.railSpeed
+			     << "|" << component.railStartNormalized
+			     << "|" << component.railLookAheadDistance
+			     << "|" << (component.railLoop ? 1 : 0)
+			     << "|" << (component.railOrientToPath ? 1 : 0)
+			     << "|" << (component.railUseSmoothCurve ? 1 : 0)
+			     << "|" << component.healthMaximum
+			     << "|" << component.healthCurrent
+			     << "|" << component.enemySpawnFollowerGameObjectId
+			     << "|" << component.enemySpawnNormalized
+			     << "|" << component.enemyAttackTargetGameObjectId
+			     << "|" << component.enemyAttackInterval
+			     << "|" << component.enemyAttackRange
+			     << "|" << component.enemyAttackDamage
+			     << "|" << component.enemyProjectileTemplateGameObjectId
+			     << "|" << component.enemyProjectilePoolSize
+			     << "|" << component.enemyProjectileSpeed
+			     << "|" << component.enemyProjectileHitRadius
+			     << "|" << component.enemyProjectileLifetime
+			     << "|" << component.railShipSpeedSourceGameObjectId
+			     << "|" << component.railShipSailGameObjectId
+			     << "|" << component.railShipWakeEffectGameObjectId
+			     << "|" << component.railShipWindEffectGameObjectId
+			     << "|" << component.railShipEffectStartSpeed
+			     << "|" << component.railShipEffectFullSpeed
+			     << "|" << component.railShipSailMinimumSpeed
+			     << "|" << component.railShipSailMaximumSpeed
+			     << "|" << component.enemyMotionPattern
+			     << "|" << component.enemyMotionAmplitude.x
+			     << "|" << component.enemyMotionAmplitude.y
+			     << "|" << component.enemyMotionAmplitude.z
+			     << "|" << component.enemyMotionFrequency
+			     << "|" << component.enemyMotionPhase
+			     << "|" << component.enemyMotionTargetGameObjectId
+			     << "|" << component.enemyMotionSpeed
+			     << "|" << (component.enemyMotionLookAtTarget ? 1 : 0)
+			     << "|" << component.stageFollowerGameObjectId
+			     << "|" << component.stageStartMarkerGameObjectId
+			     << "|" << component.stageGoalMarkerGameObjectId
+			     << "|" << component.stageStartEffectGameObjectId
+			     << "|" << component.stageGoalEffectGameObjectId
+			     << "|" << component.stageStartDelay
+			     << "|" << component.stageGoalRadius
+			     << "|" << component.stageGoalDelay
+			     << "|" << EncodeSceneToken(component.stageNextScenePath)
+			     << "|" << EncodeSceneToken(component.stageSelectScenePath)
+			     << "|" << EncodeSceneToken(component.sceneButtonScenePath)
+			     << "|" << component.audioBus
+			     << "|" << component.audioMaxVoices
+			     << "|" << component.audioRetriggerInterval
+			     << "|" << (component.compositeAutoExposureEnabled ? 1 : 0)
+			     << "|" << component.compositeMinimumExposure
+			     << "|" << component.compositeMaximumExposure
+			     << "|" << component.compositeExposureAdaptationSpeed
+			     << "|" << component.compositeTargetLuminance
+			     << "|" << component.compositeTemperature
+			     << "|" << component.compositeTint
+			     << "|" << component.compositeLift.x
+			     << "|" << component.compositeLift.y
+			     << "|" << component.compositeLift.z
+			     << "|" << component.compositeGamma
+			     << "|" << component.compositeGain.x
+			     << "|" << component.compositeGain.y
+			     << "|" << component.compositeGain.z
+			     << "|" << component.audioDopplerLevel
+			     << "|" << component.audioSpread
+			     << "|" << component.audioConeInnerAngle
+			     << "|" << component.audioConeOuterAngle
+			     << "|" << component.audioConeOuterVolume
+			     << "|" << component.audioOcclusionStrength
+			     << "|" << component.audioReverbSend
+			     << "|" << component.audioReflectionStrength
+			     << "|" << component.enemyWaveIndex
+			     << "|" << component.enemyFormationPattern
+			     << "|" << component.enemyFormationSlot
+			     << "|" << component.enemyFormationSpacing
+			     << "|" << component.railAimMouseSensitivity
+			     << "|" << component.railAimGamepadSensitivity
+			     << "|" << component.railAimAssistRadius
+			     << "|" << (component.railAimInvertY ? 1 : 0)
+			     << "|" << component.railEventFollowerGameObjectId
+			     << "|" << component.railEventNormalized
+			     << "|" << component.railEventType
+			     << "|" << component.railEventTargetGameObjectId
+			     << "|" << component.railEventDuration
+			     << "|" << EncodeSceneToken(component.railEventText)
+			     << "|" << (component.railEventPauseRail ? 1 : 0)
+			     << "|" << component.bossPhaseTwoHealthRatio
+			     << "|" << component.bossPhaseThreeHealthRatio
+			     << "|" << component.bossPhaseOneMotionPattern
+			     << "|" << component.bossPhaseTwoMotionPattern
+			     << "|" << component.bossPhaseThreeMotionPattern
+			     << "|" << component.bossPhaseOneAttackInterval
+			     << "|" << component.bossPhaseTwoAttackInterval
+			     << "|" << component.bossPhaseThreeAttackInterval
+			     << "|" << component.railHudBindingType
+			     << "|" << component.railHudSourceGameObjectId
+			     << "|" << component.railAcceleration
+			     << "|" << component.railDeceleration
+			     << "|" << (component.railStartPaused ? 1 : 0)
+			     << "|" << (component.railReverse ? 1 : 0)
+			     << "|" << (component.railStopAtEnd ? 1 : 0)
+			     << "|" << component.waveTriggerMode
+			     << "|" << component.waveTriggerSourceGameObjectId
+			     << "|" << component.waveTriggerValue
+			     << "|" << component.waveSpawnInterval
+			     << "|" << (component.waveDeactivateChildrenOnStart ? 1 : 0)
+			     << "|" << component.timelineSourceMode
+			     << "|" << component.timelineSourceGameObjectId
+			     << "|" << component.timelineTriggerValue
+			     << "|" << component.timelineTargetGameObjectId
+			     << "|" << EncodeSceneToken(component.timelineActionName)
+			     << "|" << (component.timelineTriggerOnce ? 1 : 0)
+			     << "|" << component.thresholdSourceMode
+			     << "|" << component.thresholdSourceGameObjectId
+			     << "|" << component.thresholdSecondValue
+			     << "|" << component.thresholdThirdValue
+			     << "|" << EncodeSceneToken(component.thresholdFirstActionName)
+			     << "|" << EncodeSceneToken(component.thresholdSecondActionName)
+			     << "|" << EncodeSceneToken(component.thresholdThirdActionName)
+			     << "|" << component.uiBindingSourceGameObjectId
+			     << "|" << component.uiBindingValueType
+			     << "|" << EncodeSceneToken(component.uiBindingPrefix)
+			     << "|" << component.uiBindingPrecision
+			     << "|" << component.uiBindingScale
+			     << "|" << component.waveActionTargetGameObjectId
+			     << "|" << EncodeSceneToken(component.waveStartedActionName)
+			     << "|" << EncodeSceneToken(component.waveSpawnedActionName)
+			     << "|" << EncodeSceneToken(component.waveCompletedActionName)
+			     << "|" << component.thresholdTargetGameObjectId;
 
 			file << "\n";
 
@@ -945,7 +1144,7 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 }
 
 bool EditorScene::LoadScene(const std::string& filePath) {
-	std::ifstream file(filePath);  // SaveScene と同じ | 区切りテキストを読み込む
+	std::ifstream file(filePath, std::ios::binary);  // BOM の有無に関係なく旧形式と新形式を読み込む
 	if (!file.is_open()) {
 		return false;
 	}
@@ -954,8 +1153,17 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 	EditorPhysicsSettings loadedPhysicsSettings = physicsSettings_;  // 古い Scene に設定行がない場合は現在の既定値を使う
 	bool hasSceneData = false;  // 空 Scene 保存も許可するため、GameObject が 0 件でも有効な Scene 行を読んだかを記録する
 	std::string line;
+	bool isFirstLine = true;
 
 	while (std::getline(file, line)) {
+		if (isFirstLine && line.size() >= sizeof(kSceneUtf8Bom) &&
+			static_cast<unsigned char>(line[0]) == kSceneUtf8Bom[0] &&
+			static_cast<unsigned char>(line[1]) == kSceneUtf8Bom[1] &&
+			static_cast<unsigned char>(line[2]) == kSceneUtf8Bom[2]) {
+			line.erase(0, sizeof(kSceneUtf8Bom));
+		}
+
+		isFirstLine = false;
 		std::vector<std::string> elements = SplitLine(line, '|');  // 1 行を | で分割して、先頭要素で行の種類を判定する
 		if (elements.empty()) {
 			continue;
@@ -1415,6 +1623,254 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 						(std::clamp)(ToInt(elements[postProcessEffectCursor + 66u]), 0, 3);
 				}
 
+				// Ocean 値は既存 Scene の全フィールドより後ろへ追加し、旧形式をそのまま読み込めるようにする。
+				const size_t oceanCursor = postProcessEffectCursor + 67u;
+				if (elements.size() >= oceanCursor + 24u) {
+					component.oceanGridResolution = ToInt(elements[oceanCursor + 0u]);
+					component.oceanSize = ToFloat(elements[oceanCursor + 1u]);
+					component.oceanWaveHeight = ToFloat(elements[oceanCursor + 2u]);
+					component.oceanMaxWaveHeight = ToFloat(elements[oceanCursor + 3u]);
+					component.oceanWaveLength = ToFloat(elements[oceanCursor + 4u]);
+					component.oceanWaveSpeed = ToFloat(elements[oceanCursor + 5u]);
+					component.oceanTimeScale = ToFloat(elements[oceanCursor + 6u]);
+					component.oceanChoppiness = ToFloat(elements[oceanCursor + 7u]);
+					component.oceanPrimaryDirection = {
+						ToFloat(elements[oceanCursor + 8u]),
+						ToFloat(elements[oceanCursor + 9u])};
+					component.oceanSecondaryDirection = {
+						ToFloat(elements[oceanCursor + 10u]),
+						ToFloat(elements[oceanCursor + 11u])};
+					component.oceanSecondaryWaveScale = ToFloat(elements[oceanCursor + 12u]);
+					component.oceanRippleScale = ToFloat(elements[oceanCursor + 13u]);
+					component.oceanRippleStrength = ToFloat(elements[oceanCursor + 14u]);
+					component.oceanFoamStrength = ToFloat(elements[oceanCursor + 15u]);
+					component.oceanRoughness = ToFloat(elements[oceanCursor + 16u]);
+					component.oceanReflectionStrength = ToFloat(elements[oceanCursor + 17u]);
+					component.oceanShallowColor = {
+						ToFloat(elements[oceanCursor + 18u]),
+						ToFloat(elements[oceanCursor + 19u]),
+						ToFloat(elements[oceanCursor + 20u])};
+					component.oceanDeepColor = {
+						ToFloat(elements[oceanCursor + 21u]),
+						ToFloat(elements[oceanCursor + 22u]),
+						ToFloat(elements[oceanCursor + 23u])};
+				}
+
+				// Buoyancy 値も末尾へ追加し、Ocean までの Scene を変更なしで読み込めるようにする。
+				const size_t buoyancyCursor = oceanCursor + 24u;
+				if (elements.size() >= buoyancyCursor + 14u) {
+					component.buoyancyOceanGameObjectId = ToInt(elements[buoyancyCursor + 0u]);
+					component.buoyancyCenterOffset = {
+						ToFloat(elements[buoyancyCursor + 1u]),
+						ToFloat(elements[buoyancyCursor + 2u]),
+						ToFloat(elements[buoyancyCursor + 3u])};
+					component.buoyancyHullSize = {
+						ToFloat(elements[buoyancyCursor + 4u]),
+						ToFloat(elements[buoyancyCursor + 5u]),
+						ToFloat(elements[buoyancyCursor + 6u])};
+					component.buoyancyStrength = ToFloat(elements[buoyancyCursor + 7u]);
+					component.buoyancyMaxSubmersion = ToFloat(elements[buoyancyCursor + 8u]);
+					component.buoyancyDamping = ToFloat(elements[buoyancyCursor + 9u]);
+					component.buoyancyWaterDrag = ToFloat(elements[buoyancyCursor + 10u]);
+					component.buoyancyAngularDrag = ToFloat(elements[buoyancyCursor + 11u]);
+					component.buoyancyNormalInfluence = ToFloat(elements[buoyancyCursor + 12u]);
+					component.buoyancyUseCenterPoint = ToInt(elements[buoyancyCursor + 13u]) != 0;
+				}
+
+				// 高品質 Ocean 値は Buoyancy より後ろへ追加し、従来の列位置を維持する。
+				const size_t advancedOceanCursor = buoyancyCursor + 14u;
+				if (elements.size() >= advancedOceanCursor + 10u) {
+					component.oceanWindSpeed = ToFloat(elements[advancedOceanCursor + 0u]);
+					component.oceanWaterDepth = ToFloat(elements[advancedOceanCursor + 1u]);
+					component.oceanDirectionSpread = ToFloat(elements[advancedOceanCursor + 2u]);
+					component.oceanSwellStrength = ToFloat(elements[advancedOceanCursor + 3u]);
+					component.oceanSpectrumSeed = ToFloat(elements[advancedOceanCursor + 4u]);
+					component.oceanCrestSharpness = ToFloat(elements[advancedOceanCursor + 5u]);
+					component.oceanFoamThreshold = ToFloat(elements[advancedOceanCursor + 6u]);
+					component.oceanDetailNormalStrength = ToFloat(elements[advancedOceanCursor + 7u]);
+					component.oceanAbsorptionDistance = ToFloat(elements[advancedOceanCursor + 8u]);
+					component.oceanRefractionDistortion = ToFloat(elements[advancedOceanCursor + 9u]);
+				}
+
+				// Rail Movement は全 Ocean 設定より後ろへ追加し、従来 Scene の列位置を維持する。
+				const size_t railMovementCursor = advancedOceanCursor + 10u;
+				if (elements.size() >= railMovementCursor + 7u) {
+					component.railPathGameObjectId = ToInt(elements[railMovementCursor + 0u]);
+					component.railSpeed = ToFloat(elements[railMovementCursor + 1u]);
+					component.railStartNormalized = ToFloat(elements[railMovementCursor + 2u]);
+					component.railLookAheadDistance = ToFloat(elements[railMovementCursor + 3u]);
+					component.railLoop = ToInt(elements[railMovementCursor + 4u]) != 0;
+					component.railOrientToPath = ToInt(elements[railMovementCursor + 5u]) != 0;
+					component.railUseSmoothCurve = ToInt(elements[railMovementCursor + 6u]) != 0;
+				}
+
+				// 旧 RailShooter 列は Scene の数値レイアウト互換だけに読み込む。Runtime は参照しない。
+				const size_t legacyRailShooterCursor = railMovementCursor + 7u;
+				if (elements.size() >= legacyRailShooterCursor + 8u) {
+					component.healthMaximum = ToFloat(elements[legacyRailShooterCursor + 0u]);
+					component.healthCurrent = ToFloat(elements[legacyRailShooterCursor + 1u]);
+					component.enemySpawnFollowerGameObjectId = ToInt(elements[legacyRailShooterCursor + 2u]);
+					component.enemySpawnNormalized = ToFloat(elements[legacyRailShooterCursor + 3u]);
+					component.enemyAttackTargetGameObjectId = ToInt(elements[legacyRailShooterCursor + 4u]);
+					component.enemyAttackInterval = ToFloat(elements[legacyRailShooterCursor + 5u]);
+					component.enemyAttackRange = ToFloat(elements[legacyRailShooterCursor + 6u]);
+					component.enemyAttackDamage = ToFloat(elements[legacyRailShooterCursor + 7u]);
+				}
+
+				if (elements.size() >= legacyRailShooterCursor + 13u) {
+					component.enemyProjectileTemplateGameObjectId = ToInt(elements[legacyRailShooterCursor + 8u]);
+					component.enemyProjectilePoolSize = ToInt(elements[legacyRailShooterCursor + 9u]);
+					component.enemyProjectileSpeed = ToFloat(elements[legacyRailShooterCursor + 10u]);
+					component.enemyProjectileHitRadius = ToFloat(elements[legacyRailShooterCursor + 11u]);
+					component.enemyProjectileLifetime = ToFloat(elements[legacyRailShooterCursor + 12u]);
+				}
+
+				// 旧制作支援列も保存互換のためだけに読み込む。
+				const size_t railAuthoringCursor = legacyRailShooterCursor + 13u;
+				if (elements.size() >= railAuthoringCursor + 28u) {
+					component.railShipSpeedSourceGameObjectId = ToInt(elements[railAuthoringCursor + 0u]);
+					component.railShipSailGameObjectId = ToInt(elements[railAuthoringCursor + 1u]);
+					component.railShipWakeEffectGameObjectId = ToInt(elements[railAuthoringCursor + 2u]);
+					component.railShipWindEffectGameObjectId = ToInt(elements[railAuthoringCursor + 3u]);
+					component.railShipEffectStartSpeed = ToFloat(elements[railAuthoringCursor + 4u]);
+					component.railShipEffectFullSpeed = ToFloat(elements[railAuthoringCursor + 5u]);
+					component.railShipSailMinimumSpeed = ToFloat(elements[railAuthoringCursor + 6u]);
+					component.railShipSailMaximumSpeed = ToFloat(elements[railAuthoringCursor + 7u]);
+					component.enemyMotionPattern = ToInt(elements[railAuthoringCursor + 8u]);
+					component.enemyMotionAmplitude.x = ToFloat(elements[railAuthoringCursor + 9u]);
+					component.enemyMotionAmplitude.y = ToFloat(elements[railAuthoringCursor + 10u]);
+					component.enemyMotionAmplitude.z = ToFloat(elements[railAuthoringCursor + 11u]);
+					component.enemyMotionFrequency = ToFloat(elements[railAuthoringCursor + 12u]);
+					component.enemyMotionPhase = ToFloat(elements[railAuthoringCursor + 13u]);
+					component.enemyMotionTargetGameObjectId = ToInt(elements[railAuthoringCursor + 14u]);
+					component.enemyMotionSpeed = ToFloat(elements[railAuthoringCursor + 15u]);
+					component.enemyMotionLookAtTarget = ToInt(elements[railAuthoringCursor + 16u]) != 0;
+					component.stageFollowerGameObjectId = ToInt(elements[railAuthoringCursor + 17u]);
+					component.stageStartMarkerGameObjectId = ToInt(elements[railAuthoringCursor + 18u]);
+					component.stageGoalMarkerGameObjectId = ToInt(elements[railAuthoringCursor + 19u]);
+					component.stageStartEffectGameObjectId = ToInt(elements[railAuthoringCursor + 20u]);
+					component.stageGoalEffectGameObjectId = ToInt(elements[railAuthoringCursor + 21u]);
+					component.stageStartDelay = ToFloat(elements[railAuthoringCursor + 22u]);
+					component.stageGoalRadius = ToFloat(elements[railAuthoringCursor + 23u]);
+					component.stageGoalDelay = ToFloat(elements[railAuthoringCursor + 24u]);
+					component.stageNextScenePath = DecodeSceneToken(elements[railAuthoringCursor + 25u]);
+					component.stageSelectScenePath = DecodeSceneToken(elements[railAuthoringCursor + 26u]);
+					component.sceneButtonScenePath = DecodeSceneToken(elements[railAuthoringCursor + 27u]);
+				}
+
+				// AudioSource の高度設定は全既存列より後ろへ追加し、旧 Scene の読み込みを維持する。
+				const size_t advancedAudioCursor = railAuthoringCursor + 28u;
+				if (elements.size() >= advancedAudioCursor + 3u) {
+					component.audioBus = ToInt(elements[advancedAudioCursor + 0u]);
+					component.audioMaxVoices = ToInt(elements[advancedAudioCursor + 1u]);
+					component.audioRetriggerInterval = ToFloat(elements[advancedAudioCursor + 2u]);
+				}
+
+				const size_t postProcessColorCursor = advancedAudioCursor + 3u;
+				if (elements.size() >= postProcessColorCursor + 14u) {
+					component.compositeAutoExposureEnabled =
+						ToInt(elements[postProcessColorCursor + 0u]) != 0;
+					component.compositeMinimumExposure = ToFloat(elements[postProcessColorCursor + 1u]);
+					component.compositeMaximumExposure = ToFloat(elements[postProcessColorCursor + 2u]);
+					component.compositeExposureAdaptationSpeed = ToFloat(elements[postProcessColorCursor + 3u]);
+					component.compositeTargetLuminance = ToFloat(elements[postProcessColorCursor + 4u]);
+					component.compositeTemperature = ToFloat(elements[postProcessColorCursor + 5u]);
+					component.compositeTint = ToFloat(elements[postProcessColorCursor + 6u]);
+					component.compositeLift = {
+						ToFloat(elements[postProcessColorCursor + 7u]),
+						ToFloat(elements[postProcessColorCursor + 8u]),
+						ToFloat(elements[postProcessColorCursor + 9u])};
+					component.compositeGamma = ToFloat(elements[postProcessColorCursor + 10u]);
+					component.compositeGain = {
+						ToFloat(elements[postProcessColorCursor + 11u]),
+						ToFloat(elements[postProcessColorCursor + 12u]),
+						ToFloat(elements[postProcessColorCursor + 13u])};
+				}
+
+				// レール制作と空間音声の追加値は既存の全列より後ろへ置く。
+				const size_t railProductionCursor = postProcessColorCursor + 14u;
+				if (elements.size() >= railProductionCursor + 33u) {
+					component.audioDopplerLevel = ToFloat(elements[railProductionCursor + 0u]);
+					component.audioSpread = ToFloat(elements[railProductionCursor + 1u]);
+					component.audioConeInnerAngle = ToFloat(elements[railProductionCursor + 2u]);
+					component.audioConeOuterAngle = ToFloat(elements[railProductionCursor + 3u]);
+					component.audioConeOuterVolume = ToFloat(elements[railProductionCursor + 4u]);
+					component.audioOcclusionStrength = ToFloat(elements[railProductionCursor + 5u]);
+					component.audioReverbSend = ToFloat(elements[railProductionCursor + 6u]);
+					component.audioReflectionStrength = ToFloat(elements[railProductionCursor + 7u]);
+					component.enemyWaveIndex = ToInt(elements[railProductionCursor + 8u]);
+					component.enemyFormationPattern = ToInt(elements[railProductionCursor + 9u]);
+					component.enemyFormationSlot = ToInt(elements[railProductionCursor + 10u]);
+					component.enemyFormationSpacing = ToFloat(elements[railProductionCursor + 11u]);
+					component.railAimMouseSensitivity = ToFloat(elements[railProductionCursor + 12u]);
+					component.railAimGamepadSensitivity = ToFloat(elements[railProductionCursor + 13u]);
+					component.railAimAssistRadius = ToFloat(elements[railProductionCursor + 14u]);
+					component.railAimInvertY = ToInt(elements[railProductionCursor + 15u]) != 0;
+					component.railEventFollowerGameObjectId = ToInt(elements[railProductionCursor + 16u]);
+					component.railEventNormalized = ToFloat(elements[railProductionCursor + 17u]);
+					component.railEventType = ToInt(elements[railProductionCursor + 18u]);
+					component.railEventTargetGameObjectId = ToInt(elements[railProductionCursor + 19u]);
+					component.railEventDuration = ToFloat(elements[railProductionCursor + 20u]);
+					component.railEventText = DecodeSceneToken(elements[railProductionCursor + 21u]);
+					component.railEventPauseRail = ToInt(elements[railProductionCursor + 22u]) != 0;
+					component.bossPhaseTwoHealthRatio = ToFloat(elements[railProductionCursor + 23u]);
+					component.bossPhaseThreeHealthRatio = ToFloat(elements[railProductionCursor + 24u]);
+					component.bossPhaseOneMotionPattern = ToInt(elements[railProductionCursor + 25u]);
+					component.bossPhaseTwoMotionPattern = ToInt(elements[railProductionCursor + 26u]);
+					component.bossPhaseThreeMotionPattern = ToInt(elements[railProductionCursor + 27u]);
+					component.bossPhaseOneAttackInterval = ToFloat(elements[railProductionCursor + 28u]);
+					component.bossPhaseTwoAttackInterval = ToFloat(elements[railProductionCursor + 29u]);
+					component.bossPhaseThreeAttackInterval = ToFloat(elements[railProductionCursor + 30u]);
+					component.railHudBindingType = ToInt(elements[railProductionCursor + 31u]);
+					component.railHudSourceGameObjectId = ToInt(elements[railProductionCursor + 32u]);
+				}
+
+				// RailFollower の実行制御値は既存の制作支援列より後ろへ追加する。
+				const size_t railFollowerCursor = railProductionCursor + 33u;
+				if (elements.size() >= railFollowerCursor + 5u) {
+					component.railAcceleration = ToFloat(elements[railFollowerCursor + 0u]);
+					component.railDeceleration = ToFloat(elements[railFollowerCursor + 1u]);
+					component.railStartPaused = ToInt(elements[railFollowerCursor + 2u]) != 0;
+					component.railReverse = ToInt(elements[railFollowerCursor + 3u]) != 0;
+					component.railStopAtEnd = ToInt(elements[railFollowerCursor + 4u]) != 0;
+				}
+
+				// 汎用 Wave / Event / State / UI Binding は旧 RailShooter 列を再利用せず末尾へ追加する。
+				const size_t genericGameplayCursor = railFollowerCursor + 5u;
+				if (elements.size() >= genericGameplayCursor + 23u) {
+					component.waveTriggerMode = ToInt(elements[genericGameplayCursor + 0u]);
+					component.waveTriggerSourceGameObjectId = ToInt(elements[genericGameplayCursor + 1u]);
+					component.waveTriggerValue = ToFloat(elements[genericGameplayCursor + 2u]);
+					component.waveSpawnInterval = ToFloat(elements[genericGameplayCursor + 3u]);
+					component.waveDeactivateChildrenOnStart = ToInt(elements[genericGameplayCursor + 4u]) != 0;
+					component.timelineSourceMode = ToInt(elements[genericGameplayCursor + 5u]);
+					component.timelineSourceGameObjectId = ToInt(elements[genericGameplayCursor + 6u]);
+					component.timelineTriggerValue = ToFloat(elements[genericGameplayCursor + 7u]);
+					component.timelineTargetGameObjectId = ToInt(elements[genericGameplayCursor + 8u]);
+					component.timelineActionName = DecodeSceneToken(elements[genericGameplayCursor + 9u]);
+					component.timelineTriggerOnce = ToInt(elements[genericGameplayCursor + 10u]) != 0;
+					component.thresholdSourceMode = ToInt(elements[genericGameplayCursor + 11u]);
+					component.thresholdSourceGameObjectId = ToInt(elements[genericGameplayCursor + 12u]);
+					component.thresholdSecondValue = ToFloat(elements[genericGameplayCursor + 13u]);
+					component.thresholdThirdValue = ToFloat(elements[genericGameplayCursor + 14u]);
+					component.thresholdFirstActionName = DecodeSceneToken(elements[genericGameplayCursor + 15u]);
+					component.thresholdSecondActionName = DecodeSceneToken(elements[genericGameplayCursor + 16u]);
+					component.thresholdThirdActionName = DecodeSceneToken(elements[genericGameplayCursor + 17u]);
+					component.uiBindingSourceGameObjectId = ToInt(elements[genericGameplayCursor + 18u]);
+					component.uiBindingValueType = ToInt(elements[genericGameplayCursor + 19u]);
+					component.uiBindingPrefix = DecodeSceneToken(elements[genericGameplayCursor + 20u]);
+					component.uiBindingPrecision = ToInt(elements[genericGameplayCursor + 21u]);
+					component.uiBindingScale = ToFloat(elements[genericGameplayCursor + 22u]);
+				}
+
+				if (elements.size() >= genericGameplayCursor + 28u) {
+					component.waveActionTargetGameObjectId = ToInt(elements[genericGameplayCursor + 23u]);
+					component.waveStartedActionName = DecodeSceneToken(elements[genericGameplayCursor + 24u]);
+					component.waveSpawnedActionName = DecodeSceneToken(elements[genericGameplayCursor + 25u]);
+					component.waveCompletedActionName = DecodeSceneToken(elements[genericGameplayCursor + 26u]);
+					component.thresholdTargetGameObjectId = ToInt(elements[genericGameplayCursor + 27u]);
+				}
+
 				gameObject.components.push_back(component);
 			break;
 			}
@@ -1708,6 +2164,17 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.audioSpatialBlend = 1.0f;
 		component.audioMinDistance = 1.0f;
 		component.audioMaxDistance = 50.0f;
+		component.audioBus = 0;
+		component.audioMaxVoices = 4;
+		component.audioRetriggerInterval = 0.03f;
+		component.audioDopplerLevel = 1.0f;
+		component.audioSpread = 0.0f;
+		component.audioConeInnerAngle = 360.0f;
+		component.audioConeOuterAngle = 360.0f;
+		component.audioConeOuterVolume = 0.2f;
+		component.audioOcclusionStrength = 0.65f;
+		component.audioReverbSend = 0.0f;
+		component.audioReflectionStrength = 0.0f;
 		component.navAgentRadius = 0.5f;
 		component.navAgentHeight = 2.0f;
 		component.navMaxSpeed = 3.5f;
@@ -1798,6 +2265,148 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.freeRotateAxes = 7;  // X|Y|Z all
 		component.freeUseLocalSpace = true;
 		component.freeRotationInput = {0.0f, 0.0f, 0.0f};
+		component.oceanGridResolution = 2048;
+		component.oceanSize = 240.0f;
+		component.oceanWaveHeight = 1.8f;
+		component.oceanMaxWaveHeight = 4.5f;
+		component.oceanWaveLength = 28.0f;
+		component.oceanWaveSpeed = 1.0f;
+		component.oceanTimeScale = 1.0f;
+		component.oceanChoppiness = 0.65f;
+		component.oceanPrimaryDirection = {1.0f, 0.28f};
+		component.oceanSecondaryDirection = {-0.45f, 1.0f};
+		component.oceanSecondaryWaveScale = 0.45f;
+		component.oceanRippleScale = 0.22f;
+		component.oceanRippleStrength = 0.12f;
+		component.oceanWindSpeed = 14.0f;
+		component.oceanWaterDepth = 80.0f;
+		component.oceanDirectionSpread = 0.35f;
+		component.oceanSwellStrength = 0.65f;
+		component.oceanSpectrumSeed = 7.0f;
+		component.oceanCrestSharpness = 0.65f;
+		component.oceanFoamStrength = 1.0f;
+		component.oceanFoamThreshold = 0.58f;
+		component.oceanRoughness = 0.12f;
+		component.oceanReflectionStrength = 0.85f;
+		component.oceanDetailNormalStrength = 0.45f;
+		component.oceanAbsorptionDistance = 18.0f;
+		component.oceanRefractionDistortion = 0.08f;
+		component.oceanShallowColor = {0.04f, 0.34f, 0.46f};
+		component.oceanDeepColor = {0.005f, 0.045f, 0.11f};
+		component.buoyancyOceanGameObjectId = -1;
+		component.buoyancyCenterOffset = {0.0f, 0.0f, 0.0f};
+		component.buoyancyHullSize = {3.0f, 1.2f, 6.0f};
+		component.buoyancyStrength = 18.0f;
+		component.buoyancyMaxSubmersion = 2.0f;
+		component.buoyancyDamping = 5.0f;
+		component.buoyancyWaterDrag = 1.4f;
+		component.buoyancyAngularDrag = 1.8f;
+		component.buoyancyNormalInfluence = 0.2f;
+		component.buoyancyUseCenterPoint = true;
+		component.railPathGameObjectId = -1;
+		component.railSpeed = 8.0f;
+		component.railStartNormalized = 0.0f;
+		component.railLookAheadDistance = 1.0f;
+		component.railAcceleration = 0.0f;
+		component.railDeceleration = 0.0f;
+		component.railLoop = false;
+		component.railOrientToPath = true;
+		component.railUseSmoothCurve = true;
+		component.railStartPaused = false;
+		component.railReverse = false;
+		component.railStopAtEnd = true;
+		component.healthMaximum = 100.0f;
+		component.healthCurrent = 100.0f;
+		component.enemySpawnFollowerGameObjectId = -1;
+		component.enemySpawnNormalized = 0.0f;
+		component.enemyAttackTargetGameObjectId = -1;
+		component.enemyAttackInterval = 2.0f;
+		component.enemyAttackRange = 40.0f;
+		component.enemyAttackDamage = 10.0f;
+		component.enemyProjectileTemplateGameObjectId = -1;
+		component.enemyProjectilePoolSize = 8;
+		component.enemyProjectileSpeed = 20.0f;
+		component.enemyProjectileHitRadius = 0.5f;
+		component.enemyProjectileLifetime = 5.0f;
+		component.enemyWaveIndex = 0;
+		component.enemyFormationPattern = 0;
+		component.enemyFormationSlot = 0;
+		component.enemyFormationSpacing = 3.0f;
+		component.railShipSpeedSourceGameObjectId = -1;
+		component.railShipSailGameObjectId = -1;
+		component.railShipWakeEffectGameObjectId = -1;
+		component.railShipWindEffectGameObjectId = -1;
+		component.railShipEffectStartSpeed = 0.5f;
+		component.railShipEffectFullSpeed = 12.0f;
+		component.railShipSailMinimumSpeed = 0.35f;
+		component.railShipSailMaximumSpeed = 1.5f;
+		component.railAimMouseSensitivity = 0.0025f;
+		component.railAimGamepadSensitivity = 1.5f;
+		component.railAimAssistRadius = 0.18f;
+		component.railAimInvertY = false;
+		component.enemyMotionPattern = 0;
+		component.enemyMotionAmplitude = {2.0f, 1.0f, 0.0f};
+		component.enemyMotionFrequency = 0.5f;
+		component.enemyMotionPhase = 0.0f;
+		component.enemyMotionTargetGameObjectId = -1;
+		component.enemyMotionSpeed = 5.0f;
+		component.enemyMotionLookAtTarget = true;
+		component.stageFollowerGameObjectId = -1;
+		component.stageStartMarkerGameObjectId = -1;
+		component.stageGoalMarkerGameObjectId = -1;
+		component.stageStartEffectGameObjectId = -1;
+		component.stageGoalEffectGameObjectId = -1;
+		component.stageStartDelay = 1.0f;
+		component.stageGoalRadius = 2.0f;
+		component.stageGoalDelay = 2.0f;
+		component.stageNextScenePath.clear();
+		component.stageSelectScenePath.clear();
+		component.sceneButtonScenePath.clear();
+		component.railEventFollowerGameObjectId = -1;
+		component.railEventNormalized = 0.0f;
+		component.railEventType = 0;
+		component.railEventTargetGameObjectId = -1;
+		component.railEventDuration = 2.0f;
+		component.railEventText = "Encounter Event";
+		component.railEventPauseRail = false;
+		component.bossPhaseTwoHealthRatio = 0.66f;
+		component.bossPhaseThreeHealthRatio = 0.33f;
+		component.bossPhaseOneMotionPattern = 0;
+		component.bossPhaseTwoMotionPattern = 1;
+		component.bossPhaseThreeMotionPattern = 4;
+		component.bossPhaseOneAttackInterval = 2.0f;
+		component.bossPhaseTwoAttackInterval = 1.25f;
+		component.bossPhaseThreeAttackInterval = 0.65f;
+		component.railHudBindingType = 0;
+		component.railHudSourceGameObjectId = -1;
+		component.waveTriggerMode = 0;
+		component.waveTriggerSourceGameObjectId = -1;
+		component.waveTriggerValue = 0.0f;
+		component.waveSpawnInterval = 0.0f;
+		component.waveDeactivateChildrenOnStart = true;
+		component.waveActionTargetGameObjectId = -1;
+		component.waveStartedActionName = "OnWaveStarted";
+		component.waveSpawnedActionName = "OnWaveSpawned";
+		component.waveCompletedActionName = "OnWaveCompleted";
+		component.timelineSourceMode = 0;
+		component.timelineSourceGameObjectId = -1;
+		component.timelineTriggerValue = 0.0f;
+		component.timelineTargetGameObjectId = -1;
+		component.timelineActionName = "OnTimelineEvent";
+		component.timelineTriggerOnce = true;
+		component.thresholdSourceMode = 0;
+		component.thresholdSourceGameObjectId = -1;
+		component.thresholdTargetGameObjectId = -1;
+		component.thresholdSecondValue = 0.66f;
+		component.thresholdThirdValue = 0.33f;
+		component.thresholdFirstActionName = "OnState1";
+		component.thresholdSecondActionName = "OnState2";
+		component.thresholdThirdActionName = "OnState3";
+		component.uiBindingSourceGameObjectId = -1;
+		component.uiBindingValueType = 1;
+		component.uiBindingPrefix.clear();
+		component.uiBindingPrecision = 0;
+		component.uiBindingScale = 100.0f;
 		component.buttonLabel = "Button";
 		component.buttonPosition = {20.0f, 20.0f};
 		component.buttonSize = {160.0f, 48.0f};
@@ -1853,6 +2462,16 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.compositeFilmGrain = 0.25f;
 		component.compositeChromaticAberration = 0.15f;
 		component.compositeAmbientOcclusionStrength = 0.65f;
+		component.compositeAutoExposureEnabled = true;
+		component.compositeMinimumExposure = 0.35f;
+		component.compositeMaximumExposure = 3.0f;
+		component.compositeExposureAdaptationSpeed = 1.8f;
+		component.compositeTargetLuminance = 0.18f;
+		component.compositeTemperature = 0.0f;
+		component.compositeTint = 0.0f;
+		component.compositeLift = {0.0f, 0.0f, 0.0f};
+		component.compositeGamma = 1.0f;
+		component.compositeGain = {1.0f, 1.0f, 1.0f};
 	}
 
 	if (type == EditorComponentType::Environment) {
@@ -1880,6 +2499,32 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.cameraMotionBlurEnabled = false;
 		component.cameraMotionBlurIntensity = 0.5f;
 		component.cameraExposure = 0.0f;
+	}
+
+	if (type == EditorComponentType::Ocean) {
+		component.color = component.oceanShallowColor;
+		component.roughness = component.oceanRoughness;
+		component.ior = 1.333f;
+		component.reflectionStrength = component.oceanReflectionStrength;
+		component.clearCoat = 1.0f;
+		component.clearCoatRoughness = 0.05f;
+		component.transmission = 0.18f;
+		component.lightingMode = 3;
+	}
+
+	if (type == EditorComponentType::Terrain) {
+		component.colliderSize = {100.0f, 20.0f, 100.0f};
+		component.oceanGridResolution = 128;
+	}
+
+	if (type == EditorComponentType::Foliage) {
+		component.colliderSize = {60.0f, 1.0f, 60.0f};
+		component.intensity = 1.0f;
+		component.particleMaxCount = 4096;
+		component.colliderRadius = 120.0f;
+		component.oceanWaveHeight = 0.18f;
+		component.oceanWindSpeed = 14.0f;
+		component.oceanWaveLength = 4.0f;
 	}
 
 	if (type == EditorComponentType::ReflectionProbe) {

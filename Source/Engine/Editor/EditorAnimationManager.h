@@ -37,6 +37,10 @@ public:
 
 	bool IsAnimationPlaying(int32_t gameObjectId) const;  // Animation または Animator が動作中なら true を返す。
 	float GetAnimationTime(int32_t gameObjectId) const;  // Animator は現在 State、Animation は Clip の再生秒を返す。
+	bool GetAnimatorSkinningState(
+		int32_t gameObjectId,
+		int32_t& clipIndex,
+		float& playbackTime) const;  // Animator の現在支配的な Clip と Bone Sampling 用の再生秒を返す。
 	std::string GetAnimatorStateName(int32_t gameObjectId) const;  // Inspector デバッグ表示用の State 名を返す。
 	bool GetAnimatorParameters(
 		int32_t gameObjectId,

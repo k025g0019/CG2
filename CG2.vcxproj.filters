@@ -69,8 +69,20 @@
 	<None Include="Assets\Shaders\Particle\Particle.PS.hlsl" />
 	<None Include="Assets\Shaders\Particle\ParticleModel.VS.hlsl" />
 	<None Include="Assets\Shaders\Particle\ParticleModel.PS.hlsl" />
+	<None Include="Assets\Shaders\Transparency\WeightedOIT.PS.hlsl" />
+	<None Include="Assets\Shaders\Transparency\WeightedOITComposite.PS.hlsl" />
+	<None Include="Assets\Shaders\Transparency\RefractiveSurface.PS.hlsl" />
+	<None Include="Assets\Shaders\Temporal\SkinnedMotionVector.VS.hlsl" />
+	<None Include="Assets\Shaders\Water\UnderwaterCaustics.PS.hlsl" />
+	<None Include="Assets\Shaders\Common\SurfaceDeformation.hlsli" />
 	<None Include="Assets\Shaders\Object3d.VS.hlsl" />
 	<None Include="Assets\Shaders\Object3d.PS.hlsl" />
+	<None Include="Assets\Shaders\Water\OceanSpectrum.hlsli" />
+	<None Include="Assets\Shaders\Water\OceanFftSampling.hlsli" />
+	<None Include="Assets\Shaders\Water\OceanFFT_UpdateSpectrum.CS.hlsl" />
+	<None Include="Assets\Shaders\Water\OceanFFT_Row.CS.hlsl" />
+	<None Include="Assets\Shaders\Water\OceanFFT_Transpose.CS.hlsl" />
+	<None Include="Assets\Shaders\Water\OceanFFT_Finalize.CS.hlsl" />
 	<None Include="Assets\Shaders\Object3dReflectionMask.PS.hlsl" />
 	<None Include="Assets\Shaders\Culling\BuildIndirectArgs.CS.hlsl" />
 	<None Include="Assets\Shaders\Culling\FrustumCulling.CS.hlsl" />
@@ -105,6 +117,7 @@
     <None Include="Assets\Shaders\Temporal\TemporalResolve.CS.hlsl" />
     <None Include="Assets\Shaders\Temporal\VelocityDilate.CS.hlsl" />
     <None Include="Assets\Shaders\ShadowDepth.VS.hlsl" />
+    <None Include="Assets\Shaders\Shadow\AlphaCutoutShadowDepth.PS.hlsl" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Source\Engine\Core\CrashHandler.cpp">
@@ -140,9 +153,24 @@
     <ClCompile Include="Source\Engine\Editor\EditorJoltPhysicsManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="Source\Engine\Editor\EditorLocalMoveManager.cpp">
-      <Filter>ソース ファイル</Filter>
-    </ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorLocalMoveManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorRailMovementManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorWaveSpawnerManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorGameplayEventManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorUiBindingManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorGameplayToolsWindowManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorRollingMoveManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
@@ -236,6 +264,9 @@
     <ClCompile Include="Source\Engine\Editor\EditorPhysicsManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorOceanSystem.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorScene.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
@@ -264,6 +295,9 @@
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorGameViewManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorGameBuildManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorHierarchyWindowManager.cpp">
@@ -297,6 +331,9 @@
 	  <Filter>ソース ファイル</Filter>
 	</ClCompile>
 	<ClCompile Include="Source\Engine\Renderer\EditorGpuCullingManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Renderer\EditorOceanFftManager.cpp">
 	  <Filter>ソース ファイル</Filter>
 	</ClCompile>
 	<ClCompile Include="Source\Engine\Renderer\EditorGpuParticleManager.cpp">
@@ -1246,9 +1283,24 @@
     <ClInclude Include="Source\Engine\Editor\EditorJoltPhysicsManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="Source\Engine\Editor\EditorLocalMoveManager.h">
-      <Filter>ヘッダー ファイル</Filter>
-    </ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorLocalMoveManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorRailMovementManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorWaveSpawnerManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorGameplayEventManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorUiBindingManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorGameplayToolsWindowManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
     <ClInclude Include="Source\Engine\Editor\EditorRollingMoveManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
@@ -1262,6 +1314,9 @@
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="Source\Engine\Editor\EditorPhysicsManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorOceanSystem.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="Source\Engine\Editor\EditorScene.h">
@@ -1306,6 +1361,9 @@
     <ClInclude Include="Source\Engine\Editor\EditorGameViewManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorGameBuildManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
     <ClInclude Include="Source\Engine\Editor\EditorHierarchyWindowManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
@@ -1337,6 +1395,9 @@
 	  <Filter>ヘッダー ファイル</Filter>
 	</ClInclude>
 	<ClInclude Include="Source\Engine\Renderer\EditorGpuCullingManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Renderer\EditorOceanFftManager.h">
 	  <Filter>ヘッダー ファイル</Filter>
 	</ClInclude>
 	<ClInclude Include="Source\Engine\Renderer\EditorGpuParticleManager.h">

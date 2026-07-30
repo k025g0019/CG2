@@ -346,6 +346,34 @@ enum class EditorComponentType {
 	FreeTransform,
 	// FBX / OBJ の頂点位置から自動生成する凸包 Collider
 	AutoConvexCollision,
+	// FFocean3D を基にした編集可能な海面描画
+	Ocean,
+	// Ocean の波面を使って Dynamic Rigidbody へ複数点浮力を加える
+	Buoyancy,
+	// 子 GameObject を制御点にしたレール上の自動移動
+	RailMovement,
+	// ゲーム中にダメージを受ける体力
+	Health,
+	// 旧 RailShooterEnemy の Scene 読み込み互換スロット。Engine Runtime は実行しない
+	LegacyRailShooterEnemy,
+	// 旧 RailShooterShip の Scene 読み込み互換スロット。Engine Runtime は実行しない
+	LegacyRailShooterShip,
+	// 旧 RailShooterEnemyMotion の Scene 読み込み互換スロット。Engine Runtime は実行しない
+	LegacyRailShooterEnemyMotion,
+	// 旧 RailShooterStage の Scene 読み込み互換スロット。Engine Runtime は実行しない
+	LegacyRailShooterStage,
+	// Script を書かずに Scene を切り替える GameView Button
+	SceneButton,
+	// 草木メッシュへ風による頂点変形と透過光を追加する
+	Foliage,
+	// 子 GameObject 群を開始条件と間隔に従って順次有効化する
+	WaveSpawner,
+	// 時間または RailFollower 進行率から任意の C++ Script Action を通知する
+	TimelineEvent,
+	// Health または RailFollower の値を閾値で状態へ変換し、任意 Action を通知する
+	ThresholdState,
+	// Health / RailFollower / Active 値を同じ GameObject の Text / Slider へ反映する
+	UIValueBinding,
 	// Component 種類数。範囲チェックに使う
 	Count,
 };
@@ -475,6 +503,17 @@ struct EditorComponent {
 		float audioSpatialBlend;  // 3D空間ブレンド (0=2D, 1=3D)
 		float audioMinDistance;  // 3D最小距離
 		float audioMaxDistance;  // 3D最大距離
+		int32_t audioBus;  // 0=SFX、1=BGM、2=Ambience、3=UI
+		int32_t audioMaxVoices;  // 同じ AudioSource から同時に鳴らせる最大数
+		float audioRetriggerInterval;  // 同じ AudioSource を再発音できるまでの秒数
+		float audioDopplerLevel;  // 相対速度をPitchへ反映する強さ
+		float audioSpread;  // 3D音源の左右への広がり角度
+		float audioConeInnerAngle;  // 最大音量になる指向性コーン内角度
+		float audioConeOuterAngle;  // 外側音量へ到達する指向性コーン外角度
+		float audioConeOuterVolume;  // 指向性コーン外側の音量倍率
+		float audioOcclusionStrength;  // Colliderで遮られた時の減衰強度
+		float audioReverbSend;  // 残響Submixへ送る量
+		float audioReflectionStrength;  // 初期反射音の量
 		float navAgentRadius;  // NavigationAgent / NavMeshSurface の Agent 半径
 		float navAgentHeight;  // NavigationAgent / NavMeshSurface の Agent 高さ
 		float navMaxSpeed;  // NavigationAgent の最大速度
@@ -551,7 +590,7 @@ struct EditorComponent {
 	float particleCollisionBounce;  // Ground 衝突時に残す Y 速度の割合
 	float particleCollisionFriction;  // Ground 衝突時に減らす水平速度の割合
 	bool particlePrewarm;  // Loop Effect を開始時から進行済みの見た目にする
-	int32_t particleMotionType;  // 0=直線、1=軌道、2=渦、3=波、4=吸引、5=雲、6=爆発
+	int32_t particleMotionType;  // 0=直線、1=軌道、2=渦、3=波/航跡、4=吸引、5=雲、6=爆発/水しぶき、7=弾道。
 	Vector3 particleMotionCenter;  // 軌道・渦・吸引運動の中心を Emitter からの相対位置で指定する
 	float particleAngularSpeed;  // 軌道・渦運動の角速度（度/秒）
 	float particleRadialAcceleration;  // 中心から外向きへ加える加速度。負なら中心へ寄る
@@ -607,6 +646,16 @@ struct EditorComponent {
 	float compositeFilmGrain;  // フィルムグレイン
 	float compositeChromaticAberration;  // 色収差
 	float compositeAmbientOcclusionStrength;  // AO強度
+	bool compositeAutoExposureEnabled;  // 画面平均輝度から露出を自動調整する
+	float compositeMinimumExposure;  // 自動露出の下限
+	float compositeMaximumExposure;  // 自動露出の上限
+	float compositeExposureAdaptationSpeed;  // 明暗へ追従する速度
+	float compositeTargetLuminance;  // 自動露出が合わせる中間輝度
+	float compositeTemperature;  // 赤青方向のホワイトバランス
+	float compositeTint;  // 緑紫方向のホワイトバランス
+	Vector3 compositeLift;  // 暗部へ加える色
+	float compositeGamma;  // 中間調ガンマ
+	Vector3 compositeGain;  // 明部へ掛ける色
 	// Environment 設定
 	Vector3 skyLowerColor;  // 地平線 / 下側の空色
 	float environmentTextureRotation;  // 環境テクスチャの水平回転（ラジアン）
@@ -646,6 +695,164 @@ struct EditorComponent {
 	int32_t freeRotateAxes;  // bit 0=X, 1=Y, 2=Z
 	bool freeUseLocalSpace;
 	Vector3 freeRotationInput;  // deg/sec per axis
+	// Ocean 設定
+	int32_t oceanGridResolution;  // 海面グリッドの一辺に使う分割数
+	float oceanSize;  // 海面メッシュ一辺のワールド寸法
+	float oceanWaveHeight;  // 主波の高さ
+	float oceanMaxWaveHeight;  // 複数波を合成した後の高さ上限
+	float oceanWaveLength;  // 主波の波長
+	float oceanWaveSpeed;  // 波位相の進行速度
+	float oceanTimeScale;  // Ocean 全体の時間倍率。0 なら停止
+	float oceanChoppiness;  // 波頂点の水平押し出し量
+	EditorScriptVector2 oceanPrimaryDirection;  // 主波の XZ 方向
+	EditorScriptVector2 oceanSecondaryDirection;  // 副波の XZ 方向
+	float oceanSecondaryWaveScale;  // 副波レイヤの強さ
+	float oceanRippleScale;  // 主波長に対する細波波長の比率
+	float oceanRippleStrength;  // 細波の高さ比率
+	float oceanWindSpeed;  // スペクトルへ与える風速
+	float oceanWaterDepth;  // 有限水深の分散計算に使う水深
+	float oceanDirectionSpread;  // 風向きから波方向を散らす角度幅
+	float oceanSwellStrength;  // 長いうねり帯域の強さ
+	float oceanSpectrumSeed;  // 波成分を固定生成するシード
+	float oceanCrestSharpness;  // 二次高調波で波頭を尖らせる強さ
+	float oceanFoamStrength;  // 急斜面へ出す泡の強さ
+	float oceanFoamThreshold;  // 圧縮泡が出始める閾値
+	float oceanRoughness;  // 海面反射の粗さ
+	float oceanReflectionStrength;  // 海面の環境反射強度
+	float oceanDetailNormalStrength;  // ピクセル単位の微細波法線強度
+	float oceanAbsorptionDistance;  // 水色が深海色へ吸収される距離
+	float oceanRefractionDistortion;  // 微細波による屈折方向の歪み
+	Vector3 oceanShallowColor;  // 光が届く浅い海面の色
+	Vector3 oceanDeepColor;  // 深い海面の色
+	// Buoyancy 設定
+	int32_t buoyancyOceanGameObjectId;  // 対象 Ocean。-1 は現在位置を覆う Ocean を自動検出
+	Vector3 buoyancyCenterOffset;  // 船体中心から浮力領域中心までのローカル差分
+	Vector3 buoyancyHullSize;  // 浮力点を置く船体幅、高さ、長さ
+	float buoyancyStrength;  // 1m 沈んだ時に発生する上向き加速度
+	float buoyancyMaxSubmersion;  // 旧 Scene の読み書き互換用。体積浮力では使用しない
+	float buoyancyDamping;  // 水面に対する上下速度の減衰
+	float buoyancyWaterDrag;  // 浸水率に応じた船体全体の速度抵抗
+	float buoyancyAngularDrag;  // 浸水率に応じた角速度抵抗
+	float buoyancyNormalInfluence;  // 浮力方向へ波面法線を混ぜる割合
+	bool buoyancyUseCenterPoint;  // 旧 Scene の読み書き互換用。自動セル配置では使用しない
+	// Rail Movement 設定
+	int32_t railPathGameObjectId;  // 直下の子を制御点として使う親 GameObject ID
+	float railSpeed;  // レール上を1秒間に進む距離
+	float railStartNormalized;  // レール全長に対する開始位置。0～1
+	float railLookAheadDistance;  // 進行方向を決めるために先読みする距離
+	float railAcceleration;  // 目標速度へ近づく毎秒の加速度。0 以下なら即時変更
+	float railDeceleration;  // 停止または減速時の毎秒の減速度。0 以下なら即時変更
+	bool railLoop;  // 終端から始点へつなげるなら true
+	bool railOrientToPath;  // 進行方向へ自動回転するなら true
+	bool railUseSmoothCurve;  // Catmull-Rom 曲線で制御点間を補間するなら true
+	bool railStartPaused;  // Play 開始時に外部から再開されるまで停止するなら true
+	bool railReverse;  // Play 開始時にレールの逆方向へ進むなら true
+	bool railStopAtEnd;  // 非ループ終端へ到達した時に停止するなら true
+	// Health 設定
+	float healthMaximum;  // Play 開始時に設定する最大体力
+	float healthCurrent;  // Play 中の現在体力
+	// WaveSpawner 設定
+	int32_t waveTriggerMode;  // 0=Play開始、1=RailFollower進行率
+	int32_t waveTriggerSourceGameObjectId;  // RailFollower進行率を読む GameObject。未設定は -1
+	float waveTriggerValue;  // RailFollower全長に対する開始進行率
+	float waveSpawnInterval;  // 子 GameObject を順次有効化する間隔秒
+	bool waveDeactivateChildrenOnStart;  // trueなら Play 開始時に子を非表示へ移す
+	int32_t waveActionTargetGameObjectId;  // Wave通知を受け取るScript所有GameObject。未設定なら所有者
+	std::string waveStartedActionName;  // 条件成立時に通知する任意Script Action
+	std::string waveSpawnedActionName;  // 子を1つ有効化した時に通知する任意Script Action
+	std::string waveCompletedActionName;  // 全ての子を有効化した時に通知する任意Script Action
+	// 旧 RailShooterEnemy 保存互換値。新規機能から参照しない
+	int32_t enemySpawnFollowerGameObjectId;  // 出現判定に使う Rail Movement 所有者
+	float enemySpawnNormalized;  // 所有者のレール進行率がこの値へ達したら出現する
+	int32_t enemyAttackTargetGameObjectId;  // 攻撃対象
+	float enemyAttackInterval;  // 攻撃間隔の秒数
+	float enemyAttackRange;  // 攻撃可能距離
+	float enemyAttackDamage;  // 1 回の攻撃で減らす Health
+	int32_t enemyProjectileTemplateGameObjectId;  // 実行時に複製する敵弾の見た目 Object
+	int32_t enemyProjectilePoolSize;  // 敵ごとに事前生成する弾数
+	float enemyProjectileSpeed;  // 敵弾が 1 秒間に進む距離
+	float enemyProjectileHitRadius;  // 対象中心へ命中したとみなす半径
+	float enemyProjectileLifetime;  // 命中しなかった敵弾を戻すまでの秒数
+	int32_t enemyWaveIndex;  // 専用Timeline上でまとめるWave番号
+	int32_t enemyFormationPattern;  // 0=横列、1=V字、2=円、3=グリッド
+	int32_t enemyFormationSlot;  // Wave内での配置順
+	float enemyFormationSpacing;  // 編隊を一括配置する時の間隔
+	// 旧 RailShooterShip 保存互換値。新規機能から参照しない
+	int32_t railShipSpeedSourceGameObjectId;  // 速度を読む Rail Movement 所有者。未設定なら船自身
+	int32_t railShipSailGameObjectId;  // 帆 Animation を持つ Object
+	int32_t railShipWakeEffectGameObjectId;  // 航跡 Effect を持つ Object
+	int32_t railShipWindEffectGameObjectId;  // 風切り Effect を持つ Object
+	float railShipEffectStartSpeed;  // Effect の再生を始める船速
+	float railShipEffectFullSpeed;  // 演出強度を最大とみなす船速
+	float railShipSailMinimumSpeed;  // 停止付近の帆 Animation 再生倍率
+	float railShipSailMaximumSpeed;  // 最大船速時の帆 Animation 再生倍率
+	float railAimMouseSensitivity;  // マウス差分から照準位置へ加える感度
+	float railAimGamepadSensitivity;  // 右スティックで照準を動かす毎秒速度
+	float railAimAssistRadius;  // 画面上でロック対象を選ぶ照準半径
+	bool railAimInvertY;  // trueなら照準の上下を反転する
+	// 旧 RailShooterEnemyMotion 保存互換値。新規機能から参照しない
+	int32_t enemyMotionPattern;  // 0=上下揺動、1=旋回、2=8の字、3=追跡、4=突進離脱
+	Vector3 enemyMotionAmplitude;  // パターンの X/Y/Z 振幅
+	float enemyMotionFrequency;  // 1 秒当たりの周期
+	float enemyMotionPhase;  // 個体ごとの開始位相
+	int32_t enemyMotionTargetGameObjectId;  // 追跡・向き制御の対象
+	float enemyMotionSpeed;  // 追跡・突進の移動速度
+	bool enemyMotionLookAtTarget;  // 対象方向へ回転するなら true
+	// 旧 RailShooterStage 保存互換値。新規機能から参照しない
+	int32_t stageFollowerGameObjectId;  // レールを進む Player / Camera Rig
+	int32_t stageStartMarkerGameObjectId;  // Play 開始時に配置する Start Marker
+	int32_t stageGoalMarkerGameObjectId;  // 到達判定に使う Goal Marker
+	int32_t stageStartEffectGameObjectId;  // 開始時に再生する Effect Object
+	int32_t stageGoalEffectGameObjectId;  // ゴール時に再生する Effect Object
+	float stageStartDelay;  // レール移動開始までの秒数
+	float stageGoalRadius;  // Goal Marker への到達半径
+	float stageGoalDelay;  // ゴール演出から Scene 遷移までの秒数
+	std::string stageNextScenePath;  // ゴール後に開く次 Scene
+	std::string stageSelectScenePath;  // Next 未設定時に戻る Stage Select Scene
+	// Scene Button 設定
+	std::string sceneButtonScenePath;  // クリック時に開く Scene
+	// TimelineEvent 設定
+	int32_t timelineSourceMode;  // 0=Play開始からの秒数、1=RailFollower進行率
+	int32_t timelineSourceGameObjectId;  // RailFollower進行率を読む GameObject。未設定は -1
+	float timelineTriggerValue;  // 秒数または 0～1 の進行率
+	int32_t timelineTargetGameObjectId;  // Actionを受け取る C++ Script 所有 GameObject
+	std::string timelineActionName;  // EditorNativeScript::BindAction で登録した任意名
+	bool timelineTriggerOnce;  // trueなら Play 中に一度だけ通知する
+	// 旧 RailShooterEvent 保存互換値。新規機能から参照しない
+	int32_t railEventFollowerGameObjectId;  // 発火進行率を読む Rail Movement 所有者
+	float railEventNormalized;  // Timeline上の発火進行率
+	int32_t railEventType;  // 0=演出、1=BGM、2=会話、3=ボスPhase、4=汎用Trigger
+	int32_t railEventTargetGameObjectId;  // Audio / Effect / Text / Boss の対象
+	float railEventDuration;  // 会話表示やレール停止を維持する秒数
+	std::string railEventText;  // 会話またはTimeline上の表示名
+	bool railEventPauseRail;  // 発火中にFollowerのRail Movementを停止するならtrue
+	// ThresholdState 設定
+	int32_t thresholdSourceMode;  // 0=Health比率、1=RailFollower進行率
+	int32_t thresholdSourceGameObjectId;  // 値を読む GameObject。未設定なら所有者
+	int32_t thresholdTargetGameObjectId;  // State Actionを受け取るScript所有GameObject。未設定なら所有者
+	float thresholdSecondValue;  // State 1から2へ切り替える境界
+	float thresholdThirdValue;  // State 2から3へ切り替える境界
+	std::string thresholdFirstActionName;  // State 1へ入った時の任意 Script Action
+	std::string thresholdSecondActionName;  // State 2へ入った時の任意 Script Action
+	std::string thresholdThirdActionName;  // State 3へ入った時の任意 Script Action
+	// 旧 RailShooterBoss 保存互換値。新規機能から参照しない
+	float bossPhaseTwoHealthRatio;  // Phase 2へ移る残りHP比率
+	float bossPhaseThreeHealthRatio;  // Phase 3へ移る残りHP比率
+	int32_t bossPhaseOneMotionPattern;  // Phase 1のEnemyMotionパターン
+	int32_t bossPhaseTwoMotionPattern;  // Phase 2のEnemyMotionパターン
+	int32_t bossPhaseThreeMotionPattern;  // Phase 3のEnemyMotionパターン
+	float bossPhaseOneAttackInterval;  // Phase 1の攻撃間隔
+	float bossPhaseTwoAttackInterval;  // Phase 2の攻撃間隔
+	float bossPhaseThreeAttackInterval;  // Phase 3の攻撃間隔
+	// UIValueBinding 設定
+	int32_t uiBindingSourceGameObjectId;  // 値を読む GameObject。未設定なら所有者
+	int32_t uiBindingValueType;  // 0=Health現在値、1=Health比率、2=Rail進行率、3=Active
+	std::string uiBindingPrefix;  // Textへ数値より前に付ける文字列
+	int32_t uiBindingPrecision;  // Textへ表示する小数桁数
+	float uiBindingScale;  // 読み取った値へ掛ける表示倍率
+	// 旧 RailShooterHud 保存互換値。新規機能から参照しない
+	int32_t railHudBindingType;  // 0=HP、1=進行率、2=敵数、3=リロード、4=照準、5=会話
+	int32_t railHudSourceGameObjectId;  // HP / Rail / Weaponの参照元。-1は自動検出
 	};
 
 struct EditorGameObject {

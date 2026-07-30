@@ -11,9 +11,13 @@
 #include "EditorLocalMoveManager.h"
 #include "EditorNavigationManager.h"
 #include "EditorPhysicsManager.h"
+#include "EditorRailMovementManager.h"
+#include "EditorGameplayEventManager.h"
 #include "EditorRollingMoveManager.h"
 #include "EditorScene.h"
 #include "EditorScriptManager.h"
+#include "EditorUiBindingManager.h"
+#include "EditorWaveSpawnerManager.h"
 
 #include <cstdint>
 #include <string>
@@ -44,14 +48,20 @@ public:
 	const EditorEffectManager& GetEffectManager() const;  // 読み取り専用版
 	EditorEffekseerManager& GetEffekseerManager();  // Platform / Renderer から公式 Effekseer Runtime を操作する。
 	const EditorEffekseerManager& GetEffekseerManager() const;  // 読み取り専用版。
+	EditorAudioManager& GetAudioManager();  // Audio Mixer とイベント再生を操作するために返す。
+	const EditorAudioManager& GetAudioManager() const;  // 読み取り専用版。
+	EditorRailMovementManager& GetRailMovementManager();  // Spline Editor と Script から実行状態を操作するために返す。
+	const EditorRailMovementManager& GetRailMovementManager() const;  // 読み取り専用のレール実行状態を返す。
 	bool PlayEffect(int32_t gameObjectId);  // .effect と .efk を拡張子に応じて再生する。
 	void StopEffect(int32_t gameObjectId);  // 内蔵 GPU Particle と Effekseer の両方を停止する。
 	int32_t GetAliveEffectCount(int32_t gameObjectId) const;  // 両実行系の生存数を合算する。
+	bool RequestSceneLoad(const std::string& scenePath);  // Scene Button から Script 不要で安全な遷移を要求する。
 
 private:
 	EditorScene* editorScene_ = nullptr;  // Play 実行対象の Scene
 	std::vector<std::string>* consoleMessages_ = nullptr;  // Play 中の物理 / Script ログを出す Console
 	EditorScene sceneBackup_;  // Stop 時に編集前状態へ戻すための Scene バックアップ
+	std::string sceneBackupPath_;  // Stop 時に編集前の Scene パスも戻す。
 	EditorAnimationManager animationManager_;  // Animation Component の実行担当
 	EditorAIManager aiManager_;  // AI Component の実行担当
 	EditorAudioManager audioManager_;  // AudioSource Component の実行担当
@@ -62,11 +72,19 @@ private:
 	EditorScriptManager scriptManager_;  // Script / MonoBehaviour Component の実行入口
 	EditorInputManager inputManager_;  // Input Component の実行担当
 	EditorLocalMoveManager localMoveManager_;  // ローカル移動 Component の実行担当
+	EditorRailMovementManager railMovementManager_;  // 子ウェイポイントを通るレール移動の実行担当
+	EditorWaveSpawnerManager waveSpawnerManager_;  // 子GameObjectを開始条件に従って有効化する汎用Wave担当
+	EditorGameplayEventManager gameplayEventManager_;  // TimelineとThresholdから任意Script Actionを通知する担当
+	EditorUiBindingManager uiBindingManager_;  // 汎用値をCanvasのTextとSliderへ反映する担当
 	EditorRollingMoveManager rollingMoveManager_;  // 転がり移動 Component の実行担当
 	EditorNavigationManager navigationManager_;  // NavigationAgent / NavMesh 系 Component の実行担当
 	EditorPhysicsManager physicsManager_;  // RigidBody / Collider の実行担当
 	bool isPlaying_ = false;  // Play 中なら true
 	bool hasSceneBackup_ = false;  // sceneBackup_ が有効なら true
+
+	void StartRuntimeSystems(bool shouldReinitializeScript);  // 現在 Scene の各 Runtime を開始する。
+	void StopRuntimeSystems();  // Scene 切替前または Play 停止時に各 Runtime を止める。
+	bool LoadSceneForPlay(const std::string& scenePath);  // Play 状態を維持したまま Scene を安全に差し替える。
 };
 
 #pragma warning(pop)

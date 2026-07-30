@@ -12,6 +12,316 @@
 #include <vector>
 
 //================================================================
+// C++ Script 制作用の高水準 Runtime API
+//================================================================
+
+class EditorNativeScriptRuntime final {
+public:
+	static void SetRuntimeApi(const EditorScriptRuntimeApi* runtimeApi) {
+		runtimeApi_ = runtimeApi;
+	}
+
+	static const EditorScriptRuntimeApi* GetRuntimeApi() {
+		return runtimeApi_;
+	}
+
+private:
+	inline static const EditorScriptRuntimeApi* runtimeApi_ = nullptr;
+};
+
+enum class KeyCode : int32_t {
+	Escape = 0x01,
+	Enter = 0x1C,
+	LeftControl = 0x1D,
+	A = 0x1E,
+	D = 0x20,
+	W = 0x11,
+	S = 0x1F,
+	LeftShift = 0x2A,
+	Space = 0x39,
+	UpArrow = 0xC8,
+	LeftArrow = 0xCB,
+	RightArrow = 0xCD,
+	DownArrow = 0xD0,
+};
+
+class Input final {
+public:
+	static bool GetKey(KeyCode keyCode) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi == nullptr || runtimeApi->IsKeyDown == nullptr) {
+			return false;
+		}
+
+		return runtimeApi->IsKeyDown(static_cast<int32_t>(keyCode));
+	}
+
+	static bool GetKeyDown(KeyCode keyCode) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi == nullptr || runtimeApi->IsKeyPressed == nullptr) {
+			return false;
+		}
+
+		return runtimeApi->IsKeyPressed(static_cast<int32_t>(keyCode));
+	}
+};
+
+class SceneManager final {
+public:
+	static bool LoadScene(const char* scenePath) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi == nullptr || runtimeApi->LoadScene == nullptr ||
+			scenePath == nullptr || scenePath[0] == '\0') {
+			return false;
+		}
+
+		return runtimeApi->LoadScene(scenePath);
+	}
+
+	static bool LoadScene(const std::string& scenePath) {
+		return LoadScene(scenePath.c_str());
+	}
+
+	static bool LoadScene(int32_t sceneBuildIndex) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi == nullptr || runtimeApi->LoadSceneByBuildIndex == nullptr) {
+			return false;
+		}
+
+		return runtimeApi->LoadSceneByBuildIndex(sceneBuildIndex);
+	}
+};
+
+class GameObject final {
+public:
+	explicit GameObject(int32_t gameObjectId = -1)
+		: gameObjectId_(gameObjectId) {
+	}
+
+	static GameObject Find(const char* gameObjectName) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi == nullptr || runtimeApi->FindGameObjectByName == nullptr ||
+			gameObjectName == nullptr || gameObjectName[0] == '\0') {
+			return GameObject{};
+		}
+
+		return GameObject{runtimeApi->FindGameObjectByName(gameObjectName)};
+	}
+
+	int32_t GetInstanceId() const {
+		return gameObjectId_;
+	}
+
+	bool HasReference() const {
+		return gameObjectId_ >= 0;
+	}
+
+	bool IsActive() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (!HasReference() || runtimeApi == nullptr || runtimeApi->IsGameObjectActive == nullptr) {
+			return false;
+		}
+
+		return runtimeApi->IsGameObjectActive(gameObjectId_);
+	}
+
+	bool SetActive(bool isActive) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (!HasReference() || runtimeApi == nullptr || runtimeApi->SetGameObjectActive == nullptr) {
+			return false;
+		}
+
+		return runtimeApi->SetGameObjectActive(gameObjectId_, isActive);
+	}
+
+	EditorScriptTransform GetTransform() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (!HasReference() || runtimeApi == nullptr || runtimeApi->GetTransform == nullptr) {
+			return EditorScriptTransform{};
+		}
+
+		return runtimeApi->GetTransform(gameObjectId_);
+	}
+
+	bool SetTransform(const EditorScriptTransform& transform) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (!HasReference() || runtimeApi == nullptr || runtimeApi->SetTransform == nullptr) {
+			return false;
+		}
+
+		runtimeApi->SetTransform(gameObjectId_, &transform);
+		return true;
+	}
+
+private:
+	int32_t gameObjectId_ = -1;
+};
+
+class RailFollower final {
+public:
+	explicit RailFollower(const GameObject& gameObject)
+		: gameObjectId_(gameObject.GetInstanceId()) {
+	}
+
+	explicit RailFollower(int32_t gameObjectId)
+		: gameObjectId_(gameObjectId) {
+	}
+
+	bool Pause() const {
+		return SetPaused(true);
+	}
+
+	bool Resume() const {
+		return SetPaused(false);
+	}
+
+	bool SetPaused(bool isPaused) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (gameObjectId_ < 0 || runtimeApi == nullptr || runtimeApi->SetRailPaused == nullptr) {
+			return false;
+		}
+
+		return runtimeApi->SetRailPaused(gameObjectId_, isPaused);
+	}
+
+	bool IsPaused() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->IsRailPaused != nullptr &&
+			runtimeApi->IsRailPaused(gameObjectId_);
+	}
+
+	bool SetSpeed(float speed) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->SetRailSpeed != nullptr &&
+			runtimeApi->SetRailSpeed(gameObjectId_, speed);
+	}
+
+	bool SetReverse(bool isReversed) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->SetRailReverse != nullptr &&
+			runtimeApi->SetRailReverse(gameObjectId_, isReversed);
+	}
+
+	bool JumpTo(float normalizedProgress) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr &&
+			runtimeApi->SetRailNormalizedProgress != nullptr &&
+			runtimeApi->SetRailNormalizedProgress(gameObjectId_, normalizedProgress);
+	}
+
+	bool SwitchRail(const GameObject& railPathGameObject, bool preservesProgress = true) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && railPathGameObject.HasReference() && runtimeApi != nullptr &&
+			runtimeApi->SetRailPath != nullptr &&
+			runtimeApi->SetRailPath(
+				gameObjectId_,
+				railPathGameObject.GetInstanceId(),
+				preservesProgress);
+	}
+
+	bool GetNormalizedProgress(float& normalizedProgress) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr &&
+			runtimeApi->GetRailNormalizedProgress != nullptr &&
+			runtimeApi->GetRailNormalizedProgress(gameObjectId_, &normalizedProgress);
+	}
+
+	bool GetLength(float& railLength) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->GetRailLength != nullptr &&
+			runtimeApi->GetRailLength(gameObjectId_, &railLength);
+	}
+
+	bool GetPosition(float normalizedProgress, EditorScriptVector3& position) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->GetRailPosition != nullptr &&
+			runtimeApi->GetRailPosition(gameObjectId_, normalizedProgress, &position);
+	}
+
+	bool GetDirection(float normalizedProgress, EditorScriptVector3& direction) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->GetRailDirection != nullptr &&
+			runtimeApi->GetRailDirection(gameObjectId_, normalizedProgress, &direction);
+	}
+
+	bool ConsumeEndReached() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr &&
+			runtimeApi->ConsumeRailEndReached != nullptr &&
+			runtimeApi->ConsumeRailEndReached(gameObjectId_);
+	}
+
+private:
+	int32_t gameObjectId_ = -1;
+};
+
+class Rigidbody final {
+public:
+	explicit Rigidbody(const GameObject& gameObject)
+		: gameObjectId_(gameObject.GetInstanceId()) {
+	}
+
+	explicit Rigidbody(int32_t gameObjectId)
+		: gameObjectId_(gameObjectId) {
+	}
+
+	EditorScriptVector3 GetVelocity() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (gameObjectId_ < 0 || runtimeApi == nullptr || runtimeApi->GetVelocity == nullptr) {
+			return EditorScriptVector3{};
+		}
+
+		return runtimeApi->GetVelocity(gameObjectId_);
+	}
+
+	bool SetVelocity(const EditorScriptVector3& velocity) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (gameObjectId_ < 0 || runtimeApi == nullptr || runtimeApi->SetVelocity == nullptr) {
+			return false;
+		}
+
+		runtimeApi->SetVelocity(gameObjectId_, &velocity);
+		return true;
+	}
+
+	bool AddForce(const EditorScriptVector3& force) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->AddForce != nullptr &&
+			runtimeApi->AddForce(gameObjectId_, &force);
+	}
+
+	bool AddImpulse(const EditorScriptVector3& impulse) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->AddImpulse != nullptr &&
+			runtimeApi->AddImpulse(gameObjectId_, &impulse);
+	}
+
+	bool AddTorque(const EditorScriptVector3& torque) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->AddTorque != nullptr &&
+			runtimeApi->AddTorque(gameObjectId_, &torque);
+	}
+
+private:
+	int32_t gameObjectId_ = -1;
+};
+
+//================================================================
 // ユーザー C++ Script の共通基底クラス
 //================================================================
 
@@ -159,6 +469,25 @@ public:
 		return true;
 	}
 
+	int32_t GetActionCount() const {
+		return static_cast<int32_t>(actionNames_.size());
+	}
+
+	bool GetActionName(int32_t actionIndex, char* actionName, int32_t actionNameCapacity) const {
+		if (actionIndex < 0 ||
+			actionIndex >= static_cast<int32_t>(actionNames_.size()) ||
+			actionName == nullptr ||
+			actionNameCapacity <= 0) {
+			return false;
+		}
+
+		CopyText(
+			actionNames_[static_cast<size_t>(actionIndex)].c_str(),
+			actionName,
+			static_cast<size_t>(actionNameCapacity));
+		return true;
+	}
+
 protected:
 	using ActionFunction = std::function<void(const EditorScriptInputActionContext&)>;
 
@@ -271,9 +600,67 @@ protected:
 			[&value](const EditorScriptFieldValue& fieldValue) { value = fieldValue.stringValue; });
 	}
 
+	void ExposeGameObject(const char* name, const char* displayName, int32_t& gameObjectId) {
+		EditorScriptFieldValue defaultValue{};
+		defaultValue.type = EditorScriptFieldTypeGameObject;
+		defaultValue.intValue = gameObjectId;
+		AddField(
+			name,
+			displayName,
+			defaultValue,
+			false,
+			0.0f,
+			0.0f,
+			1.0f,
+			[&gameObjectId](EditorScriptFieldValue& fieldValue) { fieldValue.intValue = gameObjectId; },
+			[&gameObjectId](const EditorScriptFieldValue& fieldValue) { gameObjectId = fieldValue.intValue; });
+	}
+
+	void ExposeGameObject(const char* name, const char* displayName, GameObject& gameObject) {
+		EditorScriptFieldValue defaultValue{};
+		defaultValue.type = EditorScriptFieldTypeGameObject;
+		defaultValue.intValue = gameObject.GetInstanceId();
+		AddField(
+			name,
+			displayName,
+			defaultValue,
+			false,
+			0.0f,
+			0.0f,
+			1.0f,
+			[&gameObject](EditorScriptFieldValue& fieldValue) {
+				fieldValue.intValue = gameObject.GetInstanceId();
+			},
+			[&gameObject](const EditorScriptFieldValue& fieldValue) {
+				gameObject = GameObject{fieldValue.intValue};
+			});
+	}
+
+	void ExposeScene(const char* name, const char* displayName, std::string& scenePath) {
+		EditorScriptFieldValue defaultValue{};
+		defaultValue.type = EditorScriptFieldTypeSceneAsset;
+		CopyText(scenePath.c_str(), defaultValue.stringValue, sizeof(defaultValue.stringValue));
+		AddField(
+			name,
+			displayName,
+			defaultValue,
+			false,
+			0.0f,
+			0.0f,
+			1.0f,
+			[&scenePath](EditorScriptFieldValue& fieldValue) {
+				CopyText(scenePath.c_str(), fieldValue.stringValue, sizeof(fieldValue.stringValue));
+			},
+			[&scenePath](const EditorScriptFieldValue& fieldValue) { scenePath = fieldValue.stringValue; });
+	}
+
 	void BindAction(const char* functionName, ActionFunction actionFunction) {
 		if (functionName == nullptr || functionName[0] == '\0' || !actionFunction) {
 			return;
+		}
+
+		if (actionFunctions_.find(functionName) == actionFunctions_.end()) {
+			actionNames_.push_back(functionName);
 		}
 
 		actionFunctions_[functionName] = std::move(actionFunction);
@@ -288,6 +675,7 @@ private:
 
 	std::vector<FieldBinding> fieldBindings_;  // 登録順を Inspector の表示順として保持する。
 	std::unordered_map<std::string, ActionFunction> actionFunctions_;  // Inspector の関数名から C++ メソッドへ振り分ける。
+	std::vector<std::string> actionNames_;  // Script が公開した Action を Inspector の候補へ登録順で渡す。
 
 	static void CopyText(const char* sourceText, char* destinationText, size_t destinationSize) {
 		if (destinationText == nullptr || destinationSize == 0U) {

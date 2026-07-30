@@ -49,6 +49,7 @@
 #include "EditorRuntimeManager.h"
 #include "EditorDepthHierarchyManager.h"
 #include "EditorGpuCullingManager.h"
+#include "EditorOceanFftManager.h"
 #include "EditorGpuParticleManager.h"
 #include "EditorGBufferManager.h"
 #include "EditorPostProcessQualityManager.h"
@@ -649,10 +650,10 @@ namespace EditorSharedState {
 	constexpr uint32_t kRuntimeTextureCount = 4; // kRuntimeTextureCount �͋N�����ɌŒ�Ŋm�ۂ���W�� Texture ���B
 	constexpr uint32_t kRuntimeSwapChainBufferCount = 2; // kRuntimeSwapChainBufferCount �� SwapChain �� back buffer ���B
 	constexpr uint32_t kRuntimeSpriteIndexCount = 6; // kRuntimeSpriteIndexCount �� Sprite �l�p�`�� 2 �O�p�`�ŕ`�� index ���B
-	constexpr uint32_t kRuntimeShadowMapSize = 4096; // shadow atlas size (4 lights x 2048 each)
+	constexpr uint32_t kRuntimeShadowMapSize = 4096; // 4x4 atlas。Sun CSM とローカルライト影を同居させる。
 	constexpr uint32_t kRuntimeShadowSrvDescriptorIndex = 15;
 	constexpr uint32_t kMaxShadowLights = 4;
-	constexpr uint32_t kShadowAtlasTiles = 2; // 2x2 grid
+	constexpr uint32_t kShadowAtlasTiles = 4; // 4x4 grid。各タイルは 1024x1024。
 	constexpr uint32_t kRuntimeHdrSrvDescriptorIndex = 16; // HDR RT �� SRV �� DescriptorHeap �� 16 �ԖځB
 	constexpr uint32_t kRuntimeBloomSrvDescriptorIndexA = 17; // Bloom A �� SRV �� 17 �ԖځB
 	constexpr uint32_t kRuntimeBloomSrvDescriptorIndexB = 18; // Bloom B �� SRV �� 18 �ԖځB
@@ -665,13 +666,17 @@ namespace EditorSharedState {
 	constexpr uint32_t kRuntimeIblPrefilterSrvDescriptorIndex = 25; // IBL ���O�t�B���^�[�ς� cube �� SRV�B
 	constexpr uint32_t kRuntimeIblEnvironmentSrvDescriptorIndex = 26; // IBL �� cube �� SRV�B
 	constexpr uint32_t kRuntimeIblBrdfLutSrvDescriptorIndex = 27; // IBL BRDF LUT �� SRV�B
+	constexpr uint32_t kRuntimeColorGradingLutSrvDescriptorIndex = 113u;
 	constexpr uint32_t kRuntimeMaterialMaskSrvDescriptorIndex = 28; // Object3d �̋��ʗ� / �e���}�X�N SRV�B
 	constexpr uint32_t kRuntimePlanarReflectionSrvDescriptorIndex = 29; // ���ʔ��˗p�ɕʃJ�����ŕ`���� HDR RT �� SRV�B
 	constexpr uint32_t kRuntimeEnvironmentSrvDescriptorIndex = 30; // ���摜 / HDRI �� SRV�B
 	constexpr uint32_t kRuntimeDepthPyramidDescriptorStartIndex = 31u; // 深度ピラミッドは SRV/UAV を交互に 31～54 番へ配置する。
 	constexpr uint32_t kRuntimeReconstructedNormalSrvDescriptorIndex = 55u; // 深度から再構築したワールド法線の SRV。
 	constexpr uint32_t kRuntimeReconstructedNormalUavDescriptorIndex = 56u; // ワールド法線を書き込む UAV。
-	constexpr uint32_t kRuntimeRtvCount = 12; // RTV Heap �T�C�Y: swap2 + HDR + bloom2 + post + SSAO2 + HDR���� + �ގ��}�X�N + ���ʔ���
+	constexpr uint32_t kRuntimeOitAccumulationSrvDescriptorIndex = 120u;
+	constexpr uint32_t kRuntimeOitRevealageSrvDescriptorIndex = 121u;
+	constexpr uint32_t kRuntimeOitRevealageDuplicateSrvDescriptorIndex = 122u;
+	constexpr uint32_t kRuntimeRtvCount = 14; // swap2 + HDR/Bloom/Post/SSAO/Composite/Mask/Planar + OIT 2枚
 	inline HINSTANCE g_instanceHandle = nullptr; // g_instanceHandle �� Win32 Window �� DirectInput �������Ɏg���A�v�����́B
 	inline int g_exitCode = 0; // g_exitCode �� WinMain �֕Ԃ��I���R�[�h�B
 	inline bool g_isInitialized = false; // g_isInitialized �� PlatformManager �̏�������������������\���t���O�B
@@ -709,6 +714,9 @@ namespace EditorSharedState {
 	inline ComPtr<ID3D12CommandQueue> g_commandQueue; // g_commandQueue / Allocator / List �� GPU �֕`�施�߂𑗂邽�߂̈ꎮ�B
 	inline ComPtr<ID3D12CommandAllocator> g_commandAllocator;
 	inline ComPtr<ID3D12GraphicsCommandList> g_commandList;
+	inline ComPtr<ID3D12QueryHeap> g_renderTimestampQueryHeap;
+	inline ComPtr<ID3D12Resource> g_renderTimestampReadback;
+	inline std::uint64_t g_renderTimestampFrequency = 0u;
 
 	inline ComPtr<IDXGISwapChain4> g_swapChain; // g_swapChain �� Window �ɕ\������ back buffer ��B
 
@@ -772,9 +780,24 @@ namespace EditorSharedState {
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_planarReflectionRtvHandle{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_planarReflectionSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_planarReflectionSrvHandleGPU{};
+	inline ID3D12Resource* g_oitAccumulationRenderTarget = nullptr;
+	inline ID3D12Resource* g_oitRevealageRenderTarget = nullptr;
+	inline D3D12_CPU_DESCRIPTOR_HANDLE g_oitRtvHandles[2]{};
+	inline D3D12_CPU_DESCRIPTOR_HANDLE g_oitSrvHandlesCPU[2]{};
+	inline D3D12_GPU_DESCRIPTOR_HANDLE g_oitSrvHandlesGPU[2]{};
 
 	inline uint32_t g_renderWidth = 1u; // g_renderWidth / Height �� SwapChain �� DepthStencil �̌��݃T�C�Y�B
 	inline uint32_t g_renderHeight = 1u;
+
+	struct EditorRenderProfile {
+		float gpuFrameMilliseconds = 0.0f;
+		std::uint64_t localVideoMemoryUsage = 0u;
+		std::uint64_t localVideoMemoryBudget = 0u;
+		uint32_t sceneObjectCount = 0u;
+		uint32_t instanceCount = 0u;
+	};
+
+	inline EditorRenderProfile g_renderProfile{};
 
 	inline ComPtr<IDxcUtils> g_dxcUtils; // g_dxc* �� HLSL �̓ǂݍ��݁E�R���p�C���Einclude �����Ɏg�� DXC �I�u�W�F�N�g�B
 	inline ComPtr<IDxcCompiler3> g_dxcCompiler;
@@ -784,6 +807,7 @@ namespace EditorSharedState {
 	inline ComPtr<IDxcBlob> g_pixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_objectReflectionMaskPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_shadowVertexShaderBlob;
+	inline ComPtr<IDxcBlob> g_alphaCutoutShadowPixelShaderBlob;
 
 	// Post-process shader blobs
 	inline ComPtr<IDxcBlob> g_fullscreenVertexShaderBlob;
@@ -800,6 +824,11 @@ namespace EditorSharedState {
 	inline ComPtr<IDxcBlob> g_depthOfFieldPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_motionBlurPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_passthroughPixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_weightedOitPixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_weightedOitCompositePixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_refractiveSurfacePixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_underwaterCausticsPixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_skinnedMotionVectorVertexShaderBlob;
 
 
 	inline ComPtr<ID3DBlob> g_signatureBlob; // g_signatureBlob / g_errorBlob �� RootSignature �V���A���C�Y���ʂƎ��s���O�B
@@ -815,7 +844,15 @@ namespace EditorSharedState {
 	inline ComPtr<ID3D12PipelineState> g_cullNonePipelineState;
 	inline ComPtr<ID3D12PipelineState> g_transparentPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_transparentCullNonePipelineState;
+	inline ComPtr<ID3D12PipelineState> g_weightedOitPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_weightedOitCullNonePipelineState;
+	inline ComPtr<ID3D12PipelineState> g_waterSurfacePipelineState;  // Opaque Color / Depth を読む水面専用パス
+	inline ComPtr<ID3D12PipelineState> g_refractiveSurfacePipelineState;
+	inline ComPtr<ID3D12PipelineState> g_refractiveSurfaceCullNonePipelineState;
 	inline ComPtr<ID3D12PipelineState> g_shadowPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_shadowCullNonePipelineState;
+	inline ComPtr<ID3D12PipelineState> g_alphaCutoutShadowPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_alphaCutoutShadowCullNonePipelineState;
 
 	// Post-process root signature and pipeline states
 	inline ComPtr<ID3D12RootSignature> g_postProcessRootSignature;
@@ -832,9 +869,12 @@ namespace EditorSharedState {
 	inline ComPtr<ID3D12PipelineState> g_depthOfFieldPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_motionBlurPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_passthroughPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_weightedOitCompositePipelineState;
+	inline ComPtr<ID3D12PipelineState> g_underwaterCausticsPipelineState;
 	inline EditorDepthHierarchyManager g_depthHierarchyManager;
 	inline EditorGBufferManager g_gBufferManager;
 	inline EditorGpuCullingManager g_gpuCullingManager;
+	inline EditorOceanFftManager g_oceanFftManager;
 	inline EditorGpuParticleManager g_gpuParticleManager;
 	inline EditorPostProcessQualityManager g_postProcessQualityManager;
 	inline EditorTemporalRenderingManager g_temporalRenderingManager;
@@ -861,6 +901,8 @@ namespace EditorSharedState {
 	inline TransformationMatrix* g_spriteTransformationMatrixData = nullptr;
 	inline ID3D12Resource* g_sphereTransformationMatrixResource = nullptr;
 	inline TransformationMatrix* g_sphereTransformationMatrixData = nullptr;
+	inline ID3D12Resource* g_identitySkinMatrixResource = nullptr;  // 非 Skin 頂点でも t16 / t17 を常に有効な SRV にする
+	inline Matrix4x4* g_identitySkinMatrixData = nullptr;
 
 	// g_modelData �͋N�����ɓǂݍ��ފ��� OBJ ���f���B
 	inline ModelData g_modelData{};
@@ -918,6 +960,9 @@ namespace EditorSharedState {
 	inline bool g_isSceneViewVisible = false; // g_isSceneViewVisible �� SceneView �֕`�悷���`�����t���[���L�����ǂ����B
 	inline bool g_isGameViewVisible = false; // g_isGameViewVisible �� GameView �֕`�悷���`���L�����ǂ����B
 	inline bool g_isAnimationWindowVisible = false;  // true なら Docking 可能な Animation Window を表示する。
+	inline bool g_isSplineEditorVisible = false;  // trueなら汎用Spline Editorを表示する。
+	inline bool g_isGameplayTimelineWindowVisible = false;  // trueなら汎用Event Timelineを表示する。
+	inline bool g_isStateGraphWindowVisible = false;  // trueなら汎用Threshold State Graphを表示する。
 	inline bool g_isGameViewUsingSceneCamera = true; // true �Ȃ� Camera Component ���Ȃ����� Scene �J�������p���Ă���B
 
 	// g_viewport / g_scissorRect �� DirectX �� SceneView �������֕`�����߂̋�`�B
@@ -991,6 +1036,7 @@ namespace EditorSharedState {
 	inline ID3D12Resource* g_iblIrradianceCube = nullptr;
 	inline ID3D12Resource* g_iblPrefilterCube = nullptr;
 	inline ID3D12Resource* g_iblBRDFLUT = nullptr;
+	inline ID3D12Resource* g_colorGradingLut = nullptr;
 	inline bool g_iblEnvironmentCubeLoaded = false;  // EnvironmentMapEffect 用の実キューブマップが読み込めたか。
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_iblIrradianceSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_iblIrradianceSrvHandleGPU{};
@@ -1000,6 +1046,8 @@ namespace EditorSharedState {
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_iblEnvironmentSrvHandleGPU{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_iblBrdfLutSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_iblBrdfLutSrvHandleGPU{};
+	inline D3D12_CPU_DESCRIPTOR_HANDLE g_colorGradingLutSrvHandleCPU{};
+	inline D3D12_GPU_DESCRIPTOR_HANDLE g_colorGradingLutSrvHandleGPU{};
 	inline uint32_t g_iblPrefilterMipCount = 0;
 
 	// g_editorRuntimeManager �� Play ���� Input / Physics ���X�V���� Runtime�B
@@ -1018,6 +1066,9 @@ namespace EditorSharedState {
 	inline std::string g_currentScenePath; // g_currentScenePath �͍��J���Ă��� .scene �̕ۑ���B���ۑ��V�[���ł͋󕶎��B
 
 	// g_hierarchyFilter / g_assetFilter �͊e�������̓��̓o�b�t�@�B
+	inline bool g_isStandaloneGame = false;  // 書き出した Player として起動中なら true。
+	inline std::vector<std::string> g_gameBuildScenePaths;  // Player に含めた遷移可能 Scene 一覧。
+
 	inline char g_hierarchyFilter[128] = {};
 	inline char g_assetFilter[128] = {};
 
@@ -1315,6 +1366,14 @@ namespace EditorSharedState {
 			DXGI_FORMAT_R16G16B16A16_FLOAT,
 			GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 11u));
 
+		// Weighted Blended OIT は色の重み付き総和と透過率を別々に保持する。
+		recreateRenderTarget(g_oitAccumulationRenderTarget, g_renderWidth, g_renderHeight,
+			DXGI_FORMAT_R16G16B16A16_FLOAT,
+			GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 12u));
+		recreateRenderTarget(g_oitRevealageRenderTarget, g_renderWidth, g_renderHeight,
+			DXGI_FORMAT_R16_FLOAT,
+			GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 13u));
+
 		// HDR SRV
 		{
 			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
@@ -1407,6 +1466,40 @@ namespace EditorSharedState {
 			g_planarReflectionSrvHandleGPU = GetGPUDescriptorHandle(
 				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimePlanarReflectionSrvDescriptorIndex);
 			g_device->CreateShaderResourceView(g_planarReflectionRenderTarget, &srvDesc, g_planarReflectionSrvHandleCPU);
+		}
+
+		// OIT の revealage は PostProcess RootSignature の t2/t3 連続テーブルへ載せる。
+		{
+			D3D12_SHADER_RESOURCE_VIEW_DESC accumulationSrvDesc{};
+			accumulationSrvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+			accumulationSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			accumulationSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			accumulationSrvDesc.Texture2D.MipLevels = 1;
+
+			D3D12_SHADER_RESOURCE_VIEW_DESC revealageSrvDesc = accumulationSrvDesc;
+			revealageSrvDesc.Format = DXGI_FORMAT_R16_FLOAT;
+
+			g_oitRtvHandles[0] = GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 12u);
+			g_oitRtvHandles[1] = GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 13u);
+
+			g_oitSrvHandlesCPU[0] = GetCPUDescriptorHandle(
+				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeOitAccumulationSrvDescriptorIndex);
+			g_oitSrvHandlesGPU[0] = GetGPUDescriptorHandle(
+				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeOitAccumulationSrvDescriptorIndex);
+			g_oitSrvHandlesCPU[1] = GetCPUDescriptorHandle(
+				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeOitRevealageSrvDescriptorIndex);
+			g_oitSrvHandlesGPU[1] = GetGPUDescriptorHandle(
+				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeOitRevealageSrvDescriptorIndex);
+
+			g_device->CreateShaderResourceView(
+				g_oitAccumulationRenderTarget, &accumulationSrvDesc, g_oitSrvHandlesCPU[0]);
+			g_device->CreateShaderResourceView(
+				g_oitRevealageRenderTarget, &revealageSrvDesc, g_oitSrvHandlesCPU[1]);
+
+			const D3D12_CPU_DESCRIPTOR_HANDLE duplicateRevealageHandle = GetCPUDescriptorHandle(
+				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeOitRevealageDuplicateSrvDescriptorIndex);
+			g_device->CreateShaderResourceView(
+				g_oitRevealageRenderTarget, &revealageSrvDesc, duplicateRevealageHandle);
 		}
 
 		// 深度依存の Compute Texture も Scene 描画サイズへ追従させる。

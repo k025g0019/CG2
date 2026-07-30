@@ -5,11 +5,13 @@
 #include "EditorInputManager.h"
 #include "EditorJoltPhysicsManager.h"
 #include "EditorPhysicsManager.h"
+#include "EditorRailMovementManager.h"
 #include "EditorScene.h"
 #include "EditorScriptApi.h"
 #include "Source/Engine/Effect/EditorEffectManager.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -58,18 +60,31 @@ public:
 	bool IsStarted() const;  // Start 済みかどうかを返す
 	ScriptDebugInfo GetDebugInfo(int32_t gameObjectId) const;  // Inspector 用に DLL の現在状態を返す
 	bool RefreshExposedFields(EditorComponent& scriptComponent);  // DLL の公開変数定義を Inspector 用データへ同期する
+	std::vector<std::string> GetRegisteredActionNames(int32_t gameObjectId);  // 対象ObjectのScriptがBindActionした名前をInspector候補として返す
+	void QueueActionEvent(
+		int32_t gameObjectId,
+		const std::string& functionName,
+		int32_t valueType = EditorScriptInputValueTypeButton,
+		float buttonValue = 1.0f,
+		EditorScriptVector2 vector2Value = {});  // Timelineなどから任意の Script Action を次の Update へ通知する
 	void QueueUiEvent(
 		int32_t gameObjectId,
 		const std::string& functionName,
 		int32_t valueType = EditorScriptInputValueTypeButton,
 		float buttonValue = 1.0f,
 		EditorScriptVector2 vector2Value = {});  // Game View UI の操作を次の Update で Script へ通知する
+	bool RequestSceneLoad(const std::string& scenePath);  // 高水準 Component からも Script と同じ検証で Scene 遷移を要求する。
+	bool ConsumeSceneLoadRequest(std::string& scenePath);  // Script が要求した Scene 遷移を RuntimeManager へ 1 回だけ渡す。
+	void SetRailMovementManager(EditorRailMovementManager* railMovementManager);  // C++ Script の RailFollower API を実行系へ接続する。
 
 private:
 	struct ScriptBinding {
 		int32_t gameObjectId = -1;  // この Script を呼ぶ対象 GameObject ID
 		EditorComponentType componentType = EditorComponentType::Script;  // Script か MonoBehaviour かの種類
 		std::string dllPath;  // Component に設定された元 DLL パス
+		size_t synchronizedFieldHash = 0U;  // Inspector と DLL で最後に一致した公開変数値のハッシュ
+		bool hasSynchronizedFieldHash = false;  // 初回同期前の hash=0 と実データを区別する
+		bool hasStarted = false;  // GameObjectが初めてActiveになりStartを通知済みならtrue
 	};
 
 	struct ScriptModule {
@@ -90,6 +105,8 @@ private:
 		EditorScriptGetFieldValueFn getFieldValueFunction = nullptr;  // Script インスタンスの現在値を返す
 		EditorScriptSetFieldValueFn setFieldValueFunction = nullptr;  // Inspector 保存値を Script インスタンスへ設定する
 		EditorScriptInvokeActionFn invokeActionFunction = nullptr;  // PlayerInput の関数名を C++ メソッドへ通知する
+		EditorScriptGetActionCountFn getActionCountFunction = nullptr;  // Script が公開する Action 候補数を返す
+		EditorScriptGetActionNameFn getActionNameFunction = nullptr;  // Script が公開する Action 名を返す
 		bool isLoaded = false;  // 関数取得と初期化まで成功していれば true
 		std::vector<int32_t> attachedGameObjectIds;  // この DLL を使っている GameObject 一覧
 	};
@@ -97,6 +114,7 @@ private:
 	struct ScriptMetadata {
 		std::filesystem::file_time_type lastWriteTime{};  // 同じ DLL を毎フレーム読み直さないための更新日時
 		std::vector<EditorScriptFieldDescriptor> fieldDescriptors;  // Inspector へ表示する公開変数定義
+		std::vector<std::string> actionNames;  // BindAction された候補を Play 前の Inspector へ渡す
 		bool isValid = false;  // メタデータ取得に成功していれば true
 	};
 
@@ -106,6 +124,7 @@ private:
 		int32_t valueType = EditorScriptInputValueTypeButton;  // Button か Vector2 かを Script 側へ伝える。
 		float buttonValue = 1.0f;  // Button / Toggle の値。
 		EditorScriptVector2 vector2Value{};  // Slider など 1 軸値は x に入れる。
+		bool isUiEvent = false;  // trueなら InputContext の発生元を UI として通知する。
 	};
 
 	EditorScene* editorScene_ = nullptr;  // Script Component を探す対象 Scene
@@ -114,28 +133,33 @@ private:
 	EditorEffectManager* effectManager_ = nullptr;  // Effect の再生・停止・生存数 API
 	EditorAIManager* aiManager_ = nullptr;  // AI センサー状態を読む AI API
 	EditorPhysicsManager* physicsManager_ = nullptr;  // AddForce / SetVelocity へ接続する物理 API
+	EditorRailMovementManager* railMovementManager_ = nullptr;  // RailFollower の停止・移動・問い合わせ API
 	std::vector<std::string>* consoleMessages_ = nullptr;  // Script のログやエラーを出す Console
 	bool isStarted_ = false;  // Start が呼ばれていれば true
 	float lastDeltaTime_ = 0.0f;  // 最後に Update へ渡した秒数
 	float lastFixedDeltaTime_ = 0.0f;  // 最後に FixedUpdate へ渡した秒数
 	std::vector<EditorJoltPhysicsManager::PhysicsEvent> physicsEvents_;  // OnCollision / OnTrigger 相当の元データ
 	std::vector<ScriptBinding> scriptBindings_;  // Scene 内 Script Component から作った実行対象一覧
+	std::unordered_map<int32_t, std::vector<size_t>> scriptBindingIndicesByGameObjectId_;  // Input/UI 通知を対象 Script へ直接渡す索引
 	std::unordered_map<std::string, ScriptModule> scriptModules_;  // DLL パス単位で 1 度だけロードしたモジュール一覧
 	std::unordered_map<std::string, std::string> moduleStatusMessages_;  // DLL ごとの最新状態メッセージ
 	std::unordered_map<std::string, ScriptMetadata> scriptMetadataCache_;  // Play 前の Inspector 用 DLL メタデータキャッシュ
 	std::unordered_map<std::string, bool> inputActionActiveStates_;  // Vector2 Action の started / canceled 判定用状態
 	std::unordered_set<std::string> missingActionWarnings_;  // 未登録関数の警告を同じPlay中に一度だけ出す
 	std::vector<QueuedUiEvent> queuedUiEvents_;  // Game View UI から来たイベントを Update まで保持する
+	std::string requestedScenePath_;  // Update 終了後に安全に切り替える Scene のパス。
 	std::array<uint8_t, 256> currentKeyState_{};  // DLL Script から参照する最新キー状態
 	std::array<uint8_t, 256> previousKeyState_{};  // 押した瞬間判定用の 1 フレーム前キー状態
 	int32_t hotReloadCheckFrameTimer_ = 0;  // DLL 更新日時の確認を毎フレーム実行しないための残りフレーム数
+	int32_t fieldSynchronizationFrameTimer_ = 0;  // 公開変数の DLL 往復を毎フレーム行わないための残りフレーム数
 	uint64_t reloadGeneration_ = 0;  // 作業 DLL コピー名を毎回変えるための通し番号
 	EditorScriptRuntimeApi runtimeApi_{};  // DLL へ渡す関数ポインタ群
 
 	void BuildScriptBindings();  // Scene 内の Script / MonoBehaviour から DLL 実行対象一覧を作る
 	void BuildRuntimeApi();  // DLL へ公開する関数ポインタを設定する
-	void StartBindingsForModule(ScriptModule& scriptModule);  // DLL を使う全 GameObject に Start を送る
-	void StopBindingsForModule(ScriptModule& scriptModule);  // DLL を使う全 GameObject に Stop を送る
+	void StartBindingsForModule(ScriptModule& scriptModule);  // DLLを使うActiveなGameObjectへ未通知のStartを送る
+	void StartBindingIfNeeded(ScriptBinding& scriptBinding, ScriptModule& scriptModule);  // 初回Active時だけ公開値同期とStartを行う
+	void StopBindingsForModule(ScriptModule& scriptModule);  // Start済みGameObjectだけへStopを送る
 	void DispatchQueuedUiEvents();  // Button などの UI イベントを C++ Script 関数へ通知する
 	void DispatchInputActions();  // PlayerInput の Action を同じ GameObject の C++ 関数へ通知する
 	void ApplyComponentFieldsToInstance(const ScriptBinding& scriptBinding, ScriptModule& scriptModule);  // 保存済み Inspector 値を Script インスタンスへ戻す
@@ -143,6 +167,7 @@ private:
 	void SynchronizeComponentProperties(EditorComponent& scriptComponent, const std::vector<EditorScriptFieldDescriptor>& fieldDescriptors);  // DLL 定義と保存値を名前で統合する
 	bool ReadMetadataFromDll(const std::string& dllPath, ScriptMetadata& scriptMetadata);  // Play 前でも DLL から公開変数定義を取得する
 	EditorComponent* FindScriptComponent(const ScriptBinding& scriptBinding);  // Binding が指す Script / MonoBehaviour Component を返す
+	bool IsScriptBindingActive(const ScriptBinding& scriptBinding) const;  // GameObjectとScript Componentが実行可能ならtrue
 	void HotReloadChangedModules();  // 元 DLL の更新日時を見て差し替える
 	void UnloadAllModules();  // Play 停止時にすべての DLL を解放する
 	bool LoadModule(const std::string& dllPath);  // DLL を読み込み、必要な関数を取得する
@@ -185,6 +210,8 @@ private:
 	int32_t FindGameObjectByNameInternal(const char* gameObjectName) const;  // DLL API 用に名前から GameObject ID を探す
 	bool SetGameObjectActiveInternal(int32_t gameObjectId, bool isActive);  // DLL API 用に GameObject の有効状態を変更する
 	bool IsGameObjectActiveInternal(int32_t gameObjectId) const;  // DLL API 用に GameObject の有効状態を取得する
+	bool RequestSceneLoadInternal(const std::string& scenePath);  // Scene 遷移要求を検証して保留する。
+	bool RequestSceneLoadByBuildIndexInternal(int32_t sceneIndex);  // Build Settings の順番から Scene 遷移を要求する。
 
 	static void ScriptLogBridge(const char* message);  // DLL からのログを現在の ScriptManager へ流す
 	static bool ScriptIsKeyDownBridge(int32_t keyCode);  // DLL からのキー押下判定を現在の ScriptManager へ流す
@@ -233,6 +260,19 @@ private:
 	static int32_t ScriptFindGameObjectByNameBridge(const char* gameObjectName);
 	static bool ScriptSetGameObjectActiveBridge(int32_t gameObjectId, bool isActive);
 	static bool ScriptIsGameObjectActiveBridge(int32_t gameObjectId);
+	static bool ScriptLoadSceneBridge(const char* scenePath);
+	static bool ScriptLoadSceneByBuildIndexBridge(int32_t sceneIndex);
+	static bool ScriptSetRailPausedBridge(int32_t gameObjectId, bool isPaused);
+	static bool ScriptIsRailPausedBridge(int32_t gameObjectId);
+	static bool ScriptSetRailSpeedBridge(int32_t gameObjectId, float speed);
+	static bool ScriptSetRailReverseBridge(int32_t gameObjectId, bool isReversed);
+	static bool ScriptSetRailNormalizedProgressBridge(int32_t gameObjectId, float normalizedProgress);
+	static bool ScriptSetRailPathBridge(int32_t gameObjectId, int32_t railPathGameObjectId, bool preservesProgress);
+	static bool ScriptGetRailNormalizedProgressBridge(int32_t gameObjectId, float* normalizedProgress);
+	static bool ScriptGetRailLengthBridge(int32_t gameObjectId, float* railLength);
+	static bool ScriptGetRailPositionBridge(int32_t gameObjectId, float normalizedProgress, EditorScriptVector3* position);
+	static bool ScriptGetRailDirectionBridge(int32_t gameObjectId, float normalizedProgress, EditorScriptVector3* direction);
+	static bool ScriptConsumeRailEndReachedBridge(int32_t gameObjectId);
 };
 
 #pragma warning(pop)

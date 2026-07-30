@@ -35,11 +35,13 @@ public:
 	struct ProbeView {
 		int32_t sourceId = -1;
 		const EditorGameObject* gameObject = nullptr;
+		const EditorComponent* component = nullptr;
 		const EditorSceneObject* sceneObject = nullptr;
 		PlanarReflectionCamera sceneCam;
 		PlanarReflectionCamera gameCam;
 	};
 	const std::vector<ProbeView>& GetViews() const { return views_; }
+	const ProbeView* FindNearestView(const Vector3& cameraPosition) const;  // View ごとに最も近い反射面を選ぶ。
 	bool HasProbes() const { return !views_.empty(); }
 
 private:

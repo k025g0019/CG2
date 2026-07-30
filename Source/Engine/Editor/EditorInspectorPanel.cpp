@@ -6,6 +6,7 @@
 #include "EditorNativeScriptAssetManager.h"
 #include "EditorSharedState.h"
 #include "Source/Engine/Animation/PropertyAnimationClip.h"
+#include "Vector.h"
 
 #include <algorithm>
 #include <cctype>
@@ -249,6 +250,8 @@ namespace {
 		{"描画・レンダリング", "ビルボードレンダラー", EditorComponentType::BillboardRenderer},
 		{"描画・レンダリング", "キャンバスレンダラー", EditorComponentType::CanvasRenderer},
 		{"描画・レンダリング", "パーティクルシステムレンダラー", EditorComponentType::ParticleSystemRenderer},
+		{"描画・レンダリング", "Ocean", EditorComponentType::Ocean},
+		{"物理", "Buoyancy", EditorComponentType::Buoyancy},
 		{"カメラ", "カメラ", EditorComponentType::Camera},
 		{"カメラ", "オーディオリスナー", EditorComponentType::AudioListener},
 		{"カメラ", "フレアレイヤー", EditorComponentType::FlareLayer},
@@ -336,6 +339,7 @@ namespace {
 		{"UI", "コンテンツサイズフィッター", EditorComponentType::ContentSizeFitter},
 		{"UI", "アスペクト比フィッター", EditorComponentType::AspectRatioFitter},
 		{"UI", "レイアウトエレメント", EditorComponentType::LayoutElement},
+		{"UI", "Scene ボタン", EditorComponentType::SceneButton},
 		{"入力・イベント", "イベントシステム", EditorComponentType::EventSystem},
 		{"入力・イベント", "スタンドアロン入力モジュール", EditorComponentType::StandaloneInputModule},
 		{"入力・イベント", "Input System UI 入力モジュール", EditorComponentType::InputSystemUIInputModule},
@@ -345,6 +349,12 @@ namespace {
 		{"入力・イベント", "入力", EditorComponentType::Input},
 		{"ゲームプレイ", "ローカル移動", EditorComponentType::LocalMove},
 		{"ゲームプレイ", "ローリング移動", EditorComponentType::RollingMove},
+		{"ゲームプレイ", "レール移動", EditorComponentType::RailMovement},
+		{"ゲームプレイ", "体力", EditorComponentType::Health},
+		{"ゲームプレイ", "Wave Spawner", EditorComponentType::WaveSpawner},
+		{"入力・イベント", "Timeline Event", EditorComponentType::TimelineEvent},
+		{"入力・イベント", "Threshold State", EditorComponentType::ThresholdState},
+		{"UI", "値バインディング", EditorComponentType::UIValueBinding},
 		{"ゲームプレイ", "自由移動/回転", EditorComponentType::FreeTransform},
 		{"ナビゲーション", "NavMesh エージェント", EditorComponentType::NavigationAgent},
 		{"ナビゲーション", "NavMesh 障害物", EditorComponentType::NavMeshObstacle},
@@ -398,6 +408,7 @@ namespace {
 		{"エフェクト", "プロジェクター", EditorComponentType::Projector},
 		{"エフェクト", "デカールプロジェクター", EditorComponentType::DecalProjector},
 		{"地形・タイルマップ", "テレイン", EditorComponentType::Terrain},
+		{"地形・タイルマップ", "フォリッジ", EditorComponentType::Foliage},
 		{"地形・タイルマップ", "地形の当たり判定", EditorComponentType::TerrainCollider},
 		{"地形・タイルマップ", "タイルマップ", EditorComponentType::Tilemap},
 		{"地形・タイルマップ", "タイルマップレンダラー", EditorComponentType::TilemapRenderer},
@@ -1437,6 +1448,59 @@ namespace {
 		return isChanged;
 	}
 
+	bool DrawScriptActionRow(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		int32_t targetGameObjectId,
+		const char* label,
+		std::string& actionName) {
+		bool isChanged = DrawStringInputRow(label, actionName);
+		const int32_t resolvedTargetGameObjectId = targetGameObjectId >= 0
+			? targetGameObjectId
+			: ownerGameObject.id;
+		const std::vector<std::string> actionNames =
+			context.runtimeManager.GetScriptManager().GetRegisteredActionNames(resolvedTargetGameObjectId);
+
+		if (actionNames.empty()) {
+			return isChanged;
+		}
+
+		const std::string candidateLabel = std::string(label) + " 候補";
+		ImGui::PushID(candidateLabel.c_str());
+
+		if (BeginPropertyTable("ScriptActionCandidateRow", 2)) {
+			SetupTwoColumnPropertyTable();
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted(candidateLabel.c_str());
+			ImGui::TableNextColumn();
+			ImGui::SetNextItemWidth(-1.0f);
+
+			if (ImGui::BeginCombo("##Value", actionName.empty() ? "登録Actionを選択" : actionName.c_str())) {
+				for (const std::string& candidateActionName : actionNames) {
+					const bool isSelected = actionName == candidateActionName;
+
+					if (ImGui::Selectable(candidateActionName.c_str(), isSelected)) {
+						actionName = candidateActionName;
+						isChanged = true;
+					}
+
+					if (isSelected) {
+						ImGui::SetItemDefaultFocus();
+					}
+				}
+
+				ImGui::EndCombo();
+			}
+
+			ImGui::EndTable();
+		}
+
+		ImGui::PopID();
+		return isChanged;
+	}
+
 	void DrawRendererComponent(
 		EditorInspectorPanelContext& context,
 		const EditorGameObject& gameObject,
@@ -2028,6 +2092,24 @@ namespace {
 			case EditorScriptFieldTypeString:
 				DrawStringInputRow(propertyLabel, scriptProperty.stringValue);
 				break;
+			case EditorScriptFieldTypeGameObject:
+				DrawGameObjectReferenceRow(
+					context,
+					gameObject,
+					propertyLabel,
+					scriptProperty.intValue,
+					"未設定",
+					true);
+				break;
+			case EditorScriptFieldTypeSceneAsset:
+				DrawStringInputRow(propertyLabel, scriptProperty.stringValue);
+
+				if (!context.selectedAssetPath.empty() &&
+					EditorAssetUtility::HasExtension(context.selectedAssetPath, ".scene") &&
+					ImGui::Button("選択中 Scene を設定", ImVec2(-1.0f, 0.0f))) {
+					scriptProperty.stringValue = context.selectedAssetPath;
+				}
+				break;
 			default:
 				DrawTextRow(propertyLabel, "未対応の型");
 				break;
@@ -2147,6 +2229,14 @@ namespace {
 
 	void DrawUIComponent(EditorComponent& component, const char* description) {
 		DrawTextRow("説明", description);
+
+		if (component.type == EditorComponentType::Text ||
+			component.type == EditorComponentType::TextMeshProUGUI) {
+			DrawStringInputRow("表示文字", component.buttonLabel);
+			DrawVector2Row("位置", component.buttonPosition, 0.5f, -10000.0f, 10000.0f);
+			DrawFloatRow("文字サイズ", component.buttonSize.y, 1.0f, 8.0f, 128.0f);
+		}
+
 		DrawColor3Row("色", component.color);
 		DrawFloatRow("透明度", component.intensity, 0.01f, 0.0f, 1.0f);
 	}
@@ -2442,6 +2532,217 @@ namespace {
 		DrawTextRow("BVH", hasModelData ? "生成対象" : "未生成");
 	}
 
+	void DrawRailMovementComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		EditorComponent& component) {
+		DrawTextRow("説明", "指定した親の子 GameObject を制御点として移動する汎用 RailFollower です。");
+		DrawTextRow("作り方", "空の親を作り、その子に Point 00、Point 01...を置いて Gizmo で経路を編集します。");
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"Rail Path",
+			component.railPathGameObjectId,
+			"未設定",
+			false);
+		DrawFloatRow("速度", component.railSpeed, 0.1f, -1000.0f, 1000.0f);
+		DrawFloatRow("加速度", component.railAcceleration, 0.1f, 0.0f, 10000.0f);
+		DrawFloatRow("減速度", component.railDeceleration, 0.1f, 0.0f, 10000.0f);
+		DrawFloatRow("開始位置", component.railStartNormalized, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("向きの先読み", component.railLookAheadDistance, 0.05f, 0.01f, 1000.0f);
+		DrawCheckboxRow("ループ", component.railLoop);
+		DrawCheckboxRow("進行方向へ回転", component.railOrientToPath);
+		DrawCheckboxRow("滑らかな曲線", component.railUseSmoothCurve);
+		DrawCheckboxRow("開始時に停止", component.railStartPaused);
+		DrawCheckboxRow("逆方向", component.railReverse);
+		DrawCheckboxRow("終端で停止", component.railStopAtEnd);
+	}
+
+	void DrawHealthComponent(EditorComponent& component) {
+		DrawTextRow("説明", "ダメージや耐久値など、ゲーム側が用途を決める汎用の現在値と最大値です。");
+		DrawFloatRow("最大体力", component.healthMaximum, 1.0f, 0.0f, 1000000.0f);
+
+		if (component.healthCurrent > component.healthMaximum) {
+			component.healthCurrent = component.healthMaximum;
+		}
+
+		DrawTextRow("実行中体力", std::to_string(component.healthCurrent).c_str());
+	}
+
+	void DrawWaveSpawnerComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		EditorComponent& component) {
+		DrawTextRow("説明", "子GameObjectを開始条件と間隔に従って順次有効化します。子の行動は扱いません。");
+		const char* triggerModes[] = {"Play 開始", "RailFollower 進行率"};
+		component.waveTriggerMode = (std::clamp)(component.waveTriggerMode, 0, 1);
+		DrawComboRow("開始条件", component.waveTriggerMode, triggerModes, 2);
+
+		if (component.waveTriggerMode == 1) {
+			DrawGameObjectReferenceRow(
+				context,
+				ownerGameObject,
+				"進行率 Source",
+				component.waveTriggerSourceGameObjectId,
+				"未設定",
+				true);
+			DrawFloatRow("開始進行率", component.waveTriggerValue, 0.01f, 0.0f, 1.0f);
+		}
+
+		DrawFloatRow("生成間隔", component.waveSpawnInterval, 0.01f, 0.0f, 3600.0f);
+		DrawCheckboxRow("開始時に子を待機", component.waveDeactivateChildrenOnStart);
+		DrawTextRow("生成対象", "このGameObjectの直下にある子をHierarchy順で使用します。");
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"Action 対象",
+			component.waveActionTargetGameObjectId,
+			"このObject",
+			true);
+		DrawScriptActionRow(
+			context,
+			ownerGameObject,
+			component.waveActionTargetGameObjectId,
+			"開始 Action",
+			component.waveStartedActionName);
+		DrawScriptActionRow(
+			context,
+			ownerGameObject,
+			component.waveActionTargetGameObjectId,
+			"各生成 Action",
+			component.waveSpawnedActionName);
+		DrawScriptActionRow(
+			context,
+			ownerGameObject,
+			component.waveActionTargetGameObjectId,
+			"完了 Action",
+			component.waveCompletedActionName);
+	}
+
+	void DrawTimelineEventComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		EditorComponent& component) {
+		DrawTextRow("説明", "条件成立時に対象C++ Scriptへ任意名のActionを通知します。");
+		const char* sourceModes[] = {"Play 経過秒", "RailFollower 進行率"};
+		component.timelineSourceMode = (std::clamp)(component.timelineSourceMode, 0, 1);
+		DrawComboRow("時間 Source", component.timelineSourceMode, sourceModes, 2);
+
+		if (component.timelineSourceMode == 1) {
+			DrawGameObjectReferenceRow(
+				context,
+				ownerGameObject,
+				"進行率 Source",
+				component.timelineSourceGameObjectId,
+				"未設定",
+				true);
+			DrawFloatRow("発火進行率", component.timelineTriggerValue, 0.01f, 0.0f, 1.0f);
+		}
+		else {
+			DrawFloatRow("発火秒", component.timelineTriggerValue, 0.05f, 0.0f, 86400.0f);
+		}
+
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"Action 対象",
+			component.timelineTargetGameObjectId,
+			"このObject",
+			true);
+		DrawScriptActionRow(
+			context,
+			ownerGameObject,
+			component.timelineTargetGameObjectId,
+			"Action 名",
+			component.timelineActionName);
+		DrawCheckboxRow("一度だけ", component.timelineTriggerOnce);
+	}
+
+	void DrawThresholdStateComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		EditorComponent& component) {
+		DrawTextRow("説明", "値を3状態へ分け、状態変更時に名前付きScript Actionだけを通知します。");
+		const char* sourceModes[] = {"Health 比率", "RailFollower 進行率"};
+		component.thresholdSourceMode = (std::clamp)(component.thresholdSourceMode, 0, 1);
+		DrawComboRow("値 Source", component.thresholdSourceMode, sourceModes, 2);
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"Source Object",
+			component.thresholdSourceGameObjectId,
+			"このObject",
+			true);
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"Action 対象",
+			component.thresholdTargetGameObjectId,
+			"このObject",
+			true);
+		DrawFloatRow("State 2 境界", component.thresholdSecondValue, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("State 3 境界", component.thresholdThirdValue, 0.01f, 0.0f, 1.0f);
+		DrawScriptActionRow(
+			context,
+			ownerGameObject,
+			component.thresholdTargetGameObjectId,
+			"State 1 Action",
+			component.thresholdFirstActionName);
+		DrawScriptActionRow(
+			context,
+			ownerGameObject,
+			component.thresholdTargetGameObjectId,
+			"State 2 Action",
+			component.thresholdSecondActionName);
+		DrawScriptActionRow(
+			context,
+			ownerGameObject,
+			component.thresholdTargetGameObjectId,
+			"State 3 Action",
+			component.thresholdThirdActionName);
+	}
+
+	void DrawUiValueBindingComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		EditorComponent& component) {
+		DrawTextRow("説明", "汎用値を同じGameObjectのTextとSliderへ反映します。ゲームオブジェクトを自動探索しません。");
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"Source Object",
+			component.uiBindingSourceGameObjectId,
+			"このObject",
+			true);
+		const char* valueTypes[] = {"Health 現在値", "Health 比率", "RailFollower 進行率", "Active"};
+		component.uiBindingValueType = (std::clamp)(component.uiBindingValueType, 0, 3);
+		DrawComboRow("値", component.uiBindingValueType, valueTypes, 4);
+		DrawStringInputRow("接頭文字", component.uiBindingPrefix);
+		DrawIntRow("小数桁", component.uiBindingPrecision);
+		component.uiBindingPrecision = (std::clamp)(component.uiBindingPrecision, 0, 6);
+		DrawFloatRow("表示倍率", component.uiBindingScale, 0.1f, -1000000.0f, 1000000.0f);
+	}
+
+	void DrawSceneButtonComponent(
+		EditorInspectorPanelContext& context,
+		EditorComponent& component) {
+		DrawTextRow("説明", "Script を書かず、Game View のクリックで指定 Scene を開きます。");
+		DrawStringInputRow("表示文字", component.buttonLabel);
+		DrawVector2Row("位置", component.buttonPosition, 0.5f, -10000.0f, 10000.0f);
+		DrawVector2Row("サイズ", component.buttonSize, 0.5f, 1.0f, 4096.0f);
+		DrawColor3Row("通常色", component.color);
+		DrawColor3Row("ホバー色", component.buttonHoverColor);
+		DrawColor3Row("押下色", component.buttonPressedColor);
+		DrawCheckboxRow("操作可能", component.buttonInteractable);
+		DrawStringInputRow("遷移先 Scene", component.sceneButtonScenePath);
+
+		if (!context.selectedAssetPath.empty() &&
+			EditorAssetUtility::HasExtension(context.selectedAssetPath, ".scene") &&
+			ImGui::Button("選択中 Scene を設定", ImVec2(-1.0f, 0.0f))) {
+			component.sceneButtonScenePath = context.selectedAssetPath;
+		}
+	}
+
 	void DrawAutoConvexCollisionComponent(const EditorGameObject& gameObject, EditorComponent& component) {
 		std::string collisionAssetPath;
 		const ModelData* loadedModelData = GetModelDataForComponent(gameObject, component, false, collisionAssetPath);
@@ -2681,10 +2982,29 @@ namespace {
 		DrawTextRow("アセット", component.assetPath.empty() ? "未設定" : component.assetPath.c_str());
 	}
 
-	void DrawAudioListenerComponent(EditorComponent& component) {
+	void DrawAudioListenerComponent(
+		EditorInspectorPanelContext& context,
+		EditorComponent& component) {
 		DrawTextRow("説明", "Scene 内の音を聞く位置です。");
 		DrawTextRow("状態", component.isActive ? "アクティブ (聞こえています)" : "無効");
 		DrawTextRow("注", "AudioSource + AudioReverbZone の距離判定に使われます。");
+		DrawSubHeader("実行時 Audio Mixer");
+		EditorAudioManager& audioManager = context.runtimeManager.GetAudioManager();
+		float masterVolume = audioManager.GetMasterVolume();
+		float sfxVolume = audioManager.GetBusVolume(EditorAudioBus::Sfx);
+		float bgmVolume = audioManager.GetBusVolume(EditorAudioBus::Bgm);
+		float ambienceVolume = audioManager.GetBusVolume(EditorAudioBus::Ambience);
+		float uiVolume = audioManager.GetBusVolume(EditorAudioBus::Ui);
+		DrawFloatRow("Master", masterVolume, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("SFX", sfxVolume, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("BGM", bgmVolume, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("Ambience", ambienceVolume, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("UI", uiVolume, 0.01f, 0.0f, 1.0f);
+		audioManager.SetMasterVolume(masterVolume);
+		audioManager.SetBusVolume(EditorAudioBus::Sfx, sfxVolume);
+		audioManager.SetBusVolume(EditorAudioBus::Bgm, bgmVolume);
+		audioManager.SetBusVolume(EditorAudioBus::Ambience, ambienceVolume);
+		audioManager.SetBusVolume(EditorAudioBus::Ui, uiVolume);
 	}
 
 	void DrawPlayableDirectorComponent(EditorComponent& component) {
@@ -2783,7 +3103,8 @@ namespace {
 				"波",
 				"吸引",
 				"雲",
-				"爆発"
+				"爆発 / 水しぶき",
+				"Projectile Trail"
 			};
 			DrawComboRow(
 				"運動方式",
@@ -2820,9 +3141,17 @@ namespace {
 				DrawFloatRow("吸引力", component.particleAttractorStrength, 0.1f, 0.0f, 1000.0f);
 			}
 
-			DrawCheckboxRow("地面衝突", component.particleCollision);
+			DrawCheckboxRow("衝突", component.particleCollision);
 
 			if (component.particleCollision) {
+				const char* collisionModeItems[] = {
+					"Depth (画面内エフェクト)",
+					"Physics SDF (物理オブジェクト)"};
+				DrawComboRow(
+					"衝突方式",
+					component.collisionDetectionMode,
+					collisionModeItems,
+					static_cast<int32_t>(_countof(collisionModeItems)));
 				DrawFloatRow("反発", component.particleCollisionBounce, 0.01f, 0.0f, 1.0f);
 				DrawFloatRow("摩擦", component.particleCollisionFriction, 0.01f, 0.0f, 1.0f);
 			}
@@ -2913,8 +3242,8 @@ namespace {
 			}
 		}
 
-		DrawTextRow("説明", "反射方式を切り替えるコンポーネントです。スクリーンスペース反射は床や濡れ面、キューブマップ反射は金属や球体、平面反射は鏡や磨かれた床向けです。");
-		DrawFloatRow("強さ", component.intensity, 0.01f, 0.0f, 4.0f);
+		DrawTextRow("説明", "反射方式を切り替えます。材質の反射・屈折率を基礎反射率に使い、この強さで反射像の寄与を調整します。");
+		DrawFloatRow("反射像の強さ", component.intensity, 0.01f, 0.0f, 4.0f);
 		DrawFloatRow("反射の粗さ", component.roughness, 0.01f, 0.0f, 1.0f);
 		DrawVector3Row("中心", component.colliderCenter, 0.01f, 0.0f, 0.0f);
 		DrawVector3Row("サイズ", component.colliderSize, 0.01f, 0.01f, 1000.0f);
@@ -3162,9 +3491,23 @@ namespace {
 		const char* tmItems[] = {"Reinhard", "Filmic", "Timothy", "Uncharted2", "ACES"};
 		DrawComboRow("トーンマップ", component.compositeToneMappingMode, tmItems, static_cast<int32_t>(_countof(tmItems)));
 		DrawFloatRow("露出", component.compositeExposure, 0.01f, 0.0f, 8.0f);
+		DrawCheckboxRow("自動露出", component.compositeAutoExposureEnabled);
+
+		if (component.compositeAutoExposureEnabled) {
+			DrawFloatRow("自動露出 下限", component.compositeMinimumExposure, 0.01f, 0.01f, 8.0f);
+			DrawFloatRow("自動露出 上限", component.compositeMaximumExposure, 0.01f, 0.01f, 16.0f);
+			DrawFloatRow("露出追従速度", component.compositeExposureAdaptationSpeed, 0.05f, 0.0f, 10.0f);
+			DrawFloatRow("基準輝度", component.compositeTargetLuminance, 0.01f, 0.01f, 1.0f);
+		}
+
 		DrawFloatRow("ホワイトポイント", component.compositeWhitePoint, 0.1f, 0.1f, 20.0f);
 		DrawFloatRow("彩度", component.compositeSaturation, 0.01f, 0.0f, 4.0f);
 		DrawFloatRow("コントラスト", component.compositeContrast, 0.01f, 0.0f, 4.0f);
+		DrawFloatRow("色温度", component.compositeTemperature, 0.01f, -1.0f, 1.0f);
+		DrawFloatRow("Tint", component.compositeTint, 0.01f, -1.0f, 1.0f);
+		DrawVector3Row("Lift", component.compositeLift, 0.005f, -1.0f, 1.0f);
+		DrawFloatRow("Gamma", component.compositeGamma, 0.01f, 0.1f, 4.0f);
+		DrawVector3Row("Gain", component.compositeGain, 0.01f, 0.0f, 4.0f);
 		DrawFloatRow("ビネット", component.compositeVignetteStrength, 0.01f, 0.0f, 2.0f);
 		DrawFloatRow("ビネット半径", component.compositeVignetteRadius, 0.01f, 0.0f, 1.0f);
 		DrawFloatRow("フィルムグレイン", component.compositeFilmGrain, 0.01f, 0.0f, 2.0f);
@@ -3271,8 +3614,34 @@ namespace {
 	}
 
 	void DrawTerrainComponent(EditorComponent& component) {
-		DrawTextRow("説明", "地形を扱うコンポーネントです。");
-		DrawVector3Row("サイズ", component.colliderSize, 1.0f, 1.0f, 10000.0f);
+		DrawTextRow("説明", "HeightMap から地形を生成し、距離に応じてメッシュLODを切り替えます。");
+		DrawStringInputRow("Height Map", component.assetPath);
+		DrawVector3Row("サイズ X / 高さ / Z", component.colliderSize, 1.0f, 0.01f, 10000.0f);
+
+		if (DrawIntRow("最高LOD解像度", component.oceanGridResolution)) {
+			component.oceanGridResolution = (std::clamp)(component.oceanGridResolution, 16, 256);
+		}
+
+		DrawTextRow("LOD", "近距離 / 中距離 / 遠距離の3段階。Shadowは一段低いLODを使用します。");
+	}
+
+	void DrawFoliageComponent(EditorComponent& component) {
+		DrawTextRow("説明", "DensityMap とGPU Instancingで草木を配置し、距離で描画密度を落とします。");
+		DrawStringInputRow("Density Map", component.assetPath);
+		DrawVector3Row("配置範囲", component.colliderSize, 1.0f, 1.0f, 10000.0f);
+		DrawFloatRow("密度", component.intensity, 0.01f, 0.0f, 1.0f);
+
+		if (DrawIntRow("最大Instance数", component.particleMaxCount)) {
+			component.particleMaxCount = (std::clamp)(component.particleMaxCount, 1, 65535);
+		}
+
+		DrawFloatRow("LOD距離", component.colliderRadius, 1.0f, 1.0f, 10000.0f);
+		DrawSubHeader("風");
+		DrawVector2Row("風向き", component.oceanPrimaryDirection, 0.01f, -1.0f, 1.0f);
+		DrawFloatRow("揺れ幅", component.oceanWaveHeight, 0.01f, 0.0f, 5.0f);
+		DrawFloatRow("風速", component.oceanWindSpeed, 0.1f, 0.0f, 100.0f);
+		DrawFloatRow("空間周波数", component.oceanWaveLength, 0.01f, 0.01f, 100.0f);
+		DrawFloatRow("時間倍率", component.oceanTimeScale, 0.01f, 0.0f, 10.0f);
 	}
 
 	void DrawTilemapComponent(EditorComponent& component) {
@@ -3284,6 +3653,112 @@ namespace {
 	void DrawGridComponent(EditorComponent& component) {
 		DrawTextRow("説明", "Tilemap の親になる Grid コンポーネントです。");
 		DrawVector3Row("セルサイズ", component.colliderSize, 0.01f, 0.01f, 100.0f);
+	}
+
+	void DrawOceanComponent(EditorComponent& component) {
+		//============================================================
+		// FFocean3D を基にした Ocean の調整値
+		//============================================================
+
+		DrawTextRow("説明", "外部モデル不要の海面です。Scene View と Game View の両方へ同じ波を描画します。");
+
+		DrawTextRow("メッシュ", "16～2048の2冪。近傍密度を維持し、外周を追加頂点なしで地平線方向へ広げます。");
+		const int32_t clampedPreviousResolution =
+			(std::clamp)(component.oceanGridResolution, 16, 2048);
+		int32_t previousGridResolution = 16;
+
+		while (previousGridResolution <= 1024 &&
+			previousGridResolution * 2 <= clampedPreviousResolution) {
+			previousGridResolution *= 2;
+		}
+
+		component.oceanGridResolution = previousGridResolution;
+
+		if (DrawIntRow("グリッド解像度", component.oceanGridResolution)) {
+			if (component.oceanGridResolution == previousGridResolution + 1) {
+				component.oceanGridResolution =
+					(std::min)(previousGridResolution * 2, 2048);
+			}
+			else if (component.oceanGridResolution == previousGridResolution - 1) {
+				component.oceanGridResolution =
+					(std::max)(previousGridResolution / 2, 16);
+			}
+			else {
+				const int32_t clampedResolution =
+					(std::clamp)(component.oceanGridResolution, 16, 2048);
+				int32_t normalizedResolution = 16;
+
+				while (normalizedResolution <= 1024 &&
+					normalizedResolution * 2 <= clampedResolution) {
+					normalizedResolution *= 2;
+				}
+
+				component.oceanGridResolution = normalizedResolution;
+			}
+		}
+		DrawFloatRow("海面サイズ", component.oceanSize, 1.0f, 1.0f, 20000.0f);
+
+		DrawTextRow("主波", "波高・波長・速度と XZ 方向を調整します。");
+		DrawFloatRow("波の高さ", component.oceanWaveHeight, 0.05f, 0.0f, 2000.0f);
+		DrawFloatRow("最大波高", component.oceanMaxWaveHeight, 0.05f, 0.0f, 4000.0f);
+		DrawFloatRow("波長", component.oceanWaveLength, 0.1f, 0.1f, 10000.0f);
+		DrawFloatRow("波の速度", component.oceanWaveSpeed, 0.01f, -10.0f, 10.0f);
+		DrawFloatRow("時間倍率", component.oceanTimeScale, 0.01f, 0.0f, 4.0f);
+		DrawFloatRow("Choppiness", component.oceanChoppiness, 0.01f, -4.0f, 4.0f);
+		DrawVector2Row("主波方向 XZ", component.oceanPrimaryDirection, 0.01f, -100.0f, 100.0f);
+
+		DrawTextRow("副波・細波", "別方向の波を重ね、均一な波並びを崩します。");
+		DrawVector2Row("副波方向 XZ", component.oceanSecondaryDirection, 0.01f, -100.0f, 100.0f);
+		DrawFloatRow("副波の強さ", component.oceanSecondaryWaveScale, 0.01f, 0.0f, 2.0f);
+		DrawFloatRow("細波の波長比", component.oceanRippleScale, 0.005f, 0.02f, 1.0f);
+		DrawFloatRow("細波の強さ", component.oceanRippleStrength, 0.005f, 0.0f, 1.0f);
+
+		DrawTextRow("波スペクトル", "16成分を長いうねり・風浪・細波へ分け、有限水深の分散則で動かします。");
+		DrawFloatRow("風速", component.oceanWindSpeed, 0.1f, 0.1f, 80.0f);
+		DrawFloatRow("水深", component.oceanWaterDepth, 0.5f, 0.1f, 5000.0f);
+		DrawFloatRow("方向分散", component.oceanDirectionSpread, 0.01f, 0.0f, 3.14159f);
+		DrawFloatRow("うねりの強さ", component.oceanSwellStrength, 0.01f, 0.0f, 2.0f);
+		DrawFloatRow("スペクトルシード", component.oceanSpectrumSeed, 1.0f, 0.0f, 65535.0f);
+		DrawFloatRow("波頭の尖り", component.oceanCrestSharpness, 0.01f, 0.0f, 1.0f);
+
+		DrawTextRow("海面材質", "微細法線、圧縮泡、吸収、Fresnel 反射と屈折を合成します。");
+		DrawFloatRow("泡の強さ", component.oceanFoamStrength, 0.01f, 0.0f, 4.0f);
+		DrawFloatRow("泡の閾値", component.oceanFoamThreshold, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("粗さ", component.oceanRoughness, 0.01f, 0.035f, 1.0f);
+		DrawFloatRow("反射", component.oceanReflectionStrength, 0.01f, 0.0f, 2.0f);
+		DrawFloatRow("屈折", component.transmission, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("微細法線", component.oceanDetailNormalStrength, 0.01f, 0.0f, 2.0f);
+		DrawFloatRow("吸収距離", component.oceanAbsorptionDistance, 0.1f, 0.1f, 500.0f);
+		DrawFloatRow("屈折の歪み", component.oceanRefractionDistortion, 0.005f, 0.0f, 1.0f);
+		DrawTextRow("水深色", "水深が吸収距離以下なら浅瀬色、深くなるほど深海色を強くします。");
+		DrawColor3Row("浅瀬色", component.oceanShallowColor);
+		DrawColor3Row("深海色", component.oceanDeepColor);
+	}
+
+	void DrawBuoyancyComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		EditorComponent& component) {
+		//============================================================
+		// 描画と同じ GPU FFT 波面を使う船体浮力
+		//============================================================
+
+		DrawTextRow("説明", "船体全体へ浮力セルを自動配置し、水没体積に応じて上下・傾斜させます。");
+		DrawTextRow("自動分割", "船体の大きさに応じて 8～512 点。縦方向にも分散し、固定の船底点は使いません。");
+		DrawTextRow("必須", "同じ GameObject に Rigidbody と Box / Convex / Mesh Collider を追加してください。");
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"対象 Ocean",
+			component.buoyancyOceanGameObjectId,
+			"自動検出",
+			false);
+		DrawVector3Row("浮力中心", component.buoyancyCenterOffset, 0.01f, -1000.0f, 1000.0f);
+		DrawVector3Row("船体サイズ", component.buoyancyHullSize, 0.05f, 0.05f, 10000.0f);
+		DrawFloatRow("浮力", component.buoyancyStrength, 0.1f, 0.0f, 1000.0f);
+		DrawFloatRow("上下減衰", component.buoyancyDamping, 0.05f, 0.0f, 100.0f);
+		DrawFloatRow("水の抵抗", component.buoyancyWaterDrag, 0.05f, 0.0f, 100.0f);
+		DrawFloatRow("回転抵抗", component.buoyancyAngularDrag, 0.05f, 0.0f, 100.0f);
 	}
 
 	void DrawComponentBody(EditorInspectorPanelContext& context, EditorGameObject& gameObject, EditorComponent& component) {
@@ -3333,6 +3808,12 @@ namespace {
 		case EditorComponentType::Environment:
 			DrawEnvironmentComponent(component);
 			break;
+		case EditorComponentType::Ocean:
+			DrawOceanComponent(component);
+			break;
+		case EditorComponentType::Buoyancy:
+			DrawBuoyancyComponent(context, gameObject, component);
+			break;
 		case EditorComponentType::LightProbeGroup:
 			DrawLightProbeGroupComponent(component);
 			break;
@@ -3344,13 +3825,65 @@ namespace {
 			break;
 		case EditorComponentType::AudioSource:
 			DrawTextRow("音声アセット", component.assetPath.empty() ? "未設定" : component.assetPath.c_str());
+			DrawStringInputRow("音声パス", component.assetPath);
+
+			if (!context.selectedAssetPath.empty() &&
+				EditorAssetUtility::HasExtension(context.selectedAssetPath, ".wav") &&
+				ImGui::Button("選択中 WAV を設定", ImVec2(-1.0f, 0.0f))) {
+				component.assetPath = context.selectedAssetPath;
+			}
+
+			if (ImGui::Button("内蔵 Cannon", ImVec2(-1.0f, 0.0f))) {
+				component.assetPath = "builtin://rail-cannon";
+			}
+
+			if (ImGui::Button("内蔵 Water Impact", ImVec2(-1.0f, 0.0f))) {
+				component.assetPath = "builtin://water-impact";
+			}
+
+			if (ImGui::Button("内蔵 Ocean Ambience", ImVec2(-1.0f, 0.0f))) {
+				component.assetPath = "builtin://ocean-ambience";
+			}
+
 			DrawFloatRow("音量", component.audioVolume, 0.01f, 0.0f, 1.0f);
 			DrawFloatRow("ピッチ", component.audioPitch, 0.01f, 0.0f, 3.0f);
 			DrawCheckboxRow("ループ", component.audioLoop);
 			DrawCheckboxRow("自動再生", component.audioPlayOnAwake);
+			{
+				const char* audioBusItems[] = {"SFX", "BGM", "Ambience", "UI"};
+				component.audioBus = (std::clamp)(component.audioBus, 0, 3);
+				DrawComboRow(
+					"ミキサーバス",
+					component.audioBus,
+					audioBusItems,
+					static_cast<int32_t>(_countof(audioBusItems)));
+			}
+			DrawIntRow("同時発音数", component.audioMaxVoices);
+			component.audioMaxVoices = (std::clamp)(component.audioMaxVoices, 1, 32);
+			DrawFloatRow("再発音間隔", component.audioRetriggerInterval, 0.01f, 0.0f, 10.0f);
 			DrawFloatRow("空間ブレンド", component.audioSpatialBlend, 0.01f, 0.0f, 1.0f);
 			DrawFloatRow("最小距離", component.audioMinDistance, 0.1f, 0.0f, 1000.0f);
 			DrawFloatRow("最大距離", component.audioMaxDistance, 0.1f, 0.0f, 10000.0f);
+			DrawSubHeader("3D 空間音響");
+			DrawFloatRow("Doppler", component.audioDopplerLevel, 0.01f, 0.0f, 5.0f);
+			DrawFloatRow("広がり角度", component.audioSpread, 1.0f, 0.0f, 360.0f);
+			DrawFloatRow("指向性 内角", component.audioConeInnerAngle, 1.0f, 0.0f, 360.0f);
+			DrawFloatRow("指向性 外角", component.audioConeOuterAngle, 1.0f, 0.0f, 360.0f);
+			component.audioConeOuterAngle = (std::max)(component.audioConeOuterAngle, component.audioConeInnerAngle);
+			DrawFloatRow("外側音量", component.audioConeOuterVolume, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("遮蔽", component.audioOcclusionStrength, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("残響Send", component.audioReverbSend, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("初期反射", component.audioReflectionStrength, 0.01f, 0.0f, 1.0f);
+
+			if (context.runtimeManager.IsPlaying()) {
+				if (ImGui::Button("テスト再生", ImVec2(-1.0f, 0.0f))) {
+					context.runtimeManager.GetAudioManager().Play(gameObject.id);
+				}
+
+				if (ImGui::Button("停止", ImVec2(-1.0f, 0.0f))) {
+					context.runtimeManager.GetAudioManager().Stop(gameObject.id);
+				}
+			}
 			break;
 		case EditorComponentType::AudioReverbZone:
 			DrawAudioFilterComponent(component, "範囲内の音へリバーブを加えるコンポーネントです。");
@@ -3473,7 +4006,7 @@ namespace {
 			DrawAvatarMaskComponent(component);
 			break;
 		case EditorComponentType::AudioListener:
-			DrawAudioListenerComponent(component);
+			DrawAudioListenerComponent(context, component);
 			break;
 		case EditorComponentType::AimConstraint:
 			DrawAimConstraintComponent(component);
@@ -3649,6 +4182,24 @@ namespace {
 		case EditorComponentType::RollingMove:
 			DrawRollingMoveComponent(component);
 			break;
+		case EditorComponentType::RailMovement:
+			DrawRailMovementComponent(context, gameObject, component);
+			break;
+		case EditorComponentType::Health:
+			DrawHealthComponent(component);
+			break;
+		case EditorComponentType::WaveSpawner:
+			DrawWaveSpawnerComponent(context, gameObject, component);
+			break;
+		case EditorComponentType::TimelineEvent:
+			DrawTimelineEventComponent(context, gameObject, component);
+			break;
+		case EditorComponentType::ThresholdState:
+			DrawThresholdStateComponent(context, gameObject, component);
+			break;
+		case EditorComponentType::UIValueBinding:
+			DrawUiValueBindingComponent(context, gameObject, component);
+			break;
 		case EditorComponentType::FreeTransform:
 			DrawFreeTransformComponent(component);
 			break;
@@ -3686,6 +4237,9 @@ namespace {
 		case EditorComponentType::Terrain:
 			DrawTerrainComponent(component);
 			break;
+		case EditorComponentType::Foliage:
+			DrawFoliageComponent(component);
+			break;
 		case EditorComponentType::Tilemap:
 			DrawTilemapComponent(component);
 			break;
@@ -3718,6 +4272,9 @@ namespace {
 			break;
 		case EditorComponentType::Button:
 			DrawButtonComponent(component);
+			break;
+		case EditorComponentType::SceneButton:
+			DrawSceneButtonComponent(context, component);
 			break;
 		case EditorComponentType::Toggle:
 			DrawToggleComponent(component);

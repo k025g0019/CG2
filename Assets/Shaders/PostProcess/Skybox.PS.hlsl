@@ -1,5 +1,7 @@
 ﻿#include "ToneMappingCommon.hlsli"
 
+#include "../Common/AnalyticAtmosphere.hlsli"
+
 struct SkyboxCB
 {
     row_major float4x4 inverseViewProjection;
@@ -64,13 +66,14 @@ float3 ReconstructViewDirection(float2 uv)
 float4 main(PixelShaderInput input) : SV_TARGET0
 {
     const float3 viewDirection = ReconstructViewDirection(input.texcoord);
-    const float horizonRate = pow(
-        saturate(viewDirection.y * 0.5f + 0.5f),
-        max(gSkybox.horizonSharpness, 0.0001f));
-    const float3 gradientColor = lerp(
-        max(gSkybox.bottomColor, 0.0f),
-        max(gSkybox.topColor, 0.0f),
-        horizonRate) * max(gSkybox.intensity, 0.0f);
+    const float3 safeSunDirection = normalize(-gSkybox.sunDirection);
+    const float3 atmosphereColor = EvaluateAnalyticAtmosphere(
+        viewDirection,
+        safeSunDirection,
+        gSkybox.topColor,
+        gSkybox.bottomColor,
+        gSkybox.intensity,
+        gSkybox.sunIntensity);
 
     const float3 rotatedViewDirection = RotateDirectionAroundYAxis(
         viewDirection,
@@ -81,19 +84,15 @@ float4 main(PixelShaderInput input) : SV_TARGET0
         environmentUv,
         max(gSkybox.environmentTextureMipBias, 0.0f)).rgb *
         max(gSkybox.environmentTextureIntensity, 0.0f);
-    float3 skyColor = lerp(
-        gradientColor,
-        environmentColor,
-        saturate(gSkybox.environmentTextureEnabled));
-
-    const float3 safeSunDirection = normalize(-gSkybox.sunDirection);
-    const float sunRate = pow(saturate(dot(viewDirection, safeSunDirection)), 256.0f);
-    const float sunGlow = pow(saturate(dot(viewDirection, safeSunDirection)), 12.0f);
-    const float3 sunColor = float3(1.0f, 0.86f, 0.62f) *
-        (sunRate * 12.0f + sunGlow * 0.35f) *
-        max(gSkybox.sunIntensity, 0.0f);
-
-    skyColor += sunColor;
+    const float environmentMask = saturate(gSkybox.environmentTextureEnabled);
+    const float3 environmentSolarScattering = EvaluateAtmosphereSolarScattering(
+        viewDirection,
+        safeSunDirection,
+        gSkybox.sunIntensity * 0.18f);
+    const float3 skyColor = lerp(
+        atmosphereColor,
+        environmentColor + environmentSolarScattering,
+        environmentMask);
 
     return float4(max(skyColor, 0.0f), 1.0f);
 }

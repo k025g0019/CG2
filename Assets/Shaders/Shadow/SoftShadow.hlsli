@@ -23,15 +23,20 @@ float SampleSoftShadow9Tap(
 	float2 uv,
 	float compareDepth,
 	float2 texelSize,
-	float radius)
+	float radius,
+	float2 minimumUv,
+	float2 maximumUv)
 {
 	float shadowValue = 0.0f;
 
 	[unroll]
 	for (int kernelIndex = 0; kernelIndex < 9; ++kernelIndex) {
-		const float2 offsetUv = uv + kSoftShadowKernel[kernelIndex] * texelSize * radius;
+		const float2 offsetUv = clamp(
+			uv + kSoftShadowKernel[kernelIndex] * texelSize * radius,
+			minimumUv,
+			maximumUv);
 		const float sampledDepth = shadowTexture.SampleLevel(shadowSampler, offsetUv, 0.0f).r;
-		shadowValue += (compareDepth <= sampledDepth) ? 1.0f : 0.22f;
+		shadowValue += compareDepth <= sampledDepth ? 1.0f : 0.0f;
 	}
 
 	return shadowValue / 9.0f;

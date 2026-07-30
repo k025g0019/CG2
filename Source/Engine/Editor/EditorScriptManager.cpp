@@ -4,6 +4,7 @@
 
 #include "EditorAssetUtility.h"
 #include "EditorComponentUtility.h"
+#include "EditorSharedState.h"
 #include "StringUtility.h"
 
 #include <Windows.h>
@@ -11,11 +12,56 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <sstream>
 
 namespace {
 	EditorScriptManager* gActiveScriptManager = nullptr;  // DLL API の関数ポインタから現在の ScriptManager を逆参照する。
 	constexpr int32_t kHotReloadCheckFrameInterval = 30;  // Play 中の DLL 更新確認を 30 フレーム間隔へ抑える。
+	constexpr int32_t kFieldSynchronizationFrameInterval = 5;  // Inspector 公開変数の DLL 往復は最大 6 フレームに 1 回へ抑える。
+
+	void CombineHash(size_t& currentHash, size_t valueHash) {
+		currentHash ^= valueHash + 0x9E3779B9U + (currentHash << 6U) + (currentHash >> 2U);
+	}
+
+	size_t HashScriptProperties(const std::vector<EditorScriptProperty>& scriptProperties) {
+		size_t propertyHash = scriptProperties.size();
+
+		for (const EditorScriptProperty& scriptProperty : scriptProperties) {
+			CombineHash(propertyHash, std::hash<std::string>{}(scriptProperty.name));
+			CombineHash(propertyHash, std::hash<int32_t>{}(scriptProperty.type));
+
+			switch (scriptProperty.type) {
+			case EditorScriptFieldTypeBool:
+				CombineHash(propertyHash, std::hash<bool>{}(scriptProperty.boolValue));
+				break;
+			case EditorScriptFieldTypeInt32:
+			case EditorScriptFieldTypeGameObject:
+				CombineHash(propertyHash, std::hash<int32_t>{}(scriptProperty.intValue));
+				break;
+			case EditorScriptFieldTypeFloat:
+				CombineHash(propertyHash, std::hash<float>{}(scriptProperty.floatValue));
+				break;
+			case EditorScriptFieldTypeVector2:
+				CombineHash(propertyHash, std::hash<float>{}(scriptProperty.vector2Value.x));
+				CombineHash(propertyHash, std::hash<float>{}(scriptProperty.vector2Value.y));
+				break;
+			case EditorScriptFieldTypeVector3:
+				CombineHash(propertyHash, std::hash<float>{}(scriptProperty.vector3Value.x));
+				CombineHash(propertyHash, std::hash<float>{}(scriptProperty.vector3Value.y));
+				CombineHash(propertyHash, std::hash<float>{}(scriptProperty.vector3Value.z));
+				break;
+			case EditorScriptFieldTypeString:
+			case EditorScriptFieldTypeSceneAsset:
+				CombineHash(propertyHash, std::hash<std::string>{}(scriptProperty.stringValue));
+				break;
+			default:
+				break;
+			}
+		}
+
+		return propertyHash;
+	}
 
 	bool HasRunnableScriptComponent(const EditorGameObject& gameObject) {
 		const EditorComponent* scriptComponent =
@@ -25,7 +71,7 @@ namespace {
 
 		const bool hasScript = scriptComponent != nullptr && scriptComponent->isActive;
 		const bool hasMonoBehaviour = monoBehaviourComponent != nullptr && monoBehaviourComponent->isActive;
-		return gameObject.isActive && (hasScript || hasMonoBehaviour);
+		return hasScript || hasMonoBehaviour;
 	}
 
 	EditorScriptVector3 ToScriptVector3(const Vector3& value) {
@@ -52,6 +98,30 @@ namespace {
 		const size_t copySize = (std::min)(sourceText.size(), destinationSize - 1u);
 		std::memcpy(destination, sourceText.data(), copySize);
 		destination[copySize] = '\0';
+	}
+
+	void ReadRegisteredActionNames(
+		EditorScriptGetActionCountFn getActionCountFunction,
+		EditorScriptGetActionNameFn getActionNameFunction,
+		std::vector<std::string>& actionNames) {
+		if (getActionCountFunction == nullptr || getActionNameFunction == nullptr) {
+			return;
+		}
+
+		const int32_t actionCount = (std::clamp)(getActionCountFunction(), 0, 512);
+
+		for (int32_t actionIndex = 0; actionIndex < actionCount; actionIndex++) {
+			char actionName[128]{};
+
+			if (!getActionNameFunction(actionIndex, actionName, static_cast<int32_t>(sizeof(actionName))) ||
+			actionName[0] == '\0') {
+				continue;
+			}
+
+			if (std::find(actionNames.begin(), actionNames.end(), actionName) == actionNames.end()) {
+				actionNames.emplace_back(actionName);
+			}
+		}
 	}
 
 	std::string GetRenderableModelAssetPath(const EditorGameObject& gameObject) {
@@ -116,6 +186,7 @@ namespace {
 			scriptProperty.boolValue = fieldValue.boolValue;
 			break;
 		case EditorScriptFieldTypeInt32:
+		case EditorScriptFieldTypeGameObject:
 			scriptProperty.intValue = fieldValue.intValue;
 			break;
 		case EditorScriptFieldTypeFloat:
@@ -130,6 +201,7 @@ namespace {
 			scriptProperty.vector3Value = ToEditorVector3(fieldValue.vector3Value);
 			break;
 		case EditorScriptFieldTypeString:
+		case EditorScriptFieldTypeSceneAsset:
 			scriptProperty.stringValue = fieldValue.stringValue;
 			break;
 		default:
@@ -166,18 +238,26 @@ void EditorScriptManager::Initialize(
 	lastFixedDeltaTime_ = 0.0f;
 	physicsEvents_.clear();
 	scriptBindings_.clear();
+	scriptBindingIndicesByGameObjectId_.clear();
 	scriptModules_.clear();
 	moduleStatusMessages_.clear();
 	scriptMetadataCache_.clear();
 	inputActionActiveStates_.clear();
 	missingActionWarnings_.clear();
 	queuedUiEvents_.clear();
+	requestedScenePath_.clear();
 	currentKeyState_.fill(0);
 	previousKeyState_.fill(0);
 	hotReloadCheckFrameTimer_ = 0;
+	fieldSynchronizationFrameTimer_ = 0;
 	reloadGeneration_ = 0;
 	BuildRuntimeApi();
 	gActiveScriptManager = this;
+}
+
+void EditorScriptManager::SetRailMovementManager(
+	EditorRailMovementManager* railMovementManager) {
+	railMovementManager_ = railMovementManager;
 }
 
 void EditorScriptManager::Start() {
@@ -216,25 +296,68 @@ void EditorScriptManager::Update(const uint8_t* keyState, float deltaTime) {
 
 	lastDeltaTime_ = deltaTime;  // DLL 側の Update にそのまま渡す秒数。
 
-	// Inspector で編集した公開変数は、Input Action と Update のどちらよりも先に反映する。
-	for (const ScriptBinding& scriptBinding : scriptBindings_) {
+	// 非ActiveでPlayを開始したWave要素もBindingは保持し、初めてActiveになったフレームでStartする。
+	for (ScriptBinding& scriptBinding : scriptBindings_) {
 		ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
-		if (scriptModule != nullptr && scriptModule->isLoaded) {
-			ApplyComponentFieldsToInstance(scriptBinding, *scriptModule);
+
+		if (scriptModule != nullptr) {
+			StartBindingIfNeeded(scriptBinding, *scriptModule);
+		}
+	}
+
+	const bool shouldSynchronizeFields = fieldSynchronizationFrameTimer_ <= 0;
+
+	if (shouldSynchronizeFields) {
+		fieldSynchronizationFrameTimer_ = kFieldSynchronizationFrameInterval;
+	}
+	else {
+		fieldSynchronizationFrameTimer_--;
+	}
+
+	// Inspector 値が実際に変わった Script だけを DLL へ送り、変更のない全フィールド往復を省く。
+	if (shouldSynchronizeFields) {
+		for (ScriptBinding& scriptBinding : scriptBindings_) {
+			ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
+			EditorComponent* scriptComponent = FindScriptComponent(scriptBinding);
+
+			if (scriptModule == nullptr || !scriptModule->isLoaded || scriptComponent == nullptr ||
+				!scriptBinding.hasStarted || !IsScriptBindingActive(scriptBinding)) {
+				continue;
+			}
+
+			const size_t componentFieldHash = HashScriptProperties(scriptComponent->scriptProperties);
+			if (!scriptBinding.hasSynchronizedFieldHash ||
+				componentFieldHash != scriptBinding.synchronizedFieldHash) {
+				ApplyComponentFieldsToInstance(scriptBinding, *scriptModule);
+				scriptBinding.synchronizedFieldHash = componentFieldHash;
+				scriptBinding.hasSynchronizedFieldHash = true;
+			}
 		}
 	}
 
 	DispatchQueuedUiEvents();
 	DispatchInputActions();
 
-	for (const ScriptBinding& scriptBinding : scriptBindings_) {
+	for (ScriptBinding& scriptBinding : scriptBindings_) {
 		ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
-		if (scriptModule == nullptr || !scriptModule->isLoaded || scriptModule->updateFunction == nullptr) {
+		if (scriptModule == nullptr || !scriptModule->isLoaded ||
+			!scriptBinding.hasStarted || !IsScriptBindingActive(scriptBinding)) {
 			continue;
 		}
 
-		scriptModule->updateFunction(scriptBinding.gameObjectId, deltaTime);
-		ReadInstanceFieldsToComponent(scriptBinding, *scriptModule);
+		if (scriptModule->updateFunction != nullptr) {
+			scriptModule->updateFunction(scriptBinding.gameObjectId, deltaTime);
+		}
+
+		if (shouldSynchronizeFields) {
+			ReadInstanceFieldsToComponent(scriptBinding, *scriptModule);
+			EditorComponent* scriptComponent = FindScriptComponent(scriptBinding);
+
+			if (scriptComponent != nullptr) {
+				scriptBinding.synchronizedFieldHash = HashScriptProperties(scriptComponent->scriptProperties);
+				scriptBinding.hasSynchronizedFieldHash = true;
+			}
+		}
 	}
 }
 
@@ -245,28 +368,48 @@ void EditorScriptManager::FixedUpdate(float fixedDeltaTime) {
 
 	lastFixedDeltaTime_ = fixedDeltaTime;  // DLL 側の FixedUpdate にそのまま渡す秒数。
 
-	for (const ScriptBinding& scriptBinding : scriptBindings_) {
-		ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
-		if (scriptModule == nullptr || !scriptModule->isLoaded) {
+	// 接触した GameObject に付いた Script だけへ通知し、Script 数 x 接触数の全走査を避ける。
+	for (const EditorJoltPhysicsManager::PhysicsEvent& physicsEvent : physicsEvents_) {
+		const int32_t gameObjectId = physicsEvent.collision.selfGameObjectId;
+		const auto bindingIndicesIterator = scriptBindingIndicesByGameObjectId_.find(gameObjectId);
+
+		if (bindingIndicesIterator == scriptBindingIndicesByGameObjectId_.end()) {
 			continue;
 		}
 
-		if (scriptModule->physicsEventFunction != nullptr) {
-			for (const EditorJoltPhysicsManager::PhysicsEvent& physicsEvent : physicsEvents_) {
-				if (physicsEvent.collision.selfGameObjectId != scriptBinding.gameObjectId) {
-					continue;
-				}
+		const EditorScriptPhysicsEvent scriptPhysicsEvent = ConvertPhysicsEvent(physicsEvent);
 
-				const EditorScriptPhysicsEvent scriptPhysicsEvent = ConvertPhysicsEvent(physicsEvent);
-				scriptModule->physicsEventFunction(scriptBinding.gameObjectId, &scriptPhysicsEvent);
+		for (const size_t bindingIndex : bindingIndicesIterator->second) {
+			if (bindingIndex >= scriptBindings_.size()) {
+				continue;
 			}
+
+			const ScriptBinding& scriptBinding = scriptBindings_[bindingIndex];
+
+			if (!scriptBinding.hasStarted || !IsScriptBindingActive(scriptBinding)) {
+				continue;
+			}
+
+			ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
+
+			if (scriptModule != nullptr && scriptModule->isLoaded &&
+				scriptModule->physicsEventFunction != nullptr) {
+				scriptModule->physicsEventFunction(gameObjectId, &scriptPhysicsEvent);
+			}
+		}
+	}
+
+	for (const ScriptBinding& scriptBinding : scriptBindings_) {
+		ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
+
+		if (scriptModule == nullptr || !scriptModule->isLoaded ||
+			!scriptBinding.hasStarted || !IsScriptBindingActive(scriptBinding)) {
+			continue;
 		}
 
 		if (scriptModule->fixedUpdateFunction != nullptr) {
 			scriptModule->fixedUpdateFunction(scriptBinding.gameObjectId, fixedDeltaTime);
 		}
-
-		ReadInstanceFieldsToComponent(scriptBinding, *scriptModule);
 	}
 }
 
@@ -280,9 +423,21 @@ void EditorScriptManager::DispatchAnimationEvent(
 	float eventTime,
 	const std::string& effectAssetPath,
 	const Vector3& localOffset) {
+	const auto bindingIndicesIterator = scriptBindingIndicesByGameObjectId_.find(gameObjectId);
+
+	if (bindingIndicesIterator == scriptBindingIndicesByGameObjectId_.end()) {
+		return;
+	}
+
 	// 同じ GameObject に複数の Script Component がある場合は、各 DLL へ同じ Event を通知する。
-	for (const ScriptBinding& scriptBinding : scriptBindings_) {
-		if (scriptBinding.gameObjectId != gameObjectId) {
+	for (const size_t bindingIndex : bindingIndicesIterator->second) {
+		if (bindingIndex >= scriptBindings_.size()) {
+			continue;
+		}
+
+		const ScriptBinding& scriptBinding = scriptBindings_[bindingIndex];
+
+		if (!scriptBinding.hasStarted || !IsScriptBindingActive(scriptBinding)) {
 			continue;
 		}
 
@@ -316,12 +471,15 @@ void EditorScriptManager::Stop() {
 	physicsEvents_.clear();
 	UnloadAllModules();
 	scriptBindings_.clear();
+	scriptBindingIndicesByGameObjectId_.clear();
 	inputActionActiveStates_.clear();
 	missingActionWarnings_.clear();
 	queuedUiEvents_.clear();
+	requestedScenePath_.clear();
 	currentKeyState_.fill(0);
 	previousKeyState_.fill(0);
 	hotReloadCheckFrameTimer_ = 0;
+	fieldSynchronizationFrameTimer_ = 0;
 }
 
 bool EditorScriptManager::IsStarted() const {
@@ -330,14 +488,16 @@ bool EditorScriptManager::IsStarted() const {
 
 EditorScriptManager::ScriptDebugInfo EditorScriptManager::GetDebugInfo(int32_t gameObjectId) const {
 	ScriptDebugInfo debugInfo{};
-	for (const ScriptBinding& scriptBinding : scriptBindings_) {
-		if (scriptBinding.gameObjectId != gameObjectId) {
-			continue;
-		}
+	const auto bindingIndicesIterator = scriptBindingIndicesByGameObjectId_.find(gameObjectId);
 
-		debugInfo.hasBinding = true;
-		debugInfo.sourceDllPath = scriptBinding.dllPath;
-		break;
+	if (bindingIndicesIterator != scriptBindingIndicesByGameObjectId_.end() &&
+		!bindingIndicesIterator->second.empty()) {
+		const size_t bindingIndex = bindingIndicesIterator->second.front();
+
+		if (bindingIndex < scriptBindings_.size()) {
+			debugInfo.hasBinding = true;
+			debugInfo.sourceDllPath = scriptBindings_[bindingIndex].dllPath;
+		}
 	}
 
 	if (debugInfo.sourceDllPath.empty() && editorScene_ != nullptr) {
@@ -443,7 +603,56 @@ bool EditorScriptManager::RefreshExposedFields(EditorComponent& scriptComponent)
 	return true;
 }
 
-void EditorScriptManager::QueueUiEvent(
+std::vector<std::string> EditorScriptManager::GetRegisteredActionNames(int32_t gameObjectId) {
+	std::vector<std::string> actionNames;
+
+	if (editorScene_ == nullptr) {
+		return actionNames;
+	}
+
+	EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+
+	if (gameObject == nullptr) {
+		return actionNames;
+	}
+
+	for (EditorComponent& component : gameObject->components) {
+		const bool isScriptComponent =
+			component.type == EditorComponentType::Script ||
+			component.type == EditorComponentType::MonoBehaviour;
+
+		if (!isScriptComponent || component.assetPath.empty()) {
+			continue;
+		}
+
+		ScriptModule* loadedModule = FindModule(component.assetPath);
+
+		if (loadedModule != nullptr && loadedModule->isLoaded) {
+			ReadRegisteredActionNames(
+				loadedModule->getActionCountFunction,
+				loadedModule->getActionNameFunction,
+				actionNames);
+			continue;
+		}
+
+		RefreshExposedFields(component);
+		const auto metadataIterator = scriptMetadataCache_.find(component.assetPath);
+
+		if (metadataIterator == scriptMetadataCache_.end()) {
+			continue;
+		}
+
+		for (const std::string& actionName : metadataIterator->second.actionNames) {
+			if (std::find(actionNames.begin(), actionNames.end(), actionName) == actionNames.end()) {
+				actionNames.push_back(actionName);
+			}
+		}
+	}
+
+	return actionNames;
+}
+
+void EditorScriptManager::QueueActionEvent(
 	int32_t gameObjectId,
 	const std::string& functionName,
 	int32_t valueType,
@@ -459,7 +668,36 @@ void EditorScriptManager::QueueUiEvent(
 	uiEvent.valueType = valueType;
 	uiEvent.buttonValue = buttonValue;
 	uiEvent.vector2Value = vector2Value;
+	uiEvent.isUiEvent = false;
 	queuedUiEvents_.push_back(uiEvent);
+}
+
+void EditorScriptManager::QueueUiEvent(
+	int32_t gameObjectId,
+	const std::string& functionName,
+	int32_t valueType,
+	float buttonValue,
+	EditorScriptVector2 vector2Value) {
+	const size_t queuedEventCount = queuedUiEvents_.size();
+	QueueActionEvent(gameObjectId, functionName, valueType, buttonValue, vector2Value);
+
+	if (queuedUiEvents_.size() > queuedEventCount) {
+		queuedUiEvents_.back().isUiEvent = true;
+	}
+}
+
+bool EditorScriptManager::RequestSceneLoad(const std::string& scenePath) {
+	return RequestSceneLoadInternal(scenePath);
+}
+
+bool EditorScriptManager::ConsumeSceneLoadRequest(std::string& scenePath) {
+	if (requestedScenePath_.empty()) {
+		return false;
+	}
+
+	scenePath.swap(requestedScenePath_);
+	requestedScenePath_.clear();
+	return true;
 }
 
 void EditorScriptManager::ScriptLogBridge(const char* message) {
@@ -850,8 +1088,124 @@ bool EditorScriptManager::ScriptIsGameObjectActiveBridge(int32_t gameObjectId) {
 		gActiveScriptManager->IsGameObjectActiveInternal(gameObjectId);
 }
 
+bool EditorScriptManager::ScriptLoadSceneBridge(const char* scenePath) {
+	return gActiveScriptManager != nullptr && scenePath != nullptr &&
+		gActiveScriptManager->RequestSceneLoadInternal(scenePath);
+}
+
+bool EditorScriptManager::ScriptLoadSceneByBuildIndexBridge(int32_t sceneIndex) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->RequestSceneLoadByBuildIndexInternal(sceneIndex);
+}
+
+bool EditorScriptManager::ScriptSetRailPausedBridge(int32_t gameObjectId, bool isPaused) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->railMovementManager_ != nullptr &&
+		gActiveScriptManager->railMovementManager_->SetPaused(gameObjectId, isPaused);
+}
+
+bool EditorScriptManager::ScriptIsRailPausedBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->railMovementManager_ != nullptr &&
+		gActiveScriptManager->railMovementManager_->IsPaused(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptSetRailSpeedBridge(int32_t gameObjectId, float speed) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->railMovementManager_ != nullptr &&
+		gActiveScriptManager->railMovementManager_->SetSpeed(gameObjectId, speed);
+}
+
+bool EditorScriptManager::ScriptSetRailReverseBridge(int32_t gameObjectId, bool isReversed) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->railMovementManager_ != nullptr &&
+		gActiveScriptManager->railMovementManager_->SetReverse(gameObjectId, isReversed);
+}
+
+bool EditorScriptManager::ScriptSetRailNormalizedProgressBridge(
+	int32_t gameObjectId,
+	float normalizedProgress) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->railMovementManager_ != nullptr &&
+		gActiveScriptManager->railMovementManager_->SetNormalizedProgress(
+			gameObjectId,
+			normalizedProgress);
+}
+
+bool EditorScriptManager::ScriptSetRailPathBridge(
+	int32_t gameObjectId,
+	int32_t railPathGameObjectId,
+	bool preservesProgress) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->railMovementManager_ != nullptr &&
+		gActiveScriptManager->railMovementManager_->SetRailPath(
+			gameObjectId,
+			railPathGameObjectId,
+			preservesProgress);
+}
+
+bool EditorScriptManager::ScriptGetRailNormalizedProgressBridge(
+	int32_t gameObjectId,
+	float* normalizedProgress) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->railMovementManager_ != nullptr &&
+		normalizedProgress != nullptr &&
+		gActiveScriptManager->railMovementManager_->GetNormalizedProgress(
+			gameObjectId,
+			*normalizedProgress);
+}
+
+bool EditorScriptManager::ScriptGetRailLengthBridge(int32_t gameObjectId, float* railLength) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->railMovementManager_ != nullptr &&
+		railLength != nullptr &&
+		gActiveScriptManager->railMovementManager_->GetRailLength(gameObjectId, *railLength);
+}
+
+bool EditorScriptManager::ScriptGetRailPositionBridge(
+	int32_t gameObjectId,
+	float normalizedProgress,
+	EditorScriptVector3* position) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->railMovementManager_ == nullptr ||
+		position == nullptr) {
+		return false;
+	}
+
+	Vector3 editorPosition{};
+
+	if (!gActiveScriptManager->railMovementManager_->GetRailPosition(
+			gameObjectId,
+			normalizedProgress,
+			editorPosition)) {
+		return false;
+	}
+
+	*position = ToScriptVector3(editorPosition);
+	return true;
+}
+
+bool EditorScriptManager::ScriptGetRailDirectionBridge(
+	int32_t gameObjectId,
+	float normalizedProgress,
+	EditorScriptVector3* direction) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->railMovementManager_ == nullptr ||
+		direction == nullptr) {
+		return false;
+	}
+
+	Vector3 editorDirection{};
+
+	if (!gActiveScriptManager->railMovementManager_->GetRailDirection(
+			gameObjectId,
+			normalizedProgress,
+			editorDirection)) {
+		return false;
+	}
+
+	*direction = ToScriptVector3(editorDirection);
+	return true;
+}
+
+bool EditorScriptManager::ScriptConsumeRailEndReachedBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->railMovementManager_ != nullptr &&
+		gActiveScriptManager->railMovementManager_->ConsumeEndReached(gameObjectId);
+}
+
 void EditorScriptManager::BuildScriptBindings() {
 	scriptBindings_.clear();
+	scriptBindingIndicesByGameObjectId_.clear();
 
 	if (editorScene_ == nullptr) {
 		return;
@@ -884,6 +1238,7 @@ void EditorScriptManager::BuildScriptBindings() {
 			scriptBinding.componentType = component.type;
 			scriptBinding.dllPath = component.assetPath;
 			scriptBindings_.push_back(scriptBinding);
+			scriptBindingIndicesByGameObjectId_[gameObject.id].push_back(scriptBindings_.size() - 1U);
 		}
 	}
 }
@@ -937,10 +1292,38 @@ void EditorScriptManager::BuildRuntimeApi() {
 	runtimeApi_.FindGameObjectByName = ScriptFindGameObjectByNameBridge;
 	runtimeApi_.SetGameObjectActive = ScriptSetGameObjectActiveBridge;
 	runtimeApi_.IsGameObjectActive = ScriptIsGameObjectActiveBridge;
+	runtimeApi_.LoadScene = ScriptLoadSceneBridge;
+	runtimeApi_.LoadSceneByBuildIndex = ScriptLoadSceneByBuildIndexBridge;
+	runtimeApi_.SetRailPaused = ScriptSetRailPausedBridge;
+	runtimeApi_.IsRailPaused = ScriptIsRailPausedBridge;
+	runtimeApi_.SetRailSpeed = ScriptSetRailSpeedBridge;
+	runtimeApi_.SetRailReverse = ScriptSetRailReverseBridge;
+	runtimeApi_.SetRailNormalizedProgress = ScriptSetRailNormalizedProgressBridge;
+	runtimeApi_.SetRailPath = ScriptSetRailPathBridge;
+	runtimeApi_.GetRailNormalizedProgress = ScriptGetRailNormalizedProgressBridge;
+	runtimeApi_.GetRailLength = ScriptGetRailLengthBridge;
+	runtimeApi_.GetRailPosition = ScriptGetRailPositionBridge;
+	runtimeApi_.GetRailDirection = ScriptGetRailDirectionBridge;
+	runtimeApi_.ConsumeRailEndReached = ScriptConsumeRailEndReachedBridge;
 }
 
 void EditorScriptManager::StartBindingsForModule(ScriptModule& scriptModule) {
 	if (!scriptModule.isLoaded) {
+		return;
+	}
+
+	for (ScriptBinding& scriptBinding : scriptBindings_) {
+		if (scriptBinding.dllPath == scriptModule.sourceDllPath) {
+			StartBindingIfNeeded(scriptBinding, scriptModule);
+		}
+	}
+}
+
+void EditorScriptManager::StartBindingIfNeeded(
+	ScriptBinding& scriptBinding,
+	ScriptModule& scriptModule) {
+	if (!scriptModule.isLoaded || scriptBinding.hasStarted ||
+		!IsScriptBindingActive(scriptBinding)) {
 		return;
 	}
 
@@ -957,32 +1340,36 @@ void EditorScriptManager::StartBindingsForModule(ScriptModule& scriptModule) {
 		}
 	}
 
-	for (const ScriptBinding& scriptBinding : scriptBindings_) {
-		if (scriptBinding.dllPath != scriptModule.sourceDllPath) {
-			continue;
-		}
-
-		EditorComponent* scriptComponent = FindScriptComponent(scriptBinding);
-		if (scriptComponent != nullptr) {
-			SynchronizeComponentProperties(*scriptComponent, fieldDescriptors);
-			ApplyComponentFieldsToInstance(scriptBinding, scriptModule);
-		}
-
-		if (scriptModule.startFunction != nullptr) {
-			scriptModule.startFunction(scriptBinding.gameObjectId);
-		}
+	EditorComponent* scriptComponent = FindScriptComponent(scriptBinding);
+	if (scriptComponent != nullptr) {
+		SynchronizeComponentProperties(*scriptComponent, fieldDescriptors);
+		ApplyComponentFieldsToInstance(scriptBinding, scriptModule);
+		scriptBinding.synchronizedFieldHash = HashScriptProperties(scriptComponent->scriptProperties);
+		scriptBinding.hasSynchronizedFieldHash = true;
 	}
+
+	if (scriptModule.startFunction != nullptr) {
+		scriptModule.startFunction(scriptBinding.gameObjectId);
+	}
+
+	scriptBinding.hasStarted = true;
 }
 
 void EditorScriptManager::StopBindingsForModule(ScriptModule& scriptModule) {
-	if (!scriptModule.isLoaded || scriptModule.stopFunction == nullptr) {
+	if (!scriptModule.isLoaded) {
 		return;
 	}
 
-	for (const ScriptBinding& scriptBinding : scriptBindings_) {
-		if (scriptBinding.dllPath == scriptModule.sourceDllPath) {
+	for (ScriptBinding& scriptBinding : scriptBindings_) {
+		if (scriptBinding.dllPath != scriptModule.sourceDllPath || !scriptBinding.hasStarted) {
+			continue;
+		}
+
+		if (scriptModule.stopFunction != nullptr) {
 			scriptModule.stopFunction(scriptBinding.gameObjectId);
 		}
+
+		scriptBinding.hasStarted = false;
 	}
 }
 
@@ -1005,43 +1392,58 @@ void EditorScriptManager::DispatchQueuedUiEvents() {
 		inputContext.valueType = uiEvent.valueType;
 		inputContext.buttonValue = uiEvent.buttonValue;
 		inputContext.vector2Value = uiEvent.vector2Value;
-		CopyStringToFixedBuffer("UI", inputContext.actionMapName, sizeof(inputContext.actionMapName));
-		CopyStringToFixedBuffer("Button", inputContext.actionName, sizeof(inputContext.actionName));
-		CopyStringToFixedBuffer("UI/Button", inputContext.bindingPath, sizeof(inputContext.bindingPath));
+		const char* actionMapName = uiEvent.isUiEvent ? "UI" : "Event";
+		const char* actionName = uiEvent.isUiEvent ? "Button" : "Trigger";
+		const char* bindingPath = uiEvent.isUiEvent ? "UI/Button" : "Event/Trigger";
+		CopyStringToFixedBuffer(actionMapName, inputContext.actionMapName, sizeof(inputContext.actionMapName));
+		CopyStringToFixedBuffer(actionName, inputContext.actionName, sizeof(inputContext.actionName));
+		CopyStringToFixedBuffer(bindingPath, inputContext.bindingPath, sizeof(inputContext.bindingPath));
 
 		bool hasScriptCandidate = false;
 		bool wasInvoked = false;
 
-		for (const ScriptBinding& scriptBinding : scriptBindings_) {
-			if (scriptBinding.gameObjectId != uiEvent.gameObjectId) {
-				continue;
-			}
+		const auto bindingIndicesIterator = scriptBindingIndicesByGameObjectId_.find(uiEvent.gameObjectId);
 
-			ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
-			if (scriptModule == nullptr || !scriptModule->isLoaded || scriptModule->invokeActionFunction == nullptr) {
-				continue;
-			}
+		if (bindingIndicesIterator != scriptBindingIndicesByGameObjectId_.end()) {
+			for (const size_t bindingIndex : bindingIndicesIterator->second) {
+				if (bindingIndex >= scriptBindings_.size()) {
+					continue;
+				}
 
-			hasScriptCandidate = true;
-			wasInvoked = scriptModule->invokeActionFunction(
-				scriptBinding.gameObjectId,
-				uiEvent.functionName.c_str(),
-				&inputContext);
+				const ScriptBinding& scriptBinding = scriptBindings_[bindingIndex];
 
-			if (wasInvoked) {
-				break;
+				if (!scriptBinding.hasStarted || !IsScriptBindingActive(scriptBinding)) {
+					continue;
+				}
+
+				ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
+				if (scriptModule == nullptr || !scriptModule->isLoaded || scriptModule->invokeActionFunction == nullptr) {
+					continue;
+				}
+
+				hasScriptCandidate = true;
+				wasInvoked = scriptModule->invokeActionFunction(
+					scriptBinding.gameObjectId,
+					uiEvent.functionName.c_str(),
+					&inputContext);
+
+				if (wasInvoked) {
+					break;
+				}
 			}
 		}
 
 		if (hasScriptCandidate && !wasInvoked) {
 			const std::string warningKey =
-				"UI|" + std::to_string(uiEvent.gameObjectId) + "|" + uiEvent.functionName;
+				std::string(uiEvent.isUiEvent ? "UI|" : "Event|") +
+				std::to_string(uiEvent.gameObjectId) + "|" + uiEvent.functionName;
 
 			if (missingActionWarnings_.insert(warningKey).second) {
 				const EditorGameObject* gameObject = editorScene_->FindGameObject(uiEvent.gameObjectId);
 				const std::string gameObjectName = gameObject != nullptr ? gameObject->name : "Unknown";
 				PushConsoleMessage(
-					"Button関数が未登録です: " + uiEvent.functionName + " (GameObject=" + gameObjectName + ")");
+					std::string(uiEvent.isUiEvent ? "Button関数" : "Event Action") +
+					"が未登録です: " + uiEvent.functionName + " (GameObject=" + gameObjectName + ")");
 			}
 		}
 	}
@@ -1062,6 +1464,8 @@ void EditorScriptManager::DispatchInputActions() {
 		if (playerInput == nullptr || !playerInput->isActive) {
 			continue;
 		}
+
+		const auto bindingIndicesIterator = scriptBindingIndicesByGameObjectId_.find(gameObject.id);
 
 		for (const EditorInputEventBinding& eventBinding : playerInput->inputEventBindings) {
 			if (eventBinding.actionMapName.empty() ||
@@ -1085,24 +1489,32 @@ void EditorScriptManager::DispatchInputActions() {
 				bool hasScriptCandidate = false;
 				bool wasInvoked = false;
 
-				for (const ScriptBinding& scriptBinding : scriptBindings_) {
-					if (scriptBinding.gameObjectId != gameObject.id) {
-						continue;
-					}
+				if (bindingIndicesIterator != scriptBindingIndicesByGameObjectId_.end()) {
+					for (const size_t bindingIndex : bindingIndicesIterator->second) {
+						if (bindingIndex >= scriptBindings_.size()) {
+							continue;
+						}
 
-					ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
-					if (scriptModule == nullptr || !scriptModule->isLoaded || scriptModule->invokeActionFunction == nullptr) {
-						continue;
-					}
+						const ScriptBinding& scriptBinding = scriptBindings_[bindingIndex];
 
-					hasScriptCandidate = true;
-					wasInvoked = scriptModule->invokeActionFunction(
-						scriptBinding.gameObjectId,
-						eventBinding.functionName.c_str(),
-						&inputContext);
+						if (!scriptBinding.hasStarted || !IsScriptBindingActive(scriptBinding)) {
+							continue;
+						}
 
-					if (wasInvoked) {
-						break;  // 1 つの Event 欄は、登録関数を持つ 1 つの C++ Component だけを呼ぶ。
+						ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
+						if (scriptModule == nullptr || !scriptModule->isLoaded || scriptModule->invokeActionFunction == nullptr) {
+							continue;
+						}
+
+						hasScriptCandidate = true;
+						wasInvoked = scriptModule->invokeActionFunction(
+							scriptBinding.gameObjectId,
+							eventBinding.functionName.c_str(),
+							&inputContext);
+
+						if (wasInvoked) {
+							break;  // 1 つの Event 欄は、登録関数を持つ 1 つの C++ Component だけを呼ぶ。
+						}
 					}
 				}
 
@@ -1265,6 +1677,27 @@ EditorComponent* EditorScriptManager::FindScriptComponent(const ScriptBinding& s
 	return nullptr;
 }
 
+bool EditorScriptManager::IsScriptBindingActive(const ScriptBinding& scriptBinding) const {
+	if (editorScene_ == nullptr) {
+		return false;
+	}
+
+	const EditorGameObject* gameObject = editorScene_->FindGameObject(scriptBinding.gameObjectId);
+
+	if (gameObject == nullptr || !gameObject->isActive) {
+		return false;
+	}
+
+	for (const EditorComponent& component : gameObject->components) {
+		if (component.type == scriptBinding.componentType &&
+			component.assetPath == scriptBinding.dllPath) {
+			return component.isActive;
+		}
+	}
+
+	return false;
+}
+
 bool EditorScriptManager::ReadMetadataFromDll(const std::string& dllPath, ScriptMetadata& scriptMetadata) {
 	const std::filesystem::path sourcePath = std::filesystem::absolute(dllPath);
 	std::error_code fileError;
@@ -1306,6 +1739,10 @@ bool EditorScriptManager::ReadMetadataFromDll(const std::string& dllPath, Script
 		reinterpret_cast<EditorScriptGetFieldCountFn>(GetProcAddress(moduleHandle, "EditorScript_GetFieldCount"));
 	const EditorScriptGetFieldDescriptorFn getFieldDescriptorFunction =
 		reinterpret_cast<EditorScriptGetFieldDescriptorFn>(GetProcAddress(moduleHandle, "EditorScript_GetFieldDescriptor"));
+	const EditorScriptGetActionCountFn getActionCountFunction =
+		reinterpret_cast<EditorScriptGetActionCountFn>(GetProcAddress(moduleHandle, "EditorScript_GetActionCount"));
+	const EditorScriptGetActionNameFn getActionNameFunction =
+		reinterpret_cast<EditorScriptGetActionNameFn>(GetProcAddress(moduleHandle, "EditorScript_GetActionName"));
 #pragma warning(pop)
 
 	if (getFieldCountFunction != nullptr && getFieldDescriptorFunction != nullptr) {
@@ -1319,6 +1756,11 @@ bool EditorScriptManager::ReadMetadataFromDll(const std::string& dllPath, Script
 			}
 		}
 	}
+
+	ReadRegisteredActionNames(
+		getActionCountFunction,
+		getActionNameFunction,
+		scriptMetadata.actionNames);
 
 	FreeLibrary(moduleHandle);
 	std::filesystem::remove(copiedDllPath, fileError);
@@ -1451,6 +1893,10 @@ bool EditorScriptManager::LoadModule(const std::string& dllPath) {
 		reinterpret_cast<EditorScriptSetFieldValueFn>(GetProcAddress(moduleHandle, "EditorScript_SetFieldValue"));
 	scriptModule.invokeActionFunction =
 		reinterpret_cast<EditorScriptInvokeActionFn>(GetProcAddress(moduleHandle, "EditorScript_InvokeAction"));
+	scriptModule.getActionCountFunction =
+		reinterpret_cast<EditorScriptGetActionCountFn>(GetProcAddress(moduleHandle, "EditorScript_GetActionCount"));
+	scriptModule.getActionNameFunction =
+		reinterpret_cast<EditorScriptGetActionNameFn>(GetProcAddress(moduleHandle, "EditorScript_GetActionName"));
 #pragma warning(pop)
 
 	if (scriptModule.loadFunction == nullptr || !scriptModule.loadFunction(kEditorScriptApiVersion, &runtimeApi_)) {
@@ -1494,6 +1940,8 @@ void EditorScriptManager::UnloadModule(ScriptModule& scriptModule) {
 	scriptModule.getFieldValueFunction = nullptr;
 	scriptModule.setFieldValueFunction = nullptr;
 	scriptModule.invokeActionFunction = nullptr;
+	scriptModule.getActionCountFunction = nullptr;
+	scriptModule.getActionNameFunction = nullptr;
 	scriptModule.isLoaded = false;
 }
 
@@ -2128,4 +2576,49 @@ bool EditorScriptManager::IsGameObjectActiveInternal(int32_t gameObjectId) const
 
 	const EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
 	return gameObject != nullptr && gameObject->isActive;
+}
+
+bool EditorScriptManager::RequestSceneLoadInternal(const std::string& scenePath) {
+	if (scenePath.empty()) {
+		PushConsoleMessage("Scene: 遷移先が空です");
+		return false;
+	}
+
+	const std::string normalizedScenePath =
+		std::filesystem::path(scenePath).lexically_normal().generic_string();
+
+	if (!EditorAssetUtility::HasExtension(normalizedScenePath, ".scene")) {
+		PushConsoleMessage("Scene: .scene 以外は読み込めません " + normalizedScenePath);
+		return false;
+	}
+
+	if (EditorSharedState::g_isStandaloneGame &&
+		std::find(
+			EditorSharedState::g_gameBuildScenePaths.begin(),
+			EditorSharedState::g_gameBuildScenePaths.end(),
+			normalizedScenePath) == EditorSharedState::g_gameBuildScenePaths.end()) {
+		PushConsoleMessage("Scene: Build Settings に含まれていません " + normalizedScenePath);
+		return false;
+	}
+
+	std::error_code fileError;
+	if (!std::filesystem::exists(normalizedScenePath, fileError) || fileError) {
+		PushConsoleMessage("Scene: ファイルがありません " + normalizedScenePath);
+		return false;
+	}
+
+	requestedScenePath_ = normalizedScenePath;
+	return true;
+}
+
+bool EditorScriptManager::RequestSceneLoadByBuildIndexInternal(int32_t sceneIndex) {
+	if (sceneIndex < 0 ||
+		static_cast<size_t>(sceneIndex) >=
+			EditorSharedState::g_gameBuildScenePaths.size()) {
+		PushConsoleMessage("Scene: Build Index が範囲外です");
+		return false;
+	}
+
+	return RequestSceneLoadInternal(
+		EditorSharedState::g_gameBuildScenePaths[static_cast<size_t>(sceneIndex)]);
 }

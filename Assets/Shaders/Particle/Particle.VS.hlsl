@@ -15,6 +15,7 @@ struct VSOutput
 {
     float4 position : SV_POSITION;
     float2 texcoord : TEXCOORD0;
+    float particleStyle : TEXCOORD1;
     float4 color : COLOR0;
 };
 
@@ -23,6 +24,7 @@ VSOutput main(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID)
     VSOutput output;
     output.position = float4(2.0f, 2.0f, 0.0f, 1.0f);
     output.texcoord = float2(0.0f, 0.0f);
+    output.particleStyle = 0.0f;
     output.color = float4(0.0f, 0.0f, 0.0f, 0.0f);
 
     const uint aliveCount = gAliveList[0];
@@ -57,6 +59,7 @@ VSOutput main(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID)
         1.0f);
     output.position = mul(worldPosition, gParticleCamera.viewProjection);
     output.texcoord = quadTexcoords[vertexId];
+    output.particleStyle = particle.motion0.x;
     output.color = particleColor;
     return output;
 }

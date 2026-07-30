@@ -12,18 +12,21 @@ RWTexture2D<float> gDisocclusionMask : register(u0);
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
-    if (any(dispatchThreadId.xy >= gRenderSize))
+    uint2 pixelPosition;
+
+    if (!ResolveViewportDispatchPixel(dispatchThreadId.xy, pixelPosition))
     {
         return;
     }
 
-    const uint2 pixelPosition = dispatchThreadId.xy;
     const float2 currentUv = GetScreenUv(pixelPosition);
     const float2 velocity = gDilatedVelocity.Load(int3(pixelPosition, 0));
     const float2 previousUv = currentUv - velocity;
     const float currentDepth = gSceneDepth.Load(int3(pixelPosition, 0));
 
-    if (gTemporalParameters.x < 0.5f || !IsScreenUvValid(previousUv))
+    if (!IsScreenUvValid(currentUv) ||
+        gTemporalParameters.x < 0.5f ||
+        !IsScreenUvValid(previousUv))
     {
         gDisocclusionMask[pixelPosition] = 1.0f;
         return;

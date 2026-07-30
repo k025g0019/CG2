@@ -5,11 +5,93 @@
 #include "StringUtility.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <filesystem>
 
 #pragma warning(disable : 5045)
+
+namespace {
+	void InterpolateSkinMatrices(
+		const std::vector<Matrix4x4>& firstMatrices,
+		const std::vector<Matrix4x4>& secondMatrices,
+		float interpolation,
+		std::vector<Matrix4x4>& sampledMatrices) {
+		if (firstMatrices.size() != secondMatrices.size()) {
+			sampledMatrices = firstMatrices;
+			return;
+		}
+
+		sampledMatrices.resize(firstMatrices.size());
+		const float clampedInterpolation = (std::clamp)(interpolation, 0.0f, 1.0f);
+
+		for (size_t boneIndex = 0u; boneIndex < firstMatrices.size(); boneIndex++) {
+			for (int32_t row = 0; row < 4; row++) {
+				for (int32_t column = 0; column < 4; column++) {
+					const float firstValue = firstMatrices[boneIndex].matrix[row][column];
+					const float secondValue = secondMatrices[boneIndex].matrix[row][column];
+					sampledMatrices[boneIndex].matrix[row][column] =
+						firstValue + (secondValue - firstValue) * clampedInterpolation;
+				}
+			}
+		}
+	}
+
+	bool SampleSkinPose(
+		const ModelData& modelData,
+		int32_t clipIndex,
+		float playbackTime,
+		std::vector<Matrix4x4>& sampledMatrices) {
+		if (clipIndex < 0 || clipIndex >= static_cast<int32_t>(modelData.animationClips.size())) {
+			sampledMatrices = modelData.defaultSkinMatrices;
+			return !sampledMatrices.empty();
+		}
+
+		const ModelAnimationClipData& clip =
+			modelData.animationClips[static_cast<size_t>(clipIndex)];
+		if (clip.skinPoseFrames.empty()) {
+			sampledMatrices = modelData.defaultSkinMatrices;
+			return !sampledMatrices.empty();
+		}
+
+		float sampleTime = (std::max)(playbackTime, 0.0f);
+		if (clip.durationSeconds > 0.000001f) {
+			sampleTime = std::fmod(sampleTime, clip.durationSeconds);
+		}
+
+		const auto upperFrameIterator = std::lower_bound(
+			clip.skinPoseFrames.begin(),
+			clip.skinPoseFrames.end(),
+			sampleTime,
+			[](const ModelSkinPoseFrameData& poseFrame, float targetTime) {
+				return poseFrame.timeSeconds < targetTime;
+			});
+
+		if (upperFrameIterator == clip.skinPoseFrames.begin()) {
+			sampledMatrices = upperFrameIterator->boneMatrices;
+			return !sampledMatrices.empty();
+		}
+
+		if (upperFrameIterator == clip.skinPoseFrames.end()) {
+			sampledMatrices = clip.skinPoseFrames.back().boneMatrices;
+			return !sampledMatrices.empty();
+		}
+
+		const ModelSkinPoseFrameData& nextFrame = *upperFrameIterator;
+		const ModelSkinPoseFrameData& previousFrame = *(upperFrameIterator - 1);
+		const float frameDuration = nextFrame.timeSeconds - previousFrame.timeSeconds;
+		const float interpolation = frameDuration > 0.000001f
+			? (sampleTime - previousFrame.timeSeconds) / frameDuration
+			: 0.0f;
+		InterpolateSkinMatrices(
+			previousFrame.boneMatrices,
+			nextFrame.boneMatrices,
+			interpolation,
+			sampledMatrices);
+		return !sampledMatrices.empty();
+	}
+}
 
 void EditorSceneObjectManager::Initialize(ID3D12Device* device) {
 	device_ = device;  // CreateObject で ConstantBuffer を作るため Device を保持する
@@ -60,6 +142,17 @@ int32_t EditorSceneObjectManager::CreateObject(
 	sceneObject.customMeshVertexResource = nullptr;
 	sceneObject.customMeshVertexBufferView = {};
 	sceneObject.customMeshVertexCount = 0u;
+	sceneObject.customMeshIndexResource = nullptr;
+	sceneObject.customMeshIndexBufferView = {};
+	sceneObject.customMeshIndexCount = 0u;
+	sceneObject.currentSkinMatrixResource = nullptr;
+	sceneObject.currentSkinMatrixData = nullptr;
+	sceneObject.previousSkinMatrixResource = nullptr;
+	sceneObject.previousSkinMatrixData = nullptr;
+	sceneObject.skinMatrixCount = 0u;
+	sceneObject.currentSkinClipIndex = -1;
+	sceneObject.currentSkinTime = -1.0f;
+	sceneObject.usesSkinning = false;
 	sceneObject.customMeshLocalBoundsCenter = {0.0f, 0.0f, 0.0f};
 	sceneObject.customMeshLocalBoundsSize = {1.0f, 1.0f, 1.0f};
 
@@ -117,11 +210,39 @@ int32_t EditorSceneObjectManager::CreateObject(
 	}
 
 	sceneObject.transformationData->WVP = MakeIdentity4x4();  // 初回描画前の行列を単位行列にしておく
+	sceneObject.transformationData->previousWVP = MakeIdentity4x4();
+	sceneObject.transformationData->temporalParams = {};
 	sceneObject.transformationData->World = MakeIdentity4x4();
 	sceneObject.transformationData->lightWVP = MakeIdentity4x4();
+	sceneObject.transformationData->reflectionClipPlane = {};
+	sceneObject.transformationData->reflectionClipParams = {};
+	sceneObject.transformationData->oceanParams0 = {};
+	sceneObject.transformationData->oceanParams1 = {};
+	sceneObject.transformationData->oceanParams2 = {};
+	sceneObject.transformationData->oceanParams3 = {};
+	sceneObject.transformationData->oceanParams4 = {};
+	sceneObject.transformationData->oceanParams5 = {};
+	sceneObject.transformationData->oceanWaveData0 = {};
+	sceneObject.transformationData->oceanWaveData1 = {};
+	sceneObject.transformationData->surfaceParams0 = {};
+	sceneObject.transformationData->surfaceParams1 = {};
 	sceneObject.gameTransformationData->WVP = MakeIdentity4x4();
+	sceneObject.gameTransformationData->previousWVP = MakeIdentity4x4();
+	sceneObject.gameTransformationData->temporalParams = {};
 	sceneObject.gameTransformationData->World = MakeIdentity4x4();
 	sceneObject.gameTransformationData->lightWVP = MakeIdentity4x4();
+	sceneObject.gameTransformationData->reflectionClipPlane = {};
+	sceneObject.gameTransformationData->reflectionClipParams = {};
+	sceneObject.gameTransformationData->oceanParams0 = {};
+	sceneObject.gameTransformationData->oceanParams1 = {};
+	sceneObject.gameTransformationData->oceanParams2 = {};
+	sceneObject.gameTransformationData->oceanParams3 = {};
+	sceneObject.gameTransformationData->oceanParams4 = {};
+	sceneObject.gameTransformationData->oceanParams5 = {};
+	sceneObject.gameTransformationData->oceanWaveData0 = {};
+	sceneObject.gameTransformationData->oceanWaveData1 = {};
+	sceneObject.gameTransformationData->surfaceParams0 = {};
+	sceneObject.gameTransformationData->surfaceParams1 = {};
 	sceneObject.materialData->color = {1.0f, 1.0f, 1.0f, 1.0f};  // Mesh の初期色は白。Inspector の Renderer 色で上書きされる。
 	sceneObject.materialData->enableLighting =
 		type == EditorSceneObjectType::Model ? TRUE : FALSE;  // Model はライトあり、Sprite は Texture 色をそのまま出す。
@@ -170,6 +291,24 @@ int32_t EditorSceneObjectManager::CreateObject(
 	sceneObject.materialData->materialExtensionPadding2 = 0.0f;
 	sceneObject.materialData->uvTiling = {1.0f, 1.0f};
 	sceneObject.materialData->uvOffset = {0.0f, 0.0f};
+	sceneObject.materialData->oceanEnabled = 0.0f;
+	sceneObject.materialData->oceanFoamStrength = 0.0f;
+	sceneObject.materialData->oceanRoughness = 0.12f;
+	sceneObject.materialData->oceanColorBlendScale = 1.0f;
+	sceneObject.materialData->oceanDeepColor = {0.0f, 0.0f, 0.0f};
+	sceneObject.materialData->oceanMaterialPadding = 0.0f;
+	sceneObject.materialData->oceanDetailNormalStrength = 0.0f;
+	sceneObject.materialData->oceanFoamThreshold = 0.58f;
+	sceneObject.materialData->oceanAbsorptionDistance = 18.0f;
+	sceneObject.materialData->oceanRefractionDistortion = 0.08f;
+	sceneObject.materialData->oceanWaterDepth = 80.0f;
+	sceneObject.materialData->oceanCrestSharpness = 0.65f;
+	sceneObject.materialData->oceanMaterialPadding1 = 0.0f;
+	sceneObject.materialData->oceanMaterialPadding2 = 0.0f;
+	sceneObject.materialData->surfaceMode = 0;
+	sceneObject.materialData->surfaceMaterialPadding0 = 0.0f;
+	sceneObject.materialData->surfaceMaterialPadding1 = 0.0f;
+	sceneObject.materialData->surfaceMaterialPadding2 = 0.0f;
 	sceneObject.cullMode = 0;
 	sceneObjects_.push_back(sceneObject);
 
@@ -456,11 +595,163 @@ bool EditorSceneObjectManager::SetCustomModelMesh(
 	sceneObject.customMeshVertexBufferView.SizeInBytes = static_cast<UINT>(vertexBufferSize);
 	sceneObject.customMeshVertexBufferView.StrideInBytes = sizeof(VertexData);
 	sceneObject.customMeshVertexCount = static_cast<uint32_t>(modelData.vertices.size());
+
+	// 共有頂点を持つメッシュだけ Index Buffer を追加し、既存 OBJ / FBX は従来経路を維持する。
+	if (!modelData.indices.empty()) {
+		const size_t indexBufferSize = sizeof(uint32_t) * modelData.indices.size();
+		sceneObject.customMeshIndexResource = CreateVertexResource(indexBufferSize);
+
+		if (sceneObject.customMeshIndexResource == nullptr) {
+			ClearCustomModelMesh(sceneObjectIndex);
+			return false;
+		}
+
+		uint32_t* mappedIndexData = nullptr;
+		const HRESULT indexMapResult = sceneObject.customMeshIndexResource->Map(
+			0,
+			nullptr,
+			reinterpret_cast<void**>(&mappedIndexData));
+
+		if (FAILED(indexMapResult) || mappedIndexData == nullptr) {
+			ClearCustomModelMesh(sceneObjectIndex);
+			return false;
+		}
+
+		std::memcpy(mappedIndexData, modelData.indices.data(), indexBufferSize);
+		sceneObject.customMeshIndexBufferView.BufferLocation =
+			sceneObject.customMeshIndexResource->GetGPUVirtualAddress();
+		sceneObject.customMeshIndexBufferView.SizeInBytes = static_cast<UINT>(indexBufferSize);
+		sceneObject.customMeshIndexBufferView.Format = DXGI_FORMAT_R32_UINT;
+		sceneObject.customMeshIndexCount = static_cast<uint32_t>(modelData.indices.size());
+	}
+
+	const std::vector<Matrix4x4>* initialSkinMatrices =
+		!modelData.defaultSkinMatrices.empty() ? &modelData.defaultSkinMatrices : nullptr;
+	if (initialSkinMatrices == nullptr) {
+		for (const ModelAnimationClipData& animationClip : modelData.animationClips) {
+			if (!animationClip.skinPoseFrames.empty() &&
+				!animationClip.skinPoseFrames.front().boneMatrices.empty()) {
+				initialSkinMatrices = &animationClip.skinPoseFrames.front().boneMatrices;
+				break;
+			}
+		}
+	}
+
+	if (initialSkinMatrices != nullptr && !initialSkinMatrices->empty()) {
+		const size_t skinBufferSize = sizeof(Matrix4x4) * initialSkinMatrices->size();
+		sceneObject.currentSkinMatrixResource = CreateVertexResource(skinBufferSize);
+		sceneObject.previousSkinMatrixResource = CreateVertexResource(skinBufferSize);
+
+		if (sceneObject.currentSkinMatrixResource == nullptr ||
+			sceneObject.previousSkinMatrixResource == nullptr) {
+			ClearCustomModelMesh(sceneObjectIndex);
+			return false;
+		}
+
+		const HRESULT currentSkinMapResult = sceneObject.currentSkinMatrixResource->Map(
+			0,
+			nullptr,
+			reinterpret_cast<void**>(&sceneObject.currentSkinMatrixData));
+		const HRESULT previousSkinMapResult = sceneObject.previousSkinMatrixResource->Map(
+			0,
+			nullptr,
+			reinterpret_cast<void**>(&sceneObject.previousSkinMatrixData));
+
+		if (FAILED(currentSkinMapResult) || FAILED(previousSkinMapResult) ||
+			sceneObject.currentSkinMatrixData == nullptr ||
+			sceneObject.previousSkinMatrixData == nullptr) {
+			ClearCustomModelMesh(sceneObjectIndex);
+			return false;
+		}
+
+		std::memcpy(
+			sceneObject.currentSkinMatrixData,
+			initialSkinMatrices->data(),
+			skinBufferSize);
+		std::memcpy(
+			sceneObject.previousSkinMatrixData,
+			initialSkinMatrices->data(),
+			skinBufferSize);
+		sceneObject.skinMatrixCount = static_cast<uint32_t>(initialSkinMatrices->size());
+		sceneObject.currentSkinClipIndex = -1;
+		sceneObject.currentSkinTime = -1.0f;
+		sceneObject.usesSkinning = true;
+	}
+
 	sceneObject.customMeshLocalBoundsCenter = modelData.localBoundsCenter;
 	sceneObject.customMeshLocalBoundsSize = modelData.localBoundsSize;
 	sceneObject.assetPath = assetPath;
 	sceneObject.usesCustomMesh = true;
 	return true;
+}
+
+bool EditorSceneObjectManager::UpdateSkinnedPose(
+	int32_t sceneObjectIndex,
+	const ModelData& modelData,
+	int32_t clipIndex,
+	float playbackTime) {
+	if (sceneObjectIndex < 0 ||
+		sceneObjectIndex >= static_cast<int32_t>(sceneObjects_.size())) {
+		return false;
+	}
+
+	EditorSceneObject& sceneObject = sceneObjects_[static_cast<size_t>(sceneObjectIndex)];
+	if (!sceneObject.usesSkinning ||
+		sceneObject.currentSkinMatrixData == nullptr ||
+		sceneObject.previousSkinMatrixData == nullptr ||
+		sceneObject.skinMatrixCount == 0u) {
+		return false;
+	}
+
+	if (sceneObject.currentSkinClipIndex == clipIndex &&
+		std::abs(sceneObject.currentSkinTime - playbackTime) <= 0.000001f) {
+		return true;
+	}
+
+	std::vector<Matrix4x4> sampledMatrices;
+	if (!SampleSkinPose(modelData, clipIndex, playbackTime, sampledMatrices) ||
+		sampledMatrices.size() != static_cast<size_t>(sceneObject.skinMatrixCount)) {
+		return false;
+	}
+
+	const size_t skinBufferSize =
+		sizeof(Matrix4x4) * static_cast<size_t>(sceneObject.skinMatrixCount);
+	std::memcpy(
+		sceneObject.previousSkinMatrixData,
+		sceneObject.currentSkinMatrixData,
+		skinBufferSize);
+	std::memcpy(
+		sceneObject.currentSkinMatrixData,
+		sampledMatrices.data(),
+		skinBufferSize);
+	sceneObject.currentSkinClipIndex = clipIndex;
+	sceneObject.currentSkinTime = playbackTime;
+	return true;
+}
+
+void EditorSceneObjectManager::ClearSkinningResources(int32_t sceneObjectIndex) {
+	if (sceneObjectIndex < 0 ||
+		sceneObjectIndex >= static_cast<int32_t>(sceneObjects_.size())) {
+		return;
+	}
+
+	EditorSceneObject& sceneObject = sceneObjects_[static_cast<size_t>(sceneObjectIndex)];
+	if (sceneObject.currentSkinMatrixResource != nullptr) {
+		sceneObject.currentSkinMatrixResource->Release();
+		sceneObject.currentSkinMatrixResource = nullptr;
+	}
+
+	if (sceneObject.previousSkinMatrixResource != nullptr) {
+		sceneObject.previousSkinMatrixResource->Release();
+		sceneObject.previousSkinMatrixResource = nullptr;
+	}
+
+	sceneObject.currentSkinMatrixData = nullptr;
+	sceneObject.previousSkinMatrixData = nullptr;
+	sceneObject.skinMatrixCount = 0u;
+	sceneObject.currentSkinClipIndex = -1;
+	sceneObject.currentSkinTime = -1.0f;
+	sceneObject.usesSkinning = false;
 }
 
 void EditorSceneObjectManager::ClearCustomModelMesh(int32_t sceneObjectIndex) {
@@ -470,12 +761,21 @@ void EditorSceneObjectManager::ClearCustomModelMesh(int32_t sceneObjectIndex) {
 	}
 
 	EditorSceneObject& sceneObject = sceneObjects_[static_cast<size_t>(sceneObjectIndex)];
+	ClearSkinningResources(sceneObjectIndex);
 	if (sceneObject.customMeshVertexResource != nullptr) {
 		sceneObject.customMeshVertexResource->Release();
 		sceneObject.customMeshVertexResource = nullptr;
 	}
 	sceneObject.customMeshVertexBufferView = {};
 	sceneObject.customMeshVertexCount = 0u;
+
+	if (sceneObject.customMeshIndexResource != nullptr) {
+		sceneObject.customMeshIndexResource->Release();
+		sceneObject.customMeshIndexResource = nullptr;
+	}
+
+	sceneObject.customMeshIndexBufferView = {};
+	sceneObject.customMeshIndexCount = 0u;
 	sceneObject.customMeshLocalBoundsCenter = {0.0f, 0.0f, 0.0f};
 	sceneObject.customMeshLocalBoundsSize = {1.0f, 1.0f, 1.0f};
 	sceneObject.usesCustomMesh = false;

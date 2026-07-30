@@ -31,12 +31,21 @@ public:
 		ID3D12GraphicsCommandList* commandList,
 		D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle,
 		D3D12_GPU_DESCRIPTOR_HANDLE sceneDepthSrvHandle,
+		D3D12_GPU_DESCRIPTOR_HANDLE objectMotionVectorSrvHandle,
 		D3D12_GPU_DESCRIPTOR_HANDLE reconstructedNormalSrvHandle,
-		D3D12_GPU_DESCRIPTOR_HANDLE depthPyramidSrvHandle,
+		const std::array<D3D12_GPU_DESCRIPTOR_HANDLE, 5u>& depthPyramidSrvHandles,
 		D3D12_GPU_DESCRIPTOR_HANDLE materialMaskSrvHandle,
 		const float* inverseViewProjectionMatrix,
 		const float* viewProjectionMatrix,
 		const float* cameraPosition,
+		float viewportX,
+		float viewportY,
+		float viewportWidth,
+		float viewportHeight,
+		bool ssrEnabled,
+		bool temporalEnabled,
+		uint32_t viewHistoryIndex,
+		bool advanceHistoryFrame,
 		float sharpness = 0.08f,
 		float blendRatio = 0.90f);
 
@@ -73,7 +82,8 @@ private:
 		uint32_t pipelineIndex,
 		ResourceType destinationResourceType,
 		const std::array<D3D12_GPU_DESCRIPTOR_HANDLE, 4u>& sourceSrvHandles,
-		const std::array<uint32_t, 40u>& constants);
+		const std::array<uint32_t, 44u>& constants,
+		const std::array<D3D12_GPU_DESCRIPTOR_HANDLE, 4u>* additionalSourceSrvHandles = nullptr);
 
 	D3D12_CPU_DESCRIPTOR_HANDLE GetCpuDescriptorHandle(uint32_t descriptorIndex) const;
 	D3D12_GPU_DESCRIPTOR_HANDLE GetGpuDescriptorHandle(uint32_t descriptorIndex) const;
@@ -88,10 +98,15 @@ private:
 	std::array<D3D12_GPU_DESCRIPTOR_HANDLE, static_cast<size_t>(ResourceType::Count)> srvHandles_{};
 	std::array<D3D12_GPU_DESCRIPTOR_HANDLE, static_cast<size_t>(ResourceType::Count)> uavHandles_{};
 
-	std::array<float, 16u> previousViewProjectionMatrix_{};
+	static constexpr uint32_t kViewHistoryCount = 2u;
+	std::array<std::array<float, 16u>, kViewHistoryCount> previousViewProjectionMatrices_{};
+	std::array<std::array<float, 4u>, kViewHistoryCount> previousViewportRects_{};
+	D3D12_GPU_DESCRIPTOR_HANDLE outputSrvHandle_{};
 	uint32_t renderWidth_ = 0u;
 	uint32_t renderHeight_ = 0u;
 	uint32_t historyWriteIndex_ = 0u;
-	bool isHistoryValid_ = false;
+	std::array<bool, kViewHistoryCount> isHistoryValid_{};
+	std::array<bool, kViewHistoryCount> lastSsrEnabled_{};
+	std::array<bool, kViewHistoryCount> lastTemporalEnabled_{};
 	bool isInitialized_ = false;
 };

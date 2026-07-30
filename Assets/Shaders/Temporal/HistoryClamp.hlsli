@@ -10,6 +10,8 @@ void GetNeighborhoodBounds(
 {
     minimumColor = float3(65504.0f, 65504.0f, 65504.0f);
     maximumColor = 0.0f;
+    const int2 viewportMinimumPixel = GetViewportMinimumPixel();
+    const int2 viewportMaximumPixel = GetViewportMaximumPixel();
 
     [unroll]
     for (int offsetY = -1; offsetY <= 1; offsetY++)
@@ -19,8 +21,8 @@ void GetNeighborhoodBounds(
         {
             const int2 samplePosition = clamp(
                 pixelPosition + int2(offsetX, offsetY),
-                int2(0, 0),
-                int2(renderSize) - 1);
+                viewportMinimumPixel,
+                viewportMaximumPixel);
             const float3 sampleColor = currentTexture.Load(int3(samplePosition, 0)).rgb;
             minimumColor = min(minimumColor, sampleColor);
             maximumColor = max(maximumColor, sampleColor);

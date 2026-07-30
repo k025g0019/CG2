@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "EditorScene.h"
 
@@ -19,7 +19,7 @@ public:
 	EditorJoltPhysicsManager& operator=(EditorJoltPhysicsManager&&) = delete;  // 内部ポインタの所有先を動かさない
 
 	struct PhysicsHit {
-		int32_t gameObjectId = -1;  // 命中した GameObject ID。床など Scene 外 Body は -1
+		int32_t gameObjectId = -1;  // 命中した GameObject ID。Scene 外 Body は -1
 		Vector3 point = {0.0f, 0.0f, 0.0f};  // World 空間の命中点
 		Vector3 normal = {0.0f, 1.0f, 0.0f};  // 命中面の法線。取れない場合は上向き
 		float distance = 0.0f;  // Cast 開始点から命中点までの距離
@@ -55,12 +55,14 @@ public:
 	void Update(float deltaTime);  // Jolt の PhysicsSystem を進め、結果を GameObject へ戻す
 	void Stop();  // Jolt Body と PhysicsSystem を破棄する
 	bool IsActive() const;  // Jolt World が Play 用に作成済みか返す
+	bool SetGameObjectSimulationActive(int32_t gameObjectId, bool isActive);  // 出現待ち Object の Body を物理 Worldへ出し入れする
 	bool Raycast(const Vector3& origin, const Vector3& direction, float distance, PhysicsHit& hit) const;  // Scene 内 Collider に Ray を飛ばす
 	bool SphereCast(const Vector3& origin, float radius, const Vector3& direction, float distance, PhysicsHit& hit) const;  // 太さのある Ray を飛ばす
 	bool CapsuleCast(const Vector3& origin, float radius, float height, const Vector3& direction, float distance, PhysicsHit& hit) const;  // Capsule 形状を移動させる
 	bool OverlapSphere(const Vector3& center, float radius, std::vector<int32_t>& hitGameObjectIds) const;  // 球の範囲に重なった GameObject を列挙する
 	bool OverlapBox(const Vector3& center, const Vector3& size, std::vector<int32_t>& hitGameObjectIds) const;  // 箱の範囲に重なった GameObject を列挙する
 	bool AddForce(int32_t gameObjectId, const Vector3& force);  // Dynamic Rigidbody に継続力を加える
+	bool AddForceAtPosition(int32_t gameObjectId, const Vector3& force, const Vector3& worldPosition);  // World 位置へ力を加え、重心との差から回転も発生させる
 	bool AddImpulse(int32_t gameObjectId, const Vector3& impulse);  // Dynamic Rigidbody に瞬間力を加える
 	bool AddTorque(int32_t gameObjectId, const Vector3& torque);  // Dynamic Rigidbody に回転力を加える
 	bool SetVelocity(int32_t gameObjectId, const Vector3& velocity);  // Rigidbody の速度を直接設定する

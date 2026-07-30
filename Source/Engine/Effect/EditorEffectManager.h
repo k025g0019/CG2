@@ -38,6 +38,10 @@ public:
 		float rotation = 0.0f;  // 描画モデルの現在回転角（ラジアン）。
 		float rotationSpeed = 0.0f;  // 描画モデルの回転速度（ラジアン/秒）。
 		float emissionStrength = 0.0f;  // HDR色へ加える放射強度。
+		float collisionBounce = 0.35f;  // 深度面へ衝突した時に残す法線方向速度率。
+		float collisionFriction = 0.2f;  // 深度面へ衝突した時に失う接線方向速度率。
+		bool useCollision = false;  // Scene Depth を使う衝突を有効にする。
+		int32_t collisionMode = 0;  // 0=Depth、1=Physics Collider 由来の SDF。
 		std::string renderAssetPath;  // 空なら板、FBX / OBJ ならその Mesh を GPU インスタンシングする。
 	};
 
@@ -87,6 +91,7 @@ private:
 		float collisionBounce = 0.35f;  // Ground 衝突で残す垂直速度率。
 		float collisionFriction = 0.2f;  // Ground 衝突で失う水平速度率。
 		bool useCollision = false;  // Ground 簡易衝突を有効にする。
+		int32_t collisionMode = 0;  // 0=Depth、1=Physics Collider 由来の SDF。
 		bool useLocalSpace = false;  // Emitter 移動へ追従する場合は true。
 		Vector3 localPosition{0.0f, 0.0f, 0.0f};  // Local Space 時の Emitter 相対位置。
 		Vector3 velocity{0.0f, 0.0f, 0.0f};  // 1 秒当たりの移動量。

@@ -38,6 +38,8 @@ namespace {
 		modelData.material.uvLayoutTextureFilePath.clear();
 		modelData.materials.clear();
 		modelData.animationClips.clear();
+		modelData.skinBoneNames.clear();
+		modelData.defaultSkinMatrices.clear();
 		modelData.localBoundsCenter = {0.0f, 0.0f, 0.0f};
 		modelData.localBoundsSize = {1.0f, 1.0f, 1.0f};
 	}
@@ -498,7 +500,108 @@ namespace {
 		return firstAnimatedNode;
 	}
 
-	void AppendFbxAnimationClips(ModelData& modelData, FbxScene* scene) {
+	struct FbxSkinBindingData {
+		FbxNode* meshNode = nullptr;  // Skin Cluster を持つ Mesh Node
+		FbxNode* boneNode = nullptr;  // Cluster が参照する Bone Node
+		FbxAMatrix meshBindGlobal{};  // Bind 時の Mesh Global 行列
+		FbxAMatrix boneBindGlobal{};  // Bind 時の Bone Global 行列
+	};
+
+	struct VertexSkinInfluenceData {
+		std::array<uint32_t, 4u> boneIndices{};
+		std::array<float, 4u> boneWeights{};
+	};
+
+	Matrix4x4 ConvertFbxSkinMatrix(const FbxAMatrix& fbxMatrix) {
+		// FBX の column-vector / 右手系を、エンジンの row-vector / X 反転座標へ変換する。
+		Matrix4x4 rowMatrix{};
+
+		for (int32_t row = 0; row < 4; row++) {
+			for (int32_t column = 0; column < 4; column++) {
+				rowMatrix.matrix[row][column] =
+					static_cast<float>(fbxMatrix[column][row]);
+			}
+		}
+
+		Matrix4x4 handednessMatrix = MakeIdentity4x4();
+		handednessMatrix.matrix[0][0] = -1.0f;
+		return Multiply(Multiply(handednessMatrix, rowMatrix), handednessMatrix);
+	}
+
+	Matrix4x4 EvaluateFbxSkinMatrix(
+		const FbxSkinBindingData& binding,
+		const FbxTime& sampleTime) {
+		if (binding.meshNode == nullptr || binding.boneNode == nullptr) {
+			return MakeIdentity4x4();
+		}
+
+		const FbxAMatrix meshCurrentGlobal =
+			binding.meshNode->EvaluateGlobalTransform(sampleTime);
+		const FbxAMatrix boneCurrentGlobal =
+			binding.boneNode->EvaluateGlobalTransform(sampleTime);
+		const FbxAMatrix skinMatrix =
+			meshCurrentGlobal.Inverse() *
+			boneCurrentGlobal *
+			binding.boneBindGlobal.Inverse() *
+			binding.meshBindGlobal;
+		return ConvertFbxSkinMatrix(skinMatrix);
+	}
+
+	void InsertFbxSkinInfluence(
+		VertexSkinInfluenceData& influenceData,
+		uint32_t boneIndex,
+		float boneWeight) {
+		if (boneWeight <= 0.000001f) {
+			return;
+		}
+
+		for (size_t influenceIndex = 0u;
+			 influenceIndex < influenceData.boneWeights.size();
+			 influenceIndex++) {
+			if (influenceData.boneWeights[influenceIndex] > 0.0f &&
+				influenceData.boneIndices[influenceIndex] == boneIndex) {
+				influenceData.boneWeights[influenceIndex] += boneWeight;
+				return;
+			}
+		}
+
+		size_t replacementIndex = 0u;
+		for (size_t influenceIndex = 1u;
+			 influenceIndex < influenceData.boneWeights.size();
+			 influenceIndex++) {
+			if (influenceData.boneWeights[influenceIndex] <
+				influenceData.boneWeights[replacementIndex]) {
+				replacementIndex = influenceIndex;
+			}
+		}
+
+		if (boneWeight > influenceData.boneWeights[replacementIndex]) {
+			influenceData.boneIndices[replacementIndex] = boneIndex;
+			influenceData.boneWeights[replacementIndex] = boneWeight;
+		}
+	}
+
+	void NormalizeFbxSkinInfluence(VertexSkinInfluenceData& influenceData) {
+		float totalWeight = 0.0f;
+
+		for (float boneWeight : influenceData.boneWeights) {
+			totalWeight += boneWeight;
+		}
+
+		if (totalWeight <= 0.000001f) {
+			return;
+		}
+
+		const float inverseTotalWeight = 1.0f / totalWeight;
+		for (float& boneWeight : influenceData.boneWeights) {
+			boneWeight *= inverseTotalWeight;
+		}
+	}
+
+	void AppendFbxAnimationClips(
+		ModelData& modelData,
+		FbxScene* scene,
+		const std::vector<FbxSkinBindingData>& skinBindings) {
 		if (scene == nullptr) {
 			return;
 		}
@@ -532,19 +635,21 @@ namespace {
 				scene->GetRootNode(),
 				animationLayer,
 				firstAnimatedNode);
+			const double sourceFrameRate = FbxTime::GetFrameRate(
+				scene->GetGlobalSettings().GetTimeMode());
+			const float sampleFrameRate = (std::clamp)(
+				static_cast<float>(sourceFrameRate),
+				15.0f,
+				60.0f);
+			const int32_t sampleCount = clipData.durationSeconds > 0.0f
+				? (std::min)(
+					static_cast<int32_t>(std::ceil(clipData.durationSeconds * sampleFrameRate)) + 1,
+					3600)
+				: 1;
+			const double clipStartSeconds = clipTimeSpan.GetStart().GetSecondDouble();
 
 			if (animatedNode != nullptr && clipData.durationSeconds > 0.0f) {
 				clipData.animatedNodeName = animatedNode->GetName();
-				const double sourceFrameRate = FbxTime::GetFrameRate(
-					scene->GetGlobalSettings().GetTimeMode());
-				const float sampleFrameRate = (std::clamp)(
-					static_cast<float>(sourceFrameRate),
-					15.0f,
-					60.0f);
-				const int32_t sampleCount = (std::min)(
-					static_cast<int32_t>(std::ceil(clipData.durationSeconds * sampleFrameRate)) + 1,
-					3600);
-				const double clipStartSeconds = clipTimeSpan.GetStart().GetSecondDouble();
 
 				for (int32_t sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
 					const float keyframeTime = (std::min)(
@@ -573,6 +678,32 @@ namespace {
 						static_cast<float>(scale[1]),
 						static_cast<float>(scale[2])};
 					clipData.keyframes.push_back(keyframe);
+				}
+			}
+
+			if (!skinBindings.empty()) {
+				clipData.skinPoseFrames.reserve(static_cast<size_t>(sampleCount));
+
+				for (int32_t sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+					const float frameTime = clipData.durationSeconds > 0.0f
+						? (std::min)(
+							static_cast<float>(sampleIndex) / sampleFrameRate,
+							clipData.durationSeconds)
+						: 0.0f;
+					FbxTime sampleTime{};
+					sampleTime.SetSecondDouble(
+						clipStartSeconds + static_cast<double>(frameTime));
+
+					ModelSkinPoseFrameData poseFrame{};
+					poseFrame.timeSeconds = frameTime;
+					poseFrame.boneMatrices.reserve(skinBindings.size());
+
+					for (const FbxSkinBindingData& skinBinding : skinBindings) {
+						poseFrame.boneMatrices.push_back(
+							EvaluateFbxSkinMatrix(skinBinding, sampleTime));
+					}
+
+					clipData.skinPoseFrames.push_back(std::move(poseFrame));
 				}
 			}
 
@@ -763,23 +894,30 @@ namespace {
 		modelData.vertices.insert(modelData.vertices.end(), std::begin(vertices), std::end(vertices));
 	}
 
-	void AppendTriangleWithNormals(
+	void AppendSkinnedTriangleWithNormals(
 		ModelData& modelData,
-		const Vector3& firstPosition,
-		const Vector3& secondPosition,
-		const Vector3& thirdPosition,
-		const Vector2& firstTexcoord,
-		const Vector2& secondTexcoord,
-		const Vector2& thirdTexcoord,
-		const Vector3& firstNormal,
-		const Vector3& secondNormal,
-		const Vector3& thirdNormal) {
-		const VertexData vertices[3] = {
-			{{firstPosition.x, firstPosition.y, firstPosition.z, 1.0f}, firstTexcoord, NormalizeVector3(firstNormal)},
-			{{secondPosition.x, secondPosition.y, secondPosition.z, 1.0f}, secondTexcoord, NormalizeVector3(secondNormal)},
-			{{thirdPosition.x, thirdPosition.y, thirdPosition.z, 1.0f}, thirdTexcoord, NormalizeVector3(thirdNormal)}};
-
-		modelData.vertices.insert(modelData.vertices.end(), std::begin(vertices), std::end(vertices));
+		const std::array<Vector3, 3u>& positions,
+		const std::array<Vector2, 3u>& texcoords,
+		const std::array<Vector3, 3u>& normals,
+		const std::array<VertexSkinInfluenceData, 3u>& influences) {
+		for (size_t vertexIndex = 0u; vertexIndex < positions.size(); vertexIndex++) {
+			const VertexSkinInfluenceData& influenceData = influences[vertexIndex];
+			VertexData vertex{};
+			vertex.position = {
+				positions[vertexIndex].x,
+				positions[vertexIndex].y,
+				positions[vertexIndex].z,
+				1.0f};
+			vertex.texcoord = texcoords[vertexIndex];
+			vertex.normal = NormalizeVector3(normals[vertexIndex]);
+			vertex.boneIndices = influenceData.boneIndices;
+			vertex.boneWeights = {
+				influenceData.boneWeights[0],
+				influenceData.boneWeights[1],
+				influenceData.boneWeights[2],
+				influenceData.boneWeights[3]};
+			modelData.vertices.push_back(vertex);
+		}
 	}
 
 	struct ObjFaceVertexIndex {
@@ -988,9 +1126,8 @@ namespace {
 			}
 		};
 		appendMaterialNode(appendMaterialNode, scene->GetRootNode());
-		if (includeAnimation) {
-			AppendFbxAnimationClips(modelData, scene);
-		}
+
+		std::vector<FbxSkinBindingData> skinBindings;
 
 		auto appendMeshNode = [&](auto&& appendMeshNodeSelf, FbxNode* node) -> void {
 			if (node == nullptr) {
@@ -1004,6 +1141,67 @@ namespace {
 				geometryTransform.SetR(node->GetGeometricRotation(FbxNode::eSourcePivot));
 				geometryTransform.SetS(node->GetGeometricScaling(FbxNode::eSourcePivot));
 
+				const int32_t controlPointCount =
+					static_cast<int32_t>(mesh->GetControlPointsCount());
+				std::vector<VertexSkinInfluenceData> controlPointInfluences(
+					static_cast<size_t>((std::max)(controlPointCount, 0)));
+				const int32_t skinDeformerCount = static_cast<int32_t>(
+					mesh->GetDeformerCount(FbxDeformer::eSkin));
+
+				for (int32_t skinDeformerIndex = 0;
+					 skinDeformerIndex < skinDeformerCount;
+					 skinDeformerIndex++) {
+					FbxSkin* skin = static_cast<FbxSkin*>(
+						mesh->GetDeformer(skinDeformerIndex, FbxDeformer::eSkin));
+					if (skin == nullptr) {
+						continue;
+					}
+
+					const int32_t clusterCount = static_cast<int32_t>(skin->GetClusterCount());
+					for (int32_t clusterIndex = 0; clusterIndex < clusterCount; clusterIndex++) {
+						FbxCluster* cluster = skin->GetCluster(clusterIndex);
+						FbxNode* boneNode = cluster != nullptr ? cluster->GetLink() : nullptr;
+
+						if (cluster == nullptr || boneNode == nullptr) {
+							continue;
+						}
+
+						FbxSkinBindingData skinBinding{};
+						skinBinding.meshNode = node;
+						skinBinding.boneNode = boneNode;
+						cluster->GetTransformMatrix(skinBinding.meshBindGlobal);
+						cluster->GetTransformLinkMatrix(skinBinding.boneBindGlobal);
+						const uint32_t boneIndex = static_cast<uint32_t>(skinBindings.size());
+						skinBindings.push_back(skinBinding);
+						modelData.skinBoneNames.push_back(
+							std::string(node->GetName()) + "/" + boneNode->GetName());
+
+						const int32_t clusterControlPointCount =
+							static_cast<int32_t>(cluster->GetControlPointIndicesCount());
+						const int32_t* controlPointIndices = cluster->GetControlPointIndices();
+						const double* controlPointWeights = cluster->GetControlPointWeights();
+
+						for (int32_t influenceIndex = 0;
+							 influenceIndex < clusterControlPointCount;
+							 influenceIndex++) {
+							const int32_t controlPointIndex = controlPointIndices[influenceIndex];
+
+							if (controlPointIndex < 0 || controlPointIndex >= controlPointCount) {
+								continue;
+							}
+
+							InsertFbxSkinInfluence(
+								controlPointInfluences[static_cast<size_t>(controlPointIndex)],
+								boneIndex,
+								static_cast<float>(controlPointWeights[influenceIndex]));
+						}
+					}
+				}
+
+				for (VertexSkinInfluenceData& influenceData : controlPointInfluences) {
+					NormalizeFbxSkinInfluence(influenceData);
+				}
+
 				FbxStringList uvSetNames{};
 				mesh->GetUVSetNames(uvSetNames);
 				const char* primaryUvSetName =
@@ -1014,9 +1212,10 @@ namespace {
 						continue;
 					}
 
-					Vector3 positions[3]{};
-					Vector3 normals[3]{};
-					Vector2 texcoords[3]{};
+					std::array<Vector3, 3u> positions{};
+					std::array<Vector3, 3u> normals{};
+					std::array<Vector2, 3u> texcoords{};
+					std::array<VertexSkinInfluenceData, 3u> influences{};
 					bool isValidTriangle = true;
 					for (int32_t vertexIndex = 0; vertexIndex < 3; vertexIndex++) {
 						const int32_t controlPointIndex = mesh->GetPolygonVertex(polygonIndex, vertexIndex);
@@ -1027,6 +1226,8 @@ namespace {
 						}
 
 						const FbxVector4 localControlPoint = mesh->GetControlPointAt(controlPointIndex);
+						influences[static_cast<size_t>(vertexIndex)] =
+							controlPointInfluences[static_cast<size_t>(controlPointIndex)];
 						const FbxVector4 fbxPosition = geometryTransform.MultT(localControlPoint);
 
 						// GameObject 側の Transform で配置・回転・拡縮するため、
@@ -1079,17 +1280,12 @@ namespace {
 
 					// X 反転で面の表裏が逆になるため、2 番目と 3 番目を入れ替えて三角形を追加する。
 					// FBX の頂点法線をそのまま使い、Blender の smooth shade が面法線へ潰れないようにする。
-					AppendTriangleWithNormals(
+					AppendSkinnedTriangleWithNormals(
 						modelData,
-						positions[0],
-						positions[2],
-						positions[1],
-						texcoords[0],
-						texcoords[2],
-						texcoords[1],
-						normals[0],
-						normals[2],
-						normals[1]);
+						{positions[0], positions[2], positions[1]},
+						{texcoords[0], texcoords[2], texcoords[1]},
+						{normals[0], normals[2], normals[1]},
+						{influences[0], influences[2], influences[1]});
 				}
 			}
 
@@ -1100,6 +1296,21 @@ namespace {
 		};
 
 		appendMeshNode(appendMeshNode, scene->GetRootNode());
+
+		if (!skinBindings.empty()) {
+			FbxTime defaultPoseTime{};
+			defaultPoseTime.SetSecondDouble(0.0);
+			modelData.defaultSkinMatrices.reserve(skinBindings.size());
+
+			for (const FbxSkinBindingData& skinBinding : skinBindings) {
+				modelData.defaultSkinMatrices.push_back(
+					EvaluateFbxSkinMatrix(skinBinding, defaultPoseTime));
+			}
+		}
+
+		if (includeAnimation) {
+			AppendFbxAnimationClips(modelData, scene, skinBindings);
+		}
 
 		scene->Destroy();
 		fbxManager->Destroy();

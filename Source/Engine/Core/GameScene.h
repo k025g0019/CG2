@@ -8,6 +8,7 @@
 #include "EditorAnimationWindowManager.h"
 #include "EditorDockingManager.h"
 #include "EditorFrameInputManager.h"
+#include "EditorGameBuildManager.h"
 #include "EditorGameViewManager.h"
 #include "EditorHierarchyWindowManager.h"
 #include "EditorImguiFrameManager.h"
@@ -15,6 +16,7 @@
 #include "EditorMainMenuManager.h"
 #include "EditorPlatformManager.h"
 #include "EditorRenderManager.h"
+#include "EditorGameplayToolsWindowManager.h"
 #include "EditorSceneLifecycleManager.h"
 #include "EditorSceneViewManager.h"
 
@@ -46,7 +48,11 @@ private:
 	EditorInspectorWindowManager inspectorWindowManager_;  // Inspector ウィンドウと Component 編集を扱う Manager。
 	EditorBottomPanelWindowManager bottomPanelWindowManager_;  // Project / Console の下部パネル表示を扱う Manager。
 	EditorAnimationWindowManager animationWindowManager_;  // Timeline、Keyframe、Preview、Animation Event の編集を扱う Manager。
+	EditorGameplayToolsWindowManager gameplayToolsWindowManager_;  // 汎用Spline、Event Timeline、State Graphを扱うManager。
 	EditorRenderManager renderManager_;  // SceneObject / Sprite / ImGui を GPU に描画する Manager。
+	EditorGameBuildSettings gameBuildSettings_;  // Standalone Player の起動 Scene と遷移可能 Scene を保持する。
+	bool isStandaloneGame_ = false;  // Editor UI を描かず GameView だけを表示する起動なら true。
+	bool hasStandaloneInitializationFailed_ = false;  // game.build が壊れていた場合に Editor へ誤って戻らないためのフラグ。
 };
 
 #pragma warning(pop)

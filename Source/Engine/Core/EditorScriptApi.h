@@ -6,7 +6,7 @@
 // DLL Script と Editor 本体が共有する C 互換 API
 //================================================================
 
-constexpr uint32_t kEditorScriptApiVersion = 5U;  // DLL 側との互換性確認に使う固定バージョン。
+constexpr uint32_t kEditorScriptApiVersion = 6U;  // RailFollower API を末尾追加した DLL 互換バージョン。
 
 enum EditorScriptPhysicsEventType : int32_t {
 	EditorScriptPhysicsEventTypeCollisionEnter = 0,
@@ -90,6 +90,8 @@ enum EditorScriptFieldType : int32_t {
 	EditorScriptFieldTypeVector2 = 3,
 	EditorScriptFieldTypeVector3 = 4,
 	EditorScriptFieldTypeString = 5,
+	EditorScriptFieldTypeGameObject = 6,
+	EditorScriptFieldTypeSceneAsset = 7,
 };
 
 enum EditorScriptInputPhase : int32_t {
@@ -276,6 +278,19 @@ struct EditorScriptRuntimeApi {
 	int32_t (*FindGameObjectByName)(const char* gameObjectName);
 	bool (*SetGameObjectActive)(int32_t gameObjectId, bool isActive);
 	bool (*IsGameObjectActive)(int32_t gameObjectId);
+	bool (*LoadScene)(const char* scenePath);
+	bool (*LoadSceneByBuildIndex)(int32_t sceneIndex);
+	bool (*SetRailPaused)(int32_t gameObjectId, bool isPaused);
+	bool (*IsRailPaused)(int32_t gameObjectId);
+	bool (*SetRailSpeed)(int32_t gameObjectId, float speed);
+	bool (*SetRailReverse)(int32_t gameObjectId, bool isReversed);
+	bool (*SetRailNormalizedProgress)(int32_t gameObjectId, float normalizedProgress);
+	bool (*SetRailPath)(int32_t gameObjectId, int32_t railPathGameObjectId, bool preservesProgress);
+	bool (*GetRailNormalizedProgress)(int32_t gameObjectId, float* normalizedProgress);
+	bool (*GetRailLength)(int32_t gameObjectId, float* railLength);
+	bool (*GetRailPosition)(int32_t gameObjectId, float normalizedProgress, EditorScriptVector3* position);
+	bool (*GetRailDirection)(int32_t gameObjectId, float normalizedProgress, EditorScriptVector3* direction);
+	bool (*ConsumeRailEndReached)(int32_t gameObjectId);
 };
 
 extern "C" {
@@ -292,4 +307,6 @@ extern "C" {
 	typedef bool(__cdecl* EditorScriptGetFieldValueFn)(int32_t gameObjectId, const char* fieldName, EditorScriptFieldValue* fieldValue);
 	typedef bool(__cdecl* EditorScriptSetFieldValueFn)(int32_t gameObjectId, const char* fieldName, const EditorScriptFieldValue* fieldValue);
 	typedef bool(__cdecl* EditorScriptInvokeActionFn)(int32_t gameObjectId, const char* functionName, const EditorScriptInputActionContext* inputContext);
+	typedef int32_t(__cdecl* EditorScriptGetActionCountFn)();
+	typedef bool(__cdecl* EditorScriptGetActionNameFn)(int32_t actionIndex, char* actionName, int32_t actionNameCapacity);
 }

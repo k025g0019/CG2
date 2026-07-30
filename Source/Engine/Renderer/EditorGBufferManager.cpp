@@ -3,7 +3,8 @@
 #include <algorithm>
 
 namespace {
-	constexpr uint32_t kGBufferDescriptorStartIndex = 102u;
+	// PostProcessQuality は 90～103 を使うため、その直後から GBuffer を配置する。
+	constexpr uint32_t kGBufferDescriptorStartIndex = 104u;
 	constexpr D3D12_RESOURCE_STATES kGBufferReadState =
 		static_cast<D3D12_RESOURCE_STATES>(
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
@@ -14,6 +15,7 @@ namespace {
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
+		DXGI_FORMAT_R16G16_FLOAT,
 	};
 
 	constexpr std::array<std::array<float, 4u>, EditorGBufferManager::kRenderTargetCount>
@@ -21,6 +23,7 @@ namespace {
 			{0.0f, 0.0f, 0.0f, 0.0f},
 			{0.5f, 0.5f, 1.0f, 0.0f},
 			{1.0f, 0.0f, 1.0f, 0.0f},
+			{0.0f, 0.0f, 0.0f, 0.0f},
 			{0.0f, 0.0f, 0.0f, 0.0f},
 		}};
 }
@@ -217,6 +220,10 @@ D3D12_GPU_DESCRIPTOR_HANDLE EditorGBufferManager::GetMaterialSrvHandle() const {
 
 D3D12_GPU_DESCRIPTOR_HANDLE EditorGBufferManager::GetEmissionSrvHandle() const {
 	return srvHandles_[static_cast<size_t>(RenderTargetType::Emission)];
+}
+
+D3D12_GPU_DESCRIPTOR_HANDLE EditorGBufferManager::GetMotionVectorSrvHandle() const {
+	return srvHandles_[static_cast<size_t>(RenderTargetType::MotionVector)];
 }
 
 bool EditorGBufferManager::IsReady() const {

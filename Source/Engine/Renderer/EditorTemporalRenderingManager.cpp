@@ -1,12 +1,13 @@
 ﻿#include "EditorTemporalRenderingManager.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace {
 	constexpr uint32_t kTemporalDescriptorStartIndex = 57u;
 	constexpr uint32_t kDescriptorStride = 2u;
-	constexpr uint32_t kComputeConstantCount = 40u;
+	constexpr uint32_t kComputeConstantCount = 44u;
 	constexpr uint32_t kThreadGroupSize = 8u;
 
 	constexpr D3D12_RESOURCE_STATES kShaderReadState = static_cast<D3D12_RESOURCE_STATES>(
@@ -88,21 +89,64 @@ bool EditorTemporalRenderingManager::Execute(
 	ID3D12GraphicsCommandList* commandList,
 	D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle,
 	D3D12_GPU_DESCRIPTOR_HANDLE sceneDepthSrvHandle,
+	D3D12_GPU_DESCRIPTOR_HANDLE objectMotionVectorSrvHandle,
 	D3D12_GPU_DESCRIPTOR_HANDLE reconstructedNormalSrvHandle,
-	D3D12_GPU_DESCRIPTOR_HANDLE depthPyramidSrvHandle,
+	const std::array<D3D12_GPU_DESCRIPTOR_HANDLE, 5u>& depthPyramidSrvHandles,
 	D3D12_GPU_DESCRIPTOR_HANDLE materialMaskSrvHandle,
 	const float* inverseViewProjectionMatrix,
 	const float* viewProjectionMatrix,
 	const float* cameraPosition,
+	float viewportX,
+	float viewportY,
+	float viewportWidth,
+	float viewportHeight,
+	bool ssrEnabled,
+	bool temporalEnabled,
+	uint32_t viewHistoryIndex,
+	bool advanceHistoryFrame,
 	float sharpness,
 	float blendRatio) {
 
 	if (!isInitialized_ || commandList == nullptr || sourceColorSrvHandle.ptr == 0u ||
-		sceneDepthSrvHandle.ptr == 0u || reconstructedNormalSrvHandle.ptr == 0u ||
-		depthPyramidSrvHandle.ptr == 0u || materialMaskSrvHandle.ptr == 0u ||
+		sceneDepthSrvHandle.ptr == 0u || objectMotionVectorSrvHandle.ptr == 0u ||
+		reconstructedNormalSrvHandle.ptr == 0u ||
+		depthPyramidSrvHandles[0].ptr == 0u || materialMaskSrvHandle.ptr == 0u ||
 		inverseViewProjectionMatrix == nullptr || viewProjectionMatrix == nullptr ||
-		cameraPosition == nullptr) {
+		cameraPosition == nullptr || viewHistoryIndex >= kViewHistoryCount) {
 		return false;
+	}
+
+	if (!ssrEnabled && !temporalEnabled) {
+		return false;
+	}
+
+	if (ssrEnabled) {
+		for (const D3D12_GPU_DESCRIPTOR_HANDLE depthPyramidSrvHandle : depthPyramidSrvHandles) {
+			if (depthPyramidSrvHandle.ptr == 0u) {
+				return false;
+			}
+		}
+	}
+
+	const float viewportRect[4] = {
+		viewportX,
+		viewportY,
+		(std::max)(viewportWidth, 1.0f),
+		(std::max)(viewportHeight, 1.0f)
+	};
+	bool hasViewportChanged = false;
+
+	for (uint32_t viewportElementIndex = 0u; viewportElementIndex < 4u; viewportElementIndex++) {
+		hasViewportChanged = hasViewportChanged ||
+			std::fabs(
+				previousViewportRects_[viewHistoryIndex][viewportElementIndex] -
+				viewportRect[viewportElementIndex]) > 0.5f;
+	}
+
+	if (ssrEnabled != lastSsrEnabled_[viewHistoryIndex] ||
+		temporalEnabled != lastTemporalEnabled_[viewHistoryIndex] ||
+		hasViewportChanged) {
+		isHistoryValid_[viewHistoryIndex] = false;
 	}
 
 	commandList->SetComputeRootSignature(computeRootSignature_.Get());
@@ -117,8 +161,11 @@ bool EditorTemporalRenderingManager::Execute(
 	std::memcpy(&constants[4], inverseViewProjectionMatrix, sizeof(float) * 16u);
 	std::memcpy(
 		&constants[20],
-		isHistoryValid_ ? previousViewProjectionMatrix_.data() : viewProjectionMatrix,
+		isHistoryValid_[viewHistoryIndex]
+			? previousViewProjectionMatrices_[viewHistoryIndex].data()
+			: viewProjectionMatrix,
 		sizeof(float) * 16u);
+	std::memcpy(&constants[40], viewportRect, sizeof(viewportRect));
 
 	const ResourceType ssrHistoryReadType = historyWriteIndex_ == 0u
 		? ResourceType::SsrHistory1
@@ -141,14 +188,14 @@ bool EditorTemporalRenderingManager::Execute(
 	// カメラ移動量と非連続領域を求める
 	//================================================================
 
-	float historyValidValue = isHistoryValid_ ? 1.0f : 0.0f;
+	float historyValidValue = isHistoryValid_[viewHistoryIndex] ? 1.0f : 0.0f;
 	std::memcpy(&constants[36], &historyValidValue, sizeof(float));
 
 	if (!Dispatch(
 		commandList,
 		0u,
 		ResourceType::Velocity,
-		{sceneDepthSrvHandle, sceneDepthSrvHandle, sceneDepthSrvHandle, sceneDepthSrvHandle},
+		{sceneDepthSrvHandle, objectMotionVectorSrvHandle, sceneDepthSrvHandle, sceneDepthSrvHandle},
 		constants)) {
 		return false;
 	}
@@ -183,80 +230,101 @@ bool EditorTemporalRenderingManager::Execute(
 		return false;
 	}
 
-	//================================================================
-	// Hi-Z を使って SSR を追跡し、前フレーム結果と安定化する
-	//================================================================
+	D3D12_GPU_DESCRIPTOR_HANDLE resolvedColorSrvHandle = sourceColorSrvHandle;
 
-	std::memcpy(&constants[36], &cameraPosition[0], sizeof(float) * 3u);
-	float reflectionDistance = 80.0f;
-	std::memcpy(&constants[39], &reflectionDistance, sizeof(float));
-	std::memcpy(&constants[20], viewProjectionMatrix, sizeof(float) * 16u);
+	if (ssrEnabled) {
+		//============================================================
+		// Hi-Z を使って SSR を追跡し、前フレーム結果と安定化する
+		//============================================================
 
-	if (!Dispatch(
-		commandList,
-		4u,
-		ResourceType::SsrTrace,
-		{sourceColorSrvHandle, sceneDepthSrvHandle, reconstructedNormalSrvHandle, depthPyramidSrvHandle},
-		constants)) {
-		return false;
-	}
+		std::memcpy(&constants[36], &cameraPosition[0], sizeof(float) * 3u);
+		float reflectionDistance = 80.0f;
+		std::memcpy(&constants[39], &reflectionDistance, sizeof(float));
+		std::memcpy(&constants[20], viewProjectionMatrix, sizeof(float) * 16u);
 
-	if (!Dispatch(
-		commandList,
-		5u,
-		ResourceType::SsrCurrent,
-		{sourceColorSrvHandle, getSrvHandle(ResourceType::SsrTrace), sceneDepthSrvHandle, reconstructedNormalSrvHandle},
-		constants)) {
-		return false;
-	}
+		const std::array<D3D12_GPU_DESCRIPTOR_HANDLE, 4u> additionalDepthPyramidSrvHandles = {
+			depthPyramidSrvHandles[1],
+			depthPyramidSrvHandles[2],
+			depthPyramidSrvHandles[3],
+			depthPyramidSrvHandles[4]
+		};
 
-	std::memcpy(&constants[36], &historyValidValue, sizeof(float));
+		if (!Dispatch(
+			commandList,
+			4u,
+			ResourceType::SsrTrace,
+			{materialMaskSrvHandle, sceneDepthSrvHandle, reconstructedNormalSrvHandle, depthPyramidSrvHandles[0]},
+			constants,
+			&additionalDepthPyramidSrvHandles)) {
+			return false;
+		}
 
-	if (!Dispatch(
-		commandList,
-		6u,
-		ssrHistoryWriteType,
-		{getSrvHandle(ResourceType::SsrCurrent), getSrvHandle(ssrHistoryReadType), getSrvHandle(ResourceType::DilatedVelocity), getSrvHandle(ResourceType::DisocclusionMask)},
-		constants)) {
-		return false;
-	}
+		if (!Dispatch(
+			commandList,
+			5u,
+			ResourceType::SsrCurrent,
+			{sourceColorSrvHandle, getSrvHandle(ResourceType::SsrTrace), materialMaskSrvHandle, reconstructedNormalSrvHandle},
+			constants)) {
+			return false;
+		}
 
-	if (!Dispatch(
-		commandList,
-		7u,
-		ResourceType::SsrDenoised,
-		{getSrvHandle(ssrHistoryWriteType), sceneDepthSrvHandle, reconstructedNormalSrvHandle, materialMaskSrvHandle},
-		constants)) {
-		return false;
-	}
+		std::memcpy(&constants[36], &historyValidValue, sizeof(float));
 
-	if (!Dispatch(
-		commandList,
-		8u,
-		ResourceType::ReflectionComposite,
-		{sourceColorSrvHandle, getSrvHandle(ResourceType::SsrDenoised), materialMaskSrvHandle, getSrvHandle(ResourceType::DisocclusionMask)},
-		constants)) {
-		return false;
+		if (!Dispatch(
+			commandList,
+			6u,
+			ssrHistoryWriteType,
+			{getSrvHandle(ResourceType::SsrCurrent), getSrvHandle(ssrHistoryReadType), getSrvHandle(ResourceType::DilatedVelocity), getSrvHandle(ResourceType::DisocclusionMask)},
+			constants)) {
+			return false;
+		}
+
+		if (!Dispatch(
+			commandList,
+			7u,
+			ResourceType::SsrDenoised,
+			{getSrvHandle(ssrHistoryWriteType), sceneDepthSrvHandle, reconstructedNormalSrvHandle, materialMaskSrvHandle},
+			constants)) {
+			return false;
+		}
+
+		if (!Dispatch(
+			commandList,
+			8u,
+			ResourceType::ReflectionComposite,
+			{sourceColorSrvHandle, getSrvHandle(ResourceType::SsrDenoised), materialMaskSrvHandle, getSrvHandle(ResourceType::DisocclusionMask)},
+			constants)) {
+			return false;
+		}
+
+		resolvedColorSrvHandle = getSrvHandle(ResourceType::ReflectionComposite);
 	}
 
 	//================================================================
 	// 色履歴を近傍色へ制限してゴーストを抑え、次フレーム深度を保存
 	//================================================================
 
-	const float temporalHistoryBlend = (std::clamp)(blendRatio, 0.0f, 0.98f);
-	const float temporalSharpness = (std::clamp)(sharpness, 0.0f, 1.0f);
-	std::memcpy(&constants[36], &historyValidValue, sizeof(float));
-	std::memcpy(&constants[37], &temporalHistoryBlend, sizeof(float));
-	std::memcpy(&constants[38], &temporalSharpness, sizeof(float));
-	constants[39] = 0u;
+	if (temporalEnabled) {
+		const float temporalHistoryBlend = (std::clamp)(blendRatio, 0.0f, 0.98f);
+		const float temporalSharpness = (std::clamp)(sharpness, 0.0f, 1.0f);
+		std::memcpy(&constants[36], &historyValidValue, sizeof(float));
+		std::memcpy(&constants[37], &temporalHistoryBlend, sizeof(float));
+		std::memcpy(&constants[38], &temporalSharpness, sizeof(float));
+		constants[39] = 0u;
 
-	if (!Dispatch(
-		commandList,
-		9u,
-		colorHistoryWriteType,
-		{getSrvHandle(ResourceType::ReflectionComposite), getSrvHandle(colorHistoryReadType), getSrvHandle(ResourceType::DilatedVelocity), getSrvHandle(ResourceType::ReactiveMask)},
-		constants)) {
-		return false;
+		if (!Dispatch(
+			commandList,
+			9u,
+			colorHistoryWriteType,
+			{resolvedColorSrvHandle, getSrvHandle(colorHistoryReadType), getSrvHandle(ResourceType::DilatedVelocity), getSrvHandle(ResourceType::ReactiveMask)},
+			constants)) {
+			return false;
+		}
+
+		outputSrvHandle_ = getSrvHandle(colorHistoryWriteType);
+	}
+	else {
+		outputSrvHandle_ = resolvedColorSrvHandle;
 	}
 
 	if (!Dispatch(
@@ -268,9 +336,22 @@ bool EditorTemporalRenderingManager::Execute(
 		return false;
 	}
 
-	std::memcpy(previousViewProjectionMatrix_.data(), viewProjectionMatrix, sizeof(float) * 16u);
-	historyWriteIndex_ = 1u - historyWriteIndex_;
-	isHistoryValid_ = true;
+	std::memcpy(
+		previousViewProjectionMatrices_[viewHistoryIndex].data(),
+		viewProjectionMatrix,
+		sizeof(float) * 16u);
+	std::memcpy(
+		previousViewportRects_[viewHistoryIndex].data(),
+		viewportRect,
+		sizeof(viewportRect));
+	isHistoryValid_[viewHistoryIndex] = true;
+	lastSsrEnabled_[viewHistoryIndex] = ssrEnabled;
+	lastTemporalEnabled_[viewHistoryIndex] = temporalEnabled;
+
+	if (advanceHistoryFrame) {
+		historyWriteIndex_ = 1u - historyWriteIndex_;
+	}
+
 	return true;
 }
 
@@ -289,10 +370,7 @@ void EditorTemporalRenderingManager::Finalize() {
 }
 
 D3D12_GPU_DESCRIPTOR_HANDLE EditorTemporalRenderingManager::GetOutputSrvHandle() const {
-	const ResourceType outputType = historyWriteIndex_ == 0u
-		? ResourceType::ColorHistory1
-		: ResourceType::ColorHistory0;
-	return srvHandles_[static_cast<size_t>(outputType)];
+	return outputSrvHandle_;
 }
 
 D3D12_GPU_DESCRIPTOR_HANDLE EditorTemporalRenderingManager::GetVelocitySrvHandle() const {
@@ -302,16 +380,18 @@ D3D12_GPU_DESCRIPTOR_HANDLE EditorTemporalRenderingManager::GetVelocitySrvHandle
 bool EditorTemporalRenderingManager::CreateRootSignatureAndPipelineStates(
 	const std::array<IDxcBlob*, kPipelineCount>& computeShaderBlobs) {
 
-	std::array<D3D12_DESCRIPTOR_RANGE, 5u> descriptorRanges{};
-	std::array<D3D12_ROOT_PARAMETER, 6u> rootParameters{};
+	std::array<D3D12_DESCRIPTOR_RANGE, 9u> descriptorRanges{};
+	std::array<D3D12_ROOT_PARAMETER, 10u> rootParameters{};
 
-	for (uint32_t descriptorIndex = 0u; descriptorIndex < 5u; descriptorIndex++) {
+	for (uint32_t descriptorIndex = 0u;
+		descriptorIndex < static_cast<uint32_t>(descriptorRanges.size());
+		descriptorIndex++) {
 		D3D12_DESCRIPTOR_RANGE& descriptorRange = descriptorRanges[descriptorIndex];
-		descriptorRange.RangeType = descriptorIndex < 4u
+		descriptorRange.RangeType = descriptorIndex < 8u
 			? D3D12_DESCRIPTOR_RANGE_TYPE_SRV
 			: D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
 		descriptorRange.NumDescriptors = 1u;
-		descriptorRange.BaseShaderRegister = descriptorIndex < 4u ? descriptorIndex : 0u;
+		descriptorRange.BaseShaderRegister = descriptorIndex < 8u ? descriptorIndex : 0u;
 		descriptorRange.RegisterSpace = 0u;
 		descriptorRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
@@ -322,11 +402,11 @@ bool EditorTemporalRenderingManager::CreateRootSignatureAndPipelineStates(
 		rootParameter.DescriptorTable.pDescriptorRanges = &descriptorRange;
 	}
 
-	rootParameters[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-	rootParameters[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-	rootParameters[5].Constants.ShaderRegister = 0u;
-	rootParameters[5].Constants.RegisterSpace = 0u;
-	rootParameters[5].Constants.Num32BitValues = kComputeConstantCount;
+	rootParameters[9].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+	rootParameters[9].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+	rootParameters[9].Constants.ShaderRegister = 0u;
+	rootParameters[9].Constants.RegisterSpace = 0u;
+	rootParameters[9].Constants.Num32BitValues = kComputeConstantCount;
 
 	std::array<D3D12_STATIC_SAMPLER_DESC, 2u> samplers{};
 	samplers[0].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -462,8 +542,19 @@ bool EditorTemporalRenderingManager::CreateSizeDependentResources(
 	}
 
 	historyWriteIndex_ = 0u;
-	isHistoryValid_ = false;
-	previousViewProjectionMatrix_.fill(0.0f);
+	isHistoryValid_.fill(false);
+	outputSrvHandle_ = {};
+	lastSsrEnabled_.fill(false);
+	lastTemporalEnabled_.fill(false);
+
+	for (std::array<float, 16u>& previousMatrix : previousViewProjectionMatrices_) {
+		previousMatrix.fill(0.0f);
+	}
+
+	for (std::array<float, 4u>& previousViewport : previousViewportRects_) {
+		previousViewport.fill(0.0f);
+	}
+
 	return true;
 }
 
@@ -477,7 +568,8 @@ void EditorTemporalRenderingManager::ReleaseSizeDependentResources() {
 	renderWidth_ = 0u;
 	renderHeight_ = 0u;
 	historyWriteIndex_ = 0u;
-	isHistoryValid_ = false;
+	isHistoryValid_.fill(false);
+	previousViewportRects_.fill({});
 }
 
 bool EditorTemporalRenderingManager::Dispatch(
@@ -485,7 +577,8 @@ bool EditorTemporalRenderingManager::Dispatch(
 	uint32_t pipelineIndex,
 	ResourceType destinationResourceType,
 	const std::array<D3D12_GPU_DESCRIPTOR_HANDLE, 4u>& sourceSrvHandles,
-	const std::array<uint32_t, 40u>& constants) {
+	const std::array<uint32_t, 44u>& constants,
+	const std::array<D3D12_GPU_DESCRIPTOR_HANDLE, 4u>* additionalSourceSrvHandles) {
 
 	if (pipelineIndex >= pipelineStates_.size()) {
 		return false;
@@ -512,11 +605,25 @@ bool EditorTemporalRenderingManager::Dispatch(
 		commandList->SetComputeRootDescriptorTable(sourceIndex, sourceSrvHandles[sourceIndex]);
 	}
 
-	commandList->SetComputeRootDescriptorTable(4u, uavHandles_[destinationIndex]);
-	commandList->SetComputeRoot32BitConstants(5u, kComputeConstantCount, constants.data(), 0u);
+	for (uint32_t sourceIndex = 0u; sourceIndex < sourceSrvHandles.size(); sourceIndex++) {
+		const D3D12_GPU_DESCRIPTOR_HANDLE additionalSourceSrvHandle =
+			additionalSourceSrvHandles == nullptr
+			? sourceSrvHandles[3]
+			: (*additionalSourceSrvHandles)[sourceIndex];
+		commandList->SetComputeRootDescriptorTable(4u + sourceIndex, additionalSourceSrvHandle);
+	}
+
+	commandList->SetComputeRootDescriptorTable(8u, uavHandles_[destinationIndex]);
+	commandList->SetComputeRoot32BitConstants(9u, kComputeConstantCount, constants.data(), 0u);
+	float viewportWidth = 1.0f;
+	float viewportHeight = 1.0f;
+	std::memcpy(&viewportWidth, &constants[42], sizeof(float));
+	std::memcpy(&viewportHeight, &constants[43], sizeof(float));
+	const uint32_t dispatchWidth = static_cast<uint32_t>(std::ceil((std::max)(viewportWidth, 1.0f)));
+	const uint32_t dispatchHeight = static_cast<uint32_t>(std::ceil((std::max)(viewportHeight, 1.0f)));
 	commandList->Dispatch(
-		(renderWidth_ + kThreadGroupSize - 1u) / kThreadGroupSize,
-		(renderHeight_ + kThreadGroupSize - 1u) / kThreadGroupSize,
+		(dispatchWidth + kThreadGroupSize - 1u) / kThreadGroupSize,
+		(dispatchHeight + kThreadGroupSize - 1u) / kThreadGroupSize,
 		1u);
 
 	D3D12_RESOURCE_BARRIER unorderedAccessBarrier{};

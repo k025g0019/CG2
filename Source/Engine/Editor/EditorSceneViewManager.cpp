@@ -796,15 +796,25 @@ void EditorSceneViewManager::Draw() {
 		IM_COL32(180, 220, 255, 255),
 		"Perspective");
 
-	char sceneFpsText[64]{};
+	char sceneFpsText[192]{};
 	const float sceneFrameRate = ImGui::GetIO().Framerate;
 	const float sceneFrameTimeMilliseconds = sceneFrameRate > 0.0f ? 1000.0f / sceneFrameRate : 0.0f;
+	constexpr double bytesPerMegabyte = 1024.0 * 1024.0;
+	const double localVideoMemoryUsageMegabytes =
+		static_cast<double>(g_renderProfile.localVideoMemoryUsage) / bytesPerMegabyte;
+	const double localVideoMemoryBudgetMegabytes =
+		static_cast<double>(g_renderProfile.localVideoMemoryBudget) / bytesPerMegabyte;
 	std::snprintf(
 		sceneFpsText,
 		_countof(sceneFpsText),
-		"%.1f FPS  %.2f ms",
+		"%.1f FPS  CPU %.2f ms  GPU %.2f ms\nVRAM %.0f / %.0f MB  Obj %u  Inst %u",
 		sceneFrameRate,
-		sceneFrameTimeMilliseconds);
+		sceneFrameTimeMilliseconds,
+		g_renderProfile.gpuFrameMilliseconds,
+		localVideoMemoryUsageMegabytes,
+		localVideoMemoryBudgetMegabytes,
+		g_renderProfile.sceneObjectCount,
+		g_renderProfile.instanceCount);
 	const ImVec2 sceneFpsTextSize = ImGui::CalcTextSize(sceneFpsText);
 	const ImVec2 sceneFpsTextPosition{
 		g_editorSceneX + 54.0f,

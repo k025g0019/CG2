@@ -1,5 +1,7 @@
 ﻿#include "../Temporal/TemporalCommon.hlsli"
 
+#include "../Temporal/HistoryClamp.hlsli"
+
 Texture2D<float4> gCurrentReflection : register(t0);
 Texture2D<float4> gReflectionHistory : register(t1);
 Texture2D<float2> gDilatedVelocity : register(t2);
@@ -31,7 +33,36 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         return;
     }
 
-    const float4 historyReflection = gReflectionHistory.SampleLevel(gLinearClampSampler, previousUv, 0.0f);
-    const float historyWeight = currentReflection.a > 0.01f ? 0.82f : 0.94f;
-    gResolvedReflection[pixelPosition] = lerp(currentReflection, historyReflection, historyWeight);
+    float3 minimumColor;
+    float3 maximumColor;
+    GetNeighborhoodBounds(
+        gCurrentReflection,
+        int2(pixelPosition),
+        gRenderSize,
+        minimumColor,
+        maximumColor);
+
+    const float4 historyReflection = gReflectionHistory.SampleLevel(
+        gLinearClampSampler,
+        previousUv,
+        0.0f);
+    const float3 clampedHistoryColor = clamp(
+        historyReflection.rgb,
+        minimumColor,
+        maximumColor);
+    const float currentConfidence = saturate(currentReflection.a);
+    const float historyConfidence = saturate(historyReflection.a);
+    const float motionAmount = saturate(length(velocity) * float(gRenderSize.x));
+    const float stableHistoryWeight = lerp(0.88f, 0.68f, motionAmount);
+    const float historyWeight = stableHistoryWeight * historyConfidence;
+    const float3 resolvedColor = lerp(
+        currentReflection.rgb,
+        clampedHistoryColor,
+        historyWeight);
+    const float historyDecay = currentConfidence > 0.01f ? 0.98f : 0.86f;
+    const float resolvedConfidence = lerp(
+        currentConfidence,
+        historyConfidence * historyDecay,
+        historyWeight);
+    gResolvedReflection[pixelPosition] = float4(resolvedColor, resolvedConfidence);
 }

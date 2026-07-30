@@ -1,6 +1,25 @@
 ﻿#include "GameScene.h"
 
+#include "EditorSharedState.h"
+
+using namespace EditorSharedState;
+
 void GameScene::Initialize(_In_ HINSTANCE instanceHandle) {
+	std::string gameBuildMessage;
+	isStandaloneGame_ = EditorGameBuildManager::TryLoadStandaloneManifest(
+		gameBuildSettings_,
+		gameBuildMessage);
+	hasStandaloneInitializationFailed_ =
+		!isStandaloneGame_ && !gameBuildMessage.empty();
+
+	if (!isStandaloneGame_ && !hasStandaloneInitializationFailed_) {
+		// Editor の Play 中も Player と同じ Build Index で Scene を切り替えられるようにする。
+		EditorGameBuildManager::LoadProjectSettings(gameBuildSettings_);
+	}
+
+	g_isStandaloneGame = isStandaloneGame_;
+	g_gameBuildScenePaths = gameBuildSettings_.scenePaths;
+
 	//================================================================
 	// Win32 / DirectX / 入力デバイスの初期化
 	//================================================================
@@ -12,11 +31,39 @@ void GameScene::Initialize(_In_ HINSTANCE instanceHandle) {
 		return;
 	}
 
+	if (hasStandaloneInitializationFailed_) {
+		MessageBoxA(
+			nullptr,
+			gameBuildMessage.c_str(),
+			"CG2 Game Build Error",
+			MB_OK | MB_ICONERROR);
+		PostQuitMessage(1);
+		return;
+	}
+
 	//================================================================
 	// エディター機能ごとの初期化
 	//================================================================
 
 	sceneLifecycleManager_.Initialize();  // Scene / Runtime / 選択同期を初期化して、空 Scene を編集できる状態にする。
+
+	if (isStandaloneGame_) {
+		if (!g_editorScene.LoadScene(gameBuildSettings_.startupScenePath)) {
+			MessageBoxA(
+				nullptr,
+				"起動シーンを読み込めません",
+				"CG2 Game Build Error",
+				MB_OK | MB_ICONERROR);
+			PostQuitMessage(1);
+			return;
+		}
+
+		g_currentScenePath = gameBuildSettings_.startupScenePath;
+		g_editorSceneSynchronizer.Update(
+			g_editorTextureFilePaths,
+			g_selectedPlacedSceneObjectIndex);
+		g_editorRuntimeManager.TogglePlay();
+	}
 	frameInputManager_.Initialize();  // キーボード入力とウィンドウサイズ追従を使える状態にする。
 	imguiFrameManager_.Initialize();  // ImGui のフレーム制御担当。現在は実体初期化済みリソースを使うだけなので空実装。
 	mainMenuManager_.Initialize();  // ファイルメニューや Play ボタンの表示担当。状態は共有 Scene を直接参照する。
@@ -49,6 +96,13 @@ void GameScene::Update() {
 	frameInputManager_.Update();  // DIK キー状態、カメラ操作、ウィンドウリサイズ後の描画サイズを更新する。
 	sceneLifecycleManager_.Update();  // Play 中の物理・Input Component と、SceneObject / GameObject の同期を更新する。
 	imguiFrameManager_.Update();  // ImGui / ImGuizmo の新しいフレームを開始する。
+
+	if (isStandaloneGame_) {
+		gameViewManager_.Update();
+		renderManager_.Update();
+		return;
+	}
+
 	mainMenuManager_.Update();  // メインメニューは Draw で表示するだけなので Update は空実装。
 	dockingManager_.Update();  // Docking は Draw 時に DockSpace を確保するため、Update は空実装。
 	sceneViewManager_.Update();  // SceneView の入力判定は Draw 中の ImGui 座標が必要なので Update は空実装。
@@ -72,6 +126,14 @@ void GameScene::Draw() {
 
 	platformManager_.Draw();  // 描画フラグをフレーム先頭で下げ、ImGui Draw 後だけ Renderer が実行されるようにする。
 	sceneLifecycleManager_.Draw();  // Play 中だけ Runtime 用 Draw を呼び、物理状態の反映を描画前に完了させる。
+
+	if (isStandaloneGame_) {
+		gameViewManager_.Draw();
+		imguiFrameManager_.Draw();
+		renderManager_.Draw();
+		return;
+	}
+
 	mainMenuManager_.Draw();  // 上部メニューと Play / Stop の UI を構築する。
 	dockingManager_.Draw();  // 各ウィンドウをドラッグ移動・ドッキングできる DockSpace を構築する。
 	sceneViewManager_.Draw();  // Scene タブ、グリッド、ギズモ、ドラッグ配置、範囲選択を描画する。

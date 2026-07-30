@@ -88,21 +88,33 @@ bool EditorTemporalRenderingManager::Execute(
 	ID3D12GraphicsCommandList* commandList,
 	D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle,
 	D3D12_GPU_DESCRIPTOR_HANDLE sceneDepthSrvHandle,
+	D3D12_GPU_DESCRIPTOR_HANDLE objectMotionVectorSrvHandle,
 	D3D12_GPU_DESCRIPTOR_HANDLE reconstructedNormalSrvHandle,
 	D3D12_GPU_DESCRIPTOR_HANDLE depthPyramidSrvHandle,
 	D3D12_GPU_DESCRIPTOR_HANDLE materialMaskSrvHandle,
 	const float* inverseViewProjectionMatrix,
 	const float* viewProjectionMatrix,
 	const float* cameraPosition,
+	bool ssrEnabled,
+	bool temporalEnabled,
 	float sharpness,
 	float blendRatio) {
 
 	if (!isInitialized_ || commandList == nullptr || sourceColorSrvHandle.ptr == 0u ||
-		sceneDepthSrvHandle.ptr == 0u || reconstructedNormalSrvHandle.ptr == 0u ||
+		sceneDepthSrvHandle.ptr == 0u || objectMotionVectorSrvHandle.ptr == 0u ||
+		reconstructedNormalSrvHandle.ptr == 0u ||
 		depthPyramidSrvHandle.ptr == 0u || materialMaskSrvHandle.ptr == 0u ||
 		inverseViewProjectionMatrix == nullptr || viewProjectionMatrix == nullptr ||
 		cameraPosition == nullptr) {
 		return false;
+	}
+
+	if (!ssrEnabled && !temporalEnabled) {
+		return false;
+	}
+
+	if (ssrEnabled != lastSsrEnabled_ || temporalEnabled != lastTemporalEnabled_) {
+		isHistoryValid_ = false;
 	}
 
 	commandList->SetComputeRootSignature(computeRootSignature_.Get());
@@ -148,7 +160,7 @@ bool EditorTemporalRenderingManager::Execute(
 		commandList,
 		0u,
 		ResourceType::Velocity,
-		{sceneDepthSrvHandle, sceneDepthSrvHandle, sceneDepthSrvHandle, sceneDepthSrvHandle},
+		{sceneDepthSrvHandle, objectMotionVectorSrvHandle, sceneDepthSrvHandle, sceneDepthSrvHandle},
 		constants)) {
 		return false;
 	}
@@ -183,80 +195,93 @@ bool EditorTemporalRenderingManager::Execute(
 		return false;
 	}
 
-	//================================================================
-	// Hi-Z を使って SSR を追跡し、前フレーム結果と安定化する
-	//================================================================
+	D3D12_GPU_DESCRIPTOR_HANDLE resolvedColorSrvHandle = sourceColorSrvHandle;
 
-	std::memcpy(&constants[36], &cameraPosition[0], sizeof(float) * 3u);
-	float reflectionDistance = 80.0f;
-	std::memcpy(&constants[39], &reflectionDistance, sizeof(float));
-	std::memcpy(&constants[20], viewProjectionMatrix, sizeof(float) * 16u);
+	if (ssrEnabled) {
+		//============================================================
+		// Hi-Z を使って SSR を追跡し、前フレーム結果と安定化する
+		//============================================================
 
-	if (!Dispatch(
-		commandList,
-		4u,
-		ResourceType::SsrTrace,
-		{sourceColorSrvHandle, sceneDepthSrvHandle, reconstructedNormalSrvHandle, depthPyramidSrvHandle},
-		constants)) {
-		return false;
-	}
+		std::memcpy(&constants[36], &cameraPosition[0], sizeof(float) * 3u);
+		float reflectionDistance = 80.0f;
+		std::memcpy(&constants[39], &reflectionDistance, sizeof(float));
+		std::memcpy(&constants[20], viewProjectionMatrix, sizeof(float) * 16u);
 
-	if (!Dispatch(
-		commandList,
-		5u,
-		ResourceType::SsrCurrent,
-		{sourceColorSrvHandle, getSrvHandle(ResourceType::SsrTrace), sceneDepthSrvHandle, reconstructedNormalSrvHandle},
-		constants)) {
-		return false;
-	}
+		if (!Dispatch(
+			commandList,
+			4u,
+			ResourceType::SsrTrace,
+			{materialMaskSrvHandle, sceneDepthSrvHandle, reconstructedNormalSrvHandle, depthPyramidSrvHandle},
+			constants)) {
+			return false;
+		}
 
-	std::memcpy(&constants[36], &historyValidValue, sizeof(float));
+		if (!Dispatch(
+			commandList,
+			5u,
+			ResourceType::SsrCurrent,
+			{sourceColorSrvHandle, getSrvHandle(ResourceType::SsrTrace), materialMaskSrvHandle, reconstructedNormalSrvHandle},
+			constants)) {
+			return false;
+		}
 
-	if (!Dispatch(
-		commandList,
-		6u,
-		ssrHistoryWriteType,
-		{getSrvHandle(ResourceType::SsrCurrent), getSrvHandle(ssrHistoryReadType), getSrvHandle(ResourceType::DilatedVelocity), getSrvHandle(ResourceType::DisocclusionMask)},
-		constants)) {
-		return false;
-	}
+		std::memcpy(&constants[36], &historyValidValue, sizeof(float));
 
-	if (!Dispatch(
-		commandList,
-		7u,
-		ResourceType::SsrDenoised,
-		{getSrvHandle(ssrHistoryWriteType), sceneDepthSrvHandle, reconstructedNormalSrvHandle, materialMaskSrvHandle},
-		constants)) {
-		return false;
-	}
+		if (!Dispatch(
+			commandList,
+			6u,
+			ssrHistoryWriteType,
+			{getSrvHandle(ResourceType::SsrCurrent), getSrvHandle(ssrHistoryReadType), getSrvHandle(ResourceType::DilatedVelocity), getSrvHandle(ResourceType::DisocclusionMask)},
+			constants)) {
+			return false;
+		}
 
-	if (!Dispatch(
-		commandList,
-		8u,
-		ResourceType::ReflectionComposite,
-		{sourceColorSrvHandle, getSrvHandle(ResourceType::SsrDenoised), materialMaskSrvHandle, getSrvHandle(ResourceType::DisocclusionMask)},
-		constants)) {
-		return false;
+		if (!Dispatch(
+			commandList,
+			7u,
+			ResourceType::SsrDenoised,
+			{getSrvHandle(ssrHistoryWriteType), sceneDepthSrvHandle, reconstructedNormalSrvHandle, materialMaskSrvHandle},
+			constants)) {
+			return false;
+		}
+
+		if (!Dispatch(
+			commandList,
+			8u,
+			ResourceType::ReflectionComposite,
+			{sourceColorSrvHandle, getSrvHandle(ResourceType::SsrDenoised), materialMaskSrvHandle, getSrvHandle(ResourceType::DisocclusionMask)},
+			constants)) {
+			return false;
+		}
+
+		resolvedColorSrvHandle = getSrvHandle(ResourceType::ReflectionComposite);
 	}
 
 	//================================================================
 	// 色履歴を近傍色へ制限してゴーストを抑え、次フレーム深度を保存
 	//================================================================
 
-	const float temporalHistoryBlend = (std::clamp)(blendRatio, 0.0f, 0.98f);
-	const float temporalSharpness = (std::clamp)(sharpness, 0.0f, 1.0f);
-	std::memcpy(&constants[36], &historyValidValue, sizeof(float));
-	std::memcpy(&constants[37], &temporalHistoryBlend, sizeof(float));
-	std::memcpy(&constants[38], &temporalSharpness, sizeof(float));
-	constants[39] = 0u;
+	if (temporalEnabled) {
+		const float temporalHistoryBlend = (std::clamp)(blendRatio, 0.0f, 0.98f);
+		const float temporalSharpness = (std::clamp)(sharpness, 0.0f, 1.0f);
+		std::memcpy(&constants[36], &historyValidValue, sizeof(float));
+		std::memcpy(&constants[37], &temporalHistoryBlend, sizeof(float));
+		std::memcpy(&constants[38], &temporalSharpness, sizeof(float));
+		constants[39] = 0u;
 
-	if (!Dispatch(
-		commandList,
-		9u,
-		colorHistoryWriteType,
-		{getSrvHandle(ResourceType::ReflectionComposite), getSrvHandle(colorHistoryReadType), getSrvHandle(ResourceType::DilatedVelocity), getSrvHandle(ResourceType::ReactiveMask)},
-		constants)) {
-		return false;
+		if (!Dispatch(
+			commandList,
+			9u,
+			colorHistoryWriteType,
+			{resolvedColorSrvHandle, getSrvHandle(colorHistoryReadType), getSrvHandle(ResourceType::DilatedVelocity), getSrvHandle(ResourceType::ReactiveMask)},
+			constants)) {
+			return false;
+		}
+
+		outputSrvHandle_ = getSrvHandle(colorHistoryWriteType);
+	}
+	else {
+		outputSrvHandle_ = resolvedColorSrvHandle;
 	}
 
 	if (!Dispatch(
@@ -271,6 +296,8 @@ bool EditorTemporalRenderingManager::Execute(
 	std::memcpy(previousViewProjectionMatrix_.data(), viewProjectionMatrix, sizeof(float) * 16u);
 	historyWriteIndex_ = 1u - historyWriteIndex_;
 	isHistoryValid_ = true;
+	lastSsrEnabled_ = ssrEnabled;
+	lastTemporalEnabled_ = temporalEnabled;
 	return true;
 }
 
@@ -289,10 +316,7 @@ void EditorTemporalRenderingManager::Finalize() {
 }
 
 D3D12_GPU_DESCRIPTOR_HANDLE EditorTemporalRenderingManager::GetOutputSrvHandle() const {
-	const ResourceType outputType = historyWriteIndex_ == 0u
-		? ResourceType::ColorHistory1
-		: ResourceType::ColorHistory0;
-	return srvHandles_[static_cast<size_t>(outputType)];
+	return outputSrvHandle_;
 }
 
 D3D12_GPU_DESCRIPTOR_HANDLE EditorTemporalRenderingManager::GetVelocitySrvHandle() const {
@@ -463,6 +487,9 @@ bool EditorTemporalRenderingManager::CreateSizeDependentResources(
 
 	historyWriteIndex_ = 0u;
 	isHistoryValid_ = false;
+	outputSrvHandle_ = {};
+	lastSsrEnabled_ = false;
+	lastTemporalEnabled_ = false;
 	previousViewProjectionMatrix_.fill(0.0f);
 	return true;
 }

@@ -190,15 +190,30 @@ bool EditorMeshCollisionMesh::BuildFromModelData(
 	triangleIndices_.clear();
 	nodes_.clear();
 
-	if (modelData.vertices.size() < 3u) {
+	if (modelData.vertices.size() < 3u ||
+		(!modelData.indices.empty() && modelData.indices.size() < 3u)) {
 		return false;
 	}
 
-	for (size_t vertexIndex = 0; vertexIndex + 2u < modelData.vertices.size(); vertexIndex += 3u) {
+	auto appendTriangle = [
+		this,
+		&modelData,
+		&colliderCenter,
+		&objectScale,
+		&shapeCenterOfMass](
+		uint32_t firstIndex,
+		uint32_t secondIndex,
+		uint32_t thirdIndex) {
+		if (firstIndex >= modelData.vertices.size() ||
+			secondIndex >= modelData.vertices.size() ||
+			thirdIndex >= modelData.vertices.size()) {
+			return;
+		}
+
 		EditorMeshCollisionTriangle triangle = MakeTriangle(
-			modelData.vertices[vertexIndex + 0u],
-			modelData.vertices[vertexIndex + 1u],
-			modelData.vertices[vertexIndex + 2u],
+			modelData.vertices[firstIndex],
+			modelData.vertices[secondIndex],
+			modelData.vertices[thirdIndex],
 			colliderCenter,
 			objectScale,
 			shapeCenterOfMass);
@@ -207,10 +222,27 @@ bool EditorMeshCollisionMesh::BuildFromModelData(
 		const Vector3 edgeAC = SubtractVector3(triangle.c, triangle.a);
 		if (LengthSqVector3(edgeAB) <= 0.000001f ||
 			LengthSqVector3(edgeAC) <= 0.000001f) {
-			continue;
+			return;
 		}
 
 		triangles_.push_back(triangle);
+	};
+
+	if (!modelData.indices.empty()) {
+		for (size_t index = 0u; index + 2u < modelData.indices.size(); index += 3u) {
+			appendTriangle(
+				modelData.indices[index + 0u],
+				modelData.indices[index + 1u],
+				modelData.indices[index + 2u]);
+		}
+	}
+	else {
+		for (size_t vertexIndex = 0u; vertexIndex + 2u < modelData.vertices.size(); vertexIndex += 3u) {
+			appendTriangle(
+				static_cast<uint32_t>(vertexIndex + 0u),
+				static_cast<uint32_t>(vertexIndex + 1u),
+				static_cast<uint32_t>(vertexIndex + 2u));
+		}
 	}
 
 	if (triangles_.empty()) {

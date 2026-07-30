@@ -1,6 +1,7 @@
 ﻿#pragma warning(disable : 4189 4514)
 
 #include "EditorRenderManager.h"
+#include "EditorOceanSystem.h"
 
 #include "EditorAssetUtility.h"
 #include "EditorComponentUtility.h"
@@ -8,16 +9,46 @@
 #include "EditorPlanarReflectionManager.h"
 #include "Log.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <format>
 #include <limits>
+#include <vector>
 
 using namespace EditorSharedState;
 
 namespace {
+	constexpr UINT kCurrentSkinMatrixRootParameter = 20u;
+	constexpr UINT kPreviousSkinMatrixRootParameter = 21u;
+
+	void BindSceneObjectSkinningResources(
+		ID3D12GraphicsCommandList* commandList,
+		const EditorSceneObject* sceneObject) {
+		if (commandList == nullptr || g_identitySkinMatrixResource == nullptr) {
+			return;
+		}
+
+		ID3D12Resource* currentSkinResource = g_identitySkinMatrixResource;
+		ID3D12Resource* previousSkinResource = g_identitySkinMatrixResource;
+
+		if (sceneObject != nullptr && sceneObject->usesSkinning &&
+			sceneObject->currentSkinMatrixResource != nullptr &&
+			sceneObject->previousSkinMatrixResource != nullptr) {
+			currentSkinResource = sceneObject->currentSkinMatrixResource;
+			previousSkinResource = sceneObject->previousSkinMatrixResource;
+		}
+
+		commandList->SetGraphicsRootShaderResourceView(
+			kCurrentSkinMatrixRootParameter,
+			currentSkinResource->GetGPUVirtualAddress());
+		commandList->SetGraphicsRootShaderResourceView(
+			kPreviousSkinMatrixRootParameter,
+			previousSkinResource->GetGPUVirtualAddress());
+	}
+
 	void AppendHashBytes(std::uint64_t& hash, const void* data, size_t byteCount) {
 		constexpr std::uint64_t kFnvPrime = 1099511628211ull;
 		const std::uint8_t* bytes = static_cast<const std::uint8_t*>(data);
@@ -26,6 +57,70 @@ namespace {
 			hash ^= static_cast<std::uint64_t>(bytes[byteIndex]);
 			hash *= kFnvPrime;
 		}
+	}
+
+	void DrawCustomSceneMesh(
+		ID3D12GraphicsCommandList* commandList,
+		const EditorSceneObject& sceneObject,
+		const Vector3* lodCameraPosition = nullptr,
+		bool useShadowLod = false) {
+		if (commandList == nullptr) {
+			return;
+		}
+
+		BindSceneObjectSkinningResources(commandList, &sceneObject);
+
+		commandList->IASetVertexBuffers(0, 1, &sceneObject.customMeshVertexBufferView);
+		const UINT instanceCount = sceneObject.surface.mode == 2
+			? (std::max)(sceneObject.surface.instanceCount, 1u)
+			: 1u;
+
+		if (sceneObject.customMeshIndexResource != nullptr &&
+			sceneObject.customMeshIndexCount > 0u) {
+			commandList->IASetIndexBuffer(&sceneObject.customMeshIndexBufferView);
+			commandList->DrawIndexedInstanced(
+				sceneObject.customMeshIndexCount,
+				instanceCount,
+				0,
+				0,
+				0);
+			return;
+		}
+
+		UINT vertexCount = sceneObject.customMeshVertexCount;
+		UINT startVertexLocation = 0u;
+
+		if (sceneObject.surface.mode == 1 && lodCameraPosition != nullptr) {
+			const Vector3 cameraOffset = Subtract(
+				*lodCameraPosition,
+				sceneObject.transform.translate);
+			const float cameraDistance = Length(cameraOffset);
+			const float terrainRadius = (std::max)(
+				(std::max)(sceneObject.surface.areaSize.x, sceneObject.surface.areaSize.y) * 0.5f,
+				1.0f);
+			size_t lodIndex = cameraDistance > terrainRadius * 4.0f
+				? 2u
+				: (cameraDistance > terrainRadius * 1.5f ? 1u : 0u);
+
+			if (useShadowLod) {
+				lodIndex = (std::min)(lodIndex + 1u, static_cast<size_t>(2u));
+			}
+
+			vertexCount = sceneObject.surface.terrainLodVertexCounts[lodIndex];
+			startVertexLocation = sceneObject.surface.terrainLodVertexOffsets[lodIndex];
+		}
+
+		commandList->DrawInstanced(
+			vertexCount,
+			instanceCount,
+			startVertexLocation,
+			0u);
+	}
+
+	UINT GetSceneObjectInstanceCount(const EditorSceneObject& sceneObject) {
+		return sceneObject.surface.mode == 2
+			? (std::max)(sceneObject.surface.instanceCount, 1u)
+			: 1u;
 	}
 
 	int32_t GetLightTypeFromComponent(const EditorComponent& component) {
@@ -70,6 +165,79 @@ namespace {
 			{0.0f, 0.0f, 0.0f});
 		const Vector3 worldRight = Transform({1.0f, 0.0f, 0.0f}, rotationMatrix);
 		return Normalize(worldRight);
+	}
+
+	void CollectParticleCollisionProxies(
+		std::vector<EditorGpuParticleManager::CollisionProxy>& collisionProxies) {
+		collisionProxies.clear();
+		collisionProxies.reserve(EditorGpuParticleManager::kMaxCollisionProxyCount);
+
+		for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
+			if (!gameObject.isActive) {
+				continue;
+			}
+
+			const Matrix4x4 worldMatrix = MakeAffineMatrix(
+				gameObject.scale,
+				gameObject.rotate,
+				gameObject.translate);
+			const Vector3 absoluteScale = {
+				std::fabs(gameObject.scale.x),
+				std::fabs(gameObject.scale.y),
+				std::fabs(gameObject.scale.z)};
+
+			for (const EditorComponent& component : gameObject.components) {
+				if (!component.isActive || component.isTrigger) {
+					continue;
+				}
+
+				const bool isBoxProxy =
+					component.type == EditorComponentType::BoxCollider ||
+					component.type == EditorComponentType::MeshCollider ||
+					component.type == EditorComponentType::AutoConvexCollision ||
+					component.type == EditorComponentType::TerrainCollider;
+				const bool isSphereProxy = component.type == EditorComponentType::SphereCollider;
+				const bool isCapsuleProxy = component.type == EditorComponentType::CapsuleCollider;
+
+				if (!isBoxProxy && !isSphereProxy && !isCapsuleProxy) {
+					continue;
+				}
+
+				EditorGpuParticleManager::CollisionProxy collisionProxy{};
+				collisionProxy.center = Transform(component.colliderCenter, worldMatrix);
+
+				if (isSphereProxy) {
+					collisionProxy.type = 1.0f;
+					const float maximumScale = (std::max)(
+						absoluteScale.x,
+						(std::max)(absoluteScale.y, absoluteScale.z));
+					collisionProxy.extent.x =
+						(std::max)(component.colliderRadius * maximumScale, 0.001f);
+				}
+				else if (isCapsuleProxy) {
+					collisionProxy.type = 2.0f;
+					const float radiusScale = (std::max)(absoluteScale.x, absoluteScale.z);
+					collisionProxy.extent.x =
+						(std::max)(component.colliderRadius * radiusScale, 0.001f);
+					collisionProxy.extent.y = (std::max)(
+						component.colliderSize.y * absoluteScale.y * 0.5f,
+						collisionProxy.extent.x);
+				}
+				else {
+					collisionProxy.type = 0.0f;
+					collisionProxy.extent = {
+						(std::max)(component.colliderSize.x * absoluteScale.x * 0.5f, 0.001f),
+						(std::max)(component.colliderSize.y * absoluteScale.y * 0.5f, 0.001f),
+						(std::max)(component.colliderSize.z * absoluteScale.z * 0.5f, 0.001f)};
+				}
+
+				collisionProxies.push_back(collisionProxy);
+
+				if (collisionProxies.size() >= EditorGpuParticleManager::kMaxCollisionProxyCount) {
+					return;
+				}
+			}
+		}
 	}
 
 	Vector3 GetPlanarReflectionLocalMeshSize(const EditorSceneObject& sceneObject) {
@@ -534,6 +702,7 @@ void EditorRenderManager::Draw() {
 	static bool hasLoggedFirstPresent = false;
 	static bool hasSubmittedShadowMap = false;
 	static std::uint64_t submittedShadowStateHash = 0u;
+	const float oceanElapsedTime = GetEditorOceanElapsedTime();
 	// 隴崢陋ｻ譏ｴ繝ｻ Present 邵�E�E�E�・�E�E�E�邵�E�E�E�・�E�E�E�陋ｻ・�E�E�E�鬩墓鱒�E�E�E�E�邵�E�E�E�貁E�E��E��E�郢�E�E�E�繝ｻ1 陜玲�E�E�E��E�E�E�笁E�E��E�邵�E�E�E�鬘鯉ｽ�E�E�E�蛟ｬ鮖ｸ邵�E�E�E�蜷�E�E�E�・狗ｸ�E�E�E�繝ｻ
 
 	auto& hr = g_hr; // hr 邵�E�E�E�・�E�E�E� DirectX API 邵�E�E�E�・�E�E�E�隰御�E�E�E�吝℡郢�E�E�E�雋槫�E�E�E��E�E�E�邵�E�E�E�螟ｧ蜿咏ｹ�E�E�E�蜿�E�E�E�繝ｻ隴帙�EHRESULT邵�E�E�E�繝ｻ
@@ -543,6 +712,11 @@ void EditorRenderManager::Draw() {
 	// commandQueue / Allocator / List 邵�E�E�E�・�E�E�E� GPU 邵�E�E�E�・�E�E�E�隰�E�E�E�蜀怜�E陷�E�E�E�・�E�E�E�闔会ｽ�E�E�E�郢�E�E�E�蟶敖竏夲�E�E�E�狗ｸ�E�E�E�貁E�E��E��E�E�E�∫�E�E�E��E�E�E�・�E�E�E�闖ｴ・�E�E�E�邵�E�E�E�繝ｻ�E�E�E�繝ｻ
 	auto& commandAllocator = g_commandAllocator;
 	auto& commandList = g_commandList;
+	auto& renderTimestampQueryHeap = g_renderTimestampQueryHeap;
+	auto& renderTimestampReadback = g_renderTimestampReadback;
+	auto& renderTimestampFrequency = g_renderTimestampFrequency;
+	auto& renderProfile = g_renderProfile;
+	auto& useAdapter = g_useAdapter;
 
 	auto& swapChain = g_swapChain;
 	// swapChain 邵�E�E�E�・�E�E�E�隰�E�E�E�蜀怜�E邵�E�E�E�蜉ｱ笳・back buffer 郢�E�E�E�繝ｻWindow 邵�E�E�E�・�E�E�E� Present 邵�E�E�E�蜷�E�E�E�・狗ｸ�E�E�E�貁E�E��E��E�E�E�∫�E�E�E��E�E�E�・�E�E�E�闖ｴ・�E�E�E�邵�E�E�E�繝ｻ�E�E�E�繝ｻ
@@ -563,6 +737,12 @@ void EditorRenderManager::Draw() {
 	auto& planarSurfacePipelineState = g_planarSurfacePipelineState;
 	auto& objectReflectionMaskPipelineState = g_objectReflectionMaskPipelineState;
 	auto& shadowPipelineState = g_shadowPipelineState;
+	auto& shadowCullNonePipelineState = g_shadowCullNonePipelineState;
+	auto& alphaCutoutShadowPipelineState = g_alphaCutoutShadowPipelineState;
+	auto& alphaCutoutShadowCullNonePipelineState = g_alphaCutoutShadowCullNonePipelineState;
+	auto& waterSurfacePipelineState = g_waterSurfacePipelineState;
+	auto& refractiveSurfacePipelineState = g_refractiveSurfacePipelineState;
+	auto& refractiveSurfaceCullNonePipelineState = g_refractiveSurfaceCullNonePipelineState;
 	// shadowPipelineState 邵�E�E�E�・�E�E�E�郢晢�E�E�E��E�E�E�郢�E�E�E�・�E�E�E�郢晞メ・�E�E�E�荵溘○邵�E�E�E�・�E�E�E� DepthTexture 郢�E�E�E�蜑�E�E�E�E��E�E�E�諛奁E�E��E�玖氣繧臥舁EPSO邵�E�E�E�繝ｻ
 	auto& shadowMapResource = g_shadowMapResource;
 	auto& shadowDsvHandle = g_shadowDsvHandle;
@@ -580,6 +760,8 @@ void EditorRenderManager::Draw() {
 	auto& passthroughPipelineState = g_passthroughPipelineState;
 	auto& dofPipelineState = g_depthOfFieldPipelineState;
 	auto& motionBlurPipelineState = g_motionBlurPipelineState;
+	auto& weightedOitCompositePipelineState = g_weightedOitCompositePipelineState;
+	auto& underwaterCausticsPipelineState = g_underwaterCausticsPipelineState;
 	auto& ssaoRenderTargets = g_ssaoRenderTargets;
 	auto& ssaoRtvHandles = g_ssaoRtvHandles;
 	auto& ssaoSrvHandlesGPU = g_ssaoSrvHandlesGPU;
@@ -655,6 +837,20 @@ void EditorRenderManager::Draw() {
 	// fence / fenceValue / fenceEvent 邵�E�E�E�・�E�E�E� Present 陟募�E�E�E�娯・ GPU 陞ｳ蠕｡・�E�E�E�繝ｻ・定輔�E笁E�E��E�邵�E�E�E�貁E�E��E��E�E�E�∫�E�E�E��E�E�E�・�E�E�E�陷�E�E�E�譴�E�E�E�謔�E叉ﾂ陟台�E�E�E�環繝ｻ
 	auto& fenceValue = g_fenceValue;
 	auto& fenceEvent = g_fenceEvent;
+	renderProfile.sceneObjectCount = static_cast<uint32_t>((std::min)(
+		editorSceneObjects.size(),
+		static_cast<size_t>((std::numeric_limits<uint32_t>::max)())));
+	std::uint64_t profiledInstanceCount = 0u;
+
+	for (const EditorSceneObject& sceneObject : editorSceneObjects) {
+		profiledInstanceCount += sceneObject.surface.mode == 2
+			? static_cast<std::uint64_t>((std::max)(sceneObject.surface.instanceCount, 1u))
+			: 1u;
+	}
+
+	renderProfile.instanceCount = static_cast<uint32_t>((std::min)(
+		profiledInstanceCount,
+		static_cast<std::uint64_t>((std::numeric_limits<uint32_t>::max)())));
 
 	auto& textureFilePaths = g_textureFilePaths; // textureFilePaths 邵�E�E�E�・�E�E�E� Texture 隰�E�E�E�・�E�E�E�邵�E�E�E�・�E�E�E�闕ｳ莨∝応陋�E�E�E�・�E�E�E�陞ｳ螢�E�E�E�竊楢抁E�E�E�E�E�E�邵�E�E�E�繝ｻ�E�E�E�繝ｻ
 	auto& textureSrvHandlesGPU = g_textureSrvHandlesGPU;
@@ -673,6 +869,8 @@ void EditorRenderManager::Draw() {
 	}
 
 	int32_t lightCount = CollectSceneLights(directionalLightData);
+	// Environment は背景画像の読み込み判定より前に反映し、Skybox と PBR が同じ有効状態を使う。
+	ApplyEnvironmentComponent(directionalLightData);
 
 	emissiveLightData->count = 0;
 	for (const EditorSceneObject& emissiveObject : editorSceneObjects) {
@@ -728,14 +926,19 @@ void EditorRenderManager::Draw() {
 	const bool shouldRenderAmbientOcclusion =
 		ppSettings.hasPostProcessComponent &&
 		ppSettings.compositeAmbientOcclusionStrength > 0.0f;
+	// Temporal/SSR は一組の履歴行列を使う。Scene と Game が同時表示の時に別カメラを混ぜない。
+	const bool hasSingleTemporalViewport =
+		g_isSceneViewVisible != g_isGameViewVisible;
 	const bool shouldExecuteTemporalOrSsr =
 		ppSettings.hasPostProcessComponent &&
+		hasSingleTemporalViewport &&
 		(ppSettings.aaMode == 3 || ppSettings.ssrEnabled);
 
 	size_t gpuCullingCandidateCount = 0u;
 
 	for (const EditorSceneObject& sceneObject : editorSceneObjects) {
 		if (sceneObject.type == EditorSceneObjectType::Model &&
+			!sceneObject.ocean.isEnabled &&
 			sceneObject.transformationData != nullptr) {
 			gpuCullingCandidateCount++;
 		}
@@ -801,6 +1004,7 @@ void EditorRenderManager::Draw() {
 
 	for (const EditorSceneObject& sceneObject : editorSceneObjects) {
 		if (sceneObject.type != EditorSceneObjectType::Model ||
+			sceneObject.ocean.isEnabled ||
 			sceneObject.transformationResource == nullptr ||
 			sceneObject.transformationData == nullptr) {
 			continue;
@@ -827,6 +1031,18 @@ void EditorRenderManager::Draw() {
 				shadowStateHash,
 				&sceneObject.customMeshVertexCount,
 				sizeof(sceneObject.customMeshVertexCount));
+
+			if (sceneObject.customMeshIndexResource != nullptr &&
+				sceneObject.customMeshIndexCount > 0u) {
+				AppendHashBytes(
+					shadowStateHash,
+					&sceneObject.customMeshIndexBufferView,
+					sizeof(D3D12_INDEX_BUFFER_VIEW));
+				AppendHashBytes(
+					shadowStateHash,
+					&sceneObject.customMeshIndexCount,
+					sizeof(sceneObject.customMeshIndexCount));
+			}
 		}
 		else {
 			size_t meshTypeIndex = static_cast<size_t>(sceneObject.meshType);
@@ -867,21 +1083,43 @@ void EditorRenderManager::Draw() {
 
 	Matrix4x4 uvTransformMatrix = MakeAffineMatrix(uvTransform.scale, uvTransform.rotate, uvTransform.translate);
 	// uvTransformMatrix 邵�E�E�E�・�E�E�E� Material 邵�E�E�E�・�E�E�E�雋ゑ�E�E�E��E�E�E�邵�E�E�E�繝ｻUV 陞溽判驪�E�E�E�髯�E�E�E�謔溘�E邵�E�E�E�繝ｻ
+	spriteTransformationMatrixData->previousWVP = spriteTransformationMatrixData->WVP;
 	spriteTransformationMatrixData->WVP = spriteWorldViewProjectionMatrix;
 	// 隴鯉ｽ�E�E�E�郢晏干�E�E�E�樒ｹ晁侭�E�E�E�礼�E�E�E�晢�E�E�E��E�E�E�騾匁E�E��E��E�E�E�邵�E�E�E�・�E�E�E�陞ｳ螢�E�E�E�辟夂ｹ晁E��E繝｣郢晁E�E��E�斐＜邵�E�E�E�・�E�E�E�闔�E�E�E�E��E�E�E�繝ｵ郢晢�E�E�E��E�E�E�郢晢�E�E�E��E�E�E�郢晢�E�E�E��E�E�E�邵�E�E�E�・�E�E�E�髯�E�E�E�謔溘�E郢�E�E�E�蜻亥�E�E�E�檎ｸ�E�E�E�蟠趣�E�E�E��E�E�E�・�E�E�E�郢�E�E�E��E�E�E�邵�E�E�E�繝ｻ
 	spriteTransformationMatrixData->World = spriteWorldMatrix;
 	spriteTransformationMatrixData->lightWVP = Multiply(spriteWorldMatrix, lightViewProjectionMatrixPerLight[0]);
+	sphereTransformationMatrixData->previousWVP = sphereTransformationMatrixData->WVP;
 	sphereTransformationMatrixData->WVP = worldViewProjectionMatrix;
 	sphereTransformationMatrixData->World = worldMatrix;
 	sphereTransformationMatrixData->lightWVP = Multiply(worldMatrix, lightViewProjectionMatrixPerLight[0]);
+	spriteTransformationMatrixData->oceanParams0 = {};
+	spriteTransformationMatrixData->oceanParams1 = {};
+	spriteTransformationMatrixData->oceanParams2 = {};
+	spriteTransformationMatrixData->oceanParams3 = {};
+	spriteTransformationMatrixData->oceanParams4 = {};
+	spriteTransformationMatrixData->oceanParams5 = {};
+	spriteTransformationMatrixData->surfaceParams0 = {};
+	spriteTransformationMatrixData->surfaceParams1 = {};
+	sphereTransformationMatrixData->oceanParams0 = {};
+	sphereTransformationMatrixData->oceanParams1 = {};
+	sphereTransformationMatrixData->oceanParams2 = {};
+	sphereTransformationMatrixData->oceanParams3 = {};
+	sphereTransformationMatrixData->oceanParams4 = {};
+	sphereTransformationMatrixData->oceanParams5 = {};
+	sphereTransformationMatrixData->surfaceParams0 = {};
+	sphereTransformationMatrixData->surfaceParams1 = {};
 
 	spriteMaterialData->uvTransform = uvTransformMatrix;
 	// Sprite 邵�E�E�E�・�E�E�E� 3D 郢晢�E�E�E��E�E�E�郢昴・�E�E�E�晉�E�E��E�E�E�・�E�E�E� Material 邵�E�E�E�・�E�E�E�陷�E�E�E�蠕個ｧ UV 陞溽判驪�E�E�E�郢�E�E�E�雋樊ｸ夊ｭ擾�E�E�E��E�E�E�邵�E�E�E�蜷�E�E�E�・狗ｸ�E�E�E�繝ｻ
 	sphereMaterialData->uvTransform = uvTransformMatrix;
+	spriteMaterialData->oceanEnabled = 0.0f;
+	sphereMaterialData->oceanEnabled = 0.0f;
 
 	auto updateSceneObjectMatrices = [&](
 			const Matrix4x4& targetViewProjectionMatrix,
 			bool isGameViewTarget,
+			const Vector3& targetCameraPosition,
+			bool updateMotionHistory,
 			bool reflectionClipEnabled = false,
 			Vector4 reflectionClipPlane = {0.0f, 0.0f, 0.0f, 0.0f}) {
 		for (EditorSceneObject& sceneObject : editorSceneObjects) {
@@ -899,6 +1137,10 @@ void EditorRenderManager::Draw() {
 				: sceneObject.transformationData;
 
 			if (targetTransformationData != nullptr) {
+				if (updateMotionHistory) {
+					targetTransformationData->previousWVP = targetTransformationData->WVP;
+				}
+
 				targetTransformationData->WVP = Multiply(
 					sceneObjectWorldMatrix,
 					sceneObjectProjectionMatrix);
@@ -913,18 +1155,69 @@ void EditorRenderManager::Draw() {
 					0.0f,
 					0.0f
 				};
+				targetTransformationData->surfaceParams0 = {
+					static_cast<float>(sceneObject.surface.mode),
+					oceanElapsedTime * sceneObject.surface.timeScale,
+					sceneObject.surface.windStrength,
+					sceneObject.surface.windSpeed};
+				targetTransformationData->surfaceParams1 = {
+					sceneObject.surface.windDirection.x,
+					sceneObject.surface.windDirection.y,
+					sceneObject.surface.windSpatialScale,
+					sceneObject.surface.hasHeightOrDensityMap ? 1.0f : 0.0f};
+
+				if (sceneObject.surface.mode == 1) {
+					targetTransformationData->oceanParams4 = {
+						sceneObject.surface.hasHeightOrDensityMap ? 1.0f : 0.0f,
+						sceneObject.surface.heightScale,
+						sceneObject.surface.areaSize.x,
+						sceneObject.surface.areaSize.y};
+				}
+				else if (sceneObject.surface.mode == 2) {
+					targetTransformationData->oceanParams4 = {
+						sceneObject.surface.density,
+						sceneObject.surface.lodDistance,
+						sceneObject.surface.areaSize.x,
+						sceneObject.surface.areaSize.y};
+				}
+
+				if (sceneObject.ocean.isEnabled || sceneObject.surface.mode != 0) {
+					// 波の不変値は同期時だけ書き、描画パスごとに時刻と LOD 中心だけ更新する。
+					const Matrix4x4 inverseWorldMatrix = Inverse(sceneObjectWorldMatrix);
+					const Vector3 localCameraPosition =
+						Transform(targetCameraPosition, inverseWorldMatrix);
+
+					if (sceneObject.ocean.isEnabled) {
+						targetTransformationData->oceanParams0.y = oceanElapsedTime;
+						const float finestCellSize = (std::max)(
+							sceneObject.ocean.size /
+								static_cast<float>((std::max)(sceneObject.ocean.gridResolution, 16)),
+							0.0001f);
+						targetTransformationData->oceanParams5.z =
+							std::round(localCameraPosition.x / finestCellSize) * finestCellSize;
+						targetTransformationData->oceanParams5.w =
+							std::round(localCameraPosition.z / finestCellSize) * finestCellSize;
+					}
+					else {
+						targetTransformationData->oceanParams5.z = localCameraPosition.x;
+						targetTransformationData->oceanParams5.w = localCameraPosition.z;
+					}
+				}
 			}
 
-			if (sceneObject.materialData != nullptr) {
-				// GameObject のモデルは FBX / OBJ が持つ UV をそのまま使う。
-				// 旧プレビュー用の共通 UV 操作をここへ流すと、貼った画像全体が勝手にずれる。
-				sceneObject.materialData->uvTransform = MakeIdentity4x4();
-			}
 		}
 	};
 
-	updateSceneObjectMatrices(sceneViewProjectionMatrix, false);
-	updateSceneObjectMatrices(gameViewProjectionMatrix, true);
+	updateSceneObjectMatrices(
+		sceneViewProjectionMatrix,
+		false,
+		cameraTransform.translate,
+		true);
+	updateSceneObjectMatrices(
+		gameViewProjectionMatrix,
+		true,
+		g_gameCameraPosition,
+		true);
 
 	hr = commandAllocator->Reset();
 	// CommandAllocator / CommandList 郢�E�E�E�蜑�E�E�E�E��E�E�E�鄙ｫ繝ｵ郢晢�E�E�E��E�E�E�郢晢�E�E�E��E�E�E�郢晢�E�E�E��E�E�E�邵�E�E�E�・�E�E�E�隰�E�E�E�蜀怜�E髫�E�E�E�蛟ｬ鮖ｸ騾匁E�E��E��E�E�E�邵�E�E�E�・�E�E�E� Reset 邵�E�E�E�蜷�E�E�E�・狗ｸ�E�E�E�繝ｻ
@@ -939,6 +1232,48 @@ void EditorRenderManager::Draw() {
 		Log(g_logStream, std::format("CommandList Reset failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
 		g_isDrawRequested = false;
 		return;
+	}
+
+	if (renderTimestampQueryHeap != nullptr && renderTimestampReadback != nullptr) {
+		commandList->EndQuery(
+			renderTimestampQueryHeap.Get(),
+			D3D12_QUERY_TYPE_TIMESTAMP,
+			0u);
+	}
+
+	//================================================================
+	// Ocean FFT 更新
+	// Scene に Ocean がある時だけGPU波面を更新し、同一設定の海面へ共有する。
+	//================================================================
+
+	EditorSceneObject* primaryOceanSceneObject = nullptr;
+
+	for (EditorSceneObject& sceneObject : editorSceneObjects) {
+		if (!sceneObject.ocean.isEnabled) {
+			continue;
+		}
+
+		if (sceneObject.transformationData != nullptr) {
+			sceneObject.transformationData->oceanParams0.x = 1.0f;
+		}
+
+		if (sceneObject.gameTransformationData != nullptr) {
+			sceneObject.gameTransformationData->oceanParams0.x = 1.0f;
+		}
+
+		if (primaryOceanSceneObject == nullptr) {
+			primaryOceanSceneObject = &sceneObject;
+		}
+	}
+
+	if (primaryOceanSceneObject != nullptr &&
+		g_oceanFftManager.Execute(
+			commandList.Get(),
+			primaryOceanSceneObject->ocean,
+			oceanElapsedTime)) {
+		for (EditorSceneObject& sceneObject : editorSceneObjects) {
+			g_oceanFftManager.ApplyToSceneObject(sceneObject);
+		}
 	}
 
 	D3D12_GPU_DESCRIPTOR_HANDLE environmentSrvHandleGPU =
@@ -1004,9 +1339,9 @@ void EditorRenderManager::Draw() {
 	const float skyEnvironmentTextureEnabled =
 		hasEnvironmentTexture ? userRequestedEnvironmentTexture : 0.0f;
 
-	// IBL 用 Cube は実 DDS が無い場合も中立グレーの TextureCube を持つ。
-	// 2D 背景画像の有無とは分離し、直接光が無い場面でも環境反射を失わないようにする。
-	directionalLightData->environmentTextureEnabled = userRequestedEnvironmentTexture;
+	// 背景と PBR 反射は同じ環境画像を使う。読み込みに失敗した画像を有効扱いにせず、
+	// Shader 側の Environment グラデーションへ確実にフォールバックさせる。
+	directionalLightData->environmentTextureEnabled = skyEnvironmentTextureEnabled;
 
 	UINT backBufferIndex = swapChain->GetCurrentBackBufferIndex();
 	// backBufferIndex 邵�E�E�E�・�E�E�E�闔蛾宦螻楢�E�E�E��E�E�E�蜀怜�E邵�E�E�E�蜷�E�E�E�・・SwapChain buffer 邵�E�E�E�・�E�E�E�騾�E�E�E�・�E�E�E�陷�E�E�E�・�E�E�E�邵�E�E�E�繝ｻ
@@ -1014,8 +1349,30 @@ void EditorRenderManager::Draw() {
 	auto drawShadowObjects = [&]() {
 		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
 			if (sceneObject.type != EditorSceneObjectType::Model ||
-				sceneObject.transformationResource == nullptr) {
+				sceneObject.ocean.isEnabled ||
+				sceneObject.transformationResource == nullptr ||
+				(sceneObject.materialData != nullptr && sceneObject.materialData->alphaMode == 2)) {
 				continue;
+			}
+
+			const bool isAlphaCutout =
+				sceneObject.materialData != nullptr &&
+				sceneObject.materialData->alphaMode == 1;
+			const bool isDoubleSided =
+				sceneObject.cullMode == 2 ||
+				(sceneObject.materialData != nullptr && sceneObject.materialData->doubleSided != 0);
+
+			if (isAlphaCutout && isDoubleSided) {
+				commandList->SetPipelineState(alphaCutoutShadowCullNonePipelineState.Get());
+			}
+			else if (isAlphaCutout) {
+				commandList->SetPipelineState(alphaCutoutShadowPipelineState.Get());
+			}
+			else if (isDoubleSided) {
+				commandList->SetPipelineState(shadowCullNonePipelineState.Get());
+			}
+			else {
+				commandList->SetPipelineState(shadowPipelineState.Get());
 			}
 
 			size_t meshTypeIndex = static_cast<size_t>(sceneObject.meshType);
@@ -1028,20 +1385,58 @@ void EditorRenderManager::Draw() {
 			commandList->SetGraphicsRootConstantBufferView(
 				1,
 				sceneObject.transformationResource->GetGPUVirtualAddress());
+			const D3D12_GPU_DESCRIPTOR_HANDLE fallbackHeightHandle =
+				sceneObject.customTextureSrvGpuHandle.ptr != 0u
+				? sceneObject.customTextureSrvGpuHandle
+				: textureSrvHandlesGPU[2];
+			const D3D12_GPU_DESCRIPTOR_HANDLE heightHandle =
+				sceneObject.materialTextureSrvGpuHandles[
+					static_cast<size_t>(EditorMaterialTextureSlot::Height)].ptr != 0u
+				? sceneObject.materialTextureSrvGpuHandles[
+					static_cast<size_t>(EditorMaterialTextureSlot::Height)]
+				: fallbackHeightHandle;
+			commandList->SetGraphicsRootDescriptorTable(16, heightHandle);
+
+			if (isAlphaCutout && sceneObject.materialResource != nullptr) {
+				const D3D12_GPU_DESCRIPTOR_HANDLE baseColorHandle =
+					sceneObject.customTextureSrvGpuHandle.ptr != 0u
+					? sceneObject.customTextureSrvGpuHandle
+					: textureSrvHandlesGPU[2];
+				const D3D12_GPU_DESCRIPTOR_HANDLE opacityHandle =
+					sceneObject.materialTextureSrvGpuHandles[
+						static_cast<size_t>(EditorMaterialTextureSlot::Opacity)].ptr != 0u
+					? sceneObject.materialTextureSrvGpuHandles[
+						static_cast<size_t>(EditorMaterialTextureSlot::Opacity)]
+					: baseColorHandle;
+
+				commandList->SetGraphicsRootConstantBufferView(
+					0,
+					sceneObject.materialResource->GetGPUVirtualAddress());
+				commandList->SetGraphicsRootDescriptorTable(3, baseColorHandle);
+				commandList->SetGraphicsRootDescriptorTable(17, opacityHandle);
+			}
 
 			if (sceneObject.usesCustomMesh &&
 				sceneObject.customMeshVertexResource != nullptr &&
 				sceneObject.customMeshVertexCount > 0u) {
-				commandList->IASetVertexBuffers(0, 1, &sceneObject.customMeshVertexBufferView);
-				commandList->DrawInstanced(sceneObject.customMeshVertexCount, 1, 0, 0);
+				DrawCustomSceneMesh(
+					commandList.Get(),
+					sceneObject,
+					&cameraTransform.translate,
+					true);
 			}
 			else {
 				commandList->IASetVertexBuffers(0, 1, &primitiveVertexBufferViews[meshTypeIndex]);
-				commandList->DrawInstanced(primitiveVertexCounts[meshTypeIndex], 1, 0, 0);
+				commandList->DrawInstanced(
+					primitiveVertexCounts[meshTypeIndex],
+					GetSceneObjectInstanceCount(sceneObject),
+					0,
+					0);
 			}
 		}
 
 		if (isLegacyPreviewVisible) {
+			commandList->SetPipelineState(shadowPipelineState.Get());
 			commandList->SetGraphicsRootConstantBufferView(
 				1,
 				sphereTransformationMatrixResource->GetGPUVirtualAddress());
@@ -1070,7 +1465,10 @@ void EditorRenderManager::Draw() {
 		shadowViewport.MaxDepth = 1.0f;
 
 		commandList->SetGraphicsRootSignature(rootSignature.Get());
+		BindSceneObjectSkinningResources(commandList.Get(), nullptr);
 		commandList->SetPipelineState(shadowPipelineState.Get());
+		ID3D12DescriptorHeap* shadowDescriptorHeaps[] = {srvDescriptorHeap};
+		commandList->SetDescriptorHeaps(1, shadowDescriptorHeaps);
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
 		for (int32_t lightIdx = 0; lightIdx < lightCount; lightIdx++) {
@@ -1131,6 +1529,7 @@ void EditorRenderManager::Draw() {
 	commandList->ResourceBarrier(1, &hdrBarrier);
 
 	commandList->SetGraphicsRootSignature(rootSignature.Get());
+	BindSceneObjectSkinningResources(commandList.Get(), nullptr);
 	commandList->SetPipelineState(graphicsPipelineState.Get());
 	commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
 	commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource->GetGPUVirtualAddress());
@@ -1160,8 +1559,6 @@ void EditorRenderManager::Draw() {
 		float materialMaskClearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 		commandList->ClearRenderTargetView(materialMaskRtvHandle, materialMaskClearColor, 0, nullptr);
 	}
-
-	ApplyEnvironmentComponent(directionalLightData);
 
 	auto drawSkybox = [&](
 			const D3D12_VIEWPORT& targetViewport,
@@ -1232,20 +1629,113 @@ void EditorRenderManager::Draw() {
 		}
 	};
 
-	auto drawSceneObjects = [&](bool isGameViewPass, const D3D12_CPU_DESCRIPTOR_HANDLE& targetRtvHandle, int32_t skipGameObjectId, int32_t planarSurfaceGameObjectId = -1) {
-		commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, &dsvHandle);
+	enum class SceneObjectDrawFilter {
+		All,
+		Opaque,
+		Water,
+		Refractive,
+		Transparent
+	};
+
+	auto drawSceneObjects = [&](
+			bool isGameViewPass,
+			const D3D12_CPU_DESCRIPTOR_HANDLE& targetRtvHandle,
+			const Vector3& targetCameraPosition,
+			int32_t skipGameObjectId,
+			int32_t planarSurfaceGameObjectId = -1,
+			bool useWeightedOit = false,
+			SceneObjectDrawFilter drawFilter = SceneObjectDrawFilter::All) {
+		const bool usesDepthAttachment =
+			drawFilter != SceneObjectDrawFilter::Water &&
+			drawFilter != SceneObjectDrawFilter::Refractive;
+
+		if (usesDepthAttachment) {
+			commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, &dsvHandle);
+		}
+		else {
+			commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, nullptr);
+		}
+
+		g_oceanFftManager.BindGraphicsResources(commandList.Get());
 		const bool isPlanarReflectionDraw = targetRtvHandle.ptr == planarReflectionRtvHandle.ptr;
 		const bool useGpuCullingForPass = shouldUseGpuCulling &&
 			!isPlanarReflectionDraw &&
 			((!isGameViewPass && g_isSceneViewVisible) ||
 			(isGameViewPass && !g_isSceneViewVisible && g_isGameViewVisible));
+		// 描画パスごとの並べ替え領域は容量を保持し、毎フレームの再確保を避ける。
+		static std::vector<const EditorSceneObject*> orderedSceneObjects;
+		static std::vector<const EditorSceneObject*> transparentSceneObjects;
+		orderedSceneObjects.clear();
+		transparentSceneObjects.clear();
+		orderedSceneObjects.reserve(editorSceneObjects.size());
+		transparentSceneObjects.reserve(editorSceneObjects.size());
 
+		// 不透明・Masked を先に描き、Transparent は Alpha Blend が成立するよう遠方から並べる。
 		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
+			const bool isOcean =
+				sceneObject.ocean.isEnabled ||
+				(sceneObject.materialData != nullptr && sceneObject.materialData->oceanEnabled >= 0.5f);
+			const bool isTransparent =
+				!isOcean &&
+				sceneObject.materialData != nullptr &&
+				sceneObject.materialData->alphaMode == 2;
+			const bool isRefractive =
+				isTransparent &&
+				sceneObject.materialData->transmission > 0.0001f;
+			const bool shouldDrawObject =
+				drawFilter == SceneObjectDrawFilter::All ||
+				(drawFilter == SceneObjectDrawFilter::Opaque && !isOcean && !isTransparent) ||
+				(drawFilter == SceneObjectDrawFilter::Water && isOcean) ||
+				(drawFilter == SceneObjectDrawFilter::Refractive && isRefractive) ||
+				(drawFilter == SceneObjectDrawFilter::Transparent && isTransparent && !isRefractive);
+
+			if (!shouldDrawObject) {
+				continue;
+			}
+
+			if (isTransparent) {
+				transparentSceneObjects.push_back(&sceneObject);
+			}
+			else {
+				orderedSceneObjects.push_back(&sceneObject);
+			}
+		}
+
+		std::sort(
+			transparentSceneObjects.begin(),
+			transparentSceneObjects.end(),
+			[&targetCameraPosition](const EditorSceneObject* left, const EditorSceneObject* right) {
+				const Vector3 leftOffset = Subtract(left->transform.translate, targetCameraPosition);
+				const Vector3 rightOffset = Subtract(right->transform.translate, targetCameraPosition);
+				return Dot(leftOffset, leftOffset) > Dot(rightOffset, rightOffset);
+			});
+		orderedSceneObjects.insert(
+			orderedSceneObjects.end(),
+			transparentSceneObjects.begin(),
+			transparentSceneObjects.end());
+
+		for (const EditorSceneObject* sceneObjectPointer : orderedSceneObjects) {
+			const EditorSceneObject& sceneObject = *sceneObjectPointer;
+			const bool isOcean =
+				sceneObject.ocean.isEnabled ||
+				(sceneObject.materialData != nullptr && sceneObject.materialData->oceanEnabled >= 0.5f);
+			const bool isTransparent =
+				!isOcean &&
+				sceneObject.materialData != nullptr &&
+				sceneObject.materialData->alphaMode == 2;
+			const bool isRefractive =
+				isTransparent &&
+				sceneObject.materialData->transmission > 0.0001f;
+			const bool isDedicatedRefractivePass =
+				drawFilter == SceneObjectDrawFilter::Refractive &&
+				isRefractive;
 			if (skipGameObjectId >= 0 && sceneObject.gameObjectId == skipGameObjectId) {
 				continue;
 			}
 
-			if (useGpuCullingForPass && !g_gpuCullingManager.IsVisible(sceneObject.gameObjectId)) {
+			if (useGpuCullingForPass &&
+				!sceneObject.ocean.isEnabled &&
+				!g_gpuCullingManager.IsVisible(sceneObject.gameObjectId)) {
 				continue;
 			}
 
@@ -1265,7 +1755,19 @@ void EditorRenderManager::Draw() {
 
 			if (sceneObject.type == EditorSceneObjectType::Sprite) {
 				// 平行投影で頂点の表裏が反転しても Sprite 全体が破棄されないよう、両面 PSO を使う。
-				if (g_cullNonePipelineState != nullptr) {
+				if (isOcean && waterSurfacePipelineState != nullptr) {
+					commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, nullptr);
+					commandList->SetPipelineState(waterSurfacePipelineState.Get());
+				}
+				else if (isDedicatedRefractivePass && refractiveSurfaceCullNonePipelineState != nullptr) {
+					commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, nullptr);
+					commandList->SetPipelineState(refractiveSurfaceCullNonePipelineState.Get());
+				}
+				else if (isTransparent && useWeightedOit && g_weightedOitCullNonePipelineState != nullptr) {
+					commandList->OMSetRenderTargets(2, g_oitRtvHandles, FALSE, &dsvHandle);
+					commandList->SetPipelineState(g_weightedOitCullNonePipelineState.Get());
+				}
+				else if (g_cullNonePipelineState != nullptr) {
 					commandList->SetPipelineState(g_cullNonePipelineState.Get());
 				}
 				else {
@@ -1300,7 +1802,29 @@ void EditorRenderManager::Draw() {
 					meshTypeIndex = static_cast<size_t>(EditorModelMeshType::Plane);
 				}
 
-				if (sceneObject.gameObjectId == planarSurfaceGameObjectId && planarSurfacePipelineState != nullptr) {
+				if (isOcean && waterSurfacePipelineState != nullptr) {
+					commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, nullptr);
+					commandList->SetPipelineState(waterSurfacePipelineState.Get());
+				}
+				else if (isDedicatedRefractivePass && sceneObject.cullMode == 2 &&
+					refractiveSurfaceCullNonePipelineState != nullptr) {
+					commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, nullptr);
+					commandList->SetPipelineState(refractiveSurfaceCullNonePipelineState.Get());
+				}
+				else if (isDedicatedRefractivePass && refractiveSurfacePipelineState != nullptr) {
+					commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, nullptr);
+					commandList->SetPipelineState(refractiveSurfacePipelineState.Get());
+				}
+				else if (isTransparent && useWeightedOit && sceneObject.cullMode == 2 &&
+					g_weightedOitCullNonePipelineState != nullptr) {
+					commandList->OMSetRenderTargets(2, g_oitRtvHandles, FALSE, &dsvHandle);
+					commandList->SetPipelineState(g_weightedOitCullNonePipelineState.Get());
+				}
+				else if (isTransparent && useWeightedOit && g_weightedOitPipelineState != nullptr) {
+					commandList->OMSetRenderTargets(2, g_oitRtvHandles, FALSE, &dsvHandle);
+					commandList->SetPipelineState(g_weightedOitPipelineState.Get());
+				}
+				else if (sceneObject.gameObjectId == planarSurfaceGameObjectId && planarSurfacePipelineState != nullptr) {
 					commandList->SetPipelineState(planarSurfacePipelineState.Get());
 				}
 				else if (sceneObject.materialData != nullptr &&
@@ -1342,14 +1866,28 @@ void EditorRenderManager::Draw() {
 				if (sceneObject.usesCustomMesh &&
 					sceneObject.customMeshVertexResource != nullptr &&
 					sceneObject.customMeshVertexCount > 0u) {
-					commandList->IASetVertexBuffers(0, 1, &sceneObject.customMeshVertexBufferView);
-					commandList->DrawInstanced(sceneObject.customMeshVertexCount, 1, 0, 0);
+					DrawCustomSceneMesh(
+						commandList.Get(),
+						sceneObject,
+						&targetCameraPosition,
+						false);
 				}
 				else {
 					commandList->IASetVertexBuffers(0, 1, &primitiveVertexBufferViews[meshTypeIndex]);
-					commandList->DrawInstanced(primitiveVertexCounts[meshTypeIndex], 1, 0, 0);
+					commandList->DrawInstanced(
+						primitiveVertexCounts[meshTypeIndex],
+						GetSceneObjectInstanceCount(sceneObject),
+						0,
+						0);
 				}
 			}
+		}
+
+		if (usesDepthAttachment) {
+			commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, &dsvHandle);
+		}
+		else {
+			commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, nullptr);
 		}
 	};
 
@@ -1362,6 +1900,7 @@ void EditorRenderManager::Draw() {
 
 		commandList->SetGraphicsRootSignature(rootSignature.Get());
 		commandList->SetPipelineState(objectReflectionMaskPipelineState.Get());
+		g_oceanFftManager.BindGraphicsResources(commandList.Get());
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		commandList->OMSetRenderTargets(1, &materialMaskRtvHandle, FALSE, &dsvHandle);
 
@@ -1395,16 +1934,32 @@ void EditorRenderManager::Draw() {
 
 			commandList->SetGraphicsRootConstantBufferView(0, materialResource->GetGPUVirtualAddress());
 			commandList->SetGraphicsRootConstantBufferView(1, transformationResource->GetGPUVirtualAddress());
+			const D3D12_GPU_DESCRIPTOR_HANDLE textureHandle =
+				sceneObject.customTextureSrvGpuHandle.ptr != 0u
+				? sceneObject.customTextureSrvGpuHandle
+				: textureSrvHandlesGPU[2];
+			commandList->SetGraphicsRootDescriptorTable(3, textureHandle);
+			bindMaterialTextureHandles(sceneObject, textureHandle);
 
 			if (sceneObject.usesCustomMesh &&
 				sceneObject.customMeshVertexResource != nullptr &&
 				sceneObject.customMeshVertexCount > 0u) {
-				commandList->IASetVertexBuffers(0, 1, &sceneObject.customMeshVertexBufferView);
-				commandList->DrawInstanced(sceneObject.customMeshVertexCount, 1, 0, 0);
+				const Vector3& maskCameraPosition = isGameViewPass
+					? g_gameCameraPosition
+					: cameraTransform.translate;
+				DrawCustomSceneMesh(
+					commandList.Get(),
+					sceneObject,
+					&maskCameraPosition,
+					false);
 			}
 			else {
 				commandList->IASetVertexBuffers(0, 1, &primitiveVertexBufferViews[meshTypeIndex]);
-				commandList->DrawInstanced(primitiveVertexCounts[meshTypeIndex], 1, 0, 0);
+				commandList->DrawInstanced(
+					primitiveVertexCounts[meshTypeIndex],
+					GetSceneObjectInstanceCount(sceneObject),
+					0,
+					0);
 			}
 		}
 
@@ -1416,7 +1971,6 @@ void EditorRenderManager::Draw() {
 		commandList->OMSetRenderTargets(1, &hdrRtvHandle, FALSE, &dsvHandle);
 	};
 
-	bool hasGpuParticlesUpdatedThisFrame = false;
 	auto drawEffects = [&](
 		const Matrix4x4& targetViewProjectionMatrix,
 		const Matrix4x4& targetViewMatrix,
@@ -1426,16 +1980,6 @@ void EditorRenderManager::Draw() {
 		if (!g_editorRuntimeManager.IsPlaying()) {
 			g_gpuParticleManager.RequestReset();
 			return;
-		}
-
-		if (!hasGpuParticlesUpdatedThisFrame) {
-			EditorEffectManager& effectManager = g_editorRuntimeManager.GetEffectManager();
-			g_gpuParticleManager.Update(
-				commandList.Get(),
-				effectManager.GetPendingGpuParticleSpawns(),
-				effectManager.GetLastDeltaTime());
-			effectManager.ClearPendingGpuParticleSpawns();
-			hasGpuParticlesUpdatedThisFrame = true;
 		}
 
 		commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, &dsvHandle);
@@ -1533,10 +2077,16 @@ void EditorRenderManager::Draw() {
 			updateSceneObjectMatrices(
 				reflectionCamera.viewProjection,
 				false,
+				reflectionCamera.position,
+				false,
 				true,
 				reflectionCamera.clipPlane);
 			defaultDrawPso = planarScenePipelineState.Get();
-			drawSceneObjects(false, planarReflectionRtvHandle, planarView.sourceId);
+			drawSceneObjects(
+				false,
+				planarReflectionRtvHandle,
+				reflectionCamera.position,
+				planarView.sourceId);
 			drawEffects(
 				reflectionCamera.viewProjection,
 				reflectionCamera.viewMatrix,
@@ -1545,7 +2095,11 @@ void EditorRenderManager::Draw() {
 				planarReflectionRtvHandle);
 			defaultDrawPso = graphicsPipelineState.Get();
 
-			updateSceneObjectMatrices(sceneViewProjectionMatrix, false);
+			updateSceneObjectMatrices(
+				sceneViewProjectionMatrix,
+				false,
+				cameraTransform.translate,
+				false);
 			directionalLightData->cameraPosition = savedCameraPosition;
 		}
 
@@ -1576,10 +2130,16 @@ void EditorRenderManager::Draw() {
 			updateSceneObjectMatrices(
 				reflectionCamera.viewProjection,
 				true,
+				reflectionCamera.position,
+				false,
 				true,
 				reflectionCamera.clipPlane);
 			defaultDrawPso = planarScenePipelineState.Get();
-			drawSceneObjects(true, planarReflectionRtvHandle, planarView.sourceId);
+			drawSceneObjects(
+				true,
+				planarReflectionRtvHandle,
+				reflectionCamera.position,
+				planarView.sourceId);
 			drawEffects(
 				reflectionCamera.viewProjection,
 				reflectionCamera.viewMatrix,
@@ -1588,7 +2148,11 @@ void EditorRenderManager::Draw() {
 				planarReflectionRtvHandle);
 			defaultDrawPso = graphicsPipelineState.Get();
 
-			updateSceneObjectMatrices(gameViewProjectionMatrix, true);
+			updateSceneObjectMatrices(
+				gameViewProjectionMatrix,
+				true,
+				g_gameCameraPosition,
+				false);
 			directionalLightData->cameraPosition = savedCameraPosition;
 		}
 
@@ -1604,6 +2168,59 @@ void EditorRenderManager::Draw() {
 		commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource->GetGPUVirtualAddress());
 		commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	}
+
+	const bool shouldRenderWeightedOit =
+		g_oitAccumulationRenderTarget != nullptr &&
+		g_oitRevealageRenderTarget != nullptr &&
+		g_weightedOitPipelineState != nullptr &&
+		g_weightedOitCullNonePipelineState != nullptr &&
+		weightedOitCompositePipelineState != nullptr &&
+		std::any_of(
+			editorSceneObjects.begin(),
+			editorSceneObjects.end(),
+			[](const EditorSceneObject& sceneObject) {
+				return sceneObject.materialData != nullptr &&
+					!sceneObject.ocean.isEnabled &&
+					sceneObject.materialData->oceanEnabled < 0.5f &&
+					sceneObject.materialData->alphaMode == 2 &&
+					sceneObject.materialData->transmission <= 0.0001f;
+			});
+	const bool shouldRenderRefractiveSurface =
+		refractiveSurfacePipelineState != nullptr &&
+		refractiveSurfaceCullNonePipelineState != nullptr &&
+		hdrCompositeRenderTarget != nullptr &&
+		depthStencilResource != nullptr &&
+		std::any_of(
+			editorSceneObjects.begin(),
+			editorSceneObjects.end(),
+			[](const EditorSceneObject& sceneObject) {
+				return sceneObject.materialData != nullptr &&
+					!sceneObject.ocean.isEnabled &&
+					sceneObject.materialData->oceanEnabled < 0.5f &&
+					sceneObject.materialData->alphaMode == 2 &&
+					sceneObject.materialData->transmission > 0.0001f;
+			});
+
+	if (shouldRenderWeightedOit) {
+		std::array<D3D12_RESOURCE_BARRIER, 2u> oitBarriers{};
+		ID3D12Resource* oitResources[2] = {
+			g_oitAccumulationRenderTarget,
+			g_oitRevealageRenderTarget};
+
+		for (uint32_t oitTargetIndex = 0u; oitTargetIndex < oitBarriers.size(); ++oitTargetIndex) {
+			oitBarriers[oitTargetIndex].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			oitBarriers[oitTargetIndex].Transition.pResource = oitResources[oitTargetIndex];
+			oitBarriers[oitTargetIndex].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+			oitBarriers[oitTargetIndex].Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+			oitBarriers[oitTargetIndex].Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		}
+
+		commandList->ResourceBarrier(static_cast<UINT>(oitBarriers.size()), oitBarriers.data());
+		const float accumulationClearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+		const float revealageClearColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+		commandList->ClearRenderTargetView(g_oitRtvHandles[0], accumulationClearColor, 0, nullptr);
+		commandList->ClearRenderTargetView(g_oitRtvHandles[1], revealageClearColor, 0, nullptr);
 	}
 
 	if (g_isSceneViewVisible || g_isGameViewVisible) {
@@ -1640,14 +2257,14 @@ void EditorRenderManager::Draw() {
 		}
 
 		int32_t firstReflectorId = planarViews.empty() ? -1 : planarViews[0].sourceId;
-		drawSceneObjects(false, hdrRtvHandle, -1, firstReflectorId);
-		drawEffects(
-			sceneViewProjectionMatrix,
-			viewMatrix,
-			projectionMatrix,
+		drawSceneObjects(
+			false,
+			hdrRtvHandle,
 			cameraTransform.translate,
-			hdrRtvHandle);
-		drawReflectionMaskObjects(false, firstReflectorId);
+			-1,
+			firstReflectorId,
+			false,
+			SceneObjectDrawFilter::Opaque);
 	}
 
 	if (g_isGameViewVisible) {
@@ -1661,7 +2278,204 @@ void EditorRenderManager::Draw() {
 			inverseGameViewProjectionMatrix,
 		g_gameCameraPosition);
 		int32_t firstReflectorId = planarViews.empty() ? -1 : planarViews[0].sourceId;
-		drawSceneObjects(true, hdrRtvHandle, -1, firstReflectorId);
+		drawSceneObjects(
+			true,
+			hdrRtvHandle,
+			g_gameCameraPosition,
+			-1,
+			firstReflectorId,
+			false,
+			SceneObjectDrawFilter::Opaque);
+	}
+
+	//================================================================
+	// Water Surface: Opaque Color / Depth を参照する専用パス
+	//================================================================
+
+	const bool shouldRenderWaterSurface =
+		primaryOceanSceneObject != nullptr &&
+		waterSurfacePipelineState != nullptr &&
+		hdrCompositeRenderTarget != nullptr &&
+		depthStencilResource != nullptr;
+
+	if (shouldRenderWaterSurface) {
+		std::array<D3D12_RESOURCE_BARRIER, 2u> opaqueCopyBarriers{};
+		opaqueCopyBarriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		opaqueCopyBarriers[0].Transition.pResource = hdrRenderTarget;
+		opaqueCopyBarriers[0].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		opaqueCopyBarriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		opaqueCopyBarriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+		opaqueCopyBarriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		opaqueCopyBarriers[1].Transition.pResource = hdrCompositeRenderTarget;
+		opaqueCopyBarriers[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		opaqueCopyBarriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		opaqueCopyBarriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+		commandList->ResourceBarrier(
+			static_cast<UINT>(opaqueCopyBarriers.size()),
+			opaqueCopyBarriers.data());
+		commandList->CopyResource(hdrCompositeRenderTarget, hdrRenderTarget);
+
+		opaqueCopyBarriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+		opaqueCopyBarriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		opaqueCopyBarriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+		opaqueCopyBarriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		commandList->ResourceBarrier(
+			static_cast<UINT>(opaqueCopyBarriers.size()),
+			opaqueCopyBarriers.data());
+
+		D3D12_RESOURCE_BARRIER waterDepthBarrier{};
+		waterDepthBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		waterDepthBarrier.Transition.pResource = depthStencilResource;
+		waterDepthBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		waterDepthBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+		waterDepthBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		commandList->ResourceBarrier(1, &waterDepthBarrier);
+
+		commandList->SetGraphicsRootSignature(rootSignature.Get());
+		commandList->SetGraphicsRootDescriptorTable(22, hdrCompositeSrvHandleGPU);
+		commandList->SetGraphicsRootDescriptorTable(23, depthSrvHandleGPU);
+
+		if (g_isSceneViewVisible) {
+			commandList->RSSetViewports(1, &viewport);
+			commandList->RSSetScissorRects(1, &scissorRect);
+			const int32_t firstReflectorId = planarViews.empty() ? -1 : planarViews[0].sourceId;
+			drawSceneObjects(
+				false,
+				hdrRtvHandle,
+				cameraTransform.translate,
+				-1,
+				firstReflectorId,
+				false,
+				SceneObjectDrawFilter::Water);
+		}
+
+		if (g_isGameViewVisible) {
+			commandList->RSSetViewports(1, &gameViewport);
+			commandList->RSSetScissorRects(1, &gameScissorRect);
+			const int32_t firstReflectorId = planarViews.empty() ? -1 : planarViews[0].sourceId;
+			drawSceneObjects(
+				true,
+				hdrRtvHandle,
+				g_gameCameraPosition,
+				-1,
+				firstReflectorId,
+				false,
+				SceneObjectDrawFilter::Water);
+		}
+
+		waterDepthBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		waterDepthBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+		commandList->ResourceBarrier(1, &waterDepthBarrier);
+	}
+
+	//================================================================
+	// Refractive Surface: 水面合成後のColor / 不透明Depthを参照するガラス専用パス
+	//================================================================
+
+	if (shouldRenderRefractiveSurface) {
+		std::array<D3D12_RESOURCE_BARRIER, 2u> refractiveCopyBarriers{};
+		refractiveCopyBarriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		refractiveCopyBarriers[0].Transition.pResource = hdrRenderTarget;
+		refractiveCopyBarriers[0].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		refractiveCopyBarriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		refractiveCopyBarriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+		refractiveCopyBarriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		refractiveCopyBarriers[1].Transition.pResource = hdrCompositeRenderTarget;
+		refractiveCopyBarriers[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		refractiveCopyBarriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		refractiveCopyBarriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+		commandList->ResourceBarrier(
+			static_cast<UINT>(refractiveCopyBarriers.size()),
+			refractiveCopyBarriers.data());
+		commandList->CopyResource(hdrCompositeRenderTarget, hdrRenderTarget);
+
+		refractiveCopyBarriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+		refractiveCopyBarriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		refractiveCopyBarriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+		refractiveCopyBarriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		commandList->ResourceBarrier(
+			static_cast<UINT>(refractiveCopyBarriers.size()),
+			refractiveCopyBarriers.data());
+
+		D3D12_RESOURCE_BARRIER refractiveDepthBarrier{};
+		refractiveDepthBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		refractiveDepthBarrier.Transition.pResource = depthStencilResource;
+		refractiveDepthBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		refractiveDepthBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+		refractiveDepthBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		commandList->ResourceBarrier(1, &refractiveDepthBarrier);
+
+		commandList->SetGraphicsRootSignature(rootSignature.Get());
+		commandList->SetGraphicsRootDescriptorTable(22, hdrCompositeSrvHandleGPU);
+		commandList->SetGraphicsRootDescriptorTable(23, depthSrvHandleGPU);
+
+		if (g_isSceneViewVisible) {
+			commandList->RSSetViewports(1, &viewport);
+			commandList->RSSetScissorRects(1, &scissorRect);
+			const int32_t firstReflectorId = planarViews.empty() ? -1 : planarViews[0].sourceId;
+			drawSceneObjects(
+				false,
+				hdrRtvHandle,
+				cameraTransform.translate,
+				-1,
+				firstReflectorId,
+				false,
+				SceneObjectDrawFilter::Refractive);
+		}
+
+		if (g_isGameViewVisible) {
+			commandList->RSSetViewports(1, &gameViewport);
+			commandList->RSSetScissorRects(1, &gameScissorRect);
+			const int32_t firstReflectorId = planarViews.empty() ? -1 : planarViews[0].sourceId;
+			drawSceneObjects(
+				true,
+				hdrRtvHandle,
+				g_gameCameraPosition,
+				-1,
+				firstReflectorId,
+				false,
+				SceneObjectDrawFilter::Refractive);
+		}
+
+		refractiveDepthBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		refractiveDepthBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+		commandList->ResourceBarrier(1, &refractiveDepthBarrier);
+	}
+
+	// 通常半透明と Effect は水面の後に描き、Weighted OIT の対象を水と分離する。
+	if (g_isSceneViewVisible) {
+		commandList->RSSetViewports(1, &viewport);
+		commandList->RSSetScissorRects(1, &scissorRect);
+		const int32_t firstReflectorId = planarViews.empty() ? -1 : planarViews[0].sourceId;
+		drawSceneObjects(
+			false,
+			hdrRtvHandle,
+			cameraTransform.translate,
+			-1,
+			firstReflectorId,
+			shouldRenderWeightedOit,
+			SceneObjectDrawFilter::Transparent);
+		drawEffects(
+			sceneViewProjectionMatrix,
+			viewMatrix,
+			projectionMatrix,
+			cameraTransform.translate,
+			hdrRtvHandle);
+		drawReflectionMaskObjects(false, firstReflectorId);
+	}
+
+	if (g_isGameViewVisible) {
+		commandList->RSSetViewports(1, &gameViewport);
+		commandList->RSSetScissorRects(1, &gameScissorRect);
+		const int32_t firstReflectorId = planarViews.empty() ? -1 : planarViews[0].sourceId;
+		drawSceneObjects(
+			true,
+			hdrRtvHandle,
+			g_gameCameraPosition,
+			-1,
+			firstReflectorId,
+			shouldRenderWeightedOit,
+			SceneObjectDrawFilter::Transparent);
 		drawEffects(
 			gameViewProjectionMatrix,
 			g_gameViewMatrix,
@@ -1679,7 +2493,9 @@ void EditorRenderManager::Draw() {
 		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
 			if (sceneObject.type != EditorSceneObjectType::Model ||
 				sceneObject.cullMode == 1 ||
+				sceneObject.ocean.isEnabled ||
 				sceneObject.materialData == nullptr ||
+				sceneObject.materialData->oceanEnabled >= 0.5f ||
 				sceneObject.materialData->alphaMode == 2) {
 				continue;
 			}
@@ -1722,12 +2538,22 @@ void EditorRenderManager::Draw() {
 			if (sceneObject.usesCustomMesh &&
 				sceneObject.customMeshVertexResource != nullptr &&
 				sceneObject.customMeshVertexCount > 0u) {
-				commandList->IASetVertexBuffers(0, 1, &sceneObject.customMeshVertexBufferView);
-				commandList->DrawInstanced(sceneObject.customMeshVertexCount, 1, 0, 0);
+				const Vector3& gBufferCameraPosition = isGameViewPass
+					? g_gameCameraPosition
+					: cameraTransform.translate;
+				DrawCustomSceneMesh(
+					commandList.Get(),
+					sceneObject,
+					&gBufferCameraPosition,
+					false);
 			}
 			else {
 				commandList->IASetVertexBuffers(0, 1, &primitiveVertexBufferViews[meshTypeIndex]);
-				commandList->DrawInstanced(primitiveVertexCounts[meshTypeIndex], 1, 0, 0);
+				commandList->DrawInstanced(
+					primitiveVertexCounts[meshTypeIndex],
+					GetSceneObjectInstanceCount(sceneObject),
+					0,
+					0);
 			}
 		}
 	};
@@ -1736,6 +2562,8 @@ void EditorRenderManager::Draw() {
 		(g_isSceneViewVisible || g_isGameViewVisible) &&
 		g_gBufferManager.Begin(commandList.Get(), dsvHandle)) {
 		commandList->SetDescriptorHeaps(1, descriptorHeaps);
+		BindSceneObjectSkinningResources(commandList.Get(), nullptr);
+		g_oceanFftManager.BindGraphicsResources(commandList.Get());
 
 		if (g_isSceneViewVisible) {
 			commandList->RSSetViewports(1, &viewport);
@@ -1809,8 +2637,10 @@ void EditorRenderManager::Draw() {
 			const D3D12_VIEWPORT& targetViewport,
 			const D3D12_RECT& targetScissorRect,
 			const Matrix4x4& targetInverseViewProjection,
-			const Matrix4x4& targetReflectionViewProjection) {
-			float reflectionParams[40] = {};
+			const Matrix4x4& targetReflectionViewProjection,
+			const Vector3& targetCameraPosition,
+			const Vector4& targetReflectionPlane) {
+			float reflectionParams[48] = {};
 			reflectionParams[0] = 1.0f / static_cast<float>((std::max)(g_renderWidth, 1u));
 			reflectionParams[1] = 1.0f / static_cast<float>((std::max)(g_renderHeight, 1u));
 			reflectionParams[2] = 12.0f;
@@ -1821,10 +2651,16 @@ void EditorRenderManager::Draw() {
 			reflectionParams[37] = targetViewport.TopLeftY;
 			reflectionParams[38] = targetViewport.Width;
 			reflectionParams[39] = targetViewport.Height;
+			reflectionParams[40] = targetCameraPosition.x;
+			reflectionParams[41] = targetCameraPosition.y;
+			reflectionParams[42] = targetCameraPosition.z;
+			reflectionParams[44] = targetReflectionPlane.x;
+			reflectionParams[45] = targetReflectionPlane.y;
+			reflectionParams[46] = targetReflectionPlane.z;
 
 			commandList->RSSetViewports(1, &targetViewport);
 			commandList->RSSetScissorRects(1, &targetScissorRect);
-			commandList->SetGraphicsRoot32BitConstants(2, 40, reflectionParams, 0);
+			commandList->SetGraphicsRoot32BitConstants(2, 48, reflectionParams, 0);
 			commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			commandList->DrawInstanced(3, 1, 0, 0);
 		};
@@ -1836,7 +2672,9 @@ void EditorRenderManager::Draw() {
 				viewport,
 				scissorRect,
 				inverseViewProjectionMatrix,
-				planarView.sceneCam.viewProjection);
+				planarView.sceneCam.viewProjection,
+				cameraTransform.translate,
+				planarView.sceneCam.clipPlane);
 		}
 
 		if (g_isGameViewVisible) {
@@ -1844,7 +2682,9 @@ void EditorRenderManager::Draw() {
 				gameViewport,
 				gameScissorRect,
 				inverseGameViewProjectionMatrix,
-				planarView.gameCam.viewProjection);
+				planarView.gameCam.viewProjection,
+				g_gameCameraPosition,
+				planarView.gameCam.clipPlane);
 		}
 
 		compositeBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -1874,6 +2714,34 @@ void EditorRenderManager::Draw() {
 
 		ID3D12DescriptorHeap* computeDescriptorHeaps[] = {srvDescriptorHeap};
 		commandList->SetDescriptorHeaps(1u, computeDescriptorHeaps);
+		if (g_editorRuntimeManager.IsPlaying()) {
+			EditorEffectManager& effectManager = g_editorRuntimeManager.GetEffectManager();
+			static std::vector<EditorGpuParticleManager::CollisionProxy> collisionProxies;
+			CollectParticleCollisionProxies(collisionProxies);
+			const bool useGameCollisionCamera = g_isGameViewVisible;
+			const Matrix4x4& collisionViewProjection = useGameCollisionCamera
+				? gameViewProjectionMatrix
+				: sceneViewProjectionMatrix;
+			const Matrix4x4& collisionInverseViewProjection = useGameCollisionCamera
+				? inverseGameViewProjectionMatrix
+				: inverseViewProjectionMatrix;
+			const D3D12_VIEWPORT& collisionViewport = useGameCollisionCamera
+				? gameViewport
+				: viewport;
+			g_gpuParticleManager.Update(
+				commandList.Get(),
+				effectManager.GetPendingGpuParticleSpawns(),
+				effectManager.GetLastDeltaTime(),
+				depthSrvHandleGPU,
+				collisionViewProjection,
+				collisionInverseViewProjection,
+				g_renderWidth,
+				g_renderHeight,
+				collisionViewport,
+				collisionProxies);
+			effectManager.ClearPendingGpuParticleSpawns();
+		}
+
 		const Matrix4x4& depthInverseViewProjection = g_isSceneViewVisible
 			? inverseViewProjectionMatrix
 			: inverseGameViewProjectionMatrix;
@@ -1892,6 +2760,7 @@ void EditorRenderManager::Draw() {
 
 			for (const EditorSceneObject& sceneObject : editorSceneObjects) {
 				if (sceneObject.type != EditorSceneObjectType::Model ||
+					sceneObject.ocean.isEnabled ||
 					sceneObject.transformationData == nullptr) {
 					continue;
 				}
@@ -2128,6 +2997,7 @@ void EditorRenderManager::Draw() {
 			commandList.Get(),
 			hdrPostSourceSrvHandle,
 			depthSrvHandleGPU,
+			g_gBufferManager.GetMotionVectorSrvHandle(),
 			g_gBufferManager.IsReady()
 				? g_gBufferManager.GetNormalSrvHandle()
 				: g_depthHierarchyManager.GetReconstructedNormalSrvHandle(),
@@ -2136,6 +3006,8 @@ void EditorRenderManager::Draw() {
 			&temporalInverseViewProjection.matrix[0][0],
 			&temporalViewProjection.matrix[0][0],
 			&temporalCameraPosition.x,
+			ppSettings.ssrEnabled,
+			ppSettings.aaMode == 3,
 			ppSettings.temporalSharpness,
 			ppSettings.temporalBlendRatio);
 
@@ -2151,6 +3023,192 @@ void EditorRenderManager::Draw() {
 		if (isTemporalRenderingExecuted) {
 			hdrPostSourceSrvHandle = g_temporalRenderingManager.GetOutputSrvHandle();
 		}
+	}
+
+	//================================================================
+	// Weighted Blended OIT 合成
+	//================================================================
+
+	if (shouldRenderWeightedOit) {
+		std::array<D3D12_RESOURCE_BARRIER, 2u> oitReadBarriers{};
+		ID3D12Resource* oitResources[2] = {
+			g_oitAccumulationRenderTarget,
+			g_oitRevealageRenderTarget};
+
+		for (uint32_t oitTargetIndex = 0u; oitTargetIndex < oitReadBarriers.size(); ++oitTargetIndex) {
+			oitReadBarriers[oitTargetIndex].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			oitReadBarriers[oitTargetIndex].Transition.pResource = oitResources[oitTargetIndex];
+			oitReadBarriers[oitTargetIndex].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+			oitReadBarriers[oitTargetIndex].Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+			oitReadBarriers[oitTargetIndex].Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		}
+
+		commandList->ResourceBarrier(static_cast<UINT>(oitReadBarriers.size()), oitReadBarriers.data());
+		const bool isOitSourceHdr = hdrPostSourceSrvHandle.ptr == hdrSrvHandleGPU.ptr;
+		ID3D12Resource* oitDestinationResource = isOitSourceHdr
+			? hdrCompositeRenderTarget
+			: hdrRenderTarget;
+		const D3D12_CPU_DESCRIPTOR_HANDLE oitDestinationRtvHandle = isOitSourceHdr
+			? hdrCompositeRtvHandle
+			: hdrRtvHandle;
+		const D3D12_GPU_DESCRIPTOR_HANDLE oitDestinationSrvHandle = isOitSourceHdr
+			? hdrCompositeSrvHandleGPU
+			: hdrSrvHandleGPU;
+
+		D3D12_RESOURCE_BARRIER oitDestinationBarrier{};
+		oitDestinationBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		oitDestinationBarrier.Transition.pResource = oitDestinationResource;
+		oitDestinationBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		oitDestinationBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		oitDestinationBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		commandList->ResourceBarrier(1, &oitDestinationBarrier);
+
+		commandList->RSSetViewports(1, &fullViewport);
+		commandList->RSSetScissorRects(1, &fullScissor);
+		commandList->OMSetRenderTargets(1, &oitDestinationRtvHandle, FALSE, nullptr);
+		commandList->SetGraphicsRootSignature(postProcessRootSignature.Get());
+		commandList->SetPipelineState(weightedOitCompositePipelineState.Get());
+		commandList->SetGraphicsRootDescriptorTable(0, hdrPostSourceSrvHandle);
+		commandList->SetGraphicsRootDescriptorTable(1, g_oitSrvHandlesGPU[0]);
+		commandList->SetGraphicsRootDescriptorTable(3, g_oitSrvHandlesGPU[1]);
+		const float oitCompositeParams[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+		commandList->SetGraphicsRoot32BitConstants(2, 4, oitCompositeParams, 0);
+		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		commandList->DrawInstanced(3, 1, 0, 0);
+
+		oitDestinationBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		oitDestinationBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		commandList->ResourceBarrier(1, &oitDestinationBarrier);
+		hdrPostSourceSrvHandle = oitDestinationSrvHandle;
+		hdrPostSourceResource = oitDestinationResource;
+	}
+
+	//================================================================
+	// Underwater / Caustics
+	// 海面がある時だけ、Scene と Game の各カメラに対応する深度復元を行う。
+	//================================================================
+
+	if (primaryOceanSceneObject != nullptr &&
+		underwaterCausticsPipelineState != nullptr &&
+		depthStencilResource != nullptr &&
+		hdrRenderTarget != nullptr &&
+		hdrCompositeRenderTarget != nullptr) {
+		const bool isUnderwaterSourceHdr = hdrPostSourceSrvHandle.ptr == hdrSrvHandleGPU.ptr;
+		ID3D12Resource* underwaterDestinationResource = isUnderwaterSourceHdr
+			? hdrCompositeRenderTarget
+			: hdrRenderTarget;
+		const D3D12_CPU_DESCRIPTOR_HANDLE underwaterDestinationRtvHandle = isUnderwaterSourceHdr
+			? hdrCompositeRtvHandle
+			: hdrRtvHandle;
+		const D3D12_GPU_DESCRIPTOR_HANDLE underwaterDestinationSrvHandle = isUnderwaterSourceHdr
+			? hdrCompositeSrvHandleGPU
+			: hdrSrvHandleGPU;
+
+		D3D12_RESOURCE_BARRIER underwaterBarrier{};
+		underwaterBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		underwaterBarrier.Transition.pResource = underwaterDestinationResource;
+		underwaterBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		underwaterBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		underwaterBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		commandList->ResourceBarrier(1, &underwaterBarrier);
+
+		const float underwaterClearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+		commandList->OMSetRenderTargets(1, &underwaterDestinationRtvHandle, FALSE, nullptr);
+		commandList->ClearRenderTargetView(
+			underwaterDestinationRtvHandle,
+			underwaterClearColor,
+			0,
+			nullptr);
+		commandList->SetGraphicsRootSignature(postProcessRootSignature.Get());
+		commandList->SetPipelineState(underwaterCausticsPipelineState.Get());
+		commandList->SetGraphicsRootDescriptorTable(0, hdrPostSourceSrvHandle);
+		commandList->SetGraphicsRootDescriptorTable(1, depthSrvHandleGPU);
+		g_oceanFftManager.BindPostProcessDisplacement(commandList.Get(), 4u);
+		const Matrix4x4 oceanWorldMatrix = MakeAffineMatrix(
+			primaryOceanSceneObject->transform.scale,
+			primaryOceanSceneObject->transform.rotate,
+			primaryOceanSceneObject->transform.translate);
+		const Matrix4x4 oceanWorldToLocalMatrix = Inverse(oceanWorldMatrix);
+		const bool isOceanFftReady =
+			primaryOceanSceneObject->transformationData != nullptr &&
+			g_oceanFftManager.IsReadyFor(primaryOceanSceneObject->ocean);
+
+		auto drawUnderwaterViewport = [&](
+				const D3D12_VIEWPORT& targetViewport,
+				const D3D12_RECT& targetScissor,
+				const Matrix4x4& targetInverseViewProjection,
+				const Vector3& targetCameraPosition) {
+			float underwaterParams[48] = {};
+			std::memcpy(
+				underwaterParams,
+				&targetInverseViewProjection.matrix[0][0],
+				sizeof(float) * 16u);
+			underwaterParams[16] = targetCameraPosition.x;
+			underwaterParams[17] = targetCameraPosition.y;
+			underwaterParams[18] = targetCameraPosition.z;
+			underwaterParams[19] = primaryOceanSceneObject->transform.translate.y;
+			underwaterParams[20] = primaryOceanSceneObject->ocean.deepColor.x;
+			underwaterParams[21] = primaryOceanSceneObject->ocean.deepColor.y;
+			underwaterParams[22] = primaryOceanSceneObject->ocean.deepColor.z;
+			underwaterParams[23] =
+				0.35f + primaryOceanSceneObject->ocean.detailNormalStrength * 1.25f;
+			underwaterParams[24] = primaryOceanSceneObject->ocean.shallowColor.x;
+			underwaterParams[25] = primaryOceanSceneObject->ocean.shallowColor.y;
+			underwaterParams[26] = primaryOceanSceneObject->ocean.shallowColor.z;
+			underwaterParams[27] = primaryOceanSceneObject->ocean.absorptionDistance;
+			underwaterParams[28] = 1.0f / static_cast<float>((std::max)(g_renderWidth, 1u));
+			underwaterParams[29] = 1.0f / static_cast<float>((std::max)(g_renderHeight, 1u));
+			underwaterParams[30] = oceanElapsedTime;
+			underwaterParams[31] = primaryOceanSceneObject->ocean.refractionDistortion;
+			underwaterParams[32] = targetViewport.TopLeftX / static_cast<float>(g_renderWidth);
+			underwaterParams[33] = targetViewport.TopLeftY / static_cast<float>(g_renderHeight);
+			underwaterParams[34] = targetViewport.Width / static_cast<float>(g_renderWidth);
+			underwaterParams[35] = targetViewport.Height / static_cast<float>(g_renderHeight);
+			underwaterParams[36] = oceanWorldToLocalMatrix.matrix[0][0];
+			underwaterParams[37] = oceanWorldToLocalMatrix.matrix[1][0];
+			underwaterParams[38] = oceanWorldToLocalMatrix.matrix[2][0];
+			underwaterParams[39] = oceanWorldToLocalMatrix.matrix[3][0];
+			underwaterParams[40] = oceanWorldToLocalMatrix.matrix[0][2];
+			underwaterParams[41] = oceanWorldToLocalMatrix.matrix[1][2];
+			underwaterParams[42] = oceanWorldToLocalMatrix.matrix[2][2];
+			underwaterParams[43] = oceanWorldToLocalMatrix.matrix[3][2];
+			underwaterParams[44] = isOceanFftReady
+				? primaryOceanSceneObject->transformationData->oceanWaveData1[15u].x
+				: 1.0f;
+			underwaterParams[45] = isOceanFftReady
+				? primaryOceanSceneObject->transformationData->oceanWaveData1[15u].z
+				: 1.0f;
+			underwaterParams[46] = primaryOceanSceneObject->ocean.size * 4.0f;
+			underwaterParams[47] = primaryOceanSceneObject->transform.scale.y;
+
+			commandList->RSSetViewports(1, &targetViewport);
+			commandList->RSSetScissorRects(1, &targetScissor);
+			commandList->SetGraphicsRoot32BitConstants(2, 48, underwaterParams, 0);
+			commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			commandList->DrawInstanced(3, 1, 0, 0);
+		};
+
+		if (g_isSceneViewVisible) {
+			drawUnderwaterViewport(
+				viewport,
+				scissorRect,
+				inverseViewProjectionMatrix,
+				cameraTransform.translate);
+		}
+
+		if (g_isGameViewVisible) {
+			drawUnderwaterViewport(
+				gameViewport,
+				gameScissorRect,
+				inverseGameViewProjectionMatrix,
+				g_gameCameraPosition);
+		}
+
+		underwaterBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		underwaterBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		commandList->ResourceBarrier(1, &underwaterBarrier);
+		hdrPostSourceSrvHandle = underwaterDestinationSrvHandle;
+		hdrPostSourceResource = underwaterDestinationResource;
 	}
 
 	//================================================================
@@ -2504,6 +3562,20 @@ void EditorRenderManager::Draw() {
 	backBufferBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
 	commandList->ResourceBarrier(1, &backBufferBarrier);
 
+	if (renderTimestampQueryHeap != nullptr && renderTimestampReadback != nullptr) {
+		commandList->EndQuery(
+			renderTimestampQueryHeap.Get(),
+			D3D12_QUERY_TYPE_TIMESTAMP,
+			1u);
+		commandList->ResolveQueryData(
+			renderTimestampQueryHeap.Get(),
+			D3D12_QUERY_TYPE_TIMESTAMP,
+			0u,
+			2u,
+			renderTimestampReadback.Get(),
+			0u);
+	}
+
 	hr = commandList->Close(); // CommandList 郢�E�E�E�蟶晏陶邵�E�E�E�蛟･�E�E�E�・娜U 邵�E�E�E�・�E�E�E�陞ｳ貁E�E��E�・�E�E�E�蠕後堤�E�E�E��E�E�E�髦�E�E�E�・玖ｿ�E�E�E�・�E�E�E�隲�E�E�E�荵昶・驕抵�E�E�E��E�E�E�陞ｳ螢�E�E�E�笘�E�E�E�E��E�E�E�荵敖繝ｻ
 	if (FAILED(hr)) {
 		Log(g_logStream, std::format("CommandList Close failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
@@ -2554,7 +3626,49 @@ void EditorRenderManager::Draw() {
 	}
 
 	// GPU が完了したため、次フレームで使う可視結果を安全に読み戻す。
+	if (renderTimestampReadback != nullptr && renderTimestampFrequency > 0u) {
+		const D3D12_RANGE readRange{0u, sizeof(std::uint64_t) * 2u};
+		std::uint64_t* timestampData = nullptr;
+
+		if (SUCCEEDED(renderTimestampReadback->Map(
+			0u,
+			&readRange,
+			reinterpret_cast<void**>(&timestampData))) && timestampData != nullptr) {
+			if (timestampData[1] >= timestampData[0]) {
+				const double elapsedTicks = static_cast<double>(timestampData[1] - timestampData[0]);
+				const float measuredMilliseconds = static_cast<float>(
+					elapsedTicks * 1000.0 / static_cast<double>(renderTimestampFrequency));
+				renderProfile.gpuFrameMilliseconds = renderProfile.gpuFrameMilliseconds <= 0.0f
+					? measuredMilliseconds
+					: renderProfile.gpuFrameMilliseconds * 0.90f + measuredMilliseconds * 0.10f;
+			}
+
+			const D3D12_RANGE writeRange{0u, 0u};
+			renderTimestampReadback->Unmap(0u, &writeRange);
+		}
+	}
+
+	static int32_t videoMemoryQueryFrameTimer = 0;
+
+	if (videoMemoryQueryFrameTimer <= 0 && useAdapter != nullptr) {
+		DXGI_QUERY_VIDEO_MEMORY_INFO videoMemoryInfo{};
+
+		if (SUCCEEDED(useAdapter->QueryVideoMemoryInfo(
+			0u,
+			DXGI_MEMORY_SEGMENT_GROUP_LOCAL,
+			&videoMemoryInfo))) {
+			renderProfile.localVideoMemoryUsage = videoMemoryInfo.CurrentUsage;
+			renderProfile.localVideoMemoryBudget = videoMemoryInfo.Budget;
+		}
+
+		videoMemoryQueryFrameTimer = 30;
+	}
+	else {
+		videoMemoryQueryFrameTimer--;
+	}
+
 	g_gpuCullingManager.ResolveReadback();
+	g_oceanFftManager.ResolveReadback();
 
 	g_isDrawRequested = false;
 	// 闔�E�E�E�E��E�E�E�繝ｵ郢晢�E�E�E��E�E�E�郢晢�E�E�E��E�E�E�郢晢�E�E�E��E�E�E�邵�E�E�E�・�E�E�E�隰�E�E�E�蜀怜�E髫補扱・�E�E�E�繧・�E�E�E�定ｱ�E�E�E�驛�E�E�E�E��E�E�E�・�E�E�E�邵�E�E�E�蜉ｱ笳・�E�E�E��E�E�E�・�E�E�E�邵�E�E�E�・�E�E�E�邵�E�E�E�竏ｵ・�E�E�E�・�E�E�E�邵�E�E�E�・�E�E�E� ImGui::Render 邵�E�E�E�・�E�E�E�邵�E�E�E�・�E�E�E� Renderer 郢�E�E�E�蜻茨�E�E�E��E�E�E�・�E�E�E�郢�E�E�E�竏夲�E�E�E�狗ｸ�E�E�E�繝ｻ

@@ -178,6 +178,7 @@ namespace {
 
 			for (EditorComponent& component : gameObject.components) {
 				if (component.type != EditorComponentType::Button &&
+					component.type != EditorComponentType::SceneButton &&
 					component.type != EditorComponentType::Toggle &&
 					component.type != EditorComponentType::Slider) {
 					continue;
@@ -211,12 +212,18 @@ namespace {
 					ImGui::BeginDisabled();
 				}
 
-				if (uiComponent->type == EditorComponentType::Button) {
+				if (uiComponent->type == EditorComponentType::Button ||
+					uiComponent->type == EditorComponentType::SceneButton) {
 					const bool isClicked = ImGui::Button(buttonLabel, buttonSize);
-					if (isClicked && canInteract) {
+
+					if (isClicked && canInteract && uiComponent->type == EditorComponentType::Button) {
 						g_editorRuntimeManager.GetScriptManager().QueueUiEvent(
 							gameObject.id,
 							uiComponent->buttonOnClickFunction);
+					}
+
+					if (isClicked && canInteract && uiComponent->type == EditorComponentType::SceneButton) {
+						g_editorRuntimeManager.RequestSceneLoad(uiComponent->sceneButtonScenePath);
 					}
 				}
 
@@ -280,6 +287,40 @@ void EditorGameViewManager::Draw() {
 #ifdef USE_IMGUI
 	g_isGameViewVisible = false;  // Draw 中に有効な矩形を取れたフレームだけ true にする。
 
+	if (g_isStandaloneGame) {
+		g_isSceneViewVisible = false;
+		const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
+		constexpr ImGuiWindowFlags standaloneWindowFlags =
+			ImGuiWindowFlags_NoDecoration |
+			ImGuiWindowFlags_NoMove |
+			ImGuiWindowFlags_NoSavedSettings |
+			ImGuiWindowFlags_NoBackground |
+			ImGuiWindowFlags_NoBringToFrontOnFocus |
+			ImGuiWindowFlags_NoNav;
+		ImGui::SetNextWindowPos(mainViewport->Pos);
+		ImGui::SetNextWindowSize(mainViewport->Size);
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+		ImGui::Begin("###StandaloneGameView", nullptr, standaloneWindowFlags);
+
+		const ImVec2 gameContentPosition = ImGui::GetCursorScreenPos();
+		const ImVec2 gameContentSize = ImGui::GetContentRegionAvail();
+		g_editorGameX = gameContentPosition.x;
+		g_editorGameY = gameContentPosition.y;
+		g_editorGameWidth = (std::max)(gameContentSize.x, 1.0f);
+		g_editorGameHeight = (std::max)(gameContentSize.y, 1.0f);
+		g_isGameViewVisible = true;
+
+		UpdateGameCameraMatrices();
+		ImGui::Dummy(ImVec2(g_editorGameWidth, g_editorGameHeight));
+		DrawGameViewUiControls(
+			gameContentPosition,
+			g_editorGameWidth,
+			g_editorGameHeight);
+		ImGui::End();
+		ImGui::PopStyleVar();
+		return;
+	}
+
 	constexpr ImGuiWindowFlags gameWindowFlags =
 		ImGuiWindowFlags_NoCollapse |
 		ImGuiWindowFlags_NoBackground |
@@ -336,15 +377,25 @@ void EditorGameViewManager::Draw() {
 		g_isGameViewUsingSceneCamera ? IM_COL32(255, 210, 130, 255) : IM_COL32(170, 215, 255, 255),
 		cameraText);
 
-	char gameFpsText[64]{};
+	char gameFpsText[192]{};
 	const float gameFrameRate = ImGui::GetIO().Framerate;
 	const float gameFrameTimeMilliseconds = gameFrameRate > 0.0f ? 1000.0f / gameFrameRate : 0.0f;
+	constexpr double bytesPerMegabyte = 1024.0 * 1024.0;
+	const double localVideoMemoryUsageMegabytes =
+		static_cast<double>(g_renderProfile.localVideoMemoryUsage) / bytesPerMegabyte;
+	const double localVideoMemoryBudgetMegabytes =
+		static_cast<double>(g_renderProfile.localVideoMemoryBudget) / bytesPerMegabyte;
 	std::snprintf(
 		gameFpsText,
 		_countof(gameFpsText),
-		"%.1f FPS  %.2f ms",
+		"%.1f FPS  CPU %.2f ms  GPU %.2f ms\nVRAM %.0f / %.0f MB  Obj %u  Inst %u",
 		gameFrameRate,
-		gameFrameTimeMilliseconds);
+		gameFrameTimeMilliseconds,
+		g_renderProfile.gpuFrameMilliseconds,
+		localVideoMemoryUsageMegabytes,
+		localVideoMemoryBudgetMegabytes,
+		g_renderProfile.sceneObjectCount,
+		g_renderProfile.instanceCount);
 	const ImVec2 gameFpsTextSize = ImGui::CalcTextSize(gameFpsText);
 	const ImVec2 gameFpsTextPosition{
 		g_editorGameX + 18.0f,

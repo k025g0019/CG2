@@ -6,6 +6,7 @@
 #include "EditorNativeScriptAssetManager.h"
 #include "EditorSharedState.h"
 #include "Source/Engine/Animation/PropertyAnimationClip.h"
+#include "Vector.h"
 
 #include <algorithm>
 #include <cctype>
@@ -24,6 +25,198 @@ namespace {
 	constexpr float kRadianToDegree = 57.2957795f;  // 内部のラジアン値を Inspector 表示用の度数へ変換する係数。
 	constexpr float kDegreeToRadian = 0.0174532924f;  // Inspector で入力された度数を内部用ラジアンへ戻す係数。
 	constexpr unsigned char kUtf8Bom[] = {0xEFu, 0xBBu, 0xBFu};  // テキスト系アセットを UTF-8 BOM 付きで保存する。
+
+	enum class RailShooterSetupRequestType {
+		None,
+		ShipPresentation,
+		StageMarkers,
+	};
+
+	struct RailShooterSetupRequest {
+		RailShooterSetupRequestType type = RailShooterSetupRequestType::None;
+		int32_t ownerGameObjectId = -1;
+	};
+
+	RailShooterSetupRequest gRailShooterSetupRequest{};
+
+	void ConfigureParticlePreset(
+		EditorScene& editorScene,
+		int32_t gameObjectId,
+		float emissionRate,
+		float lifetime,
+		float speed,
+		float size,
+		const Vector3& direction,
+		int32_t burstCount) {
+		EditorGameObject* gameObject = editorScene.FindGameObject(gameObjectId);
+
+		if (gameObject == nullptr) {
+			return;
+		}
+
+		EditorComponent* particleComponent = EditorComponentUtility::FindComponent(
+			*gameObject,
+			EditorComponentType::ParticleSystem);
+
+		if (particleComponent == nullptr) {
+			return;
+		}
+
+		particleComponent->particleRate = emissionRate;
+		particleComponent->particleLifetime = lifetime;
+		particleComponent->particleSpeed = speed;
+		particleComponent->particleSize = size;
+		particleComponent->particleDirection = direction;
+		particleComponent->particleBurstCount = burstCount;
+		particleComponent->particleSimulationSpace = 1;
+		particleComponent->animationPlayOnAwake = false;
+	}
+
+	void ProcessRailShooterSetupRequest(EditorInspectorPanelContext& context) {
+		if (gRailShooterSetupRequest.type == RailShooterSetupRequestType::None ||
+			gRailShooterSetupRequest.ownerGameObjectId < 0 ||
+			context.runtimeManager.IsPlaying()) {
+			gRailShooterSetupRequest = {};
+			return;
+		}
+
+		const int32_t ownerGameObjectId = gRailShooterSetupRequest.ownerGameObjectId;
+		EditorGameObject* ownerGameObject = context.editorScene.FindGameObject(ownerGameObjectId);
+
+		if (ownerGameObject == nullptr) {
+			gRailShooterSetupRequest = {};
+			return;
+		}
+
+		context.editorScene.PushUndo();
+
+		if (gRailShooterSetupRequest.type == RailShooterSetupRequestType::ShipPresentation) {
+			const int32_t sailGameObjectId = context.editorScene.CreateGameObject("Sail Animation");
+			context.editorScene.SetParent(sailGameObjectId, ownerGameObjectId);
+			context.editorScene.AddComponent(sailGameObjectId, EditorComponentType::Animation);
+
+			EditorGameObject* sailGameObject = context.editorScene.FindGameObject(sailGameObjectId);
+			if (sailGameObject != nullptr) {
+				EditorComponent* animationComponent = EditorComponentUtility::FindComponent(
+					*sailGameObject,
+					EditorComponentType::Animation);
+
+				if (animationComponent != nullptr) {
+					animationComponent->animationType = 2;
+					animationComponent->animationAmplitude = 0.08f;
+					animationComponent->animationLoop = true;
+					animationComponent->animationPlayOnAwake = true;
+				}
+			}
+
+			const int32_t wakeGameObjectId = context.editorScene.CreateGameObject("Wake Effect");
+			context.editorScene.SetParent(wakeGameObjectId, ownerGameObjectId);
+			context.editorScene.AddComponent(wakeGameObjectId, EditorComponentType::ParticleSystem);
+			ConfigureParticlePreset(
+				context.editorScene,
+				wakeGameObjectId,
+				80.0f,
+				1.4f,
+				1.2f,
+				0.25f,
+				Vector3{0.0f, 0.25f, -1.0f},
+				0);
+
+			EditorGameObject* wakeGameObject = context.editorScene.FindGameObject(wakeGameObjectId);
+			if (wakeGameObject != nullptr) {
+				wakeGameObject->translate = {0.0f, -0.4f, -1.8f};
+			}
+
+			const int32_t windGameObjectId = context.editorScene.CreateGameObject("Wind Effect");
+			context.editorScene.SetParent(windGameObjectId, ownerGameObjectId);
+			context.editorScene.AddComponent(windGameObjectId, EditorComponentType::ParticleSystem);
+			ConfigureParticlePreset(
+				context.editorScene,
+				windGameObjectId,
+				36.0f,
+				0.45f,
+				8.0f,
+				0.08f,
+				Vector3{0.0f, 0.0f, -1.0f},
+				0);
+
+			EditorGameObject* refreshedOwnerGameObject = context.editorScene.FindGameObject(ownerGameObjectId);
+			EditorComponent* shipComponent = refreshedOwnerGameObject != nullptr
+				? EditorComponentUtility::FindComponent(*refreshedOwnerGameObject, EditorComponentType::RailShooterShip)
+				: nullptr;
+
+			if (shipComponent != nullptr) {
+				shipComponent->railShipSailGameObjectId = sailGameObjectId;
+				shipComponent->railShipWakeEffectGameObjectId = wakeGameObjectId;
+				shipComponent->railShipWindEffectGameObjectId = windGameObjectId;
+			}
+		}
+		else if (gRailShooterSetupRequest.type == RailShooterSetupRequestType::StageMarkers) {
+			const Vector3 stagePosition = ownerGameObject->translate;
+			const int32_t startMarkerGameObjectId = context.editorScene.CreateGameObject("Start Marker");
+			EditorGameObject* startMarkerGameObject = context.editorScene.FindGameObject(startMarkerGameObjectId);
+
+			if (startMarkerGameObject != nullptr) {
+				startMarkerGameObject->translate = stagePosition;
+			}
+
+			const int32_t goalMarkerGameObjectId = context.editorScene.CreateGameObject("Goal Marker");
+			EditorGameObject* goalMarkerGameObject = context.editorScene.FindGameObject(goalMarkerGameObjectId);
+
+			if (goalMarkerGameObject != nullptr) {
+				goalMarkerGameObject->translate = Add(stagePosition, Vector3{0.0f, 0.0f, 100.0f});
+			}
+
+			const int32_t startEffectGameObjectId = context.editorScene.CreateGameObject("Start Effect");
+			context.editorScene.AddComponent(startEffectGameObjectId, EditorComponentType::ParticleSystem);
+			ConfigureParticlePreset(
+				context.editorScene,
+				startEffectGameObjectId,
+				0.0f,
+				0.8f,
+				3.0f,
+				0.25f,
+				Vector3{0.0f, 1.0f, 0.0f},
+				32);
+
+			const int32_t goalEffectGameObjectId = context.editorScene.CreateGameObject("Goal Effect");
+			context.editorScene.AddComponent(goalEffectGameObjectId, EditorComponentType::ParticleSystem);
+			ConfigureParticlePreset(
+				context.editorScene,
+				goalEffectGameObjectId,
+				0.0f,
+				1.2f,
+				4.0f,
+				0.35f,
+				Vector3{0.0f, 1.0f, 0.0f},
+				64);
+
+			EditorGameObject* startEffectGameObject = context.editorScene.FindGameObject(startEffectGameObjectId);
+			EditorGameObject* goalEffectGameObject = context.editorScene.FindGameObject(goalEffectGameObjectId);
+
+			if (startEffectGameObject != nullptr) {
+				startEffectGameObject->translate = stagePosition;
+			}
+
+			if (goalEffectGameObject != nullptr) {
+				goalEffectGameObject->translate = Add(stagePosition, Vector3{0.0f, 0.0f, 100.0f});
+			}
+
+			EditorGameObject* refreshedOwnerGameObject = context.editorScene.FindGameObject(ownerGameObjectId);
+			EditorComponent* stageComponent = refreshedOwnerGameObject != nullptr
+				? EditorComponentUtility::FindComponent(*refreshedOwnerGameObject, EditorComponentType::RailShooterStage)
+				: nullptr;
+
+			if (stageComponent != nullptr) {
+				stageComponent->stageStartMarkerGameObjectId = startMarkerGameObjectId;
+				stageComponent->stageGoalMarkerGameObjectId = goalMarkerGameObjectId;
+				stageComponent->stageStartEffectGameObjectId = startEffectGameObjectId;
+				stageComponent->stageGoalEffectGameObjectId = goalEffectGameObjectId;
+			}
+		}
+
+		gRailShooterSetupRequest = {};
+	}
 
 #ifdef _DEBUG
 	constexpr bool kIsDebugEditorBuild = true;  // 実行中エンジンが Debug なら Script も Debug DLL を基準にする。
@@ -249,6 +442,8 @@ namespace {
 		{"描画・レンダリング", "ビルボードレンダラー", EditorComponentType::BillboardRenderer},
 		{"描画・レンダリング", "キャンバスレンダラー", EditorComponentType::CanvasRenderer},
 		{"描画・レンダリング", "パーティクルシステムレンダラー", EditorComponentType::ParticleSystemRenderer},
+		{"描画・レンダリング", "Ocean", EditorComponentType::Ocean},
+		{"物理", "Buoyancy", EditorComponentType::Buoyancy},
 		{"カメラ", "カメラ", EditorComponentType::Camera},
 		{"カメラ", "オーディオリスナー", EditorComponentType::AudioListener},
 		{"カメラ", "フレアレイヤー", EditorComponentType::FlareLayer},
@@ -336,6 +531,7 @@ namespace {
 		{"UI", "コンテンツサイズフィッター", EditorComponentType::ContentSizeFitter},
 		{"UI", "アスペクト比フィッター", EditorComponentType::AspectRatioFitter},
 		{"UI", "レイアウトエレメント", EditorComponentType::LayoutElement},
+		{"UI", "Scene ボタン", EditorComponentType::SceneButton},
 		{"入力・イベント", "イベントシステム", EditorComponentType::EventSystem},
 		{"入力・イベント", "スタンドアロン入力モジュール", EditorComponentType::StandaloneInputModule},
 		{"入力・イベント", "Input System UI 入力モジュール", EditorComponentType::InputSystemUIInputModule},
@@ -345,6 +541,12 @@ namespace {
 		{"入力・イベント", "入力", EditorComponentType::Input},
 		{"ゲームプレイ", "ローカル移動", EditorComponentType::LocalMove},
 		{"ゲームプレイ", "ローリング移動", EditorComponentType::RollingMove},
+		{"ゲームプレイ", "レール移動", EditorComponentType::RailMovement},
+		{"ゲームプレイ", "体力", EditorComponentType::Health},
+		{"ゲームプレイ", "レールシューティング敵", EditorComponentType::RailShooterEnemy},
+		{"ゲームプレイ", "レールシューティング船演出", EditorComponentType::RailShooterShip},
+		{"ゲームプレイ", "レールシューティング敵移動", EditorComponentType::RailShooterEnemyMotion},
+		{"ゲームプレイ", "レールシューティングステージ", EditorComponentType::RailShooterStage},
 		{"ゲームプレイ", "自由移動/回転", EditorComponentType::FreeTransform},
 		{"ナビゲーション", "NavMesh エージェント", EditorComponentType::NavigationAgent},
 		{"ナビゲーション", "NavMesh 障害物", EditorComponentType::NavMeshObstacle},
@@ -398,6 +600,7 @@ namespace {
 		{"エフェクト", "プロジェクター", EditorComponentType::Projector},
 		{"エフェクト", "デカールプロジェクター", EditorComponentType::DecalProjector},
 		{"地形・タイルマップ", "テレイン", EditorComponentType::Terrain},
+		{"地形・タイルマップ", "フォリッジ", EditorComponentType::Foliage},
 		{"地形・タイルマップ", "地形の当たり判定", EditorComponentType::TerrainCollider},
 		{"地形・タイルマップ", "タイルマップ", EditorComponentType::Tilemap},
 		{"地形・タイルマップ", "タイルマップレンダラー", EditorComponentType::TilemapRenderer},
@@ -2028,6 +2231,24 @@ namespace {
 			case EditorScriptFieldTypeString:
 				DrawStringInputRow(propertyLabel, scriptProperty.stringValue);
 				break;
+			case EditorScriptFieldTypeGameObject:
+				DrawGameObjectReferenceRow(
+					context,
+					gameObject,
+					propertyLabel,
+					scriptProperty.intValue,
+					"未設定",
+					true);
+				break;
+			case EditorScriptFieldTypeSceneAsset:
+				DrawStringInputRow(propertyLabel, scriptProperty.stringValue);
+
+				if (!context.selectedAssetPath.empty() &&
+					EditorAssetUtility::HasExtension(context.selectedAssetPath, ".scene") &&
+					ImGui::Button("選択中 Scene を設定", ImVec2(-1.0f, 0.0f))) {
+					scriptProperty.stringValue = context.selectedAssetPath;
+				}
+				break;
 			default:
 				DrawTextRow(propertyLabel, "未対応の型");
 				break;
@@ -2442,6 +2663,248 @@ namespace {
 		DrawTextRow("BVH", hasModelData ? "生成対象" : "未生成");
 	}
 
+	void DrawRailMovementComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		EditorComponent& component) {
+		DrawTextRow("説明", "指定した親の直下にある子 GameObject を上から順に通るレール移動です。");
+		DrawTextRow("作り方", "空の親を作り、その子に Point 00、Point 01...を置いて Gizmo で経路を編集します。");
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"Rail Path",
+			component.railPathGameObjectId,
+			"未設定",
+			false);
+		DrawFloatRow("速度", component.railSpeed, 0.1f, -1000.0f, 1000.0f);
+		DrawFloatRow("開始位置", component.railStartNormalized, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("向きの先読み", component.railLookAheadDistance, 0.05f, 0.01f, 1000.0f);
+		DrawCheckboxRow("ループ", component.railLoop);
+		DrawCheckboxRow("進行方向へ回転", component.railOrientToPath);
+		DrawCheckboxRow("滑らかな曲線", component.railUseSmoothCurve);
+	}
+
+	void DrawHealthComponent(EditorComponent& component) {
+		DrawTextRow("説明", "敵やプレイヤーが攻撃で減らされる体力です。Play 開始時に最大体力へ戻ります。");
+		DrawFloatRow("最大体力", component.healthMaximum, 1.0f, 0.0f, 1000000.0f);
+
+		if (component.healthCurrent > component.healthMaximum) {
+			component.healthCurrent = component.healthMaximum;
+		}
+
+		DrawTextRow("実行中体力", std::to_string(component.healthCurrent).c_str());
+	}
+
+	void DrawRailShooterEnemyComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		EditorComponent& component) {
+		DrawTextRow("説明", "レール進行率で出現し、射程内の対象へ一定間隔で攻撃する敵です。");
+		DrawTextRow("出現場所", "この敵 GameObject の Transform。Play 開始までは Scene 上で直接編集できます。");
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"進行率の参照元",
+			component.enemySpawnFollowerGameObjectId,
+			"未設定",
+			false);
+		DrawFloatRow("出現進行率", component.enemySpawnNormalized, 0.01f, 0.0f, 1.0f);
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"攻撃対象",
+			component.enemyAttackTargetGameObjectId,
+			"未設定",
+			false);
+		DrawFloatRow("攻撃間隔", component.enemyAttackInterval, 0.05f, 0.01f, 3600.0f);
+		DrawFloatRow("攻撃射程", component.enemyAttackRange, 0.1f, 0.0f, 100000.0f);
+		DrawFloatRow("攻撃ダメージ", component.enemyAttackDamage, 1.0f, 0.0f, 1000000.0f);
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"敵弾テンプレート",
+			component.enemyProjectileTemplateGameObjectId,
+			"未設定 (即時攻撃)",
+			false);
+		DrawIntRow("敵弾プール数", component.enemyProjectilePoolSize);
+		component.enemyProjectilePoolSize = (std::clamp)(component.enemyProjectilePoolSize, 1, 256);
+		DrawFloatRow("敵弾速度", component.enemyProjectileSpeed, 0.1f, 0.01f, 100000.0f);
+		DrawFloatRow("敵弾命中半径", component.enemyProjectileHitRadius, 0.01f, 0.01f, 1000.0f);
+		DrawFloatRow("敵弾寿命", component.enemyProjectileLifetime, 0.1f, 0.01f, 3600.0f);
+		DrawTextRow("移動", "同じ敵へ Rail Movement または AI Steering を追加します。海上敵は Rigidbody、Collider、Buoyancy を使えます。");
+		DrawTextRow("攻撃演出", "Animator に Attack Trigger、同じ GameObject に Particle / Visual Effect を設定すると発射時に再生します。");
+		DrawTextRow("敵弾", "非表示の Model / Sprite Object をテンプレートへ指定します。Play 中だけ複製して再利用します。");
+	}
+
+	void DrawRailShooterShipComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		EditorComponent& component) {
+		DrawTextRow("説明", "船速から帆 Animation、航跡、風切り Effect を一括制御します。");
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"速度の参照元",
+			component.railShipSpeedSourceGameObjectId,
+			"未設定 (この船)",
+			false);
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"帆 Animation",
+			component.railShipSailGameObjectId,
+			"未設定",
+			false);
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"航跡 Effect",
+			component.railShipWakeEffectGameObjectId,
+			"未設定",
+			false);
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"風切り Effect",
+			component.railShipWindEffectGameObjectId,
+			"未設定",
+			false);
+		DrawFloatRow("演出開始速度", component.railShipEffectStartSpeed, 0.1f, 0.0f, 100000.0f);
+		DrawFloatRow("最大演出速度", component.railShipEffectFullSpeed, 0.1f, 0.01f, 100000.0f);
+		DrawFloatRow("帆の最低速度", component.railShipSailMinimumSpeed, 0.05f, 0.0f, 100.0f);
+		DrawFloatRow("帆の最高速度", component.railShipSailMaximumSpeed, 0.05f, 0.0f, 100.0f);
+
+		if (!context.runtimeManager.IsPlaying() &&
+			ImGui::Button("標準の帆・航跡・風切りを一括作成", ImVec2(-1.0f, 0.0f))) {
+			gRailShooterSetupRequest = {
+				RailShooterSetupRequestType::ShipPresentation,
+				ownerGameObject.id};
+		}
+
+		DrawTextRow("使い方", "帆へ Animation、航跡と風切りへ Particle / Visual Effect を付け、ここから参照するだけです。");
+	}
+
+	void DrawRailShooterEnemyMotionComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		EditorComponent& component) {
+		DrawTextRow("説明", "Rail Movement の上へ編隊運動を重ねるか、追跡・突進離脱を単独で実行します。");
+		const char* motionPatternItems[] = {
+			"上下・左右揺動",
+			"旋回",
+			"8 の字",
+			"対象を追跡",
+			"突進して離脱",
+		};
+		component.enemyMotionPattern = (std::clamp)(component.enemyMotionPattern, 0, 4);
+		DrawComboRow(
+			"移動パターン",
+			component.enemyMotionPattern,
+			motionPatternItems,
+			static_cast<int32_t>(_countof(motionPatternItems)));
+		DrawVector3Row("振幅", component.enemyMotionAmplitude, 0.1f, -100000.0f, 100000.0f);
+		DrawFloatRow("周期", component.enemyMotionFrequency, 0.05f, 0.0f, 1000.0f);
+		DrawFloatRow("開始位相", component.enemyMotionPhase, 0.05f, -100000.0f, 100000.0f);
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"追跡・注視対象",
+			component.enemyMotionTargetGameObjectId,
+			"未設定",
+			false);
+		DrawFloatRow("追跡・突進速度", component.enemyMotionSpeed, 0.1f, 0.0f, 100000.0f);
+		DrawCheckboxRow("対象へ向く", component.enemyMotionLookAtTarget);
+		DrawTextRow("組み合わせ", "Rail Movement と併用すると、レール経路を中心に揺動・旋回・8の字を重ねられます。");
+	}
+
+	void DrawRailShooterStageComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		EditorComponent& component) {
+		DrawTextRow("説明", "開始位置、開始待機、ゴール判定、演出、次 Scene までをまとめて管理します。");
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"Player / Camera Rig",
+			component.stageFollowerGameObjectId,
+			"未設定",
+			false);
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"Start Marker",
+			component.stageStartMarkerGameObjectId,
+			"未設定",
+			false);
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"Goal Marker",
+			component.stageGoalMarkerGameObjectId,
+			"未設定 (レール終端)",
+			false);
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"開始 Effect",
+			component.stageStartEffectGameObjectId,
+			"未設定",
+			false);
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"ゴール Effect",
+			component.stageGoalEffectGameObjectId,
+			"未設定",
+			false);
+		DrawFloatRow("開始待機", component.stageStartDelay, 0.1f, 0.0f, 3600.0f);
+		DrawFloatRow("ゴール半径", component.stageGoalRadius, 0.1f, 0.01f, 100000.0f);
+		DrawFloatRow("ゴール後待機", component.stageGoalDelay, 0.1f, 0.0f, 3600.0f);
+		DrawStringInputRow("次の Scene", component.stageNextScenePath);
+		DrawStringInputRow("Stage Select Scene", component.stageSelectScenePath);
+
+		if (!context.runtimeManager.IsPlaying() &&
+			ImGui::Button("Start / Goal と標準 Effect を一括作成", ImVec2(-1.0f, 0.0f))) {
+			gRailShooterSetupRequest = {
+				RailShooterSetupRequestType::StageMarkers,
+				ownerGameObject.id};
+		}
+
+		const bool hasSelectedScene =
+			!context.selectedAssetPath.empty() &&
+			EditorAssetUtility::HasExtension(context.selectedAssetPath, ".scene");
+
+		if (hasSelectedScene && ImGui::Button("選択中 Scene を次へ設定", ImVec2(-1.0f, 0.0f))) {
+			component.stageNextScenePath = context.selectedAssetPath;
+		}
+
+		if (hasSelectedScene && ImGui::Button("選択中 Scene を Stage Select へ設定", ImVec2(-1.0f, 0.0f))) {
+			component.stageSelectScenePath = context.selectedAssetPath;
+		}
+
+		DrawTextRow("Animator", "開始時に Start、ゴール時に Goal Trigger を Player / Camera Rig へ送ります。");
+	}
+
+	void DrawSceneButtonComponent(
+		EditorInspectorPanelContext& context,
+		EditorComponent& component) {
+		DrawTextRow("説明", "Script を書かず、Game View のクリックで指定 Scene を開きます。");
+		DrawStringInputRow("表示文字", component.buttonLabel);
+		DrawVector2Row("位置", component.buttonPosition, 0.5f, -10000.0f, 10000.0f);
+		DrawVector2Row("サイズ", component.buttonSize, 0.5f, 1.0f, 4096.0f);
+		DrawColor3Row("通常色", component.color);
+		DrawColor3Row("ホバー色", component.buttonHoverColor);
+		DrawColor3Row("押下色", component.buttonPressedColor);
+		DrawCheckboxRow("操作可能", component.buttonInteractable);
+		DrawStringInputRow("遷移先 Scene", component.sceneButtonScenePath);
+
+		if (!context.selectedAssetPath.empty() &&
+			EditorAssetUtility::HasExtension(context.selectedAssetPath, ".scene") &&
+			ImGui::Button("選択中 Scene を設定", ImVec2(-1.0f, 0.0f))) {
+			component.sceneButtonScenePath = context.selectedAssetPath;
+		}
+	}
+
 	void DrawAutoConvexCollisionComponent(const EditorGameObject& gameObject, EditorComponent& component) {
 		std::string collisionAssetPath;
 		const ModelData* loadedModelData = GetModelDataForComponent(gameObject, component, false, collisionAssetPath);
@@ -2820,9 +3283,17 @@ namespace {
 				DrawFloatRow("吸引力", component.particleAttractorStrength, 0.1f, 0.0f, 1000.0f);
 			}
 
-			DrawCheckboxRow("地面衝突", component.particleCollision);
+			DrawCheckboxRow("衝突", component.particleCollision);
 
 			if (component.particleCollision) {
+				const char* collisionModeItems[] = {
+					"Depth (画面内エフェクト)",
+					"Physics SDF (物理オブジェクト)"};
+				DrawComboRow(
+					"衝突方式",
+					component.collisionDetectionMode,
+					collisionModeItems,
+					static_cast<int32_t>(_countof(collisionModeItems)));
 				DrawFloatRow("反発", component.particleCollisionBounce, 0.01f, 0.0f, 1.0f);
 				DrawFloatRow("摩擦", component.particleCollisionFriction, 0.01f, 0.0f, 1.0f);
 			}
@@ -2913,8 +3384,8 @@ namespace {
 			}
 		}
 
-		DrawTextRow("説明", "反射方式を切り替えるコンポーネントです。スクリーンスペース反射は床や濡れ面、キューブマップ反射は金属や球体、平面反射は鏡や磨かれた床向けです。");
-		DrawFloatRow("強さ", component.intensity, 0.01f, 0.0f, 4.0f);
+		DrawTextRow("説明", "反射方式を切り替えます。材質の反射・屈折率を基礎反射率に使い、この強さで反射像の寄与を調整します。");
+		DrawFloatRow("反射像の強さ", component.intensity, 0.01f, 0.0f, 4.0f);
 		DrawFloatRow("反射の粗さ", component.roughness, 0.01f, 0.0f, 1.0f);
 		DrawVector3Row("中心", component.colliderCenter, 0.01f, 0.0f, 0.0f);
 		DrawVector3Row("サイズ", component.colliderSize, 0.01f, 0.01f, 1000.0f);
@@ -3271,8 +3742,34 @@ namespace {
 	}
 
 	void DrawTerrainComponent(EditorComponent& component) {
-		DrawTextRow("説明", "地形を扱うコンポーネントです。");
-		DrawVector3Row("サイズ", component.colliderSize, 1.0f, 1.0f, 10000.0f);
+		DrawTextRow("説明", "HeightMap から地形を生成し、距離に応じてメッシュLODを切り替えます。");
+		DrawStringInputRow("Height Map", component.assetPath);
+		DrawVector3Row("サイズ X / 高さ / Z", component.colliderSize, 1.0f, 0.01f, 10000.0f);
+
+		if (DrawIntRow("最高LOD解像度", component.oceanGridResolution)) {
+			component.oceanGridResolution = (std::clamp)(component.oceanGridResolution, 16, 256);
+		}
+
+		DrawTextRow("LOD", "近距離 / 中距離 / 遠距離の3段階。Shadowは一段低いLODを使用します。");
+	}
+
+	void DrawFoliageComponent(EditorComponent& component) {
+		DrawTextRow("説明", "DensityMap とGPU Instancingで草木を配置し、距離で描画密度を落とします。");
+		DrawStringInputRow("Density Map", component.assetPath);
+		DrawVector3Row("配置範囲", component.colliderSize, 1.0f, 1.0f, 10000.0f);
+		DrawFloatRow("密度", component.intensity, 0.01f, 0.0f, 1.0f);
+
+		if (DrawIntRow("最大Instance数", component.particleMaxCount)) {
+			component.particleMaxCount = (std::clamp)(component.particleMaxCount, 1, 65535);
+		}
+
+		DrawFloatRow("LOD距離", component.colliderRadius, 1.0f, 1.0f, 10000.0f);
+		DrawSubHeader("風");
+		DrawVector2Row("風向き", component.oceanPrimaryDirection, 0.01f, -1.0f, 1.0f);
+		DrawFloatRow("揺れ幅", component.oceanWaveHeight, 0.01f, 0.0f, 5.0f);
+		DrawFloatRow("風速", component.oceanWindSpeed, 0.1f, 0.0f, 100.0f);
+		DrawFloatRow("空間周波数", component.oceanWaveLength, 0.01f, 0.01f, 100.0f);
+		DrawFloatRow("時間倍率", component.oceanTimeScale, 0.01f, 0.0f, 10.0f);
 	}
 
 	void DrawTilemapComponent(EditorComponent& component) {
@@ -3284,6 +3781,112 @@ namespace {
 	void DrawGridComponent(EditorComponent& component) {
 		DrawTextRow("説明", "Tilemap の親になる Grid コンポーネントです。");
 		DrawVector3Row("セルサイズ", component.colliderSize, 0.01f, 0.01f, 100.0f);
+	}
+
+	void DrawOceanComponent(EditorComponent& component) {
+		//============================================================
+		// FFocean3D を基にした Ocean の調整値
+		//============================================================
+
+		DrawTextRow("説明", "外部モデル不要の海面です。Scene View と Game View の両方へ同じ波を描画します。");
+
+		DrawTextRow("メッシュ", "16～2048の2冪。近傍密度を維持し、外周を追加頂点なしで地平線方向へ広げます。");
+		const int32_t clampedPreviousResolution =
+			(std::clamp)(component.oceanGridResolution, 16, 2048);
+		int32_t previousGridResolution = 16;
+
+		while (previousGridResolution <= 1024 &&
+			previousGridResolution * 2 <= clampedPreviousResolution) {
+			previousGridResolution *= 2;
+		}
+
+		component.oceanGridResolution = previousGridResolution;
+
+		if (DrawIntRow("グリッド解像度", component.oceanGridResolution)) {
+			if (component.oceanGridResolution == previousGridResolution + 1) {
+				component.oceanGridResolution =
+					(std::min)(previousGridResolution * 2, 2048);
+			}
+			else if (component.oceanGridResolution == previousGridResolution - 1) {
+				component.oceanGridResolution =
+					(std::max)(previousGridResolution / 2, 16);
+			}
+			else {
+				const int32_t clampedResolution =
+					(std::clamp)(component.oceanGridResolution, 16, 2048);
+				int32_t normalizedResolution = 16;
+
+				while (normalizedResolution <= 1024 &&
+					normalizedResolution * 2 <= clampedResolution) {
+					normalizedResolution *= 2;
+				}
+
+				component.oceanGridResolution = normalizedResolution;
+			}
+		}
+		DrawFloatRow("海面サイズ", component.oceanSize, 1.0f, 1.0f, 20000.0f);
+
+		DrawTextRow("主波", "波高・波長・速度と XZ 方向を調整します。");
+		DrawFloatRow("波の高さ", component.oceanWaveHeight, 0.05f, 0.0f, 2000.0f);
+		DrawFloatRow("最大波高", component.oceanMaxWaveHeight, 0.05f, 0.0f, 4000.0f);
+		DrawFloatRow("波長", component.oceanWaveLength, 0.1f, 0.1f, 10000.0f);
+		DrawFloatRow("波の速度", component.oceanWaveSpeed, 0.01f, -10.0f, 10.0f);
+		DrawFloatRow("時間倍率", component.oceanTimeScale, 0.01f, 0.0f, 4.0f);
+		DrawFloatRow("Choppiness", component.oceanChoppiness, 0.01f, -4.0f, 4.0f);
+		DrawVector2Row("主波方向 XZ", component.oceanPrimaryDirection, 0.01f, -100.0f, 100.0f);
+
+		DrawTextRow("副波・細波", "別方向の波を重ね、均一な波並びを崩します。");
+		DrawVector2Row("副波方向 XZ", component.oceanSecondaryDirection, 0.01f, -100.0f, 100.0f);
+		DrawFloatRow("副波の強さ", component.oceanSecondaryWaveScale, 0.01f, 0.0f, 2.0f);
+		DrawFloatRow("細波の波長比", component.oceanRippleScale, 0.005f, 0.02f, 1.0f);
+		DrawFloatRow("細波の強さ", component.oceanRippleStrength, 0.005f, 0.0f, 1.0f);
+
+		DrawTextRow("波スペクトル", "16成分を長いうねり・風浪・細波へ分け、有限水深の分散則で動かします。");
+		DrawFloatRow("風速", component.oceanWindSpeed, 0.1f, 0.1f, 80.0f);
+		DrawFloatRow("水深", component.oceanWaterDepth, 0.5f, 0.1f, 5000.0f);
+		DrawFloatRow("方向分散", component.oceanDirectionSpread, 0.01f, 0.0f, 3.14159f);
+		DrawFloatRow("うねりの強さ", component.oceanSwellStrength, 0.01f, 0.0f, 2.0f);
+		DrawFloatRow("スペクトルシード", component.oceanSpectrumSeed, 1.0f, 0.0f, 65535.0f);
+		DrawFloatRow("波頭の尖り", component.oceanCrestSharpness, 0.01f, 0.0f, 1.0f);
+
+		DrawTextRow("海面材質", "微細法線、圧縮泡、吸収、Fresnel 反射と屈折を合成します。");
+		DrawFloatRow("泡の強さ", component.oceanFoamStrength, 0.01f, 0.0f, 4.0f);
+		DrawFloatRow("泡の閾値", component.oceanFoamThreshold, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("粗さ", component.oceanRoughness, 0.01f, 0.035f, 1.0f);
+		DrawFloatRow("反射", component.oceanReflectionStrength, 0.01f, 0.0f, 2.0f);
+		DrawFloatRow("屈折", component.transmission, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("微細法線", component.oceanDetailNormalStrength, 0.01f, 0.0f, 2.0f);
+		DrawFloatRow("吸収距離", component.oceanAbsorptionDistance, 0.1f, 0.1f, 500.0f);
+		DrawFloatRow("屈折の歪み", component.oceanRefractionDistortion, 0.005f, 0.0f, 1.0f);
+		DrawTextRow("水深色", "水深が吸収距離以下なら浅瀬色、深くなるほど深海色を強くします。");
+		DrawColor3Row("浅瀬色", component.oceanShallowColor);
+		DrawColor3Row("深海色", component.oceanDeepColor);
+	}
+
+	void DrawBuoyancyComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		EditorComponent& component) {
+		//============================================================
+		// 描画と同じ GPU FFT 波面を使う船体浮力
+		//============================================================
+
+		DrawTextRow("説明", "船体全体へ浮力セルを自動配置し、水没体積に応じて上下・傾斜させます。");
+		DrawTextRow("自動分割", "船体の大きさに応じて 8～512 点。縦方向にも分散し、固定の船底点は使いません。");
+		DrawTextRow("必須", "同じ GameObject に Rigidbody と Box / Convex / Mesh Collider を追加してください。");
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"対象 Ocean",
+			component.buoyancyOceanGameObjectId,
+			"自動検出",
+			false);
+		DrawVector3Row("浮力中心", component.buoyancyCenterOffset, 0.01f, -1000.0f, 1000.0f);
+		DrawVector3Row("船体サイズ", component.buoyancyHullSize, 0.05f, 0.05f, 10000.0f);
+		DrawFloatRow("浮力", component.buoyancyStrength, 0.1f, 0.0f, 1000.0f);
+		DrawFloatRow("上下減衰", component.buoyancyDamping, 0.05f, 0.0f, 100.0f);
+		DrawFloatRow("水の抵抗", component.buoyancyWaterDrag, 0.05f, 0.0f, 100.0f);
+		DrawFloatRow("回転抵抗", component.buoyancyAngularDrag, 0.05f, 0.0f, 100.0f);
 	}
 
 	void DrawComponentBody(EditorInspectorPanelContext& context, EditorGameObject& gameObject, EditorComponent& component) {
@@ -3332,6 +3935,12 @@ namespace {
 			break;
 		case EditorComponentType::Environment:
 			DrawEnvironmentComponent(component);
+			break;
+		case EditorComponentType::Ocean:
+			DrawOceanComponent(component);
+			break;
+		case EditorComponentType::Buoyancy:
+			DrawBuoyancyComponent(context, gameObject, component);
 			break;
 		case EditorComponentType::LightProbeGroup:
 			DrawLightProbeGroupComponent(component);
@@ -3649,6 +4258,24 @@ namespace {
 		case EditorComponentType::RollingMove:
 			DrawRollingMoveComponent(component);
 			break;
+		case EditorComponentType::RailMovement:
+			DrawRailMovementComponent(context, gameObject, component);
+			break;
+		case EditorComponentType::Health:
+			DrawHealthComponent(component);
+			break;
+		case EditorComponentType::RailShooterEnemy:
+			DrawRailShooterEnemyComponent(context, gameObject, component);
+			break;
+		case EditorComponentType::RailShooterShip:
+			DrawRailShooterShipComponent(context, gameObject, component);
+			break;
+		case EditorComponentType::RailShooterEnemyMotion:
+			DrawRailShooterEnemyMotionComponent(context, gameObject, component);
+			break;
+		case EditorComponentType::RailShooterStage:
+			DrawRailShooterStageComponent(context, gameObject, component);
+			break;
 		case EditorComponentType::FreeTransform:
 			DrawFreeTransformComponent(component);
 			break;
@@ -3686,6 +4313,9 @@ namespace {
 		case EditorComponentType::Terrain:
 			DrawTerrainComponent(component);
 			break;
+		case EditorComponentType::Foliage:
+			DrawFoliageComponent(component);
+			break;
 		case EditorComponentType::Tilemap:
 			DrawTilemapComponent(component);
 			break;
@@ -3718,6 +4348,9 @@ namespace {
 			break;
 		case EditorComponentType::Button:
 			DrawButtonComponent(component);
+			break;
+		case EditorComponentType::SceneButton:
+			DrawSceneButtonComponent(context, component);
 			break;
 		case EditorComponentType::Toggle:
 			DrawToggleComponent(component);
@@ -4470,6 +5103,7 @@ void EditorInspectorPanel::Draw(EditorInspectorPanelContext& context) {
 
 	ImGui::PopStyleVar(2);
 	ImGui::End();
+	ProcessRailShooterSetupRequest(context);
 }
 
 const char* EditorInspectorPanel::GetSelectedObjectLabel(const EditorInspectorPanelContext& context) const {

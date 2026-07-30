@@ -3,6 +3,7 @@
 #pragma warning(disable : 5045)
 
 #include "EditorAssetUtility.h"
+#include "EditorGameBuildManager.h"
 #include "EditorSharedState.h"
 
 #include <Windows.h>
@@ -153,6 +154,23 @@ namespace {
 		return scenePaths;
 	}
 
+	bool ContainsScenePath(
+		const std::vector<std::string>& scenePaths,
+		const std::string& scenePath) {
+		return std::find(
+			scenePaths.begin(),
+			scenePaths.end(),
+			scenePath) != scenePaths.end();
+	}
+
+	void AddUniqueScenePath(
+		std::vector<std::string>& scenePaths,
+		const std::string& scenePath) {
+		if (!scenePath.empty() && !ContainsScenePath(scenePaths, scenePath)) {
+			scenePaths.push_back(scenePath);
+		}
+	}
+
 	void SyncSelectionToScene() {
 		g_editorSelectionManager.SyncLegacySelection(
 			g_selectedEditorGameObjectId,
@@ -235,6 +253,26 @@ namespace {
 		return true;
 	}
 
+	void CreateNewEditingScene(
+		EditorScene* editorScene,
+		EditorRuntimeManager* runtimeManager,
+		std::vector<std::string>& consoleMessages) {
+		if (editorScene == nullptr || runtimeManager == nullptr) {
+			return;
+		}
+
+		if (runtimeManager->IsPlaying()) {
+			runtimeManager->TogglePlay();
+		}
+
+		editorScene->InitializeDefaultScene();
+		g_currentScenePath.clear();
+		g_selectedAssetPath.clear();
+		SelectFirstGameObjectOrClear();
+		RefreshSceneObjects();
+		consoleMessages.push_back("File: 新規 Scene を作成");
+	}
+
 	void CreateEmptyGameObject(std::vector<std::string>& consoleMessages) {
 		g_editorScene.PushUndo();  // GameObject 生成を Undo 対象にする
 		const int32_t gameObjectId = g_editorScene.CreateGameObject("GameObject");
@@ -270,6 +308,309 @@ namespace {
 		SelectGameObject(gameObjectId);
 		g_selectedSceneObject = 3;
 		consoleMessages.push_back("Scene: カメラを作成");
+	}
+
+	void CreateOceanGameObject(std::vector<std::string>& consoleMessages) {
+		g_editorScene.PushUndo();
+		const int32_t gameObjectId = g_editorScene.CreateGameObject("Ocean");
+		g_editorScene.AddComponent(gameObjectId, EditorComponentType::Ocean);
+		SelectGameObject(gameObjectId);
+		RefreshSceneObjects();
+		consoleMessages.push_back("Scene: Ocean を作成");
+	}
+
+	EditorComponent* FindComponent(
+		EditorGameObject* gameObject,
+		EditorComponentType componentType) {
+		if (gameObject == nullptr) {
+			return nullptr;
+		}
+
+		for (EditorComponent& component : gameObject->components) {
+			if (component.type == componentType) {
+				return &component;
+			}
+		}
+
+		return nullptr;
+	}
+
+	EditorGameObject* CreateStressModel(
+		EditorScene* editorScene,
+		const std::string& objectName,
+		const std::string& assetPath,
+		const Vector3& position,
+		const Vector3& scale) {
+		if (editorScene == nullptr) {
+			return nullptr;
+		}
+
+		const int32_t gameObjectId = editorScene->CreateGameObject(objectName);
+		editorScene->AddComponent(gameObjectId, EditorComponentType::MeshFilter);
+		editorScene->AddComponent(gameObjectId, EditorComponentType::ModelRenderer);
+		EditorGameObject* gameObject = editorScene->FindGameObject(gameObjectId);
+
+		if (gameObject == nullptr) {
+			return nullptr;
+		}
+
+		gameObject->translate = position;
+		gameObject->scale = scale;
+		EditorComponent* meshFilter = FindComponent(gameObject, EditorComponentType::MeshFilter);
+		EditorComponent* modelRenderer = FindComponent(gameObject, EditorComponentType::ModelRenderer);
+
+		if (meshFilter != nullptr) {
+			meshFilter->assetPath = assetPath;
+		}
+
+		if (modelRenderer != nullptr) {
+			modelRenderer->assetPath = assetPath;
+			modelRenderer->useImportedMaterialTextures = true;
+			modelRenderer->lightingMode = 3;
+		}
+
+		return gameObject;
+	}
+
+	void CreateRenderStressScene(
+		EditorScene* editorScene,
+		EditorRuntimeManager* runtimeManager,
+		std::vector<std::string>& consoleMessages) {
+		if (editorScene == nullptr || runtimeManager == nullptr) {
+			return;
+		}
+
+		if (runtimeManager->IsPlaying()) {
+			runtimeManager->TogglePlay();
+		}
+
+		//============================================================
+		// 基本環境
+		//============================================================
+
+		editorScene->InitializeDefaultScene();
+		for (EditorGameObject& gameObject : editorScene->GetGameObjects()) {
+			if (gameObject.name == "Main Camera") {
+				gameObject.translate = {0.0f, 18.0f, -42.0f};
+				gameObject.rotate = {0.22f, 0.0f, 0.0f};
+			}
+			else if (gameObject.name == "Point Light") {
+				gameObject.translate = {18.0f, 28.0f, -12.0f};
+			}
+		}
+
+		const int32_t postProcessGameObjectId = editorScene->CreateGameObject("Stress Post Process");
+		editorScene->AddComponent(postProcessGameObjectId, EditorComponentType::PostProcess);
+		EditorComponent* postProcess = FindComponent(
+			editorScene->FindGameObject(postProcessGameObjectId),
+			EditorComponentType::PostProcess);
+
+		if (postProcess != nullptr) {
+			postProcess->aaMode = 3;
+			postProcess->ssrEnabled = true;
+			postProcess->bloomIntensity = 0.65f;
+		}
+
+		//============================================================
+		// Ocean / Terrain / Foliage
+		//============================================================
+
+		const int32_t oceanGameObjectId = editorScene->CreateGameObject("Stress Ocean");
+		editorScene->AddComponent(oceanGameObjectId, EditorComponentType::Ocean);
+		EditorComponent* ocean = FindComponent(
+			editorScene->FindGameObject(oceanGameObjectId),
+			EditorComponentType::Ocean);
+
+		if (ocean != nullptr) {
+			ocean->oceanGridResolution = 2048;
+			ocean->oceanSize = 320.0f;
+		}
+
+		const int32_t terrainGameObjectId = editorScene->CreateGameObject("Stress Terrain");
+		editorScene->AddComponent(terrainGameObjectId, EditorComponentType::Terrain);
+		EditorGameObject* terrainGameObject = editorScene->FindGameObject(terrainGameObjectId);
+		EditorComponent* terrain = FindComponent(terrainGameObject, EditorComponentType::Terrain);
+
+		if (terrainGameObject != nullptr) {
+			terrainGameObject->translate = {0.0f, -6.0f, 70.0f};
+		}
+
+		if (terrain != nullptr) {
+			terrain->assetPath = "resources/model/huzisann.png";
+			terrain->colliderSize = {260.0f, 28.0f, 260.0f};
+			terrain->oceanGridResolution = 256;
+		}
+
+		EditorGameObject* foliageGameObject = CreateStressModel(
+			editorScene,
+			"Stress Foliage",
+			"resources/editorDefault/cone.fbx",
+			{0.0f, -1.0f, 28.0f},
+			{0.22f, 1.8f, 0.22f});
+
+		if (foliageGameObject != nullptr) {
+			editorScene->AddComponent(foliageGameObject->id, EditorComponentType::Foliage);
+			EditorComponent* foliage = FindComponent(foliageGameObject, EditorComponentType::Foliage);
+			EditorComponent* foliageRenderer = FindComponent(
+				foliageGameObject,
+				EditorComponentType::ModelRenderer);
+
+			if (foliage != nullptr) {
+				foliage->assetPath = "resources/editorDefault/sibahu.png";
+				foliage->colliderSize = {180.0f, 1.0f, 180.0f};
+				foliage->intensity = 0.82f;
+				foliage->particleMaxCount = 8192;
+				foliage->colliderRadius = 170.0f;
+			}
+
+			if (foliageRenderer != nullptr) {
+				foliageRenderer->textureAssetPath = "resources/editorDefault/sibahu.png";
+				foliageRenderer->doubleSided = true;
+			}
+		}
+
+		//============================================================
+		// Opaque / OIT / Refractive
+		//============================================================
+
+		for (int32_t modelIndex = 0; modelIndex < 48; ++modelIndex) {
+			const int32_t columnIndex = modelIndex % 12;
+			const int32_t rowIndex = modelIndex / 12;
+			const float x = (static_cast<float>(columnIndex) - 5.5f) * 4.5f;
+			const float z = 8.0f + static_cast<float>(rowIndex) * 5.0f;
+			EditorGameObject* modelGameObject = CreateStressModel(
+				editorScene,
+				"Stress Opaque " + std::to_string(modelIndex),
+				"resources/editorDefault/ICOCube.fbx",
+				{x, 2.0f, z},
+				{1.4f, 1.4f, 1.4f});
+
+			if (modelGameObject != nullptr) {
+				modelGameObject->rotate.y = static_cast<float>(modelIndex) * 0.21f;
+			}
+		}
+
+		for (int32_t transparentIndex = 0; transparentIndex < 32; ++transparentIndex) {
+			const int32_t columnIndex = transparentIndex % 8;
+			const int32_t rowIndex = transparentIndex / 8;
+			const float x = (static_cast<float>(columnIndex) - 3.5f) * 5.5f;
+			const float z = 34.0f + static_cast<float>(rowIndex) * 4.0f;
+			EditorGameObject* transparentGameObject = CreateStressModel(
+				editorScene,
+				"Stress OIT " + std::to_string(transparentIndex),
+				"resources/editorDefault/box.fbx",
+				{x, 3.0f, z},
+				{1.8f, 3.6f, 1.8f});
+			EditorComponent* transparentRenderer = FindComponent(
+				transparentGameObject,
+				EditorComponentType::ModelRenderer);
+
+			if (transparentRenderer != nullptr) {
+				transparentRenderer->alphaMode = 2;
+				transparentRenderer->alpha = 0.34f;
+				transparentRenderer->color = {0.15f, 0.55f, 0.95f};
+				transparentRenderer->doubleSided = true;
+			}
+		}
+
+		for (int32_t glassIndex = 0; glassIndex < 12; ++glassIndex) {
+			const float x = (static_cast<float>(glassIndex) - 5.5f) * 4.8f;
+			EditorGameObject* glassGameObject = CreateStressModel(
+				editorScene,
+				"Stress Refractive " + std::to_string(glassIndex),
+				"resources/editorDefault/ICOCube.fbx",
+				{x, 5.0f, 54.0f},
+				{2.2f, 2.2f, 2.2f});
+			EditorComponent* glassRenderer = FindComponent(
+				glassGameObject,
+				EditorComponentType::ModelRenderer);
+
+			if (glassRenderer != nullptr) {
+				glassRenderer->alphaMode = 2;
+				glassRenderer->alpha = 0.28f;
+				glassRenderer->transmission = 0.92f;
+				glassRenderer->ior = 1.52f;
+				glassRenderer->roughness = 0.06f;
+				glassRenderer->color = {0.72f, 0.92f, 1.0f};
+			}
+		}
+
+		//============================================================
+		// Skinned Motion Vector / Particle Collision
+		//============================================================
+
+		for (int32_t skinnedIndex = 0; skinnedIndex < 4; ++skinnedIndex) {
+			const int32_t gameObjectId = editorScene->CreateGameObject(
+				"Stress Skinned " + std::to_string(skinnedIndex));
+			editorScene->AddComponent(gameObjectId, EditorComponentType::MeshFilter);
+			editorScene->AddComponent(gameObjectId, EditorComponentType::SkinnedMeshRenderer);
+			editorScene->AddComponent(gameObjectId, EditorComponentType::Animation);
+			editorScene->AddComponent(gameObjectId, EditorComponentType::Animator);
+			EditorGameObject* skinnedGameObject = editorScene->FindGameObject(gameObjectId);
+
+			if (skinnedGameObject != nullptr) {
+				skinnedGameObject->translate = {
+					(static_cast<float>(skinnedIndex) - 1.5f) * 7.0f,
+					2.0f,
+					64.0f};
+				skinnedGameObject->scale = {1.5f, 1.5f, 1.5f};
+				EditorComponent* meshFilter = FindComponent(
+					skinnedGameObject,
+					EditorComponentType::MeshFilter);
+				EditorComponent* skinnedRenderer = FindComponent(
+					skinnedGameObject,
+					EditorComponentType::SkinnedMeshRenderer);
+
+				if (meshFilter != nullptr) {
+					meshFilter->assetPath = "Assets/ai.fbx";
+				}
+
+				if (skinnedRenderer != nullptr) {
+					skinnedRenderer->assetPath = "Assets/ai.fbx";
+					skinnedRenderer->useImportedMaterialTextures = true;
+				}
+			}
+		}
+
+		for (int32_t particleIndex = 0; particleIndex < 2; ++particleIndex) {
+			const int32_t gameObjectId = editorScene->CreateGameObject(
+				particleIndex == 0 ? "Stress Depth Particles" : "Stress SDF Particles");
+			editorScene->AddComponent(gameObjectId, EditorComponentType::ParticleSystem);
+			EditorGameObject* particleGameObject = editorScene->FindGameObject(gameObjectId);
+			EditorComponent* particleSystem = FindComponent(
+				particleGameObject,
+				EditorComponentType::ParticleSystem);
+
+			if (particleGameObject != nullptr) {
+				particleGameObject->translate = {
+					particleIndex == 0 ? -10.0f : 10.0f,
+					10.0f,
+					20.0f};
+			}
+
+			if (particleSystem != nullptr) {
+				particleSystem->particleMaxCount = 8192;
+				particleSystem->particleRate = 1800.0f;
+				particleSystem->particleLifetime = 4.0f;
+				particleSystem->particleShape = 2;
+				particleSystem->particleShapeRadius = 4.0f;
+				particleSystem->particleCollision = true;
+				particleSystem->collisionDetectionMode = particleIndex;
+				particleSystem->particleNoiseStrength = 2.5f;
+				particleSystem->particleEndColor = {0.15f, 0.55f, 1.0f};
+			}
+		}
+
+		g_currentScenePath.clear();
+		g_selectedAssetPath.clear();
+		SelectFirstGameObjectOrClear();
+		RefreshSceneObjects();
+		SaveSceneToPath(
+			editorScene,
+			"Assets/Scenes/RenderStress.scene",
+			consoleMessages);
+		consoleMessages.push_back(
+			"Profile: Ocean / Terrain / Foliage / OIT / Refraction / Skinning / Particle 負荷Sceneを作成");
 	}
 
 	void CreatePrimitiveGameObject(const char* assetPath) {
@@ -339,8 +680,14 @@ void EditorMainMenuBar::Draw(
 
 	static bool shouldOpenSceneSaveAsPopup = false;  // 保存先入力モーダルを次フレームで開く要求
 	static bool shouldOpenSceneLoadPopup = false;  // 読込候補一覧モーダルを次フレームで開く要求
+	static bool shouldOpenNewScenePopup = false;  // 編集中 Scene を新規 Scene へ置き換える確認要求
+	static bool shouldOpenRenderStressPopup = false;  // 現在 Scene を負荷検証用 Scene へ置き換える確認要求
+	static bool shouldOpenGameBuildPopup = false;  // ゲーム書き出し設定を次フレームで開く要求
 	static char sceneSavePathBuffer[260] = {};  // 名前を付けて保存の入力欄
 	static char sceneLoadPathBuffer[260] = {};  // 読込候補一覧での直接入力欄
+	static char productNameBuffer[128] = "CG2Game";  // 書き出す exe の名前
+	static char outputDirectoryBuffer[260] = "Builds/CG2Game";  // Player の出力先
+	static EditorGameBuildSettings gameBuildSettings{};  // Build Settings モーダルの編集状態
 
 	// MainMenuBar が開けないフレームはメニュー描画を行わない
 	if (!ImGui::BeginMainMenuBar()) {
@@ -348,6 +695,12 @@ void EditorMainMenuBar::Draw(
 	}
 
 	if (ImGui::BeginMenu("ファイル")) {
+		if (ImGui::MenuItem("新規 Scene", "Ctrl+N")) {
+			shouldOpenNewScenePopup = true;
+		}
+
+		ImGui::Separator();
+
 		if (ImGui::MenuItem("保存", "Ctrl+S")) {
 			if (g_currentScenePath.empty()) {
 				const std::string defaultScenePath = BuildDefaultScenePath();
@@ -369,6 +722,39 @@ void EditorMainMenuBar::Draw(
 		if (ImGui::MenuItem("読み込み")) {
 			sceneLoadPathBuffer[0] = '\0';
 			shouldOpenSceneLoadPopup = true;
+		}
+
+		if (ImGui::MenuItem("ゲームをビルド...")) {
+			if (!EditorGameBuildManager::LoadProjectSettings(gameBuildSettings)) {
+				gameBuildSettings = EditorGameBuildSettings{};
+			}
+
+			const std::vector<std::string> availableScenePaths = CollectSceneAssetPaths();
+			if (gameBuildSettings.scenePaths.empty()) {
+				gameBuildSettings.scenePaths = availableScenePaths;
+			}
+
+			AddUniqueScenePath(gameBuildSettings.scenePaths, g_currentScenePath);
+
+			if (!ContainsScenePath(
+					gameBuildSettings.scenePaths,
+					gameBuildSettings.startupScenePath)) {
+				gameBuildSettings.startupScenePath = gameBuildSettings.scenePaths.empty()
+					? std::string{}
+					: gameBuildSettings.scenePaths[0];
+			}
+
+			strncpy_s(
+				productNameBuffer,
+				sizeof(productNameBuffer),
+				gameBuildSettings.productName.c_str(),
+				_TRUNCATE);
+			strncpy_s(
+				outputDirectoryBuffer,
+				sizeof(outputDirectoryBuffer),
+				gameBuildSettings.outputDirectory.c_str(),
+				_TRUNCATE);
+			shouldOpenGameBuildPopup = true;
 		}
 
 		ImGui::Separator();
@@ -449,6 +835,9 @@ void EditorMainMenuBar::Draw(
 			if (ImGui::MenuItem("Sphere")) {
 				CreatePrimitiveGameObject("resources/sphere.fbx");
 			}
+			if (ImGui::MenuItem("Ocean")) {
+				CreateOceanGameObject(consoleMessages);
+			}
 			ImGui::EndMenu();
 		}
 
@@ -490,6 +879,14 @@ void EditorMainMenuBar::Draw(
 			AddComponentToSelectedGameObject(EditorComponentType::AutoConvexCollision, "Auto Convex Collision", consoleMessages);
 		}
 
+		if (ImGui::MenuItem("Ocean", nullptr, false, canAddComponent)) {
+			AddComponentToSelectedGameObject(EditorComponentType::Ocean, "Ocean", consoleMessages);
+		}
+
+		if (ImGui::MenuItem("Buoyancy", nullptr, false, canAddComponent)) {
+			AddComponentToSelectedGameObject(EditorComponentType::Buoyancy, "Buoyancy", consoleMessages);
+		}
+
 		if (ImGui::MenuItem("プレイヤー入力", nullptr, false, canAddComponent)) {
 			AddComponentToSelectedGameObject(EditorComponentType::PlayerInput, "プレイヤー入力", consoleMessages);
 		}
@@ -503,6 +900,10 @@ void EditorMainMenuBar::Draw(
 
 	if (ImGui::BeginMenu("ウィンドウ")) {
 		ImGui::MenuItem("アニメーション", nullptr, &g_isAnimationWindowVisible);
+
+		if (ImGui::MenuItem("描画負荷テスト Scene を作成")) {
+			shouldOpenRenderStressPopup = true;
+		}
 
 		if (ImGui::MenuItem("Console 表示")) {
 			g_isConsoleCleared = false;
@@ -518,6 +919,57 @@ void EditorMainMenuBar::Draw(
 		}
 
 		ImGui::EndMenu();
+	}
+
+	if (shouldOpenNewScenePopup) {
+		ImGui::OpenPopup("NewScenePopup");
+		shouldOpenNewScenePopup = false;
+	}
+
+	if (ImGui::BeginPopupModal("NewScenePopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::Text("新しい Scene を開きます。");
+		ImGui::TextDisabled("現在の未保存変更は破棄されます。");
+
+		if (ImGui::Button("新規 Scene を開く", ImVec2(180.0f, 0.0f))) {
+			CreateNewEditingScene(editorScene_, runtimeManager_, consoleMessages);
+			ImGui::CloseCurrentPopup();
+		}
+
+		ImGui::SameLine();
+
+		if (ImGui::Button("キャンセル", ImVec2(120.0f, 0.0f))) {
+			ImGui::CloseCurrentPopup();
+		}
+
+		ImGui::EndPopup();
+	}
+
+	if (shouldOpenRenderStressPopup) {
+		ImGui::OpenPopup("RenderStressScenePopup");
+		shouldOpenRenderStressPopup = false;
+	}
+
+	if (ImGui::BeginPopupModal(
+			"RenderStressScenePopup",
+			nullptr,
+			ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::Text("描画負荷テスト Scene を作成します。");
+		ImGui::TextDisabled("現在の未保存変更は破棄され、Assets/Scenes/RenderStress.scene へ保存されます。");
+
+		if (ImGui::Button("作成する", ImVec2(160.0f, 0.0f))) {
+			CreateRenderStressScene(editorScene_, runtimeManager_, consoleMessages);
+			selectedPlacedSceneObjectIndex = -1;
+			previousSelectedGameObjectId = -1;
+			ImGui::CloseCurrentPopup();
+		}
+
+		ImGui::SameLine();
+
+		if (ImGui::Button("キャンセル", ImVec2(120.0f, 0.0f))) {
+			ImGui::CloseCurrentPopup();
+		}
+
+		ImGui::EndPopup();
 	}
 
 	if (shouldOpenSceneSaveAsPopup) {
@@ -575,6 +1027,113 @@ void EditorMainMenuBar::Draw(
 		if (ImGui::Button("このパスを読込", ImVec2(160.0f, 0.0f))) {
 			if (sceneLoadPathBuffer[0] != '\0' &&
 				LoadSceneFromPath(editorScene_, sceneLoadPathBuffer, consoleMessages)) {
+				ImGui::CloseCurrentPopup();
+			}
+		}
+
+		ImGui::SameLine();
+
+		if (ImGui::Button("キャンセル", ImVec2(120.0f, 0.0f))) {
+			ImGui::CloseCurrentPopup();
+		}
+
+		ImGui::EndPopup();
+	}
+
+	if (shouldOpenGameBuildPopup) {
+		ImGui::OpenPopup("GameBuildSettingsPopup");
+		shouldOpenGameBuildPopup = false;
+	}
+
+	if (ImGui::BeginPopupModal(
+			"GameBuildSettingsPopup",
+			nullptr,
+			ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::Text("ゲーム書き出し設定");
+		ImGui::InputText("ゲーム名", productNameBuffer, sizeof(productNameBuffer));
+		ImGui::InputText("出力先", outputDirectoryBuffer, sizeof(outputDirectoryBuffer));
+		ImGui::TextDisabled("Release ビルド済みの実行ファイルと最新 Assets を出力します");
+		ImGui::Separator();
+		ImGui::Text("ビルド対象シーン");
+
+		const std::vector<std::string> availableScenePaths = CollectSceneAssetPaths();
+		ImGui::BeginChild("GameBuildSceneList", ImVec2(620.0f, 260.0f), true);
+
+		for (const std::string& scenePath : availableScenePaths) {
+			bool isIncluded = ContainsScenePath(gameBuildSettings.scenePaths, scenePath);
+			const std::string checkboxLabel = scenePath + "##BuildScene";
+
+			if (ImGui::Checkbox(checkboxLabel.c_str(), &isIncluded)) {
+				if (isIncluded) {
+					AddUniqueScenePath(gameBuildSettings.scenePaths, scenePath);
+				}
+				else {
+					gameBuildSettings.scenePaths.erase(
+						std::remove(
+							gameBuildSettings.scenePaths.begin(),
+							gameBuildSettings.scenePaths.end(),
+							scenePath),
+						gameBuildSettings.scenePaths.end());
+
+					if (gameBuildSettings.startupScenePath == scenePath) {
+						gameBuildSettings.startupScenePath.clear();
+					}
+				}
+			}
+
+			if (isIncluded) {
+				ImGui::SameLine(480.0f);
+				const bool isStartupScene =
+					gameBuildSettings.startupScenePath == scenePath;
+				const std::string startupLabel = "起動##" + scenePath;
+
+				if (ImGui::RadioButton(startupLabel.c_str(), isStartupScene)) {
+					gameBuildSettings.startupScenePath = scenePath;
+				}
+			}
+		}
+
+		if (availableScenePaths.empty()) {
+			ImGui::TextDisabled("Assets または resources に .scene がありません");
+		}
+
+		ImGui::EndChild();
+		ImGui::TextDisabled(
+			"C++ 遷移: Input::GetKeyDown(KeyCode::Space) / SceneManager::LoadScene(\"Assets/Scenes/Stage.scene\")");
+
+		if (ImGui::Button("ゲームを書き出す", ImVec2(180.0f, 0.0f))) {
+			if (!g_currentScenePath.empty()) {
+				SaveSceneToPath(editorScene_, g_currentScenePath, consoleMessages);
+			}
+
+			gameBuildSettings.productName = productNameBuffer;
+			gameBuildSettings.outputDirectory = outputDirectoryBuffer;
+
+			if (gameBuildSettings.startupScenePath.empty() &&
+				!gameBuildSettings.scenePaths.empty()) {
+				gameBuildSettings.startupScenePath = gameBuildSettings.scenePaths[0];
+			}
+
+			std::string buildMessage;
+			const bool wasSettingsSaved =
+				EditorGameBuildManager::SaveProjectSettings(gameBuildSettings);
+
+			if (wasSettingsSaved) {
+				g_gameBuildScenePaths = gameBuildSettings.scenePaths;
+			}
+
+			const bool wasGameExported = wasSettingsSaved &&
+				EditorGameBuildManager::ExportReleaseGame(
+					gameBuildSettings,
+					buildMessage);
+
+			if (!wasSettingsSaved) {
+				buildMessage = "Build: ProjectSettings を保存できません";
+			}
+
+			consoleMessages.push_back(buildMessage);
+
+			if (wasGameExported) {
 				ImGui::CloseCurrentPopup();
 			}
 		}

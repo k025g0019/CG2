@@ -31,12 +31,15 @@ public:
 		ID3D12GraphicsCommandList* commandList,
 		D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle,
 		D3D12_GPU_DESCRIPTOR_HANDLE sceneDepthSrvHandle,
+		D3D12_GPU_DESCRIPTOR_HANDLE objectMotionVectorSrvHandle,
 		D3D12_GPU_DESCRIPTOR_HANDLE reconstructedNormalSrvHandle,
 		D3D12_GPU_DESCRIPTOR_HANDLE depthPyramidSrvHandle,
 		D3D12_GPU_DESCRIPTOR_HANDLE materialMaskSrvHandle,
 		const float* inverseViewProjectionMatrix,
 		const float* viewProjectionMatrix,
 		const float* cameraPosition,
+		bool ssrEnabled,
+		bool temporalEnabled,
 		float sharpness = 0.08f,
 		float blendRatio = 0.90f);
 
@@ -89,9 +92,12 @@ private:
 	std::array<D3D12_GPU_DESCRIPTOR_HANDLE, static_cast<size_t>(ResourceType::Count)> uavHandles_{};
 
 	std::array<float, 16u> previousViewProjectionMatrix_{};
+	D3D12_GPU_DESCRIPTOR_HANDLE outputSrvHandle_{};
 	uint32_t renderWidth_ = 0u;
 	uint32_t renderHeight_ = 0u;
 	uint32_t historyWriteIndex_ = 0u;
 	bool isHistoryValid_ = false;
+	bool lastSsrEnabled_ = false;
+	bool lastTemporalEnabled_ = false;
 	bool isInitialized_ = false;
 };

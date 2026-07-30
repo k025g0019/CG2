@@ -17,6 +17,14 @@
 class EditorGpuParticleManager {
 public:
 	static constexpr uint32_t kMaxParticleCount = 262144u;
+	static constexpr uint32_t kMaxCollisionProxyCount = 32u;
+
+	struct CollisionProxy {
+		Vector3 center{0.0f, 0.0f, 0.0f};  // Collider のワールド中心。
+		float type = 0.0f;  // 0=Box、1=Sphere、2=Capsule。
+		Vector3 extent{0.5f, 0.5f, 0.5f};  // Box半径、Sphere半径(x)、Capsule半径(x)/半高さ(y)。
+		float padding = 0.0f;
+	};
 
 	bool Initialize(
 		ID3D12Device* device,
@@ -34,7 +42,14 @@ public:
 	void Update(
 		ID3D12GraphicsCommandList* commandList,
 		const std::vector<EditorEffectManager::GpuParticleSpawn>& spawns,
-		float deltaTime);  // Spawn転送とCompute Shader更新を行う。
+		float deltaTime,
+		D3D12_GPU_DESCRIPTOR_HANDLE sceneDepthSrvHandle,
+		const Matrix4x4& viewProjection,
+		const Matrix4x4& inverseViewProjection,
+		uint32_t renderWidth,
+		uint32_t renderHeight,
+		const D3D12_VIEWPORT& collisionViewport,
+		const std::vector<CollisionProxy>& collisionProxies);  // Depth / Physics SDF 衝突を含むCompute更新を行う。
 	void Draw(
 		ID3D12GraphicsCommandList* commandList,
 		const Matrix4x4& viewProjection);  // AliveListを使ってGPUインスタンシング描画する。
@@ -78,6 +93,18 @@ private:
 		float globalDamping = 0.0f;
 		uint32_t maxParticleCount = kMaxParticleCount;
 		uint32_t commandValue = 0u;  // Clear時は全初期化フラグ、Spawn時は発生数。
+		Matrix4x4 viewProjection{};
+		Matrix4x4 inverseViewProjection{};
+		float renderWidth = 1.0f;
+		float renderHeight = 1.0f;
+		float collisionThickness = 0.0025f;
+		float collisionPadding = 0.0f;
+		float viewportOffsetX = 0.0f;
+		float viewportOffsetY = 0.0f;
+		float viewportWidth = 1.0f;
+		float viewportHeight = 1.0f;
+		uint32_t colliderCount = 0u;
+		float collisionProxyPadding[3]{0.0f, 0.0f, 0.0f};
 	};
 
 	bool CreateBuffers(ID3D12Device* device);  // Particle本体とAlive/DeadリストをGPUに作る。
@@ -110,6 +137,8 @@ private:
 	Microsoft::WRL::ComPtr<ID3D12Resource> particleUploadBuffer_;
 	Microsoft::WRL::ComPtr<ID3D12Resource> aliveListBuffer_;
 	Microsoft::WRL::ComPtr<ID3D12Resource> deadListBuffer_;
+	Microsoft::WRL::ComPtr<ID3D12Resource> collisionProxyBuffer_;
+	CollisionProxy* collisionProxyData_ = nullptr;
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> computeRootSignature_;
 	Microsoft::WRL::ComPtr<ID3D12PipelineState> clearPipelineState_;
 	Microsoft::WRL::ComPtr<ID3D12PipelineState> updatePipelineState_;

@@ -665,6 +665,49 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		return;
 	}
 
+	D3D12_QUERY_HEAP_DESC renderTimestampQueryHeapDesc{};
+	renderTimestampQueryHeapDesc.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+	renderTimestampQueryHeapDesc.Count = 2u;
+	ComPtr<ID3D12QueryHeap> renderTimestampQueryHeap;
+	hr = device->CreateQueryHeap(
+		&renderTimestampQueryHeapDesc,
+		IID_PPV_ARGS(renderTimestampQueryHeap.GetAddressOf()));
+
+	std::uint64_t renderTimestampFrequency = 0u;
+
+	if (SUCCEEDED(hr)) {
+		hr = commandQueue->GetTimestampFrequency(&renderTimestampFrequency);
+	}
+
+	D3D12_HEAP_PROPERTIES renderTimestampReadbackHeapProperties{};
+	renderTimestampReadbackHeapProperties.Type = D3D12_HEAP_TYPE_READBACK;
+	D3D12_RESOURCE_DESC renderTimestampReadbackDesc{};
+	renderTimestampReadbackDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+	renderTimestampReadbackDesc.Width = sizeof(std::uint64_t) * 2u;
+	renderTimestampReadbackDesc.Height = 1u;
+	renderTimestampReadbackDesc.DepthOrArraySize = 1u;
+	renderTimestampReadbackDesc.MipLevels = 1u;
+	renderTimestampReadbackDesc.SampleDesc.Count = 1u;
+	renderTimestampReadbackDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+	ComPtr<ID3D12Resource> renderTimestampReadback;
+
+	if (SUCCEEDED(hr)) {
+		hr = device->CreateCommittedResource(
+			&renderTimestampReadbackHeapProperties,
+			D3D12_HEAP_FLAG_NONE,
+			&renderTimestampReadbackDesc,
+			D3D12_RESOURCE_STATE_COPY_DEST,
+			nullptr,
+			IID_PPV_ARGS(renderTimestampReadback.GetAddressOf()));
+	}
+
+	if (FAILED(hr) || renderTimestampQueryHeap == nullptr ||
+		renderTimestampReadback == nullptr || renderTimestampFrequency == 0u) {
+		Log(logStream, std::format("Render profiler resource creation failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
 
 	ComPtr<ID3D12CommandAllocator> commandAllocator; // commandAllocator は CommandList が記録する命令メモリを管琁E��る、E
 	hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(commandAllocator.GetAddressOf()));
@@ -1040,6 +1083,51 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		kRuntimePlanarReflectionSrvDescriptorIndex);
 	device->CreateShaderResourceView(planarReflectionRenderTarget, &hdrSrvDesc, planarReflectionSrvHandleCPU);
 
+	//================================================================
+	// Weighted Blended OIT Render Targets
+	//================================================================
+
+	ID3D12Resource* oitAccumulationRenderTarget = createRenderTargetResource(
+		renderWidth,
+		renderHeight,
+		DXGI_FORMAT_R16G16B16A16_FLOAT);
+	ID3D12Resource* oitRevealageRenderTarget = createRenderTargetResource(
+		renderWidth,
+		renderHeight,
+		DXGI_FORMAT_R16_FLOAT);
+	D3D12_CPU_DESCRIPTOR_HANDLE oitRtvHandles[2] = {
+		GetCPUDescriptorHandle(rtvDescriptorHeap, rtvSize, 12u),
+		GetCPUDescriptorHandle(rtvDescriptorHeap, rtvSize, 13u)};
+	D3D12_RENDER_TARGET_VIEW_DESC oitAccumulationRtvDesc{};
+	oitAccumulationRtvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+	oitAccumulationRtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+	D3D12_RENDER_TARGET_VIEW_DESC oitRevealageRtvDesc = oitAccumulationRtvDesc;
+	oitRevealageRtvDesc.Format = DXGI_FORMAT_R16_FLOAT;
+	device->CreateRenderTargetView(
+		oitAccumulationRenderTarget, &oitAccumulationRtvDesc, oitRtvHandles[0]);
+	device->CreateRenderTargetView(
+		oitRevealageRenderTarget, &oitRevealageRtvDesc, oitRtvHandles[1]);
+
+	D3D12_CPU_DESCRIPTOR_HANDLE oitSrvHandlesCPU[2] = {
+		GetCPUDescriptorHandle(srvDescriptorHeap, srvSize, kRuntimeOitAccumulationSrvDescriptorIndex),
+		GetCPUDescriptorHandle(srvDescriptorHeap, srvSize, kRuntimeOitRevealageSrvDescriptorIndex)};
+	D3D12_GPU_DESCRIPTOR_HANDLE oitSrvHandlesGPU[2] = {
+		GetGPUDescriptorHandle(srvDescriptorHeap, srvSize, kRuntimeOitAccumulationSrvDescriptorIndex),
+		GetGPUDescriptorHandle(srvDescriptorHeap, srvSize, kRuntimeOitRevealageSrvDescriptorIndex)};
+	D3D12_SHADER_RESOURCE_VIEW_DESC oitAccumulationSrvDesc = hdrSrvDesc;
+	D3D12_SHADER_RESOURCE_VIEW_DESC oitRevealageSrvDesc = hdrSrvDesc;
+	oitRevealageSrvDesc.Format = DXGI_FORMAT_R16_FLOAT;
+	device->CreateShaderResourceView(
+		oitAccumulationRenderTarget, &oitAccumulationSrvDesc, oitSrvHandlesCPU[0]);
+	device->CreateShaderResourceView(
+		oitRevealageRenderTarget, &oitRevealageSrvDesc, oitSrvHandlesCPU[1]);
+	const D3D12_CPU_DESCRIPTOR_HANDLE oitDuplicateRevealageSrvHandle = GetCPUDescriptorHandle(
+		srvDescriptorHeap,
+		srvSize,
+		kRuntimeOitRevealageDuplicateSrvDescriptorIndex);
+	device->CreateShaderResourceView(
+		oitRevealageRenderTarget, &oitRevealageSrvDesc, oitDuplicateRevealageSrvHandle);
+
 	ComPtr<IDxcUtils> dxcUtils; // dxcUtils は HLSL ファイル読み込みと IncludeHandler 作�Eに使ぁEDXC 補助、E
 	ComPtr<IDxcCompiler3> dxcCompiler; // dxcCompiler は HLSL めEDXIL へコンパイルする DXC コンパイラ、E
 	ComPtr<IDxcIncludeHandler> includeHandler; // includeHandler は shader の #include を解決するための標準ハンドラ、E
@@ -1078,6 +1166,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	ComPtr<IDxcBlob> shadowVertexShaderBlob = CompileShader(
 		L"Assets/Shaders/ShadowDepth.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> alphaCutoutShadowPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/Shadow/AlphaCutoutShadowDepth.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 
 	// Post-process shader compilation
@@ -1133,6 +1225,26 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		logStream);
 	ComPtr<IDxcBlob> motionBlurPixelShaderBlob = CompileShader(
 		L"Assets/Shaders/PostProcess/MotionBlur.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> weightedOitPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/Transparency/WeightedOIT.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> weightedOitCompositePixelShaderBlob = CompileShader(
+		L"Assets/Shaders/Transparency/WeightedOITComposite.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> refractiveSurfacePixelShaderBlob = CompileShader(
+		L"Assets/Shaders/Transparency/RefractiveSurface.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> underwaterCausticsPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/Water/UnderwaterCaustics.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> skinnedMotionVectorVertexShaderBlob = CompileShader(
+		L"Assets/Shaders/Temporal/SkinnedMotionVector.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
 		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> bloomPrefilterPixelShaderBlob = CompileShader(
@@ -1260,6 +1372,22 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		L"Assets/Shaders/Particle/ParticleModel.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
 		includeHandler.Get(),
 		logStream);
+	ComPtr<IDxcBlob> oceanFftUpdateSpectrumShaderBlob = CompileShader(
+		L"Assets/Shaders/Water/OceanFFT_UpdateSpectrum.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> oceanFftRowShaderBlob = CompileShader(
+		L"Assets/Shaders/Water/OceanFFT_Row.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> oceanFftTransposeShaderBlob = CompileShader(
+		L"Assets/Shaders/Water/OceanFFT_Transpose.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> oceanFftFinalizeShaderBlob = CompileShader(
+		L"Assets/Shaders/Water/OceanFFT_Finalize.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
 
 	if (vertexShaderBlob == nullptr ||
 		pixelShaderBlob == nullptr ||
@@ -1267,6 +1395,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		gBufferVertexShaderBlob == nullptr ||
 		gBufferPixelShaderBlob == nullptr ||
 		shadowVertexShaderBlob == nullptr ||
+		alphaCutoutShadowPixelShaderBlob == nullptr ||
 		fullscreenVertexShaderBlob == nullptr ||
 		toneMappingPixelShaderBlob == nullptr ||
 		bloomExtractPixelShaderBlob == nullptr ||
@@ -1281,6 +1410,11 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		passthroughPixelShaderBlob == nullptr ||
 		depthOfFieldPixelShaderBlob == nullptr ||
 		motionBlurPixelShaderBlob == nullptr ||
+		weightedOitPixelShaderBlob == nullptr ||
+		weightedOitCompositePixelShaderBlob == nullptr ||
+		refractiveSurfacePixelShaderBlob == nullptr ||
+		underwaterCausticsPixelShaderBlob == nullptr ||
+		skinnedMotionVectorVertexShaderBlob == nullptr ||
 		bloomPrefilterPixelShaderBlob == nullptr ||
 		bloomDownsamplePixelShaderBlob == nullptr ||
 		bloomUpsamplePixelShaderBlob == nullptr ||
@@ -1312,7 +1446,11 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		particleVertexShaderBlob == nullptr ||
 		particlePixelShaderBlob == nullptr ||
 		particleModelVertexShaderBlob == nullptr ||
-		particleModelPixelShaderBlob == nullptr) {
+		particleModelPixelShaderBlob == nullptr ||
+		oceanFftUpdateSpectrumShaderBlob == nullptr ||
+		oceanFftRowShaderBlob == nullptr ||
+		oceanFftTransposeShaderBlob == nullptr ||
+		oceanFftFinalizeShaderBlob == nullptr) {
 		RequestInitializationFailure(); // �K�{�V�F�[�_�[�� 1 �ł��������� PSO �쐬�֐i�߂Ȃ��B
 		return;
 	}
@@ -1363,6 +1501,18 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	iblBrdfLutRange[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
 	iblBrdfLutRange[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
+	D3D12_DESCRIPTOR_RANGE waterSceneColorRange[1] = {};
+	waterSceneColorRange[0].BaseShaderRegister = 18u;
+	waterSceneColorRange[0].NumDescriptors = 1u;
+	waterSceneColorRange[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	waterSceneColorRange[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_DESCRIPTOR_RANGE waterSceneDepthRange[1] = {};
+	waterSceneDepthRange[0].BaseShaderRegister = 19u;
+	waterSceneDepthRange[0].NumDescriptors = 1u;
+	waterSceneDepthRange[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	waterSceneDepthRange[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
 	// t7-t13 は Normal / Metallic / Roughness / AO / Emission / Height / Opacity の順で使う。
 	D3D12_DESCRIPTOR_RANGE materialMapDescriptorRanges[7][1] = {};
 	for (int32_t materialMapIndex = 0; materialMapIndex < 7; materialMapIndex++) {
@@ -1378,8 +1528,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	D3D12_ROOT_SIGNATURE_DESC descriptionRootSignature{};
 	descriptionRootSignature.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
-	// 0-10 は既存描画、11-17 は PBR Material Map の個別 SRV。
-	D3D12_ROOT_PARAMETER rootParameters[18] = {};
+	// 0-10 は既存描画、11-17 は PBR Map、18-19 は Ocean FFT、20-21 は現在 / 前 Bone 行列。
+	// 22-23 は水面専用パスが読む不透明 Scene Color / Depth。
+	D3D12_ROOT_PARAMETER rootParameters[24] = {};
 
 	rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 	rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -1439,11 +1590,43 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	for (int32_t materialMapIndex = 0; materialMapIndex < 7; materialMapIndex++) {
 		const int32_t rootParameterIndex = 11 + materialMapIndex;
 		rootParameters[rootParameterIndex].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-		rootParameters[rootParameterIndex].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+		rootParameters[rootParameterIndex].ShaderVisibility = materialMapIndex == 5
+			? D3D12_SHADER_VISIBILITY_ALL
+			: D3D12_SHADER_VISIBILITY_PIXEL;
 		rootParameters[rootParameterIndex].DescriptorTable.pDescriptorRanges =
 			materialMapDescriptorRanges[materialMapIndex];
 		rootParameters[rootParameterIndex].DescriptorTable.NumDescriptorRanges = 1;
 	}
+
+	rootParameters[18].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+	rootParameters[18].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+	rootParameters[18].Descriptor.ShaderRegister = 14u;
+	rootParameters[18].Descriptor.RegisterSpace = 0u;
+
+	rootParameters[19].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+	rootParameters[19].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+	rootParameters[19].Descriptor.ShaderRegister = 15u;
+	rootParameters[19].Descriptor.RegisterSpace = 0u;
+
+	rootParameters[20].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+	rootParameters[20].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+	rootParameters[20].Descriptor.ShaderRegister = 16u;
+	rootParameters[20].Descriptor.RegisterSpace = 0u;
+
+	rootParameters[21].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+	rootParameters[21].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+	rootParameters[21].Descriptor.ShaderRegister = 17u;
+	rootParameters[21].Descriptor.RegisterSpace = 0u;
+
+	rootParameters[22].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	rootParameters[22].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	rootParameters[22].DescriptorTable.pDescriptorRanges = waterSceneColorRange;
+	rootParameters[22].DescriptorTable.NumDescriptorRanges = _countof(waterSceneColorRange);
+
+	rootParameters[23].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	rootParameters[23].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	rootParameters[23].DescriptorTable.pDescriptorRanges = waterSceneDepthRange;
+	rootParameters[23].DescriptorTable.NumDescriptorRanges = _countof(waterSceneDepthRange);
 
 	descriptionRootSignature.pParameters = rootParameters;
 	descriptionRootSignature.NumParameters = _countof(rootParameters);
@@ -1456,7 +1639,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	staticSamplers[0].ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
 	staticSamplers[0].MaxLOD = D3D12_FLOAT32_MAX;
 	staticSamplers[0].ShaderRegister = 0;
-	staticSamplers[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	staticSamplers[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 	staticSamplers[1].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
 	staticSamplers[1].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
 	staticSamplers[1].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
@@ -1578,6 +1761,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	spriteTransformationMatrixResource->Map(
 		0, nullptr, reinterpret_cast<void**>(&spriteTransformationMatrixData));
 	spriteTransformationMatrixData->WVP = MakeIdentity4x4();
+	spriteTransformationMatrixData->previousWVP = MakeIdentity4x4();
 	spriteTransformationMatrixData->World = MakeIdentity4x4();
 	spriteTransformationMatrixData->lightWVP = MakeIdentity4x4();
 
@@ -1590,8 +1774,26 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	sphereTransformationMatrixResource->Map(
 		0, nullptr, reinterpret_cast<void**>(&sphereTransformationMatrixData));
 	sphereTransformationMatrixData->WVP = MakeIdentity4x4();
+	sphereTransformationMatrixData->previousWVP = MakeIdentity4x4();
 	sphereTransformationMatrixData->World = MakeIdentity4x4();
 	sphereTransformationMatrixData->lightWVP = MakeIdentity4x4();
+
+	ID3D12Resource* identitySkinMatrixResource = CreateBufferResource(
+		device.Get(), sizeof(Matrix4x4));
+	Matrix4x4* identitySkinMatrixData = nullptr;
+
+	if (identitySkinMatrixResource == nullptr ||
+		FAILED(identitySkinMatrixResource->Map(
+			0,
+			nullptr,
+			reinterpret_cast<void**>(&identitySkinMatrixData))) ||
+		identitySkinMatrixData == nullptr) {
+		Log(logStream, "Identity skin matrix buffer creation failed.");
+		RequestInitializationFailure();
+		return;
+	}
+
+	*identitySkinMatrixData = MakeIdentity4x4();
 	Log(logStream, "Init Stage: material and transform buffers completed");
 
 	// RootSignature は Shader がどの Resource をどのスロチE��で読むかを固定する、E
@@ -1621,8 +1823,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	Log(logStream, "Init Stage: object root signature created");
 
-	// inputElementDescs は VertexData の position / texcoord / normal めEShader 入力に対応させる、E
-	D3D12_INPUT_ELEMENT_DESC inputElementDescs[3] = {};
+	// inputElementDescs は静的 Mesh と Skinned Mesh で同じ VertexData を共有する。
+	D3D12_INPUT_ELEMENT_DESC inputElementDescs[5] = {};
 	inputElementDescs[0].SemanticName = "POSITION";
 	inputElementDescs[0].SemanticIndex = 0;
 	inputElementDescs[0].Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
@@ -1635,6 +1837,14 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	inputElementDescs[2].SemanticIndex = 0;
 	inputElementDescs[2].Format = DXGI_FORMAT_R32G32B32_FLOAT;
 	inputElementDescs[2].AlignedByteOffset = D3D12_APPEND_ALIGNED_ELEMENT;
+	inputElementDescs[3].SemanticName = "BLENDINDICES";
+	inputElementDescs[3].SemanticIndex = 0;
+	inputElementDescs[3].Format = DXGI_FORMAT_R32G32B32A32_UINT;
+	inputElementDescs[3].AlignedByteOffset = D3D12_APPEND_ALIGNED_ELEMENT;
+	inputElementDescs[4].SemanticName = "BLENDWEIGHT";
+	inputElementDescs[4].SemanticIndex = 0;
+	inputElementDescs[4].Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+	inputElementDescs[4].AlignedByteOffset = D3D12_APPEND_ALIGNED_ELEMENT;
 
 	// blendDesc は RenderTarget へ色を書き込む方法。現状は不透�E描画の標準設定、E
 	D3D12_BLEND_DESC blendDesc{};
@@ -1819,6 +2029,121 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	Log(logStream, "Init Stage: transparent pso created");
 
+	// 水面は不透明物の Color / Depth を Shader で読み、屈折後の完成色を出力する。
+	// Depth SRV と DSV を同時に束縛しないため、可視判定も Shader 側で行う。
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC waterSurfacePipelineStateDesc = graphicsPipelineStateDesc;
+	waterSurfacePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	waterSurfacePipelineStateDesc.DepthStencilState.DepthEnable = FALSE;
+	waterSurfacePipelineStateDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+	waterSurfacePipelineStateDesc.DSVFormat = DXGI_FORMAT_UNKNOWN;
+
+	ComPtr<ID3D12PipelineState> waterSurfacePipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&waterSurfacePipelineStateDesc,
+		IID_PPV_ARGS(waterSurfacePipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || waterSurfacePipelineState == nullptr) {
+		Log(logStream, std::format("Water surface PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	Log(logStream, "Init Stage: water surface pso created");
+
+	// Transmission材質はScene Color / Depthを読み、屈折込みの完成色を直接HDRへ書く。
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC refractiveSurfacePipelineStateDesc =
+		waterSurfacePipelineStateDesc;
+	refractiveSurfacePipelineStateDesc.PS = {
+		refractiveSurfacePixelShaderBlob->GetBufferPointer(),
+		refractiveSurfacePixelShaderBlob->GetBufferSize()};
+	refractiveSurfacePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
+
+	ComPtr<ID3D12PipelineState> refractiveSurfacePipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&refractiveSurfacePipelineStateDesc,
+		IID_PPV_ARGS(refractiveSurfacePipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || refractiveSurfacePipelineState == nullptr) {
+		Log(logStream, std::format("Refractive surface PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC refractiveSurfaceCullNonePipelineStateDesc =
+		refractiveSurfacePipelineStateDesc;
+	refractiveSurfaceCullNonePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	ComPtr<ID3D12PipelineState> refractiveSurfaceCullNonePipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&refractiveSurfaceCullNonePipelineStateDesc,
+		IID_PPV_ARGS(refractiveSurfaceCullNonePipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || refractiveSurfaceCullNonePipelineState == nullptr) {
+		Log(logStream, std::format("Refractive CullNone PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	Log(logStream, "Init Stage: refractive surface pso created");
+
+	// Weighted Blended OIT は描画順に依存せず、色の重み付き総和と透過率を同時出力する。
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC weightedOitPipelineStateDesc = graphicsPipelineStateDesc;
+	weightedOitPipelineStateDesc.PS = {
+		weightedOitPixelShaderBlob->GetBufferPointer(),
+		weightedOitPixelShaderBlob->GetBufferSize()};
+	weightedOitPipelineStateDesc.NumRenderTargets = 2;
+	weightedOitPipelineStateDesc.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+	weightedOitPipelineStateDesc.RTVFormats[1] = DXGI_FORMAT_R16_FLOAT;
+	weightedOitPipelineStateDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+	weightedOitPipelineStateDesc.BlendState.IndependentBlendEnable = TRUE;
+
+	D3D12_RENDER_TARGET_BLEND_DESC& accumulationBlend =
+		weightedOitPipelineStateDesc.BlendState.RenderTarget[0];
+	accumulationBlend.BlendEnable = TRUE;
+	accumulationBlend.SrcBlend = D3D12_BLEND_ONE;
+	accumulationBlend.DestBlend = D3D12_BLEND_ONE;
+	accumulationBlend.BlendOp = D3D12_BLEND_OP_ADD;
+	accumulationBlend.SrcBlendAlpha = D3D12_BLEND_ONE;
+	accumulationBlend.DestBlendAlpha = D3D12_BLEND_ONE;
+	accumulationBlend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+	accumulationBlend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+	D3D12_RENDER_TARGET_BLEND_DESC& revealageBlend =
+		weightedOitPipelineStateDesc.BlendState.RenderTarget[1];
+	revealageBlend.BlendEnable = TRUE;
+	revealageBlend.SrcBlend = D3D12_BLEND_ZERO;
+	revealageBlend.DestBlend = D3D12_BLEND_INV_SRC_COLOR;
+	revealageBlend.BlendOp = D3D12_BLEND_OP_ADD;
+	revealageBlend.SrcBlendAlpha = D3D12_BLEND_ZERO;
+	revealageBlend.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+	revealageBlend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+	revealageBlend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_RED;
+
+	ComPtr<ID3D12PipelineState> weightedOitPipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&weightedOitPipelineStateDesc,
+		IID_PPV_ARGS(weightedOitPipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || weightedOitPipelineState == nullptr) {
+		Log(logStream, std::format("Weighted OIT PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC weightedOitCullNonePipelineStateDesc = weightedOitPipelineStateDesc;
+	weightedOitCullNonePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	ComPtr<ID3D12PipelineState> weightedOitCullNonePipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&weightedOitCullNonePipelineStateDesc,
+		IID_PPV_ARGS(weightedOitCullNonePipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || weightedOitCullNonePipelineState == nullptr) {
+		Log(logStream, std::format("Weighted OIT CullNone PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	Log(logStream, "Init Stage: weighted oit pso created");
+
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC shadowPipelineStateDesc{};
 	shadowPipelineStateDesc.pRootSignature = rootSignature.Get();
 	shadowPipelineStateDesc.InputLayout.pInputElementDescs = inputElementDescs;
@@ -1856,6 +2181,57 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	Log(logStream, "Init Stage: shadow pso created");
 
+	// 両面材質は裏面も影へ残す。通常材質と Masked 材質で PixelShader の有無だけを分ける。
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC shadowCullNonePipelineStateDesc = shadowPipelineStateDesc;
+	shadowCullNonePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+
+	ComPtr<ID3D12PipelineState> shadowCullNonePipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&shadowCullNonePipelineStateDesc,
+		IID_PPV_ARGS(shadowCullNonePipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || shadowCullNonePipelineState == nullptr) {
+		Log(logStream, std::format("Shadow CullNone PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC alphaCutoutShadowPipelineStateDesc = shadowPipelineStateDesc;
+	alphaCutoutShadowPipelineStateDesc.PS = {
+		alphaCutoutShadowPixelShaderBlob->GetBufferPointer(),
+		alphaCutoutShadowPixelShaderBlob->GetBufferSize()
+	};
+
+	ComPtr<ID3D12PipelineState> alphaCutoutShadowPipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&alphaCutoutShadowPipelineStateDesc,
+		IID_PPV_ARGS(alphaCutoutShadowPipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || alphaCutoutShadowPipelineState == nullptr) {
+		Log(logStream, std::format("Alpha cutout shadow PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC alphaCutoutShadowCullNonePipelineStateDesc =
+		alphaCutoutShadowPipelineStateDesc;
+	alphaCutoutShadowCullNonePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+
+	ComPtr<ID3D12PipelineState> alphaCutoutShadowCullNonePipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&alphaCutoutShadowCullNonePipelineStateDesc,
+		IID_PPV_ARGS(alphaCutoutShadowCullNonePipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || alphaCutoutShadowCullNonePipelineState == nullptr) {
+		Log(
+			logStream,
+			std::format("Alpha cutout shadow CullNone PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	Log(logStream, "Init Stage: alpha cutout shadow pso created");
+
 	//================================================================
 	// Post-process RootSignature and PipelineStates
 	//================================================================
@@ -1879,7 +2255,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	postProcessDescriptorRange2[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
 	postProcessDescriptorRange2[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-	D3D12_ROOT_PARAMETER postProcessRootParameters[4] = {};
+	D3D12_ROOT_PARAMETER postProcessRootParameters[5] = {};
 	postProcessRootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
 	postProcessRootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	postProcessRootParameters[0].DescriptorTable.pDescriptorRanges = postProcessDescriptorRange0;
@@ -1893,12 +2269,18 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	postProcessRootParameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
 	postProcessRootParameters[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	postProcessRootParameters[2].Constants.ShaderRegister = 0;
-	postProcessRootParameters[2].Constants.Num32BitValues = 40;
+	postProcessRootParameters[2].Constants.Num32BitValues = 48;
 
 	postProcessRootParameters[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
 	postProcessRootParameters[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	postProcessRootParameters[3].DescriptorTable.pDescriptorRanges = postProcessDescriptorRange2;
 	postProcessRootParameters[3].DescriptorTable.NumDescriptorRanges = _countof(postProcessDescriptorRange2);
+
+	// t4 は Underwater が描画と同じ FFT 変位を参照するための Root SRV。
+	postProcessRootParameters[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+	postProcessRootParameters[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	postProcessRootParameters[4].Descriptor.ShaderRegister = 4u;
+	postProcessRootParameters[4].Descriptor.RegisterSpace = 0u;
 
 	D3D12_STATIC_SAMPLER_DESC postProcessSampler{};
 	postProcessSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -2101,6 +2483,20 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	ComPtr<ID3D12PipelineState> motionBlurPipelineState = CreatePostProcessPSO(
 		"MotionBlur", motionBlurPixelShaderBlob.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
 	if (motionBlurPipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
+	ComPtr<ID3D12PipelineState> weightedOitCompositePipelineState = CreatePostProcessPSO(
+		"WeightedOITComposite", weightedOitCompositePixelShaderBlob.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
+	if (weightedOitCompositePipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
+	ComPtr<ID3D12PipelineState> underwaterCausticsPipelineState = CreatePostProcessPSO(
+		"UnderwaterCaustics", underwaterCausticsPixelShaderBlob.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
+	if (underwaterCausticsPipelineState == nullptr) {
 		RequestInitializationFailure();
 		return;
 	}
@@ -2356,6 +2752,19 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	// vertexResource は旧琁E�Eレビューの頂点めEGPU へ渡ぁEUpload Buffer、E
 	if (vertexResource == nullptr) {
 		Log(logStream, "Sphere vertex buffer creation failed.");
+		RequestInitializationFailure();
+		return;
+	}
+
+	const bool isOceanFftInitialized = g_oceanFftManager.Initialize(
+		device.Get(),
+		oceanFftUpdateSpectrumShaderBlob.Get(),
+		oceanFftRowShaderBlob.Get(),
+		oceanFftTransposeShaderBlob.Get(),
+		oceanFftFinalizeShaderBlob.Get());
+
+	if (!isOceanFftInitialized) {
+		Log(logStream, "Ocean FFT initialization failed");
 		RequestInitializationFailure();
 		return;
 	}
@@ -2997,6 +3406,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_commandQueue = commandQueue;
 	g_commandAllocator = commandAllocator;
 	g_commandList = commandList;
+	g_renderTimestampQueryHeap = renderTimestampQueryHeap;
+	g_renderTimestampReadback = renderTimestampReadback;
+	g_renderTimestampFrequency = renderTimestampFrequency;
 	g_swapChain = swapChain;
 	g_swapChainDesc = swapChainDesc;
 	g_rtvDescriptorHeap = rtvDescriptorHeap;
@@ -3051,6 +3463,15 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_planarReflectionRtvHandle = planarReflectionRtvHandle;
 	g_planarReflectionSrvHandleCPU = planarReflectionSrvHandleCPU;
 	g_planarReflectionSrvHandleGPU = planarReflectionSrvHandleGPU;
+	g_oitAccumulationRenderTarget = oitAccumulationRenderTarget;
+	g_oitRevealageRenderTarget = oitRevealageRenderTarget;
+
+	for (uint32_t oitTargetIndex = 0u; oitTargetIndex < 2u; ++oitTargetIndex) {
+		g_oitRtvHandles[oitTargetIndex] = oitRtvHandles[oitTargetIndex];
+		g_oitSrvHandlesCPU[oitTargetIndex] = oitSrvHandlesCPU[oitTargetIndex];
+		g_oitSrvHandlesGPU[oitTargetIndex] = oitSrvHandlesGPU[oitTargetIndex];
+	}
+
 	g_dxcUtils = dxcUtils;
 	g_dxcCompiler = dxcCompiler;
 	g_includeHandler = includeHandler;
@@ -3058,6 +3479,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_pixelShaderBlob = pixelShaderBlob;
 	g_objectReflectionMaskPixelShaderBlob = objectReflectionMaskPixelShaderBlob;
 	g_shadowVertexShaderBlob = shadowVertexShaderBlob;
+	g_alphaCutoutShadowPixelShaderBlob = alphaCutoutShadowPixelShaderBlob;
 	g_fullscreenVertexShaderBlob = fullscreenVertexShaderBlob;
 	g_toneMappingPixelShaderBlob = toneMappingPixelShaderBlob;
 	g_bloomExtractPixelShaderBlob = bloomExtractPixelShaderBlob;
@@ -3072,6 +3494,11 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_passthroughPixelShaderBlob = passthroughPixelShaderBlob;
 	g_depthOfFieldPixelShaderBlob = depthOfFieldPixelShaderBlob;
 	g_motionBlurPixelShaderBlob = motionBlurPixelShaderBlob;
+	g_weightedOitPixelShaderBlob = weightedOitPixelShaderBlob;
+	g_weightedOitCompositePixelShaderBlob = weightedOitCompositePixelShaderBlob;
+	g_refractiveSurfacePixelShaderBlob = refractiveSurfacePixelShaderBlob;
+	g_underwaterCausticsPixelShaderBlob = underwaterCausticsPixelShaderBlob;
+	g_skinnedMotionVectorVertexShaderBlob = skinnedMotionVectorVertexShaderBlob;
 	g_signatureBlob = signatureBlob;
 	g_errorBlob = errorBlob;
 	g_rootSignature = rootSignature;
@@ -3083,7 +3510,15 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_cullNonePipelineState = cullNonePipelineState;
 	g_transparentPipelineState = transparentPipelineState;
 	g_transparentCullNonePipelineState = transparentCullNonePipelineState;
+	g_weightedOitPipelineState = weightedOitPipelineState;
+	g_weightedOitCullNonePipelineState = weightedOitCullNonePipelineState;
+	g_waterSurfacePipelineState = waterSurfacePipelineState;
+	g_refractiveSurfacePipelineState = refractiveSurfacePipelineState;
+	g_refractiveSurfaceCullNonePipelineState = refractiveSurfaceCullNonePipelineState;
 	g_shadowPipelineState = shadowPipelineState;
+	g_shadowCullNonePipelineState = shadowCullNonePipelineState;
+	g_alphaCutoutShadowPipelineState = alphaCutoutShadowPipelineState;
+	g_alphaCutoutShadowCullNonePipelineState = alphaCutoutShadowCullNonePipelineState;
 	g_postProcessRootSignature = postProcessRootSignature;
 	g_toneMappingPipelineState = toneMappingPipelineState;
 	g_bloomExtractPipelineState = bloomExtractPipelineState;
@@ -3098,6 +3533,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_passthroughPipelineState = passthroughPipelineState;
 	g_depthOfFieldPipelineState = depthOfFieldPipelineState;
 	g_motionBlurPipelineState = motionBlurPipelineState;
+	g_weightedOitCompositePipelineState = weightedOitCompositePipelineState;
+	g_underwaterCausticsPipelineState = underwaterCausticsPipelineState;
 	g_iblIrradianceCube = iblIrradianceCube;
 	g_iblPrefilterCube = iblPrefilterCube;
 	g_iblEnvironmentCube = iblEnvironmentCube;
@@ -3123,6 +3560,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_spriteTransformationMatrixData = spriteTransformationMatrixData;
 	g_sphereTransformationMatrixResource = sphereTransformationMatrixResource;
 	g_sphereTransformationMatrixData = sphereTransformationMatrixData;
+	g_identitySkinMatrixResource = identitySkinMatrixResource;
+	g_identitySkinMatrixData = identitySkinMatrixData;
 	g_modelData = std::move(modelData);
 	for (size_t meshTypeIndex = 0; meshTypeIndex < kEditorModelMeshTypeCount; meshTypeIndex++) {
 		g_editorPrimitiveModelData[meshTypeIndex] = std::move(primitiveModelData[meshTypeIndex]);
@@ -3302,6 +3741,8 @@ int EditorPlatformManager::Finalize() {
 	auto& spriteTransformationMatrixData = g_spriteTransformationMatrixData;
 	auto& sphereTransformationMatrixResource = g_sphereTransformationMatrixResource;
 	auto& sphereTransformationMatrixData = g_sphereTransformationMatrixData;
+	auto& identitySkinMatrixResource = g_identitySkinMatrixResource;
+	auto& identitySkinMatrixData = g_identitySkinMatrixData;
 	auto& modelData = g_modelData;
 	auto& editorPrimitiveVertexResources = g_editorPrimitiveVertexResources;
 	auto& vertices = g_vertices;
@@ -3455,6 +3896,11 @@ int EditorPlatformManager::Finalize() {
 	directionalLightResource->Release();
 	spriteTransformationMatrixResource->Release();
 	sphereTransformationMatrixResource->Release();
+	if (identitySkinMatrixResource != nullptr) {
+		identitySkinMatrixResource->Release();
+		identitySkinMatrixResource = nullptr;
+		identitySkinMatrixData = nullptr;
+	}
 	spriteIndexResource->Release();
 	spriteVertexResource->Release();
 	for (ID3D12Resource* primitiveVertexResource : editorPrimitiveVertexResources) {
@@ -3466,6 +3912,7 @@ int EditorPlatformManager::Finalize() {
 	vertexResource->Release();
 	g_editorRuntimeManager.GetEffekseerManager().FinalizeGraphics();
 	g_gpuCullingManager.Finalize();
+	g_oceanFftManager.Finalize();
 	g_gpuParticleManager.Finalize();
 	g_postProcessQualityManager.Finalize();
 	g_temporalRenderingManager.Finalize();
@@ -3505,6 +3952,16 @@ int EditorPlatformManager::Finalize() {
 	if (g_planarReflectionRenderTarget != nullptr) {
 		g_planarReflectionRenderTarget->Release();
 		g_planarReflectionRenderTarget = nullptr;
+	}
+
+	if (g_oitAccumulationRenderTarget != nullptr) {
+		g_oitAccumulationRenderTarget->Release();
+		g_oitAccumulationRenderTarget = nullptr;
+	}
+
+	if (g_oitRevealageRenderTarget != nullptr) {
+		g_oitRevealageRenderTarget->Release();
+		g_oitRevealageRenderTarget = nullptr;
 	}
 	if (g_environmentTextureUploadResource != nullptr) {
 		g_environmentTextureUploadResource->Release();

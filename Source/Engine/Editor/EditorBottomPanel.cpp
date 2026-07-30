@@ -292,6 +292,30 @@ namespace {
 		return isWritten;
 	}
 
+	bool CreateSceneAsset(
+		const std::string& createDirectoryPath,
+		std::string& selectedAssetPath,
+		std::vector<std::string>& consoleMessages) {
+		std::filesystem::create_directories(createDirectoryPath);
+		const std::string scenePath = MakeUniqueTextAssetPath(
+			createDirectoryPath,
+			"NewScene",
+			".scene");
+		EditorScene newScene;
+		newScene.InitializeDefaultScene();
+
+		if (!newScene.SaveScene(scenePath)) {
+			consoleMessages.push_back("Asset: Scene の作成に失敗 " + scenePath);
+			return false;
+		}
+
+		InvalidateProjectAssetCache();
+		selectedAssetPath = scenePath;
+		g_selectedAssetPath = scenePath;
+		consoleMessages.push_back("Asset: Scene を作成 " + scenePath);
+		return true;
+	}
+
 	bool LoadSceneFromAssetPath(const std::string& assetPath, std::vector<std::string>& consoleMessages) {
 		// .scene のダブルクリックは外部アプリではなく、エディタ内の現在シーン読み込みとして扱う。
 		if (!g_editorScene.LoadScene(assetPath)) {
@@ -528,6 +552,13 @@ void EditorBottomPanel::Draw(
 				ImGui::OpenPopup("ProjectCreateAssetPopup");
 			}
 			if (ImGui::BeginPopup("ProjectCreateAssetPopup")) {
+				if (ImGui::MenuItem("Scene")) {
+					CreateSceneAsset(
+						GetProjectAssetCreateDirectory(selectedAssetPath),
+						selectedAssetPath,
+						consoleMessages);
+				}
+
 				if (ImGui::MenuItem("フォルダー")) {
 					std::memset(newFolderName, 0, sizeof(newFolderName));
 					const char* defaultFolderName = "NewFolder";

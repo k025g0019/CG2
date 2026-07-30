@@ -90,6 +90,8 @@ enum EditorScriptFieldType : int32_t {
 	EditorScriptFieldTypeVector2 = 3,
 	EditorScriptFieldTypeVector3 = 4,
 	EditorScriptFieldTypeString = 5,
+	EditorScriptFieldTypeGameObject = 6,
+	EditorScriptFieldTypeSceneAsset = 7,
 };
 
 enum EditorScriptInputPhase : int32_t {
@@ -276,6 +278,8 @@ struct EditorScriptRuntimeApi {
 	int32_t (*FindGameObjectByName)(const char* gameObjectName);
 	bool (*SetGameObjectActive)(int32_t gameObjectId, bool isActive);
 	bool (*IsGameObjectActive)(int32_t gameObjectId);
+	bool (*LoadScene)(const char* scenePath);
+	bool (*LoadSceneByBuildIndex)(int32_t sceneIndex);
 };
 
 extern "C" {

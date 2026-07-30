@@ -25,7 +25,8 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float2 velocity = gDilatedVelocity.Load(int3(pixelPosition, 0));
     const float luminance = dot(sceneColor, float3(0.2126f, 0.7152f, 0.0722f));
     const float emissiveReaction = saturate((luminance - 2.0f) * 0.25f);
-    const float reflectionReaction = saturate(materialMask.r * materialMask.g);
+    const float reflectionReaction = saturate(
+        materialMask.r * (1.0f - materialMask.g));
     const float motionReaction = saturate(length(velocity * float2(gRenderSize)) * 0.075f);
     gReactiveMask[pixelPosition] = max(
         disocclusion,

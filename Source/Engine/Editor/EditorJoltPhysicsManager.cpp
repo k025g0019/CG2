@@ -55,14 +55,12 @@
 
 namespace {
 	constexpr float kJoltMinimumShapeSize = 0.01f;  // 0 サイズ Shape は Jolt で無効なので、最小値を持たせる
-	constexpr float kJoltFloorY = 0.0f;  // Unity 風の簡易 Scene で床として使う高さ
 	constexpr uint32_t kJoltMaxBodies = 4096;  // Editor 内で扱う GameObject 数の上限
 	constexpr uint32_t kJoltMaxBodyPairs = 4096;  // BroadPhase が保持する接触候補数
 	constexpr uint32_t kJoltMaxContactConstraints = 4096;  // Solver が扱う接触制約数
 	constexpr uint32_t kJoltTempAllocatorSize = 10u * 1024u * 1024u;  // Jolt Update 中の一時メモリ
 	constexpr uint32_t kJoltMaxJobs = 1024;  // SingleThreaded JobSystem が保持する Job 数
 	constexpr int32_t kPhysicsLayerCount = 8;  // Inspector に出している物理レイヤー数
-	constexpr int32_t kPhysicsLayerGround = 3;  // 自動床に使う Ground レイヤー
 	constexpr int32_t kPhysicsLayerUi = 6;  // UI は物理衝突させない
 	constexpr int32_t kPhysicsLayerIgnoreRaycast = 7;  // Raycast 無視用レイヤー
 	constexpr size_t kMaxPhysicsConsoleMessages = 240;  // 物理イベントで Console を無制限に増やさない上限
@@ -353,7 +351,6 @@ public:
 		physicsSystem_->SetGravity(MakeJoltVector(physicsSettings.gravity));
 		physicsSystem_->SetContactListener(&contactListener_);
 
-		AddFloorBody();
 		AddSceneBodies();
 		AddSceneConstraints();
 		physicsSystem_->OptimizeBroadPhase();
@@ -395,11 +392,6 @@ public:
 			}
 			bodyLinks_.clear();
 
-			if (!floorBodyId_.IsInvalid()) {
-				bodyInterface.RemoveBody(floorBodyId_);
-				bodyInterface.DestroyBody(floorBodyId_);
-				floorBodyId_ = JPH::BodyID();
-			}
 		}
 
 		bodyMaterials_.clear();
@@ -413,6 +405,33 @@ public:
 
 	bool IsActive() const {
 		return isActive_;
+	}
+
+	bool SetGameObjectSimulationActive(int32_t gameObjectId, bool isActive) {
+		if (!isActive_ || physicsSystem_ == nullptr) {
+			return false;
+		}
+
+		JPH::BodyInterface& bodyInterface = physicsSystem_->GetBodyInterface();
+		bool foundBody = false;
+
+		for (const JoltBodyLink& bodyLink : bodyLinks_) {
+			if (bodyLink.gameObjectId != gameObjectId) {
+				continue;
+			}
+
+			foundBody = true;
+			const bool isBodyAdded = bodyInterface.IsAdded(bodyLink.bodyId);
+
+			if (isActive && !isBodyAdded) {
+				bodyInterface.AddBody(bodyLink.bodyId, JPH::EActivation::Activate);
+			}
+			else if (!isActive && isBodyAdded) {
+				bodyInterface.RemoveBody(bodyLink.bodyId);
+			}
+		}
+
+		return foundBody;
 	}
 
 	bool Raycast(const Vector3& origin, const Vector3& direction, float distance, PhysicsHit& hit) const {
@@ -491,6 +510,24 @@ public:
 
 		JPH::BodyInterface& bodyInterface = physicsSystem_->GetBodyInterface();
 		bodyInterface.AddForce(bodyId, MakeJoltVector(force), JPH::EActivation::Activate);
+		return true;
+	}
+
+	bool AddForceAtPosition(
+		int32_t gameObjectId,
+		const Vector3& force,
+		const Vector3& worldPosition) {
+		JPH::BodyID bodyId;
+		if (!TryFindPrimaryBodyId(gameObjectId, bodyId)) {
+			return false;
+		}
+
+		JPH::BodyInterface& bodyInterface = physicsSystem_->GetBodyInterface();
+		bodyInterface.AddForce(
+			bodyId,
+			MakeJoltVector(force),
+			MakeJoltPosition(worldPosition),
+			JPH::EActivation::Activate);
 		return true;
 	}
 
@@ -690,32 +727,7 @@ private:
 	std::unordered_map<uint64_t, ActiveContactPair> activeContactPairs_;  // Enter 済み接触の Stay / Exit 管理
 	std::vector<PhysicsEvent> stepEvents_;  // 1 固定更新中に発生した接触イベントを Script へ渡すために保持する
 	std::vector<JPH::Ref<JPH::Constraint>> constraints_;  // Play 中に Jolt World へ追加した Joint 制約
-	JPH::BodyID floorBodyId_;  // Play 中だけ使う床 Body
 	bool isActive_ = false;  // Start 済みなら true
-
-	void AddFloorBody() {
-		JPH::BodyInterface& bodyInterface = physicsSystem_->GetBodyInterface();
-		JPH::BodyCreationSettings floorSettings(
-			new JPH::BoxShape(JPH::Vec3(100.0f, 0.5f, 100.0f), 0.0f),
-			JPH::RVec3(
-				static_cast<JPH::Real>(0.0f),
-				static_cast<JPH::Real>(kJoltFloorY - 0.5f),
-				static_cast<JPH::Real>(0.0f)),
-			JPH::Quat::sIdentity(),
-			JPH::EMotionType::Static,
-			MakeJoltObjectLayer(kPhysicsLayerGround, false));
-
-		PhysicsBodyMaterial floorMaterial{};
-		floorMaterial.dynamicFriction = 0.6f;
-		floorMaterial.staticFriction = 0.8f;
-		floorMaterial.bounciness = 0.0f;
-
-		floorSettings.mFriction = GetAverageFriction(floorMaterial);
-		floorSettings.mRestitution = floorMaterial.bounciness;
-		floorSettings.mUserData = 0;
-		floorBodyId_ = bodyInterface.CreateAndAddBody(floorSettings, JPH::EActivation::DontActivate);
-		RegisterBody(floorBodyId_, -1, floorMaterial);
-	}
 
 	void AddSceneBodies() {
 		for (EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
@@ -1608,12 +1620,12 @@ private:
 		JPH::BodyInterface& bodyInterface = physicsSystem_->GetBodyInterface();
 
 		for (const JoltBodyLink& bodyLink : bodyLinks_) {
-			if (!bodyLink.isDynamic) {
+			if (!bodyLink.isDynamic || !bodyInterface.IsAdded(bodyLink.bodyId)) {
 				continue;
 			}
 
 			EditorGameObject* gameObject = editorScene_->FindGameObject(bodyLink.gameObjectId);
-			if (gameObject == nullptr) {
+			if (gameObject == nullptr || !gameObject->isActive) {
 				continue;
 			}
 
@@ -1687,12 +1699,12 @@ private:
 		JPH::BodyInterface& bodyInterface = physicsSystem_->GetBodyInterface();
 
 		for (const JoltBodyLink& bodyLink : bodyLinks_) {
-			if (!bodyLink.isDynamic) {
+			if (!bodyLink.isDynamic || !bodyInterface.IsAdded(bodyLink.bodyId)) {
 				continue;
 			}
 
 			EditorGameObject* gameObject = editorScene_->FindGameObject(bodyLink.gameObjectId);
-			if (gameObject == nullptr) {
+			if (gameObject == nullptr || !gameObject->isActive) {
 				continue;
 			}
 
@@ -1917,7 +1929,7 @@ private:
 
 	std::string GetObjectName(int32_t gameObjectId) const {
 		if (gameObjectId < 0) {
-			return "床";
+			return "Scene外Body";
 		}
 
 		const EditorGameObject* gameObject = editorScene_ != nullptr ? editorScene_->FindGameObject(gameObjectId) : nullptr;
@@ -1967,6 +1979,10 @@ bool EditorJoltPhysicsManager::IsActive() const {
 	return impl_->IsActive();
 }
 
+bool EditorJoltPhysicsManager::SetGameObjectSimulationActive(int32_t gameObjectId, bool isActive) {
+	return impl_->SetGameObjectSimulationActive(gameObjectId, isActive);
+}
+
 bool EditorJoltPhysicsManager::Raycast(
 	const Vector3& origin,
 	const Vector3& direction,
@@ -2004,6 +2020,13 @@ bool EditorJoltPhysicsManager::OverlapBox(const Vector3& center, const Vector3& 
 
 bool EditorJoltPhysicsManager::AddForce(int32_t gameObjectId, const Vector3& force) {
 	return impl_->AddForce(gameObjectId, force);
+}
+
+bool EditorJoltPhysicsManager::AddForceAtPosition(
+	int32_t gameObjectId,
+	const Vector3& force,
+	const Vector3& worldPosition) {
+	return impl_->AddForceAtPosition(gameObjectId, force, worldPosition);
 }
 
 bool EditorJoltPhysicsManager::AddImpulse(int32_t gameObjectId, const Vector3& impulse) {

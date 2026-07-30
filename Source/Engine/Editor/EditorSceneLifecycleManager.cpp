@@ -21,7 +21,10 @@ void EditorSceneLifecycleManager::Initialize() {
 	// Manager 初期化は一度だけ。毎フレーム呼ぶと参照先や状態を上書きして選択が壊れる。
 	if (!g_isEditorManagerInitialized) {
 		g_editorSelectionManager.Initialize(&g_editorScene, &editorSceneObjects);  // 選択 Manager は GameObject と SceneObject の選択 ID を相互変換する。
-		g_editorSceneSynchronizer.Initialize(&g_editorScene, &g_editorSceneObjectManager);  // Synchronizer は EditorScene の GameObject から描画用 SceneObject を作る。
+		g_editorSceneSynchronizer.Initialize(
+			&g_editorScene,
+			&g_editorSceneObjectManager,
+			&g_editorRuntimeManager.GetAnimationManager());  // 再生中の Bone Pose まで SceneObject へ同期する。
 		g_editorSceneCameraController.Initialize();  // Scene カメラはエディター専用の Transform を初期位置に戻す。
 
 		// AssetFactory は Project からのドラッグ配置で GameObject と SceneObject を同時生成する。

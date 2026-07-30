@@ -24,7 +24,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float4 materialMask = gMaterialMask.Load(int3(pixelPosition, 0));
     const bool isSsrMaterial = materialMask.b < 0.5f;
     const float reflectionWeight = isSsrMaterial
-        ? saturate(materialMask.r * materialMask.g * reflectionColor.a)
+        ? saturate(reflectionColor.a)
         : 0.0f;
     const float disocclusion = gDisocclusionMask.Load(int3(pixelPosition, 0));
     const float stableReflectionWeight = reflectionWeight * (1.0f - disocclusion * 0.5f);

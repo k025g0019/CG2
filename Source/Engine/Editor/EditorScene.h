@@ -346,6 +346,26 @@ enum class EditorComponentType {
 	FreeTransform,
 	// FBX / OBJ の頂点位置から自動生成する凸包 Collider
 	AutoConvexCollision,
+	// FFocean3D を基にした編集可能な海面描画
+	Ocean,
+	// Ocean の波面を使って Dynamic Rigidbody へ複数点浮力を加える
+	Buoyancy,
+	// 子 GameObject を制御点にしたレール上の自動移動
+	RailMovement,
+	// ゲーム中にダメージを受ける体力
+	Health,
+	// レール進行率で出現して対象へ攻撃する敵
+	RailShooterEnemy,
+	// 船速度から帆 Animation・航跡・風切り Effect をまとめて制御する
+	RailShooterShip,
+	// 敵へ揺動・旋回・追跡などの移動パターンを追加する
+	RailShooterEnemyMotion,
+	// ステージ開始・ゴール・次 Scene 遷移を管理する
+	RailShooterStage,
+	// Script を書かずに Scene を切り替える GameView Button
+	SceneButton,
+	// 草木メッシュへ風による頂点変形と透過光を追加する
+	Foliage,
 	// Component 種類数。範囲チェックに使う
 	Count,
 };
@@ -646,6 +666,99 @@ struct EditorComponent {
 	int32_t freeRotateAxes;  // bit 0=X, 1=Y, 2=Z
 	bool freeUseLocalSpace;
 	Vector3 freeRotationInput;  // deg/sec per axis
+	// Ocean 設定
+	int32_t oceanGridResolution;  // 海面グリッドの一辺に使う分割数
+	float oceanSize;  // 海面メッシュ一辺のワールド寸法
+	float oceanWaveHeight;  // 主波の高さ
+	float oceanMaxWaveHeight;  // 複数波を合成した後の高さ上限
+	float oceanWaveLength;  // 主波の波長
+	float oceanWaveSpeed;  // 波位相の進行速度
+	float oceanTimeScale;  // Ocean 全体の時間倍率。0 なら停止
+	float oceanChoppiness;  // 波頂点の水平押し出し量
+	EditorScriptVector2 oceanPrimaryDirection;  // 主波の XZ 方向
+	EditorScriptVector2 oceanSecondaryDirection;  // 副波の XZ 方向
+	float oceanSecondaryWaveScale;  // 副波レイヤの強さ
+	float oceanRippleScale;  // 主波長に対する細波波長の比率
+	float oceanRippleStrength;  // 細波の高さ比率
+	float oceanWindSpeed;  // スペクトルへ与える風速
+	float oceanWaterDepth;  // 有限水深の分散計算に使う水深
+	float oceanDirectionSpread;  // 風向きから波方向を散らす角度幅
+	float oceanSwellStrength;  // 長いうねり帯域の強さ
+	float oceanSpectrumSeed;  // 波成分を固定生成するシード
+	float oceanCrestSharpness;  // 二次高調波で波頭を尖らせる強さ
+	float oceanFoamStrength;  // 急斜面へ出す泡の強さ
+	float oceanFoamThreshold;  // 圧縮泡が出始める閾値
+	float oceanRoughness;  // 海面反射の粗さ
+	float oceanReflectionStrength;  // 海面の環境反射強度
+	float oceanDetailNormalStrength;  // ピクセル単位の微細波法線強度
+	float oceanAbsorptionDistance;  // 水色が深海色へ吸収される距離
+	float oceanRefractionDistortion;  // 微細波による屈折方向の歪み
+	Vector3 oceanShallowColor;  // 光が届く浅い海面の色
+	Vector3 oceanDeepColor;  // 深い海面の色
+	// Buoyancy 設定
+	int32_t buoyancyOceanGameObjectId;  // 対象 Ocean。-1 は現在位置を覆う Ocean を自動検出
+	Vector3 buoyancyCenterOffset;  // 船体中心から浮力領域中心までのローカル差分
+	Vector3 buoyancyHullSize;  // 浮力点を置く船体幅、高さ、長さ
+	float buoyancyStrength;  // 1m 沈んだ時に発生する上向き加速度
+	float buoyancyMaxSubmersion;  // 旧 Scene の読み書き互換用。体積浮力では使用しない
+	float buoyancyDamping;  // 水面に対する上下速度の減衰
+	float buoyancyWaterDrag;  // 浸水率に応じた船体全体の速度抵抗
+	float buoyancyAngularDrag;  // 浸水率に応じた角速度抵抗
+	float buoyancyNormalInfluence;  // 浮力方向へ波面法線を混ぜる割合
+	bool buoyancyUseCenterPoint;  // 旧 Scene の読み書き互換用。自動セル配置では使用しない
+	// Rail Movement 設定
+	int32_t railPathGameObjectId;  // 直下の子を制御点として使う親 GameObject ID
+	float railSpeed;  // レール上を1秒間に進む距離
+	float railStartNormalized;  // レール全長に対する開始位置。0～1
+	float railLookAheadDistance;  // 進行方向を決めるために先読みする距離
+	bool railLoop;  // 終端から始点へつなげるなら true
+	bool railOrientToPath;  // 進行方向へ自動回転するなら true
+	bool railUseSmoothCurve;  // Catmull-Rom 曲線で制御点間を補間するなら true
+	// Health 設定
+	float healthMaximum;  // Play 開始時に設定する最大体力
+	float healthCurrent;  // Play 中の現在体力
+	// Rail Shooter Enemy 設定
+	int32_t enemySpawnFollowerGameObjectId;  // 出現判定に使う Rail Movement 所有者
+	float enemySpawnNormalized;  // 所有者のレール進行率がこの値へ達したら出現する
+	int32_t enemyAttackTargetGameObjectId;  // 攻撃対象
+	float enemyAttackInterval;  // 攻撃間隔の秒数
+	float enemyAttackRange;  // 攻撃可能距離
+	float enemyAttackDamage;  // 1 回の攻撃で減らす Health
+	int32_t enemyProjectileTemplateGameObjectId;  // 実行時に複製する敵弾の見た目 Object
+	int32_t enemyProjectilePoolSize;  // 敵ごとに事前生成する弾数
+	float enemyProjectileSpeed;  // 敵弾が 1 秒間に進む距離
+	float enemyProjectileHitRadius;  // 対象中心へ命中したとみなす半径
+	float enemyProjectileLifetime;  // 命中しなかった敵弾を戻すまでの秒数
+	// Rail Shooter Ship 設定
+	int32_t railShipSpeedSourceGameObjectId;  // 速度を読む Rail Movement 所有者。未設定なら船自身
+	int32_t railShipSailGameObjectId;  // 帆 Animation を持つ Object
+	int32_t railShipWakeEffectGameObjectId;  // 航跡 Effect を持つ Object
+	int32_t railShipWindEffectGameObjectId;  // 風切り Effect を持つ Object
+	float railShipEffectStartSpeed;  // Effect の再生を始める船速
+	float railShipEffectFullSpeed;  // 演出強度を最大とみなす船速
+	float railShipSailMinimumSpeed;  // 停止付近の帆 Animation 再生倍率
+	float railShipSailMaximumSpeed;  // 最大船速時の帆 Animation 再生倍率
+	// Rail Shooter Enemy Motion 設定
+	int32_t enemyMotionPattern;  // 0=上下揺動、1=旋回、2=8の字、3=追跡、4=突進離脱
+	Vector3 enemyMotionAmplitude;  // パターンの X/Y/Z 振幅
+	float enemyMotionFrequency;  // 1 秒当たりの周期
+	float enemyMotionPhase;  // 個体ごとの開始位相
+	int32_t enemyMotionTargetGameObjectId;  // 追跡・向き制御の対象
+	float enemyMotionSpeed;  // 追跡・突進の移動速度
+	bool enemyMotionLookAtTarget;  // 対象方向へ回転するなら true
+	// Rail Shooter Stage 設定
+	int32_t stageFollowerGameObjectId;  // レールを進む Player / Camera Rig
+	int32_t stageStartMarkerGameObjectId;  // Play 開始時に配置する Start Marker
+	int32_t stageGoalMarkerGameObjectId;  // 到達判定に使う Goal Marker
+	int32_t stageStartEffectGameObjectId;  // 開始時に再生する Effect Object
+	int32_t stageGoalEffectGameObjectId;  // ゴール時に再生する Effect Object
+	float stageStartDelay;  // レール移動開始までの秒数
+	float stageGoalRadius;  // Goal Marker への到達半径
+	float stageGoalDelay;  // ゴール演出から Scene 遷移までの秒数
+	std::string stageNextScenePath;  // ゴール後に開く次 Scene
+	std::string stageSelectScenePath;  // Next 未設定時に戻る Stage Select Scene
+	// Scene Button 設定
+	std::string sceneButtonScenePath;  // クリック時に開く Scene
 	};
 
 struct EditorGameObject {

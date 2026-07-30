@@ -2,12 +2,8 @@
 #include "Common/AdvancedPBR.hlsli"
 #include "Common/PBRCommon.hlsli"
 #include "Lighting/IBLRuntime.hlsli"
-#include "DirectXTK/EnvironmentMapEffectBridge.hlsli"
 #include "Reflection/ParallaxCorrectedCubemap.hlsli"
 #include "Shadow/SoftShadow.hlsli"
-#include "lygia/color/blend/softLight.hlsl"
-#include "lygia/generative/snoise.hlsl"
-#include "FidelityFX/CAS/ShaderLibDX/ffx_a.h"
 
 struct Material
 {
@@ -57,6 +53,24 @@ struct Material
     float materialExtensionPadding2;
     float2 uvTiling;
     float2 uvOffset;
+    float oceanEnabled;
+    float oceanFoamStrength;
+    float oceanRoughness;
+    float oceanColorBlendScale;
+    float3 oceanDeepColor;
+    float oceanMaterialPadding;
+    float oceanDetailNormalStrength;
+    float oceanFoamThreshold;
+    float oceanAbsorptionDistance;
+    float oceanRefractionDistortion;
+    float oceanWaterDepth;
+    float oceanCrestSharpness;
+    float oceanMaterialPadding1;
+    float oceanMaterialPadding2;
+    int surfaceMode;
+    float surfaceMaterialPadding0;
+    float surfaceMaterialPadding1;
+    float surfaceMaterialPadding2;
 };
 
 struct DirectionalLightData
@@ -105,6 +119,7 @@ struct PixelShaderInput
     float3 normal : NORMAL0;
     float3 worldPosition : TEXCOORD1;
     float4 shadowPosition : TEXCOORD2;
+    float4 oceanData : TEXCOORD3;
     bool isFrontFace : SV_IsFrontFace;
 };
 
@@ -132,6 +147,7 @@ ConstantBuffer<EmissiveLightArray> gEmissiveLights : register(b2);
 
 Texture2D gTexture : register(t0);
 Texture2D gShadowMap : register(t1);
+Texture2D gEnvironmentTexture : register(t2);
 Texture2D gNormalMap : register(t7);
 Texture2D gMetallicMap : register(t8);
 Texture2D gRoughnessMap : register(t9);
@@ -139,6 +155,8 @@ Texture2D gAmbientOcclusionMap : register(t10);
 Texture2D gEmissionMap : register(t11);
 Texture2D gHeightMap : register(t12);
 Texture2D gOpacityMap : register(t13);
+Texture2D<float4> gWaterSceneColor : register(t18);
+Texture2D<float> gWaterSceneDepth : register(t19);
 
 SamplerState gTextureSampler : register(s0);
 SamplerState gShadowSampler : register(s1);
@@ -146,6 +164,64 @@ SamplerState gShadowSampler : register(s1);
 static const float kIBLPrefilterMipCount = 9.0f;
 
 #define LIGHT_PRIMARY gDirectionalLight.lights[0]
+
+float3 RotateEnvironmentDirection(float3 direction, float rotationRadian)
+{
+    const float cosValue = cos(rotationRadian);
+    const float sinValue = sin(rotationRadian);
+
+    return float3(
+        direction.x * cosValue - direction.z * sinValue,
+        direction.y,
+        direction.x * sinValue + direction.z * cosValue);
+}
+
+float2 MakeEnvironmentLatLongUv(float3 direction)
+{
+    const float3 safeDirection = normalize(direction);
+
+    return float2(
+        atan2(safeDirection.z, safeDirection.x) * (0.5f / PI) + 0.5f,
+        acos(clamp(safeDirection.y, -1.0f, 1.0f)) / PI);
+}
+
+float3 SampleRuntimeEnvironment(float3 direction, float mipLevel)
+{
+    const float3 safeDirection = normalize(direction);
+    const float skyBlend = pow(
+        saturate(safeDirection.y * 0.5f + 0.5f),
+        max(LIGHT_PRIMARY.horizonSharpness, 0.0001f));
+    const float3 gradientColor = lerp(
+        max(LIGHT_PRIMARY.skyLowerColor, 0.0f),
+        max(LIGHT_PRIMARY.skyUpperColor, 0.0f),
+        skyBlend) * max(LIGHT_PRIMARY.skyIntensity, 0.0f);
+    const float3 rotatedDirection = RotateEnvironmentDirection(
+        safeDirection,
+        LIGHT_PRIMARY.environmentTextureRotation);
+    const float2 environmentUv = MakeEnvironmentLatLongUv(rotatedDirection);
+    const float3 textureColor = gEnvironmentTexture.SampleLevel(
+        gIblSampler,
+        environmentUv,
+        max(mipLevel + LIGHT_PRIMARY.environmentTextureMipBias, 0.0f)).rgb *
+        max(LIGHT_PRIMARY.environmentTextureIntensity, 0.0f);
+    const float environmentTextureMask = saturate(
+        LIGHT_PRIMARY.environmentTextureEnabled);
+    float3 environmentColor = lerp(
+        gradientColor,
+        textureColor,
+        environmentTextureMask);
+
+    // Skybox と同じ太陽方向を反射にも加え、背景とモデルで光源が食い違わないようにする。
+    const float3 safeSunDirection = normalize(-LIGHT_PRIMARY.direction);
+    const float sunRate = pow(saturate(dot(safeDirection, safeSunDirection)), 256.0f);
+    const float sunGlow = pow(saturate(dot(safeDirection, safeSunDirection)), 12.0f);
+    environmentColor +=
+        float3(1.0f, 0.86f, 0.62f) *
+        (sunRate * 12.0f + sunGlow * 0.35f) *
+        max(LIGHT_PRIMARY.skyEmission, 0.0f);
+
+    return max(environmentColor, 0.0f);
+}
 
 float CalculateSpotAttenuation(float3 lightDirection, float3 spotForward, DirectionalLightData light)
 {
@@ -309,7 +385,7 @@ AdvancedPbrMaterial BuildMaterial(float2 materialUv)
 
 float3 BuildExtendedF0(float3 baseColor, float metallic)
 {
-    float dielectricF0 = AdvancedPbrIorToF0(gMaterial.ior);
+    const float dielectricF0 = max(0.04f, AdvancedPbrIorToF0(gMaterial.ior));
     float luminance = max(dot(baseColor, float3(0.2126f, 0.7152f, 0.0722f)), 0.0001f);
     float3 baseTint = baseColor / luminance;
     float3 dielectricTint = lerp(
@@ -322,6 +398,12 @@ float3 BuildExtendedF0(float3 baseColor, float metallic)
 
 float3 EvaluateClearCoat(float3 normal, float3 viewDirection, float3 lightDirection, float3 radiance)
 {
+    // 水面自体が誘電体の鏡面層なので、ClearCoat を重ねて反射を二重加算しない。
+    if (gMaterial.oceanEnabled >= 0.5f)
+    {
+        return 0.0f;
+    }
+
     float clearCoat = saturate(gMaterial.clearCoat);
     if (clearCoat <= 0.0001f)
     {
@@ -341,13 +423,281 @@ float3 EvaluateClearCoat(float3 normal, float3 viewDirection, float3 lightDirect
     return distribution * geometry * fresnel / denominator * radiance * normalDotLight * clearCoat;
 }
 
-float ComputeProceduralMicroVariation(float3 worldPosition, float3 normal)
+float FastOceanSin(float phase)
 {
-    const float noiseValue = snoise(worldPosition * 0.18f + normal * 0.35f);
-    return saturate(noiseValue * 0.5f + 0.5f);
+    return sin(phase);
 }
 
-float4 main(PixelShaderInput input) : SV_TARGET0
+float FastOceanCos(float phase)
+{
+    return cos(phase);
+}
+
+float3 ApplyOceanDetailNormal(
+    float3 surfaceNormal,
+    float3 worldPosition,
+    float oceanTime,
+    float detailWeight)
+{
+    const float detailStrength = max(gMaterial.oceanDetailNormalStrength, 0.0f);
+
+    if (detailStrength <= 0.0001f)
+    {
+        return surfaceNormal;
+    }
+
+    // 低周波の法線は遠景にも残し、高周波だけを距離と画面上の大きさで落とす。
+    const float worldFootprint = max(
+        length(ddx(worldPosition.xz)),
+        length(ddy(worldPosition.xz)));
+    const float2 horizonBandWeights = saturate(
+        1.0f - worldFootprint * float2(0.035f, 0.08f));
+    const float2 horizonDirection0 = float2(0.91f, 0.41f);
+    const float2 horizonDirection1 = float2(-0.36f, 0.93f);
+    const float horizonPhase0 =
+        dot(worldPosition.xz, horizonDirection0) * 0.18f + oceanTime * 0.32f;
+    const float horizonPhase1 =
+        dot(worldPosition.xz, horizonDirection1) * 0.42f - oceanTime * 0.46f;
+    float2 detailGradient =
+        horizonDirection0 * FastOceanCos(horizonPhase0) * 0.055f * horizonBandWeights.x +
+        horizonDirection1 * FastOceanCos(horizonPhase1) * 0.028f * horizonBandWeights.y;
+
+    const float nearDetailWeight = saturate(detailWeight);
+    const float3 bandWeights = saturate(
+        1.0f - worldFootprint * float3(2.4f, 4.4f, 8.0f)) * nearDetailWeight;
+
+    if (bandWeights.x > 0.0001f)
+    {
+        const float phase0 =
+            dot(worldPosition.xz, float2(0.82f, 0.57f)) * 7.4f + oceanTime * 2.1f;
+        detailGradient +=
+            float2(0.82f, 0.57f) * FastOceanCos(phase0) * 0.12f * bandWeights.x;
+
+        const float phase1 =
+            dot(worldPosition.xz, float2(-0.46f, 0.89f)) * 13.7f + oceanTime * 3.4f;
+        detailGradient +=
+            float2(-0.46f, 0.89f) * FastOceanCos(phase1) * 0.075f * bandWeights.y;
+    }
+
+    if (bandWeights.z > 0.0001f)
+    {
+        const float phase2 =
+            dot(worldPosition.xz, float2(0.96f, -0.28f)) * 25.0f - oceanTime * 5.2f;
+        detailGradient +=
+            float2(0.96f, -0.28f) * FastOceanCos(phase2) * 0.035f * bandWeights.z;
+    }
+
+    const float distortionScale = 1.0f + max(gMaterial.oceanRefractionDistortion, 0.0f) * 3.0f;
+    const float3 detailOffset = float3(-detailGradient.x, 0.0f, -detailGradient.y);
+    return normalize(surfaceNormal + detailOffset * detailStrength * distortionScale);
+}
+
+float ComputeOceanFoam(float3 worldPosition, float3 normal, float4 oceanData)
+{
+    const float foamStrength = max(gMaterial.oceanFoamStrength, 0.0f);
+
+    if (foamStrength <= 0.0001f)
+    {
+        return 0.0f;
+    }
+
+    const float foamThreshold = min(saturate(gMaterial.oceanFoamThreshold), 0.999f);
+    const float compressionWidth = max(fwidth(oceanData.x), 0.015f);
+    const float compressionFoam = smoothstep(
+        max(foamThreshold - compressionWidth, 0.0f),
+        min(foamThreshold + compressionWidth * 2.0f, 1.0f),
+        oceanData.x);
+    const float slopeFoam = smoothstep(0.16f, 0.52f, 1.0f - saturate(normal.y));
+    const float crestFoam = smoothstep(0.68f, 0.96f, oceanData.w);
+    const float foamCoverage =
+        compressionFoam * lerp(0.72f, 0.92f, saturate(gMaterial.oceanCrestSharpness)) +
+        slopeFoam * 0.14f +
+        crestFoam * 0.10f;
+
+    if (foamCoverage <= 0.0001f)
+    {
+        return 0.0f;
+    }
+
+    const float breakupWeight = saturate(oceanData.z);
+    float foamVariation = 0.82f;
+
+    if (breakupWeight > 0.0001f)
+    {
+        const float foamWarp = FastOceanSin(
+            dot(worldPosition.xz, float2(-0.23f, 0.97f)) * 0.31f - oceanData.y * 0.18f);
+        const float foamPattern =
+            FastOceanSin(
+                dot(worldPosition.xz, float2(0.73f, -0.68f)) * 1.15f +
+                oceanData.y * 0.55f + foamWarp * 0.85f) *
+            0.5f + 0.5f;
+        const float secondaryPattern =
+            FastOceanSin(
+                dot(worldPosition.xz, float2(-0.61f, -0.79f)) * 0.47f -
+                oceanData.y * 0.27f) *
+            0.5f + 0.5f;
+        const float continuousVariation = lerp(
+            0.72f,
+            1.0f,
+            saturate(foamPattern * 0.65f + secondaryPattern * 0.35f));
+        foamVariation = lerp(foamVariation, continuousVariation, breakupWeight);
+    }
+
+    return saturate(
+        foamCoverage *
+        0.78f *
+        foamVariation *
+        foamStrength);
+}
+
+float ComputeOceanShallowWeight(
+    float normalDotView,
+    float normalizedCrestHeight,
+    float waterThickness)
+{
+    const float absorptionDistance = max(gMaterial.oceanAbsorptionDistance, 0.1f);
+    const float waterDepth = max(waterThickness, 0.0f);
+
+    // 水深による吸収へ、薄く光を通す波頭だけを足して浅瀬色を見える状態にする。
+    const float depthTransmission = rcp(1.0f + waterDepth / absorptionDistance);
+    const float surfaceTransmission = 0.08f + depthTransmission * 0.92f;
+    const float viewTransmission = lerp(0.48f, 1.0f, saturate(normalDotView));
+    const float crestTransmission =
+        smoothstep(0.08f, 0.82f, saturate(normalizedCrestHeight)) *
+        lerp(0.28f, 0.62f, saturate(gMaterial.oceanCrestSharpness));
+    return saturate(
+        (surfaceTransmission * viewTransmission + crestTransmission) *
+        max(gMaterial.oceanColorBlendScale, 0.01f));
+}
+
+struct OceanSceneSample
+{
+    float3 refractedColor;
+    float waterThickness;
+    float shoreFoam;
+};
+
+OceanSceneSample SampleOceanScene(
+    PixelShaderInput input,
+    float3 surfaceNormal)
+{
+    OceanSceneSample sceneSample;
+    uint sceneWidth = 1u;
+    uint sceneHeight = 1u;
+    gWaterSceneDepth.GetDimensions(sceneWidth, sceneHeight);
+
+    const float2 sceneSize = max(float2(sceneWidth, sceneHeight), float2(1.0f, 1.0f));
+    const float2 screenUv = saturate(input.position.xy / sceneSize);
+    const float opaqueDepth = gWaterSceneDepth.SampleLevel(gShadowSampler, screenUv, 0.0f);
+
+    // 水面より手前にある不透明物を、水面専用パスで上書きしない。
+    clip(opaqueDepth + 0.00002f - input.position.z);
+
+    const float cameraDistance = length(LIGHT_PRIMARY.cameraPosition - input.worldPosition);
+    const float depthGap = max(opaqueDepth - input.position.z, 0.0f);
+    const float normalizedThickness = opaqueDepth >= 0.99999f
+        ? 1.0f
+        : saturate(depthGap * max(72.0f, cameraDistance * 5.0f));
+    const float maximumWaterDepth = max(gMaterial.oceanWaterDepth, 0.1f);
+    sceneSample.waterThickness = lerp(0.02f, maximumWaterDepth, normalizedThickness);
+    sceneSample.shoreFoam =
+        (1.0f - smoothstep(0.025f, 0.22f, normalizedThickness)) *
+        saturate(gMaterial.oceanFoamStrength);
+
+    const float2 refractionOffset =
+        surfaceNormal.xz *
+        max(gMaterial.oceanRefractionDistortion, 0.0f) *
+        lerp(0.003f, 0.016f, saturate(sceneSample.waterThickness / maximumWaterDepth));
+    const float2 refractedUv = saturate(screenUv + refractionOffset);
+    const float3 opaqueSceneColor = gWaterSceneColor.SampleLevel(
+        gShadowSampler,
+        refractedUv,
+        0.0f).rgb;
+    const float3 deepColor = max(gMaterial.oceanDeepColor, 0.0f);
+    const float3 absorptionCoefficient =
+        max(1.0f - saturate(deepColor), 0.025f) /
+        max(gMaterial.oceanAbsorptionDistance, 0.1f);
+    const float3 waterTransmittance = exp(
+        -absorptionCoefficient * sceneSample.waterThickness);
+    sceneSample.refractedColor =
+        opaqueSceneColor * waterTransmittance +
+        deepColor * (1.0f - waterTransmittance);
+    return sceneSample;
+}
+
+#if defined(ENABLE_REFRACTIVE_SURFACE)
+float3 SampleRefractiveScene(
+    PixelShaderInput input,
+    float3 surfaceNormal,
+    float3 absorptionTint,
+    float roughness,
+    float transmission)
+{
+    uint sceneWidth = 1u;
+    uint sceneHeight = 1u;
+    gWaterSceneDepth.GetDimensions(sceneWidth, sceneHeight);
+
+    const float2 sceneSize = max(float2(sceneWidth, sceneHeight), float2(1.0f, 1.0f));
+    const float2 screenUv = saturate(input.position.xy / sceneSize);
+    const float opaqueDepth = gWaterSceneDepth.SampleLevel(gShadowSampler, screenUv, 0.0f);
+
+    // 専用屈折パスではDSVを同時に使えないため、不透明面との前後判定をScene Depthで行う。
+    clip(opaqueDepth + 0.00002f - input.position.z);
+
+    const float cameraDistance = length(LIGHT_PRIMARY.cameraPosition - input.worldPosition);
+    const float depthGap = max(opaqueDepth - input.position.z, 0.0f);
+    const float opticalThickness = opaqueDepth >= 0.99999f
+        ? 0.35f
+        : saturate(depthGap * max(64.0f, cameraDistance * 4.0f));
+    const float refractionStrength =
+        lerp(0.002f, 0.024f, saturate(transmission)) *
+        (1.0f - saturate(roughness) * 0.75f);
+    const float2 refractedUv = saturate(screenUv + surfaceNormal.xy * refractionStrength);
+    const float3 sceneColor = gWaterSceneColor.SampleLevel(
+        gShadowSampler,
+        refractedUv,
+        0.0f).rgb;
+    const float3 absorption = exp(
+        -max(1.0f - saturate(absorptionTint), 0.015f) *
+        opticalThickness * 1.5f);
+    return sceneColor * absorption + absorptionTint * (1.0f - absorption) * 0.08f;
+}
+#endif
+
+#if defined(ENABLE_WEIGHTED_OIT)
+struct ObjectPixelOutput
+{
+    float4 accumulation : SV_TARGET0;
+    float revealage : SV_TARGET1;
+};
+
+ObjectPixelOutput BuildObjectPixelOutput(float4 color, float deviceDepth)
+{
+    ObjectPixelOutput output;
+    const float alpha = saturate(color.a);
+    const float depthWeight = saturate(1.0f - deviceDepth * 0.9f);
+    // R16G16B16A16_FLOAT の飽和を避けつつ、手前の透明面を適度に優先する。
+    const float weight =
+        clamp(alpha * 0.8f + 0.2f, 0.05f, 1.0f) *
+        lerp(1.0f, 24.0f, depthWeight * depthWeight * depthWeight);
+    output.accumulation = float4(max(color.rgb, 0.0f) * alpha, alpha) * weight;
+    output.revealage = alpha;
+    return output;
+}
+#else
+typedef float4 ObjectPixelOutput;
+
+ObjectPixelOutput BuildObjectPixelOutput(float4 color, float deviceDepth)
+{
+    return color;
+}
+#endif
+
+#if defined(ENABLE_WEIGHTED_OIT)
+ObjectPixelOutput main(PixelShaderInput input)
+#else
+ObjectPixelOutput main(PixelShaderInput input) : SV_TARGET0
+#endif
 {
     float3 geometricNormal = normalize(input.normal);
     if (gMaterial.doubleSided != 0 && !input.isFrontFace)
@@ -368,17 +718,100 @@ float4 main(PixelShaderInput input) : SV_TARGET0
         clip(material.alpha - saturate(gMaterial.alphaCutoff));
     }
 
-    if (gMaterial.enableLighting == 0) {
+#if defined(ENABLE_REFRACTIVE_SURFACE)
+    const bool isDedicatedRefraction =
+        gMaterial.alphaMode == 2 &&
+        gMaterial.transmission > 0.0001f;
+#else
+    const bool isDedicatedRefraction = false;
+#endif
+
+    if (gMaterial.enableLighting == 0 && !isDedicatedRefraction) {
         float3 unlitColor = material.baseColor + material.baseColor * material.emissionStrength;
-        return float4(unlitColor, material.alpha);
+        return BuildObjectPixelOutput(float4(unlitColor, material.alpha), input.position.z);
     }
 
     float3 N = ApplyNormalMap(materialUv, geometricNormal, tangent, bitangent);
+
+    if (gMaterial.oceanEnabled >= 0.5f)
+    {
+        N = ApplyOceanDetailNormal(
+            N,
+            input.worldPosition,
+            input.oceanData.y,
+            input.oceanData.z);
+    }
+
     float NdotV = saturate(dot(N, V));
 
     float3 albedo = material.baseColor;
     float metallic = material.metallic;
     float roughness = material.roughness;
+    float surfaceTransmission = saturate(gMaterial.transmission);
+    float oceanFoam = 0.0f;
+    float oceanWaterThickness = max(gMaterial.oceanWaterDepth, 0.1f);
+    float3 oceanRefractedColor = float3(0.0f, 0.0f, 0.0f);
+
+    if (gMaterial.surfaceMode == 1)
+    {
+        const float slopeWeight = smoothstep(0.18f, 0.72f, 1.0f - saturate(N.y));
+        const float heightVariation = 0.92f + 0.08f * sin(input.worldPosition.y * 0.17f);
+        const float3 grassTint = float3(0.58f, 0.86f, 0.52f) * heightVariation;
+        const float3 rockTint = float3(0.72f, 0.69f, 0.64f);
+        albedo *= lerp(grassTint, rockTint, slopeWeight);
+        metallic = 0.0f;
+        roughness = max(roughness, lerp(0.58f, 0.82f, slopeWeight));
+    }
+    else if (gMaterial.surfaceMode == 2)
+    {
+        const float foliageVariation =
+            0.88f + 0.12f * sin(dot(input.worldPosition.xz, float2(0.73f, 1.17f)));
+        albedo *= float3(0.72f, 1.0f, 0.68f) * foliageVariation;
+        metallic = 0.0f;
+        roughness = max(roughness, 0.48f);
+    }
+
+    if (gMaterial.oceanEnabled >= 0.5f)
+    {
+        const OceanSceneSample oceanSceneSample = SampleOceanScene(input, N);
+        oceanWaterThickness = oceanSceneSample.waterThickness;
+        oceanRefractedColor = oceanSceneSample.refractedColor;
+        const float shallowWeight = ComputeOceanShallowWeight(
+            NdotV,
+            input.oceanData.w,
+            oceanWaterThickness);
+        oceanFoam = max(
+            ComputeOceanFoam(input.worldPosition, N, input.oceanData),
+            oceanSceneSample.shoreFoam);
+        albedo = lerp(max(gMaterial.oceanDeepColor, 0.0f), max(material.baseColor, 0.0f), shallowWeight);
+        const float horizonBlend =
+            (1.0f - NdotV) *
+            (1.0f - NdotV) *
+            0.32f;
+        const float3 horizonWaterColor = lerp(
+            max(gMaterial.oceanDeepColor, 0.0f),
+            max(material.baseColor, 0.0f),
+            0.42f);
+        albedo = lerp(albedo, horizonWaterColor, horizonBlend);
+        albedo = lerp(albedo, float3(0.82f, 0.94f, 0.98f), oceanFoam);
+        metallic = 0.0f;
+        roughness = lerp(
+            clamp(gMaterial.oceanRoughness, 0.12f, 1.0f),
+            0.72f,
+            oceanFoam);
+
+        // 1 pixel 内で法線が大きく変わる遠景は粗さへ畳み込み、点状の鏡面エイリアシングを防ぐ。
+        const float normalVariance = max(
+            dot(ddx(N), ddx(N)),
+            dot(ddy(N), ddy(N)));
+        roughness = clamp(
+            sqrt(roughness * roughness + min(normalVariance, 1.0f)),
+            0.12f,
+            1.0f);
+        surfaceTransmission *=
+            (1.0f - oceanFoam) *
+            lerp(0.55f, 1.0f, shallowWeight);
+    }
 
     //============================================================
     // 課題用の基本ライティング
@@ -432,25 +865,24 @@ float4 main(PixelShaderInput input) : SV_TARGET0
             max(gMaterial.emissionColor, 0.0f) *
             material.emissionStrength;
 
-        return float4(classicDirect + classicAmbient + emission, material.alpha);
+        return BuildObjectPixelOutput(
+            float4(classicDirect + classicAmbient + emission, material.alpha),
+            input.position.z);
     }
 
-    const float proceduralVariation = ComputeProceduralMicroVariation(input.worldPosition, N);
-    const float fidelityPhase = proceduralVariation * A_2PI;
-    const float hashVariation = frac(sin(dot(input.worldPosition, float3(12.9898f, 78.233f, 45.164f)) + fidelityPhase) * 43758.5453f);
-    const float blendOpacity = saturate((1.0f - roughness) * 0.12f + material.emissionStrength * 0.03f);
-    const float3 proceduralTint = lerp(
-        float3(1.0f, 1.0f, 1.0f),
-        float3(proceduralVariation, proceduralVariation, proceduralVariation),
-        0.18f);
-    albedo = blendSoftLight(albedo, proceduralTint, blendOpacity);
-    roughness = clamp(roughness + (hashVariation - 0.5f) * 0.02f, 0.04f, 1.0f);
     float sampledAo = gMaterial.useAmbientOcclusionMap != 0
         ? gAmbientOcclusionMap.Sample(gTextureSampler, materialUv).r
         : 1.0f;
     float ao = lerp(1.0f, sampledAo, saturate(gMaterial.ambientOcclusionStrength));
 
     float3 F0 = BuildExtendedF0(albedo, metallic);
+
+    if (gMaterial.oceanEnabled >= 0.5f)
+    {
+        const float waterIor = max(gMaterial.ior, 1.0001f);
+        const float waterF0Root = (waterIor - 1.0f) / (waterIor + 1.0f);
+        F0 = float3(1.0f, 1.0f, 1.0f) * waterF0Root * waterF0Root;
+    }
 
     float3 direct = 0.0f;
     for (int lightIdx = 0; lightIdx < 4; lightIdx++)
@@ -466,9 +898,12 @@ float4 main(PixelShaderInput input) : SV_TARGET0
             ? normalize(lightDirection)
             : float3(0.0f, 1.0f, 0.0f);
         float rawNdotL = dot(N, L);
+        const float effectiveSubsurface = gMaterial.surfaceMode == 2
+            ? max(saturate(gMaterial.subsurface), 0.38f)
+            : saturate(gMaterial.subsurface);
         float NdotL = saturate(
-            (rawNdotL + saturate(gMaterial.subsurface)) /
-            (1.0f + saturate(gMaterial.subsurface)));
+            (rawNdotL + effectiveSubsurface) /
+            (1.0f + effectiveSubsurface));
         if (NdotL > 0.0f)
         {
             // 各ライトの shadowVP でワールド座標を投影し、atlas 内の対応タイルを読む。
@@ -533,39 +968,82 @@ float4 main(PixelShaderInput input) : SV_TARGET0
         }
     }
 
-    const float iblIntensity =
-        LIGHT_PRIMARY.environmentTextureEnabled >= 0.5f
-        ? max(LIGHT_PRIMARY.environmentTextureIntensity, 0.0f)
-        : 0.0f;
-    float3 ibl = EvaluateIBLWithF0(
+    const float cubemapModeMask =
+        step(0.5f, gMaterial.reflectionMode) *
+        (1.0f - step(1.5f, gMaterial.reflectionMode));
+    const float environmentReflectionIntensity = max(
+        LIGHT_PRIMARY.reflectionIntensity,
+        0.0f);
+    const float3 environmentFresnel = FresnelSchlickRoughness(
+        NdotV,
+        F0,
+        roughness);
+    const float3 environmentDiffuseWeight =
+        (1.0f - environmentFresnel) * (1.0f - metallic);
+    const float3 diffuseEnvironment = SampleRuntimeEnvironment(
         N,
-        V,
-        albedo,
-        metallic,
-        roughness,
-        ao,
-        iblIntensity,
-        kIBLPrefilterMipCount,
-        F0);
+        5.0f) * albedo;
+    const float3 reflectionDirection = normalize(reflect(-V, N));
+    const float reflectionMip =
+        roughness * (kIBLPrefilterMipCount - 1.0f);
+    const float3 reflectedEnvironment = SampleRuntimeEnvironment(
+        reflectionDirection,
+        reflectionMip);
+    const float2 environmentBrdf = gBRDFLUT.Sample(
+        gIblSampler,
+        float2(NdotV, roughness)).rg;
+    const float3 environmentSpecular =
+        reflectedEnvironment *
+        (environmentFresnel * environmentBrdf.x + environmentBrdf.y) *
+        environmentReflectionIntensity;
+    float3 ibl =
+        (environmentDiffuseWeight * diffuseEnvironment + environmentSpecular) *
+        ao;
 
+    const float effectiveClearCoat = gMaterial.oceanEnabled >= 0.5f
+        ? 0.0f
+        : saturate(gMaterial.clearCoat);
     float clearCoatMip =
         clamp(gMaterial.clearCoatRoughness, 0.035f, 1.0f) *
         (kIBLPrefilterMipCount - 1.0f);
-    float3 clearCoatReflection = gPrefilterCube.SampleLevel(
-        gIblSampler,
+    float3 clearCoatReflection = SampleRuntimeEnvironment(
         reflect(-V, N),
-        clearCoatMip).rgb * saturate(gMaterial.clearCoat) * iblIntensity;
+        clearCoatMip) *
+        effectiveClearCoat *
+        environmentReflectionIntensity;
     ibl += clearCoatReflection * FresnelSchlick(NdotV, float3(0.04f, 0.04f, 0.04f));
 
     float3 refractionDirection = refract(-V, N, 1.0f / max(gMaterial.ior, 1.0001f));
-    float3 transmissionColor = gEnvironmentCube.SampleLevel(
-        gIblSampler,
+    float3 transmissionColor = SampleRuntimeEnvironment(
         refractionDirection,
-        roughness * (kIBLPrefilterMipCount - 1.0f)).rgb;
+        roughness * (kIBLPrefilterMipCount - 1.0f));
+    float transmissionAmount = surfaceTransmission;
+
+    if (gMaterial.oceanEnabled >= 0.5f)
+    {
+        transmissionColor = oceanRefractedColor;
+        transmissionAmount *= 1.0f - FresnelSchlick(NdotV, F0).r;
+    }
+#if defined(ENABLE_REFRACTIVE_SURFACE)
+    else if (isDedicatedRefraction)
+    {
+        transmissionColor = SampleRefractiveScene(
+            input,
+            N,
+            albedo,
+            roughness,
+            surfaceTransmission);
+        transmissionAmount *= 1.0f - FresnelSchlick(NdotV, F0).r;
+    }
+#endif
+
+    const float3 transmittedRadiance = gMaterial.oceanEnabled >= 0.5f
+        ? transmissionColor
+        : transmissionColor * albedo;
     ibl = lerp(
         ibl,
-        transmissionColor * albedo,
-        saturate(gMaterial.transmission) * iblIntensity);
+        transmittedRadiance,
+        saturate(transmissionAmount));
 
     float3 ambient =
         albedo *
@@ -583,48 +1061,77 @@ float4 main(PixelShaderInput input) : SV_TARGET0
     float3 finalColor = direct + ibl + ambient + emission;
 
     //============================================================
-    // DirectXTK EnvironmentMapEffect 方式のキューブ環境反射
+    // Reflection Probe の Box Projection 補正
     //============================================================
     {
-        const float smoothness = saturate(1.0f - roughness);
-        const float materialReflection = max(max(gMaterial.reflectance, gMaterial.reflectionProbeIntensity), metallic);
-        const float cubemapModeMask =
-            step(0.5f, gMaterial.reflectionMode) *
-            (1.0f - step(1.5f, gMaterial.reflectionMode));
-        const float environmentMapAmount = saturate(
-            cubemapModeMask *
-            max(materialReflection, 1.0f) *
-            smoothness *
-            max(LIGHT_PRIMARY.reflectionIntensity, 1.0f));
+        const float probeIntensity = max(
+            gMaterial.reflectionProbeIntensity,
+            0.0f);
 
-        if (environmentMapAmount > 0.0001f)
+        if (cubemapModeMask > 0.5f &&
+            probeIntensity > 0.0001f &&
+            LIGHT_PRIMARY.environmentTextureEnabled >= 0.5f)
         {
-            DirectXTKEnvironmentMapInput environmentMapInput;
-            environmentMapInput.litColor = finalColor;
-            environmentMapInput.alpha = material.alpha;
-            environmentMapInput.eyeVector = V;
-            environmentMapInput.worldNormal = N;
-            environmentMapInput.environmentMapAmount = environmentMapAmount;
-            environmentMapInput.fresnelFactor = 5.0f;
-            environmentMapInput.environmentMapSpecular = F0 * max(LIGHT_PRIMARY.environmentTextureIntensity, 1.0f) * smoothness;
-            environmentMapInput.useFresnel = false;
-            const float3 environmentCoordinate = DirectXTKComputeEnvironmentCoordinate(V, N);
-            environmentMapInput.environmentCoordinate = CorrectParallaxCubemapDirection(
+            const float3 environmentCoordinate = normalize(reflect(-V, N));
+            const float3 probeCoordinate = CorrectParallaxCubemapDirection(
                 input.worldPosition,
                 environmentCoordinate,
                 gMaterial.reflectionProbeCenter,
                 gMaterial.reflectionProbeExtent);
-            environmentMapInput.useEnvironmentCoordinate =
-                gMaterial.reflectionProbeBoxProjection >= 0.5f;
-
-            finalColor = DirectXTKApplyEnvironmentMap(
-                environmentMapInput,
-                gEnvironmentCube,
+            const float3 correctedCoordinate = normalize(lerp(
+                environmentCoordinate,
+                probeCoordinate,
+                step(0.5f, gMaterial.reflectionProbeBoxProjection)));
+            const float originalReflectionMip =
+                roughness * (kIBLPrefilterMipCount - 1.0f);
+            const float3 originalReflection = SampleRuntimeEnvironment(
+                environmentCoordinate,
+                originalReflectionMip);
+            const float probeRoughness = clamp(
+                gMaterial.reflectionReserved,
+                0.035f,
+                1.0f);
+            const float probeReflectionMip =
+                probeRoughness * (kIBLPrefilterMipCount - 1.0f);
+            const float3 correctedReflection = SampleRuntimeEnvironment(
+                correctedCoordinate,
+                probeReflectionMip);
+            const float2 originalReflectionBrdf = gBRDFLUT.Sample(
                 gIblSampler,
-                LIGHT_PRIMARY.environmentTextureEnabled);
+                float2(NdotV, roughness)).rg;
+            const float2 correctedReflectionBrdf = gBRDFLUT.Sample(
+                gIblSampler,
+                float2(NdotV, probeRoughness)).rg;
+            const float3 originalReflectionResponse =
+                FresnelSchlickRoughness(NdotV, F0, roughness) * originalReflectionBrdf.x +
+                originalReflectionBrdf.y;
+            const float3 correctedReflectionResponse =
+                FresnelSchlickRoughness(NdotV, F0, probeRoughness) * correctedReflectionBrdf.x +
+                correctedReflectionBrdf.y;
+
+            // 通常 IBL の鏡面項を Probe 補正後へ置換し、二重反射と強度の二乗を防ぐ。
+            const float3 originalSpecular = originalReflection * originalReflectionResponse;
+            const float3 correctedSpecular = correctedReflection * correctedReflectionResponse;
+            const float3 probeSpecular =
+                originalSpecular * (1.0f - saturate(probeIntensity)) +
+                correctedSpecular * probeIntensity;
+            finalColor +=
+                (probeSpecular - originalSpecular) *
+                environmentReflectionIntensity *
+                ao;
         }
     }
 
-    finalColor += (hashVariation - 0.5f) / 255.0f;
-    return float4(max(finalColor, 0.0f), material.alpha);
+    if (gMaterial.oceanEnabled >= 0.5f)
+    {
+        finalColor = lerp(
+            finalColor,
+            float3(0.88f, 0.96f, 1.0f),
+            oceanFoam * 0.42f);
+    }
+
+    const float outputAlpha = gMaterial.oceanEnabled >= 0.5f || isDedicatedRefraction
+        ? 1.0f
+        : material.alpha;
+    return BuildObjectPixelOutput(float4(max(finalColor, 0.0f), outputAlpha), input.position.z);
 }

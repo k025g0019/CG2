@@ -15,7 +15,7 @@
 
 class EditorGBufferManager {
 public:
-	static constexpr uint32_t kRenderTargetCount = 4u;
+	static constexpr uint32_t kRenderTargetCount = 5u;
 
 	bool Initialize(
 		ID3D12Device* device,
@@ -41,6 +41,7 @@ public:
 	D3D12_GPU_DESCRIPTOR_HANDLE GetNormalSrvHandle() const;
 	D3D12_GPU_DESCRIPTOR_HANDLE GetMaterialSrvHandle() const;
 	D3D12_GPU_DESCRIPTOR_HANDLE GetEmissionSrvHandle() const;
+	D3D12_GPU_DESCRIPTOR_HANDLE GetMotionVectorSrvHandle() const;
 	bool IsReady() const;
 
 private:
@@ -49,6 +50,7 @@ private:
 		Normal,
 		Material,
 		Emission,
+		MotionVector,
 		Count,
 	};
 

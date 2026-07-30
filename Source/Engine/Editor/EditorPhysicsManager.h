@@ -23,12 +23,14 @@ public:
 	int32_t Update(float deltaTime);  // Jolt PhysicsSystem を進め、結果を GameObject へ戻し、実行した固定更新回数を返す
 	void Draw();  // 現時点では Jolt のデバッグ描画なし
 	void StopSimulation();  // Play 停止時に Jolt Body を破棄する
+	bool SetGameObjectSimulationActive(int32_t gameObjectId, bool isActive);  // Wave 出現前後で Jolt Body を物理 Worldへ出し入れする
 	bool Raycast(const Vector3& origin, const Vector3& direction, float distance, EditorJoltPhysicsManager::PhysicsHit& hit) const;  // Runtime から Physics.Raycast 相当を呼べる入口
 	bool SphereCast(const Vector3& origin, float radius, const Vector3& direction, float distance, EditorJoltPhysicsManager::PhysicsHit& hit) const;  // Runtime から Physics.SphereCast 相当を呼べる入口
 	bool CapsuleCast(const Vector3& origin, float radius, float height, const Vector3& direction, float distance, EditorJoltPhysicsManager::PhysicsHit& hit) const;  // Runtime から Physics.CapsuleCast 相当を呼べる入口
 	bool OverlapSphere(const Vector3& center, float radius, std::vector<int32_t>& hitGameObjectIds) const;  // Runtime から Physics.OverlapSphere 相当を呼べる入口
 	bool OverlapBox(const Vector3& center, const Vector3& size, std::vector<int32_t>& hitGameObjectIds) const;  // Runtime から Physics.OverlapBox 相当を呼べる入口
 	bool AddForce(int32_t gameObjectId, const Vector3& force);  // Runtime から Rigidbody.AddForce 相当を呼べる入口
+	bool AddForceAtPosition(int32_t gameObjectId, const Vector3& force, const Vector3& worldPosition);  // 船体内部など World 位置へ力を加える入口
 	bool AddImpulse(int32_t gameObjectId, const Vector3& impulse);  // Runtime から Rigidbody.AddImpulse 相当を呼べる入口
 	bool AddTorque(int32_t gameObjectId, const Vector3& torque);  // Runtime から Rigidbody.AddTorque 相当を呼べる入口
 	bool SetVelocity(int32_t gameObjectId, const Vector3& velocity);  // Runtime から Rigidbody.velocity 相当を呼べる入口
@@ -44,6 +46,8 @@ private:
 	float fixedTimeStep_ = 1.0f / 60.0f;  // 物理だけを進める固定時間。Unity の FixedUpdate 相当
 	float fixedTimeAccumulator_ = 0.0f;  // 可変 deltaTime を固定時間へ分割するための蓄積時間
 	int32_t maxFixedSubSteps_ = 4;  // フレーム落ち時に 1 フレームで回す物理回数の上限
+
+	void ApplyBuoyancyForces(float fixedDeltaTime);  // Ocean と船体セルの水没体積を測り、Jolt 更新前に浮力を加える
 };
 
 #pragma warning(pop)

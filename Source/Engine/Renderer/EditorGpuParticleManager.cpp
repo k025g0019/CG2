@@ -95,6 +95,13 @@ void EditorGpuParticleManager::Finalize() {
 	particleUploadBuffer_.Reset();
 	aliveListBuffer_.Reset();
 	deadListBuffer_.Reset();
+
+	if (collisionProxyBuffer_ != nullptr && collisionProxyData_ != nullptr) {
+		collisionProxyBuffer_->Unmap(0u, nullptr);
+	}
+
+	collisionProxyData_ = nullptr;
+	collisionProxyBuffer_.Reset();
 	computeRootSignature_.Reset();
 	clearPipelineState_.Reset();
 	updatePipelineState_.Reset();
@@ -119,7 +126,14 @@ void EditorGpuParticleManager::RequestReset() {
 void EditorGpuParticleManager::Update(
 	ID3D12GraphicsCommandList* commandList,
 	const std::vector<EditorEffectManager::GpuParticleSpawn>& spawns,
-	float deltaTime) {
+	float deltaTime,
+	D3D12_GPU_DESCRIPTOR_HANDLE sceneDepthSrvHandle,
+	const Matrix4x4& viewProjection,
+	const Matrix4x4& inverseViewProjection,
+	uint32_t renderWidth,
+	uint32_t renderHeight,
+	const D3D12_VIEWPORT& collisionViewport,
+	const std::vector<CollisionProxy>& collisionProxies) {
 	if (commandList == nullptr ||
 		particleBuffer_ == nullptr ||
 		aliveListBuffer_ == nullptr ||
@@ -136,6 +150,17 @@ void EditorGpuParticleManager::Update(
 	}
 
 	if (!isResetFrame && hasEverSpawned_) {
+		const uint32_t collisionProxyCount = static_cast<uint32_t>((std::min)(
+			collisionProxies.size(),
+			static_cast<size_t>(kMaxCollisionProxyCount)));
+
+		if (collisionProxyData_ != nullptr && collisionProxyCount > 0u) {
+			std::memcpy(
+				collisionProxyData_,
+				collisionProxies.data(),
+				sizeof(CollisionProxy) * static_cast<size_t>(collisionProxyCount));
+		}
+
 		// 前フレームのリスト件数を消し、Particleの寿命からAlive/DeadをGPU上で再構築する。
 		ParticleComputeConstants clearConstants{};
 		clearConstants.maxParticleCount = kMaxParticleCount;
@@ -160,11 +185,22 @@ void EditorGpuParticleManager::Update(
 		updateConstants.deltaTime = (std::max)(deltaTime, 0.0f);
 		updateConstants.globalDamping = 0.0f;
 		updateConstants.maxParticleCount = kMaxParticleCount;
+		updateConstants.viewProjection = viewProjection;
+		updateConstants.inverseViewProjection = inverseViewProjection;
+		updateConstants.renderWidth = static_cast<float>((std::max)(renderWidth, 1u));
+		updateConstants.renderHeight = static_cast<float>((std::max)(renderHeight, 1u));
+		updateConstants.viewportOffsetX = collisionViewport.TopLeftX;
+		updateConstants.viewportOffsetY = collisionViewport.TopLeftY;
+		updateConstants.viewportWidth = (std::max)(collisionViewport.Width, 1.0f);
+		updateConstants.viewportHeight = (std::max)(collisionViewport.Height, 1.0f);
+		updateConstants.colliderCount = collisionProxyCount;
 		commandList->SetPipelineState(updatePipelineState_.Get());
-		commandList->SetComputeRoot32BitConstants(0, 4u, &updateConstants, 0u);
+		commandList->SetComputeRoot32BitConstants(0, 48u, &updateConstants, 0u);
 		commandList->SetComputeRootUnorderedAccessView(1, particleBuffer_->GetGPUVirtualAddress());
 		commandList->SetComputeRootUnorderedAccessView(2, aliveListBuffer_->GetGPUVirtualAddress());
 		commandList->SetComputeRootUnorderedAccessView(3, deadListBuffer_->GetGPUVirtualAddress());
+		commandList->SetComputeRootDescriptorTable(5, sceneDepthSrvHandle);
+		commandList->SetComputeRootShaderResourceView(6, collisionProxyBuffer_->GetGPUVirtualAddress());
 		commandList->Dispatch((kMaxParticleCount + 63u) / 64u, 1u, 1u);
 
 		std::array<D3D12_RESOURCE_BARRIER, 3u> updateBarriers{};
@@ -311,7 +347,31 @@ bool EditorGpuParticleManager::CreateBuffers(ID3D12Device* device) {
 		D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
 		nullptr,
 		IID_PPV_ARGS(deadListBuffer_.GetAddressOf()));
-	return SUCCEEDED(hr);
+	if (FAILED(hr)) {
+		return false;
+	}
+
+	const UINT64 collisionProxyBufferSize =
+		sizeof(CollisionProxy) * static_cast<UINT64>(kMaxCollisionProxyCount);
+	D3D12_RESOURCE_DESC collisionProxyDesc = MakeBufferDesc(
+		collisionProxyBufferSize,
+		D3D12_RESOURCE_FLAG_NONE);
+	hr = device->CreateCommittedResource(
+		&uploadHeap,
+		D3D12_HEAP_FLAG_NONE,
+		&collisionProxyDesc,
+		D3D12_RESOURCE_STATE_GENERIC_READ,
+		nullptr,
+		IID_PPV_ARGS(collisionProxyBuffer_.GetAddressOf()));
+	if (FAILED(hr)) {
+		return false;
+	}
+
+	hr = collisionProxyBuffer_->Map(
+		0u,
+		nullptr,
+		reinterpret_cast<void**>(&collisionProxyData_));
+	return SUCCEEDED(hr) && collisionProxyData_ != nullptr;
 }
 
 bool EditorGpuParticleManager::CreateComputePipeline(
@@ -319,11 +379,17 @@ bool EditorGpuParticleManager::CreateComputePipeline(
 	IDxcBlob* clearComputeShader,
 	IDxcBlob* updateComputeShader,
 	IDxcBlob* spawnComputeShader) {
-	D3D12_ROOT_PARAMETER rootParameters[5]{};
+	D3D12_DESCRIPTOR_RANGE depthDescriptorRange{};
+	depthDescriptorRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	depthDescriptorRange.NumDescriptors = 1u;
+	depthDescriptorRange.BaseShaderRegister = 1u;
+	depthDescriptorRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_ROOT_PARAMETER rootParameters[7]{};
 	rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
 	rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 	rootParameters[0].Constants.ShaderRegister = 0u;
-	rootParameters[0].Constants.Num32BitValues = 4u;
+	rootParameters[0].Constants.Num32BitValues = 48u;
 
 	for (UINT parameterIndex = 1u; parameterIndex < 4u; parameterIndex++) {
 		rootParameters[parameterIndex].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
@@ -333,6 +399,13 @@ bool EditorGpuParticleManager::CreateComputePipeline(
 	rootParameters[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
 	rootParameters[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 	rootParameters[4].Descriptor.ShaderRegister = 0u;
+	rootParameters[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	rootParameters[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+	rootParameters[5].DescriptorTable.NumDescriptorRanges = 1u;
+	rootParameters[5].DescriptorTable.pDescriptorRanges = &depthDescriptorRange;
+	rootParameters[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+	rootParameters[6].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+	rootParameters[6].Descriptor.ShaderRegister = 2u;
 
 	D3D12_ROOT_SIGNATURE_DESC rootSignatureDesc{};
 	rootSignatureDesc.NumParameters = _countof(rootParameters);
@@ -575,12 +648,12 @@ EditorGpuParticleManager::GpuParticleData EditorGpuParticleManager::ConvertSpawn
 		(std::max)(spawn.attractorStrength, 0.0f),
 		spawn.rotation,
 		spawn.rotationSpeed,
-		0.0f};
+		(std::clamp)(spawn.collisionBounce, 0.0f, 1.0f)};
 	particle.rendering = {
 		static_cast<float>(EnsureModelMesh(spawn.renderAssetPath)),
 		(std::max)(spawn.emissionStrength, 0.0f),
-		0.0f,
-		0.0f};
+		spawn.useCollision ? static_cast<float>(spawn.collisionMode + 1) : 0.0f,
+		(std::clamp)(spawn.collisionFriction, 0.0f, 1.0f)};
 	return particle;
 }
 

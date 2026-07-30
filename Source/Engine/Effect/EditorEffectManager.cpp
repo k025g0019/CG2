@@ -432,6 +432,7 @@ bool EditorEffectManager::SpawnParticle(const EmitterSnapshot& emitter) {
 	particle.collisionBounce = (std::clamp)(emitter.component.particleCollisionBounce, 0.0f, 1.0f);
 	particle.collisionFriction = (std::clamp)(emitter.component.particleCollisionFriction, 0.0f, 1.0f);
 	particle.useCollision = emitter.component.particleCollision;
+	particle.collisionMode = (std::clamp)(emitter.component.collisionDetectionMode, 0, 1);
 	particle.useLocalSpace = useLocalSpace;
 	particle.localPosition = initialPosition;
 	particle.velocity = {
@@ -478,6 +479,10 @@ bool EditorEffectManager::SpawnParticle(const EmitterSnapshot& emitter) {
 	gpuSpawn.rotation = RandomRange(0.0f, kPi * 2.0f);
 	gpuSpawn.rotationSpeed = particle.rotationSpeed;
 	gpuSpawn.emissionStrength = particle.emissionStrength;
+	gpuSpawn.collisionBounce = particle.collisionBounce;
+	gpuSpawn.collisionFriction = particle.collisionFriction;
+	gpuSpawn.useCollision = particle.useCollision;
+	gpuSpawn.collisionMode = particle.collisionMode;
 	gpuSpawn.renderAssetPath = emitter.component.particleRenderAssetPath;
 	pendingGpuParticleSpawns_.push_back(gpuSpawn);
 	return true;

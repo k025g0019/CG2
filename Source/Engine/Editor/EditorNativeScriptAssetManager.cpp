@@ -1,5 +1,7 @@
 ﻿#include "EditorNativeScriptAssetManager.h"
 
+#include "Source/Engine/Core/EditorNativeScript.h"  // 生成対象の公開 C++ API もエンジンビルド時に検証する。
+
 #include <array>
 #include <filesystem>
 #include <fstream>
@@ -123,6 +125,7 @@ private:
 	float moveSpeed_ = 3.0f;  // Inspector から編集する移動速度。
 	float jumpImpulse_ = 5.0f;  // Inspector から編集するジャンプの瞬間力。
 	std::string startMessage_ = "__SCRIPT_NAME__::Start";  // Inspector から編集する開始ログ。
+	std::string nextScenePath_;  // Space を押した時に開く .scene。空なら遷移しない。
 	EditorScriptVector2 moveInput_{};  // OnMove が受けた入力を Update まで保持する。
 
 	void OnMove(const EditorScriptInputActionContext& inputContext);
@@ -171,6 +174,7 @@ __SCRIPT_NAME__::__SCRIPT_NAME__() {
 	ExposeFloat("moveSpeed", "移動速度", moveSpeed_, 0.0f, 100.0f, 0.1f);
 	ExposeFloat("jumpImpulse", "ジャンプ力", jumpImpulse_, 0.0f, 100.0f, 0.1f);
 	ExposeString("startMessage", "開始メッセージ", startMessage_);
+	ExposeScene("nextScenePath", "Space 遷移先 Scene", nextScenePath_);
 
 	BindAction("OnMove", [this](const EditorScriptInputActionContext& inputContext) { OnMove(inputContext); });
 	BindAction("OnJump", [this](const EditorScriptInputActionContext& inputContext) { OnJump(inputContext); });
@@ -192,10 +196,17 @@ void __SCRIPT_NAME__::Update(int32_t gameObjectId, float deltaTime) {
 		return;
 	}
 
-	EditorScriptTransform transform = runtimeApi->GetTransform(gameObjectId);
+	// Unity の Input.GetKeyDown + SceneManager.LoadScene と同じ用途で Scene を切り替える。
+	if (!nextScenePath_.empty() && Input::GetKeyDown(KeyCode::Space)) {
+		SceneManager::LoadScene(nextScenePath_);
+		return;
+	}
+
+	const GameObject gameObject{gameObjectId};
+	EditorScriptTransform transform = gameObject.GetTransform();
 	transform.position.x += moveInput_.x * moveSpeed_ * deltaTime;
 	transform.position.z += moveInput_.y * moveSpeed_ * deltaTime;
-	runtimeApi->SetTransform(gameObjectId, &transform);
+	gameObject.SetTransform(transform);
 }
 
 void __SCRIPT_NAME__::FixedUpdate(int32_t gameObjectId, float fixedDeltaTime) {
@@ -234,7 +245,7 @@ void __SCRIPT_NAME__::OnJump(const EditorScriptInputActionContext& inputContext)
 	}
 
 	const EditorScriptVector3 jumpImpulse{0.0f, jumpImpulse_, 0.0f};
-	runtimeApi->AddImpulse(inputContext.gameObjectId, &jumpImpulse);
+	Rigidbody{inputContext.gameObjectId}.AddImpulse(jumpImpulse);
 }
 
 void __SCRIPT_NAME__::OnFire(const EditorScriptInputActionContext& inputContext) {
@@ -275,11 +286,13 @@ extern "C" __declspec(dllexport) bool EditorScript_Load(
 	}
 
 	runtimeApi = api;
+	EditorNativeScriptRuntime::SetRuntimeApi(api);
 	return true;
 }
 
 extern "C" __declspec(dllexport) void EditorScript_Unload() {
 	scriptStates.clear();
+	EditorNativeScriptRuntime::SetRuntimeApi(nullptr);
 	runtimeApi = nullptr;
 }
 

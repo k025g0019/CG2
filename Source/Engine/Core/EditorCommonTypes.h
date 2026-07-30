@@ -3,6 +3,7 @@
 #include "Matrix.h"
 #include "Vector.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -37,6 +38,8 @@ struct VertexData {
 	Vector4 position;  // 頂点のローカル座標
 	Vector2 texcoord;  // テクスチャ参照用 UV
 	Vector3 normal;  // ライティングに使う法線
+	std::array<uint32_t, 4u> boneIndices{};  // FBX Skin Cluster を参照する最大 4 本の Bone Index
+	Vector4 boneWeights{};  // boneIndices と対になる正規化済み Bone Weight
 };
 
 struct Material {
@@ -45,12 +48,12 @@ struct Material {
 	int32_t useTexture;  // 0 なら Texture を使わず、Component の色だけで描画する
 	float metallic;  // 金属感。0 は非金属、1 は金属
 	float roughness;  // 粗さ。0 は鏡面、1 は粗い
-	float reflectance;  // 反射の強さ
+	float reflectance;  // 材質の基礎反射率。Reflection Probe の寄与率とは分離する
 	float ior;  // 屈折率。ガラスや水の見た目調整に使う値
 	float emissionStrength;  // 放射の強さ。0 なら自発光しない
 	float reflectionMode;  // 0: SSR / 1: Cubemap / 2: Planar
-	float reflectionProbeIntensity;  // 反射コンポーネント側で上書きする強さ
-	float reflectionReserved;  // 反射コンポーネント側の粗さ上書き値
+	float reflectionProbeIntensity;  // Reflection Probe の反射像を混ぜる寄与率
+	float reflectionReserved;  // Reflection Probe の反射像へ適用する粗さ
 	float materialPadding0;  // HLSL cbuffer の 16byte 境界合わせ
 	float materialPadding1;  // HLSL cbuffer の 16byte 境界合わせ
 	Vector3 reflectionProbeCenter;  // Box Projection に使う Reflection Probe のワールド中心
@@ -86,10 +89,28 @@ struct Material {
 	float materialExtensionPadding2;  // HLSL cbuffer の 16byte 境界合わせ
 	Vector2 uvTiling;  // UV の繰り返し回数
 	Vector2 uvOffset;  // UV の開始位置
+	float oceanEnabled;  // 1.0f なら Ocean 専用の海面材質を使う
+	float oceanFoamStrength;  // 波の急斜面へ加える泡の強さ
+	float oceanRoughness;  // Ocean 専用の反射粗さ
+	float oceanColorBlendScale;  // 浅瀬色と深海色の混合幅
+	Vector3 oceanDeepColor;  // 海面の深い部分へ使う色
+	float oceanMaterialPadding;  // HLSL cbuffer の 16byte 境界合わせ
+	float oceanDetailNormalStrength;  // ピクセル単位の細波法線強度
+	float oceanFoamThreshold;  // 波面圧縮から泡を出す閾値
+	float oceanAbsorptionDistance;  // Beer-Lambert 近似へ使う吸収距離
+	float oceanRefractionDistortion;  // 細波による屈折方向の歪み
+	float oceanWaterDepth;  // 色吸収へ使う海面の水深
+	float oceanCrestSharpness;  // 泡の波頭判定へ使う尖り
+	float oceanMaterialPadding1;  // HLSL cbuffer の 16byte 境界合わせ
+	float oceanMaterialPadding2;  // HLSL cbuffer の 16byte 境界合わせ
+	int32_t surfaceMode;  // 0=通常、1=Terrain、2=Foliage
+	float surfaceMaterialPadding0;  // HLSL cbuffer の 16byte 境界合わせ
+	float surfaceMaterialPadding1;  // HLSL cbuffer の 16byte 境界合わせ
+	float surfaceMaterialPadding2;  // HLSL cbuffer の 16byte 境界合わせ
 };
 
 static_assert(offsetof(Material, uvTransform) == 96u, "Material と HLSL cbuffer の uvTransform 開始位置が一致していません。");
-static_assert(sizeof(Material) == 288u, "Material と HLSL cbuffer のサイズが一致していません。");
+static_assert(sizeof(Material) == 368u, "Material と HLSL cbuffer のサイズが一致していません。");
 
 constexpr int32_t kMaxEmissiveLights = 8;
 
@@ -147,7 +168,22 @@ struct TransformationMatrix {
 	Matrix4x4 lightWVP;  // 平行光源から見た World * View * Projection。影判定に使う
 	Vector4 reflectionClipPlane;  // SV_ClipDistance0 に使うクリップ平面 (normal.xyz, d)
 	Vector4 reflectionClipParams;  // x=1.0 でクリップ有効、0.0 で無効
+	Vector4 oceanParams0;  // x=有効、y=時刻、z=波高、w=最大波高
+	Vector4 oceanParams1;  // xy=主波方向、z=波長、w=速度
+	Vector4 oceanParams2;  // xy=副波方向、z=副波強度、w=choppiness
+	Vector4 oceanParams3;  // x=細波波長比、y=細波強度、z=時間倍率、w=近傍波LODの基準寸法
+	Vector4 oceanParams4;  // x=風速、y=水深、z=方向分散、w=うねり強度
+	Vector4 oceanParams5;  // x=スペクトルシード、y=波頭の尖り、zw=カメラ追従 LOD のローカル XZ 中心
+	std::array<Vector4, 16u> oceanWaveData0;  // xy=方向、z=波数、w=振幅
+	std::array<Vector4, 16u> oceanWaveData1;  // x=角周波数、y=位相、zw=予約
+	Vector4 surfaceParams0;  // x=描画種別、y=時刻、z=風変位量、w=風速
+	Vector4 surfaceParams1;  // xy=風向き、z=空間周波数、w=Height/Density map 有効
+	Matrix4x4 previousWVP;  // 前フレームの位置を再投影し、Object / Skinned Motion Vector を作る
 };
+
+static_assert(
+	sizeof(TransformationMatrix) == 928u,
+	"TransformationMatrix と Ocean HLSL cbuffer のサイズが一致していません。");
 
 struct Sprite {
 	Vector2 position;  // スプライトの左上基準位置
@@ -181,18 +217,27 @@ struct ModelAnimationKeyframeData {
 	Vector3 scale;  // FBX Node のローカル拡縮
 };
 
+struct ModelSkinPoseFrameData {
+	float timeSeconds;  // クリップ開始からの経過秒
+	std::vector<Matrix4x4> boneMatrices;  // Mesh ローカル頂点を現在姿勢へ変換する Bone 行列
+};
+
 struct ModelAnimationClipData {
 	std::string name;  // FBX の AnimationStack 名や Clip 名
 	float durationSeconds;  // クリップ長。取得できない場合は 0
 	std::string animatedNodeName;  // Transform Key を取得した FBX Node 名
 	std::vector<ModelAnimationKeyframeData> keyframes;  // クリップを時間順にサンプリングした Transform Key
+	std::vector<ModelSkinPoseFrameData> skinPoseFrames;  // GBuffer と通常描画で共有するスキン姿勢
 };
 
 struct ModelData {
 	std::vector<VertexData> vertices;  // OBJ から展開した頂点配列
+	std::vector<uint32_t> indices;  // 空なら従来の頂点列、値があれば共有頂点の三角形 Index 配列
 	MaterialData material;  // 後方互換用の先頭マテリアル情報
 	std::vector<MaterialData> materials;  // モデルが持つマテリアル一覧
 	std::vector<ModelAnimationClipData> animationClips;  // モデルが持つアニメーションクリップ一覧
+	std::vector<std::string> skinBoneNames;  // boneIndices が参照する FBX Cluster / Bone 名
+	std::vector<Matrix4x4> defaultSkinMatrices;  // Animation 停止時に使う FBX 初期姿勢
 	Vector3 localBoundsCenter;  // モデル原点基準のローカル包囲中心
 	Vector3 localBoundsSize;  // モデル原点基準のローカル包囲サイズ
 };

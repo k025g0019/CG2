@@ -26,6 +26,11 @@ public:
 		const Transforms& initialTransform,
 		const std::string& name);
 	bool SetCustomModelMesh(int32_t sceneObjectIndex, const std::string& assetPath, const ModelData& modelData);  // 実メッシュ頂点を SceneObject の GPU バッファへ設定する
+	bool UpdateSkinnedPose(
+		int32_t sceneObjectIndex,
+		const ModelData& modelData,
+		int32_t clipIndex,
+		float playbackTime);  // 現在姿勢を更新し、更新前の姿勢を Motion Vector 用に保持する
 	bool SetCustomTexture(int32_t sceneObjectIndex, const std::string& textureAssetPath);  // 任意画像を SceneObject 専用 Texture として GPU へ読み込む
 	bool SetMaterialTexture(
 		int32_t sceneObjectIndex,
@@ -35,6 +40,7 @@ public:
 	void ClearMaterialTexture(int32_t sceneObjectIndex, EditorMaterialTextureSlot textureSlot);  // 指定 PBR Map を解放する
 	void ClearAllMaterialTextures(int32_t sceneObjectIndex);  // SceneObject が持つ全 PBR Map を解放する
 	void ClearCustomModelMesh(int32_t sceneObjectIndex);  // SceneObject を内部基本形描画へ戻す
+	void ClearSkinningResources(int32_t sceneObjectIndex);  // Bone 行列 Buffer と再生状態を解放する
 	void ReleaseObject(int32_t sceneObjectIndex);  // 指定した描画用 SceneObject の GPU Resource を解放する
 	void ReleaseAll();  // 全 SceneObject の GPU Resource を解放して配列を空にする
 	std::vector<EditorSceneObject>& GetSceneObjects();  // SceneView / Render / Synchronizer が編集する SceneObject 配列

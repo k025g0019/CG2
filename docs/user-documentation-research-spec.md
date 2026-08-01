@@ -172,6 +172,13 @@ ChatGPT Work へ渡す場合は、利用可能なモデルの中で最も長い�
 | `EditorAIManager.cpp` | AI Component、外部プロセス、Sensor、Python 連携。 |
 | `EditorLocalMoveManager.cpp` | ローカル移動 Component。 |
 | `EditorRollingMoveManager.cpp` | トルク、摩擦を利用する転がり移動 Component。 |
+| `EditorFreeTransformManager.cpp` | 軸選択付きの非物理移動・回転。 |
+| `EditorRailMovementManager.cpp` | Spline Sample、距離基準移動、RailFollower Runtime API。 |
+| `EditorWaveSpawnerManager.cpp` | 子GameObjectの待機、順次有効化、Wave Action通知。 |
+| `EditorGameplayEventManager.cpp` | Timeline EventとThreshold Stateの条件評価、Action通知。 |
+| `EditorUiBindingManager.cpp` | Health / Rail / ActiveからText / Sliderへの値反映。 |
+| `EditorOceanSystem.cpp` | Oceanの選択、波面Sample、Buoyancyへの共通波面提供。 |
+| `EditorGameBuildManager.cpp` | Build Settings保存、Release Player書き出し、Standalone起動。 |
 
 ### 8.4 描画
 
@@ -212,6 +219,10 @@ ChatGPT Work へ渡す場合は、利用可能なモデルの中で最も長い�
 - Console。
 - Project Settings または設定画面。
 - Docking、分離、再配置。
+- Spline Editor。
+- Event Timeline。
+- State Graph。
+- Game Build Settings。
 
 各ウィンドウについて、役割、開き方、選択方法、右クリック、ダブルクリック、Delete、ドラッグ＆ドロップ、検索、スクロール、保存への影響を記録する。
 
@@ -2268,6 +2279,7 @@ ChatGPT Work へ渡す調査データでは、この表に「概要、Inspector 
 | 描画・レンダリング | ビルボードレンダラー | `BillboardRenderer` |
 | 描画・レンダリング | キャンバスレンダラー | `CanvasRenderer` |
 | 描画・レンダリング | パーティクルシステムレンダラー | `ParticleSystemRenderer` |
+| 描画・レンダリング | Ocean | `Ocean` |
 | カメラ | カメラ | `Camera` |
 | カメラ | オーディオリスナー | `AudioListener` |
 | カメラ | フレアレイヤー | `FlareLayer` |
@@ -2284,6 +2296,8 @@ ChatGPT Work へ渡す調査データでは、この表に「概要、Inspector 
 | 3D物理 | 球の当たり判定 | `SphereCollider` |
 | 3D物理 | カプセル当たり判定 | `CapsuleCollider` |
 | 3D物理 | メッシュ当たり判定 | `MeshCollider` |
+| 3D物理 | Auto Convex Collision | `AutoConvexCollision` |
+| 物理 | Buoyancy | `Buoyancy` |
 | 3D物理 | 地形の当たり判定 | `TerrainCollider` |
 | 3D物理 | 車輪の当たり判定 | `WheelCollider` |
 | 3D物理 | キャラクターコントローラー | `CharacterController` |
@@ -2356,6 +2370,8 @@ ChatGPT Work へ渡す調査データでは、この表に「概要、Inspector 
 | UI | コンテンツサイズフィッター | `ContentSizeFitter` |
 | UI | アスペクト比フィッター | `AspectRatioFitter` |
 | UI | レイアウトエレメント | `LayoutElement` |
+| UI | Scene ボタン | `SceneButton` |
+| UI | 値バインディング | `UIValueBinding` |
 | 入力・イベント | イベントシステム | `EventSystem` |
 | 入力・イベント | スタンドアロン入力モジュール | `StandaloneInputModule` |
 | 入力・イベント | Input System UI 入力モジュール | `InputSystemUIInputModule` |
@@ -2363,8 +2379,14 @@ ChatGPT Work へ渡す調査データでは、この表に「概要、Inspector 
 | 入力・イベント | プレイヤー入力マネージャー | `PlayerInputManager` |
 | 入力・イベント | タッチ入力モジュール | `TouchInputModule` |
 | 入力・イベント | 入力 | `Input` |
+| 入力・イベント | Timeline Event | `TimelineEvent` |
+| 入力・イベント | Threshold State | `ThresholdState` |
 | ゲームプレイ | ローカル移動 | `LocalMove` |
 | ゲームプレイ | ローリング移動 | `RollingMove` |
+| ゲームプレイ | 自由移動/回転 | `FreeTransform` |
+| ゲームプレイ | レール移動 | `RailMovement` |
+| ゲームプレイ | 体力 | `Health` |
+| ゲームプレイ | Wave Spawner | `WaveSpawner` |
 | ナビゲーション | NavMesh エージェント | `NavigationAgent` |
 | ナビゲーション | NavMesh 障害物 | `NavMeshObstacle` |
 | ナビゲーション | NavMesh サーフェス | `NavMeshSurface` |
@@ -2422,6 +2444,7 @@ ChatGPT Work へ渡す調査データでは、この表に「概要、Inspector 
 | 地形・タイルマップ | タイルマップレンダラー | `TilemapRenderer` |
 | 地形・タイルマップ | タイルマップ当たり判定 2D | `TilemapCollider2D` |
 | 地形・タイルマップ | グリッド | `Grid` |
+| 地形・タイルマップ | フォリッジ | `Foliage` |
 | FeelKit | FeelKit 触覚ソース | `HapticSource` |
 
 ### 63.1 一覧で重複している Component の扱い
@@ -2835,7 +2858,8 @@ if (doorId >= 0) {
 - Timeline、Dopesheet形式のKey配置、Key移動、Step/Linear/Cubic Hermite、自動Track記録、Preview、Loop、Event、JSON保存は実働する。
 - Graph Curveを線として編集する専用Curve Editor、接線HandleのMouse操作は未実装。接線は数値入力する。
 - 複数GameObjectの同時記録、子階層へのProperty Path、任意C++公開変数のTrack化は未実装。
-- 現行Model Importer/RuntimeはSkeleton、Bone階層、Skin Weight、Bone Matrix Paletteを完全保持していない。そのためBone単位のKey記録、Skinned MeshのBone Pose編集、GPU Skinningへの書戻しは未実装である。
+- 現行Model ImporterはFBX Clusterから最大4本のBone Index / Weightを頂点へ保持し、Runtimeは現在・前FrameのBone Matrix BufferをSkinned描画、GBuffer、Shadow、Motion Vectorへ渡す。使用可能判定には実FBXで変形、影、Temporal残像を確認する。
+- Animation WindowでBone単位のPoseを直接選択・記録する視覚編集、Humanoid Retarget、IK、Avatar編集は未実装である。GPU Skinningの実行とBone Pose編集UIを混同しない。
 - FBX Clipは現行Importerが取得できるAnimation ClipとNode Transform範囲で再生する。Unity相当のAvatar、Humanoid Retarget、IK、Avatar Maskは未実装。
 - `.animgraph`はJSON編集が中心で、Node Graphの視覚編集Windowは未実装。
 - `.animclip` Saveは現在開いているAssetへ上書きする。別名保存はProjectで新しいClipを作成して編集する。
@@ -2854,3 +2878,410 @@ if (doorId >= 0) {
 | Eventが来ない | Event時刻がClip長内か、Script DLLが同じGameObjectにあるか、Export関数名が完全一致か確認する。 |
 | Effectだけ出ない | `.effect` Path、Effect Asset JSON、Particle/VisualEffect Component、Consoleを確認する。 |
 | Stop後に値が残る | Preview停止またはPlay停止が呼ばれたか、別Scriptが同じPropertyを書いていないか確認する。 |
+
+## 66. 2026-08-01 時点で追加調査が必要な全差分
+
+この章は、65章までに具体的な使用手順が載っていなかった現在の実装を、調査対象から漏らさないための差分台帳である。
+「Shaderファイルが存在する」「Component enumが存在する」だけで完成扱いにせず、UI、保存、実行、組み合わせ、制限を確認する。
+
+| 分類 | 追加対象 | 主な根拠 |
+| --- | --- | --- |
+| Editor Window | Spline Editor、Event Timeline、State Graph | `EditorGameplayToolsWindowManager.cpp` |
+| Build | Game Build Settings、Standalone Player、`game.build` | `EditorGameBuildManager.cpp`、`EditorMainMenuBar.cpp` |
+| Scene | Path遷移、Build Index遷移、SceneButton | `EditorScriptManager.cpp`、`EditorGameViewManager.cpp` |
+| Component | FreeTransform、AutoConvexCollision、Ocean、Buoyancy、RailMovement、Health | `EditorScene.h`、`EditorInspectorPanel.cpp` |
+| 汎用進行 | WaveSpawner、TimelineEvent、ThresholdState、UIValueBinding | 各Runtime Manager |
+| Terrain | Height Map、3段階LOD、Shadow LOD | `EditorSceneSynchronizer.cpp`、`EditorRenderManager.cpp` |
+| Foliage | Density Map、GPU Instancing、距離密度、風変形 | 同上、`SurfaceDeformation.hlsli` |
+| Particle | 8運動方式、Depth / Physics SDF Collision、Mesh Particle | `EditorGpuParticleManager.cpp`、Particle Shader |
+| Audio | Bus、Voice制限、再発音間隔、Doppler、Spread、Cone、Occlusion、Reverb、初期反射 | `EditorAudioManager.cpp` |
+| Material | Clear Coat、Transmission、Subsurface、Anisotropy、Specular Tint、Sheen | `EditorScene.h`、`Object3d.PS.hlsl` |
+| Reflection | SSR、Cubemap、Planar、Object Mask、材質反射強度 | Reflection Manager / Shader |
+| Transparency | Weighted OIT、Refractive Surface、水面専用Pass | Transparency Shader、`EditorRenderManager.cpp` |
+| Temporal | Scene / Game履歴分離、Skinned Motion Vector、Reactive / Disocclusion | Temporal Manager / Shader |
+| PostProcess | Auto Exposure、色温度、Tint、Lift / Gamma / Gain | PostProcess Manager / Shader |
+| Water | GPU FFT、泡、吸収、屈折、浅瀬、Underwater / Caustics、共通浮力Sample | Ocean Manager / Water Shader |
+| C++ Script | 高水準`Input`、`GameObject`、`Rigidbody`、`SceneManager`、`RailFollower` | `EditorNativeScript.h` |
+| Script拡張 | `ExposeGameObject`、`ExposeScene`、`BindAction`、Action候補Export | Native Script / Script Manager |
+
+旧`LegacyRailShooterEnemy`、`LegacyRailShooterShip`、`LegacyRailShooterEnemyMotion`、`LegacyRailShooterStage`は新機能として説明しない。
+これらは旧Scene列を読み捨てず保持するための互換型で、現在のEngine Runtimeは専用ゲームルールを実行しない。
+
+## 67. 初期SceneとResource構成の調査
+
+### 67.1 初期Scene
+
+新規Sceneで自動配置されるGameObjectを実機で確認し、名前、Component、初期Transform、削除可能かを記録する。
+
+最低限、次を確認する。
+
+- Environment Light。
+- Main Camera。
+- Point Light。
+- 新規Scene保存前後でIDと参照が維持されるか。
+- `editorScene.scene`が起動に必要な場合、その探索Path、欠損時のError、Fallback動作。
+
+### 67.2 実行に必要なResource
+
+`resources`直下の全ファイルを「消してよい」「Editor既定」「評価課題」「使用者Asset」に分類する。
+
+| 分類 | 調査内容 |
+| --- | --- |
+| Editor既定 | `resources/editorDefault`のPrimitive Mesh、Fallback Texture、Icon。 |
+| 起動Scene | `editorScene.scene`または現在のDefault Scene Path。 |
+| 評価課題 | `resources/evaluationTaskResources`。Engine起動要件と混同しない。 |
+| Legacy Model | `resources/model/legacy`。参照が残るSceneだけで必要か確認する。 |
+| 使用者Asset | `Assets`または使用者が作ったResource Folder。 |
+
+削除可否はファイル名で判断せず、起動時の直接参照、Default Scene参照、Fallback参照、Build Copy対象を検索して決める。
+
+## 68. Game Build SettingsとStandalone実行
+
+### 68.1 EditorをBuildする手順
+
+1. `CG2.sln`をVisual Studioで開く。
+2. Platformを`x64`にする。
+3. Editor確認はDebugまたはReleaseを選び、`CG2`をStartup Projectにする。
+4. Solution Build後、`x64/Debug/CG2.exe`または`x64/Release/CG2.exe`が作られたことを確認する。
+5. 大量の`.obj`はCompilerの中間Objectであり、実行ファイルの代わりではない。Link成功と`.exe`の存在を別に確認する。
+
+### 68.2 ゲームを書き出す手順
+
+1. ゲームで使う各Sceneを`Assets`または`resources`へ`.scene`として保存する。
+2. 先にSolutionの`x64 / Release`をBuildし、`x64/Release/CG2.exe`を作る。
+3. Editorで`ファイル > ゲームをビルド...`を開く。
+4. `ゲーム名`へ出力EXE名を入力する。`.exe`がなければ自動で付くかを確認する。
+5. `出力先`を設定する。既定は`Builds/CG2Game`。
+6. Scene一覧のCheckboxで使用Sceneをすべて有効にする。
+7. 1つのSceneを`起動`Radio Buttonで選ぶ。
+8. `ゲームを書き出す`を押す。
+9. Consoleの`Build: ゲームを書き出しました`と出力Pathを確認する。
+10. 出力先のゲームEXEをEditor外から起動し、起動Scene、Scene遷移、Asset、Audio、Script DLLを確認する。
+
+### 68.3 書き出されるもの
+
+現行実装は次を出力先へCopyする。
+
+- `x64/Release/CG2.exe`をゲーム名へRenameしたEXE。
+- `x64/Release`直下の実行用DLL。
+- Projectの`Assets`全体。
+- Projectの`resources`全体。
+- `x64/Release/ThirdParty`。
+- Product名、出力先、起動Scene、Scene一覧を持つ`game.build`。
+
+`x64/Release`自体を出力先に指定してはいけない。起動SceneがScene一覧にない、Sceneファイルが存在しない、Release EXEがない場合は書き出しを失敗させる。
+
+### 68.4 StandaloneのScene遷移
+
+Scene遷移は次の2方式を別ページで説明する。
+
+- SceneButton: ScriptなしでGame View ButtonからPath遷移する。
+- C++ Script: `SceneManager::LoadScene(path)`または`SceneManager::LoadScene(buildIndex)`を使う。
+
+Build IndexはBuild SettingsのScene順と照合する。Path遷移でもStandaloneにCopyされていないSceneへは遷移できない。
+
+## 69. Spline EditorとRailMovement
+
+### 69.1 最小作成手順
+
+1. 移動対象GameObjectへ`レール移動`を追加する。
+2. `ウィンドウ > Spline Editor`を開く。
+3. 移動対象をHierarchyで選び、`新規Spline`を押す。
+4. `Spline Path`と4つの子制御点が作成され、Rail Path参照へ自動設定されることを確認する。
+5. PointをHierarchyまたはSpline Editorの一覧から選ぶ。
+6. Scene Gizmo、Inspector位置、Spline Editor CanvasのいずれかでPointを移動する。
+7. 上面編集は`上面 XZ`、高さ編集は`側面 ZY`を使う。
+8. 追加は`制御点を追加`、削除はPoint選択後`選択点を削除`を使う。2点以下にはしない。
+9. RailMovement Inspectorで速度、加減速、開始位置、向き、Loop、曲線方式を設定する。
+10. Play中は進行率Slider、停止 / 再開、順方向 / 逆方向で確認する。
+
+### 69.2 動作仕様
+
+- 制御点はRail Path直下の子をHierarchy順に使う。
+- 滑らかな曲線ONではCatmull-Rom Sampleを使う。
+- 移動は制御点番号ではなくPath全長に対する距離で進む。
+- PathまたはPointが編集された場合はSampleを再構築する。
+- `進行方向へ回転`は先読み位置からPitch / Yawを計算する。
+- Loop OFFかつ終端停止ONでは終端到達後に停止する。
+- 終端到達はC++の`ConsumeEndReached`で1回ずつ受け取る。
+
+### 69.3 責務の境界
+
+RailMovementは経路移動だけを行う。敵、攻撃、船、Camera、Wave、Boss、Goalのルールを持たせない。
+ゲーム側はC++ Script、WaveSpawner、TimelineEvent、ThresholdStateなどを必要な分だけ組み合わせる。
+
+## 70. Event Timeline、WaveSpawner、State Graph
+
+### 70.1 Event Timeline
+
+1. `ウィンドウ > Event Timeline`を開く。
+2. 表示軸を`経過秒`または`Rail進行率`から選ぶ。
+3. 経過秒では表示時間を設定する。
+4. `Eventを追加`でTimelineEventを持つGameObjectを作る。
+5. Markerを横へDragして発火秒または進行率を変更する。
+6. InspectorでSource、Action対象、Action名、一度だけを設定する。
+7. 水色MarkerがTimeline Event、橙色MarkerがRail条件のWave開始であることを説明する。
+
+TimelineはBGM、攻撃、Bossなどを直接実行しない。名前付きActionを通知し、実際の処理は受信側Script / Componentが決める。
+
+### 70.2 Waveを視覚的に作る
+
+1. 雛形にするGameObjectまたはPrefab Instanceを選ぶ。
+2. Event Timelineで`選択ObjectをWave雛形にする`を押す。
+3. 個数1～64、横列 / V字 / 円 / Grid、配置間隔を設定する。
+4. `Waveを作成`を押す。
+5. 作成されたWave親と複製された子をHierarchyで確認する。
+6. 子のComponent値やPrefabを必要に応じて個別編集する。
+7. WaveSpawnerの開始条件、間隔、Actionを設定する。
+
+この補助機能は初期配置を作るだけで、Formation移動や敵AIをEngineへ固定しない。
+
+### 70.3 State Graph
+
+1. `ウィンドウ > State Graph`を開く。
+2. ThresholdStateを持つObjectを選ぶ。未追加なら`選択ObjectへThreshold Stateを追加`を押す。
+3. SourceをHealth比率またはRail進行率から選ぶ。
+4. State 2 / 3境界を0～1で設定する。
+5. State 1 / 2 / 3 Action名を設定する。
+6. InspectorでSource ObjectとAction対象を設定する。
+7. Graph上の3 NodeとAction名を確認する。
+8. Playし、値が境界を越えた時だけActionが来ることをConsoleまたは受信Scriptで確認する。
+
+## 71. Script Actionの選択的拡張
+
+### 71.1 対象にするComponent
+
+Script Hookは全Componentへ機械的に追加しない。現在の自動候補UI対象は次である。
+
+| Component | Hookを置く理由 |
+| --- | --- |
+| WaveSpawner | 開始、各生成、完了という明確なライフサイクルがある。 |
+| TimelineEvent | 条件成立時に任意処理を呼ぶこと自体が責務である。 |
+| ThresholdState | 状態変更時の処理をゲーム側へ委譲する必要がある。 |
+
+Transform、Renderer、Collider、Healthなどへ、用途不明の開始 / 終了Hookを一律追加しない。
+
+### 71.2 登録から選択まで
+
+1. 新規C++ Scriptを作る。
+2. `EditorNativeScript`継承ClassのConstructorで`BindAction`する。
+3. DLLをBuildする。
+4. 受信GameObjectへScriptまたはMonoBehaviourを追加する。
+5. 通知Componentの`Action 対象`へ受信GameObjectを指定する。
+6. Action名を直接入力するか、`... 候補`Comboから選ぶ。
+7. Sceneを保存してPlayする。
+
+候補は対象GameObjectのDLLが公開する`EditorScript_GetActionCount`と`EditorScript_GetActionName`から取得する。旧DLLにExportがない場合は直接入力を残す。
+
+### 71.3 受信値と失敗診断
+
+| Event | `buttonValue` |
+| --- | --- |
+| Wave開始 | 1.0。 |
+| Wave各生成 | 生成GameObject ID。 |
+| Wave完了 | 子数。 |
+| Timeline | 発火設定値。 |
+| Threshold | State番号1～3。 |
+
+候補が出ない場合はAction対象、Script Component、DLL Path、DLL Build、Action Export、Action名の順で確認する。
+通知されない場合はGameObject / Component有効状態、Source参照、条件値、Play状態、Consoleの未登録Action Warningを追加で確認する。
+
+## 72. Ocean、Buoyancy、Underwater
+
+### 72.1 Oceanの作成
+
+1. `ゲームオブジェクト > 3D Object > Ocean`を選ぶ。
+2. Transform Yを基準水位にする。
+3. 最初はGrid 256または512、海面サイズ240程度で調整する。
+4. 主波の高さ、最大波高、波長、速度、Choppiness、方向を設定する。
+5. 副波方向を主波とずらし、副波と細波の強さを上げる。
+6. 風速、水深、方向分散、うねり、Seed、波頭の尖りを設定する。
+7. 泡、粗さ、反射、屈折、微細法線、吸収距離、屈折歪みを設定する。
+8. 浅瀬色と深海色を設定する。
+9. 最終品質で1024または2048を試し、FPSとGPU時間を記録する。
+
+### 72.2 Buoyancy
+
+1. 浮かせるObjectへRigidbodyを追加する。
+2. BoxCollider、AutoConvexCollision、MeshColliderのいずれかを追加する。MeshColliderを削除してAuto Convexへ置換する必要はない。
+3. Buoyancyを追加する。
+4. Ocean参照を設定するか自動検出を使う。
+5. 船体SizeとCenterを見た目へ合わせる。
+6. Playし、浮力、上下減衰、水抵抗、回転抵抗を順に調整する。
+
+描画波面と浮力は同じOcean Sampleを使うことを確認する。固定5点だけではなく、船体Sizeに応じた8～512点の分布をDebug表示またはログで確認する。
+
+### 72.3 Underwater / Caustics
+
+次を別々に確認する。
+
+- Cameraが水面より上では全画面水中処理が掛からない。
+- Cameraが波面を横切る時、境界が固定平面ではなく変位波面へ追従する。
+- 水深でFog / Absorptionが変わる。
+- Causticsが物体表面へ投影される。
+- Oceanが複数ある場合、対象水域の選択が正しい。
+- Scene ViewとGame ViewでCamera位置を混同しない。
+
+## 73. Terrain、Foliage、Particle
+
+### 73.1 Terrain
+
+1. Terrainを追加する。
+2. Height Mapを設定する。
+3. Size X / Height / Zを設定する。
+4. 最高LOD解像度16～256を設定する。
+5. Cameraを近・中・遠へ動かし、3段階LODと境界の継ぎ目を確認する。
+6. Shadowが一段低いLODでも形状破綻しないか確認する。
+7. TerrainColliderが必要なら別途追加し、見た目と判定高さを比較する。
+
+### 73.2 Foliage
+
+1. 草木Meshを持つObjectへFoliageを追加する。
+2. Density Map、配置範囲、密度、最大Instance、LOD距離を設定する。
+3. 風向き、揺れ幅、風速、空間周波数、時間倍率を設定する。
+4. Cameraを移動し、Density LOD、Frustum / Hi-Z Culling、Shadow LODを確認する。
+5. Alpha Cutout、両面、透過光、Motion Vectorを確認する。
+
+### 73.3 Particle
+
+Particleの説明はMain、Emission、Shape、Motion、Lifetime Appearance、Render Modelへ分ける。
+
+| 項目 | 現在の選択肢 |
+| --- | --- |
+| Motion | Linear、Orbit、Vortex、Wave、Attractor、Cloud、Explosion / Splash、Projectile Trail。 |
+| Collision | Depth、Physics SDF。 |
+| Render | Billboard、指定FBX / OBJ Mesh。 |
+| Asset | `.effect`、`.efk`、`.efkefc`。 |
+
+Depth Collisionは画面内の見えているDepthへ使い、画面外や裏面まで必要な物理ObjectにはPhysics SDFを使う。Collision OFF、Depth、SDFを同じSceneで比較し、反発、摩擦、薄いCollider、画面外挙動を記録する。
+
+## 74. Audioの現在機能と使用手順
+
+### 74.1 AudioSource
+
+1. AudioListenerをMain Cameraへ追加する。
+2. 音源GameObjectへAudioSourceを追加する。
+3. WAV Asset Pathを設定する。
+4. Volume、Pitch、Loop、Play On Awakeを設定する。
+5. BusをSFX、BGM、Ambience、UIから選ぶ。
+6. 同時発音数1～32と再発音間隔を設定する。
+7. 2D音はSpatial Blend 0、3D音は1へ近づける。
+8. Min / Max Distanceを設定する。
+9. Doppler、Spread、Cone Inner / Outer、Outer Volumeを設定する。
+10. Occlusion、Reverb Send、Early Reflectionを設定する。
+11. Play中にInspectorのPlay / Stopで確認する。
+
+### 74.2 実処理として確認する項目
+
+- Voice上限を超えた時に最も古い同一AudioSource Voiceを停止する。
+- 再発音間隔内の連打を抑止する。
+- Listenerとの距離で減衰する。
+- Listener右方向からPanを計算する。
+- Source前方向とListener方向からCone減衰する。
+- 相対速度からDoppler Pitchを計算する。
+- Collider RaycastでOcclusionを計算し、VolumeとLow Passへ反映する。
+- AudioLowPassFilter、AudioHighPassFilter、AudioReverbFilterの実接続範囲を確認する。
+- Reverb Zone内では最も強いZone量を使う。
+- Dry音をMasterへ残し、Reverb / Early ReflectionをSubmixへ並列送信する。
+
+Echo、Distortion、Chorusなど、Inspector表示があっても実際のEffect Chainへ未接続なら「設定のみ」と明記する。
+
+## 75. Material、Reflection、Transparency
+
+### 75.1 Advanced Material
+
+既存のBase Color、Normal、Metallic、Roughness、AO、Emission、Height、Opacityに加え、次を個別に調査する。
+
+- Clear Coat / Clear Coat Roughness。
+- Transmission。
+- Subsurface。
+- Anisotropy / Anisotropy Rotation。
+- Specular Tint。
+- Sheen / Sheen Tint。
+- Alpha Mode: Opaque、Mask、Transparent。
+- Double Sided。
+
+各値はInspector変更、Scene保存、Shader Constant、最終見た目を照合する。値が存在してもShaderで未使用なら設定のみとする。
+
+### 75.2 反射の確認順
+
+1. MaterialのMetallic、Roughness、IOR、Reflection Strengthを設定する。
+2. EnvironmentのReflection Contributionと環境画像を設定する。
+3. ReflectionProbeを追加し、Screen Space / Cubemap / Planarを1方式ずつ確認する。
+4. SSRは画面内だけ、Cubemapは環境、Planarは平面Scene Captureであることを分ける。
+5. Planarは反射面のWorld Plane、Mesh Center / Bounds、Scene / Game Cameraを確認する。
+6. 反射対象外Object Maskと反射面自身の二重描画を確認する。
+7. Reflection Strength 0、0.5、1、2で差が出ることを確認する。
+
+### 75.3 TransparencyとOIT
+
+- Alpha Mode Transparentの通常半透明はWeighted Blended OIT対象。
+- 水面と屈折Glassは専用Pathとして通常OITと分離する。
+- OITは通常半透明の描画順依存を減らすが、厳密な前後順や多層屈折を保証しない。
+- Mask材質はAlpha Cutout Shadowを確認する。
+- OIT合成前後の水面、Effect、SSR、PostProcess順序を記録する。
+
+## 76. Temporal、Skinned Motion Vector、PostProcess
+
+### 76.1 Temporal
+
+次をScene ViewとGame Viewで別々に確認する。
+
+- Previous View Projection。
+- Camera Velocity。
+- Object Motion Vector。
+- Skinned Meshの現在 / 前Frame Bone Matrix。
+- Reactive Mask。
+- Disocclusion Mask。
+- Velocity Dilate。
+- History ClampとTemporal Resolve。
+- Resize、Scene切替、Camera切替時のHistory Clear。
+
+Skinned Motion VectorはShaderがあるだけでは完成ではない。FBX Bone Weight / Index、Current / Previous Bone Palette、GBuffer出力まで接続されているかを確認する。
+
+### 76.2 PostProcess
+
+Auto Exposureは固定Exposureと同時に作用する順序を調査する。Minimum / Maximum、Adaptation Speed、Target Luminanceを暗所から明所、明所から暗所で測る。
+
+Color GradingはTemperature、Tint、Lift、Gamma、Gainを中立値へ戻せること、Scene保存で値が維持されること、Final Compositeへ渡ることを確認する。
+
+## 77. 性能と実機確認
+
+### 77.1 描画負荷テストScene
+
+`ウィンドウ > 描画負荷テスト Scene を作成`は、Ocean、Terrain、Foliage、OIT、Refraction、Skinned Mesh、Particle Collisionを同時配置する検証用Sceneを作る。
+
+1. 未保存変更を退避する。
+2. Menuから負荷Sceneを作成する。
+3. `Assets/Scenes/RenderStress.scene`が作成されたことを確認する。
+4. DebugとReleaseで同じCamera位置を使う。
+5. FPSだけでなくCPU Frame、GPU Frame、VRAM、Draw Call、Particle数を記録する。
+6. Ocean解像度、Foliage Instance数、Particle数、AA、SSRを1項目ずつ変える。
+
+### 77.2 最低限の組み合わせ試験
+
+| 試験 | 構成 |
+| --- | --- |
+| Ocean物理 | Ocean + 船体 + Rigidbody + Collider + Buoyancy。 |
+| Rail進行 | RailMovement + Spline + TimelineEvent + C++ Script。 |
+| Wave | WaveSpawner + 子3体 + Action受信Script。 |
+| HUD | Health + Text + Slider + UIValueBinding。 |
+| Scene遷移 | Title.scene + Stage.scene + SceneButton + Build Settings。 |
+| Audio | Listener + 3D AudioSource + Collider遮蔽 + Reverb Zone。 |
+| Transparency | Opaque + Mask + OIT Transparent + Glass + Ocean。 |
+| Temporal | Camera移動 + Object移動 + Skinned Animation + Particle。 |
+
+### 77.3 完了判定
+
+この追補範囲は次を満たすまで完了扱いにしない。
+
+- 63章のComponent一覧が現在の`kComponentAddEntries`と一致する。
+- 追加ComponentごとにInspector全項目、初期値、保存、Runtime、制限がある。
+- Spline Editor、Event Timeline、State Graphを画面操作で再現できる。
+- Game Build SettingsからStandalone EXEを出し、起動SceneとScene遷移を確認する。
+- 新規C++ Script DLLでAction候補が表示され、Wave / Timeline / Thresholdから受信できる。
+- Ocean描画とBuoyancyが同じ波面を参照することを確認する。
+- Reflection方式、OIT、水、UnderwaterのPass順を確認する。
+- Audioの3D方向、遮蔽、Doppler、Reverbを実際に聞いて確認する。
+- Debug / ReleaseのBuild成功だけでなく、Editor UIとStandaloneを手動確認する。
+- 実機未確認項目を「使用可能」と断定しない。

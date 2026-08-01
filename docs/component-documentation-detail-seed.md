@@ -86,6 +86,8 @@
 - Play 時: Light、Shadow、Reflection、PostProcess の影響を受ける。
 - C++ Script: `GetMaterialState`。
 - 注意: UV確認画像は描画用 Base Color Texture ではない。Texture Slot と UV確認画像を分けて説明する。
+- Advanced Material: Clear Coat、Clear Coat Roughness、Transmission、Subsurface、Anisotropy、Anisotropy Rotation、Specular Tint、Sheen、Sheen Tintも個別に説明する。
+- Alpha Mode: Opaque、Mask、Transparentを分ける。Transparentは通常半透明OIT、Transmissionが高い材質は屈折専用Pathとの関係も確認する。
 
 ### SkinnedMeshRenderer
 
@@ -93,7 +95,9 @@
 - 使う場面: キャラクター、腕、服などの変形モデル。
 - 必要条件: Skinned Mesh、Bone、Animation / Animator。
 - 主な設定: Mesh、Material、Root Bone、Bounds。
-- 注意: GPU Skinning、Bone Import、FBX Animation 対応範囲を確認する。
+- 現在のデータ: FBX Clusterから頂点ごとに最大4本のBone Index / WeightをImportし、Weightを正規化する。
+- 現在の描画: 現在Frameと前FrameのBone Matrix BufferをSkinned描画、GBuffer、Shadow、Motion Vectorへ渡す。
+- 注意: GPU Skinningの実装と、Animation WindowでBone Poseを直接編集する機能は別である。後者、Humanoid Retarget、Avatar、IKは未実装として分ける。
 
 ### SpriteRenderer
 
@@ -138,6 +142,44 @@
 - 必要条件: ParticleSystem。
 - 主な設定: Material、Render Mode、Sort、Trail。
 - 注意: ParticleSystem 本体と Renderer を分けて説明する。
+
+### Ocean
+
+- 目的: 外部モデルを用意せず、GPU FFT を使う広域海面を描画する。
+- 追加場所: `コンポーネントを追加 > 描画・レンダリング > Ocean`。または `ゲームオブジェクト > 3D Object > Ocean`。
+- 必要条件: Game View を確認する場合は有効な Camera が必要。反射と陰影を確認する場合は Environment と Light も用意する。
+- 最小手順:
+  1. `ゲームオブジェクト > 3D Object > Ocean` を選ぶ。
+  2. Ocean の Transform の Y を基準水位に合わせる。
+  3. `グリッド解像度`を 16～2048 の 2 の累乗から選ぶ。
+  4. `海面サイズ`、`波の高さ`、`最大波高`、`波長`を調整する。
+  5. `主波方向 XZ`と`副波方向 XZ`を異なる方向にする。
+  6. `風速`、`水深`、`方向分散`、`うねりの強さ`でスペクトルを調整する。
+  7. `泡の強さ`、`泡の閾値`、`粗さ`、`反射`、`屈折`を調整する。
+  8. `浅瀬色`と`深海色`を設定し、Scene View と Game View の両方で確認する。
+- 主な初期値: 解像度 2048、海面サイズ 240、波高 1.8、最大波高 4.5、波長 28、風速 14、水深 80、粗さ 0.12、反射 0.85。
+- 解像度: Inspector の `+` / `-` は 16、32、64、128、256、512、1024、2048 の順に切り替える。中間値を入力した場合は 2 の累乗へ正規化される。
+- Play 時: 描画用 FFT 変位を更新する。Buoyancy も同じ Ocean のサンプリング結果を参照する。
+- 描画: Fresnel 反射、屈折、吸収、浅瀬色、深海色、微細法線、波頭の泡を同じ水面データから合成する。
+- 性能: 解像度を上げるほど FFT と頂点処理の負荷が増える。まず 256 または 512 で調整し、最終確認時だけ 1024 / 2048 を試す。
+- 制限: Ocean は通常の MeshRenderer ではない。通常半透明 OIT、平面反射面、Terrain と同じ設定として扱わない。
+- 確認手順: Light を斜めから当て、近景の波頭、遠景の連続性、浅瀬色、反射、カメラが水面下へ移動した時の Underwater / Caustics を別々に確認する。
+
+### Foliage
+
+- 目的: Density Map と GPU Instancing で草木を大量配置し、距離に応じて描画密度を下げる。
+- 追加場所: `コンポーネントを追加 > 地形・タイルマップ > フォリッジ`。
+- 必要条件: 描画する FBX / OBJ を持つ MeshFilter / ModelRenderer。配置密度を制御する画像を使う場合は Density Map。
+- 最小手順:
+  1. 草や木のモデルを持つ GameObject を作る。
+  2. Foliage を追加する。
+  3. `Density Map`へ白黒画像を設定する。
+  4. `配置範囲`、`密度`、`最大Instance数`、`LOD距離`を設定する。
+  5. `風向き`、`揺れ幅`、`風速`、`空間周波数`、`時間倍率`を調整する。
+- 主な初期値: 配置範囲 60 x 1 x 60、密度 1、最大 4096 Instance、LOD距離 120、揺れ幅 0.18、風速 14。
+- Play / 描画時: Instance をまとめて描画し、距離で密度を落とし、頂点を風で変形する。
+- 制限: Terrain の Brush で草を塗る機能とは別。Density Map と配置範囲を使用する。
+- 確認手順: 近距離と遠距離で密度、影、風の揺れ、透過境界を確認し、最大Instance数を増やした時は FPS と VRAM も記録する。
 
 ## カメラ
 
@@ -186,6 +228,13 @@
 - 使う場面: 金属、鏡面、屋内外の反射。
 - 主な設定: Mode、Size、Center、Intensity、Resolution、Box Projection。
 - 注意: Bake / Realtime / Probe Blend / Cubemap Capture の対応状況を明記する。
+- 現在の方式: `スクリーンスペース反射`、`キューブマップ反射`、`平面反射`を選択する。
+- 現在の設定: `反射像の強さ` 0～4、`反射の粗さ` 0～1、`中心`、`サイズ`。
+- 使い分け:
+  - Screen Space は画面内の情報だけを反射するため、画面外や背面は欠ける。
+  - Cubemap は環境反射向けで、鏡のような現在 Scene の厳密な像ではない。
+  - Planar は平面向けで、反射面となる GameObject の位置・回転・Mesh Bounds を基準にする。
+- 平面反射の確認手順: 平らな Mesh に ModelRenderer と ReflectionProbe を置き、種類を`平面反射`にする。Transform を回転した場合も反射面が Mesh と一致するか、Scene View と Game View を個別に確認する。
 
 ### LightProbeGroup
 
@@ -214,6 +263,17 @@
 - 使う場面: Bloom、AA、ToneMapping、SSR、Glare、Filter。
 - 主な設定: Bloom、AA Mode、SMAA、Temporal、Exposure、Vignette、Grain、Chromatic Aberration。
 - 注意: 複数効果は追加式の折りたたみ項目として説明する。
+- 追加済み設定: Auto Exposure、Minimum / Maximum Exposure、Exposure Adaptation Speed、Target Luminance、Temperature、Tint、Lift、Gamma、Gain。
+- AA の使い分け: None、FXAA、SMAA、Temporal は排他選択。SMAA はしきい値と角丸め、Temporal はシャープネスと履歴ブレンドを調整する。
+- 最小手順:
+  1. 空の GameObject に PostProcess を追加する。
+  2. AA を 1 種類選ぶ。
+  3. Bloom / Glare を必要な方式だけ有効にする。
+  4. 明るさを固定する場合は自動露出を OFF にして`露出`を調整する。
+  5. 明暗差へ追従させる場合は自動露出を ON にし、下限、上限、追従速度、基準輝度を設定する。
+  6. Tone Mapping、White Point、Saturation、Contrast を調整する。
+  7. Temperature / Tint と Lift / Gamma / Gain は最後に微調整する。
+- 注意: Bloom の強さと最終合成側の Bloom 量を同時に上げると二重に強くなる。SSR は ReflectionProbe の方式や材質 Reflection と役割が異なる。
 
 ### Environment
 
@@ -261,6 +321,39 @@
 - 必要条件: MeshFilter、Collision Mesh。
 - 主な設定: Mesh、Convex、Center、Scale、Layer。
 - 注意: 動的 MeshCollider、BVH、Convex Hull、軽量化の対応状態を明記する。
+
+### AutoConvexCollision
+
+- 目的: FBX / OBJ の位置頂点だけを使い、Play 開始時に Jolt の Convex Hull Collider を自動生成する。
+- 追加場所: `コンポーネントを追加 > 3D物理 > Auto Convex Collision`。
+- 必要条件: 同じ GameObject に MeshFilter または ModelRenderer。Dynamic 物体として動かす場合は Rigidbody。
+- 最小手順:
+  1. FBX / OBJ を Scene へ配置する。
+  2. Auto Convex Collision を追加する。
+  3. 描画メッシュをそのまま使う場合は個別の Asset Path を空にする。
+  4. 別メッシュを判定に使う場合は Collider 側へ FBX / OBJ を設定する。
+  5. `中心`と`サイズ`を見た目に合わせる。
+  6. Play し、`入力頂点数`が 0 でないことと衝突を確認する。
+- Play 時: 頂点位置から `Jolt ConvexHullShape`を生成する。FBX のMaterial、Texture、AnimationなどはCollider生成に使わない。
+- MeshColliderとの違い: MeshCollider は三角形形状を保つ。Auto Convex は凹みや穴を凸包で埋めるが、Dynamic Rigidbody 向けに軽い判定を作りやすい。
+- 制限: 複数の凸パーツへ自動分解する機能ではなく、1つの凸包として扱う。凹形状を正確に判定する場合はMeshColliderを残して使い分ける。
+
+### Buoyancy
+
+- 目的: Ocean の波面に対して船体全体へ浮力セルを自動配置し、水没量に応じて Rigidbody へ浮力と抵抗を加える。
+- 追加場所: `コンポーネントを追加 > 物理 > Buoyancy`。
+- 必要条件: 同じ GameObject の Rigidbody と BoxCollider、AutoConvexCollision、または MeshCollider。Scene 内に有効な Ocean。
+- 最小手順:
+  1. 船体モデルへ Rigidbody と Collider を追加する。
+  2. Buoyancy を追加する。
+  3. `対象 Ocean`を設定する。未設定なら有効な Ocean の自動検出を使う。
+  4. `船体サイズ`を船全体に合わせ、`浮力中心`を重心に合わせる。
+  5. Play し、`浮力`で沈み込み量を調整する。
+  6. 上下の跳ねを`上下減衰`、横滑りを`水の抵抗`、不自然な回転を`回転抵抗`で抑える。
+- 主な初期値: 船体サイズ 3 x 1.2 x 6、浮力 18、上下減衰 5、水の抵抗 1.4、回転抵抗 1.8。
+- Play 時: 船体サイズに応じて 8～512 点へ分割する。固定5点や船底1点だけの判定ではない。
+- 注意: Transform を毎フレーム直接設定する移動Componentと併用すると物理姿勢を上書きする。レール移動と併用する場合は、どちらが位置を決めるかをゲーム側で分離する。
+- 確認手順: 平水面で静止、波ありで上下、片側だけ波に乗った時の傾斜、横速度を与えた時の抵抗を順番に確認する。
 
 ### TerrainCollider
 
@@ -354,14 +447,29 @@
 - 使う場面: BGM、SE、環境音。
 - 必要条件: WAV などの Audio Asset、AudioListener。
 - 主な設定: Clip、Volume、Pitch、Loop、Play On Awake、Spatial Blend、Min / Max Distance。
-- 注意: 対応形式、同時再生、3D減衰を確認する。
+- 追加設定: Bus、同時発音数、再発音間隔、Doppler、Spread、指向性Inner / Outer Angle、Outer Volume、Occlusion、Reverb Send、初期反射。
+- 初期値: Volume 1、Pitch 1、自動再生ON、Spatial Blend 1、Min 1、Max 50、Bus SFX、最大4 Voice、再発音間隔0.03秒、Doppler 1、Cone 360度、Occlusion 0.65。
+- 最小手順:
+  1. Main CameraへAudioListenerを追加する。
+  2. 音源GameObjectへAudioSourceを追加してWAVを指定する。
+  3. 2D音ならSpatial Blend 0、3D音なら1にする。
+  4. Min / Max Distanceを設定する。
+  5. 指向性が必要ならCone Inner / Outerを360未満へ下げ、Sourceの前方向を確認する。
+  6. 壁越しの減衰にはOcclusionを設定し、Colliderを置く。
+  7. Reverb Zoneを使う場合はReverb Sendと初期反射を設定する。
+  8. Play中の再生 / 停止Button、移動、壁、Zoneで聴き比べる。
+- Play 時: Voice上限、Retrigger抑止、距離減衰、Pan、Cone、Doppler、Collider Raycast遮蔽、Reverb Submix Sendを更新する。
+- 注意: Inspector上限はPitch 3でも、Voiceへ設定するFrequency Ratioは実装上0.01～2へClampされるため、UIと実音の差を制限として記載する。
 
 ### Audio Filter / Reverb Zone
 
 - 対象: AudioLowPassFilter、AudioHighPassFilter、AudioEchoFilter、AudioDistortionFilter、AudioReverbFilter、AudioChorusFilter、AudioReverbZone。
 - 目的: 音質や空間効果を変える。
 - 使う場面: 水中、洞窟、無線、残響、特殊演出。
-- 注意: Inspector 表示だけか、本当に XAudio2 へ反映されるか確認する。
+- 現在の実接続候補: Low Pass、High Pass、Reverb Filter、Reverb Zone。
+- Reverb: Dry音はMasterへ残し、Reverbと初期反射をSubmixへ並列送信する。
+- Zone: Listenerが複数Zone内にある場合、最も強いReverb量を使用する。
+- 注意: Echo、Distortion、Chorusを含め、Inspector表示だけかXAudio2 Effect Chainへ反映されるかComponentごとに確認する。未接続なら設定のみと書く。
 
 ## UI
 
@@ -381,6 +489,34 @@
 - 主な設定: OnClick、Value、Min、Max、Options、Text、Navigation。
 - C++ Script: `EditorScript_InvokeAction` または UI Event 関数名。
 - 注意: 実際に C++ 関数が呼ばれるか必ず確認する。
+
+### SceneButton
+
+- 目的: C++ Script を書かず、Game View 上のボタンから指定 `.scene`へ遷移する。
+- 追加場所: `コンポーネントを追加 > UI > Scene ボタン`。
+- 最小手順:
+  1. SceneButton を持つ GameObject を作る。
+  2. `表示文字`、`位置`、`サイズ`、通常・Hover・押下色を設定する。
+  3. Project で遷移先 `.scene`を選択する。
+  4. Inspector の`選択中 Scene を設定`を押す。
+  5. `ファイル > ゲームをビルド...`で遷移元と遷移先をビルド対象へ追加する。
+  6. Play し、Game View でボタンをクリックする。
+- 注意: `操作可能`がOFF、Scene Pathが空、ビルド対象外、Game Viewに入力Focusがない場合は遷移しない。
+
+### UIValueBinding
+
+- 目的: Health、RailFollower、Activeの値を、同じGameObjectのText / TextMeshProUGUIとSliderへ反映する。
+- 追加場所: `コンポーネントを追加 > UI > 値バインディング`。
+- 最小手順:
+  1. UI表示用GameObjectにTextまたはTextMeshProUGUIを追加する。
+  2. 必要なら同じGameObjectへSliderも追加する。
+  3. UIValueBindingを追加する。
+  4. `Source Object`へHealthまたはRailMovementを持つGameObjectを設定する。
+  5. `値`からHealth現在値、Health比率、RailFollower進行率、Activeを選ぶ。
+  6. Text用の`接頭文字`、`小数桁`、`表示倍率`を設定する。
+- 初期値: Health比率、小数0桁、表示倍率100。したがって既定では`0～100`の百分率表示になる。
+- Play 時: Textは`元値 x 表示倍率`を表示する。Sliderは表示倍率を使わず、元値をSliderのMin / MaxへClampして入れる。
+- 制限: 別GameObjectのTextやSliderを自動探索しない。表示先ComponentはUIValueBindingと同じGameObjectに置く。
 
 ### UI Layout
 
@@ -407,6 +543,23 @@
 - C++ Script: `GetActionVector2`、`IsActionPressed`、`WasActionJustPressed`、`EditorScript_InvokeAction`。
 - 注意: キー直書き版と Action 版を分けて説明する。
 
+### TimelineEvent
+
+- 目的: Play経過秒またはRailFollower進行率が境界を越えた時、対象C++ Scriptへ名前付きActionを送る。
+- 追加場所: `コンポーネントを追加 > 入力・イベント > Timeline Event`。`ウィンドウ > Event Timeline`から作成・配置編集もできる。
+- 設定: `時間 Source`、`発火秒`または`発火進行率`、`進行率 Source`、`Action 対象`、`Action 名`、`一度だけ`。
+- Play 時: 条件が false から true へ変わった瞬間に1回通知する。Actionの`buttonValue`には発火秒または発火進行率の設定値が入る。
+- 注意: 経過秒は一度境界を越えると通常はfalseへ戻らない。Railを巻き戻して境界より下へ戻した場合、`一度だけ`がOFFなら再度通過時に通知できる。
+
+### ThresholdState
+
+- 目的: Health比率またはRailFollower進行率を3区間へ分け、状態が変わった時だけ対象ScriptへActionを送る。
+- 追加場所: `コンポーネントを追加 > 入力・イベント > Threshold State`。`ウィンドウ > State Graph`から追加・編集もできる。
+- 設定: `値 Source`、`Source Object`、`Action 対象`、State 2 / 3境界、State 1 / 2 / 3 Action。
+- Play 時: Healthは値の低下方向、Railは値の上昇方向でState 1から3へ判定する。境界値の大小が逆でも内部で並べ替える。
+- Action値: State 1は1.0、State 2は2.0、State 3は3.0を`buttonValue`へ入れる。
+- 注意: Play開始後の最初の評価でも、初期Stateが確定した時に対応Actionが通知される。
+
 ## ゲームプレイ
 
 ### LocalMove
@@ -422,6 +575,63 @@
 - 必要条件: Rigidbody、SphereCollider または WheelCollider。
 - C++ Script: `AddTorque`。
 - 注意: 回転固定、摩擦不足、接地判定を説明する。
+
+### FreeTransform
+
+- 目的: Rigidbodyの力を使わず、指定軸だけを毎フレーム移動・回転する。
+- 追加場所: `コンポーネントを追加 > ゲームプレイ > 自由移動/回転`。
+- 設定: 移動入力、移動速度、回転入力(deg/s)、回転速度、移動X/Y/Z、回転X/Y/Z、ローカル空間。
+- 初期値: 移動速度5、回転速度90、全軸ON、ローカル空間ON。
+- 使う場面: 移動床、回転展示台、背景Object、物理を必要としない単純な自動運動。
+- 注意: Rigidbody、Animation、Constraint、RailMovementが同じTransformを書き換える構成は避ける。
+
+### RailMovement
+
+- 目的: Rail Pathの子GameObjectを制御点として、任意GameObjectを距離基準で移動する汎用RailFollower。
+- 追加場所: `コンポーネントを追加 > ゲームプレイ > レール移動`。編集は`ウィンドウ > Spline Editor`。
+- 作成手順:
+  1. 移動させるGameObjectへRailMovementを追加する。
+  2. `ウィンドウ > Spline Editor`を開く。
+  3. 対象を選択した状態で`新規Spline`を押す。
+  4. 作成された`Spline Path`の子`Point 00`以降をScene Gizmo、位置入力、上面XZ / 側面ZY Canvasで動かす。
+  5. 必要なら`制御点を追加`を押す。最低2点必要。
+  6. Inspectorで速度、加速度、減速度、開始位置、向きの先読みを設定する。
+  7. Loop、進行方向へ回転、滑らかな曲線、開始停止、逆方向、終端停止を設定する。
+  8. Play中はSpline Editorの進行率Slider、停止/再開、順方向/逆方向でPreviewする。
+- 初期値: 速度8、開始位置0、先読み1、Loop OFF、進行方向へ回転ON、滑らかな曲線ON、終端停止ON。
+- C++ Script: `RailFollower`で停止、再開、速度、逆方向、進行率Jump、Rail切替、位置・方向・長さ・終端通知を操作する。
+- 制限: RailMovementは移動だけを担当する。攻撃、敵判定、Wave、Camera、ゴールなどのゲームルールは持たない。
+
+### Health
+
+- 目的: 体力、耐久値、シールドなどに使う汎用の現在値と最大値を保持する。
+- 追加場所: `コンポーネントを追加 > ゲームプレイ > 体力`。
+- 初期値: 最大100、Play開始時の現在値100。
+- Inspector: 最大値を編集し、現在値は実行中表示として確認する。
+- 連携: ThresholdStateのHealth比率Source、UIValueBindingの現在値 / 比率Sourceとして使用する。
+- 制限: ダメージ種別、無敵時間、死亡、ドロップなどのゲーム固有ルールはHealth自身に含めない。
+
+### WaveSpawner
+
+- 目的: 直下の子GameObjectをHierarchy順に、開始条件と間隔に従って順次有効化する。
+- 追加場所: `コンポーネントを追加 > ゲームプレイ > Wave Spawner`。`ウィンドウ > Event Timeline`には選択Objectを複製してWaveを作る補助機能がある。
+- 作成手順:
+  1. 空の親GameObjectへWaveSpawnerを追加する。
+  2. 生成したいPrefab InstanceまたはGameObjectを直下の子にする。
+  3. Hierarchy上で子を希望する順番に並べる。
+  4. 開始条件をPlay開始またはRailFollower進行率から選ぶ。
+  5. Rail開始なら進行率Sourceと開始進行率を設定する。
+  6. 生成間隔と`開始時に子を待機`を設定する。
+  7. 必要な場合だけAction対象と開始・各生成・完了Actionを設定する。
+- 初期値: Play開始、生成間隔0、開始時に子を待機ON、Action名は`OnWaveStarted`、`OnWaveSpawned`、`OnWaveCompleted`。
+- Play 時: 間隔0なら条件成立Frameで全子を有効化する。各生成Actionの`buttonValue`は生成したGameObject ID、完了Actionは子数。
+- 制限: 子の移動、攻撃、HP、敵全滅判定は扱わない。各子のComponentまたはゲーム側Scriptで構成する。
+
+### 旧RailShooter互換型
+
+- `LegacyRailShooterEnemy`、`LegacyRailShooterShip`、`LegacyRailShooterEnemyMotion`、`LegacyRailShooterStage`は旧Sceneを読み込むための互換スロットである。
+- Add Componentの通常機能として使用手順を作らない。
+- Engine Runtimeはこれらのゲームルールを実行しない。新規SceneではRailMovement、WaveSpawner、TimelineEvent、ThresholdState、Health、UIValueBinding、C++ Scriptを必要な組み合わせで使う。
 
 ## ナビゲーション
 
@@ -465,6 +675,11 @@
 - 必要条件: ParticleSystemRenderer、Material。
 - 主な設定: Emission、Shape、Lifetime、Speed、Size、Color、Noise、Collision、Renderer。
 - 注意: VisualEffect が設定のみなら明記する。
+- 現在の運動方式: 直線、軌道、渦、波、吸引、雲、爆発 / 水しぶき、Projectile Trail。
+- 現在の衝突方式: Depthは画面内エフェクト向け。Physics SDFは物理Objectとの判定向け。Depthは画面外、裏側、薄い形状を正確には判定できない。
+- 描画形状: FBX / OBJをParticle 1個の形として指定できる。未設定時はCamera向きの板ポリゴンをGPU Instancingする。
+- Play操作: Inspectorから`エフェクトを再生`、`新規発生を停止`、現在の生存数確認ができる。
+- Effect Asset: `.effect`は共有設定を読み込み、`.efk` / `.efkefc`はEffekseer 1.70e DX12 Runtimeで再生する。
 
 ### LensFlare / Projector / DecalProjector
 
@@ -480,6 +695,14 @@
 - 目的: 地形、タイル、グリッドベースのマップを作る。
 - 使う場面: フィールド、2D Map、Tile Stage。
 - 注意: Brush 編集、HeightMap、Tile Palette の対応範囲を明記する。
+
+### Terrain
+
+- 目的: Height Mapから地形を生成し、近距離・中距離・遠距離の3段階LODで描画する。
+- 追加場所: `コンポーネントを追加 > 地形・タイルマップ > テレイン`。
+- 手順: Height Mapを設定し、`サイズ X / 高さ / Z`と`最高LOD解像度`16～256を設定する。
+- 描画: Shadowは通常描画より一段低いLODを使う。
+- 制限: Brush編集やTerrain Layer塗装が実装されていると推測しない。現在のInspectorにあるHeight Map、サイズ、LODを基準に説明する。
 
 ## FeelKit
 

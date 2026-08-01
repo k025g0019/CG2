@@ -22,6 +22,11 @@ C++ スクリプトは、GameObject に付けた DLL を Play 中に読み込み
 - Animation の状態を読む。
 - UI や Input Action から任意関数を呼ぶ。
 - Inspector に C++ 側の公開変数を表示する。
+- Scene を Path または Build Index で切り替える。
+- GameObject を検索し、有効状態を切り替える。
+- RailFollower を停止、再開、移動、切り替えする。
+- Animation Parameter、Animation Action、Effect を操作する。
+- Wave、Timeline、Threshold などの汎用Componentから名前付きActionを受け取る。
 
 ## 必要な構成
 
@@ -49,8 +54,11 @@ C++ スクリプトを使うには、最低限次が必要である。
 | `EditorScript_Update` | 毎フレーム。 | 入力、Transform 操作、通常更新。 |
 | `EditorScript_FixedUpdate` | 固定時間更新。 | 物理 Force、Impulse、Torque。 |
 | `EditorScript_OnPhysicsEvent` | Collision / Trigger 発生時。 | 当たり判定イベント処理。 |
+| `EditorScript_OnAnimationEvent` | Animation ClipのEvent時刻通過時。 | Event名、文字列、数値を受けて演出や処理を起動。 |
 | `EditorScript_Stop` | Play 停止または Script 停止時。 | GameObject ごとの状態削除。 |
 | `EditorScript_InvokeAction` | UI / Input Action Event から呼ばれた時。 | 関数名による任意処理の実行。 |
+| `EditorScript_GetActionCount` | InspectorがDLLのAction候補を取得する時。 | `BindAction`済み名称数を返す。 |
+| `EditorScript_GetActionName` | Inspectorが候補名を列挙する時。 | Indexに対応するAction名を返す。 |
 
 ## Inspector 公開変数用関数
 
@@ -73,6 +81,21 @@ C++ スクリプトを使うには、最低限次が必要である。
 | Vector2 | `EditorScriptFieldTypeVector2` | 2D方向、画面座標。 |
 | Vector3 | `EditorScriptFieldTypeVector3` | 位置、方向、速度。 |
 | String | `EditorScriptFieldTypeString` | 名前、Path、Command。 |
+| GameObject | `EditorScriptFieldTypeGameObject` | Inspector で Scene 内 GameObject を参照する。 |
+| Scene Asset | `EditorScriptFieldTypeSceneAsset` | Inspector で `.scene`を参照する。 |
+
+高水準基底クラス`EditorNativeScript`では、次の関数で登録する。
+
+| 関数 | Inspector表示 |
+| --- | --- |
+| `ExposeBool` | Checkbox。 |
+| `ExposeInt32` | 整数入力。範囲とStepを指定できる。 |
+| `ExposeFloat` | Float入力。範囲とStepを指定できる。 |
+| `ExposeVector2` | 2成分入力。 |
+| `ExposeVector3` | 3成分入力。 |
+| `ExposeString` | 文字列入力。 |
+| `ExposeGameObject` | Scene内GameObject候補。IDまたは`GameObject`へ保持する。 |
+| `ExposeScene` | Project内`.scene`候補。Pathを`std::string`へ保持する。 |
 
 ## Runtime API 関数一覧
 
@@ -270,6 +293,255 @@ EditorScriptAnimationState animation = runtimeApi->GetAnimationState(gameObjectI
 
 - 用途: Animation / Animator の状態を読む。
 - 読める例: 再生中、Loop、Speed、現在 Clip 名、現在時間。
+
+## 追加済み Runtime API
+
+この章は、旧下書きに載っていなかった現行`EditorScriptRuntimeApi`を省略せず扱う。
+
+### Animator Parameter
+
+| API | 用途 | 戻り値 |
+| --- | --- | --- |
+| `SetAnimatorFloat` | Float Parameterを設定する。 | 対象とParameterが有効ならtrue。 |
+| `SetAnimatorInt` | Int Parameterを設定する。 | 同上。 |
+| `SetAnimatorBool` | Bool Parameterを設定する。 | 同上。 |
+| `SetAnimatorTrigger` | Triggerを立てる。 | 同上。 |
+| `ResetAnimatorTrigger` | Triggerを解除する。 | 同上。 |
+| `SetAnimatorVector2` | Vector2 Parameterを設定する。 | 同上。 |
+| `SetAnimatorVector3` | Vector3 Parameterを設定する。 | 同上。 |
+| `GetAnimatorFloat` | Float Parameterを取得する。 | 出力へ書けた場合true。 |
+| `GetAnimatorInt` | Int Parameterを取得する。 | 同上。 |
+| `GetAnimatorBool` | Bool Parameterを取得する。 | 同上。 |
+| `GetAnimatorVector2` | Vector2 Parameterを取得する。 | 同上。 |
+| `GetAnimatorVector3` | Vector3 Parameterを取得する。 | 同上。 |
+
+Parameter名はAnimation Graph内の名前と完全一致させる。取得APIは戻り値を確認してから出力値を使う。
+
+### Animation 再生
+
+| API | 用途 |
+| --- | --- |
+| `PlayAnimationAction` | Clip Index、Blend In / Out、速度、優先度、Loopを指定してAction再生する。 |
+| `PlayAnimation` | Animation Componentの再生を開始する。 |
+| `StopAnimation` | 再生を停止する。 |
+| `IsAnimationPlaying` | 現在再生中か調べる。 |
+| `GetAnimationTime` | 現在時間を秒で取得する。 |
+| `SetAnimationTime` | 再生位置を秒で変更する。 |
+| `SetAnimationSpeed` | 再生速度倍率を変更する。 |
+| `GetAnimatorStateName` | 現在State名を呼出側Bufferへ取得する。 |
+
+`GetAnimatorStateName`はBufferと容量を渡し、falseの場合は文字列を使用しない。
+
+### Effect
+
+| API | 用途 |
+| --- | --- |
+| `PlayEffect` | 対象GameObjectのParticleSystem / VisualEffectを再生する。 |
+| `PlayEffectAt` | Effect Asset PathとLocal Offsetを指定して再生する。 |
+| `StopEffect` | 新規発生を停止する。 |
+| `GetAliveParticleCount` | 現在生存しているParticle数を取得する。 |
+| `IsEffectPlaying` | Effectが再生状態か調べる。 |
+
+Effectは毎Frame作り直さず、Emitterを再利用する。弾着、水しぶき、爆発を大量に出す場合はGameObjectまたはゲーム側Poolと組み合わせる。
+
+### GameObject
+
+低水準API:
+
+| API | 用途 |
+| --- | --- |
+| `FindGameObjectByName` | 名前からGameObject IDを取得する。見つからない場合は負値。 |
+| `SetGameObjectActive` | GameObjectの有効状態を変更する。 |
+| `IsGameObjectActive` | 現在の有効状態を取得する。 |
+
+高水準API:
+
+```cpp
+GameObject target = GameObject::Find("Target");
+
+if (target.HasReference()) {
+	target.SetActive(true);
+	EditorScriptTransform transform = target.GetTransform();
+	transform.position.y += 1.0f;
+	target.SetTransform(transform);
+}
+```
+
+頻繁に使う参照は毎Frame名前検索せず、`ExposeGameObject`でInspectorから設定して保持する。名前検索は初期化や任意候補探索に限定する。
+
+### SceneManager
+
+低水準APIは`LoadScene`と`LoadSceneByBuildIndex`、高水準APIは`SceneManager::LoadScene`である。
+
+```cpp
+std::string nextScenePath_;
+
+MyScript::MyScript() {
+	ExposeScene("nextScenePath", "次のScene", nextScenePath_);
+}
+
+void MyScript::Update(int32_t gameObjectId, float deltaTime) {
+	(void)gameObjectId;
+	(void)deltaTime;
+
+	if (!nextScenePath_.empty() && Input::GetKeyDown(KeyCode::Space)) {
+		SceneManager::LoadScene(nextScenePath_);
+	}
+}
+```
+
+Path遷移では`.scene`が存在すること、Standalone BuildではそのSceneがBuild Settingsに含まれることを確認する。Build Indexは`ゲームをビルド...`のScene一覧順を使う。
+
+### RailFollower
+
+| 高水準API | 低水準Runtime API | 用途 |
+| --- | --- | --- |
+| `Pause` / `Resume` | `SetRailPaused` | 移動を停止 / 再開する。 |
+| `SetPaused` | `SetRailPaused` | boolで停止状態を指定する。 |
+| `IsPaused` | `IsRailPaused` | 停止状態を取得する。 |
+| `SetSpeed` | `SetRailSpeed` | RailMovementの目標速度を変更する。 |
+| `SetReverse` | `SetRailReverse` | 逆方向フラグを変更する。 |
+| `JumpTo` | `SetRailNormalizedProgress` | 0～1の正規化進行率へ移動する。 |
+| `SwitchRail` | `SetRailPath` | 別Rail Pathへ切り替える。進行率を維持するか指定できる。 |
+| `GetNormalizedProgress` | `GetRailNormalizedProgress` | 現在進行率を取得する。 |
+| `GetLength` | `GetRailLength` | Rail全長を取得する。 |
+| `GetPosition` | `GetRailPosition` | 任意進行率のWorld位置を取得する。 |
+| `GetDirection` | `GetRailDirection` | 任意進行率の進行方向を取得する。 |
+| `ConsumeEndReached` | `ConsumeRailEndReached` | 終端到達通知を1回消費する。 |
+
+```cpp
+GameObject followerObject_;
+
+MyScript::MyScript() {
+	ExposeGameObject("follower", "Rail移動対象", followerObject_);
+}
+
+void MyScript::Update(int32_t gameObjectId, float deltaTime) {
+	(void)gameObjectId;
+	(void)deltaTime;
+
+	if (followerObject_.HasReference() && Input::GetKeyDown(KeyCode::Space)) {
+		RailFollower railFollower{followerObject_};
+		railFollower.SetPaused(!railFollower.IsPaused());
+	}
+}
+```
+
+`RailFollower`はGameObject IDを参照する軽量Wrapperなので、値として作る。生ポインターや手動`new`は不要である。
+
+### Rigidbody 高水準API
+
+`Rigidbody` Wrapperは`GetVelocity`、`SetVelocity`、`AddForce`、`AddImpulse`、`AddTorque`を提供する。
+
+```cpp
+Rigidbody rigidbody{gameObjectId};
+rigidbody.AddImpulse(EditorScriptVector3{0.0f, 5.0f, 0.0f});
+```
+
+## Script Action 登録と汎用Component連携
+
+### 設計方針
+
+Script Actionは、挙動の差し替えやライフサイクル通知が必要なComponentだけへ接続する。Transform、Renderer、Colliderのような基礎データComponentすべてへ意味のないHookを追加しない。
+
+- Presetは共通設定値を再利用するもの。
+- Componentは開始条件、値の監視、子の有効化など汎用責務を持つ。
+- Script Actionはゲーム固有処理を受け取る任意の拡張点。
+- `OnBossAppear`のようなゲーム固有名をEngine Managerへ固定しない。
+
+### Actionを登録する
+
+新規生成したC++ Scriptは`EditorNativeScript`を継承する。Constructorで`BindAction`する。
+
+```cpp
+class StageEventReceiver final : public EditorNativeScript {
+public:
+	StageEventReceiver();
+
+private:
+	void OnWaveStarted(const EditorScriptInputActionContext& inputContext);
+	void OnWaveSpawned(const EditorScriptInputActionContext& inputContext);
+	void OnWaveCompleted(const EditorScriptInputActionContext& inputContext);
+};
+
+StageEventReceiver::StageEventReceiver() {
+	BindAction("OnWaveStarted", [this](const EditorScriptInputActionContext& inputContext) {
+		OnWaveStarted(inputContext);
+	});
+	BindAction("OnWaveSpawned", [this](const EditorScriptInputActionContext& inputContext) {
+		OnWaveSpawned(inputContext);
+	});
+	BindAction("OnWaveCompleted", [this](const EditorScriptInputActionContext& inputContext) {
+		OnWaveCompleted(inputContext);
+	});
+}
+```
+
+同じ名前を再登録した場合は関数を置き換え、Inspector候補名は重複させない。
+
+### EditorへAction候補を公開する
+
+新しいScript Templateは次のDLL Exportを自動生成する。
+
+| Export | 用途 |
+| --- | --- |
+| `EditorScript_GetActionCount` | 登録済みAction数を返す。 |
+| `EditorScript_GetActionName` | Indexに対応するAction名を返す。 |
+
+使用者がExport本体を手書きする必要はない。古いTemplateから作成したDLLにはこのExportがない場合がある。その場合もAction名の直接入力は使えるが、Inspectorの候補Comboは表示されない。候補が必要なら新Templateと同じExportを追加してDLLを再Buildする。
+
+### Inspectorで接続する
+
+1. ProjectでC++ Script Assetを作成する。
+2. Header / Sourceで`BindAction`を追加する。
+3. Editorと同じx64構成でDLLをBuildする。
+4. Actionを受け取るGameObjectへ`Script`または`MonoBehaviour`を追加し、DLL Pathを設定する。
+5. WaveSpawner、TimelineEvent、ThresholdStateの`Action 対象`へそのGameObjectを設定する。
+6. Action名を直接入力するか、表示された`... 候補`から選ぶ。
+7. Sceneを保存してPlayする。
+8. Consoleに未登録Action Warningがないか確認する。
+
+候補一覧はAction対象GameObjectに付いたScript / MonoBehaviour DLLから収集する。Action対象が`このObject`なら、通知ComponentとScriptを同じGameObjectへ置く。
+
+### 受信値
+
+| 送信元 | Action | `buttonValue` |
+| --- | --- | --- |
+| WaveSpawner | 開始 | 1.0 |
+| WaveSpawner | 各生成 | 有効化したGameObject IDをfloatへ変換した値。 |
+| WaveSpawner | 完了 | 直下の子GameObject数。 |
+| TimelineEvent | 発火 | 発火秒または発火進行率の設定値。 |
+| ThresholdState | State変更 | State 1 / 2 / 3に対応する1.0 / 2.0 / 3.0。 |
+
+受信側は`inputContext.phase == EditorScriptInputPhasePerformed`を確認する。
+
+```cpp
+void StageEventReceiver::OnWaveSpawned(
+	const EditorScriptInputActionContext& inputContext) {
+	if (inputContext.phase != EditorScriptInputPhasePerformed ||
+		inputContext.valueType != EditorScriptInputValueTypeButton) {
+		return;
+	}
+
+	const int32_t spawnedGameObjectId =
+		static_cast<int32_t>(inputContext.buttonValue);
+	GameObject spawnedObject{spawnedGameObjectId};
+
+	if (spawnedObject.HasReference()) {
+		spawnedObject.SetActive(true);
+	}
+}
+```
+
+### Action候補が出ない時
+
+1. `Action 対象`が正しいGameObjectか確認する。
+2. 対象に有効なScript / MonoBehaviourがあるか確認する。
+3. DLL PathがBuild出力先と一致するか確認する。
+4. DLLを再Buildする。
+5. 古いDLLで`EditorScript_GetActionCount` / `EditorScript_GetActionName`がない場合は直接入力するかExportを追加する。
+6. Action名の大文字小文字と空白を確認する。
+7. ConsoleのDLL Load、API Version、未登録Actionを確認する。
 
 ## 基本テンプレート
 

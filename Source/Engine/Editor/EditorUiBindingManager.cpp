@@ -112,5 +112,18 @@ bool EditorUiBindingManager::ReadValue(
 		return true;
 	}
 
+	if (component.uiBindingValueType == 4) {
+		const EditorComponent* counterComponent = EditorComponentUtility::FindComponent(
+			*sourceGameObject,
+			EditorComponentType::GenericCounter);
+
+		if (counterComponent == nullptr || !counterComponent->isActive) {
+			return false;
+		}
+
+		value = counterComponent->counterCurrentValue;
+		return true;
+	}
+
 	return false;
 }

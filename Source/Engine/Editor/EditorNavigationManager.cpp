@@ -11,6 +11,23 @@ namespace {
 	constexpr float kNavigationMinimumDistance = 0.0001f;  // 0 除算を避けるための最小距離。
 	constexpr float kNavigationFallbackSurfaceHalfSize = 50.0f;  // Surface 未配置時に使う仮平面の半径。
 
+	const EditorComponent* FindNavigationSurfaceComponent(const EditorGameObject& gameObject) {
+		const EditorComponentType surfaceTypes[] = {
+			EditorComponentType::NavMeshSurface,
+			EditorComponentType::AIRecastNavMeshBuilder,
+			EditorComponentType::AIMicroPatherGrid};
+
+		for (EditorComponentType surfaceType : surfaceTypes) {
+			const EditorComponent* surface = EditorComponentUtility::FindComponent(gameObject, surfaceType);
+
+			if (surface != nullptr && surface->isActive) {
+				return surface;
+			}
+		}
+
+		return nullptr;
+	}
+
 	float AbsFloat(float value) {
 		return std::fabs(value);
 	}
@@ -305,7 +322,7 @@ namespace {
 	bool TryBuildImplicitMeshObstacle(
 		const EditorGameObject& gameObject,
 		EditorNavigationManager::NavigationObstacle& navigationObstacle) {
-		const EditorComponent* surface = EditorComponentUtility::FindComponent(gameObject, EditorComponentType::NavMeshSurface);
+		const EditorComponent* surface = FindNavigationSurfaceComponent(gameObject);
 		if (surface != nullptr && surface->isActive) {
 			return false;
 		}
@@ -326,6 +343,7 @@ void EditorNavigationManager::Start() {
 	agentDestinations_.clear();
 	isStarted_ = true;
 	BuildNavigationData(true);
+	navigationRebuildRemainingSeconds_ = 0.25f;
 }
 
 void EditorNavigationManager::Update(float deltaTime) {
@@ -333,7 +351,12 @@ void EditorNavigationManager::Update(float deltaTime) {
 		return;
 	}
 
-	BuildNavigationData(false);
+	navigationRebuildRemainingSeconds_ -= deltaTime;
+
+	if (navigationRebuildRemainingSeconds_ <= 0.0f) {
+		BuildNavigationData(false);
+		navigationRebuildRemainingSeconds_ += 0.25f;
+	}
 
 	for (EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
 		if (!gameObject.isActive) {
@@ -360,6 +383,7 @@ void EditorNavigationManager::Stop() {
 	links_.clear();
 	agentVelocities_.clear();
 	agentDestinations_.clear();
+	navigationRebuildRemainingSeconds_ = 0.0f;
 	isStarted_ = false;
 }
 
@@ -386,7 +410,7 @@ void EditorNavigationManager::BuildNavigationData(bool shouldLog) {
 		const int32_t surfaceArea =
 			modifier != nullptr && modifier->isActive && modifier->navAreaOverride ? modifier->navArea : 0;
 
-		const EditorComponent* surface = EditorComponentUtility::FindComponent(gameObject, EditorComponentType::NavMeshSurface);
+		const EditorComponent* surface = FindNavigationSurfaceComponent(gameObject);
 		if (surface != nullptr && surface->isActive && !shouldIgnoreSurface) {
 			const Vector3 center = {
 				gameObject.translate.x + surface->colliderCenter.x * gameObject.scale.x,

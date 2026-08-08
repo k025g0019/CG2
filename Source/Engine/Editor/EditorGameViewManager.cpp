@@ -4,11 +4,16 @@
 
 #include "EditorComponentUtility.h"
 #include "EditorSharedState.h"
+#include "Vector&Matrix.h"
 #include "ThirdParty/imgui-docking/imgui-docking/imgui_internal.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <sstream>
+#include <string>
+#include <vector>
 
 using namespace EditorSharedState;
 
@@ -28,23 +33,21 @@ namespace {
 	}
 
 	Transforms ResolveWorldTransform(const EditorGameObject& gameObject) {
-		Transforms worldTransform{
-			gameObject.scale,
-			gameObject.rotate,
-			gameObject.translate};
-
-		const EditorGameObject* currentParent = g_editorScene.FindGameObject(gameObject.parentId);
-		while (currentParent != nullptr) {
-			worldTransform.translate = AddVector3(currentParent->translate, worldTransform.translate);
-			worldTransform.rotate = AddVector3(currentParent->rotate, worldTransform.rotate);
-			worldTransform.scale = {
-				worldTransform.scale.x * currentParent->scale.x,
-				worldTransform.scale.y * currentParent->scale.y,
-				worldTransform.scale.z * currentParent->scale.z};
-			currentParent = g_editorScene.FindGameObject(currentParent->parentId);
-		}
-
+		Transforms worldTransform{gameObject.scale, gameObject.rotate, gameObject.translate};
+		g_editorScene.GetWorldTransform(
+			gameObject.id,
+			worldTransform.scale,
+			worldTransform.rotate,
+			worldTransform.translate);
 		return worldTransform;
+	}
+
+	Vector3 RotateVectorByEuler(const Vector3& value, const Vector3& rotation) {
+		const Matrix4x4 rotationMatrix = MakeAffineMatrix(
+			{1.0f, 1.0f, 1.0f},
+			rotation,
+			{0.0f, 0.0f, 0.0f});
+		return Transform(value, rotationMatrix);
 	}
 
 	const EditorComponent* FindRuntimeCameraComponent(const EditorGameObject& gameObject) {
@@ -85,28 +88,84 @@ namespace {
 		}
 
 		const Transforms targetWorldTransform = ResolveWorldTransform(*targetGameObject);
+		const int32_t positionSpace = (std::clamp)(cameraComponent.cameraFollowPositionSpace, 0, 1);
+
+		if (positionSpace == 1) {
+			followOffset = RotateVectorByEuler(followOffset, targetWorldTransform.rotate);
+		}
+
 		gameCameraTransform.translate = AddVector3(targetWorldTransform.translate, followOffset);
+		const int32_t rotationMode = (std::clamp)(cameraComponent.cameraFollowRotationMode, 0, 2);
+
+		if (rotationMode == 1) {
+			gameCameraTransform.rotate = AddVector3(
+				targetWorldTransform.rotate,
+				cameraGameObject.rotate);
+		}
+		else if (rotationMode == 2) {
+			const Vector3 lookDirection = Subtract(
+				targetWorldTransform.translate,
+				gameCameraTransform.translate);
+			const float lookDistance = Length(lookDirection);
+
+			if (lookDistance > 0.0001f) {
+				const Vector3 normalizedDirection = Multiply(1.0f / lookDistance, lookDirection);
+				gameCameraTransform.rotate = {
+					-std::asin((std::clamp)(normalizedDirection.y, -1.0f, 1.0f)) + cameraGameObject.rotate.x,
+					std::atan2(normalizedDirection.x, normalizedDirection.z) + cameraGameObject.rotate.y,
+					cameraGameObject.rotate.z};
+			}
+		}
+
 		return gameCameraTransform;
 	}
 
 	Transforms GetGameCameraTransform() {
 		g_isGameViewUsingSceneCamera = true;  // Camera Component が見つからない場合は Scene カメラを使う。
+		Transforms gameCameraTransform{};
 
-		for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
-			if (!gameObject.isActive) {
-				continue;
-			}
-
-			const EditorComponent* cameraComponent = FindRuntimeCameraComponent(gameObject);
-			if (cameraComponent == nullptr) {
-				continue;
-			}
-
+		if (g_runtimeGameCameraOverrideActive) {
+			gameCameraTransform = g_runtimeGameCameraOverrideTransform;
 			g_isGameViewUsingSceneCamera = false;
-			return BuildFollowCameraTransform(gameObject, *cameraComponent);
+		}
+		else {
+			const EditorGameObject* selectedCameraGameObject = nullptr;
+			const EditorComponent* selectedCameraComponent = nullptr;
+			int32_t selectedPriority = INT32_MIN;
+
+			for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
+				if (!gameObject.isActive) {
+					continue;
+				}
+
+				const EditorComponent* cameraComponent = FindRuntimeCameraComponent(gameObject);
+				if (cameraComponent == nullptr || cameraComponent->cameraPriority <= selectedPriority) {
+					continue;
+				}
+
+				selectedCameraGameObject = &gameObject;
+				selectedCameraComponent = cameraComponent;
+				selectedPriority = cameraComponent->cameraPriority;
+			}
+
+			if (selectedCameraGameObject != nullptr && selectedCameraComponent != nullptr) {
+				g_isGameViewUsingSceneCamera = false;
+				gameCameraTransform = BuildFollowCameraTransform(
+					*selectedCameraGameObject,
+					*selectedCameraComponent);
+			}
+			else {
+				gameCameraTransform = g_cameraTransform;
+			}
 		}
 
-		return g_cameraTransform;
+		gameCameraTransform.translate = AddVector3(
+			gameCameraTransform.translate,
+			g_runtimeGameCameraPositionOffset);
+		gameCameraTransform.rotate = AddVector3(
+			gameCameraTransform.rotate,
+			g_runtimeGameCameraRotationOffset);
+		return gameCameraTransform;
 	}
 
 	void UpdateGameCameraMatrices() {
@@ -124,20 +183,27 @@ namespace {
 		float farZ = 1000.0f;
 		int32_t projectionMode = 0;
 
-		// Camera Component を検索して投影パラメータを上書き
+		// Camera Component をPriority順で検索して投影パラメータを上書き
+		const EditorComponent* selectedProjectionCamera = nullptr;
+		int32_t selectedProjectionPriority = INT32_MIN;
 		for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
 			if (!gameObject.isActive) {
 				continue;
 			}
 			const EditorComponent* cameraComponent = FindRuntimeCameraComponent(gameObject);
-			if (cameraComponent == nullptr) {
+			if (cameraComponent == nullptr || cameraComponent->cameraPriority <= selectedProjectionPriority) {
 				continue;
 			}
-			fovY = cameraComponent->cameraFieldOfView * (std::numbers::pi_v<float> / 180.0f);
-			nearZ = cameraComponent->cameraNearClip;
-			farZ = cameraComponent->cameraFarClip;
-			projectionMode = cameraComponent->cameraProjectionMode;
-			break;
+
+			selectedProjectionCamera = cameraComponent;
+			selectedProjectionPriority = cameraComponent->cameraPriority;
+		}
+
+		if (selectedProjectionCamera != nullptr) {
+			fovY = selectedProjectionCamera->cameraFieldOfView * (std::numbers::pi_v<float> / 180.0f);
+			nearZ = selectedProjectionCamera->cameraNearClip;
+			farZ = selectedProjectionCamera->cameraFarClip;
+			projectionMode = selectedProjectionCamera->cameraProjectionMode;
 		}
 
 		if (projectionMode == 1) {
@@ -165,20 +231,523 @@ namespace {
 			(std::clamp)(alpha, 0.0f, 1.0f));
 	}
 
+	const EditorComponent* FindActiveComponent(
+		const EditorGameObject& gameObject,
+		EditorComponentType componentType) {
+		const EditorComponent* component =
+			EditorComponentUtility::FindComponent(gameObject, componentType);
+		return component != nullptr && component->isActive ? component : nullptr;
+	}
+
+	const EditorComponent* FindActiveLayoutComponent(const EditorGameObject& gameObject) {
+		const EditorComponentType layoutTypes[] = {
+			EditorComponentType::HorizontalLayoutGroup,
+			EditorComponentType::VerticalLayoutGroup,
+			EditorComponentType::GridLayoutGroup};
+
+		for (EditorComponentType layoutType : layoutTypes) {
+			const EditorComponent* layoutComponent = FindActiveComponent(gameObject, layoutType);
+
+			if (layoutComponent != nullptr) {
+				return layoutComponent;
+			}
+		}
+
+		return nullptr;
+	}
+
+	std::vector<std::string> SplitUiOptions(const std::string& optionText) {
+		std::vector<std::string> options;
+		std::stringstream optionStream(optionText);
+		std::string option;
+
+		while (std::getline(optionStream, option, '|')) {
+			if (!option.empty()) {
+				options.push_back(option);
+			}
+		}
+
+		if (options.empty()) {
+			options.push_back("Option");
+		}
+
+		return options;
+	}
+
+	bool CanReceiveUiInput(const EditorGameObject& gameObject) {
+		bool hasEventSystem = false;
+		bool hasActiveEventSystem = false;
+		bool hasInputModule = false;
+		bool hasActiveInputModule = false;
+
+		for (const EditorGameObject& candidate : g_editorScene.GetGameObjects()) {
+			const EditorComponent* eventSystem =
+				EditorComponentUtility::FindComponent(candidate, EditorComponentType::EventSystem);
+			if (eventSystem != nullptr) {
+				hasEventSystem = true;
+				hasActiveEventSystem |= candidate.isActive && eventSystem->isActive;
+			}
+
+			const EditorComponentType inputModuleTypes[] = {
+				EditorComponentType::StandaloneInputModule,
+				EditorComponentType::InputSystemUIInputModule,
+				EditorComponentType::TouchInputModule};
+
+			for (EditorComponentType inputModuleType : inputModuleTypes) {
+				const EditorComponent* inputModule =
+					EditorComponentUtility::FindComponent(candidate, inputModuleType);
+				if (inputModule != nullptr) {
+					hasInputModule = true;
+					hasActiveInputModule |= candidate.isActive && inputModule->isActive;
+				}
+			}
+		}
+
+		if ((hasEventSystem && !hasActiveEventSystem) ||
+			(hasInputModule && !hasActiveInputModule)) {
+			return false;
+		}
+
+		const EditorGameObject* currentObject = &gameObject;
+		while (currentObject != nullptr) {
+			const EditorComponent* raycaster =
+				EditorComponentUtility::FindComponent(*currentObject, EditorComponentType::GraphicRaycaster);
+
+			if (raycaster != nullptr && (!raycaster->isActive || !raycaster->buttonInteractable)) {
+				return false;
+			}
+
+			currentObject = g_editorScene.FindGameObject(currentObject->parentId);
+		}
+
+		return true;
+	}
+
+	void ResolveUiRect(
+		const EditorGameObject& gameObject,
+		const EditorComponent& visualComponent,
+		EditorScriptVector2& position,
+		EditorScriptVector2& size) {
+		position = visualComponent.buttonPosition;
+		size = visualComponent.buttonSize;
+
+		const EditorComponent* rectTransform =
+			FindActiveComponent(gameObject, EditorComponentType::RectTransform);
+
+		if (rectTransform != nullptr) {
+			position = rectTransform->buttonPosition;
+			size = rectTransform->buttonSize;
+		}
+
+		const EditorGameObject* parentObject = g_editorScene.FindGameObject(gameObject.parentId);
+		if (parentObject != nullptr) {
+			const EditorComponent* layoutComponent = FindActiveLayoutComponent(*parentObject);
+			if (layoutComponent != nullptr) {
+				auto childIterator = std::find(
+					parentObject->children.begin(),
+					parentObject->children.end(),
+					gameObject.id);
+				const int32_t childIndex = childIterator != parentObject->children.end()
+					? static_cast<int32_t>(std::distance(parentObject->children.begin(), childIterator))
+					: 0;
+				const float spacing = (std::max)(layoutComponent->sliderValue, 0.0f);
+				position = layoutComponent->buttonPosition;
+				size = layoutComponent->buttonSize;
+
+				if (layoutComponent->type == EditorComponentType::HorizontalLayoutGroup) {
+					position.x += static_cast<float>(childIndex) * (size.x + spacing);
+				}
+				else if (layoutComponent->type == EditorComponentType::VerticalLayoutGroup) {
+					position.y += static_cast<float>(childIndex) * (size.y + spacing);
+				}
+				else {
+					const int32_t columnCount = (std::max)(layoutComponent->inputBehavior, 1);
+					const int32_t columnIndex = childIndex % columnCount;
+					const int32_t rowIndex = childIndex / columnCount;
+					position.x += static_cast<float>(columnIndex) * (size.x + spacing);
+					position.y += static_cast<float>(rowIndex) * (size.y + spacing);
+				}
+			}
+
+			const EditorComponent* scrollRect =
+				FindActiveComponent(*parentObject, EditorComponentType::ScrollRect);
+			if (scrollRect != nullptr) {
+				position.x -= scrollRect->uvOffset.x * (std::max)(parentObject->children.size() * size.x, 0.0f);
+				position.y -= scrollRect->uvOffset.y * (std::max)(parentObject->children.size() * size.y, 0.0f);
+			}
+		}
+
+		const EditorComponent* layoutElement =
+			FindActiveComponent(gameObject, EditorComponentType::LayoutElement);
+		if (layoutElement != nullptr) {
+			size = layoutElement->buttonSize;
+		}
+
+		const EditorComponent* aspectRatioFitter =
+			FindActiveComponent(gameObject, EditorComponentType::AspectRatioFitter);
+		if (aspectRatioFitter != nullptr && aspectRatioFitter->sliderValue > 0.0f) {
+			size.x = size.y * aspectRatioFitter->sliderValue;
+		}
+
+		const EditorComponent* contentSizeFitter =
+			FindActiveComponent(gameObject, EditorComponentType::ContentSizeFitter);
+		if (contentSizeFitter != nullptr) {
+			if (contentSizeFitter->freezePositionX) {
+				const float textWidth =
+					static_cast<float>(visualComponent.buttonLabel.size()) * (std::max)(size.y, 1.0f) * 0.55f;
+				size.x = (std::max)(size.x, textWidth);
+			}
+
+			if (contentSizeFitter->freezePositionY) {
+				size.y = (std::max)(size.y, visualComponent.buttonSize.y);
+			}
+		}
+	}
+
+	bool IsUiCanvasHierarchyActive(const EditorGameObject& gameObject) {
+		const EditorGameObject* currentObject = &gameObject;
+
+		while (currentObject != nullptr) {
+			const EditorComponent* canvas =
+				EditorComponentUtility::FindComponent(*currentObject, EditorComponentType::Canvas);
+
+			if (canvas != nullptr) {
+				return currentObject->isActive && canvas->isActive;
+			}
+
+			currentObject = g_editorScene.FindGameObject(currentObject->parentId);
+		}
+
+		return true;
+	}
+
+	int32_t GetUiCanvasOrder(const EditorGameObject& gameObject) {
+		const EditorGameObject* currentObject = &gameObject;
+
+		while (currentObject != nullptr) {
+			const EditorComponent* canvas =
+				FindActiveComponent(*currentObject, EditorComponentType::Canvas);
+
+			if (canvas != nullptr) {
+				return canvas->physicsLayer;
+			}
+
+			currentObject = g_editorScene.FindGameObject(currentObject->parentId);
+		}
+
+		return 0;
+	}
+
+	bool PushUiMaskClipRect(
+		const EditorGameObject& gameObject,
+		const ImVec2& gameContentPosition,
+		float uiScaleX,
+		float uiScaleY) {
+		const EditorGameObject* currentObject = g_editorScene.FindGameObject(gameObject.parentId);
+
+		while (currentObject != nullptr) {
+			const EditorComponent* mask = FindActiveComponent(*currentObject, EditorComponentType::Mask);
+			if (mask == nullptr) {
+				mask = FindActiveComponent(*currentObject, EditorComponentType::RectMask2D);
+			}
+
+			if (mask != nullptr) {
+				const ImVec2 clipMinimum{
+					gameContentPosition.x + mask->buttonPosition.x * uiScaleX,
+					gameContentPosition.y + mask->buttonPosition.y * uiScaleY};
+				const ImVec2 clipMaximum{
+					clipMinimum.x + (std::max)(mask->buttonSize.x * uiScaleX, 1.0f),
+					clipMinimum.y + (std::max)(mask->buttonSize.y * uiScaleY, 1.0f)};
+				ImGui::PushClipRect(clipMinimum, clipMaximum, true);
+				return true;
+			}
+
+			currentObject = g_editorScene.FindGameObject(currentObject->parentId);
+		}
+
+		return false;
+	}
+
+	enum class TargetMarkerVisibility {
+		NotConfigured,
+		Visible,
+		Hidden,
+	};
+
+	TargetMarkerVisibility ResolveTargetMarkerPosition(
+		const EditorGameObject& markerGameObject,
+		float referenceGameWidth,
+		float referenceGameHeight,
+		const EditorScriptVector2& markerSize,
+		EditorScriptVector2& markerPosition,
+		float& markerRotation) {
+		const EditorComponent* marker = FindActiveComponent(markerGameObject, EditorComponentType::WorldTargetMarker);
+		bool isOffScreenIndicator = false;
+
+		if (marker == nullptr) {
+			marker = FindActiveComponent(markerGameObject, EditorComponentType::OffScreenIndicator);
+			isOffScreenIndicator = marker != nullptr;
+		}
+
+		if (marker == nullptr) {
+			return TargetMarkerVisibility::NotConfigured;
+		}
+
+		int32_t targetGameObjectId = marker->targetMarkerTargetGameObjectId;
+		bool isLocked = !marker->targetMarkerOnlyWhenLocked;
+
+		if (targetGameObjectId < 0 && marker->targetMarkerLockGameObjectId >= 0) {
+			const EditorGameObject* lockObject = g_editorScene.FindGameObject(marker->targetMarkerLockGameObjectId);
+			const EditorComponent* lock = lockObject != nullptr
+				? FindActiveComponent(*lockObject, EditorComponentType::TargetLock)
+				: nullptr;
+
+			if (lock != nullptr) {
+				targetGameObjectId = lock->targetLockCurrentGameObjectId;
+				isLocked = lock->targetLockLocked;
+			}
+			else if (lockObject != nullptr) {
+				const EditorComponent* multiLock = FindActiveComponent(*lockObject, EditorComponentType::MultiTargetLock);
+
+				if (multiLock != nullptr && !multiLock->multiTargetLockTargetGameObjectIds.empty()) {
+					const size_t maximumIndex = multiLock->multiTargetLockTargetGameObjectIds.size() - 1u;
+					const size_t targetIndex = (std::min)(
+						static_cast<size_t>((std::max)(marker->targetMarkerMultiLockIndex, 0)),
+						maximumIndex);
+					const bool hasLockState = targetIndex < multiLock->multiTargetLockCompletedValues.size();
+
+					if (hasLockState && (!marker->targetMarkerOnlyWhenLocked || multiLock->multiTargetLockCompletedValues[targetIndex])) {
+						targetGameObjectId = multiLock->multiTargetLockTargetGameObjectIds[targetIndex];
+						isLocked = multiLock->multiTargetLockCompletedValues[targetIndex];
+					}
+				}
+			}
+		}
+
+		if (targetGameObjectId < 0 && marker->targetMarkerSelectorGameObjectId >= 0) {
+			const EditorGameObject* selectorObject = g_editorScene.FindGameObject(marker->targetMarkerSelectorGameObjectId);
+			const EditorComponent* selector = selectorObject != nullptr
+				? FindActiveComponent(*selectorObject, EditorComponentType::TargetSelector)
+				: nullptr;
+			targetGameObjectId = selector != nullptr ? selector->targetSelectorCurrentTargetGameObjectId : -1;
+		}
+
+		if (targetGameObjectId < 0 || !isLocked) {
+			return TargetMarkerVisibility::Hidden;
+		}
+
+		const EditorGameObject* targetGameObject = g_editorScene.FindGameObject(targetGameObjectId);
+		if (targetGameObject == nullptr || !targetGameObject->isActive) {
+			return TargetMarkerVisibility::Hidden;
+		}
+
+		Transforms targetTransform = ResolveWorldTransform(*targetGameObject);
+		const Vector3 worldPosition{
+			targetTransform.translate.x + marker->targetMarkerWorldOffset.x,
+			targetTransform.translate.y + marker->targetMarkerWorldOffset.y,
+			targetTransform.translate.z + marker->targetMarkerWorldOffset.z};
+		const Matrix4x4 viewProjectionMatrix = Multiply(g_gameViewMatrix, g_gameProjectionMatrix);
+		float clipX = worldPosition.x * viewProjectionMatrix.matrix[0][0] +
+			worldPosition.y * viewProjectionMatrix.matrix[1][0] +
+			worldPosition.z * viewProjectionMatrix.matrix[2][0] + viewProjectionMatrix.matrix[3][0];
+		float clipY = worldPosition.x * viewProjectionMatrix.matrix[0][1] +
+			worldPosition.y * viewProjectionMatrix.matrix[1][1] +
+			worldPosition.z * viewProjectionMatrix.matrix[2][1] + viewProjectionMatrix.matrix[3][1];
+		const float clipW = worldPosition.x * viewProjectionMatrix.matrix[0][3] +
+			worldPosition.y * viewProjectionMatrix.matrix[1][3] +
+			worldPosition.z * viewProjectionMatrix.matrix[2][3] + viewProjectionMatrix.matrix[3][3];
+		const bool isBehindCamera = clipW <= 0.0001f;
+
+		if (isBehindCamera && marker->targetMarkerHideBehindCamera) {
+			return TargetMarkerVisibility::Hidden;
+		}
+
+		const float safeClipW = std::fabs(clipW) > 0.0001f ? std::fabs(clipW) : 0.0001f;
+		float normalizedX = clipX / safeClipW;
+		float normalizedY = clipY / safeClipW;
+
+		if (isBehindCamera) {
+			normalizedX = -normalizedX;
+			normalizedY = -normalizedY;
+		}
+
+		const bool isOnScreen = !isBehindCamera && std::fabs(normalizedX) <= 1.0f && std::fabs(normalizedY) <= 1.0f;
+
+		if (isOffScreenIndicator == isOnScreen) {
+			return TargetMarkerVisibility::Hidden;
+		}
+
+		markerRotation = std::atan2(-normalizedY, normalizedX);
+
+		if (isOffScreenIndicator) {
+			const float horizontalPadding = (std::clamp)(marker->targetMarkerEdgePadding / (std::max)(referenceGameWidth * 0.5f, 1.0f), 0.0f, 0.95f);
+			const float verticalPadding = (std::clamp)(marker->targetMarkerEdgePadding / (std::max)(referenceGameHeight * 0.5f, 1.0f), 0.0f, 0.95f);
+			const float scaleToEdge = (std::max)(
+				std::fabs(normalizedX) / (1.0f - horizontalPadding),
+				std::fabs(normalizedY) / (1.0f - verticalPadding));
+
+			if (scaleToEdge > 1.0f) {
+				normalizedX /= scaleToEdge;
+				normalizedY /= scaleToEdge;
+			}
+		}
+
+		markerPosition = {
+			(normalizedX + 1.0f) * 0.5f * referenceGameWidth - markerSize.x * 0.5f + marker->targetMarkerScreenOffset.x,
+			(1.0f - normalizedY) * 0.5f * referenceGameHeight - markerSize.y * 0.5f + marker->targetMarkerScreenOffset.y};
+		return TargetMarkerVisibility::Visible;
+	}
+
+	bool TryProjectGameWorldPosition(const Vector3& worldPosition, ImVec2& screenPosition) {
+		const Matrix4x4 viewProjectionMatrix = Multiply(g_gameViewMatrix, g_gameProjectionMatrix);
+		const float clipX = worldPosition.x * viewProjectionMatrix.matrix[0][0] +
+			worldPosition.y * viewProjectionMatrix.matrix[1][0] +
+			worldPosition.z * viewProjectionMatrix.matrix[2][0] + viewProjectionMatrix.matrix[3][0];
+		const float clipY = worldPosition.x * viewProjectionMatrix.matrix[0][1] +
+			worldPosition.y * viewProjectionMatrix.matrix[1][1] +
+			worldPosition.z * viewProjectionMatrix.matrix[2][1] + viewProjectionMatrix.matrix[3][1];
+		const float clipW = worldPosition.x * viewProjectionMatrix.matrix[0][3] +
+			worldPosition.y * viewProjectionMatrix.matrix[1][3] +
+			worldPosition.z * viewProjectionMatrix.matrix[2][3] + viewProjectionMatrix.matrix[3][3];
+
+		if (clipW <= 0.0001f) {
+			return false;
+		}
+
+		const float normalizedX = clipX / clipW;
+		const float normalizedY = clipY / clipW;
+
+		if (std::fabs(normalizedX) > 4.0f || std::fabs(normalizedY) > 4.0f) {
+			return false;
+		}
+
+		screenPosition = {
+			g_editorGameX + (normalizedX + 1.0f) * 0.5f * g_editorGameWidth,
+			g_editorGameY + (1.0f - normalizedY) * 0.5f * g_editorGameHeight};
+		return true;
+	}
+
+	void DrawGameTrajectoryPreviews(ImDrawList* drawList) {
+		drawList->PushClipRect(
+			ImVec2(g_editorGameX, g_editorGameY),
+			ImVec2(g_editorGameX + g_editorGameWidth, g_editorGameY + g_editorGameHeight),
+			true);
+
+		for (const EditorGameObject& rendererObject : g_editorScene.GetGameObjects()) {
+			const EditorComponent* trajectoryRenderer = EditorComponentUtility::FindComponent(
+				rendererObject,
+				EditorComponentType::TrajectoryRenderer);
+
+			if (!rendererObject.isActive || trajectoryRenderer == nullptr ||
+				!trajectoryRenderer->isActive || !trajectoryRenderer->trajectoryShowInGameView) {
+				continue;
+			}
+
+			const int32_t predictionGameObjectId = trajectoryRenderer->trajectoryPredictionGameObjectId >= 0
+				? trajectoryRenderer->trajectoryPredictionGameObjectId
+				: rendererObject.id;
+			const EditorGameObject* predictionObject = g_editorScene.FindGameObject(predictionGameObjectId);
+			const EditorComponent* prediction = predictionObject != nullptr
+				? EditorComponentUtility::FindComponent(*predictionObject, EditorComponentType::BallisticPrediction)
+				: nullptr;
+
+			if (prediction == nullptr || !prediction->isActive || !prediction->ballisticValid ||
+				prediction->ballisticTrajectoryPoints.size() < 2u) {
+				continue;
+			}
+
+			const ImU32 lineColor = ImGui::ColorConvertFloat4ToU32(ImVec4(
+				(std::clamp)(trajectoryRenderer->trajectoryColor.x, 0.0f, 1.0f),
+				(std::clamp)(trajectoryRenderer->trajectoryColor.y, 0.0f, 1.0f),
+				(std::clamp)(trajectoryRenderer->trajectoryColor.z, 0.0f, 1.0f),
+				(std::clamp)(trajectoryRenderer->trajectoryAlpha, 0.0f, 1.0f)));
+			const int32_t pointCount = (std::min)(
+				static_cast<int32_t>(prediction->ballisticTrajectoryPoints.size()),
+				(std::clamp)(trajectoryRenderer->trajectoryMaximumPoints, 2, 2048));
+
+			for (int32_t pointIndex = 1; pointIndex < pointCount; pointIndex++) {
+				ImVec2 lineStart{};
+				ImVec2 lineEnd{};
+
+				if (TryProjectGameWorldPosition(
+						prediction->ballisticTrajectoryPoints[static_cast<size_t>(pointIndex - 1)],
+						lineStart) &&
+					TryProjectGameWorldPosition(
+						prediction->ballisticTrajectoryPoints[static_cast<size_t>(pointIndex)],
+						lineEnd)) {
+					drawList->AddLine(
+						lineStart,
+						lineEnd,
+						lineColor,
+						(std::max)(trajectoryRenderer->trajectoryThickness, 0.5f));
+				}
+			}
+
+			if (trajectoryRenderer->trajectoryShowImpactPoint) {
+				ImVec2 impactPosition{};
+
+				if (TryProjectGameWorldPosition(prediction->ballisticImpactPosition, impactPosition)) {
+					drawList->AddCircle(
+						impactPosition,
+						6.0f,
+						lineColor,
+						16,
+						(std::max)(trajectoryRenderer->trajectoryThickness, 1.0f));
+				}
+			}
+		}
+
+		drawList->PopClipRect();
+	}
+
 	void DrawGameViewUiControls(const ImVec2& gameContentPosition, float gameWidth, float gameHeight) {
-		constexpr float referenceGameWidth = 1280.0f;
-		constexpr float referenceGameHeight = 720.0f;
-		const float uiScaleX = gameWidth / referenceGameWidth;
-		const float uiScaleY = gameHeight / referenceGameHeight;
+		float referenceGameWidth = 1280.0f;
+		float referenceGameHeight = 720.0f;
+		float widthHeightMatch = 0.5f;
+
+		for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
+			const EditorComponent* canvasScaler =
+				FindActiveComponent(gameObject, EditorComponentType::CanvasScaler);
+
+			if (canvasScaler != nullptr) {
+				referenceGameWidth = (std::max)(canvasScaler->buttonSize.x, 1.0f);
+				referenceGameHeight = (std::max)(canvasScaler->buttonSize.y, 1.0f);
+				widthHeightMatch = (std::clamp)(canvasScaler->sliderValue, 0.0f, 1.0f);
+				break;
+			}
+		}
+		const float widthScale = gameWidth / referenceGameWidth;
+		const float heightScale = gameHeight / referenceGameHeight;
+		const float uniformScale = std::exp(
+			std::log((std::max)(widthScale, 0.0001f)) * (1.0f - widthHeightMatch) +
+			std::log((std::max)(heightScale, 0.0001f)) * widthHeightMatch);
+		const float uiScaleX = uniformScale;
+		const float uiScaleY = uniformScale;
 		const float fontScale = (std::min)(uiScaleX, uiScaleY);
+		static std::vector<EditorGameObject*> orderedUiObjects;
+		orderedUiObjects.clear();
+		orderedUiObjects.reserve(g_editorScene.GetGameObjects().size());
+
+		for (EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
+			orderedUiObjects.push_back(&gameObject);
+		}
+
+		std::stable_sort(
+			orderedUiObjects.begin(),
+			orderedUiObjects.end(),
+			[](const EditorGameObject* firstObject, const EditorGameObject* secondObject) {
+				return GetUiCanvasOrder(*firstObject) < GetUiCanvasOrder(*secondObject);
+			});
 
 		ImGui::PushClipRect(
 			gameContentPosition,
 			ImVec2(gameContentPosition.x + gameWidth, gameContentPosition.y + gameHeight),
 			true);
 
-		for (EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
-			if (!gameObject.isActive) {
+		for (EditorGameObject* gameObjectPointer : orderedUiObjects) {
+			EditorGameObject& gameObject = *gameObjectPointer;
+
+			if (!gameObject.isActive || !IsUiCanvasHierarchyActive(gameObject)) {
 				continue;
 			}
 
@@ -187,6 +756,13 @@ namespace {
 					component.type != EditorComponentType::SceneButton &&
 					component.type != EditorComponentType::Toggle &&
 					component.type != EditorComponentType::Slider &&
+					component.type != EditorComponentType::Scrollbar &&
+					component.type != EditorComponentType::Dropdown &&
+					component.type != EditorComponentType::TMPDropdown &&
+					component.type != EditorComponentType::InputField &&
+					component.type != EditorComponentType::TMPInputField &&
+					component.type != EditorComponentType::Image &&
+					component.type != EditorComponentType::RawImage &&
 					component.type != EditorComponentType::Text &&
 					component.type != EditorComponentType::TextMeshProUGUI) {
 					continue;
@@ -197,26 +773,134 @@ namespace {
 					continue;
 				}
 
+				Vector3 renderColor = uiComponent->color;
+				Vector3 renderHoverColor = uiComponent->buttonHoverColor;
+				Vector3 renderPressedColor = uiComponent->buttonPressedColor;
+				float renderAlpha = uiComponent->alpha * uiComponent->intensity;
+				const EditorComponent* canvasRenderer =
+					FindActiveComponent(gameObject, EditorComponentType::CanvasRenderer);
+
+				if (canvasRenderer != nullptr) {
+					renderColor = {
+						renderColor.x * canvasRenderer->color.x,
+						renderColor.y * canvasRenderer->color.y,
+						renderColor.z * canvasRenderer->color.z};
+					renderHoverColor = {
+						renderHoverColor.x * canvasRenderer->color.x,
+						renderHoverColor.y * canvasRenderer->color.y,
+						renderHoverColor.z * canvasRenderer->color.z};
+					renderPressedColor = {
+						renderPressedColor.x * canvasRenderer->color.x,
+						renderPressedColor.y * canvasRenderer->color.y,
+						renderPressedColor.z * canvasRenderer->color.z};
+					renderAlpha *= canvasRenderer->alpha * canvasRenderer->intensity;
+				}
+
+				renderAlpha = (std::clamp)(renderAlpha, 0.0f, 1.0f);
+
+				EditorScriptVector2 resolvedPosition{};
+				EditorScriptVector2 resolvedSize{};
+				ResolveUiRect(gameObject, *uiComponent, resolvedPosition, resolvedSize);
+				float targetMarkerRotation = 0.0f;
+				const TargetMarkerVisibility markerVisibility = ResolveTargetMarkerPosition(
+					gameObject,
+					referenceGameWidth,
+					referenceGameHeight,
+					resolvedSize,
+					resolvedPosition,
+					targetMarkerRotation);
+
+				if (markerVisibility == TargetMarkerVisibility::Hidden) {
+					continue;
+				}
 				const ImVec2 buttonPosition{
-					gameContentPosition.x + uiComponent->buttonPosition.x * uiScaleX,
-					gameContentPosition.y + uiComponent->buttonPosition.y * uiScaleY};
+					gameContentPosition.x + resolvedPosition.x * uiScaleX,
+					gameContentPosition.y + resolvedPosition.y * uiScaleY};
 				const ImVec2 buttonSize{
-					(std::max)(uiComponent->buttonSize.x * uiScaleX, 1.0f),
-					(std::max)(uiComponent->buttonSize.y * uiScaleY, 1.0f)};
+					(std::max)(resolvedSize.x * uiScaleX, 1.0f),
+					(std::max)(resolvedSize.y * uiScaleY, 1.0f)};
 				const char* buttonLabel =
 					uiComponent->buttonLabel.empty() ? "UI" : uiComponent->buttonLabel.c_str();
 				const bool isTextComponent =
 					uiComponent->type == EditorComponentType::Text ||
 					uiComponent->type == EditorComponentType::TextMeshProUGUI;
+				const bool isImageComponent =
+					uiComponent->type == EditorComponentType::Image ||
+					uiComponent->type == EditorComponentType::RawImage;
+				const bool hasMaskClip = PushUiMaskClipRect(
+					gameObject,
+					gameContentPosition,
+					uiScaleX,
+					uiScaleY);
+
+				if (isImageComponent) {
+					ImDrawList* drawList = ImGui::GetWindowDrawList();
+					const ImVec2 imageMaximum{
+						buttonPosition.x + buttonSize.x,
+						buttonPosition.y + buttonSize.y};
+					const ImU32 imageColor = ImGui::ColorConvertFloat4ToU32(
+						ToImGuiColor(renderColor, renderAlpha));
+					const D3D12_GPU_DESCRIPTOR_HANDLE textureHandle =
+						g_editorSceneObjectManager.GetOrLoadUiTexture(uiComponent->assetPath);
+					const EditorComponent* offScreenIndicator = FindActiveComponent(
+						gameObject,
+						EditorComponentType::OffScreenIndicator);
+					const bool rotatesToTarget = offScreenIndicator != nullptr &&
+						offScreenIndicator->targetMarkerRotateToDirection;
+
+					if (textureHandle.ptr != 0u) {
+						if (rotatesToTarget) {
+							const ImVec2 center{
+								(buttonPosition.x + imageMaximum.x) * 0.5f,
+								(buttonPosition.y + imageMaximum.y) * 0.5f};
+							const float halfWidth = buttonSize.x * 0.5f;
+							const float halfHeight = buttonSize.y * 0.5f;
+							const float cosine = std::cos(targetMarkerRotation);
+							const float sine = std::sin(targetMarkerRotation);
+							auto rotatePoint = [&](float localX, float localY) {
+								return ImVec2{
+									center.x + localX * cosine - localY * sine,
+									center.y + localX * sine + localY * cosine};
+							};
+							drawList->AddImageQuad(
+								ImTextureRef(textureHandle.ptr),
+								rotatePoint(-halfWidth, -halfHeight),
+								rotatePoint(halfWidth, -halfHeight),
+								rotatePoint(halfWidth, halfHeight),
+								rotatePoint(-halfWidth, halfHeight),
+								ImVec2(0.0f, 0.0f), ImVec2(1.0f, 0.0f),
+								ImVec2(1.0f, 1.0f), ImVec2(0.0f, 1.0f),
+								imageColor);
+						}
+						else {
+							drawList->AddImage(
+								ImTextureRef(textureHandle.ptr),
+								buttonPosition,
+								imageMaximum,
+								ImVec2(0.0f, 0.0f),
+								ImVec2(1.0f, 1.0f),
+								imageColor);
+						}
+					}
+					else {
+						// 画像未設定や読込失敗時も、配置範囲を確認できる色付き矩形を表示する。
+						drawList->AddRectFilled(buttonPosition, imageMaximum, imageColor);
+					}
+
+					if (hasMaskClip) {
+						ImGui::PopClipRect();
+					}
+					continue;
+				}
 
 				if (isTextComponent) {
 					const float fontSize = (std::clamp)(
-						uiComponent->buttonSize.y * fontScale,
+						resolvedSize.y * fontScale,
 						8.0f,
-						128.0f);
+						512.0f);
 					ImDrawList* drawList = ImGui::GetWindowDrawList();
 					const ImU32 textColor = ImGui::ColorConvertFloat4ToU32(
-						ToImGuiColor(uiComponent->color, uiComponent->intensity));
+						ToImGuiColor(renderColor, renderAlpha));
 					const ImU32 shadowColor = IM_COL32(0, 0, 0, 190);
 					drawList->AddText(
 						ImGui::GetFont(),
@@ -230,19 +914,25 @@ namespace {
 						buttonPosition,
 						textColor,
 						buttonLabel);
+					if (hasMaskClip) {
+						ImGui::PopClipRect();
+					}
 					continue;
 				}
 
 				ImGui::SetCursorScreenPos(buttonPosition);
 				ImGui::PushID(uiComponent);
-				ImGui::PushStyleColor(ImGuiCol_Button, ToImGuiColor(uiComponent->color, uiComponent->intensity));
-				ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ToImGuiColor(uiComponent->buttonHoverColor, uiComponent->intensity));
-				ImGui::PushStyleColor(ImGuiCol_ButtonActive, ToImGuiColor(uiComponent->buttonPressedColor, uiComponent->intensity));
-				ImGui::PushStyleColor(ImGuiCol_FrameBg, ToImGuiColor(uiComponent->color, uiComponent->intensity));
-				ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ToImGuiColor(uiComponent->buttonHoverColor, uiComponent->intensity));
-				ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ToImGuiColor(uiComponent->buttonPressedColor, uiComponent->intensity));
+				ImGui::PushStyleColor(ImGuiCol_Button, ToImGuiColor(renderColor, renderAlpha));
+				ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ToImGuiColor(renderHoverColor, renderAlpha));
+				ImGui::PushStyleColor(ImGuiCol_ButtonActive, ToImGuiColor(renderPressedColor, renderAlpha));
+				ImGui::PushStyleColor(ImGuiCol_FrameBg, ToImGuiColor(renderColor, renderAlpha));
+				ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ToImGuiColor(renderHoverColor, renderAlpha));
+				ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ToImGuiColor(renderPressedColor, renderAlpha));
 
-				const bool canInteract = uiComponent->buttonInteractable && g_editorRuntimeManager.IsPlaying();
+				const bool canInteract =
+					uiComponent->buttonInteractable &&
+					g_editorRuntimeManager.IsPlaying() &&
+					CanReceiveUiInput(gameObject);
 				if (!canInteract) {
 					ImGui::BeginDisabled();
 				}
@@ -276,7 +966,8 @@ namespace {
 					}
 				}
 
-				if (uiComponent->type == EditorComponentType::Slider) {
+				if (uiComponent->type == EditorComponentType::Slider ||
+					uiComponent->type == EditorComponentType::Scrollbar) {
 					float sliderMinValue = uiComponent->sliderMinValue;
 					float sliderMaxValue = uiComponent->sliderMaxValue;
 					if (sliderMaxValue < sliderMinValue) {
@@ -299,12 +990,65 @@ namespace {
 					}
 				}
 
+				if (uiComponent->type == EditorComponentType::Dropdown ||
+					uiComponent->type == EditorComponentType::TMPDropdown) {
+					const std::vector<std::string> options = SplitUiOptions(uiComponent->assetPath);
+					uiComponent->inputBehavior = (std::clamp)(
+						uiComponent->inputBehavior,
+						0,
+						static_cast<int32_t>(options.size()) - 1);
+					ImGui::SetNextItemWidth(buttonSize.x);
+					if (ImGui::BeginCombo(buttonLabel, options[static_cast<size_t>(uiComponent->inputBehavior)].c_str())) {
+						for (int32_t optionIndex = 0;
+							 optionIndex < static_cast<int32_t>(options.size());
+							 optionIndex++) {
+							const bool isSelected = optionIndex == uiComponent->inputBehavior;
+							if (ImGui::Selectable(options[static_cast<size_t>(optionIndex)].c_str(), isSelected) && canInteract) {
+								uiComponent->inputBehavior = optionIndex;
+								g_editorRuntimeManager.GetScriptManager().QueueUiEvent(
+									gameObject.id,
+									uiComponent->sliderOnValueChangedFunction,
+									EditorScriptInputValueTypeButton,
+									static_cast<float>(optionIndex),
+									EditorScriptVector2{});
+							}
+						}
+						ImGui::EndCombo();
+					}
+				}
+
+				if (uiComponent->type == EditorComponentType::InputField ||
+					uiComponent->type == EditorComponentType::TMPInputField) {
+					char inputBuffer[1024]{};
+					const size_t copyLength = (std::min)(uiComponent->buttonLabel.size(), sizeof(inputBuffer) - 1u);
+					std::memcpy(inputBuffer, uiComponent->buttonLabel.data(), copyLength);
+					ImGui::SetNextItemWidth(buttonSize.x);
+					const std::string inputLabel = uiComponent->assetPath.empty()
+						? "##InputField"
+						: uiComponent->assetPath + "##InputField";
+					const bool wasChanged = ImGui::InputText(inputLabel.c_str(), inputBuffer, sizeof(inputBuffer));
+
+					if (wasChanged && canInteract) {
+						uiComponent->buttonLabel = inputBuffer;
+						g_editorRuntimeManager.GetScriptManager().QueueUiEvent(
+							gameObject.id,
+							uiComponent->sliderOnValueChangedFunction,
+							EditorScriptInputValueTypeButton,
+							static_cast<float>(uiComponent->buttonLabel.size()),
+							EditorScriptVector2{});
+					}
+				}
+
 				if (!canInteract) {
 					ImGui::EndDisabled();
 				}
 
 				ImGui::PopStyleColor(6);
 				ImGui::PopID();
+
+				if (hasMaskClip) {
+					ImGui::PopClipRect();
+				}
 			}
 		}
 
@@ -347,6 +1091,7 @@ void EditorGameViewManager::Draw() {
 
 		UpdateGameCameraMatrices();
 		ImGui::Dummy(ImVec2(g_editorGameWidth, g_editorGameHeight));
+		DrawGameTrajectoryPreviews(ImGui::GetWindowDrawList());
 		DrawGameViewUiControls(
 			gameContentPosition,
 			g_editorGameWidth,
@@ -450,6 +1195,7 @@ void EditorGameViewManager::Draw() {
 		gameFpsTextPosition,
 		IM_COL32(210, 245, 210, 255),
 		gameFpsText);
+	DrawGameTrajectoryPreviews(gameDrawList);
 
 	ImGui::Dummy(ImVec2(g_editorGameWidth, g_editorGameHeight));  // ウィンドウの内容領域を GameView の描画領域として確保する。
 	DrawGameViewUiControls(gameContentPosition, g_editorGameWidth, g_editorGameHeight);

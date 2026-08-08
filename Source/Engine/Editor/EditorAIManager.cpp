@@ -600,6 +600,114 @@ namespace {
 #pragma warning(pop)
 }
 
+namespace {
+	bool IsBehaviorTreeDefinition(EditorComponentType type) {
+		return
+			type == EditorComponentType::AIBehaviorBlackboard ||
+			type == EditorComponentType::AIBehaviorSelector ||
+			type == EditorComponentType::AIBehaviorSequence ||
+			type == EditorComponentType::AIBehaviorTask ||
+			type == EditorComponentType::AIBehaviorDecorator;
+	}
+
+	bool IsStateMachineDefinition(EditorComponentType type) {
+		return
+			type == EditorComponentType::AIState ||
+			type == EditorComponentType::AIStateTransition;
+	}
+
+	bool IsGoapDefinition(EditorComponentType type) {
+		return
+			type == EditorComponentType::AIGoapGoal ||
+			type == EditorComponentType::AIGoapAction ||
+			type == EditorComponentType::AIGoapWorldState;
+	}
+
+	bool IsHtnDefinition(EditorComponentType type) {
+		return
+			type == EditorComponentType::AIHtnDomain ||
+			type == EditorComponentType::AIHtnTask ||
+			type == EditorComponentType::AIHtnMethod;
+	}
+
+	bool IsDefinitionCompatible(EditorComponentType agentType, EditorComponentType definitionType) {
+		if (agentType == EditorComponentType::AIBehaviorTree) {
+			return IsBehaviorTreeDefinition(definitionType);
+		}
+
+		if (agentType == EditorComponentType::AIStateMachine) {
+			return IsStateMachineDefinition(definitionType);
+		}
+
+		if (agentType == EditorComponentType::AIGoapPlanner) {
+			return IsGoapDefinition(definitionType);
+		}
+
+		if (agentType == EditorComponentType::AIHtnPlanner) {
+			return IsHtnDefinition(definitionType);
+		}
+
+		return
+			(agentType == EditorComponentType::AIPathfindingAgent ||
+			 agentType == EditorComponentType::AIRecastCrowdAgent) &&
+			definitionType == EditorComponentType::AIPathRequest;
+	}
+
+	bool IsBehaviorModeDefinition(EditorComponentType type) {
+		return
+			type == EditorComponentType::AIBehaviorTask ||
+			type == EditorComponentType::AIState ||
+			type == EditorComponentType::AIGoapAction ||
+			type == EditorComponentType::AIHtnTask ||
+			type == EditorComponentType::AIHtnMethod;
+	}
+
+	void ApplyAiDefinition(
+		const EditorComponent& definition,
+		EditorComponent& runtimeAgent) {
+		if (!definition.isActive || !IsDefinitionCompatible(runtimeAgent.type, definition.type)) {
+			return;
+		}
+
+		if (definition.connectedGameObjectId != kInvalidGameObjectId) {
+			runtimeAgent.connectedGameObjectId = definition.connectedGameObjectId;
+		}
+
+		if (runtimeAgent.assetPath.empty() && !definition.assetPath.empty()) {
+			runtimeAgent.assetPath = definition.assetPath;
+		}
+
+		if (IsBehaviorModeDefinition(definition.type)) {
+			runtimeAgent.inputBehavior = (std::clamp)(definition.inputBehavior, 0, 3);
+		}
+
+		if (definition.type == EditorComponentType::AIPathRequest) {
+			runtimeAgent.navStoppingDistance = (std::max)(definition.colliderRadius, 0.0f);
+		}
+	}
+
+	void ApplyAiDefinitions(
+		const EditorScene& editorScene,
+		const EditorGameObject& gameObject,
+		EditorComponent& runtimeAgent) {
+		for (const EditorComponent& definition : gameObject.components) {
+			ApplyAiDefinition(definition, runtimeAgent);
+		}
+
+		for (int32_t childGameObjectId : gameObject.children) {
+			const EditorGameObject* childGameObject = editorScene.FindGameObject(childGameObjectId);
+
+			if (childGameObject == nullptr || !childGameObject->isActive) {
+				continue;
+			}
+
+			for (const EditorComponent& definition : childGameObject->components) {
+				ApplyAiDefinition(definition, runtimeAgent);
+			}
+		}
+	}
+}
+
 void EditorAIManager::Initialize(EditorScene* editorScene, EditorPhysicsManager* physicsManager, std::vector<std::string>* consoleMessages) {
 	editorScene_ = editorScene;  // Play 中の AI が読む Scene。
 	physicsManager_ = physicsManager;  // Rigidbody 付き AI を動かす物理 API。
@@ -616,6 +724,10 @@ void EditorAIManager::Start() {
 	visibleTargets_.clear();
 	sensorResults_.clear();
 	sensorPreviousPositions_.clear();
+	aiUpdateRemainingSeconds_.clear();
+	aiAccumulatedDeltaSeconds_.clear();
+	cachedAgentDirections_.clear();
+	cachedRuntimeAgents_.clear();
 	isStarted_ = true;
 	PushConsoleMessage("AI: ThirdParty/AI の AI Component を開始しました。");
 }
@@ -636,10 +748,79 @@ void EditorAIManager::Update(float deltaTime) {
 			}
 
 			if (IsAiAgentType(component.type)) {
-				UpdateAgent(gameObject, component, deltaTime);
+				const int64_t updateKey = MakeSensorKey(gameObject.id, component.type);
+				float& remainingSeconds = aiUpdateRemainingSeconds_[updateKey];
+				float& accumulatedSeconds = aiAccumulatedDeltaSeconds_[updateKey];
+				remainingSeconds -= deltaTime;
+				accumulatedSeconds += deltaTime;
+
+				if (remainingSeconds <= 0.0f || cachedRuntimeAgents_.find(updateKey) == cachedRuntimeAgents_.end()) {
+					EditorComponent runtimeAgent = component;
+					ApplyAiDefinitions(*editorScene_, gameObject, runtimeAgent);
+					const EditorGameObject* targetGameObject = runtimeAgent.connectedGameObjectId >= 0
+						? editorScene_->FindGameObject(runtimeAgent.connectedGameObjectId)
+						: nullptr;
+					const float distanceSquared = targetGameObject != nullptr && targetGameObject->isActive
+						? LengthSquaredXZ(MakeHorizontalVector(gameObject.translate, targetGameObject->translate))
+						: 0.0f;
+					float updateInterval = 0.1f;
+
+					if (distanceSquared > 600.0f * 600.0f) {
+						updateInterval = 1.0f;
+					}
+					else if (distanceSquared > 300.0f * 300.0f) {
+						updateInterval = 0.5f;
+					}
+					else if (distanceSquared > 150.0f * 150.0f) {
+						updateInterval = 0.2f;
+					}
+
+					Vector3 desiredDirection = MakeDesiredDirection(
+						gameObject,
+						runtimeAgent,
+						targetGameObject,
+						accumulatedSeconds);
+					Vector3 pythonDirection{};
+
+					if (TryRunPythonDirection(
+						gameObject,
+						runtimeAgent,
+						targetGameObject,
+						accumulatedSeconds,
+						pythonDirection)) {
+						desiredDirection = pythonDirection;
+					}
+
+					cachedAgentDirections_[updateKey] = desiredDirection;
+					cachedRuntimeAgents_[updateKey] = runtimeAgent;
+					accumulatedSeconds = 0.0f;
+					const uint32_t staggerValue = static_cast<uint32_t>(gameObject.id * 17 + static_cast<int32_t>(component.type));
+					const float staggerScale = 0.85f + static_cast<float>(staggerValue % 31u) * 0.01f;
+					remainingSeconds += updateInterval * staggerScale;
+				}
+
+				MoveAgent(
+					gameObject,
+					cachedRuntimeAgents_[updateKey],
+					cachedAgentDirections_[updateKey],
+					deltaTime);
 			}
 			else if (IsAiSensorType(component.type)) {
-				UpdateVisionSensor(gameObject, component, deltaTime);
+				const int64_t updateKey = MakeSensorKey(gameObject.id, component.type);
+				float& remainingSeconds = aiUpdateRemainingSeconds_[updateKey];
+				float& accumulatedSeconds = aiAccumulatedDeltaSeconds_[updateKey];
+				remainingSeconds -= deltaTime;
+				accumulatedSeconds += deltaTime;
+
+				if (remainingSeconds <= 0.0f) {
+					UpdateVisionSensor(gameObject, component, accumulatedSeconds);
+					accumulatedSeconds = 0.0f;
+					const bool isExternalSensor =
+						component.type == EditorComponentType::AIOpenCvObjectDetector ||
+						component.type == EditorComponentType::AIOpenCvColorTracker ||
+						component.type == EditorComponentType::AIWhisperSpeechRecognizer;
+					remainingSeconds += isExternalSensor ? 0.25f : 0.1f;
+				}
 			}
 		}
 	}
@@ -658,6 +839,10 @@ void EditorAIManager::Stop() {
 	visibleTargets_.clear();
 	sensorResults_.clear();
 	sensorPreviousPositions_.clear();
+	aiUpdateRemainingSeconds_.clear();
+	aiAccumulatedDeltaSeconds_.clear();
+	cachedAgentDirections_.clear();
+	cachedRuntimeAgents_.clear();
 	isStarted_ = false;
 }
 
@@ -709,6 +894,18 @@ void EditorAIManager::UpdateVisionSensor(const EditorGameObject& gameObject, Edi
 		sensorComponent.connectedGameObjectId != kInvalidGameObjectId ? editorScene_->FindGameObject(sensorComponent.connectedGameObjectId) : nullptr;
 	const int64_t sensorKey = MakeSensorKey(gameObject.id, sensorComponent.type);
 	EditorAiSensorResult sensorResult = MakeBaseSensorResult(gameObject, sensorComponent, pythonTargetGameObject);
+	const bool isOpenCvSensor =
+		sensorComponent.type == EditorComponentType::AIOpenCvObjectDetector ||
+		sensorComponent.type == EditorComponentType::AIOpenCvColorTracker;
+	const EditorComponent* openCvCamera = EditorComponentUtility::FindComponent(
+		gameObject,
+		EditorComponentType::AIOpenCvCamera);
+
+	if (isOpenCvSensor && openCvCamera != nullptr && !openCvCamera->isActive) {
+		sensorResults_[sensorKey] = sensorResult;
+		visibleTargets_[gameObject.id] = false;
+		return;
+	}
 
 	if (TryRunPythonSensor(gameObject, sensorComponent, pythonTargetGameObject, deltaTime, sensorResult)) {
 		const bool wasDetected = sensorResults_[sensorKey].isDetected;
@@ -1077,12 +1274,23 @@ Vector3 EditorAIManager::MakePathfindingDirection(
 	}
 
 	const float agentRadius = (std::max)(aiComponent.navAgentRadius, 0.1f);
-	const float cellSize = (std::max)(agentRadius * 2.0f, 0.5f);
+	const EditorComponent* gridSettings = EditorComponentUtility::FindComponent(
+		gameObject,
+		EditorComponentType::AIMicroPatherGrid);
+	const bool hasGridSettings = gridSettings != nullptr && gridSettings->isActive;
+	const float cellSize = hasGridSettings
+		? (std::max)(gridSettings->colliderRadius, 0.1f)
+		: (std::max)(agentRadius * 2.0f, 0.5f);
 	float agentPositionDetour[3] = {gameObject.translate.x, gameObject.translate.y, gameObject.translate.z};  // Detour は float[3] で座標を扱う。
 	float targetPositionDetour[3] = {targetGameObject->translate.x, targetGameObject->translate.y, targetGameObject->translate.z};  // 経路探索先。
 	const float detourDistance = dtVdist2D(agentPositionDetour, targetPositionDetour);  // RecastNavigation / Detour の 2D 距離。
 	const float searchExtent = (std::clamp)(detourDistance + 8.0f, 12.0f, 48.0f);
-	const int32_t gridSize = (std::clamp)(static_cast<int32_t>(std::ceil(searchExtent / cellSize)) * 2 + 1, 15, 81);
+	const int32_t automaticGridSize =
+		(std::clamp)(static_cast<int32_t>(std::ceil(searchExtent / cellSize)) * 2 + 1, 15, 81);
+	const int32_t configuredGridSize = hasGridSettings
+		? static_cast<int32_t>(std::round((std::max)(gridSettings->colliderSize.x, gridSettings->colliderSize.z)))
+		: automaticGridSize;
+	const int32_t gridSize = (std::clamp)(configuredGridSize, 15, 161);
 	const Vector3 center = {
 		(gameObject.translate.x + targetGameObject->translate.x) * 0.5f,
 		gameObject.translate.y,

@@ -422,6 +422,36 @@ bool EditorPostProcessQualityManager::ExecuteAutoExposure(
 		return false;
 	}
 
+	if (isHistogramReadbackPending_ && histogramReadbackResource_ != nullptr) {
+		void* histogramMappedAddress = nullptr;
+		const D3D12_RANGE readRange{0u, static_cast<SIZE_T>(kHistogramBinCount * sizeof(uint32_t))};
+
+		if (SUCCEEDED(histogramReadbackResource_->Map(
+			0u,
+			&readRange,
+			&histogramMappedAddress)) &&
+			histogramMappedAddress != nullptr) {
+			const uint32_t* histogramValues = static_cast<const uint32_t*>(histogramMappedAddress);
+			uint32_t maximumBinValue = 1u;
+
+			for (uint32_t binIndex = 0u; binIndex < kHistogramBinCount; binIndex++) {
+				maximumBinValue = (std::max)(maximumBinValue, histogramValues[binIndex]);
+			}
+
+			const float inverseMaximumBinValue = 1.0f / static_cast<float>(maximumBinValue);
+
+			for (uint32_t binIndex = 0u; binIndex < kHistogramBinCount; binIndex++) {
+				histogramNormalized_[binIndex] =
+					static_cast<float>(histogramValues[binIndex]) * inverseMaximumBinValue;
+			}
+
+			histogramReadbackResource_->Unmap(0u, nullptr);
+			hasHistogramData_ = true;
+		}
+
+		isHistogramReadbackPending_ = false;
+	}
+
 	//================================================================
 	// HDR対数輝度を256 binへ集計する
 	//================================================================
@@ -515,8 +545,10 @@ bool EditorPostProcessQualityManager::ExecuteAutoExposure(
 	constants[9] = (std::clamp)(viewportUvHeight, 0.001f, 1.0f);
 	constants[10] = kMinimumLogLuminance;
 	constants[11] = kMaximumLogLuminance;
-	constants[12] = 0.02f;
-	constants[13] = 0.98f;
+	// 鏡面反射や太陽が画面へ入っただけで全体露出が変動しないよう、
+	// ヒストグラムの最暗部と最明部を外して中間輝度を測光する。
+	constants[12] = 0.05f;
+	constants[13] = 0.95f;
 
 	const bool isExposureExecuted = DrawPass(
 		commandList,
@@ -530,6 +562,21 @@ bool EditorPostProcessQualityManager::ExecuteAutoExposure(
 	if (isExposureExecuted) {
 		lastExposureOutputResourceType_ = destinationResourceType;
 		isExposureHistoryValid_ = true;
+	}
+
+	if (histogramReadbackResource_ != nullptr) {
+		D3D12_RESOURCE_BARRIER histogramCopyBarrier{};
+		histogramCopyBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		histogramCopyBarrier.Transition.pResource = histogramResource_.Get();
+		histogramCopyBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		histogramCopyBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		histogramCopyBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+		commandList->ResourceBarrier(1u, &histogramCopyBarrier);
+		commandList->CopyResource(histogramReadbackResource_.Get(), histogramResource_.Get());
+		histogramCopyBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+		histogramCopyBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		commandList->ResourceBarrier(1u, &histogramCopyBarrier);
+		isHistogramReadbackPending_ = true;
 	}
 
 	return isExposureExecuted;
@@ -571,6 +618,14 @@ D3D12_GPU_DESCRIPTOR_HANDLE EditorPostProcessQualityManager::GetSmaaOutputSrvHan
 
 D3D12_GPU_DESCRIPTOR_HANDLE EditorPostProcessQualityManager::GetAutoExposureSrvHandle() const {
 	return srvHandles_[static_cast<size_t>(lastExposureOutputResourceType_)];
+}
+
+const std::array<float, 256u>& EditorPostProcessQualityManager::GetHistogramNormalized() const {
+	return histogramNormalized_;
+}
+
+bool EditorPostProcessQualityManager::HasHistogramData() const {
+	return hasHistogramData_;
 }
 
 bool EditorPostProcessQualityManager::CreateRootSignatureAndPipelineStates(
@@ -928,6 +983,22 @@ bool EditorPostProcessQualityManager::CreateSizeDependentResources(
 	histogramSrvHandle_ = GetGpuSrvDescriptorHandle(kHistogramSrvDescriptorIndex);
 	histogramUavGpuHandle_ = GetGpuSrvDescriptorHandle(kHistogramUavDescriptorIndex);
 
+	D3D12_RESOURCE_DESC histogramReadbackDescription = histogramResourceDescription;
+	histogramReadbackDescription.Flags = D3D12_RESOURCE_FLAG_NONE;
+	D3D12_HEAP_PROPERTIES histogramReadbackHeapProperties{};
+	histogramReadbackHeapProperties.Type = D3D12_HEAP_TYPE_READBACK;
+	const HRESULT histogramReadbackResult = device_->CreateCommittedResource(
+		&histogramReadbackHeapProperties,
+		D3D12_HEAP_FLAG_NONE,
+		&histogramReadbackDescription,
+		D3D12_RESOURCE_STATE_COPY_DEST,
+		nullptr,
+		IID_PPV_ARGS(histogramReadbackResource_.GetAddressOf()));
+
+	if (FAILED(histogramReadbackResult) || histogramReadbackResource_ == nullptr) {
+		return false;
+	}
+
 	return true;
 }
 
@@ -937,9 +1008,13 @@ void EditorPostProcessQualityManager::ReleaseSizeDependentResources() {
 	}
 
 	histogramResource_.Reset();
+	histogramReadbackResource_.Reset();
 	histogramUavCpuHandle_ = {};
 	histogramSrvHandle_ = {};
 	histogramUavGpuHandle_ = {};
+	histogramNormalized_.fill(0.0f);
+	isHistogramReadbackPending_ = false;
+	hasHistogramData_ = false;
 	srvHandles_.fill({});
 	resourceWidths_.fill(0u);
 	resourceHeights_.fill(0u);

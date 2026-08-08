@@ -35,6 +35,7 @@ public:
 	bool WasActionJustPressed(int32_t gameObjectId, const std::string& actionMapName, const std::string& actionName) const;  // DLL Script から Button Action の押した瞬間判定を取得する。
 	bool WasActionJustReleased(int32_t gameObjectId, const std::string& actionMapName, const std::string& actionName) const;  // DLL Script から Button Action を離した瞬間判定を取得する。
 	std::string GetActionBindingPath(int32_t gameObjectId, const std::string& actionMapName, const std::string& actionName) const;  // InputContext へ渡す Binding Path を返す。
+	void SetPauseInputMaps(bool isPaused, const std::string& gameplayInputMap, const std::string& uiInputMap);  // Pause中はUI Mapだけを更新する
 
 private:
 	EditorScene* editorScene_ = nullptr;  // Input Component を検索する対象 Scene
@@ -42,6 +43,9 @@ private:
 	std::unordered_map<std::string, bool> actionPressedStates_;  // started / performed / canceled 判定用の前フレーム押下状態
 	std::unordered_map<std::string, ActionVector2State> actionVector2States_;  // PlayerInput の Move など 2D 入力値をフレームごとに保持する。
 	std::unordered_map<std::string, ActionButtonState> actionButtonStates_;  // PlayerInput の Submit / LeftClick など Button 入力状態をフレームごとに保持する。
+	bool isGamePaused_ = false;  // GamePauseから受け取る入力切替状態
+	std::string pausedGameplayInputMap_ = "Gameplay";  // Pause時に抑止するMap名
+	std::string pausedUiInputMap_ = "UI";  // Pause中も許可するMap名
 	bool IsKeyPressed(const uint8_t* keyState, int32_t keyIndex) const;  // DirectInput のキー配列から 1 つのキーが押されているか調べる
 	float GetColliderBottomOffset(const EditorGameObject& gameObject) const;  // 地面判定に使う Collider の下端オフセットを返す
 };

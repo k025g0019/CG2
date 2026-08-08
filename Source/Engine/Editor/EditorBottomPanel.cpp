@@ -21,6 +21,7 @@ using namespace EditorSharedState;
 
 namespace {
 	constexpr unsigned char kUtf8Bom[] = {0xEFu, 0xBBu, 0xBFu};  // 作成アセットは UTF-8 BOM 付きで保存する。
+	constexpr char kDefaultSceneDirectory[] = "Assets/Scenes";  // Unity と同じく Scene Asset をまとめる標準フォルダー。
 	constexpr std::chrono::milliseconds kProjectAssetRefreshInterval{1000};  // 外部ツールによる追加も最大 1 秒で Project へ反映する。
 	std::vector<std::string> cachedProjectAssetPaths;  // 毎フレームの Assets / resources 全走査を避ける索引。
 	std::unordered_map<std::string, std::vector<std::filesystem::path>> cachedProjectChildDirectories;
@@ -216,6 +217,27 @@ namespace {
 		return "Assets";
 	}
 
+	std::string GetSceneAssetCreateDirectory(const std::string& selectedAssetPath) {
+		// Scene は Assets/Scenes 配下へ集約し、選択中のサブフォルダーだけは維持する。
+		if (!selectedAssetPath.empty() &&
+			(selectedAssetPath == kDefaultSceneDirectory ||
+			 selectedAssetPath.rfind(std::string(kDefaultSceneDirectory) + "/", 0) == 0)) {
+			const std::filesystem::path selectedPath(selectedAssetPath);
+
+			if (std::filesystem::is_directory(selectedPath)) {
+				return selectedPath.generic_string();
+			}
+
+			const std::filesystem::path parentPath = selectedPath.parent_path();
+
+			if (!parentPath.empty()) {
+				return parentPath.generic_string();
+			}
+		}
+
+		return kDefaultSceneDirectory;
+	}
+
 	std::string MakeUniqueInputActionsAssetPath(const std::string& directoryPath) {
 		const std::filesystem::path baseDirectoryPath(directoryPath);
 		const std::string baseName = "InGameInputAction";
@@ -318,6 +340,10 @@ namespace {
 
 	bool LoadSceneFromAssetPath(const std::string& assetPath, std::vector<std::string>& consoleMessages) {
 		// .scene のダブルクリックは外部アプリではなく、エディタ内の現在シーン読み込みとして扱う。
+		if (g_editorRuntimeManager.IsPlaying()) {
+			g_editorRuntimeManager.TogglePlay();
+		}
+
 		if (!g_editorScene.LoadScene(assetPath)) {
 			consoleMessages.push_back("Asset: シーン読込に失敗 " + assetPath);
 			return false;
@@ -331,10 +357,38 @@ namespace {
 		return true;
 	}
 
+	bool InstantiatePrefabFromAssetPath(
+		const std::string& assetPath,
+		std::vector<std::string>& consoleMessages) {
+		if (g_editorRuntimeManager.IsPlaying()) {
+			consoleMessages.push_back("Asset: Play中はPrefabをSceneへ配置できません");
+			return false;
+		}
+
+		g_editorScene.PushUndo();
+		const int32_t prefabRootId = g_editorScene.InstantiatePrefab(assetPath);
+
+		if (prefabRootId < 0) {
+			consoleMessages.push_back("Asset: Prefab生成に失敗 " + assetPath);
+			return false;
+		}
+
+		g_selectedAssetPath = assetPath;
+		SelectGameObject(prefabRootId);
+		RefreshSceneObjects();
+		consoleMessages.push_back("Asset: PrefabをSceneへ生成 " + assetPath);
+		return true;
+	}
+
 	void OpenAssetWithShell(const std::string& assetPath, std::vector<std::string>& consoleMessages) {
-		// .scene はエディタ内で開き、それ以外は OS 既定アプリへ引き渡す。
+		// SceneとPrefabはエディタ操作として処理し、それ以外だけOS既定アプリへ渡す。
 		if (EditorAssetUtility::HasExtension(assetPath, ".scene")) {
 			LoadSceneFromAssetPath(assetPath, consoleMessages);
+			return;
+		}
+
+		if (EditorAssetUtility::HasExtension(assetPath, ".prefab")) {
+			InstantiatePrefabFromAssetPath(assetPath, consoleMessages);
 			return;
 		}
 
@@ -461,27 +515,28 @@ namespace {
 
 	bool IsAssetInSelectedProjectFolder(
 		const std::string& assetPath,
-		const std::string& selectedAssetPath,
-		bool isSelectedPathFolder) {
-		// 左ツリーでフォルダーを選んでいる時だけ、その配下アセットに Project グリッドを絞る。
-		if (selectedAssetPath.empty() || !isSelectedPathFolder) {
+		const std::string& currentProjectDirectoryPath,
+		bool hasFilterText) {
+		// 検索時は全 Project を対象にし、通常時は現在フォルダー直下だけを表示する。
+		if (hasFilterText) {
 			return true;
 		}
 
-		const std::filesystem::path selectedPath(selectedAssetPath);
-		const std::string folderPrefix = selectedPath.generic_string() + "/";
-		return assetPath == selectedPath.generic_string() ||
-			assetPath.rfind(folderPrefix, 0) == 0;
+		return std::filesystem::path(assetPath).parent_path().generic_string() ==
+			currentProjectDirectoryPath;
 	}
 
-	void DrawProjectFolderNode(const std::filesystem::path& folderPath, std::string& selectedAssetPath) {
+	void DrawProjectFolderNode(
+		const std::filesystem::path& folderPath,
+		std::string& selectedAssetPath,
+		std::string& currentProjectDirectoryPath) {
 		const std::string folderPathText = folderPath.generic_string();
 
 		if (!cachedProjectDirectories.contains(folderPathText)) {
 			return;
 		}
 
-		const bool isSelected = selectedAssetPath == folderPathText;
+		const bool isSelected = currentProjectDirectoryPath == folderPathText;
 		const auto childDirectoryIterator = cachedProjectChildDirectories.find(folderPathText);
 		const bool hasChildDirectory =
 			childDirectoryIterator != cachedProjectChildDirectories.end() &&
@@ -499,12 +554,13 @@ namespace {
 		if (ImGui::IsItemClicked()) {
 			selectedAssetPath = folderPathText;
 			g_selectedAssetPath = folderPathText;
+			currentProjectDirectoryPath = folderPathText;
 		}
 
 		if (isOpened) {
 			if (hasChildDirectory) {
 				for (const std::filesystem::path& childDirectoryPath : childDirectoryIterator->second) {
-					DrawProjectFolderNode(childDirectoryPath, selectedAssetPath);
+					DrawProjectFolderNode(childDirectoryPath, selectedAssetPath, currentProjectDirectoryPath);
 				}
 			}
 
@@ -514,6 +570,9 @@ namespace {
 }
 
 void EditorBottomPanel::Initialize() {
+	std::error_code directoryError;
+	std::filesystem::create_directories(kDefaultSceneDirectory, directoryError);
+	InvalidateProjectAssetCache();
 }
 
 void EditorBottomPanel::Update() {
@@ -544,6 +603,7 @@ void EditorBottomPanel::Draw(
 			const bool isProjectWindowFocused =
 				ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);  // Project タブ全体がアクティブな時だけ Delete を受け付ける。
 			static char newFolderName[128] = "NewFolder";  // Project の新規フォルダー名入力欄。
+			static std::string currentProjectDirectoryPath = "Assets";  // ファイル選択とは分離した、右グリッドの表示先。
 			bool isOpenFolderPopupRequested = false;  // メニューを閉じた後にフォルダー作成モーダルを開く要求。
 
 			ImGui::InputText("検索", assetFilter, assetFilterSize);  // Project 内アセット名検索
@@ -554,9 +614,10 @@ void EditorBottomPanel::Draw(
 			if (ImGui::BeginPopup("ProjectCreateAssetPopup")) {
 				if (ImGui::MenuItem("Scene")) {
 					CreateSceneAsset(
-						GetProjectAssetCreateDirectory(selectedAssetPath),
+						GetSceneAssetCreateDirectory(selectedAssetPath),
 						selectedAssetPath,
 						consoleMessages);
+					currentProjectDirectoryPath = GetSceneAssetCreateDirectory(selectedAssetPath);
 				}
 
 				if (ImGui::MenuItem("フォルダー")) {
@@ -679,20 +740,43 @@ void EditorBottomPanel::Draw(
 			const std::vector<std::string>& assetPaths = CollectProjectAssetPaths();
 
 			ImGui::BeginChild("Folders", ImVec2(180.0f, 0.0f), ImGuiChildFlags_Borders);  // 左側の簡易フォルダツリー
-			DrawProjectFolderNode(std::filesystem::path("Assets"), selectedAssetPath);
-			DrawProjectFolderNode(std::filesystem::path("resources"), selectedAssetPath);
+			DrawProjectFolderNode(std::filesystem::path("Assets"), selectedAssetPath, currentProjectDirectoryPath);
+			DrawProjectFolderNode(std::filesystem::path("resources"), selectedAssetPath, currentProjectDirectoryPath);
 			ImGui::EndChild();
 			ImGui::SameLine();
 			ImGui::BeginChild("Assets", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);  // 右側のアセットグリッド
+			ImGui::TextDisabled("%s", currentProjectDirectoryPath.c_str());
+			ImGui::Separator();
 			if (ImGui::BeginTable("AssetGrid", 4, ImGuiTableFlags_SizingStretchSame)) {
-				std::error_code selectedPathError;
-				const bool isSelectedPathFolder =
-					!selectedAssetPath.empty() &&
-					std::filesystem::is_directory(selectedAssetPath, selectedPathError) &&
-					!selectedPathError;
+				const bool hasFilterText = EditorAssetUtility::HasFilterText(assetFilter);
+
+				if (!hasFilterText) {
+					const auto childDirectoryIterator =
+						cachedProjectChildDirectories.find(currentProjectDirectoryPath);
+
+					if (childDirectoryIterator != cachedProjectChildDirectories.end()) {
+						for (const std::filesystem::path& childDirectoryPath : childDirectoryIterator->second) {
+							const std::string childDirectoryText = childDirectoryPath.generic_string();
+							ImGui::TableNextColumn();
+							ImGui::PushID(childDirectoryText.c_str());
+
+							if (ImGui::Button("DIR", ImVec2(58.0f, 48.0f))) {
+								currentProjectDirectoryPath = childDirectoryText;
+								selectedAssetPath = childDirectoryText;
+								g_selectedAssetPath = childDirectoryText;
+							}
+
+							ImGui::TextWrapped("%s", childDirectoryPath.filename().generic_string().c_str());
+							ImGui::PopID();
+						}
+					}
+				}
 
 				for (const std::string& relativePath : assetPaths) {
-					if (!IsAssetInSelectedProjectFolder(relativePath, selectedAssetPath, isSelectedPathFolder)) {
+					if (!IsAssetInSelectedProjectFolder(
+							relativePath,
+							currentProjectDirectoryPath,
+							hasFilterText)) {
 						continue;
 					}
 

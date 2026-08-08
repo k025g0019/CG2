@@ -75,7 +75,10 @@ void EditorSelectionManager::SyncSelectedPlacedObjectToGameObject(int32_t select
 		return;
 	}
 
-	gameObject->translate = sceneObject.transform.translate;  // ギズモ結果の Transform を GameObject 側に反映する
-	gameObject->rotate = sceneObject.transform.rotate;
-	gameObject->scale = sceneObject.transform.scale;
+	// SceneObjectのギズモ値はワールド空間なので、親がある場合はScene側でローカルSRTへ戻す。
+	editorScene_->SetWorldTransform(
+		gameObject->id,
+		sceneObject.transform.scale,
+		sceneObject.transform.rotate,
+		sceneObject.transform.translate);
 }

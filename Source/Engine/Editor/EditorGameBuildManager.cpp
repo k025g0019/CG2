@@ -6,6 +6,9 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <queue>
+#include <regex>
+#include <set>
 #include <system_error>
 #include <utility>
 
@@ -126,6 +129,160 @@ namespace {
 			buildSettings.scenePaths.end(),
 			scenePath) != buildSettings.scenePaths.end();
 	}
+
+	bool CopyFileWithRelativePath(
+		const std::filesystem::path& projectRoot,
+		const std::filesystem::path& outputDirectory,
+		const std::filesystem::path& relativePath,
+		std::error_code& fileError) {
+		fileError.clear();
+		const std::filesystem::path sourcePath = (projectRoot / relativePath).lexically_normal();
+
+		if (!std::filesystem::exists(sourcePath, fileError) ||
+			!std::filesystem::is_regular_file(sourcePath, fileError)) {
+			return false;
+		}
+
+		const std::filesystem::path destinationPath = outputDirectory / relativePath;
+		std::filesystem::create_directories(destinationPath.parent_path(), fileError);
+
+		if (fileError) {
+			return false;
+		}
+
+		std::filesystem::copy_file(
+			sourcePath,
+			destinationPath,
+			std::filesystem::copy_options::overwrite_existing,
+			fileError);
+		return !fileError;
+	}
+
+	bool IsRecursiveDependencyAsset(const std::filesystem::path& assetPath) {
+		std::string extension = assetPath.extension().string();
+		std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char character) {
+			return static_cast<char>(std::tolower(character));
+		});
+		return extension == ".scene" || extension == ".prefab" ||
+			extension == ".material" || extension == ".animclip" ||
+			extension == ".animgraph" || extension == ".effect" ||
+			extension == ".inputactions" || extension == ".gamedata" ||
+			extension == ".json" || extension == ".xml" || extension == ".txt";
+	}
+
+	bool IsModelAsset(const std::filesystem::path& assetPath) {
+		std::string extension = assetPath.extension().string();
+		std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char character) {
+			return static_cast<char>(std::tolower(character));
+		});
+		return extension == ".fbx" || extension == ".obj" ||
+			extension == ".gltf" || extension == ".glb";
+	}
+
+	void QueueDependenciesFromFile(
+		const std::filesystem::path& sourcePath,
+		std::queue<std::filesystem::path>& pendingAssets) {
+		std::ifstream sourceFile(sourcePath, std::ios::binary);
+
+		if (!sourceFile.is_open()) {
+			return;
+		}
+
+		const std::string sourceText(
+			(std::istreambuf_iterator<char>(sourceFile)),
+			std::istreambuf_iterator<char>());
+		const std::regex assetReferencePattern(
+			R"(((?:Assets|resources)[/\\][^|"\r\n<>]*?\.(?:scene|prefab|fbx|obj|gltf|glb|png|jpg|jpeg|dds|tga|bmp|wav|mp3|ogg|dll|animclip|animgraph|effect|efk|efkefc|inputactions|gamedata|json|xml)))",
+			std::regex_constants::icase);
+
+		for (std::sregex_iterator iterator(sourceText.begin(), sourceText.end(), assetReferencePattern), endIterator;
+			 iterator != endIterator;
+			 ++iterator) {
+			pendingAssets.push(std::filesystem::path((*iterator)[1].str()).lexically_normal());
+		}
+	}
+
+	bool CopyReferencedRuntimeAssets(
+		const std::filesystem::path& projectRoot,
+		const std::filesystem::path& outputDirectory,
+		const EditorGameBuildSettings& buildSettings,
+		std::error_code& fileError,
+		size_t& copiedAssetCount) {
+		std::queue<std::filesystem::path> pendingAssets;
+		std::set<std::string> copiedAssets;
+		copiedAssetCount = 0u;
+
+		for (const std::string& scenePath : buildSettings.scenePaths) {
+			pendingAssets.push(std::filesystem::path(scenePath).lexically_normal());
+		}
+
+		pendingAssets.push(std::filesystem::path("resources/editorScene.scene"));
+
+		while (!pendingAssets.empty()) {
+			const std::filesystem::path relativePath = pendingAssets.front().lexically_normal();
+			pendingAssets.pop();
+			const std::string relativeKey = relativePath.generic_string();
+
+			if (relativePath.is_absolute() || relativeKey.find("..") != std::string::npos ||
+				!copiedAssets.insert(relativeKey).second) {
+				continue;
+			}
+
+			if (!CopyFileWithRelativePath(projectRoot, outputDirectory, relativePath, fileError)) {
+				if (relativePath == std::filesystem::path("resources/editorScene.scene")) {
+					fileError.clear();
+					continue;
+				}
+
+				return false;
+			}
+
+			copiedAssetCount++;
+
+			if (IsRecursiveDependencyAsset(relativePath)) {
+				QueueDependenciesFromFile(projectRoot / relativePath, pendingAssets);
+			}
+
+			if (IsModelAsset(relativePath)) {
+				const std::filesystem::path modelDirectory = projectRoot / relativePath.parent_path();
+
+				for (const std::filesystem::directory_entry& siblingEntry :
+					 std::filesystem::directory_iterator(modelDirectory, fileError)) {
+					if (fileError || !siblingEntry.is_regular_file(fileError)) {
+						continue;
+					}
+
+					std::string siblingExtension = siblingEntry.path().extension().string();
+					std::transform(
+						siblingExtension.begin(),
+						siblingExtension.end(),
+						siblingExtension.begin(),
+						[](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+
+					if (siblingExtension == ".png" || siblingExtension == ".jpg" ||
+						siblingExtension == ".jpeg" || siblingExtension == ".dds" ||
+						siblingExtension == ".tga" || siblingExtension == ".bmp") {
+						pendingAssets.push(relativePath.parent_path() / siblingEntry.path().filename());
+					}
+				}
+
+				fileError.clear();
+			}
+		}
+
+		const std::vector<std::pair<std::filesystem::path, std::string>> commonDirectories = {
+			{projectRoot / "Assets" / "Shaders", "Assets/Shaders"},
+			{projectRoot / "resources" / "editorDefault", "resources/editorDefault"},
+		};
+
+		for (const auto& [sourcePath, destinationName] : commonDirectories) {
+			if (!CopyDirectory(sourcePath, outputDirectory / destinationName, fileError)) {
+				return false;
+			}
+		}
+
+		return true;
+	}
 }
 
 bool EditorGameBuildManager::LoadProjectSettings(EditorGameBuildSettings& buildSettings) {
@@ -228,8 +385,6 @@ bool EditorGameBuildManager::ExportReleaseGame(
 	}
 
 	const std::vector<std::pair<std::filesystem::path, std::string>> runtimeDirectories = {
-		{projectRoot / "Assets", "Assets"},
-		{projectRoot / "resources", "resources"},
 		{releaseDirectory / "ThirdParty", "ThirdParty"},
 	};
 
@@ -243,6 +398,33 @@ bool EditorGameBuildManager::ExportReleaseGame(
 		}
 	}
 
+	size_t copiedAssetCount = 0u;
+
+	if (buildSettings.includeOnlyReferencedAssets) {
+		if (!CopyReferencedRuntimeAssets(
+				projectRoot,
+				outputDirectory,
+				buildSettings,
+				fileError,
+				copiedAssetCount)) {
+			resultMessage = "Build: 参照Assetまたは依存Assetをコピーできません";
+			return false;
+		}
+	}
+	else {
+		const std::vector<std::pair<std::filesystem::path, std::string>> allAssetDirectories = {
+			{projectRoot / "Assets", "Assets"},
+			{projectRoot / "resources", "resources"},
+		};
+
+		for (const auto& [sourcePath, destinationName] : allAssetDirectories) {
+			if (!CopyDirectory(sourcePath, outputDirectory / destinationName, fileError)) {
+				resultMessage = "Build: " + destinationName + " をコピーできません";
+				return false;
+			}
+		}
+	}
+
 	if (!SaveSettingsFile(
 			(outputDirectory / kStandaloneManifestName).generic_string(),
 			buildSettings)) {
@@ -251,6 +433,10 @@ bool EditorGameBuildManager::ExportReleaseGame(
 	}
 
 	resultMessage = "Build: ゲームを書き出しました " + gameExecutablePath.generic_string();
+
+	if (buildSettings.includeOnlyReferencedAssets) {
+		resultMessage += " (参照Asset " + std::to_string(copiedAssetCount) + "件 + 共通Shader)";
+	}
 	return true;
 }
 
@@ -326,6 +512,9 @@ bool EditorGameBuildManager::LoadSettingsFile(
 		else if (key == "StartupScene") {
 			loadedSettings.startupScenePath = value;
 		}
+		else if (key == "ReferencedAssetsOnly") {
+			loadedSettings.includeOnlyReferencedAssets = value != "0";
+		}
 		else if (key == "Scene" && !value.empty() &&
 			std::find(
 				loadedSettings.scenePaths.begin(),
@@ -367,6 +556,7 @@ bool EditorGameBuildManager::SaveSettingsFile(
 	file << "ProductName|" << buildSettings.productName << "\r\n";
 	file << "OutputDirectory|" << buildSettings.outputDirectory << "\r\n";
 	file << "StartupScene|" << buildSettings.startupScenePath << "\r\n";
+	file << "ReferencedAssetsOnly|" << (buildSettings.includeOnlyReferencedAssets ? 1 : 0) << "\r\n";
 
 	for (const std::string& scenePath : buildSettings.scenePaths) {
 		file << "Scene|" << scenePath << "\r\n";

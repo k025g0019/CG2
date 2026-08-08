@@ -13,6 +13,7 @@ struct ParticleData
     float4 motion1; // xyz: 運動中心 / w: 波周波数。
     float4 motion2; // x: 吸引力 / y: 現在回転 / z: 回転速度 / w: 衝突反発率。
     float4 rendering; // x: 描画モデル / y: 放射強度 / z: 深度衝突 / w: 摩擦。
+    float4 orientation; // x: Billboard方式 / y: Velocity方向Scale。
 };
 
 #endif

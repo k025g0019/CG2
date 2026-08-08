@@ -26,6 +26,21 @@ public:
 		bool isTrigger = false;  // 命中 Body が Trigger / Sensor なら true
 	};
 
+	struct SubmergedVolumeInfo {
+		float totalVolume = 0.0f;  // Jolt Shape 全体の体積
+		float submergedVolume = 0.0f;  // 指定水面より下にある実 Shape の体積
+		Vector3 centerOfBuoyancy = {0.0f, 0.0f, 0.0f};  // 水没体積の World 空間重心
+		Vector3 centerOfMass = {0.0f, 0.0f, 0.0f};  // Jolt Body の World 空間重心
+		Vector3 shapeSize = {0.0f, 0.0f, 0.0f};  // 実 Physics Shape のローカル境界寸法（Body生成時のScale適用済み）
+	};
+
+	struct HydrodynamicSurfaceTriangle {
+		Vector3 first = {0.0f, 0.0f, 0.0f};  // World空間の第1頂点
+		Vector3 second = {0.0f, 0.0f, 0.0f};  // World空間の第2頂点
+		Vector3 third = {0.0f, 0.0f, 0.0f};  // World空間の第3頂点
+		float areaScale = 1.0f;  // 面数縮約時に元の表面積を保つ重み
+	};
+
 	enum class PhysicsEventType {
 		CollisionEnter,  // 押し返しを伴う接触の開始
 		CollisionStay,  // 押し返しを伴う接触の継続
@@ -55,12 +70,20 @@ public:
 	void Update(float deltaTime);  // Jolt の PhysicsSystem を進め、結果を GameObject へ戻す
 	void Stop();  // Jolt Body と PhysicsSystem を破棄する
 	bool IsActive() const;  // Jolt World が Play 用に作成済みか返す
+	bool RegisterRuntimeGameObject(int32_t gameObjectId);  // Play中に追加されたGameObjectのColliderをJolt Worldへ登録する
 	bool SetGameObjectSimulationActive(int32_t gameObjectId, bool isActive);  // 出現待ち Object の Body を物理 Worldへ出し入れする
+	bool SetGameObjectTransform(int32_t gameObjectId, const Vector3& position, const Vector3& rotation);  // Pool再利用時にJolt Bodyも新しいWorld姿勢へ移す
 	bool Raycast(const Vector3& origin, const Vector3& direction, float distance, PhysicsHit& hit) const;  // Scene 内 Collider に Ray を飛ばす
+	bool RaycastIgnoringGameObject(const Vector3& origin, const Vector3& direction, float distance, int32_t ignoredGameObjectId, PhysicsHit& hit) const;  // 車体から地面へ飛ばす時など、所有者自身の全 Collider を除外する
+	bool RaycastIgnoringGameObjects(const Vector3& origin, const Vector3& direction, float distance, const std::vector<int32_t>& ignoredGameObjectIds, PhysicsHit& hit) const;  // 攻撃者階層など複数Objectを除外する
 	bool SphereCast(const Vector3& origin, float radius, const Vector3& direction, float distance, PhysicsHit& hit) const;  // 太さのある Ray を飛ばす
+	bool SphereCastIgnoringGameObjects(const Vector3& origin, float radius, const Vector3& direction, float distance, const std::vector<int32_t>& ignoredGameObjectIds, PhysicsHit& hit) const;  // Projectile半径を保ったまま複数Objectを除外する
 	bool CapsuleCast(const Vector3& origin, float radius, float height, const Vector3& direction, float distance, PhysicsHit& hit) const;  // Capsule 形状を移動させる
 	bool OverlapSphere(const Vector3& center, float radius, std::vector<int32_t>& hitGameObjectIds) const;  // 球の範囲に重なった GameObject を列挙する
 	bool OverlapBox(const Vector3& center, const Vector3& size, std::vector<int32_t>& hitGameObjectIds) const;  // 箱の範囲に重なった GameObject を列挙する
+	bool GetBodyMass(int32_t gameObjectId, float& bodyMass) const;  // Joltへ反映済みの実質量を返す
+	bool GetSubmergedVolume(int32_t gameObjectId, const Vector3& surfacePosition, const Vector3& surfaceNormal, SubmergedVolumeInfo& volumeInfo) const;  // 実 Physics Shape を水面 Plane で切り、体積と浮心を返す
+	bool GetHydrodynamicSurfaceTriangles(int32_t gameObjectId, std::vector<HydrodynamicSurfaceTriangle>& surfaceTriangles) const;  // 実Shape表面を面積分布保持パネルとしてWorld空間で返す
 	bool AddForce(int32_t gameObjectId, const Vector3& force);  // Dynamic Rigidbody に継続力を加える
 	bool AddForceAtPosition(int32_t gameObjectId, const Vector3& force, const Vector3& worldPosition);  // World 位置へ力を加え、重心との差から回転も発生させる
 	bool AddImpulse(int32_t gameObjectId, const Vector3& impulse);  // Dynamic Rigidbody に瞬間力を加える

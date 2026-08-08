@@ -5,6 +5,8 @@
 #include "EditorComponentUtility.h"
 #include "EditorSharedState.h"
 
+#include <Windows.h>
+
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -84,7 +86,14 @@ namespace {
 			return false;
 		}
 
-		return (g_mouseState.rgbButtons[mouseButtonIndex] & 0x80) != 0;
+		const bool directInputPressed = (g_mouseState.rgbButtons[mouseButtonIndex] & 0x80) != 0;
+		if (mouseButtonIndex == 0) {
+			// DirectInput can temporarily lose the mouse device while the editor/Game View changes focus.
+			// Keep the primary fire action usable through the current Win32 button state.
+			return directInputPressed || (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+		}
+
+		return directInputPressed;
 	}
 
 	bool TryLoadPlayerInputActionsAsset(
@@ -150,6 +159,9 @@ void EditorInputManager::Initialize(EditorScene* editorScene, std::vector<std::s
 	actionPressedStates_.clear();
 	actionVector2States_.clear();
 	actionButtonStates_.clear();
+	isGamePaused_ = false;
+	pausedGameplayInputMap_ = "Gameplay";
+	pausedUiInputMap_ = "UI";
 }
 
 void EditorInputManager::Update(const uint8_t* keyState, float deltaTime) {
@@ -178,6 +190,23 @@ void EditorInputManager::Update(const uint8_t* keyState, float deltaTime) {
 		0.0f,
 		-std::sin(cam.rotate.y)
 	};
+	const EditorComponent* playerInputManager = nullptr;
+
+	for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
+		const EditorComponent* managerCandidate = EditorComponentUtility::FindComponent(
+			gameObject,
+			EditorComponentType::PlayerInputManager);
+
+		if (gameObject.isActive && managerCandidate != nullptr && managerCandidate->isActive) {
+			playerInputManager = managerCandidate;
+			break;
+		}
+	}
+
+	const int32_t maximumPlayerCount = playerInputManager != nullptr
+		? (std::clamp)(playerInputManager->particleMaxCount, 1, 8)
+		: INT32_MAX;
+	int32_t activePlayerCount = 0;
 
 	for (EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
 		// 非アクティブな GameObject は入力で動かさない
@@ -208,9 +237,23 @@ void EditorInputManager::Update(const uint8_t* keyState, float deltaTime) {
 		Vector3 moveDirection{0.0f, 0.0f, 0.0f};  // 実際に移動へ使う入力方向
 		bool isJumpPressed = false;  // Jump Action または旧 Input Jump が押されていれば true
 
-		if (playerInput != nullptr && playerInput->isActive && !playerInput->assetPath.empty()) {
+		const bool canUsePlayerInput =
+			playerInput != nullptr &&
+			playerInput->isActive &&
+			activePlayerCount < maximumPlayerCount &&
+			(!isGamePaused_ || playerInput->inputActionMapName == pausedUiInputMap_);
+		if (canUsePlayerInput) {
+			activePlayerCount++;
+		}
+
+		const std::string playerInputAssetPath =
+			canUsePlayerInput && !playerInput->assetPath.empty()
+			? playerInput->assetPath
+			: (playerInputManager != nullptr ? playerInputManager->assetPath : "");
+
+		if (canUsePlayerInput && !playerInputAssetPath.empty()) {
 			PlayerInputActionDefinition actionDefinition{};
-			if (TryLoadPlayerInputActionsAsset(playerInput->assetPath, playerInput->inputActionMapName, actionDefinition)) {
+			if (TryLoadPlayerInputActionsAsset(playerInputAssetPath, playerInput->inputActionMapName, actionDefinition)) {
 				hasRuntimeInput = true;
 
 				for (const auto& vector2BindingPair : actionDefinition.vector2Bindings) {
@@ -266,7 +309,7 @@ void EditorInputManager::Update(const uint8_t* keyState, float deltaTime) {
 			}
 		}
 
-		if (!hasRuntimeInput && input != nullptr && input->isActive) {
+		if (!isGamePaused_ && !hasRuntimeInput && input != nullptr && input->isActive) {
 			hasRuntimeInput = true;
 			appliesBuiltInMovement = true;
 
@@ -426,6 +469,18 @@ std::string EditorInputManager::GetActionBindingPath(
 	}
 
 	return "";
+}
+
+void EditorInputManager::SetPauseInputMaps(
+	bool isPaused,
+	const std::string& gameplayInputMap,
+	const std::string& uiInputMap) {
+	isGamePaused_ = isPaused;
+	pausedGameplayInputMap_ = gameplayInputMap.empty() ? "Gameplay" : gameplayInputMap;
+	pausedUiInputMap_ = uiInputMap.empty() ? "UI" : uiInputMap;
+	actionPressedStates_.clear();
+	actionVector2States_.clear();
+	actionButtonStates_.clear();
 }
 
 bool EditorInputManager::IsKeyPressed(const uint8_t* keyState, int32_t keyIndex) const {

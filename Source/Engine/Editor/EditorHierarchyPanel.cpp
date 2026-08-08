@@ -20,10 +20,18 @@ namespace {
 		forward.y = -std::sin(cameraPitch);
 		forward.z = std::cos(cameraYaw) * std::cos(cameraPitch);
 
+		Vector3 worldScale{};
+		Vector3 worldRotation{};
+		Vector3 worldPosition = gameObject.translate;
+		g_editorScene.GetWorldTransform(
+			gameObject.id,
+			worldScale,
+			worldRotation,
+			worldPosition);
 		const float focusDistance = 6.0f;
-		g_cameraTransform.translate.x = gameObject.translate.x - forward.x * focusDistance;
-		g_cameraTransform.translate.y = gameObject.translate.y - forward.y * focusDistance;
-		g_cameraTransform.translate.z = gameObject.translate.z - forward.z * focusDistance;
+		g_cameraTransform.translate.x = worldPosition.x - forward.x * focusDistance;
+		g_cameraTransform.translate.y = worldPosition.y - forward.y * focusDistance;
+		g_cameraTransform.translate.z = worldPosition.z - forward.z * focusDistance;
 	}
 
 	void SelectFirstGameObjectOrClear(
@@ -107,7 +115,7 @@ void EditorHierarchyPanel::Draw(
 
 	if (ImGui::Button("親解除")) {
 		editorScene_->PushUndo();  // 選択中 GameObject の parentId を無効 ID に戻す
-		editorScene_->SetParent(selectedGameObjectId, -1);
+		editorScene_->SetParent(selectedGameObjectId, -1, true);
 	}
 
 	if (ImGui::BeginPopup("HierarchyCreatePopup")) {
@@ -258,11 +266,24 @@ void EditorHierarchyPanel::DrawGameObjectNode(
 		}
 	}
 
-	ImGui::Indent(static_cast<float>(depth) * 14.0f);  // depth をインデント幅に変換して親子階層を見た目に反映する
-	std::string label = gameObject->children.empty() ? "  " : "v ";  // 子がある場合は v を付けて展開可能に見せる
-	label += gameObject->name;
-	bool isSelected = IsGameObjectSelected(gameObject->id);
-	if (ImGui::Selectable(label.c_str(), isSelected)) {
+	(void)depth;
+	const bool hasChildren = !gameObject->children.empty();
+	ImGuiTreeNodeFlags treeNodeFlags =
+		ImGuiTreeNodeFlags_OpenOnArrow |
+		ImGuiTreeNodeFlags_SpanAvailWidth;
+	if (IsGameObjectSelected(gameObject->id)) {
+		treeNodeFlags |= ImGuiTreeNodeFlags_Selected;
+	}
+	if (!hasChildren) {
+		treeNodeFlags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+	}
+
+	const bool isNodeOpen = ImGui::TreeNodeEx(
+		reinterpret_cast<void*>(static_cast<intptr_t>(gameObject->id)),
+		treeNodeFlags,
+		"%s",
+		gameObject->name.c_str());
+	if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen()) {
 		selectedGameObjectId = gameObject->id;  // Hierarchy でクリックした GameObject を選択状態にする
 		SetSingleSelectedGameObject(selectedGameObjectId);
 		selectedPlacedSceneObjectIndex = -1;
@@ -297,21 +318,23 @@ void EditorHierarchyPanel::DrawGameObjectNode(
 		if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("GAME_OBJECT_ID")) {
 			int32_t childId = *static_cast<const int32_t*>(payload->Data);  // Drop された GameObject をこのノードの子にする
 			editorScene_->PushUndo();
-			editorScene_->SetParent(childId, gameObject->id);
+			editorScene_->SetParent(childId, gameObject->id, true);
 		}
 		ImGui::EndDragDropTarget();
 	}
 
-	ImGui::Unindent(static_cast<float>(depth) * 14.0f);
+	if (hasChildren && isNodeOpen) {
+		for (int32_t childId : gameObject->children) {
+			// TreeNode の開閉状態に従い、開いている時だけ子を再帰描画する。
+			DrawGameObjectNode(
+				childId,
+				depth + 1,
+				hierarchyFilter,
+				selectedGameObjectId,
+				selectedPlacedSceneObjectIndex,
+				selectedSceneObject);
+		}
 
-	for (int32_t childId : gameObject->children) {
-		// 子ノードは depth + 1 で再帰描画する
-		DrawGameObjectNode(
-			childId,
-			depth + 1,
-			hierarchyFilter,
-			selectedGameObjectId,
-			selectedPlacedSceneObjectIndex,
-			selectedSceneObject);
+		ImGui::TreePop();
 	}
 }

@@ -1,14 +1,38 @@
 ﻿#include "ApplicationWindow.h"
 
+#include <commdlg.h>
+#include <filesystem>
+
+#include "EditorSharedState.h"
 #include "Log.h"
+
+#pragma comment(lib, "comdlg32.lib")
 
 #ifdef USE_IMGUI
 #pragma warning(push, 0)
-#include "ThirdParty/imgui/imgui.h"
-#include "ThirdParty/imgui/imgui_impl_win32.h"
+#include "ThirdParty/imgui-docking/imgui-docking/imgui.h"
+#include "ThirdParty/imgui-docking/imgui-docking/backends/imgui_impl_win32.h"
 #pragma warning(pop)
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 #endif
+
+namespace {
+std::string WideToUtf8(const std::wstring& text) {
+	if (text.empty()) {
+		return {};
+	}
+
+	const int convertedSize = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, nullptr, 0, nullptr, nullptr);
+	std::string convertedText(convertedSize, '\0');
+	WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, convertedText.data(), convertedSize, nullptr, nullptr);
+
+	if (!convertedText.empty() && convertedText.back() == '\0') {
+		convertedText.pop_back();
+	}
+
+	return convertedText;
+}
+}  // namespace
 
 HWND CreateMainWindow(HINSTANCE instanceHandle, std::ostream& logStream) {
 	// ウィンドウの作成ルールを Windows に登録するための設定
@@ -73,6 +97,66 @@ LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPAR
 	case WM_ERASEBKGND:
 		// DirectX 側で毎フレーム全面を塗るため、Windows 既定の白塗り潰しは無効にする。
 		return 1;
+	case WM_CLOSE: {
+		using namespace EditorSharedState;
+		std::string savePath = g_currentScenePath;
+
+		if (g_isEditorSceneInitialized && savePath.empty()) {
+			// 未保存シーン: 保存するか確認する
+			const int answer = MessageBoxW(
+				windowHandle,
+				L"未保存のシーンがあります。保存しますか？",
+				L"CG2 Editor",
+				MB_YESNOCANCEL | MB_ICONQUESTION | MB_DEFBUTTON1);
+
+			if (answer == IDCANCEL) {
+				return 0;  // キャンセル: 閉じない
+			}
+
+			if (answer == IDYES) {
+				// 保存先を選ばせる
+				wchar_t fileBuffer[MAX_PATH] = L"NewScene.scene";
+				OPENFILENAMEW ofn{};
+				ofn.lStructSize = sizeof(ofn);
+				ofn.hwndOwner = windowHandle;
+				ofn.lpstrFilter = L"シーンファイル (*.scene)\0*.scene\0すべてのファイル (*.*)\0*.*\0";
+				ofn.lpstrFile = fileBuffer;
+				ofn.nMaxFile = MAX_PATH;
+				ofn.lpstrDefExt = L"scene";
+				ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
+
+				if (GetSaveFileNameW(&ofn) == 0) {
+					return 0;  // 保存先選択をキャンセルしたので閉じない
+				}
+
+				savePath = WideToUtf8(fileBuffer);
+
+				// 拡張子が無ければ .scene を付ける
+				std::filesystem::path scenePath(savePath);
+				if (scenePath.extension().empty()) {
+					scenePath += ".scene";
+				}
+				savePath = scenePath.generic_string();
+			}
+		}
+
+		if (g_isEditorSceneInitialized && !savePath.empty()) {
+			const std::filesystem::path parentPath = std::filesystem::path(savePath).parent_path();
+			if (!parentPath.empty()) {
+				std::filesystem::create_directories(parentPath);
+			}
+
+			if (!g_editorScene.SaveScene(savePath)) {
+				MessageBoxW(windowHandle, L"シーンの保存に失敗しました。", L"CG2 Editor", MB_OK | MB_ICONERROR);
+				return 0;  // 保存失敗時は閉じない
+			}
+
+			g_currentScenePath = savePath;
+		}
+
+		DestroyWindow(windowHandle);
+		return 0;
+	}
 	case WM_DESTROY:
 		PostQuitMessage(0);  // メインループ側の IsEndRequested を成立させるため、WM_QUIT をメッセージキューへ積む
 		return 0;

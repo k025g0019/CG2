@@ -7,6 +7,7 @@
 #include "EditorBottomPanelWindowManager.h"
 #include "EditorAnimationWindowManager.h"
 #include "EditorDockingManager.h"
+#include "EditorDiagnosticsWindowManager.h"
 #include "EditorFrameInputManager.h"
 #include "EditorGameBuildManager.h"
 #include "EditorGameViewManager.h"
@@ -49,6 +50,7 @@ private:
 	EditorBottomPanelWindowManager bottomPanelWindowManager_;  // Project / Console の下部パネル表示を扱う Manager。
 	EditorAnimationWindowManager animationWindowManager_;  // Timeline、Keyframe、Preview、Animation Event の編集を扱う Manager。
 	EditorGameplayToolsWindowManager gameplayToolsWindowManager_;  // 汎用Spline、Event Timeline、State Graphを扱うManager。
+	EditorDiagnosticsWindowManager diagnosticsWindowManager_;  // Runtime ProfilerとScene静的検査を扱うManager。
 	EditorRenderManager renderManager_;  // SceneObject / Sprite / ImGui を GPU に描画する Manager。
 	EditorGameBuildSettings gameBuildSettings_;  // Standalone Player の起動 Scene と遷移可能 Scene を保持する。
 	bool isStandaloneGame_ = false;  // Editor UI を描かず GameView だけを表示する起動なら true。

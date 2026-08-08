@@ -101,5 +101,5 @@ void ApplyOceanFftDisplacement(
         saturate(normalFoam.w),
         gTransformationMatrix.oceanParams0.y * gTransformationMatrix.oceanParams3.z,
         max(farDetailWeight, 0.35f),
-        saturate(displacement.w));
+        clamp(displacement.w, -1.0f, 1.0f));
 }

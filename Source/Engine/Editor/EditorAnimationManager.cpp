@@ -2,6 +2,7 @@
 
 #include "EditorAssetUtility.h"
 #include "EditorComponentUtility.h"
+#include "EditorSharedState.h"
 #include "EditorScriptManager.h"
 #include "Source/Engine/Effect/EditorEffectManager.h"
 
@@ -11,6 +12,26 @@
 #include <set>
 
 namespace {
+	const EditorComponent* FindAnimationSource(const EditorGameObject& gameObject) {
+		const EditorComponent* animationComponent = EditorComponentUtility::FindComponent(
+			gameObject,
+			EditorComponentType::Animation);
+
+		if (animationComponent != nullptr && animationComponent->isActive) {
+			return animationComponent;
+		}
+
+		const EditorComponent* playableDirector = EditorComponentUtility::FindComponent(
+			gameObject,
+			EditorComponentType::PlayableDirector);
+		return playableDirector != nullptr && playableDirector->isActive ? playableDirector : nullptr;
+	}
+
+	EditorComponent* FindAnimationSource(EditorGameObject& gameObject) {
+		return const_cast<EditorComponent*>(
+			FindAnimationSource(static_cast<const EditorGameObject&>(gameObject)));
+	}
+
 	constexpr float kPi = 3.14159265f;
 	constexpr float kTwoPi = kPi * 2.0f;
 	constexpr float kDegreesToRadians = kPi / 180.0f;
@@ -141,6 +162,8 @@ void EditorAnimationManager::Initialize(
 
 void EditorAnimationManager::Start() {
 	animationTimes_.clear();
+	animationUpdateRemainingSeconds_.clear();
+	animationAccumulatedDeltaSeconds_.clear();
 	baseTransforms_.clear();
 	animationClips_.clear();
 	propertyAnimationRuntimes_.clear();
@@ -156,9 +179,7 @@ void EditorAnimationManager::Start() {
 			continue;
 		}
 
-		const EditorComponent* animationComponent = EditorComponentUtility::FindComponent(
-			gameObject,
-			EditorComponentType::Animation);
+		const EditorComponent* animationComponent = FindAnimationSource(gameObject);
 		const EditorComponent* animatorComponent = EditorComponentUtility::FindComponent(
 			gameObject,
 			EditorComponentType::Animator);
@@ -204,16 +225,45 @@ void EditorAnimationManager::Update(float deltaTime) {
 			continue;
 		}
 
-		EditorComponent* animationComponent = EditorComponentUtility::FindComponent(
-			gameObject,
-			EditorComponentType::Animation);
+		float& remainingSeconds = animationUpdateRemainingSeconds_[gameObject.id];
+		float& accumulatedSeconds = animationAccumulatedDeltaSeconds_[gameObject.id];
+		remainingSeconds -= deltaTime;
+		accumulatedSeconds += deltaTime;
+		const Vector3 cameraDifference = {
+			gameObject.translate.x - EditorSharedState::g_gameCameraPosition.x,
+			gameObject.translate.y - EditorSharedState::g_gameCameraPosition.y,
+			gameObject.translate.z - EditorSharedState::g_gameCameraPosition.z};
+		const float cameraDistanceSquared =
+			cameraDifference.x * cameraDifference.x +
+			cameraDifference.y * cameraDifference.y +
+			cameraDifference.z * cameraDifference.z;
+		float updateInterval = 0.0f;
+
+		if (cameraDistanceSquared > 600.0f * 600.0f) {
+			updateInterval = 0.25f;
+		}
+		else if (cameraDistanceSquared > 300.0f * 300.0f) {
+			updateInterval = 0.1f;
+		}
+		else if (cameraDistanceSquared > 120.0f * 120.0f) {
+			updateInterval = 1.0f / 30.0f;
+		}
+
+		if (updateInterval > 0.0f && remainingSeconds > 0.0f) {
+			continue;
+		}
+
+		const float animationDeltaTime = accumulatedSeconds;
+		accumulatedSeconds = 0.0f;
+		remainingSeconds += updateInterval;
+		EditorComponent* animationComponent = FindAnimationSource(gameObject);
 		auto animationTimeIterator = animationTimes_.find(gameObject.id);
 
 		if (animationComponent != nullptr &&
 			animationComponent->isActive &&
 			animationTimeIterator != animationTimes_.end()) {
 			float& playbackTime = animationTimeIterator->second;
-			playbackTime += deltaTime * animationComponent->animationSpeed;
+			playbackTime += animationDeltaTime * animationComponent->animationSpeed;
 			UpdateAnimation(gameObject, *animationComponent, playbackTime);
 		}
 
@@ -222,7 +272,7 @@ void EditorAnimationManager::Update(float deltaTime) {
 			EditorComponentType::Animator);
 
 		if (animatorComponent != nullptr && animatorComponent->isActive) {
-			UpdateAnimator(gameObject, *animatorComponent, deltaTime);
+			UpdateAnimator(gameObject, *animatorComponent, animationDeltaTime);
 		}
 	}
 }
@@ -253,6 +303,8 @@ void EditorAnimationManager::Stop() {
 	}
 
 	animationTimes_.clear();
+	animationUpdateRemainingSeconds_.clear();
+	animationAccumulatedDeltaSeconds_.clear();
 	baseTransforms_.clear();
 	animationClips_.clear();
 	propertyAnimationRuntimes_.clear();
@@ -615,9 +667,7 @@ bool EditorAnimationManager::PlayAnimation(int32_t gameObjectId) {
 		return false;
 	}
 
-	const EditorComponent* animationComponent = EditorComponentUtility::FindComponent(
-		*gameObject,
-		EditorComponentType::Animation);
+	const EditorComponent* animationComponent = FindAnimationSource(*gameObject);
 	if (animationComponent == nullptr || !animationComponent->isActive) {
 		return false;
 	}
@@ -705,9 +755,7 @@ bool EditorAnimationManager::SetAnimationSpeed(int32_t gameObjectId, float playb
 		return false;
 	}
 
-	EditorComponent* animationComponent = EditorComponentUtility::FindComponent(
-		*gameObject,
-		EditorComponentType::Animation);
+	EditorComponent* animationComponent = FindAnimationSource(*gameObject);
 	if (animationComponent == nullptr) {
 		return false;
 	}

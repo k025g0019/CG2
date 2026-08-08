@@ -42,6 +42,8 @@ public:
 		float collisionFriction = 0.2f;  // 深度面へ衝突した時に失う接線方向速度率。
 		bool useCollision = false;  // Scene Depth を使う衝突を有効にする。
 		int32_t collisionMode = 0;  // 0=Depth、1=Physics Collider 由来の SDF。
+		int32_t billboardMode = 0;  // 板ParticleのCamera追従方式。
+		float billboardStretch = 1.0f;  // Velocity Facingの速度方向Scale。
 		std::string renderAssetPath;  // 空なら板、FBX / OBJ ならその Mesh を GPU インスタンシングする。
 	};
 
@@ -59,6 +61,7 @@ public:
 	void StopEffect(int32_t gameObjectId);  // 指定 Emitter の発生を止め、既存 Particle は寿命まで残す。
 	bool IsEffectPlaying(int32_t gameObjectId) const;  // Emitter が発生中、または所有 Particle が生存中なら true を返す。
 	int32_t GetAliveParticleCount(int32_t gameObjectId) const;  // Inspector / C++ Script 用に生存数を返す。
+	bool HasLiveGpuParticles() const;  // GPU更新・描画が必要なParticleまたはSpawn要求があるか返す。
 	const std::vector<GpuParticleSpawn>& GetPendingGpuParticleSpawns() const;  // Renderer がこのフレームに GPU へ積む発生要求。
 	void ClearPendingGpuParticleSpawns();  // Renderer が GPU へ転送した Spawn 要求を消す。
 	float GetLastDeltaTime() const;  // Render 側 Compute Shader に渡す直近 Update 秒。
@@ -112,6 +115,7 @@ private:
 	std::unordered_map<uint64_t, EmitterRuntime> emitterRuntimes_;  // Emitter ごとの再生状態。
 	std::unordered_map<std::string, EffectAsset> effectAssetCache_;  // Play 中に読み込んだ共有 .effect を再利用する。
 	std::vector<ParticleRuntime> particles_;  // 現在生存している Particle。
+	std::unordered_map<int32_t, int32_t> aliveParticleCountByOwner_;  // Emitterごとの全Particle走査を避ける生存数Cache。
 	std::vector<GpuParticleSpawn> pendingGpuParticleSpawns_;  // GPU StructuredBuffer へ追加する新規 Particle。
 	std::mt19937 randomEngine_{0x434732u};  // Play ごとに再現可能な乱数系列。
 	uint32_t particleSerial_ = 0u;  // 一時 GameObject 名を重複させない連番。

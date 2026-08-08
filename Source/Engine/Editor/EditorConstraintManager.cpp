@@ -1,5 +1,6 @@
 ﻿#include "EditorConstraintManager.h"
 #include "EditorComponentUtility.h"
+#include "Source/Engine/Core/Vector&Matrix.h"
 
 namespace {
 	constexpr float kConstraintMinDistance = 0.0001f;
@@ -30,6 +31,33 @@ namespace {
 			NormalizeAngle(Lerp(a.z, NormalizeAngle(b.z - a.z) + a.z, t))};
 	}
 
+	float MoveTowardsAngle(float current, float target, float maximumDelta) {
+		const float angleDelta = NormalizeAngle(target - current);
+		return NormalizeAngle(current + Clamp(angleDelta, -maximumDelta, maximumDelta));
+	}
+
+	float ConstraintLength(const Vector3& value) {
+		return std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
+	}
+
+	Vector3 NormalizeSafe(const Vector3& value, const Vector3& fallback) {
+		const float length = ConstraintLength(value);
+		return length > kConstraintMinDistance
+			? Vector3{value.x / length, value.y / length, value.z / length}
+			: fallback;
+	}
+
+	float DotVector(const Vector3& firstValue, const Vector3& secondValue) {
+		return firstValue.x * secondValue.x + firstValue.y * secondValue.y + firstValue.z * secondValue.z;
+	}
+
+	Vector3 SubtractVector(const Vector3& firstValue, const Vector3& secondValue) {
+		return {
+			firstValue.x - secondValue.x,
+			firstValue.y - secondValue.y,
+			firstValue.z - secondValue.z};
+	}
+
 	void GetAxes(int32_t axis, Vector3& forward, Vector3& up, Vector3& right) {
 		switch (axis) {
 		case 0: forward = {1,0,0}; up = {0,1,0}; right = {0,0,-1}; break;
@@ -48,7 +76,6 @@ void EditorConstraintManager::Initialize(EditorScene* editorScene) {
 }
 
 void EditorConstraintManager::Update(float deltaTime) {
-	(void)deltaTime;
 	if (editorScene_ == nullptr) return;
 
 	for (auto& gameObject : editorScene_->GetGameObjects()) {
@@ -71,7 +98,197 @@ void EditorConstraintManager::Update(float deltaTime) {
 
 		auto* parent = EditorComponentUtility::FindComponent(gameObject, EditorComponentType::ParentConstraint);
 		if (parent != nullptr && parent->isActive) SolveParentConstraint(gameObject, *parent);
+
+		auto* turretAim = EditorComponentUtility::FindComponent(gameObject, EditorComponentType::TurretAim);
+		if (turretAim != nullptr && turretAim->isActive) SolveTurretAim(gameObject, *turretAim, deltaTime);
+
+		auto* horizonStabilizer = EditorComponentUtility::FindComponent(
+			gameObject,
+			EditorComponentType::CameraHorizonStabilizer);
+		if (horizonStabilizer != nullptr && horizonStabilizer->isActive) {
+			SolveCameraHorizonStabilizer(gameObject, *horizonStabilizer, deltaTime);
+		}
 	}
+}
+
+void EditorConstraintManager::SolveTurretAim(
+	EditorGameObject& gameObject,
+	EditorComponent& component,
+	float deltaTime) {
+	int32_t targetGameObjectId = component.turretTargetGameObjectId;
+
+	if (targetGameObjectId < 0) {
+		const int32_t selectorOwnerGameObjectId = component.turretTargetSelectorGameObjectId >= 0
+			? component.turretTargetSelectorGameObjectId
+			: gameObject.id;
+		const EditorGameObject* selectorOwner = editorScene_->FindGameObject(selectorOwnerGameObjectId);
+		const EditorComponent* selector = selectorOwner != nullptr
+			? EditorComponentUtility::FindComponent(*selectorOwner, EditorComponentType::TargetSelector)
+			: nullptr;
+		targetGameObjectId = selector != nullptr
+			? selector->targetSelectorCurrentTargetGameObjectId
+			: -1;
+	}
+
+	EditorGameObject* target = FindTarget(targetGameObjectId);
+	EditorGameObject* yawPivot = component.turretYawPivotGameObjectId >= 0
+		? FindTarget(component.turretYawPivotGameObjectId)
+		: &gameObject;
+	EditorGameObject* pitchPivot = component.turretPitchPivotGameObjectId >= 0
+		? FindTarget(component.turretPitchPivotGameObjectId)
+		: yawPivot;
+	component.turretCurrentTargetGameObjectId = targetGameObjectId;
+	component.turretCanReachTarget = false;
+	component.turretIsAimed = false;
+
+	if (target == nullptr || yawPivot == nullptr || pitchPivot == nullptr) {
+		return;
+	}
+
+	Vector3 targetScale = target->scale;
+	Vector3 targetRotation = target->rotate;
+	Vector3 targetPosition = target->translate;
+	editorScene_->GetWorldTransform(target->id, targetScale, targetRotation, targetPosition);
+	(void)targetScale;
+	(void)targetRotation;
+	const EditorGameObject* velocityOwner = target;
+	const EditorComponent* targetRigidBody = nullptr;
+
+	while (velocityOwner != nullptr && targetRigidBody == nullptr) {
+		targetRigidBody = EditorComponentUtility::FindComponent(
+			*velocityOwner,
+			EditorComponentType::RigidBody);
+		velocityOwner = targetRigidBody == nullptr
+			? editorScene_->FindGameObject(velocityOwner->parentId)
+			: velocityOwner;
+	}
+
+	if (targetRigidBody != nullptr) {
+		const float predictionSeconds = (std::max)(component.turretPredictionSeconds, 0.0f);
+		targetPosition.x += targetRigidBody->velocity.x * predictionSeconds;
+		targetPosition.y += targetRigidBody->velocity.y * predictionSeconds;
+		targetPosition.z += targetRigidBody->velocity.z * predictionSeconds;
+	}
+
+	Vector3 yawScale = yawPivot->scale;
+	Vector3 yawWorldRotation = yawPivot->rotate;
+	Vector3 yawPosition = yawPivot->translate;
+	editorScene_->GetWorldTransform(yawPivot->id, yawScale, yawWorldRotation, yawPosition);
+	(void)yawScale;
+	(void)yawWorldRotation;
+	const Vector3 targetDirection = NormalizeSafe(
+		SubtractVector(targetPosition, yawPosition),
+		{0.0f, 0.0f, 1.0f});
+	Vector3 yawParentRotation{};
+
+	if (const EditorGameObject* yawParent = editorScene_->FindGameObject(yawPivot->parentId)) {
+		Vector3 parentScale = yawParent->scale;
+		Vector3 parentPosition = yawParent->translate;
+		yawParentRotation = yawParent->rotate;
+		editorScene_->GetWorldTransform(yawParent->id, parentScale, yawParentRotation, parentPosition);
+	}
+
+	Vector3 pitchParentRotation{};
+
+	if (const EditorGameObject* pitchParent = editorScene_->FindGameObject(pitchPivot->parentId)) {
+		Vector3 parentScale = pitchParent->scale;
+		Vector3 parentPosition = pitchParent->translate;
+		pitchParentRotation = pitchParent->rotate;
+		editorScene_->GetWorldTransform(pitchParent->id, parentScale, pitchParentRotation, parentPosition);
+	}
+
+	const float desiredYawDegrees = NormalizeAngle(
+		std::atan2(targetDirection.x, targetDirection.z) - yawParentRotation.y) / kDegToRad;
+	const float desiredPitchDegrees = NormalizeAngle(
+		-std::asin(Clamp(targetDirection.y, -1.0f, 1.0f)) - pitchParentRotation.x) / kDegToRad;
+	const float minimumYaw = (std::min)(component.turretYawMinimumDegrees, component.turretYawMaximumDegrees);
+	const float maximumYaw = (std::max)(component.turretYawMinimumDegrees, component.turretYawMaximumDegrees);
+	const float minimumPitch = (std::min)(component.turretPitchMinimumDegrees, component.turretPitchMaximumDegrees);
+	const float maximumPitch = (std::max)(component.turretPitchMinimumDegrees, component.turretPitchMaximumDegrees);
+	const float targetYaw = Clamp(desiredYawDegrees, minimumYaw, maximumYaw) * kDegToRad;
+	const float targetPitch = Clamp(desiredPitchDegrees, minimumPitch, maximumPitch) * kDegToRad;
+	component.turretCanReachTarget = desiredYawDegrees >= minimumYaw && desiredYawDegrees <= maximumYaw &&
+		desiredPitchDegrees >= minimumPitch && desiredPitchDegrees <= maximumPitch;
+	yawPivot->rotate.y = MoveTowardsAngle(
+		yawPivot->rotate.y,
+		targetYaw,
+		(std::max)(component.turretYawSpeedDegrees, 0.0f) * kDegToRad * (std::max)(deltaTime, 0.0f));
+	pitchPivot->rotate.x = MoveTowardsAngle(
+		pitchPivot->rotate.x,
+		targetPitch,
+		(std::max)(component.turretPitchSpeedDegrees, 0.0f) * kDegToRad * (std::max)(deltaTime, 0.0f));
+	component.turretYawErrorDegrees = std::abs(NormalizeAngle(targetYaw - yawPivot->rotate.y)) / kDegToRad;
+	component.turretPitchErrorDegrees = std::abs(NormalizeAngle(targetPitch - pitchPivot->rotate.x)) / kDegToRad;
+	component.turretIsAimed = component.turretCanReachTarget &&
+		component.turretYawErrorDegrees <= (std::max)(component.turretAimToleranceDegrees, 0.0f) &&
+		component.turretPitchErrorDegrees <= (std::max)(component.turretAimToleranceDegrees, 0.0f);
+}
+
+void EditorConstraintManager::SolveCameraHorizonStabilizer(
+	EditorGameObject& gameObject,
+	EditorComponent& component,
+	float deltaTime) {
+	EditorGameObject* source = FindTarget(component.horizonSourceGameObjectId);
+
+	if (source == nullptr || source->id == gameObject.id) {
+		return;
+	}
+
+	Vector3 sourceScale = source->scale;
+	Vector3 sourceRotation = source->rotate;
+	Vector3 sourcePosition = source->translate;
+	editorScene_->GetWorldTransform(source->id, sourceScale, sourceRotation, sourcePosition);
+	const Matrix4x4 sourceMatrix = editorScene_->GetWorldMatrix(source->id);
+	const Vector3 sourceForward = NormalizeSafe(
+		SubtractVector(Transform({0.0f, 0.0f, 1.0f}, sourceMatrix), sourcePosition),
+		{0.0f, 0.0f, 1.0f});
+	const Vector3 sourceUp = NormalizeSafe(
+		SubtractVector(Transform({0.0f, 1.0f, 0.0f}, sourceMatrix), sourcePosition),
+		{0.0f, 1.0f, 0.0f});
+	const Vector3 worldUp = NormalizeSafe(component.horizonWorldUp, {0.0f, 1.0f, 0.0f});
+	const float worldUpForwardDot = DotVector(worldUp, sourceForward);
+	const Vector3 projectedWorldUp = NormalizeSafe(
+		SubtractVector(worldUp, {
+			sourceForward.x * worldUpForwardDot,
+			sourceForward.y * worldUpForwardDot,
+			sourceForward.z * worldUpForwardDot}),
+		{0.0f, 1.0f, 0.0f});
+	const Vector3 upCross = Cross(projectedWorldUp, sourceUp);
+	const float sourceRoll = std::atan2(
+		DotVector(upCross, sourceForward),
+		Clamp(DotVector(projectedWorldUp, sourceUp), -1.0f, 1.0f));
+	Vector3 cameraScale = gameObject.scale;
+	Vector3 cameraRotation = gameObject.rotate;
+	Vector3 cameraPosition = gameObject.translate;
+	editorScene_->GetWorldTransform(gameObject.id, cameraScale, cameraRotation, cameraPosition);
+	Vector3 targetPosition = cameraPosition;
+
+	if (component.horizonFollowPosition) {
+		targetPosition = Transform(component.horizonLocalPositionOffset, sourceMatrix);
+	}
+
+	const float maximumRoll = (std::max)(component.horizonMaximumRollDegrees, 0.0f) * kDegToRad;
+	const Vector3 rotationOffset = {
+		component.horizonRotationOffsetDegrees.x * kDegToRad,
+		component.horizonRotationOffsetDegrees.y * kDegToRad,
+		component.horizonRotationOffsetDegrees.z * kDegToRad};
+	const Vector3 targetRotation = {
+		sourceRotation.x * Clamp(component.horizonPitchInheritance, 0.0f, 1.0f) + rotationOffset.x,
+		sourceRotation.y * Clamp(component.horizonYawInheritance, 0.0f, 1.0f) + rotationOffset.y,
+		Clamp(
+			sourceRoll * Clamp(component.horizonRollInheritance, 0.0f, 1.0f) + rotationOffset.z,
+			-maximumRoll,
+			maximumRoll)};
+	const float dampingBlend = component.horizonDamping <= 0.0f
+		? 1.0f
+		: 1.0f - std::exp(-(std::max)(component.horizonDamping, 0.0f) * (std::max)(deltaTime, 0.0f));
+	cameraPosition = LerpVec(cameraPosition, targetPosition, dampingBlend);
+	cameraRotation = LerpAngle(cameraRotation, targetRotation, dampingBlend);
+	editorScene_->SetWorldTransform(
+		gameObject.id,
+		cameraScale,
+		cameraRotation,
+		cameraPosition);
 }
 
 EditorGameObject* EditorConstraintManager::FindTarget(int32_t targetId) {

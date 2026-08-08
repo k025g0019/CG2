@@ -127,6 +127,8 @@ private:
 	std::unordered_map<int32_t, ModelAnimationClipData> animationClips_;  // 旧 Animation が使う単一 Clip。
 	std::unordered_map<int32_t, PropertyAnimationRuntime> propertyAnimationRuntimes_;  // .animclip のカーブと基準値。
 	std::unordered_map<int32_t, AnimatorRuntimeInstance> animatorRuntimes_;  // Animator Component ごとの実行状態。
+	std::unordered_map<int32_t, float> animationUpdateRemainingSeconds_;  // 距離別Pose更新までの残り時間。
+	std::unordered_map<int32_t, float> animationAccumulatedDeltaSeconds_;  // 間引いた時間を次のPose評価へまとめて渡す。
 	bool isStarted_ = false;  // Play 中だけ Update を許可する。
 
 	void CacheAnimationClip(const EditorGameObject& gameObject, const EditorComponent& component);  // 旧 Animation 用 Clip を読む。

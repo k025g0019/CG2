@@ -1,6 +1,7 @@
 ﻿#include "EditorEffectManager.h"
 
 #include "EditorComponentUtility.h"
+#include "Source/Engine/Core/EditorSharedState.h"
 
 #include <algorithm>
 #include <cctype>
@@ -10,6 +11,21 @@
 namespace {
 	constexpr float kPi = 3.14159265f;
 	constexpr float kMinimumLength = 0.00001f;
+	constexpr float kMaximumParticleSimulationDistance = 800.0f;
+	constexpr size_t kMaximumRuntimeParticleCount = 16384u;
+
+	bool IsWithinParticleSimulationDistance(const Vector3& worldPosition) {
+		const Vector3 cameraDifference = {
+			worldPosition.x - EditorSharedState::g_gameCameraPosition.x,
+			worldPosition.y - EditorSharedState::g_gameCameraPosition.y,
+			worldPosition.z - EditorSharedState::g_gameCameraPosition.z};
+		const float cameraDistanceSquared =
+			cameraDifference.x * cameraDifference.x +
+			cameraDifference.y * cameraDifference.y +
+			cameraDifference.z * cameraDifference.z;
+		return cameraDistanceSquared <=
+			kMaximumParticleSimulationDistance * kMaximumParticleSimulationDistance;
+	}
 
 	float GetEffectVectorLength(const Vector3& value) {
 		return std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
@@ -72,6 +88,7 @@ void EditorEffectManager::Start() {
 	emitterRuntimes_.clear();
 	effectAssetCache_.clear();
 	particles_.clear();
+	aliveParticleCountByOwner_.clear();
 	pendingGpuParticleSpawns_.clear();
 	particleSerial_ = 0u;
 	lastDeltaTime_ = 0.0f;
@@ -114,6 +131,7 @@ void EditorEffectManager::Stop() {
 	}
 
 	particles_.clear();
+	aliveParticleCountByOwner_.clear();
 	pendingGpuParticleSpawns_.clear();
 	emitterRuntimes_.clear();
 	effectAssetCache_.clear();
@@ -203,12 +221,12 @@ bool EditorEffectManager::IsEffectPlaying(int32_t gameObjectId) const {
 }
 
 int32_t EditorEffectManager::GetAliveParticleCount(int32_t gameObjectId) const {
-	return static_cast<int32_t>(std::count_if(
-		particles_.begin(),
-		particles_.end(),
-		[gameObjectId](const ParticleRuntime& particle) {
-			return particle.ownerGameObjectId == gameObjectId;
-		}));
+	const auto countIterator = aliveParticleCountByOwner_.find(gameObjectId);
+	return countIterator != aliveParticleCountByOwner_.end() ? countIterator->second : 0;
+}
+
+bool EditorEffectManager::HasLiveGpuParticles() const {
+	return !particles_.empty() || !pendingGpuParticleSpawns_.empty();
 }
 
 const std::vector<EditorEffectManager::GpuParticleSpawn>& EditorEffectManager::GetPendingGpuParticleSpawns() const {
@@ -243,10 +261,15 @@ std::vector<EditorEffectManager::EmitterSnapshot> EditorEffectManager::CollectEm
 			continue;
 		}
 
+		const EditorComponent* particleRenderer = EditorComponentUtility::FindComponent(
+			gameObject,
+			EditorComponentType::ParticleSystemRenderer);
+
 		for (const EditorComponent& component : gameObject.components) {
 			const bool isEffectComponent =
 				component.type == EditorComponentType::ParticleSystem ||
-				component.type == EditorComponentType::VisualEffect;
+				component.type == EditorComponentType::VisualEffect ||
+				component.type == EditorComponentType::TrailRenderer;
 
 			if (!isEffectComponent || !component.isActive || IsEffekseerAssetPath(component.assetPath)) {
 				continue;
@@ -257,7 +280,29 @@ std::vector<EditorEffectManager::EmitterSnapshot> EditorEffectManager::CollectEm
 			emitter.ownerGameObjectId = gameObject.id;
 			emitter.ownerPosition = gameObject.translate;
 			emitter.component = component;
+
+			if (component.type == EditorComponentType::TrailRenderer) {
+				emitter.component.particleLooping = true;
+				emitter.component.particleSimulationSpace = 0;
+				emitter.component.particleRate = (std::max)(component.particleRate, 30.0f);
+				emitter.component.particleSpeed = 0.0f;
+				emitter.component.particleGravity = 0.0f;
+				emitter.component.particleSize = (std::max)(component.particleSize, 0.01f);
+				emitter.component.particleEndSize = (std::max)(component.particleEndSize, 0.0f);
+			}
+
 			ApplyEffectAsset(emitter.component);
+
+			if (particleRenderer != nullptr && particleRenderer->isActive) {
+				if (!particleRenderer->assetPath.empty()) {
+					emitter.component.particleRenderAssetPath = particleRenderer->assetPath;
+				}
+
+				emitter.component.color = particleRenderer->color;
+				emitter.component.particleEndColor = particleRenderer->emissionColor;
+				emitter.component.particleStartAlpha = particleRenderer->alpha;
+				emitter.component.particleEmissionStrength = particleRenderer->emissionStrength;
+			}
 			emitters.push_back(emitter);
 		}
 	}
@@ -318,6 +363,12 @@ void EditorEffectManager::UpdateEmitters(
 			activeTime = runtime.elapsedTime - startDelay;
 		}
 
+		// 遠距離Effectは時間だけ進め、Particle生成と蓄積を止める。
+		if (!IsWithinParticleSimulationDistance(emitter.ownerPosition)) {
+			runtime.spawnAccumulator = 0.0f;
+			continue;
+		}
+
 		if (!runtime.isBurstEmitted && emitter.component.particleBurstCount > 0) {
 			SpawnParticles(emitter, emitter.component.particleBurstCount);
 			runtime.isBurstEmitted = true;
@@ -337,6 +388,20 @@ void EditorEffectManager::UpdateEmitters(
 void EditorEffectManager::UpdateParticles(float deltaTime) {
 	for (ParticleRuntime& particle : particles_) {
 		particle.age += deltaTime;
+
+		if (particle.age < particle.lifetime) {
+			continue;
+		}
+
+		auto countIterator = aliveParticleCountByOwner_.find(particle.ownerGameObjectId);
+
+		if (countIterator != aliveParticleCountByOwner_.end()) {
+			countIterator->second--;
+
+			if (countIterator->second <= 0) {
+				aliveParticleCountByOwner_.erase(countIterator);
+			}
+		}
 	}
 
 	particles_.erase(
@@ -380,9 +445,20 @@ void EditorEffectManager::PrewarmEmitter(const EmitterSnapshot& emitter) {
 void EditorEffectManager::SpawnParticles(
 	const EmitterSnapshot& emitter,
 	int32_t spawnCount) {
+	if (!IsWithinParticleSimulationDistance(emitter.ownerPosition) ||
+		particles_.size() >= kMaximumRuntimeParticleCount) {
+		return;
+	}
+
 	const int32_t aliveCount = GetAliveParticleCount(emitter.ownerGameObjectId);
 	const int32_t maximumCount = (std::max)(emitter.component.particleMaxCount, 1);
-	const int32_t allowedSpawnCount = (std::clamp)(spawnCount, 0, maximumCount - aliveCount);
+	const int32_t globalRemainingCount = static_cast<int32_t>(
+		kMaximumRuntimeParticleCount - particles_.size());
+	const int32_t emitterRemainingCount = (std::max)(maximumCount - aliveCount, 0);
+	const int32_t allowedSpawnCount = (std::clamp)(
+		spawnCount,
+		0,
+		(std::min)(emitterRemainingCount, globalRemainingCount));
 
 	for (int32_t particleIndex = 0; particleIndex < allowedSpawnCount; particleIndex++) {
 		if (!SpawnParticle(emitter)) {
@@ -446,6 +522,7 @@ bool EditorEffectManager::SpawnParticle(const EmitterSnapshot& emitter) {
 	particle.startColor = emitter.component.color;
 	particle.endColor = emitter.component.particleEndColor;
 	particles_.push_back(particle);
+	aliveParticleCountByOwner_[emitter.ownerGameObjectId]++;
 
 	GpuParticleSpawn gpuSpawn{};
 	gpuSpawn.position = useLocalSpace
@@ -466,7 +543,7 @@ bool EditorEffectManager::SpawnParticle(const EmitterSnapshot& emitter) {
 	gpuSpawn.drag = particle.drag;
 	gpuSpawn.noiseStrength = particle.noiseStrength;
 	gpuSpawn.noiseFrequency = particle.noiseFrequency;
-	gpuSpawn.motionType = (std::clamp)(emitter.component.particleMotionType, 0, 7);
+	gpuSpawn.motionType = (std::clamp)(emitter.component.particleMotionType, 0, 8);
 	gpuSpawn.motionCenter = {
 		emitter.ownerPosition.x + emitter.component.particleMotionCenter.x,
 		emitter.ownerPosition.y + emitter.component.particleMotionCenter.y,
@@ -483,6 +560,8 @@ bool EditorEffectManager::SpawnParticle(const EmitterSnapshot& emitter) {
 	gpuSpawn.collisionFriction = particle.collisionFriction;
 	gpuSpawn.useCollision = particle.useCollision;
 	gpuSpawn.collisionMode = particle.collisionMode;
+	gpuSpawn.billboardMode = (std::clamp)(emitter.component.particleBillboardMode, 0, 3);
+	gpuSpawn.billboardStretch = (std::max)(emitter.component.particleBillboardStretch, 0.01f);
 	gpuSpawn.renderAssetPath = emitter.component.particleRenderAssetPath;
 	pendingGpuParticleSpawns_.push_back(gpuSpawn);
 	return true;

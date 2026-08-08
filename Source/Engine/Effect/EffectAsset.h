@@ -52,6 +52,8 @@ public:
 	int32_t shape = 0;  // 0=Point、1=Sphere、2=Cone、3=Box。
 	int32_t simulationSpace = 0;  // 0=World、1=Local。
 	int32_t motionType = 0;  // 0=直線、1=軌道、2=渦、3=波、4=吸引、5=雲、6=爆発。
+	int32_t billboardMode = 0;  // 0=Camera Facing、1=Y軸固定、2=Velocity Facing、3=World XY固定。
+	float billboardStretch = 1.0f;  // Velocity Facing時の速度方向Scale。
 	bool playOnAwake = true;  // Play 開始時に自動再生する。
 	bool looping = true;  // Duration 終了後に再び発生する。
 	bool collision = false;  // 現在は Ground 簡易衝突を有効にする。

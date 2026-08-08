@@ -104,6 +104,7 @@ void EditorAudioManager::Start() {
 	}
 
 	playbackClock_ = 0.0f;
+	isPaused_ = false;
 	lastPlaybackTimeByGameObjectId_.clear();
 
 	for (auto& gameObject : editorScene_->GetGameObjects()) {
@@ -227,13 +228,19 @@ bool EditorAudioManager::Play(int32_t gameObjectId) {
 
 	voice->SetVolume(GetMixedVolume(active));
 	voice->SetFrequencyRatio((std::clamp)(audioSource->audioPitch, 0.01f, 2.0f));
-	voice->Start(0u);
+	if (!isPaused_) {
+		voice->Start(0u);
+	}
 	activeAudios_.push_back(active);
 	lastPlaybackTimeByGameObjectId_[gameObjectId] = playbackClock_;
 	return true;
 }
 
 void EditorAudioManager::Update(float deltaTime) {
+	if (isPaused_) {
+		return;
+	}
+
 	playbackClock_ += (std::max)(deltaTime, 0.0f);
 
 	if (editorScene_ == nullptr || xAudio2_ == nullptr) {
@@ -405,6 +412,32 @@ void EditorAudioManager::Stop() {
 		StopClip(audio);
 	}
 	activeAudios_.clear();
+	isPaused_ = false;
+}
+
+void EditorAudioManager::SetPaused(bool isPaused) {
+	if (isPaused_ == isPaused) {
+		return;
+	}
+
+	isPaused_ = isPaused;
+
+	for (ActiveAudio& audio : activeAudios_) {
+		if (audio.voice == nullptr) {
+			continue;
+		}
+
+		if (isPaused_) {
+			audio.voice->Stop(0u);
+		}
+		else {
+			audio.voice->Start(0u);
+		}
+	}
+}
+
+bool EditorAudioManager::IsPaused() const {
+	return isPaused_;
 }
 
 void EditorAudioManager::Stop(int32_t gameObjectId) {
@@ -463,6 +496,12 @@ void EditorAudioManager::ApplyVoiceFilter(ActiveAudio& audio, int32_t filterGame
 		*gameObject, EditorComponentType::AudioHighPassFilter);
 	const auto* reverb = EditorComponentUtility::FindComponent(
 		*gameObject, EditorComponentType::AudioReverbFilter);
+	const auto* echo = EditorComponentUtility::FindComponent(
+		*gameObject, EditorComponentType::AudioEchoFilter);
+	const auto* distortion = EditorComponentUtility::FindComponent(
+		*gameObject, EditorComponentType::AudioDistortionFilter);
+	const auto* chorus = EditorComponentUtility::FindComponent(
+		*gameObject, EditorComponentType::AudioChorusFilter);
 	const auto* audioSource = EditorComponentUtility::FindComponent(
 		*gameObject, EditorComponentType::AudioSource);
 
@@ -480,6 +519,11 @@ void EditorAudioManager::ApplyVoiceFilter(ActiveAudio& audio, int32_t filterGame
 	if (audio.occlusion > 0.0f) {
 		targetMode = AudioFilterMode::LowPass;
 		cutoff = (std::min)(cutoff, 1.0f - audio.occlusion * 0.78f);
+	}
+
+	if (distortion != nullptr && distortion->isActive) {
+		targetMode = AudioFilterMode::LowPass;
+		cutoff = (std::min)(cutoff, 1.0f - (std::clamp)(distortion->intensity, 0.0f, 1.0f) * 0.45f);
 	}
 
 	if (audio.filterMode != targetMode || audio.filterCutoff != cutoff) {
@@ -516,6 +560,18 @@ void EditorAudioManager::ApplyVoiceFilter(ActiveAudio& audio, int32_t filterGame
 		reverbAmount = (std::max)(reverbAmount, (std::clamp)(reverb->intensity, 0.0f, 1.0f));
 	}
 
+	if (echo != nullptr && echo->isActive) {
+		reverbAmount = (std::max)(
+			reverbAmount,
+			(std::clamp)(echo->intensity * 0.90f, 0.0f, 1.0f));
+	}
+
+	if (chorus != nullptr && chorus->isActive) {
+		reverbAmount = (std::max)(
+			reverbAmount,
+			(std::clamp)(chorus->intensity * 0.35f, 0.0f, 1.0f));
+	}
+
 	if (reverbAmount > 0.001f && reverbSubmix_ != nullptr && g_masterVoice != nullptr) {
 		XAUDIO2_SEND_DESCRIPTOR sendDescriptors[2]{};
 		sendDescriptors[0].Flags = 0u;
@@ -537,6 +593,21 @@ void EditorAudioManager::ApplyVoiceFilter(ActiveAudio& audio, int32_t filterGame
 	}
 	else {
 		audio.voice->SetOutputVoices(nullptr);
+	}
+
+	if (distortion != nullptr && distortion->isActive) {
+		float currentVolume = 1.0f;
+		audio.voice->GetVolume(&currentVolume);
+		const float drive = 1.0f + (std::clamp)(distortion->intensity, 0.0f, 1.0f) * 2.5f;
+		audio.voice->SetVolume((std::min)(currentVolume * drive, 4.0f));
+	}
+
+	if (chorus != nullptr && chorus->isActive) {
+		float currentFrequencyRatio = 1.0f;
+		audio.voice->GetFrequencyRatio(&currentFrequencyRatio);
+		const float chorusDepth = (std::clamp)(chorus->intensity, 0.0f, 1.0f) * 0.025f;
+		const float chorusRatio = 1.0f + std::sin(playbackClock_ * 5.02654825f) * chorusDepth;
+		audio.voice->SetFrequencyRatio((std::clamp)(currentFrequencyRatio * chorusRatio, 0.01f, 2.0f));
 	}
 }
 

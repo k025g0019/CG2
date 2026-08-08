@@ -817,6 +817,7 @@ namespace EditorSharedState {
 	inline ComPtr<IDxcBlob> g_fxaaPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_ssaoPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_ssaoBlurPixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_ssgiPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_skyboxPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_planarReflectionPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_sharpenPixelShaderBlob;
@@ -862,6 +863,7 @@ namespace EditorSharedState {
 	inline ComPtr<ID3D12PipelineState> g_fxaaPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_ssaoPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_ssaoBlurPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_ssgiPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_skyboxPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_planarReflectionPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_sharpenPipelineState;
@@ -963,6 +965,7 @@ namespace EditorSharedState {
 	inline bool g_isSplineEditorVisible = false;  // trueなら汎用Spline Editorを表示する。
 	inline bool g_isGameplayTimelineWindowVisible = false;  // trueなら汎用Event Timelineを表示する。
 	inline bool g_isStateGraphWindowVisible = false;  // trueなら汎用Threshold State Graphを表示する。
+	inline bool g_isDiagnosticsWindowVisible = false;  // trueならProfilerとScene Validatorを表示する。
 	inline bool g_isGameViewUsingSceneCamera = true; // true �Ȃ� Camera Component ���Ȃ����� Scene �J�������p���Ă���B
 
 	// g_viewport / g_scissorRect �� DirectX �� SceneView �������֕`�����߂̋�`�B
@@ -979,6 +982,10 @@ namespace EditorSharedState {
 	inline Matrix4x4 g_gameViewMatrix{};
 	inline Matrix4x4 g_gameProjectionMatrix{};
 	inline Vector3 g_gameCameraPosition{};  // GameView �� PBR ���ˌv�Z�Ɏg�� Camera Component �̃��[���h�ʒu�B
+	inline bool g_runtimeGameCameraOverrideActive = false;  // CameraBlendがGame View姿勢を上書きしている間true。
+	inline Transforms g_runtimeGameCameraOverrideTransform{};  // CameraBlendが計算したWorld姿勢。
+	inline Vector3 g_runtimeGameCameraPositionOffset{};  // CameraShakeが加えるWorld位置差分。
+	inline Vector3 g_runtimeGameCameraRotationOffset{};  // CameraShakeが加える回転差分rad。
 
 	// g_spriteProjectionMatrix �� Sprite ����ʍ��W�ŕ\�����邽�߂̐��ˉe�s��B
 	inline Matrix4x4 g_spriteProjectionMatrix{};
@@ -1037,6 +1044,9 @@ namespace EditorSharedState {
 	inline ID3D12Resource* g_iblPrefilterCube = nullptr;
 	inline ID3D12Resource* g_iblBRDFLUT = nullptr;
 	inline ID3D12Resource* g_colorGradingLut = nullptr;
+	inline ID3D12Resource* g_customColorGradingLutResource = nullptr;
+	inline ID3D12Resource* g_customColorGradingLutUploadResource = nullptr;
+	inline std::string g_loadedColorGradingLutAssetPath;
 	inline bool g_iblEnvironmentCubeLoaded = false;  // EnvironmentMapEffect 用の実キューブマップが読み込めたか。
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_iblIrradianceSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_iblIrradianceSrvHandleGPU{};

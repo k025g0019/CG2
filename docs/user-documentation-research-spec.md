@@ -174,7 +174,7 @@ ChatGPT Work へ渡す場合は、利用可能なモデルの中で最も長い�
 | `EditorRollingMoveManager.cpp` | トルク、摩擦を利用する転がり移動 Component。 |
 | `EditorFreeTransformManager.cpp` | 軸選択付きの非物理移動・回転。 |
 | `EditorRailMovementManager.cpp` | Spline Sample、距離基準移動、RailFollower Runtime API。 |
-| `EditorWaveSpawnerManager.cpp` | 子GameObjectの待機、順次有効化、Wave Action通知。 |
+| `EditorWaveSpawnerManager.cpp` | Wave設定を保持し、出現時だけObjectPoolから実体生成する。編隊Offset、Rail再初期化、貸出世代、全生成・全撃破Action。旧Sceneだけ子方式へフォールバック。 |
 | `EditorGameplayEventManager.cpp` | Timeline EventとThreshold Stateの条件評価、Action通知。 |
 | `EditorUiBindingManager.cpp` | Health / Rail / ActiveからText / Sliderへの値反映。 |
 | `EditorOceanSystem.cpp` | Oceanの選択、波面Sample、Buoyancyへの共通波面提供。 |
@@ -665,11 +665,13 @@ W キーで前進する例は、次を途中で省略せず記載する。
 
 - `EditorScript_Load`
 - `EditorScript_Unload`
-- `EditorScript_Start`
-- `EditorScript_Update`
-- `EditorScript_FixedUpdate`
-- `EditorScript_OnPhysicsEvent`
-- `EditorScript_Stop`
+- `EditorScript_CreateInstance` / `EditorScript_DestroyInstance`
+- `EditorScript_StartInstance`
+- `EditorScript_UpdateInstance`
+- `EditorScript_FixedUpdateInstance`
+- `EditorScript_OnPhysicsEventInstance`
+- `EditorScript_OnAnimationEventInstance`
+- `EditorScript_StopInstance`
 
 各関数について、呼ばれる回数、タイミング、引数、保持してよい状態、してはいけない処理、失敗時の動作を確認する。
 
@@ -1296,6 +1298,8 @@ Light が 0 個の場合に固定色の仮 Light が入らないこと、Environ
 | パラメーター | 内部名 | 説明する内容 | Inspector 範囲候補 |
 | --- | --- | --- | --- |
 | 質量 | `mass` | 加速、Impulse、衝突時の動きへの影響。重力加速度そのものは質量で変わるか。 | 0.01～100。 |
+| Colliderから質量を計算 | `automaticMassFromCollider` | Jolt ShapeのMass Propertiesを既定密度1000 kg/m3で体積へ戻し、実質密度を掛けて質量と慣性を決める。 | OFF / ON。 |
+| 実質密度 | `bodyDensity` | 中空、積荷、Ballastを含む物体全体の質量を排水外形体積で割った密度。材質単体密度と混同しない。 | 0.01以上。 |
 | 線形減衰 | `drag` | 移動速度を止める抵抗。 | 0～20。 |
 | 角度減衰 | `angularDrag` | 回転速度を止める抵抗。 | Inspector から範囲を抽出。 |
 | 重力を使用 | `useGravity` | Scene Physics Gravity を使うか。 | OFF / ON。 |
@@ -1595,9 +1599,27 @@ Button、Toggle、Slider は Inspector があるだけでなく、Game View 描�
 | Collider Debug | `drawColliderDebug` | Scene View へ形状表示。 |
 | Contact Debug | `drawContactDebug` | 接触点と法線表示。 |
 | Cast Debug | `drawCastDebug` | Raycast / ShapeCast 表示。 |
+| Velocity Debug | `drawVelocityDebug` | Rigidbody の速度と角速度を矢印表示。 |
+| Force Direction Debug | `drawForceDirectionDebug` | Scene重力、ConstantForce、風、重力場、回転軸、流れ、電場、磁場、Joint軸を矢印表示。 |
+| Field Volume Debug | `drawFieldVolumeDebug` | 風・重力・回転・電磁場の半径、FluidVolume、Buoyancy領域、空気力学の圧力中心を表示。 |
+| Connection Debug | `drawConnectionDebug` | SpringForce のAnchor間とJointの接続先を線表示。 |
+| Selected Only | `drawSelectedOnlyDebug` | 選択中GameObjectだけへ表示対象を絞る。 |
+| Vector Scale | `debugVectorScale` | 速度と力の矢印長を0.01から10.0で調整。 |
 | Layer Matrix | `layerCollisionMatrix` | 8 Layer 間の衝突可否。対称更新か。 |
 
-Physics Settings への到達方法、保存先、Scene ごとか Project 全体かを確認する。
+### 48.1 物理デバッグ表示の操作
+
+1. Scene View左側の`物理`を押す。
+2. `当たり判定の形`、`速度 / 角速度`、`力 / 場の向き`、`影響範囲 / 流体領域`、`ばね / Joint 接続`から必要な種類だけ有効にする。
+3. 表示が密集する場合は`選択中だけ表示`を有効にして、Hierarchyで確認対象を選択する。
+4. 矢印が短すぎる、または長すぎる場合は`ベクトル倍率`を変更する。
+5. 接触点、接触法線、Raycast、SphereCast、CapsuleCastの実行結果はPlay中に確認する。
+
+同じ設定はGameObjectを選択していない時のInspectorにある`物理設定 > デバッグ表示`からも変更できる。値はSceneの`PhysicsSettings`行へ保存され、Project全体ではなくSceneごとに保持される。
+
+Colliderは通常が青、Triggerが緑、選択中が黄。速度は水色、角速度と磁場は紫、力は橙、風と流体は緑、重力は赤、電場は黄で表示する。Sphere/Capsule Castは開始形状と到達形状も表示し、命中点と命中法線は赤で表示する。
+
+今回追加した物理ComponentはInspectorと追加メニューで`空気力学`、`風ゾーン`、`重力場`、`回転座標系`、`流体ボリューム`、`ばね力`、`ロープ拘束`、`ねじりばね`、`推進力`、`滑車拘束`、`物理サーボ`、`渦流場`、`圧力場`、`サスペンション`、`姿勢安定化`、`電磁気ボディ`、`電磁場`と日本語表示する。Scene保存互換とC++ Scriptの型名指定に使う内部型名はAerodynamicsやRopeConstraintなどの英語名を維持する。
 
 ## 49. C++ Script Runtime API 個別調査票
 
@@ -1619,8 +1641,15 @@ Physics Settings への到達方法、保存先、Scene ごとか Project 全体
 | `GetAngularVelocity` | GameObject ID | Vector3 | 角速度取得。 |
 | `SetAngularVelocity` | GameObject ID、Vector3 Pointer | なし | 角速度設定。 |
 | `AddForce` | GameObject ID、Force Pointer | bool | 継続的な力。成功条件。 |
+| `AddForceAtPosition` | GameObject ID、Force、World作用点 | bool | 重心から外れた力で並進とTorqueを発生。 |
 | `AddImpulse` | GameObject ID、Impulse Pointer | bool | 瞬間的な速度変化。 |
 | `AddTorque` | GameObject ID、Torque Pointer | bool | 回転力。Rolling の例。 |
+| `AddExplosionImpulse` | 中心、半径、Impulse、上向き補正 | int | 範囲内Dynamic Rigidbodyへ距離減衰Impulse。 |
+| `AttachRope` / `DetachRope` | 所有者、対象、Anchor、最大長 | bool | 実行中のロープ接続と解除。 |
+| `SetRopeLength` / `RepairRope` | 所有者、最大長 | bool | ウインチと破断修復。 |
+| `GetRopeState` | 所有者 | Rope State | 接続、破断、現在長、現在張力。 |
+| `SetComponentActive` | GameObject ID、内部型名、Active | bool | 任意Componentの実行ON/OFF。 |
+| `IsComponentActive` | GameObject ID、内部型名 | bool | 任意Componentの実行状態取得。 |
 | `GetAiSensorState` | GameObject ID、Sensor Kind | State | Vision、Object、Motion、Speech の結果。 |
 | `GetMaterialState` | GameObject ID | Material State | Renderer Material の読み取り。書き込み API の有無。 |
 | `GetAnimationState` | GameObject ID | Animation State | Clip、再生状態、時間の読み取り。再生 API の有無。 |
@@ -1944,14 +1973,16 @@ C++ スクリプトは、使用者向けサイトで最優先に詳細化する�
 | 関数 | 呼ばれるタイミング | 使用目的 | 使用者が書く内容 | 注意点 |
 | --- | --- | --- | --- | --- |
 | `EditorScript_Load` | DLL 読み込み時に 1 回。 | API Version 確認、`runtimeApi` の保持。 | `apiVersion` と `api` を確認して `runtimeApi` を保存する。 | ここで GameObject 固有処理を書かない。 |
-| `EditorScript_Unload` | DLL 解放時。 | 全 Script 状態の破棄。 | `unordered_map` などを clear する。 | `runtimeApi` を `nullptr` に戻す。 |
-| `EditorScript_Start` | Play 開始時、対象 GameObject ごとに 1 回。 | 初期化。 | 速度、HP、初期状態、ログ。 | Transform 取得は可能だが、毎フレーム処理は書かない。 |
-| `EditorScript_Update` | 毎フレーム。 | 入力、見た目の更新、通常の移動。 | `GetTransform`、Input Action、簡単な制御。 | Rigidbody 物理を使う場合は直接 Transform 更新と競合する。 |
-| `EditorScript_FixedUpdate` | 固定時間物理更新。 | 力、速度、物理操作。 | `AddForce`、`AddImpulse`、`AddTorque`、`SetVelocity`。 | 物理系は原則ここで説明する。 |
-| `EditorScript_OnPhysicsEvent` | Collision / Trigger 発生時。 | 接触イベント処理。 | 相手 ID、接触点、法線、相対速度で分岐。 | 毎フレームログを出す例は避ける。 |
-| `EditorScript_OnAnimationEvent` | Animation Clip または Graph の Event 時刻を通過した時。 | 足音、攻撃判定、Effect、任意ゲーム処理。 | Event名、Effect Path、時刻、Local Offsetで分岐。 | Event内文字列PointerはCallback中だけ有効。新規生成Scriptは基底`OnAnimationEvent`へ自動転送する。 |
-| `EditorScript_Stop` | Play 停止、Object 破棄、Script 停止。 | GameObject ごとの状態削除。 | `scriptStates.erase(gameObjectId)`。 | 破棄済み状態を残さない。 |
-| `EditorScript_InvokeAction` | Input Action Event から関数名で呼ばれる時。 | UI / Input から任意関数実行。 | `functionName` を比較し、対応処理を呼ぶ。 | 関数名の一覧と引数 Context を説明する。 |
+| `EditorScript_Unload` | DLL解放時。 | DLL全体の参照解放。 | `runtimeApi`を`nullptr`へ戻す。 | Component実体は先にEngineが破棄する。 |
+| `EditorScript_CreateInstance` | Script Component開始時にComponentごとに1回。 | 独立状態の生成。 | C++ Scriptクラスを生成して`void*`で返す。 | `nullptr`ならそのComponentは開始しない。 |
+| `EditorScript_DestroyInstance` | Script Component終了時。 | 独立状態の破棄。 | 受け取った実体をdeleteする。 | CreateとDestroyは必ず両方exportする。 |
+| `EditorScript_StartInstance` | Inspector値反映後、対象Componentごとに1回。 | 初期化。 | 速度、HP、初期状態、ログ。 | 毎フレーム処理は書かない。 |
+| `EditorScript_UpdateInstance` | ActiveなComponentへ毎フレーム。 | 入力、見た目の更新、通常の移動。 | `GetTransform`、Input Action、簡単な制御。 | Rigidbody物理と直接Transform更新を競合させない。 |
+| `EditorScript_FixedUpdateInstance` | ActiveなComponentへ固定時間物理更新。 | 力、速度、物理操作。 | `AddForce`、`AddImpulse`、`AddTorque`、`SetVelocity`。 | 物理系は原則ここで説明する。 |
+| `EditorScript_OnPhysicsEventInstance` | 所有ObjectのCollision / Trigger発生時。 | 接触イベント処理。 | 相手ID、接触点、法線、相対速度で分岐。 | 毎フレームログを出す例は避ける。 |
+| `EditorScript_OnAnimationEventInstance` | Animation Event時刻を通過した時。 | 足音、攻撃判定、Effect、任意処理。 | Event名、Effect Path、時刻、Local Offsetで分岐。 | Event内文字列PointerはCallback中だけ有効。 |
+| `EditorScript_StopInstance` | Play停止、Object破棄、Script停止。 | 終了通知。 | 購読解除などを行う。 | 実体のdeleteはDestroyInstanceへ分離する。 |
+| `EditorScript_InvokeActionInstance` | Input / UI Actionから関数名で呼ばれる時。 | 任意関数実行。 | 登録済み処理へ転送する。 | 同一DLLでもComponent実体ごとに呼び分ける。 |
 
 ### 56.2 Inspector 公開変数関数
 
@@ -1962,8 +1993,8 @@ C++ スクリプトは、使用者向けサイトで最優先に詳細化する�
 | --- | --- | --- |
 | `EditorScript_GetFieldCount` | 公開変数の数を返す。 | 0 の場合は Inspector に変数が出ない。 |
 | `EditorScript_GetFieldDescriptor` | 変数名、表示名、型、初期値、Range を返す。 | `name` と `displayName` の違い、Min / Max / Step の意味。 |
-| `EditorScript_GetFieldValue` | GameObject ごとの現在値を返す。 | `gameObjectId` ごとに値を保持する必要がある。 |
-| `EditorScript_SetFieldValue` | Inspector から変更された値を受け取る。 | 型チェック、範囲外値、文字列長、保存対象。 |
+| `EditorScript_GetFieldValueInstance` | Component実体の現在値を返す。 | `instance`が指すクラスの通常メンバーを読む。 |
+| `EditorScript_SetFieldValueInstance` | Inspectorから変更された値を対象実体へ渡す。 | 型チェック、範囲外値、文字列長、保存対象。 |
 
 説明には、Bool、Int32、Float、Vector2、Vector3、String のサンプルを分けて載せる。
 
@@ -2021,8 +2052,11 @@ Transform 例は、次を分けて用意する。
 | `GetAngularVelocity` | 回転速度を読む。 | Rigidbody が必要。 |
 | `SetAngularVelocity` | 回転速度を直接指定する。 | 回転固定軸と競合する場合を説明する。 |
 | `AddForce` | 継続的な力を加える。 | 原則 `FixedUpdate` で使う。 |
+| `AddForceAtPosition` | 作用点付きの力で並進と回転を発生させる。 | World作用点を渡す。 |
 | `AddImpulse` | 瞬間的な衝撃を加える。 | ジャンプ、弾かれ、爆発など。 |
 | `AddTorque` | 回転力を加える。 | 球や車輪を転がす例に使う。 |
+| `AddExplosionImpulse` | 範囲内へ距離減衰付き衝撃を加える。 | Dynamic RigidbodyとColliderが必要。 |
+| `RopeConstraint` Wrapper | 接続、解除、巻取り、修復、状態取得。 | RopeConstraintを事前追加する。 |
 
 物理例は、次の作例を必ず用意する。
 
@@ -2031,6 +2065,9 @@ Transform 例は、次を分けて用意する。
 - 球に Torque を入れて転がす。
 - CollisionEnter で相手の名前または ID を見る。
 - TriggerEnter でアイテム取得を行う。
+- Eを押した瞬間にRopeConstraintを対象へ接続し、再度Eで解除する。
+- ロープ長を徐々に短くしてウインチを作り、破断後にRepairできることを確認する。
+- 爆心から距離の異なる複数BodyへExplosion Impulseを加え、距離減衰と上向き補正を比較する。
 
 ### 56.7 AI / Material / Animation 取得 API
 
@@ -2123,13 +2160,14 @@ C++ スクリプト
 
 - `EditorScript_Load`
 - `EditorScript_Unload`
-- `EditorScript_Start`
-- `EditorScript_Update`
-- `EditorScript_FixedUpdate`
-- `EditorScript_OnPhysicsEvent`
-- `EditorScript_Stop`
+- `EditorScript_CreateInstance` / `EditorScript_DestroyInstance`
+- `EditorScript_StartInstance`
+- `EditorScript_UpdateInstance`
+- `EditorScript_FixedUpdateInstance`
+- `EditorScript_OnPhysicsEventInstance`
+- `EditorScript_StopInstance`
 - `runtimeApi` 保持。
-- `scriptStates` の最小例。
+- Componentごとの`ScriptInstance`と通常メンバー変数の最小例。
 - `GetTransform` と `SetTransform` の最小例。
 - `WasActionJustPressed` の最小例。
 
@@ -2302,6 +2340,23 @@ ChatGPT Work へ渡す調査データでは、この表に「概要、Inspector 
 | 3D物理 | 車輪の当たり判定 | `WheelCollider` |
 | 3D物理 | キャラクターコントローラー | `CharacterController` |
 | 3D物理 | コンスタントフォース | `ConstantForce` |
+| 3D物理 | 空気力学 | `Aerodynamics` |
+| 3D物理 | 風ゾーン | `WindZone` |
+| 3D物理 | 重力場 | `GravityField` |
+| 3D物理 | 回転座標系 | `RotatingFrame` |
+| 3D物理 | 流体ボリューム | `FluidVolume` |
+| 3D物理 | ばね力 | `SpringForce` |
+| 3D物理 | ロープ拘束 | `RopeConstraint` |
+| 3D物理 | ねじりばね | `TorsionSpring` |
+| 3D物理 | 推進力 | `Thruster` |
+| 3D物理 | 滑車拘束 | `PulleyConstraint` |
+| 3D物理 | 物理サーボ | `PhysicsServo` |
+| 3D物理 | 渦流場 | `VortexField` |
+| 3D物理 | 圧力場 | `PressureField` |
+| 3D物理 | サスペンション | `Suspension` |
+| 3D物理 | 姿勢安定化 | `UprightStabilizer` |
+| 3D物理 | 電磁気ボディ | `ElectromagneticBody` |
+| 3D物理 | 電磁場 | `ElectromagneticField` |
 | 3D物理 | ヒンジジョイント | `HingeJoint` |
 | 3D物理 | 固定ジョイント | `FixedJoint` |
 | 3D物理 | スプリングジョイント | `SpringJoint` |
@@ -2784,6 +2839,8 @@ ParticleSystemまたはVisualEffect ComponentへAsset Pathを設定して使う�
 | `.effect`項目 | 初期値 | 単位・意味 |
 | --- | --- | --- |
 | renderAssetPath | 空 | 1 Particleの描画に使うFBX/OBJ。空なら既定形状。 |
+| billboardMode | 0 | Render Asset未設定時の板の向き。0=Camera Facing、1=Y軸固定、2=Velocity Facing、3=World XY固定。 |
+| billboardStretch | 1.0 | Velocity Facing時に速度方向へ伸ばす倍率。0.01以上。 |
 | duration | 2.0 | Emitter 1周の秒数。 |
 | startDelay | 0.0 | 再生要求から発生開始までの秒数。 |
 | emissionRate | 10.0 | 1秒当たりの継続発生数。 |
@@ -2860,7 +2917,7 @@ if (doorId >= 0) {
 - 複数GameObjectの同時記録、子階層へのProperty Path、任意C++公開変数のTrack化は未実装。
 - 現行Model ImporterはFBX Clusterから最大4本のBone Index / Weightを頂点へ保持し、Runtimeは現在・前FrameのBone Matrix BufferをSkinned描画、GBuffer、Shadow、Motion Vectorへ渡す。使用可能判定には実FBXで変形、影、Temporal残像を確認する。
 - Animation WindowでBone単位のPoseを直接選択・記録する視覚編集、Humanoid Retarget、IK、Avatar編集は未実装である。GPU Skinningの実行とBone Pose編集UIを混同しない。
-- FBX Clipは現行Importerが取得できるAnimation ClipとNode Transform範囲で再生する。Unity相当のAvatar、Humanoid Retarget、IK、Avatar Maskは未実装。
+- FBX Clipは現行Importerが取得できるAnimation ClipとNode Transform範囲で再生する。AvatarMaskは1行1Bone名のMaskアセットを読み、列挙BoneだけへAnimation姿勢を適用する。Unity相当のAvatar編集、Humanoid Retarget、IKは未実装。
 - `.animgraph`はJSON編集が中心で、Node Graphの視覚編集Windowは未実装。
 - `.animclip` Saveは現在開いているAssetへ上書きする。別名保存はProjectで新しいClipを作成して編集する。
 
@@ -2993,7 +3050,9 @@ Build IndexはBuild SettingsのScene順と照合する。Path遷移でもStandal
 7. 上面編集は`上面 XZ`、高さ編集は`側面 ZY`を使う。
 8. 追加は`制御点を追加`、削除はPoint選択後`選択点を削除`を使う。2点以下にはしない。
 9. RailMovement Inspectorで速度、加減速、開始位置、向き、Loop、曲線方式を設定する。
-10. Play中は進行率Slider、停止 / 再開、順方向 / 逆方向で確認する。
+10. Rigidbodyで動かす場合は`移動方式`を`Dynamic Rigidbody 物理追従`へ変更し、位置/回転の追従軸、ばね、減衰、最大加速度を設定する。
+11. OceanのBuoyancyと併用する場合は`浮力併用プリセット`を押し、Y位置とX/Z回転を浮力側へ任せる。
+12. Play中は進行率Slider、停止 / 再開、順方向 / 逆方向で確認する。
 
 ### 69.2 動作仕様
 
@@ -3004,8 +3063,62 @@ Build IndexはBuild SettingsのScene順と照合する。Path遷移でもStandal
 - `進行方向へ回転`は先読み位置からPitch / Yawを計算する。
 - Loop OFFかつ終端停止ONでは終端到達後に停止する。
 - 終端到達はC++の`ConsumeEndReached`で1回ずつ受け取る。
+- `Transform 追従`は従来通り経路位置を直接設定する。`Dynamic Rigidbody 物理追従`はJolt固定更新ごとにPD制御の力とトルクを加え、衝突、浮力、慣性を残す。
+- 物理追従には有効なDynamic Rigidbodyと3D Colliderが必要である。位置追従軸を0にした方向は外力だけで動き、回転追従軸を0にした軸は浮力や接触トルクを上書きしない。
 
-### 69.3 責務の境界
+### 69.3 Scene Viewでの確認項目
+
+Scene Viewでは、RailMovementが参照しているRail Pathを線で表示する。
+使用者向けドキュメントでは、次の見え方を必ず説明する。
+
+- 選択中のRail Pathは橙色で太く表示される。
+- 選択中ではないRail Pathは水色で細く表示される。
+- Catmull-Romが有効な場合は、実際の移動と同じ曲線Samplingで描画する。
+- 制御点は小さいMarkerと番号Labelで表示する。
+- 進行方向はPath上の矢印で表示する。
+- RailMovementの左右移動可能範囲は水色の横線、上下移動可能範囲は緑の縦線で表示する。
+- Game Viewでは編集用のRail線を表示しない。Scene View上で経路設計を確認する。
+
+ドキュメントには「線が見えない時」の確認順も入れる。
+
+1. Scene Viewタブを開いているか。
+2. 移動対象GameObjectまたはRail Pathを選択しているか。
+3. RailMovementのRail Path参照が空ではないか。
+4. Rail Path直下に2点以上の子制御点があるか。
+5. 制御点のScaleが0、または全点が同じ位置になっていないか。
+
+### 69.4 Spline Editorの編集仕様
+
+Spline Editorの2D Canvasは、直線の点つなぎではなくRuntimeと同じ曲線Previewを表示する。
+上面XZは横X・縦Z、側面ZYは横Z・縦Yとして編集する。
+
+制御点の追加は`選択点の次へ追加`として説明する。
+
+- 制御点が選択されている場合、選択点の次に新しいPointを挿入する。
+- 選択点の次にPointがある場合は、選択点と次Pointの中間位置へ挿入する。
+- 選択点が最後の場合は、最後の進行方向へ外挿した位置へ挿入する。
+- 制御点が未選択の場合は末尾へ追加する。
+- 追加後はHierarchy順が移動順になるように子順序を更新する。
+- Canvas上でPointをDragした場合、Drag終了時にScene同期を行い、Inspector、Scene View、Runtime Sampleを更新する。
+
+削除は2点未満にしない。
+2点未満になる操作は警告し、RailMovementの動作対象から外す。
+
+### 69.5 RailMovement Inspectorのプリセット
+
+RailMovement Inspectorには、用途別に設定をまとめて適用するプリセットを説明する。
+
+| プリセット | 用途 | 変更される代表設定 |
+| --- | --- | --- |
+| 標準移動 | Transformで単純にPathへ沿わせる。移動床、カメラの下書き、敵の単純移動。 | Transform追従、進行方向へ回転ON、滑らかな曲線ON、終端停止ON。 |
+| カメラ経路 | CameraをSplineに沿わせ、見た目の確認をしやすくする。 | 速度を低め、先読みを長め、左右上下Offsetを小さめ、LoopはOFF。 |
+| 物理乗物 | Rigidbodyの慣性と衝突を残しながらPathへ追従する。 | Dynamic Rigidbody物理追従、位置/回転PD、最大加速度、Collider警告。 |
+| 浮力併用 | Ocean上の船をRailに沿わせるが、上下動と傾きはBuoyancyへ任せる。 | X/Z位置とYawをRail、Y位置とPitch/Rollを浮力側へ残す。 |
+
+プリセットは完成したゲームルールではない。
+攻撃、敵全滅待ち、スコア、ステージクリア条件はC++ Script、TimelineEvent、ThresholdState、WaveSpawner、ActionSequenceで組み合わせる。
+
+### 69.6 責務の境界
 
 RailMovementは経路移動だけを行う。敵、攻撃、船、Camera、Wave、Boss、Goalのルールを持たせない。
 ゲーム側はC++ Script、WaveSpawner、TimelineEvent、ThresholdStateなどを必要な分だけ組み合わせる。
@@ -3100,6 +3213,8 @@ Transform、Renderer、Collider、Healthなどへ、用途不明の開始 / 終�
 8. 浅瀬色と深海色を設定する。
 9. 最終品質で1024または2048を試し、FPSとGPU時間を記録する。
 
+Sceneに明示的なPlanar Reflection Probeがない場合、有効なOceanを候補にし、Scene View / Game ViewそれぞれのCameraへ最も近い水域のTransform Y面を基準に反射Captureを自動生成する。水面Shaderは環境反射を基礎に、自動Planar Capture、画面内SSRの順で信頼度合成する。Ocean自身はCaptureから除外して再帰参照を防ぎ、自動Captureを鏡用の全画面Planar合成へ流用しない。反射強度0のOceanは暗黙Capture候補から除外する。明示Planar ProbeがあるSceneでは既存の鏡面合成を優先し、OceanはEnvironment / SSRへFallbackする。自動CaptureはSceneを追加描画するため、最終品質確認では反射あり/なしのGPU時間も比較する。
+
 ### 72.2 Buoyancy
 
 1. 浮かせるObjectへRigidbodyを追加する。
@@ -3107,9 +3222,10 @@ Transform、Renderer、Collider、Healthなどへ、用途不明の開始 / 終�
 3. Buoyancyを追加する。
 4. Ocean参照を設定するか自動検出を使う。
 5. 船体SizeとCenterを見た目へ合わせる。
-6. Playし、浮力、上下減衰、水抵抗、回転抵抗を順に調整する。
+6. Playし、浮力、上下減衰、前後/横/上下の水抵抗、着水衝撃、波の横押し、回転抵抗を順に調整する。
+7. RailMovementを使う船は`Dynamic Rigidbody 物理追従`へ変更し、`浮力併用プリセット`を適用する。
 
-描画波面と浮力は同じOcean Sampleを使うことを確認する。固定5点だけではなく、船体Sizeに応じた8～512点の分布をDebug表示またはログで確認する。
+描画波面と浮力は同じOcean Sampleを使うことを確認する。通常の3D Shape経路は船体範囲を覆う固定5x5の25点へ最小二乗Planeを当て、Joltの実Shapeを切った排水体積と浮心を求める。同じ25点を各水力面へ双線形補間し、実Collider表面へ局所水位・法線・表面速度に基づく静水圧、抗力、揚力、Slammingを分布させる。Joltが体積または表面を返せない特殊Shapeだけ、船体Sizeに応じた8～512セルの旧分布へフォールバックする。Readback前のCPU有限水深SpectrumはOcean設定変更時だけ16波を再生成し、同じOceanへの25点SampleやCastでキャッシュを共有する。GPU Managerの主Oceanと設定が異なるOceanは主FFTを流用せず、そのOcean自身のCPU Spectrumで物理・Gameplay Queryを継続する。
 
 ### 72.3 Underwater / Caustics
 
@@ -3117,10 +3233,94 @@ Transform、Renderer、Collider、Healthなどへ、用途不明の開始 / 終�
 
 - Cameraが水面より上では全画面水中処理が掛からない。
 - Cameraが波面を横切る時、境界が固定平面ではなく変位波面へ追従する。
-- 水深でFog / Absorptionが変わる。
-- Causticsが物体表面へ投影される。
-- Oceanが複数ある場合、対象水域の選択が正しい。
+- 水深と視線の水中通過距離でRGB Absorption / In-scatteringが連続して変わる。
+- CausticsがFFT波面のSlopeとCurvatureへ追従して物体表面へ投影される。
+- Oceanが複数ある場合、各ViewportのCamera位置に最も適した同一FFT設定の水域が選ばれ、色・吸収・屈折・Transformが別Oceanと混ざらない。
 - Scene ViewとGame ViewでCamera位置を混同しない。
+- 屈折SampleがScene View / Game ViewのViewport境界を越えて隣のViewを読まない。
+
+### 72.3.1 Ocean Gameplay Sampleと航跡
+
+- `WaterSurfaceState` Inspectorの`砕波・泡率`が波頭で0～1へ変化する。
+- `OceanProbeSet`の各Entryが相対高さ、法線、速度に加えて泡率を表示する。
+- C++ Scriptは`Ocean::SampleDetailed`、`WaterSurfaceState::GetFoam`、`OceanProbeSet::GetFoam`で泡率を取得できる。
+- `SurfaceWakeEmitter`は船の水平速度からOcean Surface Velocityを引いた相対速度を使う。浮力による上下動だけで航跡が増えず、波頭では泡率に応じて発生量がわずかに増えることを確認する。
+
+### 72.4 Aerodynamics / WindZone
+
+1. Dynamic RigidbodyとColliderを持つGameObjectへAerodynamicsを追加する。
+2. 空気密度、抗力係数、代表面積を設定し、`1/2*rho*Cd*A*v^2`で速度の二乗に比例して減速することを確認する。
+3. 翼を使う場合はLocal `+Z`を前、`+Y`を上へ向け、基礎揚力係数、揚力傾斜、翼面積、ゼロ揚力迎角、失速迎角を設定する。
+4. 横滑りを止める場合は横力係数と側面積、回転球の軌道を曲げる場合はMagnus係数を設定する。
+5. 圧力中心を重心からずらし、合力がPitch / Yaw / Roll Torqueへ変換されることを確認する。
+6. 共通風を使う場合は別GameObjectへWindZoneを追加し、方向風または放射風、速度、半径、乱流を設定する。
+
+描画FrameではなくPhysics FixedUpdateごとに外力を加える。Aerodynamicsの基礎風速と、範囲内にある全WindZoneの風速は加算する。WindZoneを持つだけでは物体は動かず、力を受ける側にAerodynamicsが必要である。
+
+### 72.5 GravityField
+
+1. 重力中心にするGameObjectへGravityFieldを追加する。
+2. 物理式を使う場合は`Newton 逆二乗`を選び、G、引力源質量、最小計算距離を設定する。
+3. Game向けの均一な点重力なら`定加速度`を選び、加速度を設定する。
+4. 大量のRigidbodyがあるSceneでは影響半径を設定する。
+5. 中心付近で暴走する場合は最小計算距離と加速度上限を上げる。
+6. 点重力だけを使うRigidbodyは通常の`重力を使用`を無効にする。
+
+逆二乗モードは`a=G*M/r^2`、Rigidbodyへ加える力は`F=m*a`とする。GravityField自身への自己力は加えず、複数GravityFieldの力は加算する。
+
+### 72.6 RotatingFrame
+
+1. 回転中心GameObjectへRotatingFrameを追加する。
+2. World角速度、角加速度、中心の線速度、影響半径を設定する。
+3. 範囲内のDynamic Rigidbodyに対し、遠心加速度`-omega x (omega x r)`を確認する。
+4. Rigidbodyへ回転座標系に対する相対速度を与え、Coriolis加速度`-2*omega x v`を確認する。
+5. 角加速度を設定し、Euler加速度`-alpha x r`を確認する。
+6. 中心から遠い物体で加速度が過大になる場合は影響半径と加速度上限を設定する。
+
+RotatingFrameは見た目のTransform回転や床Colliderの接触を代行しない。回転する見た目、接触面、疑似力は別々の責務として組み合わせる。
+
+### 72.7 FluidVolume
+
+1. 空のGameObjectへFluidVolumeを追加し、位置・回転・Scaleと`サイズ`で有限の箱領域を作る。
+2. 対象へDynamic Rigidbodyと3D Colliderを追加する。
+3. 密度、粘性、二次抗力係数、流速、角粘性、Force上限を設定する。
+4. Colliderが境界へ半分入った状態で、全浸水時の約半分から浮力と抵抗が増えることを確認する。
+5. 物体を傾けて片側だけ浸水させ、重なり体積中心への位置付きForceから復元Torqueが発生することを確認する。
+6. 流速を設定し、物体速度との差へStokes抵抗と二次抗力が働くことを確認する。
+
+浮力は`density*displacedVolume*|gravity|`、低速粘性抵抗は等価球による`-6*pi*mu*r*vRelative`、高速抵抗は`-1/2*rho*Cd*A*|vRelative|*vRelative`を使う。Ocean波面を使うBuoyancyとは別機能であり、同じ物体へ両方の領域を重ねた場合は外力が加算される。
+
+### 72.8 SpringForce
+
+1. 所有者へDynamic Rigidbody、Collider、SpringForceを追加する。
+2. World固定点を使うか、接続先GameObjectを指定する。
+3. 所有者Anchor、接続先Anchor、自然長、ばね定数、減衰、Force上限を設定する。
+4. 自然長より伸ばした時に接続先方向、縮めた時に反対方向へ力が働くことを確認する。
+5. Anchorを重心からずらし、位置付きForceでTorqueが発生することを確認する。
+6. 接続先をDynamic Rigidbodyにして反作用を切り替え、運動量の受け渡しを確認する。
+
+力は`F=k*(length-restLength)-c*vRelativeAlongSpring`とする。取付点速度は線速度だけでなく`angularVelocity x anchorOffset`を含む。SpringJointのような拘束は作らないため、Force上限を越える外力があれば自然長から離れられる。
+
+### 72.9 ElectromagneticBody / ElectromagneticField
+
+1. 場を定義するGameObjectへElectromagneticFieldを追加する。
+2. 一様場では電場E、磁束密度B、影響半径を設定する。
+3. 点電荷では源電荷、Coulomb定数、最小計算距離、影響半径を設定する。
+4. 対象へDynamic Rigidbody、Collider、ElectromagneticBodyを追加し、正または負の電荷を設定する。
+5. 静止物体で`F=qE`、初速を持つ物体で`F=q(v x B)`を個別確認する。
+6. Local磁気Momentを設定し、`Torque=moment x B`で磁場へ姿勢がそろうことを確認する。
+7. 複数Fieldを置き、電場・磁場が加算されることと、Body側のForce/Torque上限を確認する。
+
+点電荷は自己力を除外し、中心特異点を最小距離で制限する。これは準静的な剛体向けモデルであり、誘導電流、電磁波、磁場勾配による並進力は対象外として明記する。
+
+### 72.10 追加外力の共通確認
+
+- 全てPhysics FixedUpdateで評価され、描画FPSを変えても単位時間あたりの力積が変化しない。
+- 無効GameObject、無効Component、Kinematic Rigidbodyへ力を加えない。
+- 影響源は固定更新ごとに1回収集し、対象ごとのScene全探索を避ける。
+- 複数の外力Componentは加算されるため、Ocean BuoyancyとFluidVolumeなどの重複配置を確認する。
+- Force/Torque上限は異常値対策であり、Mass、係数、Scene単位の調整を代替しない。
+- 2D物理Componentへは接続しない。
 
 ## 73. Terrain、Foliage、Particle
 
@@ -3150,10 +3350,12 @@ Particleの説明はMain、Emission、Shape、Motion、Lifetime Appearance、Ren
 | --- | --- |
 | Motion | Linear、Orbit、Vortex、Wave、Attractor、Cloud、Explosion / Splash、Projectile Trail。 |
 | Collision | Depth、Physics SDF。 |
-| Render | Billboard、指定FBX / OBJ Mesh。 |
+| Render | Camera Facing、Y軸固定、Velocity Facing、World XY固定のBillboard、指定FBX / OBJ Mesh。 |
 | Asset | `.effect`、`.efk`、`.efkefc`。 |
 
 Depth Collisionは画面内の見えているDepthへ使い、画面外や裏面まで必要な物理ObjectにはPhysics SDFを使う。Collision OFF、Depth、SDFを同じSceneで比較し、反発、摩擦、薄いCollider、画面外挙動を記録する。
+
+Render Assetが空のParticleは、World XYへ固定した板ではなく、描画中のView Cameraから得たRight / Up基底でQuadを組み立てる。Scene ViewとGame ViewはそれぞれのCamera基底を渡すため、片方のCameraへだけ正対してはいけない。FBX / OBJを指定したParticleは通常の3D Model描画を使い、Billboard ModeとStretchを適用しない。
 
 ## 74. Audioの現在機能と使用手順
 
@@ -3263,6 +3465,12 @@ Color GradingはTemperature、Tint、Lift、Gamma、Gainを中立値へ戻せる
 | 試験 | 構成 |
 | --- | --- |
 | Ocean物理 | Ocean + 船体 + Rigidbody + Collider + Buoyancy。 |
+| 空気力学 | Rigidbody + Collider + Aerodynamics + WindZone。抗力、揚力、失速、横滑り、Magnus、圧力中心Torqueを個別確認する。 |
+| 点重力 | Rigidbody + Collider + GravityField。逆二乗、定加速度、半径、中心特異点制限を個別確認する。 |
+| 回転座標系 | Rigidbody + Collider + RotatingFrame。遠心、Coriolis、Eulerの各項を速度条件別に確認する。 |
+| 有限流体 | Rigidbody + Collider + FluidVolume。部分浸水体積、Archimedes浮力、Stokes抵抗、二次抗力、流速、圧力中心Torqueを確認する。 |
+| 遠隔ばね | Rigidbody + Collider + SpringForce。World固定点、Body接続、自然長、減衰、反作用、Anchor Torqueを確認する。 |
+| 電磁気 | Rigidbody + Collider + ElectromagneticBody + ElectromagneticField。Coulomb、Lorentz、磁気Torque、点電荷特異点制限を確認する。 |
 | Rail進行 | RailMovement + Spline + TimelineEvent + C++ Script。 |
 | Wave | WaveSpawner + 子3体 + Action受信Script。 |
 | HUD | Health + Text + Slider + UIValueBinding。 |
@@ -3270,6 +3478,12 @@ Color GradingはTemperature、Tint、Lift、Gamma、Gainを中立値へ戻せる
 | Audio | Listener + 3D AudioSource + Collider遮蔽 + Reverb Zone。 |
 | Transparency | Opaque + Mask + OIT Transparent + Glass + Ocean。 |
 | Temporal | Camera移動 + Object移動 + Skinned Animation + Particle。 |
+| 画面照準 | PlayerInput + ScreenAim + RectTransform。マウスとGamepadを個別確認する。 |
+| 即時射撃 | ScreenAim + HitscanWeapon + Collider + Health + DamageReceiver。 |
+| 弾射撃 | ScreenAim + ProjectileEmitter + ObjectPool + Collider + Health + DamageReceiver。高速移動時のすり抜けを確認する。 |
+| Pool再利用 | ObjectPool + PrefabSpawner + Health + DamageReceiver。死亡後に同じItemを再生成してHealth復元を確認する。 |
+| Camera演出 | 優先度の異なるCamera 2台 + CameraBlend + CameraShake。 |
+| Rail分岐 | RailMovement + RailBranch + Rail Path 2本。自動進行率とScript手動実行を確認する。 |
 
 ### 77.3 完了判定
 
@@ -3285,3 +3499,1945 @@ Color GradingはTemperature、Tint、Lift、Gamma、Gainを中立値へ戻せる
 - Audioの3D方向、遮蔽、Doppler、Reverbを実際に聞いて確認する。
 - Debug / ReleaseのBuild成功だけでなく、Editor UIとStandaloneを手動確認する。
 - 実機未確認項目を「使用可能」と断定しない。
+
+## 78. 汎用ゲームプレイ基盤の確認手順
+
+### 78.1 オンレール射撃Sceneを汎用Componentで組む
+
+1. Rail Path親と子制御点を作り、船またはCameraへ`レール移動`を追加する。
+2. Canvas、Image、RectTransformで照準UIを作り、入力Objectへ`画面照準`を追加する。
+3. PlayerInputへ照準Vector2と発射Buttonを登録する。
+4. 即時武器なら`レイ射撃`、見える弾なら`オブジェクトプール`と`弾発射`を追加する。
+5. 命中対象へCollider、Health、`ダメージ受信`を追加する。
+6. 生成元へ`プレハブ生成`または`ウェーブ生成`を追加する。
+7. 経路変更は`レール分岐`、視点演出は`カメラブレンド`と`カメラシェイク`を使う。
+8. 敵行動、誘導、スコア、ステージ条件はC++ Scriptの公開変数とActionで接続する。
+
+### 78.2 拡張性の合格条件
+
+- RailMovementは攻撃や敵種を知らない。
+- Weaponはスコア、リロード、敵AIを知らない。
+- DamageReceiverは攻撃種別をEnumへ固定しない。
+- Spawnerは生成後の敵行動を知らない。
+- RailBranchは敵全滅条件を知らず、外部から`Trigger`できる。
+- CameraBlendとCameraShakeはゲームジャンルを知らない。
+- ゲーム固有条件はC++ ScriptまたはデータAsset側に置き、Engine Managerへ追加しない。
+
+## 79. Prefab・Scene Streaming・Sequence・Save の実利用手順
+
+### 79.1 Prefab Asset
+
+1. Hierarchyで雛形の親GameObjectを選ぶ。子Hierarchy、Component、参照先も保存対象になる。
+2. Inspectorの`オブジェクト操作 > Prefab Asset`へ`Assets/Prefabs/Enemy.prefab`を入力する。
+3. `Prefabとして保存`を押す。保存後の親には元Prefab Pathと元Object IDが記録される。
+4. Projectの`.prefab`をダブルクリック、またはScene ViewへドラッグしてInstanceを生成する。
+5. Instanceの値を変更して`Prefabへ適用`を押すと、現在のInstance階層でPrefab Assetを更新する。
+6. `Prefabへ戻す`を押すと、現在のInstance階層を削除してPrefab Assetから再生成する。
+7. 派生雛形は別Pathを入力して`Variantとして保存`を使う。Variantは元Prefab Pathを保持するが、現在は差分Assetではなく独立して生成可能な完全Snapshotとして保存される。
+
+内部GameObject参照はPrefab内IDから新しいScene IDへ再割当てする。Prefab外を指す参照は自動解決できないため、生成後にInspectorまたはScriptで設定する。Play中のProjectダブルクリック生成は禁止し、編集Sceneを実行時に書き換えない。
+
+### 79.2 非同期SceneとAdditive Scene
+
+- `SceneManager::LoadSceneAsync(path)`: Worker Threadで解析し、完了FrameでPrimary Sceneを置換する。
+- `SceneManager::LoadSceneAdditiveAsync(path)`: 現在のSceneへGameObjectをID再割当てして追加する。
+- `SceneManager::UnloadScene(path)`: Additiveで追加したSceneだけを破棄する。Primary SceneはUnload対象にしない。
+- `SceneManager::GetLoadProgress()`: 未開始0、解析中0.1から0.9、適用完了1を返す。ファイルByte数ではなく段階的な進捗である。
+- `SceneManager::IsLoading()`: Future待機中ならtrue。
+- `SceneManager::IsLoaded(path)`: PrimaryまたはAdditive一覧にPathがあればtrue。
+- `SceneManager::SetFloat/SetString`: Primary Scene置換をまたいで次Sceneへ渡す一時データ。Save Slotへは保存しない。
+
+Additive適用とUnloadでは既存Action Sequence、RailFollower進行、Saveセッション値を保持する。Primary Scene置換ではAction SequenceとRailFollowerの実行状態を初期化する。Scriptは描画ThreadでSceneへ適用されるまで、読み込み中SceneのGameObjectへアクセスしてはいけない。
+
+### 79.3 Action Sequence
+
+1. 親GameObjectへ`アクションシーケンス`を追加する。
+2. `子Stepを追加`で子GameObjectと`シーケンスステップ`を作る。実行順はHierarchy順である。
+3. Step種類をScript Action、待機、Active変更、Scene読込、条件、Signal待機から選ぶ。
+4. `並列Group`が同じ0以上で連続するStepは同時開始する。-1は順次実行である。
+5. Active条件はGameObject有効状態、体力比率、Rail進行率を比較できる。
+6. Signal待機はC++から`ActionSequence{object}.Signal("BossDefeated")`を送るまで停止する。
+7. ゲーム固有の敵全滅、会話、スコア条件は専用Enumへ追加せず、Script ActionまたはSignalで接続する。
+
+### 79.4 SaveableとCheckpoint
+
+1. 保存したいGameObjectへ`保存対象`を追加し、Scene内で重複しない保存Keyを設定する。
+2. Transform、Active、Health、Rigidbody速度、C++ Script公開変数から必要な項目だけをONにする。
+3. ゲーム全体の数値と文字列は`SaveSystem::SetFloat`、`SaveSystem::SetString`で登録する。
+4. `SaveSystem::Save(slot)`で`SaveData`配下へVersion付きSlotを書き、`Load`で現在Sceneの同じ保存Keyへ復元する。
+5. 保存Keyが重複するSceneではSave/Loadを失敗させ、誤ったGameObjectへ復元しない。
+6. CheckpointはSlot名、Play開始時Save/Load、成功時Script Actionを設定できる。
+7. Additive再構築でPlay開始時Checkpointを重複発火させない。同じPlayセッションで一度だけ初期処理する。
+
+### 79.5 一括検証Scene
+
+`ウィンドウ > ゲーム基盤検証 Scene を作成`を実行すると、次を作成する。
+
+- `Assets/Scenes/GameplayFoundationValidation.scene`
+- `Assets/Scenes/GameplayFoundationAdditive.scene`
+- `Assets/Prefabs/ValidationHierarchy.prefab`
+- `Assets/GameplayFoundationValidation.inputactions`
+
+Play後、Rail進行と分岐、Wave、マウス左発射、Pool弾、Damage、Sequenceによる対象Active化、Additive読込、Checkpoint保存をConsoleとHierarchyで確認する。これは機能確認用Assetの生成であり、既存Sceneへ自動追加しない。
+
+## 80. C++ Script Templateの調査と説明
+
+### 80.1 Templateの基本方針
+
+C++ Script Templateは、Engine Componentではなく、使用者がゲーム固有処理を書き始めるための下書きである。
+ドキュメントでは、TemplateとComponentを混同しない。
+
+- ComponentはScene上で再利用できる汎用機能である。
+- TemplateはC++ Script Asset作成時に選ぶ初期コードである。
+- Templateに書かれている処理は、使用者が編集してよい。
+- Templateは固定ゲームジャンルをEngineへ埋め込むものではない。
+- Templateは既存Componentを取得して呼び出す例を示す。
+- TemplateはAction、公開Field、Runtime APIの接続例を含む。
+
+### 80.2 Template選択UIで説明する項目
+
+ProjectでC++ Script Assetを作成する時、Templateを選択できる。
+Template選択UIには、最低限次を説明する。
+
+| 項目 | 説明 |
+| --- | --- |
+| Category | Templateの大分類。移動、戦闘、UI、Audioなど。 |
+| Display Name | UIに出る日本語名。 |
+| Description | 何を始めるためのTemplateか。 |
+| Recommended Components | そのTemplateと一緒に使うことが多いComponent。 |
+| Policy | ゲームルールはTemplate側で編集し、Engine Managerへ固定しないこと。 |
+
+### 80.3 現在のTemplate一覧
+
+この一覧は`EditorNativeScriptAssetManager`のTemplate enumとTemplate infoを基準にする。
+使用者向けサイトでは、英語の内部名だけでなく日本語名と用途を書く。
+
+| Template | 日本語表示 | 主な用途 | 併用Component |
+| --- | --- | --- | --- |
+| Empty | 空のスクリプト | 最小構成から独自処理を書く。 | Script / MonoBehaviour |
+| PlayerController | プレイヤー移動 | Vector2入力でTransformを移動する。 | PlayerInput / Input / FreeTransform |
+| RailPlayer | レール移動操作 | 入力をRailMovementの左右・上下Offsetへ渡す。 | RailMovement / PlayerInput / MovementModifier |
+| EnemyController | 敵の基本制御 | TargetSelectorの結果を使う敵処理の開始コード。 | TargetSelector / Health / HitscanWeapon / ProjectileEmitter |
+| TurretController | 砲塔制御 | 選択TargetへYaw/Pitchを向けて射撃する開始コード。 | TargetSelector / HitscanWeapon / ProjectileEmitter |
+| HomingController | 追尾制御 | TargetSteeringへ追尾開始・終了条件を追加する。 | TargetSelector / TargetSteering / Rigidbody |
+| BossController | 体力フェーズ制御 | Health比率からフェーズを切り替える開始コード。 | Health / ThresholdState / ActionSequence |
+| StageController | Scene進行 | 入力やゲーム条件からSceneを切り替える。 | TimelineEvent / ActionSequence / Scene Asset |
+| LoadoutController | 武器切替 | WeaponLoadoutの切替・射撃・リロードを入力へ接続する。 | WeaponLoadout / WeaponLoadoutSlot / PlayerInput |
+| PhysicsController | Rigidbody移動 | FixedUpdateで入力方向へ力を加える。 | RigidBody / Collider / ConstantForce |
+| HealthDamageController | 体力・破壊 | Healthを監視し0以下の終了処理を書く開始コード。 | Health / DamageReceiver / Collider |
+| SpawnPoolController | 生成・Pool | PrefabSpawnerまたはObjectPoolからObjectを生成する。 | PrefabSpawner / ObjectPool / WaveSpawner |
+| CameraEffectsController | カメラ演出 | Camera BlendとShakeを入力・イベントから再生する。 | Camera / CameraBlend / CameraShake |
+| AnimationEffectController | Animation・Effect | AnimationとParticle/VFXを同時に起動する開始コード。 | Animator / Animation / ParticleSystem / VisualEffect |
+| AudioController | 音量・音響制御 | AudioSourceの公開Propertyをゲーム中に変更する。 | AudioSource / AudioReverbZone / Audio Filter |
+| UiController | UIイベント | Button等からBindActionを呼ぶUI処理の開始コード。 | Canvas / Button / Text / Image / UIValueBinding |
+| ActionEventController | Action・Sequence | ActionRelayとActionSequenceをゲーム条件へ接続する。 | ActionRelay / ActionSequence / TimelineEvent / PropertyTween |
+| SaveCheckpointController | Save・Checkpoint | Save SlotとCheckpointを入力・イベントへ接続する。 | Saveable / Checkpoint |
+| OceanBuoyancyController | 海面問い合わせ | 描画と浮力が共有するOcean表面情報を取得する。 | Ocean / Buoyancy / RigidBody |
+| NavigationAiController | Target・経路AI | Target取得後のNavigation/Steering条件を書く開始コード。 | NavigationAgent / AIPathRequest / TargetSelector / AISteeringAgent |
+| RuntimePropertyController | Component Property操作 | Component存在確認と公開Property変更を行う。 | 任意Component / PropertyTween / ActionRelay |
+
+### 80.4 Templateごとに書くべき詳細
+
+各Templateのページには、次を必ず書く。
+
+- 作成手順: ProjectでC++ Scriptを作成し、Templateを選択し、DLLをBuildしてGameObjectへ設定する。
+- 生成される主な関数: `Start`、`Update`、`FixedUpdate`、`OnAction`、物理Event、Animation Eventなど。
+- 生成される公開Field: Inspectorから編集できる値と初期値。
+- 生成されるAction: Inspector候補に出るAction名。
+- 推奨Component: 同じGameObjectに置くもの、参照Fieldで指定するものを分ける。
+- そのまま使える確認方法: Playして何を押すと何が起きるか。
+- 書き換えるべき場所: ゲーム固有ルールを書く関数。
+- 書き換えない方がよい場所: DLL Export、Runtime API初期化、Instance転送。
+- よくある失敗: DLL Path違い、x64構成違い、Action名違い、Component未追加。
+
+### 80.5 レールシューティングでのTemplate組み合わせ例
+
+レールシューティング専用Managerを増やすのではなく、次のようにTemplateとComponentを組み合わせる。
+
+1. 船またはCameraへRailMovementを追加し、Spline EditorでPathを作る。
+2. Player側Scriptは`RailPlayer` Templateから作り、RailFollowerへ入力Offsetを渡す。
+3. 照準はScreenAim、射撃はHitscanWeaponまたはProjectileWeaponを使う。
+4. 敵はHealth、DamageReceiver、Colliderを持つPrefabにし、行動Scriptは`EnemyController`または`TurretController` Templateから作る。
+5. Wave生成はWaveSpawner、演出はTimelineEventまたはActionSequenceを使う。
+6. Bossは`BossController` TemplateでHealth比率を見てPhaseを切り替える。
+7. BGMやSEは`AudioController` TemplateでActionに接続する。
+8. HUDはCanvas、Text、Slider、UIValueBinding、`UiController` Templateで作る。
+
+この構成では、RailMovementは「移動」、Weaponは「撃つ」、WaveSpawnerは「出す」、Scriptは「ゲーム固有条件」を担当する。
+
+## 81. 全体ドキュメントの漏れ防止チェック
+
+### 81.1 ページ構成の完成条件
+
+使用者向けサイトは、機能を羅列するだけでは完成ではない。
+最終成果物には、最低限次のページ群を用意する。
+
+| ページ | 必須内容 |
+| --- | --- |
+| はじめに | CG2で何を作れるか、Editor / Game / Buildの違い、最初に開くScene。 |
+| Project | Assets、resources、Scenes、Prefabs、Scripts、Shaders、Build対象の扱い。 |
+| Scene | `.scene`の作成、保存、ダブルクリックで開く、Additive、Build Settings。 |
+| Hierarchy | GameObject作成、親子関係、子Transform、Prefab Instance、Active。 |
+| Inspector | Transform、Component追加、参照設定、警告、Preset、Runtime値。 |
+| Scene View | Gizmo、Rail線、Collider、Physics Debug、Camera Frustum、選択操作。 |
+| Game View | Play中の描画、UI、入力Focus、Standaloneとの差。 |
+| Component一覧 | 全Componentのカテゴリ、表示名、内部型名、概要、必要Component。 |
+| Component詳細 | 各Componentの作成手順、Inspector項目、Runtime、C++連携、制限。 |
+| C++ Script | 作成、Template、Build、DLL Path、API、Action、公開Field、失敗診断。 |
+| Input | Key、Mouse、GamePad、Input Action、UI Input、Action Event。 |
+| Physics | Rigidbody、Collider、Joints、Forces、Buoyancy、Debug表示、Layer。 |
+| Rendering | Model、Sprite、Material、Light、Reflection、PostProcess、Water。 |
+| Audio | AudioSource、Listener、3D音響、遮蔽、Doppler、Reverb、Bus。 |
+| UI | Canvas、Text、Image、Button、Slider、UIValueBinding、解像度。 |
+| Animation / Effect | Animation、Animator、Event、Particle、VisualEffect、Pool。 |
+| Gameplay基盤 | RailMovement、Weapon、Health、Wave、Sequence、Save、Prefab。 |
+| Build | Editor Build、Game Build、Debug / Release、Resource Copy、起動確認。 |
+| Troubleshooting | 起動しない、表示されない、音が出ない、Actionが来ない、Build失敗。 |
+
+### 81.2 1ページごとの共通必須項目
+
+各ページには次を入れる。
+
+- 目的: 何をするページか。
+- 使う場面: どんな作業で読むか。
+- 最小手順: 初めて使う人が動かせる手順。
+- 詳細手順: Inspector、Project、Hierarchy、Scene Viewを含む手順。
+- 設定一覧: 表示名、型、初期値、単位、範囲、保存、Runtime反映。
+- C++ Script連携: API、Template、Action、RuntimeProperty。
+- 組み合わせ: 一緒に使うComponent、競合するComponent。
+- Debug表示: Scene View、Console、Inspector Runtime値。
+- Build時の注意: Standaloneで必要なAsset、Path、Scene登録。
+- 失敗診断: 現象別の確認順。
+- 制限: 未実装、近似、Editor専用、確認不足を明記。
+
+### 81.3 使用者操作の書き方
+
+操作手順は、実際のEditor上の導線で書く。
+
+良い書き方:
+
+1. Projectで`Assets/Scenes`を開く。
+2. `.scene`をダブルクリックしてSceneを開く。
+3. HierarchyでGameObjectを選ぶ。
+4. Inspectorの`コンポーネントを追加`を押す。
+5. `ゲームプレイ > レール移動`を追加する。
+6. `Splineを作成して接続`を押す。
+7. Scene ViewでRail線と制御点を確認する。
+8. PlayしてGame Viewで動作を見る。
+
+避ける書き方:
+
+- 内部Manager名だけで説明する。
+- ファイルPathを直接編集する前提だけにする。
+- Editor上のボタン名や配置を書かない。
+- BuildやStandaloneでの差を書かない。
+- 実装未確認のものを「できます」と断定する。
+
+### 81.4 Component詳細の追加調査手順
+
+新しいComponentや既存Componentの変更が入ったら、次の順で調べる。
+
+1. `EditorComponentType`のenum名を確認する。
+2. Add Component Popupのカテゴリと日本語表示名を確認する。
+3. `CreateComponent`の初期値を確認する。
+4. Inspectorで表示される項目名、範囲、ボタンを確認する。
+5. Scene Save / Loadの対象Fieldを確認する。
+6. Runtime Managerが読んでいるFieldを確認する。
+7. Render / Physics / Audio / Input / UIへ接続されているか確認する。
+8. C++ Script Wrapper、Runtime API、RuntimeProperty登録を確認する。
+9. Action送受信がある場合、Action名と値を確認する。
+10. Debug表示やScene View Gizmoがあるか確認する。
+11. Build後に必要なAssetやResource Copyを確認する。
+
+### 81.5 C++ Script詳細の追加調査手順
+
+C++ Script APIやTemplateが増えたら、次を更新する。
+
+1. `EditorScriptApi.h`のRuntime API構造体を確認する。
+2. ABI互換のため末尾追加かどうか確認する。
+3. `EditorNativeScript.h`の高水準Wrapperを確認する。
+4. `EditorScriptManager`のBridge関数を確認する。
+5. 失敗時にfalseを返す条件を確認する。
+6. 生成TemplateのHeader / Sourceに何が出るか確認する。
+7. Action候補Exportが生成されるか確認する。
+8. InspectorのTemplate選択UIに表示される説明と推奨Componentを確認する。
+9. サンプルコードが実際の関数名と一致しているか確認する。
+10. 古いDLLとの互換、直接入力、API Version違いを説明する。
+
+### 81.6 Rail / レールシューティング関連の漏れ防止
+
+レールシューティングを作る説明では、ゲーム専用Managerを前提にしない。
+次を個別に説明する。
+
+| 作業 | 説明対象 |
+| --- | --- |
+| レールを作る | Spline Editor、Rail Path、制御点、Scene View線表示。 |
+| レールを動く | RailMovement、速度、加速、進行率、終端、Loop。 |
+| レール内で動く | 左右範囲、上下範囲、PlayerInput、Script入力。 |
+| 物理で動く | Dynamic Rigidbody追従、Collider、追従軸、ばね、減衰。 |
+| 海で動く | Ocean、Buoyancy、浮力併用プリセット、描画波と物理波の一致。 |
+| 経路を分ける | RailBranch、Script Trigger、進行率維持。 |
+| 敵を出す | WaveSpawner、PrefabSpawner、ObjectPool。 |
+| 撃つ | ScreenAim、HitscanWeapon、ProjectileEmitter、DamageReceiver。 |
+| 演出する | TimelineEvent、ActionSequence、CameraBlend、CameraShake、AudioSource。 |
+| 表示する | Canvas、Text、Slider、UIValueBinding、Reticle。 |
+| 保存する | Saveable、Checkpoint、Scene間一時データ。 |
+
+### 81.7 トラブルシュートの最低項目
+
+Troubleshootingには、現象別に確認順を書く。
+
+| 現象 | 確認順 |
+| --- | --- |
+| 起動しない | Debug/Release構成、作業Directory、必要Scene、resources、DLL、Console。 |
+| Sceneが開かない | `.scene`存在、Project上のPath、JSON破損、参照先Asset。 |
+| GameObjectが出ない | Active、Layer、Camera Culling、Transform、Scale、Renderer、Material。 |
+| Spriteが出ない | Texture Path、SRV、Material、Canvas/World、Alpha、Draw順。 |
+| Modelが暗い | Light、Environment、Material、Normal、Reflection、PostProcess。 |
+| Rail線が見えない | Scene View、Rail Path参照、制御点2点以上、選択状態、全点同一位置。 |
+| Railが動かない | Play中、Paused、Speed、Path長、Rigidbody/Collider、追従軸。 |
+| 物理が効かない | Rigidbody Dynamic、Collider、Layer、Kinematic、Freeze、FixedUpdate。 |
+| 浮力がおかしい | Ocean参照、Dynamic Rigidbody、排水形状に使うCollider、船体Size、重心、浮力、抵抗、Rail追従軸。通常経路はColliderの実Shape体積を使うため、上部構造を含む過大なBoxを船体Colliderにしない。 |
+| Actionが来ない | Action対象、DLL Path、Template Export、Action名、Component有効。 |
+| UIが反応しない | Canvas、EventSystem、Input Module、Raycast Target、Focus。 |
+| 音が出ない | AudioListener、Clip、Volume、Bus、3D距離、Voice上限。 |
+| Buildで動かない | Build Settings、Scene登録、Asset Copy、相対Path、Debug/Release差。 |
+
+### 81.8 未確認を残さないための表記
+
+調査が終わっていない機能には、次のどれかを書く。
+
+| 表記 | 意味 |
+| --- | --- |
+| 実装済み | Editor操作、保存、Runtime、Buildで確認済み。 |
+| Editor設定のみ | Inspector項目はあるがRuntime未接続。 |
+| Runtime接続あり | Play時に反映されるがBuild未確認。 |
+| Editor専用 | Scene ViewやInspectorだけで使う機能。 |
+| 互換用 | 旧Scene読み込みのために残している型。 |
+| 未確認 | コード上は存在するが動作確認が足りない。 |
+
+「多分」「おそらく」「Unityと同じ」のような表現で完成扱いにしない。
+
+### 81.9 最終レビュー手順
+
+ドキュメント更新後は、次を確認してから完成扱いにする。
+
+1. 3つのseedファイルがUTF-8 BOM付きで保存されている。
+2. `git diff --check`が通る。
+3. 新しいComponent、API、Templateが3ファイルのどこかに反映されている。
+4. 実装名とドキュメント名が一致している。
+5. 日本語表示名と内部型名を混同していない。
+6. 使用者操作がProject / Scene / Hierarchy / Inspector基準で書かれている。
+7. ゲーム固有処理をEngine基礎機能として説明していない。
+8. 未実装や未確認を断定していない。
+9. Troubleshootingに失敗時の確認順がある。
+10. Build / Standaloneの注意がある。
+
+## 82. 再利用Gameplay機能の現行実装状況
+
+外部サイトの記述だけで実装有無を判断せず、Component enum、Inspector追加一覧、Scene保存、Runtime Manager、C++ Script bridgeの5箇所を確認する。現行コードでは次の機能が実体まで接続済みである。
+
+| 機能 | Inspector | Scene保存 | Runtime | C++ API | 主用途 |
+| --- | --- | --- | --- | --- | --- |
+| WeaponLoadout / Slot | あり | あり | WeaponLoadoutManager | `WeaponLoadout` | 可変装備、弾薬、Reload、Visual切替 |
+| TargetSelector | あり | あり | TargetingManager | `Targeting` | 距離、角度、遮蔽、Team、Priority選択 |
+| TargetSteering | あり | あり | TargetingManager | RuntimeProperty連携 | 追尾、砲塔、Drone、Projectile |
+| PropertyTween | あり | あり | RuntimePropertyManager | `PropertyTween` | 公開Propertyの時間補間 |
+| Runtime Property | 対応Component側 | Scene値を操作 | RuntimePropertyManager | `RuntimeProperty` | Ocean、Light、Rail、Audio等の共通操作 |
+| Ocean Query | Ocean側 | Ocean設定を利用 | Ocean System | `Physics::SampleOceanSurface` | 描画・Buoyancyと同じ波面の取得 |
+| TargetPoint | あり | あり | TargetingManager | Target参照として取得 | 大型敵の部位、弱点、注視点 |
+| Team | あり | あり | TargetingManager | RuntimeProperty | 敵味方、Neutral、Target除外 |
+| DamageContext | DamageReceiverと連携 | Runtime情報 | DamageManager | `Health` | 攻撃者、命中位置、法線、Impulse、UserTag |
+
+### 82.1 大型敵へ部位Targetを作る手順
+
+1. 敵RootへCollider、Health、DamageReceiver、Teamを追加する。
+2. Team IDをゲーム側の敵IDへ設定する。
+3. Rootの子へ主砲、レーダー、エンジン等の空GameObjectを作る。
+4. 各子へTargetPointを追加し、Scene Viewの球を見ながら位置と半径を調整する。
+5. 重要部位ほどPriorityを大きくする。
+6. Player側TargetSelectorを「別Team」「優先値」へ設定する。
+7. Play中の現在Target IDとTarget変更Actionを確認する。
+
+### 82.2 Loadoutから射撃までの手順
+
+1. PlayerまたはWeaponRootへWeaponLoadoutを追加する。
+2. 子Slotを必要数作る。
+3. 各SlotのWeapon ObjectへHitscanWeaponまたはProjectileEmitter所有者を指定する。
+4. Visual、Magazine、Reserve、Reload時間を設定する。
+5. LoadoutController Templateを作成し、InputへNext、Previous、Reload、Fireを割り当てる。
+6. HUDは`GetAmmo`またはUI Value Bindingへ接続する。
+7. 発射できない場合はSlot選択、残弾、Reload中、Weapon参照、Weapon cooldown、Input Actionの順に確認する。
+
+### 82.3 Damage情報をゲーム処理へ使う手順
+
+1. 被弾対象へHealthとDamageReceiverを追加する。
+2. DamageReceiverの被弾ActionをC++ Scriptへ接続する。
+3. Action内で`GetLastDamageContext`を読む。
+4. `instigatorGameObjectId`からScoreやKill判定の所有者を決める。
+5. `hitPosition`と`hitNormal`へHit EffectやDecalを配置する。
+6. `impulse`は必要な攻撃だけ設定し、Damage値から常時自動生成しない。
+7. `userTag`の意味はゲーム側Data AssetまたはScript定数で管理する。
+
+### 82.4 互換性と制限
+
+- Teamを持たない旧SceneはNeutralとして扱い、初期設定ではTarget候補へ含める。
+- Team IDの意味はEngineが固定しない。Player、Enemy、Boss等のEnumはゲーム側へ置く。
+- TargetPointはTarget位置を提供する。部位ごとのHealthやDamage倍率は子Collider、DamageReceiver、Scriptで構成する。
+- DamageContextは最後に適用された1件を対象ごとに保持する。同一Frameの全Hit履歴が必要な場合は被弾Action内でゲーム側配列へ転記する。
+- PropertyTweenは登録済みPropertyだけを操作する。任意メンバー名への未検証アクセスは行わない。
+
+## 83. 全機能ドキュメント完成監査
+
+### 83.1 現行コードを正とする対象数
+
+2026-08-09時点の現行コードでは、`kEditorComponentTypeNames`に268 Component、`EditorScriptRuntimeApi`に208 API Entryがある。文書完成判定では、最近追加した機能だけでなく、この全件を機械照合する。
+
+| 対象 | 正本 | 詳細を書く文書 | 完成条件 |
+| --- | --- | --- | --- |
+| Component 268件 | `EditorScene.cpp`の`kEditorComponentTypeNames` | `component-documentation-detail-seed.md` | 全内部名が存在し、似たComponentとの差、設定、依存、Runtime状態、Debugが説明される。 |
+| Runtime API 211件 | `EditorScriptApi.h`の`EditorScriptRuntimeApi` | `cpp-script-documentation-detail-seed.md` | 全Entry名が存在し、推奨Wrapper、引数、戻り値、失敗条件、必要Componentが説明される。 |
+| C++ Script Template | `EditorNativeScriptAssetManager`のTemplate定義 | C++ Script文書と利用者文書 | 作成手順、生成物、公開Field、Action、推奨Component、変更箇所が説明される。 |
+| Editor Window/Workflow | Menu、Window Manager、Project/Hierarchy/Inspector実装 | 本文書 | Projectから作る実操作、保存先、Play/Build、失敗時確認が説明される。 |
+
+名称が1回出るだけでは完成ではない。次の品質監査を別に通す。
+
+1. その機能が何を担当し、何を担当しないか分かる。
+2. Project/Hierarchy/Inspectorの操作順が分かる。
+3. 必須Component、任意Component、競合Componentが分かる。
+4. 主要Inspector項目の単位、範囲、初期値、Runtime反映時期が分かる。
+5. C++ Script、Action、Runtime Propertyのどれから操作できるか分かる。
+6. Scene保存、Prefab、Buildへの持越し条件が分かる。
+7. Scene View Debug、Console、戻り値を使った確認順が分かる。
+8. 型だけ存在する機能を実装済みと誤記していない。
+
+### 83.2 利用者の開始地点
+
+ドキュメントはEngine内部Classから始めない。利用者がゲームを作る順番を主導線にする。
+
+1. `CG2.sln`を開き、DebugまたはRelease x64を選ぶ。
+2. CG2 Editorを起動し、Projectウィンドウの`Assets/Scenes`を開く。
+3. `.scene`をダブルクリックし、Scene View、Hierarchy、Inspectorへ開く。
+4. GameObjectを作り、Add Componentから機能を組み合わせる。
+5. AssetをProjectからSceneまたはInspector参照欄へ割り当てる。
+6. Sceneを保存し、PlayでScene ViewとGame Viewを確認する。
+7. C++ Scriptが必要ならProjectで作成し、TemplateまたはEmptyから始める。
+8. Build Settingsへ起動Sceneと遷移Sceneを登録する。
+9. Standalone Buildを作り、Editorを介さずexe、Scene、Asset、Resourceを確認する。
+
+Project外の絶対Pathを直接選ばせる手順は、Import機能の説明以外では主導線にしない。AssetはProjectに入り、ProjectからSceneへ使う。
+
+### 83.3 Editor基本機能の詳細対象
+
+| 機能群 | 必ず書く内容 | 最低確認 |
+| --- | --- | --- |
+| Project | Assets/resources/Scenesの意味、Import、作成、Rename、Move、Delete、Search、Refresh。 | Move後の参照維持、Build copy、拡張子別Preview。 |
+| Scene | 新規作成、保存、別名保存、ダブルクリックOpen、複数Scene、Additive、未保存警告。 | Title/Stage/Result間遷移、再起動後の再読込。 |
+| Hierarchy | 親子化、子順、折り畳み、複数選択、複製、Prefab、Active。 | 親移動/回転/Scaleが子World Transformへ反映される。 |
+| Inspector | Component追加/削除/並替、複数編集、参照割当、Reset、Preset。 | Scene保存後に全値が戻る。Play中変更の保持範囲。 |
+| Scene View | 移動/回転/Scale Gizmo、Local/World、Snap、Focus、Camera操作、Debug種別。 | Collider、Rail、Physics vector、Audio cone、Nav path。 |
+| Game View | 実Camera、解像度、Aspect、Input focus、UI、Play/Pause/Step、FPS。 | Scene View専用Gizmoが混入しない。 |
+| Console | Log/Warning/Error、Source、Clear、Filter、Play開始時処理。 | Script失敗、Asset欠落、Shader compile、Scene loadを追える。 |
+| Build Settings | Scene順、起動Scene、Debug/Release、出力先、Asset copy。 | 出力exeだけで起動し、必要Sceneを遷移できる。 |
+
+### 83.4 描画と見た目の詳細対象
+
+描画文書は「綺麗になる」とだけ書かず、入力Buffer、設定Component、Pass順、品質差、失敗時の見え方を書く。
+
+| 領域 | 詳細対象 | 接続確認 |
+| --- | --- | --- |
+| Model/Sprite/UI | Mesh、SubMesh、Material、Texture、Sampler、Alpha、Sort、SDF Text。 | PNG/FBX/OBJをProjectから配置し、Standaloneでも表示する。 |
+| Lighting | Directional/Point/Spot、Environment、Shadow、Probe、IBL。 | Lightなし、Environmentのみ、複数Lightで比較する。 |
+| Material/PBR | Base Color、Normal、Metallic、Roughness、AO、Emission、Reflectance。 | 値変更がGBuffer/Forward pathへ届く。 |
+| Reflection | ReflectionProbe、SSR、Planar、Cubemap、Fresnel、roughness mip。 | Probeなし/あり、画面外、平面位置、粗さを比較する。 |
+| Ocean | FFT Spectrum、LOD、Normal、Foam、Refraction、Absorption、Shallow、Sun glint。 | 高低差、滑らかさ、光角度、遠景、継ぎ目、Buoyancy一致。 |
+| Transparency | Alpha Blend、Weighted OIT、水/ガラス専用Pass、Depth。 | 前後順、屈折Object、Particle、水面重なり。 |
+| PostProcess | Exposure、Bloom、AA、AO、SSR、Tone Map、Vignette、Grain、CA。 | Inspector値がHardcodeで上書きされない。Scene/Game temporalを分離する。 |
+| Optimization | Frustum、Hi-Z、LOD、Instancing、Indirect、VRAM、Shader variant。 | CPU readback、Draw call、GPU ms、見た目差を計測する。 |
+
+### 83.5 3D物理の詳細対象
+
+| 領域 | 詳細対象 | 検証Scene |
+| --- | --- | --- |
+| Body/Collider | Mass、Inertia、Center of Mass、Motion Type、CCD、Friction、Restitution、Layer。 | 落下、斜面、積重ね、高速弾、Trigger。 |
+| Force/Torque | Force、Impulse、Force At Position、Torque、ConstantForce、Gravity Field。 | 同質量/異質量、重心Offset、Fixed timestep。 |
+| Joint/Constraint | Hinge、Fixed、Spring、Configurable、Character、Transform Constraint。 | Limit、Motor、Break、親子/Animation競合。 |
+| Vehicle/Aero | Wheel、Suspension、Thruster、Aerodynamics、Wind、Upright。 | 車、船、飛行機で抗力・揚力・横力・圧力中心を見る。 |
+| Rope/Mechanism | Rope、Pulley、Torsion Spring、Servo。 | Attach/Detach、巻取り、破断/Repair、張力Debug。 |
+| Field/Fluid | FluidVolume、Vortex、Pressure、Electromagnetic、RotatingFrame。 | 範囲境界、最大Force、反作用、Debug vector。 |
+| Ocean physics | Ocean Sample、実Shape水没体積、浮心、水線面積、面分布静水圧、二次抗力、Slamming、Rail併用。 | 描画頂点と同じ時間・Spectrumを固定5x5 Sampleし、実Collider表面へ補間した局所水位・法線・速度、部分浸水、浮心移動、`dV/dh`水線面積、排水体積履歴、Pool再利用を確認する。 |
+
+2D物理型は互換データであり、現行Runtime実装として案内しない。この方針はComponent文書へ型名単位で記載する。
+
+### 83.6 ゲームプレイ基盤の詳細対象
+
+| 作りたい処理 | 基盤Component/API | ゲーム側へ残す判断 |
+| --- | --- | --- |
+| 経路移動 | RailMovement、MovementModifier、RailBranch、RailFollower API。 | 敵全滅時停止、Stage分岐条件、Score条件。 |
+| 照準とTarget | ScreenAim、TargetSelector、TargetPoint、Team、Physics Cast。 | Lock優先規則のゲーム固有補正、弱点倍率。 |
+| 射撃 | HitscanWeapon、ProjectileEmitter、WeaponLoadout、ObjectPool。 | 武器種類、弾Data、入力、演出、Upgrade。 |
+| Damage | Health、DamageReceiver、DamageContext。 | Score、属性、部位破壊、死亡後処理。 |
+| Spawn | PrefabSpawner、WaveSpawner、ObjectPool。 | どの敵をいつ出すか、勝敗条件。 |
+| 順次処理 | ActionSequence、ActionRelay、TimelineEvent、ThresholdState。 | Boss登場などAction名の意味。 |
+| Camera | Camera、CinemachineCamera、Blend、Shake、Constraint。 | Stageごとの構図、演出Timing。 |
+| UI/HUD | Canvas、TMP Text、Image、Slider、UIValueBinding、Input UI。 | 配置、Art、表示値の意味。 |
+| Audio | Source、Listener、Bus、3D距離、Cone、Occlusion、Filter、Reverb。 | BGM/SE選択、演出Timing。 |
+| Save/Scene | Saveable、Checkpoint、SceneManager、Scene/Save Data。 | 何を保存するか、Scene構成、Slot UI。 |
+
+Engineは「レール上を移動する」「対象を選ぶ」「武器を発射する」まで提供する。「レール上を移動してPlayerを攻撃する敵」の完成ルールを単一Componentへ固定しない。よく使う組合せはC++ Script Templateとして提供する。
+
+### 83.7 Animation・Effect・Audioの詳細対象
+
+| 領域 | 必ず区別する項目 |
+| --- | --- |
+| Animation | Clip再生とAnimator State Machine、Parameter、Blend、Layer、AvatarMask、Root Motion、IK、Animation Event、Skinned Motion Vector。 |
+| Constraint | Animation前後の評価順、Transform親子、Physicsとの競合、Weight補間。 |
+| Particle | SimulationとRenderer、Spawn/Lifetime、Collision、Depth Collisionの限界、Physics/SDFとの使い分け、Pool。 |
+| Visual Effect | Effect Asset、公開Parameter、Play/Stop、World/Local、Decal/Light/Audio連携。 |
+| Audio playback | SE/BGM/Voice、Loop、Fade、Pitch、Pause、Voice上限、Bus。 |
+| 3D Audio | Listener、距離減衰、Cone方向、Doppler、Occlusion、Reverb Zone。 |
+| Audio Filter | Low/High Pass、Echo、Distortion、Reverb、Chorusの順序と二重適用。 |
+
+### 83.8 AI・Navigationの詳細対象
+
+AIは名称を並べるだけでは使えない。各方式でData作成、実行単位、状態可視化、外部依存を分ける。
+
+| 方式 | 作成Data | 実行Debug | 外部/前提 |
+| --- | --- | --- | --- |
+| Behavior Tree | Root、Composite、Task、Decorator、Blackboard。 | Running Node、Success/Failure、Abort。 | Script Action、Blackboard key。 |
+| State Machine | State、Transition、条件、Enter/Exit。 | Current State、成立Transition。 | Action target。 |
+| GOAP | Goal、Action前提/効果、World State、Cost。 | 選択Goal、Plan、再計画理由。 | World State供給。 |
+| HTN | Domain、Task、Method、分解条件。 | 分解Tree、実行Task、失敗位置。 | Domain Asset/Hierarchy。 |
+| Pathfinding | Surface/Grid、Agent、Obstacle、Link、Request。 | Path、Corner、到達/失敗、再探索。 | Bake data、Recast/MicroPather設定。 |
+| Steering | Seek/Flee/Arrive/Pursuit/Wander/Avoid/Flock。 | 各Force vector、合成Weight、速度。 | Target、Neighbor、Physics Query。 |
+| Vision/ML/Voice | Camera/Audio input、Model、Threshold、Command。 | Raw input、検出結果、Confidence。 | OpenCV/Whisper Model、Device。 |
+
+### 83.9 C++ Script説明の完成条件
+
+各APIページに次を固定順で置く。
+
+1. 何ができるかと責務外。
+2. 必要ComponentとInspector設定。
+3. 最小の型付きWrapper例。
+4. 引数の座標系、単位、寿命、null許可。
+5. 戻り値とfalse/負値の全条件。
+6. Update、FixedUpdate、Actionのどこで呼ぶか。
+7. Scene reload、Object destroy、Pool返却時の参照寿命。
+8. Console、Scene View、Component状態によるDebug。
+9. Runtime APIとの正確な対応名。
+10. Standaloneで必要なDLL、Asset、Scene。
+
+Templateページは完成コードとして扱わない。公開Field、推奨Component、生成Action、変更する関数、削除可能な例示部分を明記する。Templateにゲーム固有Managerを隠して依存させない。
+
+### 83.10 全体Troubleshootingの調査順
+
+| 症状 | 最初に見る層 | 次に見る層 | 最後に見る層 |
+| --- | --- | --- | --- |
+| 起動/白画面 | exe作業Directory、起動Scene、Resource。 | 初期化Log、Shader/Texture load、GPU fence。 | RenderDoc/Debugger。Main loop到達だけで直ったとしない。 |
+| Scene内容が違う | 開いているScene Path、未保存、Hierarchy Active。 | Scene deserialize、Asset参照、Prefab override。 | Runtime Synchronizer。 |
+| 見えない | Camera/Layer/Transform/Scale。 | Renderer/Material/Texture/Light。 | Draw call、PSO、Descriptor、Shader output。 |
+| 物理が違う | Dynamic/Collider/Layer/重力/Freeze。 | Fixed timestep、Mass/Inertia、力の作用点。 | Solver contact、CCD、Debug vector。 |
+| Scriptが動かない | Script Component、DLL path、Active。 | API Version、Export、Action名、戻り値。 | Bridge Log、Debugger attach。 |
+| Buildだけ失敗 | Configuration、Platform、Output path。 | Scene/Asset/DLL copy、相対Path。 | Debug/Release定義差、Runtime library。 |
+
+### 83.11 更新時の機械監査
+
+ComponentまたはRuntime APIを追加・削除した変更では、文書更新後に次を実行する。単純文字列照合は説明品質を保証しないが、完全な記載漏れを検出できる。
+
+```powershell
+$scene = Get-Content Source\Engine\Editor\EditorScene.cpp -Raw
+$componentBlock = [regex]::Match(
+    $scene,
+    'kEditorComponentTypeNames\[\]\s*=\s*\{(?<body>[\s\S]*?)\};').Groups['body'].Value
+$componentNames = [regex]::Matches($componentBlock, '"([^"]+)"') |
+    ForEach-Object { $_.Groups[1].Value }
+$componentDoc = Get-Content docs\component-documentation-detail-seed.md -Raw
+$componentNames | Where-Object {
+    $componentDoc -notmatch [regex]::Escape($_)
+}
+
+$apiHeader = Get-Content Source\Engine\Core\EditorScriptApi.h -Raw
+$apiBlock = [regex]::Match(
+    $apiHeader,
+    'struct EditorScriptRuntimeApi\s*\{(?<body>[\s\S]*?)\n\};').Groups['body'].Value
+$apiNames = [regex]::Matches($apiBlock, '\(\*([A-Za-z0-9_]+)\)') |
+    ForEach-Object { $_.Groups[1].Value }
+$apiDoc = Get-Content docs\cpp-script-documentation-detail-seed.md -Raw
+$apiNames | Where-Object {
+    $apiDoc -notmatch [regex]::Escape($_)
+}
+```
+
+出力が0件であることに加え、UTF-8 BOM、`git diff --check`、内部名と日本語表示名、実装状態表記、Projectから始まる操作手順を人手で確認する。
+
+## 84. 一つずつ詳細に書くための完成基準
+
+### 84.1 Componentページは一覧表だけで完成にしない
+
+268 Componentは、カテゴリ説明に名前が含まれるだけでは未完成である。各Componentについて、最低でも次の情報を個別に確定する。
+
+| 必須項目 | 書く内容 | 調査元 |
+| --- | --- | --- |
+| 表示名と内部名 | Add Componentの日本語名、`EditorComponentType`内部名、カテゴリ。 | `EditorInspectorPanel.cpp`のCatalog、`EditorScene.cpp`。 |
+| 目的 | 何を入力として何を出力するComponentか。 | Runtime Manager、Renderer、Physics Bridge。 |
+| 責務外 | 何をこのComponentへ入れず別Component/Scriptへ分けるか。 | Manager境界、設計方針。 |
+| 追加手順 | HierarchyでどのObjectへ追加し、Projectの何を割り当てるか。 | Add Component UI、Inspector。 |
+| Inspector全項目 | 日本語Label、内部Field、型、単位、範囲、初期値。 | Inspector描画関数、`EditorComponent`、初期化処理。 |
+| 参照 | GameObject/Asset/Scene参照、空時のFallback、削除時の挙動。 | Scene同期、Runtime Manager。 |
+| 必須構成 | 同じObject、親、子、Scene内に必要なComponent。 | Runtimeの検索処理。 |
+| Runtime | Update/FixedUpdate/Drawのどこで、何を変更するか。 | ManagerのUpdate順。 |
+| 保存 | Scene/Prefabへ保存する値、Play開始時初期化値、Runtimeのみの値。 | Serialize/Deserialize、Play lifecycle。 |
+| C++連携 | 専用Wrapper、Runtime Property、Action、読み取り専用値。 | Native Script Header、Runtime Property Registry。 |
+| Debug | Scene View表示、Inspector Runtime値、Console、戻り値。 | Debug Draw、Manager Log。 |
+| 競合 | 同じTransform、Material、Body、UI値を更新する他Component。 | Update順、実装上の書込先。 |
+| 制限 | 未実装、互換用、Editor専用、Build未確認、外部依存。 | 実コードとBuild結果。 |
+| 最小例 | 追加からPlay確認までの短い手順。 | 実Editor操作。 |
+
+「Rigidbody系」「UI系」「AI系」のようなまとめ説明の後にも、各型の差分を個別に書く。共通項目は共通表を参照してよいが、そのComponentで意味を持つ設定と意味を持たない設定を明記する。
+
+### 84.2 Componentの状態表記はコード経路単位にする
+
+| 状態 | 必要な証拠 |
+| --- | --- |
+| 型定義のみ | Enum/Scene Fieldだけがある。 |
+| Inspector設定あり | Add ComponentとInspector編集、Scene保存がある。 |
+| Runtime接続あり | ManagerがPlay中に読んで実処理へ渡す。 |
+| 描画接続あり | Draw Queue/Pass/Shaderへ値が届く。 |
+| 物理接続あり | Physics Body/Shape/Force/Queryへ値が届く。 |
+| Script接続あり | Wrapper、Action、Runtime Propertyのいずれかがある。 |
+| Standalone確認済み | EditorなしのexeでAssetを含めて動作確認済み。 |
+
+1つのComponentが複数状態を持つ場合は、「Inspector/保存は実装済み、Runtimeは未接続」のように分けて書く。型名がUnityに存在することを実装証拠にしない。
+
+### 84.3 C++ APIページは関数名一覧だけで完成にしない
+
+211 Runtime API Entryと全型付きWrapperについて、最低でも次を個別に書く。
+
+| 必須項目 | 書く内容 |
+| --- | --- |
+| 完全Signature | Return type、関数名、全引数、const、参照/Pointer。 |
+| 高水準入口 | 通常Scriptが使うClassとMethod。Wrapperがなければ低水準のみと明記する。 |
+| API Version | Entryを安全に使える最低Version。末尾追加によるABI互換。 |
+| 引数 | null/空許可、範囲、単位、Local/World、入力Buffer寿命。 |
+| 戻り値 | true/false、負ID、0、既定構造体の正確な意味。 |
+| 必須Component | Owner/Targetに必要なComponentとActive条件。 |
+| 呼出Timing | Start、Update、FixedUpdate、Action、停止時のどこで使うか。 |
+| 副作用 | Transform、Physics、Scene、Save、Pool、Action Queueの何を変えるか。 |
+| 参照寿命 | Scene切替、Destroy、Pool返却後にID/Pointerが使えるか。 |
+| Thread | Main thread限定、Async結果の受取方法。 |
+| 失敗条件 | APIなし、Version不足、参照不正、Component不足、未命中、範囲外を分ける。 |
+| 最小コード | 正常系だけでなく戻り値確認を含める。 |
+| Debug | Consoleへ何を出し、Inspector/Scene Viewのどの状態を見るか。 |
+
+### 84.4 Native Script自体の説明範囲
+
+C++説明はAPIだけでなく、ゲームを作るためのScript作成と運用全体を含める。
+
+1. ProjectでC++ Scriptを作成する場所とTemplate選択。
+2. 生成Header/Source、DLL Project、Build output。
+3. Debug/Release x64の違いと依存Runtime DLL。
+4. Factory/Load/Unload/Instance生成のExport。
+5. `EditorNativeScriptRuntime`へAPIを設定するTiming。
+6. GameObjectごとのInstance分離。
+7. 公開Fieldの型、Address寿命、Inspector同期。
+8. Action候補ExportとInspector候補表示。
+9. Start/FixedUpdate/Update/Action/Stopの順序。
+10. Collision/Trigger callbackのEnter/Stay/Exitと相手ID。
+11. Scene reload、Play Stop、Pool再利用時のreset。
+12. Console Log、Debugger attach、PDB配置。
+13. Standalone BuildへのDLL/依存DLL copy。
+14. API Version不一致時の安全な失敗。
+
+### 84.5 記載内容と実装の再照合
+
+詳細を書いた後は、文章量ではなく次を確認する。
+
+1. Inspector Labelが現在の日本語表示と一致する。
+2. 範囲Clampと初期値がコードと一致する。
+3. degree/radian、m、m/s、N、N m、秒、ms、0-1を区別している。
+4. Transform更新とPhysics Forceを混同していない。
+5. Action通知と直接API呼出を混同していない。
+6. Scene一時DataとSave Slotを混同していない。
+7. ObjectPool返却とGameObject無効化を混同していない。
+8. `true`を「命中」「完了」と誤解せず、そのAPIの成功段階を記載している。
+9. 互換Componentと新規推奨Componentを区別している。
+10. Editorで設定できるだけの機能をStandalone完成扱いしていない。
+
+### 84.6 3文書の役割分担
+
+| 文書 | 詳細の中心 | 重複しても残す情報 |
+| --- | --- | --- |
+| `component-documentation-detail-seed.md` | 268 Componentの個別設定、Runtime、連携、Debug。 | 必須Component、C++入口、失敗確認。 |
+| `cpp-script-documentation-detail-seed.md` | Native Script lifecycle、Wrapper、211 Runtime API、コード例。 | 対応Component、単位、失敗条件。 |
+| `user-documentation-research-spec.md` | ProjectからBuildまでの利用者導線、調査方法、完成監査。 | 実装状態、確認手順、文書間の参照先。 |
+
+3文書は同じ文章を複製するのではなく、Componentから探す利用者、C++から探す利用者、ゲーム制作手順から探す利用者の3つの入口を提供する。
+
+## 85. 水上3Dレールシューティング向け不足機能の利用者導線
+
+この章はゲーム固有のRailShooter Managerを増やす手順ではない。既存のRailMovement、WeaponLoadout、TargetSelector、TargetSteering、TargetPoint、Team、DamageContext、Ocean Query、Runtime Property、PropertyTweenへ、汎用基盤を組み合わせる手順である。
+
+### 85.1 現行実装状態
+
+| 機能 | Add Component | Inspector | Scene保存 | Play Runtime | C++ Wrapper/Action |
+| --- | --- | --- | --- | --- | --- |
+| Timer / Scheduler | タイマー | 時間、Repeat、自動開始、Pause、Action | 実装済み | 1回/反復、停止/再開、残り秒 | `Timer`、PayloadなしAction |
+| Generic State Machine | 汎用ステートマシン | 初期/現在State、変更Action | 実装済み | 任意文字列State保持 | `GenericStateMachine`、String Payload |
+| Attribute / Resource | 属性・リソース | Name、Min/Max/Current、毎秒回復、Action | 実装済み | Clamp、正負の毎秒変化 | `Attribute`、Float Payload |
+| Typed Action Payload | Componentではない | Action選択UIを使用 | Action名/対象を保存 | Queue経由でContextへ格納 | `ActionPayload`、API v7 |
+| Destructible Part | 破壊可能部位 | Health、無効化対象、子、Action | 実装済み | Health 0で1回処理 | GameObject Payload |
+| Formation Follower | 編隊追従 | Leader、Local Offset、追従速度 | 実装済み | Leader回転込みTransform追従 | Runtime Propertyで値調整可 |
+| Target Lock | ターゲットロック | Selector、時間、猶予、3 Action | 実装済み | 進行、完了、喪失 | `TargetLock`、GameObject Payload |
+
+「実装済み」はDebug x64のコンパイルと`CG2.exe`生成を指す。Editor操作の視覚確認、Standalone Releaseでの長時間Play、大量同時Object負荷は別の受入試験として残す。
+
+### 85.2 ProjectからSceneへ設定する共通手順
+
+1. Projectの`Assets/Scenes`から対象`.scene`をダブルクリックして開く。
+2. Hierarchyで機能を所有するGameObjectを選ぶ。
+3. Inspectorの「コンポーネントを追加」から日本語表示名を検索して追加する。
+4. GameObject参照欄へHierarchy Objectを割り当てる。未設定時Ownerになる欄と、必須のLeader欄を区別する。
+5. Action対象へC++ Script Componentを持つGameObjectを設定する。
+6. Action欄では、そのScriptが`BindAction`で公開した候補を選ぶ。文字列を手入力した場合は大文字小文字を一致させる。
+7. Sceneを保存し、PlayでRuntime表示値とAction結果を確認する。
+8. Stop後にRuntime値が編集初期値へ戻ることを確認する。
+
+Component追加だけでゲームルールは完成しない。Timerが発火しても攻撃内容はC++ ScriptまたはWeapon Component側、Stateが変化しても各Stateの動作はC++ Script側、TargetLockが完了しても発射可否はWeapon側で決める。
+
+### 85.3 ミサイルのTargetLock構成
+
+推奨Hierarchy例:
+
+```text
+PlayerShip
+├ TargetSelector
+├ TargetLock
+├ WeaponLoadout
+├ C++ Script: PlayerWeaponController
+└ MissileSpawnPoint
+```
+
+設定手順:
+
+1. `TargetSelector`で検索距離、角度、遮蔽、Team Filter、Selection Modeを設定する。
+2. 同じObjectへ`ターゲットロック`を追加し、TargetSelector参照を未設定のままOwner fallbackにするか明示参照する。
+3. Lock時間と喪失猶予を設定する。
+4. 完了ActionをPlayerWeaponControllerの`OnLockCompleted`へ設定する。
+5. C++側でPayload TypeがGameObjectか検査し、Targetを保持する。
+6. 発射入力時に`TargetLock::GetState`を再確認してからWeaponLoadoutを発射する。
+7. 発射ProjectileへTargetSteeringの明示Targetを渡す。
+
+確認項目は、別Targetへ移った時に進行率が0へ戻ること、短時間の遮蔽では猶予内保持されること、猶予超過で解除Actionが1回だけ来ること、破棄済みTargetを撃たないことである。
+
+### 85.4 敵射撃と再装填のTimer構成
+
+```text
+EnemyTurret
+├ Timer
+├ TargetSelector
+├ ProjectileEmitter
+└ C++ Script: TurretController
+```
+
+Timerを反復、自動開始、発火Action=`TryFire`にする。`TryFire`内ではTarget、射線、Weapon cooldownを確認し、撃てないFrameでもTimer自体へ敵固有の判断を埋め込まない。攻撃間隔を動的変更する場合はRuntime Propertyの`Timer.Duration`を変更する。
+
+再装填のように開始時刻が外部イベントで決まる処理では自動開始をfalseにし、弾切れ時に`Timer::Start()`、中断時に`Pause()`、再開時に`Resume()`を使う。`Start()`をResumeとして使うと残り時間が初期化されるため区別する。
+
+### 85.5 Boss Stateと部位破壊の構成
+
+```text
+BossShip
+├ Health
+├ GenericStateMachine
+├ C++ Script: BossController
+├ LeftTurret
+│  ├ Health
+│  ├ DestructiblePart
+│  └ ProjectileEmitter
+└ RightTurret
+   ├ Health
+   ├ DestructiblePart
+   └ ProjectileEmitter
+```
+
+部位のDestructiblePartは自分のHealthを監視し、無効化Componentへ`ProjectileEmitter`、必要なら子砲身を無効化する。破壊ActionのGameObject PayloadをBossControllerが受け、残存部位数や演出をゲーム側で更新する。両砲塔破壊時に`GenericStateMachine::ChangeState("Retreat")`を呼ぶ。
+
+DestructiblePartへ「両砲塔破壊なら撤退」を設定しない。これは複数部位を横断するゲーム条件であり、BossControllerまたは条件/Sequence側の責務である。修復可能な敵を作る場合はHealth回復だけでは`破壊済み`が戻らないため、Pool再生成または専用のゲーム側reset設計を行う。
+
+### 85.6 編隊とRailMovementの構成
+
+```text
+FormationLeader
+├ RailMovement または TargetSteering
+├ EnemyA + FormationFollower Offset(-8, 0, 0)
+├ EnemyB + FormationFollower Offset( 0, 0,-4)
+└ EnemyC + FormationFollower Offset( 8, 0, 0)
+```
+
+FollowerのLocal OffsetはLeader回転を反映するため、曲がるRail上でも横一列やV字を維持する。FormationFollowerはTransform追従であり、各FollowerへDynamic Rigidbodyや別のRailMovementを同時に付けない。波面へ浮かせる船団で各船が独立したBuoyancyを必要とする場合、単純Transform追従ではなく、Leaderから目標XZ/Yawだけを得てPhysicsServoまたはゲームScriptのForce制御へ渡す構成を選ぶ。
+
+WaveSpawnerは生成/有効化を担当し、FormationFollowerは生成後の位置関係だけを担当する。生成順、攻撃、撃破条件、Stage進行をFormationFollowerへ追加しない。
+
+### 85.7 AttributeのHUD接続
+
+Boost、Heat、Shield、FuelはAttributeへ分け、変更ActionのFloat PayloadをHUD Controllerへ送る。HUD側はPayloadを受けてCanvas Text/Gaugeへ反映し、毎FrameHierarchy検索しない。
+
+確認手順:
+
+1. AttributeのMin=0、Max=100、Current=100を設定する。
+2. Heatなら毎秒回復を負数、Boost回復なら正数にする。
+3. 変更ActionをHUD Controllerへ接続する。
+4. C++でPayload TypeがFloatであることを確認する。
+5. Gauge表示を`current / maximum`へ正規化する。Maximum 0を除外する。
+6. Stop/Scene切替/Pool返却時にHUDが古いObject IDを保持しないことを確認する。
+
+### 85.8 受入試験
+
+| 試験 | 操作 | 合格条件 |
+| --- | --- | --- |
+| Timer 1回 | 0.2秒、Repeat off、自動開始 | Actionが1回だけ発生しPauseになる。 |
+| Timer停止再開 | 途中Pause、待機、Resume | Pause中に残り時間が減らず、Resume後に続きから発火する。 |
+| State Payload | `Initial`から`Attack` | 変更Actionが1回、String=`Attack`。同名再指定では発火しない。 |
+| Attribute Clamp | Max 100へ150をSet | Current 100、Float Payload 100。 |
+| 部位破壊 | 部位Healthを0 | 指定Component/子が無効、物理も停止、Action 1回。 |
+| 編隊回転 | Leaderを90度回転 | Local OffsetがWorld上で回転し、Followerが追従する。 |
+| Lock完了 | 同一TargetをLock時間維持 | Progress 1、Locked true、完了Action 1回。 |
+| Lock猶予 | 一時遮蔽後、猶予内復帰 | Progressを保持して同Targetを継続する。 |
+| Lock解除 | 猶予超過 | Locked false、Target空、解除Payloadに失ったTarget。 |
+| Scene保存 | 保存、別Scene、再度開く | 編集設定と参照が復元され、Runtime値はPlay時再初期化される。 |
+| Standalone | Release Buildして起動 | Scene、C++ DLL、依存DLLを含め同じAction連携が動く。 |
+
+### 85.9 文書とコードの機械照合更新
+
+この時点の基準値はComponent 239件、Runtime API Entry 169件である。Component EnumまたはRuntime API末尾へ追加した場合、次の3箇所を同時更新する。
+
+1. `component-documentation-detail-seed.md`の個別Component契約。
+2. `cpp-script-documentation-detail-seed.md`のSignature、Wrapper、失敗条件、コード例。
+3. 本書のProject-to-Scene導線、受入試験、機械照合件数。
+
+名称が文書に1回現れるだけでは網羅済みにしない。Inspector Label、初期値、保存、Runtime更新、Action Payload、C++入口、失敗条件、Standalone確認の各証拠を分けて記録する。
+
+## 86. 複数Lock・Target HUD・汎用値の制作手順
+
+### 86.1 複数ミサイルLock
+
+1. プレイヤーへTargetSelectorを追加し、距離、角度、Team、遮蔽、最大候補数を設定する。
+2. 同じObjectへMultiTargetLockを追加する。
+3. 最大Lock数と1体のLock時間を設定する。敵をHierarchyの子Slotとして手動登録しない。
+4. C++ Scriptで`MultiTargetLock::GetEntries()`を読み、`isLocked`のEntryだけを発射Queueへ渡す。
+5. 発射直前に`target.HasReference()`と必要なTargetPoint/Healthを確認する。
+
+### 86.2 敵マーカーと画面外警告
+
+1. Canvas配下へImageを作成し、通常の画像、色、Sizeを設定する。
+2. 画面内表示にはWorldTargetMarker、画面端表示にはOffScreenIndicatorを追加する。
+3. 明示Target、TargetSelector、TargetLockのいずれか1つを接続する。
+4. Game View Cameraを動かし、画面内/外の切替、後方非表示、端余白、方向回転を確認する。
+5. 解像度とCanvasScalerを変更し、同じTargetへ追従することを確認する。
+
+### 86.3 AttributeSet・Counter・Condition
+
+1. AttributeSetへ`Boost`、`Heat`、`Shield`等をEntryとして追加する。
+2. Counterへ撃破数等の初期値、範囲、閾値、比較方法を設定する。
+3. ConditionのSource Typeを選び、比較元ObjectとProperty/属性名を指定する。
+4. 小さい接続はTrue/False ActionでActionRelayへ渡し、複雑なゲームルールはC++ Scriptへ置く。
+5. Stop後にCurrent、Lock進行率、Condition結果が次回Playへ漏れないことを確認する。
+
+### 86.4 Gameplay Data Asset
+
+1. メニュー`アセット > Gameplay Data 作成`を実行する。
+2. `Assets/Data/NewGameplayData.gdata`を選択する。
+3. GameplayData Componentの`選択中.gdataを設定`を押す。
+4. `.gdata`へ`Entry|Key|Type|Value`形式で武器・敵・Upgrade値を記述する。
+5. Play開始後、`GameplayData::GetFloat`等で保存Typeと一致するGetterを使う。
+
+### 86.5 追加受入試験
+
+| 試験 | 合格条件 |
+| --- | --- |
+| 8体Multi Lock | Targetごとに独立Progressを持ち、完了Actionが各1回。 |
+| 一時遮蔽 | 喪失猶予内はEntryとProgressを保持し、超過後だけ解除。 |
+| World Marker | Camera移動、FOV、解像度変更後も同じWorld位置へ追従。 |
+| Off-Screen | 画面内で隠れ、画面外では端余白内に収まり方向へ回転。 |
+| AttributeSet | 複数Nameが同一Objectで独立更新され、Min/MaxへClamp。 |
+| Counter | 閾値を跨いだ時だけ一回発火設定が機能する。 |
+| Condition | 比較元がない時にCrashせずfalseとなる。 |
+| Gameplay Data | `.gdata`のString/Int/Float/Boolを型一致Getterで取得できる。 |
+| Scene再読込 | 7 ComponentのInspector設定と可変Entryが復元される。 |
+
+## 87. Damage・Projectile・Threat・Pool再利用の制作手順
+
+### 87.1 ミサイルPrefabを作る
+
+1. ProjectでミサイルPrefab用GameObjectをSceneへ置き、Collider、必要ならRigidbody、ProjectileDetonator、AreaDamageを追加する。
+2. AreaDamageへ半径、基礎Damage、距離減衰、Layer Mask、`Explosion`等のDamage Tagを設定する。
+3. ProjectileDetonatorの接触、近接、寿命条件を選び、AreaDamage参照を同じObjectへ設定する。
+4. ObjectPoolのTemplateへこのObjectを設定し、ProjectileEmitterから同じPoolを発射する。
+5. 直接命中Damageと爆発Damageを重ねたくない場合、ProjectileEmitterのDamageを0へする。
+6. Playし、接触位置、近接半径、寿命終了位置、C++手動起爆の各1回だけでPoolへ戻ることを確認する。
+
+### 87.2 艦橋・装甲・エンジンの部位Damage
+
+1. 敵本体へHealth、DamageReceiver、必要ならDamageTagModifierを追加する。
+2. 各部位の子GameObjectへColliderとHitZoneを追加する。
+3. 共有HPなら全HitZoneのHealth対象を本体へ設定する。部位破壊なら部位ごとのHealthへ設定する。
+4. 艦橋2.0、装甲0.5、エンジン1.5等の部位倍率を設定する。
+5. DamageTagModifierへ`Bullet`、`Explosion`等のEntryを直接追加する。Tagごとの子GameObjectは作らない。
+6. HitscanWeapon、ProjectileEmitter、AreaDamageのDamage Tagと完全一致することを確認する。
+
+最終Damageの調査時は、基礎Damage、HitZone倍率、DamageReceiver倍率、DamageTag倍率を個別表示し、どこで倍率が重複したか追えるようにする。
+
+### 87.3 ミサイル警告HUD
+
+1. プレイヤーまたは警護対象へThreatTrackerを追加する。
+2. 最大距離、最低接近速度、最大逸れ距離、最大脅威数を設定する。
+3. CanvasへText/Imageを作り、C++ HUD Controllerで`ThreatTracker::GetEntries()`を読む。
+4. 到達予測時間の短い順に`MISSILE xN`、方向、秒数を表示する。
+5. 追加/解除ActionのGameObject Payloadを使い、警告音やMarker生成をEvent駆動にする。
+6. 画面を外れた弾、離れていく弾、横を大きく逸れる弾が警告へ残らないことを確認する。
+
+ThreatTrackerはProjectile一覧を生成するだけで、特定HUDレイアウトや自動回避をEngineへ埋め込まない。
+
+### 87.4 Pool Itemの完全Reset
+
+1. Pool TemplateのRootへRuntimeStateResetを追加する。
+2. Health、State、Attribute/Counter、Lock、Timer、Destructible、Cooldownのうち再利用で戻す項目を選ぶ。
+3. Template配下の破壊可能部位、無効化武器、子Objectも1回破壊してからPoolへ返す。
+4. 再貸出し、HealthだけでなくState、Lock進行、Timer、部位表示、Cooldown、Threat一覧が初期化されたことを確認する。
+5. Reset後にゲーム固有状態も必要ならReset ActionをC++ Scriptへ接続する。
+
+RuntimeStateResetがないItemも全対応項目を互換Resetするが、意図をSceneへ明示し一部状態を維持したい場合はComponentを追加する。
+
+### 87.5 名前付きCooldown
+
+1. プレイヤーへCooldownSetを追加する。
+2. `Boost`、`Special`、`Dodge`等をEntryとして直接追加し、時間と開始時使用可能を設定する。
+3. C++ Scriptで使用前に`IsReady`、使用時に`Start`を呼ぶ。
+4. HUDは`Get`の残り秒を表示するか、完了ActionのString Payloadで表示状態を更新する。
+5. Pool再利用またはStage再開時はRuntimeStateResetのCooldown対象で初期化する。
+
+### 87.6 保存・Standalone・回帰試験
+
+| 試験 | 合格条件 |
+| --- | --- |
+| Area重複 | 1 Healthへ複数Colliderがあっても1回だけDamage。 |
+| 距離減衰 | 中心、半径中間、端で設定した曲線と最低倍率になる。 |
+| HitZone転送 | 子Collider命中が指定Healthへ入り、部位倍率が1回だけ乗る。 |
+| Tag耐性 | BulletとExplosionを別倍率にし、未登録Tagは既定倍率になる。 |
+| 起爆条件 | 接触、近接、寿命、手動が各1回で、起爆後の二重起爆なし。 |
+| Threat予測 | 接近弾だけが到達予測時間順に最大件数まで並ぶ。 |
+| Pool Reset | 破壊・Lock・Timer・Cooldownを変更しても再貸出時に初期状態。 |
+| Cooldown可変数 | 同一Objectの複数Nameが独立し、子GameObject不要。 |
+| Scene保存 | Tag配列、Cooldown配列、参照、Flagが再読込後も一致する。 |
+| Debug / Release | 両構成でBuildし、StandaloneでもScene設定とC++ APIが一致する。 |
+
+### 87.7 機械照合基準
+
+この時点の基準値はComponent 239件、Runtime API Entry 169件である。新規7 Componentは内部型名、Add Component日本語名、Inspector全項目、初期値、Extension保存・読込、Runtime Manager、C++ Wrapper、受入試験が揃って初めて実装済みとする。
+
+## 88. 武器Pattern・命中Surface・HitStopの制作手順
+
+### 88.1 対空砲の3点Burst
+
+1. Sceneの砲ObjectへHitscanWeaponまたはProjectileEmitterを追加する。
+2. 同じObjectへWeaponFirePatternを追加し、Mode=`Burst`、Count=3、Interval=0.08を設定する。
+3. WeaponAccuracyを追加し、Base Spread、Per Shot、Recovery、Maximumを設定する。
+4. WeaponRecoilを追加し、Rigidbody Impulse、砲身Visual Target、CameraShakeの必要なものだけ接続する。
+5. Playし、1回のInputで3実Shot、Shot間隔、Spread増加、停止後の復帰を確認する。
+
+PatternはWeaponを自動生成しない。Damage、射程、Pool、発射入力は元Weaponに設定し、弾薬はWeaponLoadoutへ置く。
+
+### 88.2 複数Lockミサイル斉射
+
+1. プレイヤーへTargetSelectorとMultiTargetLockを追加し、候補条件と最大Lock数を設定する。
+2. ProjectileEmitterへTargetAssignmentを追加し、MultiTargetLock参照、最大発射数、間隔、Lock完了だけを設定する。
+3. Missile Pool TemplateへTargetSteeringとProjectileDetonatorを追加する。
+4. `Weapon{player}.FireProjectile()`を1回呼ぶ。ScriptでTarget配列をLoopして弾を個別生成しない。
+5. 各生成弾のTargetSteering Targetと近接起爆Targetが別々のLock対象になったことを確認する。
+6. Pool不足時もCrashせず、生成できた弾だけ飛び、完了Actionが列末尾で1回になることを確認する。
+
+TargetAssignmentはLock一覧を消費・解除しない。発射後のLock解除や同一Target再Lock規則はプレイヤー用C++ Scriptで決める。
+
+### 88.3 水面・金属・岩の着弾演出
+
+1. 海面RootへSurfaceType=`Water`、船体Rootへ`Metal`、岩へ`Rock`を追加する。
+2. WeaponへImpactResponderを追加する。
+3. `Explosion + Water`へ水柱Effectと着水音、`Bullet + Metal`へ火花Effectと金属音を設定する。
+4. 最後へDamage Tag空、Surface Tag空のFallback Entryを置く。
+5. AudioSourceは3D音響、距離減衰、Busを事前設定し、CameraShakeは別Componentで振幅と時間を設定する。
+6. 子ColliderへSurfaceTypeがなくても親RootのTagが使われることを確認する。
+
+ImpactResponderのEntry順がPriorityである。Wildcardを先頭へ置くと後続の具体条件へ到達しない。Effect/Audio失敗とDamage処理は独立している。
+
+### 88.4 大型砲HitStopとSlow Motion
+
+1. 演出制御ObjectへTimeScaleを追加する。
+2. HitStopならScale=0、Duration=0.05-0.12、Blend=0を基準にする。
+3. Slow MotionならScale=0.2-0.5、DurationとBlendを設定する。
+4. Damage/Impact ActionをC++ Scriptへ接続し、`TimeScale{controller}.HitStop(duration)`を呼ぶ。
+5. 停止中も入力Device状態とTimeScaleの残り時間が更新され、指定時間後に1倍へ戻ることを確認する。
+6. Pause Menuの永続停止と同じTimeScale Componentを共有しない。
+
+### 88.5 C++ Script連携
+
+```cpp
+void FireLockedMissiles(const GameObject& weaponObject) {
+	Weapon weapon{weaponObject};
+
+	if (!weapon.FireProjectile()) {
+		return;
+	}
+
+	const float spreadDegrees = weapon.GetAccuracySpread();
+	(void)spreadDegrees;
+}
+
+void OnHeavyImpact(const GameObject& timeController) {
+	TimeScale{timeController}.HitStop(0.08f);
+}
+```
+
+Componentの有無で挙動を合成するため、通常弾、Burst、Spread、複数Lock斉射ごとの専用Script APIは作らない。ゲームScriptは「いつ撃つか」「発射後にLockをどう扱うか」「HitStopをどの攻撃へ使うか」を担当する。
+
+### 88.6 保存・Runtime・回帰試験
+
+| 試験 | 合格条件 |
+| --- | --- |
+| Single互換 | 新Componentなしで従来どおり1要求1発。 |
+| Burst | CountとIntervalどおり。Cooldown中の重複要求なし。 |
+| Salvo/Spread | 同Frame複数発、Spread端点が設定角度内。 |
+| Sequence | Spawn Point配列を順番に使い、Count超過で循環。 |
+| Charge | 指定非負秒後に1発。Scale 0中はゲーム時間として停止。 |
+| Target Assignment | Lock完了Targetごとに別Projectile Target。Hierarchy Slot不要。 |
+| Accuracy | Shotごとに増加し、時間で回復、Pool Resetで0。 |
+| Recoil | Body、Visual、Cameraを個別に無効化でき、Stop後にVisual残差なし。 |
+| Surface継承 | 子Colliderから親SurfaceTypeを解決し、Default fallbackが動く。 |
+| Impact順序 | 最初の一致EntryだけがEffect/Audio/Actionを実行。 |
+| HitStop復帰 | Scale 0でも非スケールDuration後に1へ戻る。 |
+| Scene保存 | Pattern Spawn Point配列、Impact Entry、参照、文字列Tagが再読込後一致。 |
+| C++ API | `GetAccuracySpread`、`Play/HitStop/GetCurrent`がDebug/Releaseで一致。 |
+
+### 88.7 機械照合基準
+
+追加時点の基準値はComponent 246件、Runtime API Entry 172件である。前段で追加した7内部型名、7日本語Add Component名、7専用Extension、WeaponManager実行経路、非スケールTimeScale更新、3 Runtime API Entry、高水準Wrapper、3資料の説明と受入試験を同時に照合する。現行基準はComponent 268件、Runtime API Entry 211件である。
+
+Runtime APIの追加9 Entryは既存順序を変更せず構造体末尾へ置く。文書件数は`EditorScene.cpp`の`kEditorComponentTypeNames`と`EditorScriptApi.h`の`EditorScriptRuntimeApi`を再計数して更新する。
+
+## 89. 照準補助・Mission・Encounterを使う制作手順
+
+### 89.1 プレイヤー照準へ補助を追加する
+
+1. プレイヤー制御Objectへ`ScreenAim`と`TargetSelector`を追加し、Game Viewの照準入力と敵候補条件を先に確認する。
+2. 同じObjectへ`照準補助`を追加する。参照が同じObjectなら画面照準とTarget Selectorは`このObject`のままでよい。
+3. 補助半径0.08-0.15、補助強度0.2-0.4、追従速度6-12を開始値にする。
+4. 入力中の抑制を0.5以上にし、StickをTargetと逆へ倒した時にプレイヤー入力が勝つことを確認する。
+5. TargetPointを敵の中心、弱点、砲塔へ置き、Collider中心ではなく狙わせたいWorld位置へ補助されることを確認する。
+
+照準補助はTarget選択、Lock進行、射撃、Damageを行わない。`TargetSelector -> AimAssist -> TargetLock/MultiTargetLock -> Weapon`を別責務として組み合わせる。
+
+### 89.2 非誘導弾のLead Markerを出す
+
+1. 砲または照準制御Objectへ`迎撃予測`を追加する。
+2. 明示Targetを固定するか、既存TargetSelectorを参照する。
+3. ProjectileEmitterと同じProjectile速度を設定し、最大予測秒を実際の射程/弾速より少し長くする。
+4. C++ Scriptで`Targeting::GetInterceptPrediction`を取得し、World Target Markerの追従位置へ渡す。
+5. Target Rigidbodyの速度変更、Target停止、弾速不足でMarkerが表示/非表示になることを確認する。
+
+迎撃予測は重力弾道を含まない。海上砲の落下を使う場合は、返された位置を初期値としてゲームScript側の弾道Solverへ渡す。
+
+### 89.3 Mission Objectiveを作る
+
+1. Sceneへ`Mission` GameObjectを作り、`目標トラッカー`を追加する。
+2. `DestroyRadar`、`ProtectTransport`等のID、表示名、目標値をEntryへ直接追加する。Objectiveごとの子GameObjectは作らない。
+3. Stage Controller Scriptの開始時に対象Objectiveを`Active`へ変更する。
+4. 敵撃破や護衛DamageのActionから現在値を更新する。
+5. 変更ActionのString PayloadをHUD Controllerへ渡し、該当IDの表示だけ更新する。
+6. Completed/FailedをScene遷移、報酬、次Encounterへ接続する処理はゲームScript側へ置く。
+
+### 89.4 複数Waveを1 Encounterとして並べる
+
+1. 各敵Waveを`WaveSpawner`として作成し、開始条件を`外部開始`へ変更する。
+2. Sceneへ`Encounter` GameObjectを作り、`エンカウンター制御`を追加する。
+3. WaveSpawner参照を順番に追加し、各EntryへDelayと`全撃破を待つ`を設定する。
+4. 自動戦闘ならPlay開始時実行を有効にし、Rail地点やBoss演出から始めるなら無効のままC++の`EncounterController::Start`を呼ぶ。
+5. 全生成待ちなら前Waveの敵が残った状態で増援が始まり、全撃破待ちなら最後の敵がPoolへ返ってから次Waveが始まることを確認する。
+6. 完了ActionをObjective、Rail再開、Camera Blend等へ接続する。
+
+EncounterはWaveSpawnerを自動作成せず、敵の移動・攻撃も変更しない。WaveSpawnerはPrefab/Pool/Formation、EncounterはWaveの順序だけを担当する。
+
+### 89.5 Spawn Point Setで配置を量産する
+
+1. WaveSpawnerと同じGameObjectへ`生成地点セット`を追加する。
+2. Scene上へ空GameObjectを配置し、左前、右前、遠方などのWorld Transformを作る。
+3. 各地点をComponent内部のEntryへ参照する。Hierarchy上の子である必要はない。
+4. 順番、ランダム、重み付きのいずれかを選ぶ。Weight 0は選択されず、全0なら等確率へFallbackする。
+5. 同じ地点が連続すると不自然な場合は`直前を避ける`を有効にする。
+6. 海域内の自由配置にはVolume Modeを使い、Volume SizeのYを0にすれば同じ海面基準高さへ生成できる。
+
+### 89.6 Difficulty Presetを適用する
+
+1. Project/Sceneの設定Objectへ`難易度パラメーターセット`を追加する。
+2. Easy、Normal、Hard等の難易度名を登録する。
+3. Runtime Property資料から正式なComponent名とProperty名を確認し、敵HP、Damage、発射間隔、Lock時間等をOverrideへ追加する。
+4. タイトル/Stage Selectから渡したIndexをC++の`DifficultyParameterSet::Apply`へ渡す。
+5. 適用ActionのString PayloadでHUD表示、Save値、Analytics用の難易度名を更新する。
+6. 不正PropertyがConsole警告またはfalseになっても、他の有効Overrideが適用されることを確認する。
+
+### 89.7 被弾方向HUDとCamera Feedbackを作る
+
+1. Playerへ`被弾方向表示`を追加し、表示秒、Fade、最低Damageを設定する。
+2. Canvasへ方向Imageを作り、HUD Scriptで`DamageDirectionIndicator::Get`を読む。
+3. 画面中心へDirection×画面端半径を加えてImageを配置し、Alphaへ取得値を設定する。
+4. Cameraを旋回し、同じWorld SourceからのDamageが画面基準の正しい方向に出ることを確認する。
+5. SceneのCamera演出設定Objectへ`カメラフィードバックミキサー`を1つ置く。
+6. 武器、爆発、着水のCamera ShakeへPriorityを設定し、加算または最高Priority Modeを選ぶ。
+7. 最大同時数と軸別最大振幅を下げ、複数爆発でもCameraが破綻しないことを確認する。
+
+### 89.8 回帰試験
+
+| 試験 | 合格条件 |
+| --- | --- |
+| Scene保存 | Objective/Wave/Spawn/Difficultyの可変配列と全参照が再読込後一致する。 |
+| AimAssist | 入力中に補助が弱まり、Target範囲外で位置を変えない。 |
+| Intercept | 静止Target、横移動Target、解なしの3ケースで結果が安定する。 |
+| Encounter | 外部開始Waveが設定順で進み、再Startで先頭へ戻る。 |
+| SpawnPoint | 直前回避、Weight 0、無効参照、VolumeをCrashなしで処理する。 |
+| Difficulty | Float/Int/Boolを型一致で適用し、Index範囲外でfalse。 |
+| Damage HUD | Camera yaw変更後も方向が画面と一致し、時間後Alpha 0になる。 |
+| Camera Mixer | 最大同時数、Priority、Clamp、Global強度が独立して効く。 |
+| C++ API | 7高水準呼出がDebug/Releaseで同じ成功・失敗を返す。 |
+
+この章の機械照合基準は、8内部Component型、8日本語Add Component名、8専用Extension、Camera Shake Priority互換列、7 Runtime API Entry、高水準Wrapper、Debug/Releaseビルドである。現行総数はComponent 268件、Runtime API Entry 211件である。
+
+## 90. Scene自動保存と復旧
+
+### 90.1 自動保存を設定する
+
+1. メニュー`ファイル > 自動保存`で有効・無効を切り替える。初期状態は有効である。
+2. `ファイル > 自動保存間隔`から30秒、1分、2分、5分、10分のいずれかを選ぶ。初期値は2分である。
+3. 設定変更は`ProjectSettings/EditorSettings.cg2`へUTF-8 BOM付きで保存され、次回起動時に同じ設定を復元する。
+4. `ファイル > 今すぐ自動保存`を選ぶと、設定間隔を待たずに現在の編集Sceneを保存する。
+5. File Menu下部の`次回まで`と`状態`で、残り時間、変更なし、保存先、失敗状態を確認する。
+
+自動保存の時間はEditorの描画時間で進む。Play中はScene開始前の編集内容をRuntime状態で上書きしないため、自動保存を停止する。Stop後は残り時間から再開する。
+
+### 90.2 保存済みSceneの動作
+
+保存先が決まっているSceneでは、直接ファイルを途中まで書き換えない。次の順で保存する。
+
+1. 同じフォルダーへ`<Scene名>.scene.autosave.tmp`を完全出力する。
+2. 現在のSceneファイルと一時ファイルをバイト比較する。
+3. 内容が同じ場合は一時ファイルを削除し、元Sceneの更新日時を変更しない。
+4. 内容が違う場合は、更新前Sceneを`Library/AutoSave/<Scene名>_<PathHash>.previous.scene`へ退避する。
+5. 一時ファイルをWindowsの置換APIで元Sceneへ原子的に移動する。
+
+PathHashを付けるため、異なるフォルダーに同名Sceneがあっても復旧ファイルは衝突しない。正常に置換できた場合だけConsoleへ自動保存結果を出す。
+
+### 90.3 未保存Sceneの動作
+
+新規Sceneをまだ`名前を付けて保存`していない場合は、元Sceneの保存先を勝手に決めず、`Library/AutoSave/UnsavedScene.scene`へ復旧用コピーを保存する。
+
+正式なScene Assetにする場合は、復旧ファイルを直接制作先として使い続けず、Editorで読み込んでから`ファイル > 名前を付けて保存`を使い、`Assets/Scenes`配下へ保存する。
+
+### 90.4 保存失敗から復旧する
+
+1. File Menuの状態表示またはConsoleで`自動保存に失敗`を確認する。
+2. 状態に`.autosave.tmp`のPathが表示された場合、そのファイルは置換失敗時の復旧候補として残っている。
+3. CG2を終了する前に、元Scene、`.previous.scene`、`.autosave.tmp`の更新日時と内容を確認する。
+4. 元Sceneが壊れている場合は、`Library/AutoSave`の`.previous.scene`を`Assets/Scenes`へ別名コピーしてEditorから読み込む。
+5. 最新内容が一時ファイルにだけある場合は、`.autosave.tmp`を別名の`.scene`として`Assets/Scenes`へ移して読み込む。
+
+`Library/AutoSave`は復旧用生成物でありGit管理対象ではない。正式なSceneの履歴管理は引き続きGitを使う。
+
+### 90.5 手動保存・Scene切替との関係
+
+- `保存`または`名前を付けて保存`に成功すると、自動保存タイマーを0へ戻す。
+- Projectで別Sceneを開いた場合もタイマーを0へ戻し、開いた直後の不要な書き込みを防ぐ。
+- 自動保存はUndo履歴を消去せず、選択ObjectやCamera操作を変更しない。
+- 自動保存はSceneだけを対象とする。Shader、Texture、Model、C++ Script等の外部ファイルは各編集ツール側で保存する。
+- 自動保存間隔ごとにSceneを一度シリアライズするが、変更がなければ元ファイルを書き換えない。
+
+### 90.6 受入試験
+
+| 試験 | 合格条件 |
+| --- | --- |
+| 保存済みScene変更 | 指定時間後に元Sceneへ反映され、更新前版が`Library/AutoSave`へ残る。 |
+| 変更なし | 指定時間後も元Sceneの内容と更新日時が変わらず、Consoleへ保存成功を連続表示しない。 |
+| 未保存Scene | `Library/AutoSave/UnsavedScene.scene`が作成され、現在Scene Pathは空のまま。 |
+| 今すぐ保存 | Menu実行フレームで保存され、次回までの時間が設定値へ戻る。 |
+| Play中 | RuntimeでTransformやComponent値が変化してもSceneファイルへ書き込まれない。 |
+| Stop後 | 編集Sceneへ戻った後に自動保存タイマーが再開する。 |
+| 手動保存後 | 自動保存タイマーが0になり、直後に重複保存しない。 |
+| Scene切替 | 新しく開いたSceneでタイマーが0から開始し、前Sceneへ書き込まない。 |
+| 同名Scene | 別フォルダーの同名Sceneが異なるPathHashのBackupへ退避される。 |
+| 置換失敗 | 元Sceneを失わず、復旧用`.autosave.tmp`のPathが状態とConsoleへ出る。 |
+| 設定再起動 | 有効状態と保存間隔が`EditorSettings.cg2`から復元される。 |
+| 文字コード | 設定、Scene、復旧SceneがUTF-8 BOM付きで保存され、日本語名が文字化けしない。 |
+
+## 91. 弾道・被弾履歴・Pause・水面航跡・軌道表示
+
+### 91.1 艦砲の弾道予測を設定する
+
+1. 砲口GameObjectへ`照準 > 弾道予測`を追加する。
+2. `Target`を直接指定するか、`Target Selector`所有GameObjectを指定する。直接Targetを指定した場合はこちらを優先する。
+3. `初速`へ実際のProjectile初速と同じ値を入れる。
+4. `重力`は通常`(0, -9.81, 0)`、空気抵抗を使わない場合は`抗力=0`とする。
+5. Targetが一定加速度で移動すると仮定する場合だけ`Target加速度`を設定する。RigidBody速度はRuntimeから自動取得する。
+6. `最大予測秒`は射程外判定、`計算刻み`は探索と軌道点間隔、`最大点数`はCPU負荷と表示密度を決める。
+
+Runtimeは飛行時間を走査して、重力と線形抗力を含む初速度の大きさが設定初速と一致する最初の解を二分探索する。解がある場合は`有効`、`発射方向`、`着弾位置`、`飛行秒`、`軌道点列`を同じ計算から更新する。Targetなし、初速0、最大秒内に解なしの場合は無効となり、古い点列を残さない。
+
+### 91.2 軌道をScene/Gameへ表示する
+
+1. 砲口または照準用GameObjectへ`描画・レンダリング > 軌道プレビュー`を追加する。
+2. 同じGameObjectの弾道予測を使う場合は`予測元=-1`、別GameObjectならその参照を設定する。
+3. 色、Alpha、太さ、最大表示点数を設定する。
+4. `Scene Viewへ表示`は編集確認、`Game Viewへ表示`はプレイヤー向け照準、`着弾点を表示`は終端円の表示を制御する。
+
+軌道プレビューは計算を行わず、`BallisticPrediction`の点列だけを描く。これにより表示を無効にしても射撃計算は変わらず、表示点数を減らしても着弾解は変わらない。Game ViewではGame Camera、Scene ViewではScene Cameraを使って投影する。
+
+### 91.3 複数方向の被弾HUDを作る
+
+1. Healthを持つプレイヤーへ`UI > 複数被弾履歴`を追加する。
+2. `最大件数`で同時表示数、`表示秒`で寿命、`最小Damage`で小Damageの除外を設定する。
+3. `同じ攻撃元を統合`を有効にすると、同じSourceから連続したDamageを1件へ加算して寿命を延長する。
+4. C++ Scriptで`DamageEventBuffer::GetEntries()`を読み、各EntryをCanvas Imageへ割り当てる。
+
+EntryはSource GameObject、TargetからSourceへ向くWorld方向、実適用Damage、Damage Tag ID、残り秒を持つ。ComponentはHUDを直接生成せず、画面座標変換、色、Icon、左右舷表示、同時Indicator配置はゲームUI側が決める。Object Pool再利用時は履歴をClearする。
+
+### 91.4 永続Pauseを設定する
+
+1. Scene進行管理GameObjectへ`ゲームプレイ > ゲーム一時停止`を追加する。
+2. `ゲーム時間を停止`、`Physicsを停止`、`Audioを停止`をゲーム仕様に合わせて個別設定する。
+3. `Gameplay Map`と`UI Map`をPlayerInputのActionMap名と完全一致させる。Pause中はUI Mapだけを入力対象にする。
+4. Pause MenuのOpen Actionから`GamePause::Pause()`、Resume Buttonから`GamePause::Resume()`を呼ぶ。
+5. `Pause Action`と`Resume Action`を使う場合は、表示切替先ScriptへBool Payloadが届く。
+
+`TimeScale`はHitStop/Slow Motion、`GamePause`はユーザーが解除するまで続く停止であり責務を分ける。Pause中もInput ManagerとScript Updateは動き、UI ActionからResumeできる。ゲーム時間停止時は通常Updateへ0秒を渡し、Physics停止時は固定Stepを実行しない。AudioはVoiceを破棄せずStop/Startするため、再生位置を維持する。
+
+### 91.5 船の水面航跡を設定する
+
+1. 船Rootへ`海・水面 > 水面航跡エミッター`を追加する。
+2. 船の左後方、右後方、船首へ子GameObjectを作り、それぞれParticle SystemまたはVisual Effectを追加する。
+3. 3点を`左航跡`、`右航跡`、`船首飛沫`へ割り当てる。
+4. Oceanを限定する場合は`Ocean`へ参照を設定し、未設定なら各点を覆うOceanを自動検索する。
+5. `開始速度`、`最大速度`、`幅`、`寿命`、`最大発生数`を設定する。
+
+Runtimeは船RootのWorld移動量から速度と0～1強度を求める。各Effect点のYだけを描画・浮力と共通のOcean Sampleへ合わせ、Particle Rate、Size、Lifetimeを更新する。停止中は毎Frame Play/Stopせず、発生状態が切り替わった時だけEffect Managerへ通知する。FFT変位へ局所波を注入するComponentではなく、泡・飛沫・Trailを軽量に合成するComponentである。
+
+### 91.6 Score・Combo・Stage Resultテンプレート
+
+`C++ Scriptを作成`から次を選べる。
+
+| Template | 生成される接続 | ゲーム側で変更する箇所 |
+| --- | --- | --- |
+| スコア制御 | `OnClick`のFloat/Int PayloadをGenericCounterへ加算する。 | 敵種類、部位、難易度、Combo倍率による加算式。 |
+| コンボ制御 | 命中ActionでCounterを加算しTimerを再開始、Timer Actionで0へ戻す。 | Combo猶予、倍率段階、UI演出。TimerのAction名は`OnValueChanged`へ接続する。 |
+| ステージ結果 | CounterからScoreを読みS/A/B/Cを決め、`StageScore`と`StageRank`をScene間データへ保存する。 | Rank境界、命中率等の追加評価、Result Scene遷移。 |
+
+これらはエンジンの固定ゲームルールではない。生成されたC++ Scriptをプロジェクト側で編集し、Component/APIは値保持と通知だけを担当する。
+
+### 91.7 受入試験
+
+| 試験 | 合格条件 |
+| --- | --- |
+| 静止Target弾道 | 抗力0で軌道終端がTargetへ近づき、発射方向が正規化される。 |
+| 移動Target弾道 | RigidBody速度と設定加速度を反映し、飛行時間後のTarget位置を先読みする。 |
+| 解なし | 初速不足または最大秒超過でValid=false、軌道点0となる。 |
+| 表示分離 | Scene/Game表示Flagと最大表示点数を変えても弾道結果が変化しない。 |
+| 複数被弾 | 異なるSourceを複数保持し、同一Source統合、最大件数、寿命削除が独立して働く。 |
+| Pause | Gameplay入力、Physics、Audio、ゲーム時間が設定どおり止まり、UI MapからResumeできる。 |
+| 航跡 | 開始速度以下で停止し、速度増加でRateが増え、3点のYが共通Ocean Sampleへ追従する。 |
+| Scene保存 | 5 Componentの全設定値と参照が再読込後に一致し、Runtime値はPlay開始時に初期化される。 |
+| C++ API | 7追加Entryと4高水準WrapperがDebug/Releaseで同じ成功・失敗を返す。 |
+
+現行の機械照合基準はComponent 268件、Runtime API Entry 211件、C++ Script Template 24件である。
+
+## 92. FFT海面をゲーム判定へ接続する
+
+### 92.1 目的と責務境界
+
+Oceanを描画背景としてだけ使わず、照準遮蔽、弾の着水、水面通過、前方波面予測へ参加させる。判定はOcean描画MeshのColliderではなく、描画・浮力と共通の`SampleEditorOceanSurface`を使う。GPU FFTのReadback値が利用可能ならそれを優先し、未取得時は同じOcean設定から有限水深CPU SampleへFallbackする。最初のGPU結果へ切り替わる時だけ0.12秒のSmoothStepで位置・法線・表面速度を移行し、浮力や判定の瞬間的な跳びを抑える。移行完了後はGPU Sampleを無加工で返すため、定常時の船体応答へ追加遅延を入れない。
+
+Engineは交点、法線、速度、距離、Clearance等の幾何情報だけを返す。`大波ならLock禁止`、`水中弾へ変更`等のゲームルールはC++ ScriptまたはAction接続で決める。
+
+### 92.2 Ocean Segment Castの判定方法
+
+線分を指定数へ粗分割し、各点とFFT水面の符号付き距離を調べる。水面法線方向の距離が`Clearance`以下へ変化した最初の区間を二分探索し、最初の交点を返す。RaycastはDirectionを正規化し、`Start + Direction * MaximumDistance`を終点として同じ処理を使う。
+
+| 出力 | 内容 |
+| --- | --- |
+| Ocean GameObject | 命中したOceanのID。Ocean参照を省略した場合は位置を覆う有効Oceanを検索する。 |
+| Position | FFT水面上の交点。入力線分上の点ではなくSampleした水面位置。 |
+| Normal | 描画・浮力と共通の波面法線。 |
+| Surface Velocity | 交点での水面速度。飛沫、相対速度、魚雷移行判定に使える。 |
+| Distance | Startから交点までのWorld距離。 |
+| Normalized Distance | 線分全長に対する0～1の位置。 |
+
+粗分割数は2～64、二分探索回数は0～12へ制限する。長いRayで小さい高周波波を厳密に拾う場合は分割数を増やすが、1 Frameに大量発行せず、固定ProbeやTarget候補数を制限する。
+
+### 92.3 TargetSelectorで波を遮蔽物にする
+
+TargetSelectorの`遮蔽方式`を次から選ぶ。
+
+| 値 | 動作 |
+| --- | --- |
+| なし | PhysicsとOceanの遮蔽を調べない。 |
+| Physics | 従来どおりCollider Raycastだけを使う。 |
+| Ocean | Targetまでの線分とFFT波面だけを調べる。 |
+| Physics + Ocean | 両方を調べ、どちらか一方が遮れば候補から除外する。 |
+
+`Ocean Clearance`を0より大きくすると、水面を直接横切らなくても水面へ指定距離以内まで近づいた視線を遮蔽扱いにできる。TargetLockはSelectorの結果を受けるため、波で候補が消えた時は既存のLock喪失猶予へ移行する。`RuntimeProperty::SetInt(..., "TargetSelector", "OcclusionMode", 0..3)`と`SetFloat(..., "OceanClearance", value)`でPlay中にも変更できる。
+
+### 92.4 HitscanとProjectileの着水
+
+Hitscan WeaponとProjectile Emitterには`FFT水面へ命中`を追加する。有効時はPhysics HitとOcean Hitを同じ発射区間で求め、Startから近い方だけを採用する。
+
+Oceanが先ならHealthへDamageを送らず、Surface Tagを`Water`としてImpactResponder、接触起爆、命中Actionへ渡す。これにより水柱、着水音、デカール以外の水面Effect、弾消滅を既存のWeapon接続で構成できる。Oceanの下にあるColliderが先なら通常どおりPhysics Hitを採用する。OceanにMesh Colliderを重ねる必要はない。
+
+### 92.5 水面出入り状態Component
+
+1. 判定対象へ`海・水面 > 水面出入り状態`を追加する。
+2. Oceanを限定する場合は参照を設定し、省略時は判定点を覆うOceanを自動検索する。
+3. `ローカル判定位置`を船底、弾頭、残骸中心等へ合わせる。
+4. `出入り余白`で水面付近の細かい反転を抑える。
+5. `進入Action`と`離脱Action`をC++ Scriptへ接続する。
+
+状態は`AboveWater`、`EnteringWater`、`Underwater`、`LeavingWater`である。Entering/Leavingは境界を越えたFrameだけの遷移状態で、次FrameにはAbove/Underwaterへ安定する。Play開始時は現在位置から初期状態を決めるが、開始直後に進入Actionを誤発火しない。Action PayloadのGameObject IDは命中Oceanである。
+
+### 92.6 海面前方プローブComponent
+
+1. 船、Camera、AI等へ`海・水面 > 海面前方プローブ`を追加する。
+2. `ローカル原点`と`ローカル方向`を設定する。方向はOwnerのWorld回転を反映する。
+3. Probe Entryを追加し、距離を10m、25m、50m等に設定する。
+4. C++ Scriptから各IndexのPosition、Normal、Velocity、Relative Heightを読む。
+
+各EntryはHierarchyの子GameObjectを要求せず、一つのComponent内で可変配列として管理する。`Relative Height`はSampleした水面YとProbe基準点Yとの差であり、波の意味付けは行わない。ProbeがOcean範囲外、無効Ocean、Index範囲外の場合はValid=falseまたはAPIがfalseを返す。
+
+### 92.7 受入試験
+
+| 試験 | 合格条件 |
+| --- | --- |
+| Segment Cast | 波面を横切る線分で最初の交点、法線、Ocean ID、距離が返る。水面上だけの線分では命中しない。 |
+| Raycast | 非正規化Directionでも同じ方向へMaximum Distanceまで判定し、ゼロDirectionは失敗する。 |
+| Ocean選択 | Ocean指定時はそのOceanだけを使い、未指定時は位置を覆う有効Oceanを使う。 |
+| Target遮蔽 | Physics/Ocean/Bothの各Modeが独立し、Ocean遮蔽解除後は既存Lock猶予に従って再取得する。 |
+| Hitscan | PhysicsとOceanの近い方だけがImpactResponderへ届き、OceanへHealth Damageを送らない。 |
+| Projectile | 1 Frameの移動区間でFFT水面を越えた弾がすり抜けず、Water Impact後に解放される。 |
+| 水面状態 | Above→Entering→Underwater、Underwater→Leaving→Aboveの順で遷移し、開始時にActionを誤発火しない。 |
+| Probe | Owner回転、Local Origin、可変距離を反映し、3点以上でも子GameObjectを要求しない。 |
+| 保存 | Ocean参照、Mode、Clearance、Collision Flag、状態設定、Probe配列がScene再読込後に一致する。 |
+| C++ API | 5追加Entryと3高水準Wrapper群がDebug/Releaseで同じ成功・失敗を返す。 |
+
+現行の機械照合基準はComponent 268件、Runtime API Entry 211件、C++ Script Template 24件である。
+
+## 93. 自艦誤爆を防ぎ、砲塔と複数艦砲を構成する
+
+### 93.1 責務の分け方
+
+この機能群は水上レールシューティング固有の敵AIやBoss攻撃をEngineへ固定しない。Engine側は攻撃Cast除外、砲塔回転、複数Weaponの発射順、弾体継続、Camera姿勢補正という再利用可能な処理だけを持つ。
+
+| 必要な処理 | 担当 | 担当しないもの |
+| --- | --- | --- |
+| 誰へ攻撃Castを当てないか | 攻撃コリジョンフィルター | 敵選択、Damage式、Friendly Fireのゲームルール表示。 |
+| Targetへ砲身を向ける | 砲塔照準 | 自動発射、攻撃Pattern、弾薬。 |
+| 複数Weaponをまとめて要求する | 武器グループ | 個別WeaponのDamage、Cooldown、Target割当。 |
+| 貫通・跳弾後も弾を進める | 弾体貫通・跳弾 | 実材質の物理厚、破壊形状、装甲HP。 |
+| 船体の揺れをCameraへ部分継承する | 水平線スタビライザー | Camera Shake波形、演出Cut、入力。 |
+| 補給・Upgradeで弾薬値を変える | WeaponLoadout C++ API | Pickup条件、価格、Save Data規則。 |
+
+### 93.2 発射直後の自艦命中を防ぐ
+
+1. Projectで艦艇PrefabまたはSceneを開き、HierarchyからWeapon Rootを選ぶ。
+2. Inspectorの`コンポーネントを追加 > ゲームプレイ > 攻撃コリジョンフィルター`を追加する。
+3. `Instigator`へ艦艇Rootを指定する。省略時はFilterまたはWeapon所有Objectになるため、複数階層の艦艇では明示指定を推奨する。
+4. `Instigatorを無視`と`Instigator階層を無視`を有効にする。これでRoot、砲塔、砲身、砲口のColliderを同じCast除外へ入れる。
+5. 敵だけへ当てる通常武器は`Team Rule=Different Team`にする。地形や港湾施設にも当てるため、Team ComponentがないObjectは除外しない。
+6. ミサイルや大型砲弾は`Arming Distance`を砲口から自艦外殻を抜ける距離へ設定する。
+7. 特定の護衛Objectや発射レールを除外する場合だけ`Ignore Objects`へ追加する。
+
+Hitscanでは発射Ray全体、ProjectileではArming後の前Frame位置から現在位置までの連続CastへFilterを適用する。Projectileが高速でも離散位置だけで判定せず、通過区間を検査する。
+
+### 93.3 Yaw台座とPitch砲身を作る
+
+推奨Hierarchyは次である。
+
+```text
+Ship Root
+└─ Main Battery
+   └─ Yaw Pivot
+      └─ Pitch Pivot
+         └─ Muzzle
+```
+
+1. `Main Battery`へ`コンポーネントを追加 > 照準 > 砲塔照準`を追加する。
+2. `Yaw Pivot`と`Pitch Pivot`へ上の子Objectを割り当てる。
+3. 明示Targetを常時指定しない場合は、`Main Battery`または別ObjectへTarget Selectorを置き、`Target Selector`参照を設定する。
+4. Yaw/Pitchの最小・最大角を実モデルの可動域に合わせる。
+5. 旋回速度を設定し、Play中にInspectorの`到達可能`、`照準完了`、Yaw/Pitch誤差を見る。
+6. 移動Targetを単純先読みする場合は`Target予測秒`を設定する。重力弾の正確な先読みは弾道予測の発射方向をゲームScriptで使用する。
+
+Yaw PivotとPitch Pivotを同じObjectにすると両軸を一つのTransformへ適用できるが、砲塔モデルでは別Objectを推奨する。可動域外でも砲塔は端まで追従し、Runtimeの`Can Reach Target`がfalseになるため、Scriptは発射を抑止できる。
+
+### 93.4 主砲A/B/Cを一つの砲撃単位にする
+
+1. 各砲口または各砲塔へHitscan WeaponかProjectile Emitterを設定する。
+2. 共通の`Main Battery`へ`コンポーネントを追加 > ゲームプレイ > 武器グループ`を追加する。
+3. Weapons Entryを追加し、各Weapon所有GameObjectを登録する。Entry有効Flagで破壊済み砲塔等を一時除外できる。
+4. 一斉射は`Simultaneous`、左から順に撃つ場合は`Sequential`、1門ずつ循環する場合は`RoundRobin`を選ぶ。
+5. Sequentialでは`Interval`を設定する。
+6. 全砲が発射可能になるまで待つ場合は`Require All Ready`を有効にする。無効時は発射できる砲だけが処理される。
+7. 完了後に別処理へ進む場合は`Completion Action`をC++ ScriptまたはAction Relayへ接続する。
+
+Weapon GroupはWeapon Objectを自動生成しない。各Weaponの発射間隔、Projectile Prefab、Damage、Accuracy、Recoil、Impactは元Componentへ設定する。一つのGroupに登録するためだけにHierarchyへ砲数分の管理Componentを増やさない。
+
+### 93.5 補給・UpgradeをC++ Scriptから行う
+
+`WeaponLoadout` Wrapperで任意Slotを操作する。IndexはWeaponLoadout直下のWeaponLoadoutSlotをHierarchy順に収集した番号で、`-1`は選択中Slotである。
+
+```cpp
+WeaponLoadout loadout{playerObject};
+
+// 弾薬箱: Slot 0の予備弾を20追加する。
+loadout.AddReserveAmmo(0, 20);
+
+// Upgrade: Slot 0のMagazine上限を12へ変更する。
+loadout.SetMaximumAmmo(0, 12);
+
+// Stage開始時だけMagazineを上限まで満たす。
+loadout.RefillMagazine(0);
+```
+
+通常Reloadは`Reload()`を使う。`RefillMagazine()`はReserveを消費せず即時にMaximumへするため、補給地点、Stage初期化、Debug用途として区別する。Reserve=-1は無限弾であり、AddReserveAmmoでは-1を維持する。
+
+### 93.6 貫通・跳弾を設定する
+
+1. Projectile PrefabまたはProjectile Emitter所有Objectへ`コンポーネントを追加 > ゲームプレイ > 弾体貫通・跳弾`を追加する。
+2. `有効`をOnにし、初期Energy、貫通損失、最大貫通数を設定する。
+3. 跳弾を使う場合は跳弾角、最大跳弾数、速度保持率を設定する。
+4. Metal、Wood等で差を付ける場合はSurface Modifierを追加し、Surface TypeのTagと同じ文字列を設定する。
+5. Play中に一発ずつ撃ち、Damage、Impact Effect、速度低下、方向変化、最終消滅または起爆を確認する。
+
+この実装はSurfaceごとの固定Energy損失であり、Collider内部の実距離を装甲厚として積分しない。精密な戦車Simulationではなく、艦砲、ミサイル、機関砲へ一貫したゲーム向け貫通挙動を与える用途で使う。
+
+### 93.7 波で揺れる船のCameraを安定させる
+
+1. Game Cameraへ`コンポーネントを追加 > カメラ > 水平線スタビライザー`を追加する。
+2. `Follow Source`へBuoyancyで揺れる船体Rootを指定する。
+3. `Local Position Offset`で船体基準のCamera位置を決める。
+4. 最初はPitch=0.35、Yaw=1.0、Roll=0.2、Maximum Roll=8度から調整する。
+5. 波を強く感じさせたい場合はPitch/Roll継承を増やし、画面酔いを抑える場合は減らす。
+6. Positionを別Componentで管理する場合は`Position Follow`を無効にし、回転安定化だけを使う。
+7. Camera Shakeとの合成を確認する。Stabilizerは追従姿勢を作り、Shakeはその後の演出Offsetとして扱う。
+
+### 93.8 受入試験
+
+| 試験 | 合格条件 |
+| --- | --- |
+| 自艦Collider階層 | Root/子/孫Colliderを持つ艦から発射しても自艦Damageや直後消滅が起きない。 |
+| 味方・地形 | Different Teamで味方を通過し、Teamなし地形には命中する。 |
+| Arming Distance | 指定距離までは命中せず、越えたFrameの残り区間から連続判定する。 |
+| 砲塔可動域 | 範囲内TargetでIs Aimed、範囲外TargetでCan Reach=falseとなる。 |
+| 砲列 | Simultaneous/Sequential/RoundRobin、全Ready条件、Entry無効化が独立して働く。 |
+| 弾薬 | Slot選択、上下限、無限Reserve、補給、上限変更、即時補充が正しい。 |
+| 貫通・跳弾 | 最大回数とSurface補正を超えて継続せず、最終Hitで通常の消滅・起爆へ戻る。 |
+| Camera | 船体Yawを追い、Pitch/Rollだけを指定率へ減らし、最大Rollを超えない。 |
+| Scene再読込 | 5 Componentの全参照、配列、文字列、数値、Flagが復元される。 |
+| C++ ABI | 10追加Runtime APIと3高水準Wrapper群がDebug/Releaseで同じ結果を返す。 |
+
+現行の機械照合基準はComponent 268件、Runtime API Entry 211件、C++ Script Template 24件である。
+
+## 94. 移動母体からの射撃、爆発遮蔽、発射前安全検査、時間制Effect
+
+### 94.1 責務を分離する
+
+| 処理 | Engine側の担当 | ゲーム側へ残すもの |
+| --- | --- | --- |
+| 移動中の発射速度 | Projectile Emitterと弾道予測が同じRigidbody速度を使う。 | どの武器が母体速度を継承するか、継承率の調整。 |
+| 爆発遮蔽 | Area DamageがPhysics/Ocean遮蔽とTeam条件を評価する。 | 爆発の発生条件、Damage値、Friendly Fire方針。 |
+| 発射前安全確認 | 発射前射線チェックが砲口前方の遮蔽物を検出する。 | Block中の待機、別Target選択、警告UI。 |
+| 時間制状態 | 状態効果セットがID、時間、Stack、Tick、Actionを管理する。 | `Fire`、`Flood`、`EMP`の意味、Damage式、Visual、Audio。 |
+| 弾道照準接続 | Projectile Emitterが弾道予測の解をAim Sourceとして使う。 | いつ発射するか、解なし時のFallback。 |
+
+`AttackCollisionFilter`は発射後に命中させない対象を決め、`FireLineCheck`は発射前に安全かを決める。自艦Hierarchyを攻撃Castから除外しても、砲口前方の艦橋や別砲塔を安全検査から自動除外しない。
+
+### 94.2 移動する船から弾を発射する
+
+1. Projectで対象Sceneをダブルクリックし、Hierarchyから砲またはProjectile Emitter所有Objectを選ぶ。
+2. InspectorのProjectile Emitterで`発射元速度を継承`を有効にする。
+3. `速度Source`へ船体Rigidbodyを持つObjectを指定する。砲塔が船体の子なら、未指定のまま`親Rigidbodyを検索`を有効にできる。
+4. `並進速度継承=1.0`で船体のWorld並進速度を全て加える。
+5. 砲口が船体中心から離れている場合は`角速度継承=1.0`にする。作用点速度として`angularVelocity cross (muzzlePosition - rigidBodyOrigin)`が加わる。
+6. 重力弾では弾道予測にも同じ速度Source、親検索、並進/角速度継承率を設定する。
+7. Projectile Emitterの`照準Source=弾道予測`、`弾道予測`参照を設定する。
+
+実弾の初期World速度と予測の初期World速度は次で統一する。
+
+```text
+sourceVelocity = rigidBodyLinearVelocity * linearScale
+               + cross(rigidBodyAngularVelocity, muzzlePosition - rigidBodyOrigin) * angularScale
+
+projectileWorldVelocity = launchDirection * muzzleSpeed + sourceVelocity
+```
+
+弾道予測ModeではProjectile Emitterの通常速度ではなく、参照したBallisticPredictionの初速、重力、線形Drag、発射方向、発射元速度を使用する。BallisticPredictionが`Valid=false`なら発射しない。
+
+### 94.3 爆発の遮蔽とTeamを設定する
+
+1. 爆発ObjectへArea Damageを追加し、半径、基礎Damage、距離減衰、Damage対象Layerを設定する。
+2. `遮蔽判定=Physics`なら壁、艦橋、岩礁等のColliderだけを使う。FFT波面も遮蔽物にする場合は`Physics + Ocean`を選ぶ。
+3. `遮蔽Layer Mask`はDamage対象Layerとは別に設定する。Damageを受けない地形でも爆風を遮れる。
+4. `遮蔽Sample数`を1～9で設定する。複数SampleはTargetの上下へ分散し、一部だけ露出した対象の遮蔽率を求める。
+5. `遮蔽時倍率=0`なら完全遮断、0より大きければ遮蔽越しDamage/Impulseを残す。
+6. `Team Source`へ攻撃者を指定する。未指定ではInstigatorを使う。
+7. `Teamルール`を`すべて`、`異なるTeamのみ`、`同じTeamのみ`から選び、必要ならNeutralを無視する。
+
+遮蔽倍率はDamageとImpulseの両方へ同じ比率で掛かる。Sample数を増やすほどRay/Ocean queryが増えるため、通常爆発は1～3、大型爆発で輪郭精度が必要な場合だけ増やす。
+
+### 94.4 砲口前方の安全を確認する
+
+1. Projectile EmitterまたはHitscan Weaponと同じObject、またはその親へ`コンポーネントを追加 > ゲームプレイ > 発射前射線チェック`を追加する。
+2. `砲口`へMuzzle Object、`前方向Source`へ砲身の向きを持つObjectを設定する。
+3. `検査距離`を砲口から自艦外殻を抜ける距離、`検査半径`を砲弾半径または砲身の安全余白へ設定する。半径0はRay、0より大きい値はSphere Castとして扱う。
+4. `Block Layer Mask`へ自艦構造物、地形、障害物Layerを含める。
+5. 現在狙っているObjectを射線終端として許可する場合は`許可Target`へ設定する。
+6. 砲口自身や明確に安全な補助Colliderだけを`無視Object`へ追加する。自艦Hierarchy全体は追加しない。
+7. Play中に`Runtime`、`Blocking Object`、`Blocking距離`を確認する。
+
+Weapon ManagerはHitscan/Projectileの発射要求時にこの結果を確認し、Blockedなら弾薬消費、Projectile貸出、発射Actionを行わない。安全検査だけを行うため、命中後のDamage Filter、Arming Distance、Team条件は`AttackCollisionFilter`へ残す。
+
+### 94.5 状態効果を作り、C++ Scriptへ意味を接続する
+
+1. 状態を受けるGameObjectへ`コンポーネントを追加 > ゲームプレイ > 状態効果セット`を追加する。
+2. `Action対象`へ処理するC++ Script所有Objectを設定する。
+3. Effect定義を追加し、固定Enumではなく文字列`Effect ID`を設定する。
+4. `Duration`、`Stack Mode`、`最大Stack`、`Tick間隔`を設定する。
+5. 開始/Tick/終了ActionをScriptの公開Actionへ接続する。
+6. 攻撃、Trigger、Script等から`StatusEffectSet::Apply("Fire", source)`を呼ぶ。
+7. Action ContextのString PayloadからEffect IDを読み、Damage、速度低下、Component無効化、Effect再生等をゲーム側で行う。
+
+| Stack Mode | 同じIDを再適用した時 |
+| --- | --- |
+| Refresh | Stack数を変えず残り時間とTick待ちを初期値へ戻す。 |
+| Stack | 最大Stackまで増やし、残り時間を初期値へ戻す。 |
+| Ignore | 既に存在する間は新しい適用要求を無視する。 |
+
+Engineは`Fire`を毎秒Damageへ変換しない。開始/Tick/終了通知とRuntime Entryを提供し、効果の意味はAction受信Scriptが決める。Object Poolの全状態ResetではRuntime EntryをClearする。
+
+### 94.6 受入試験
+
+| 試験 | 合格条件 |
+| --- | --- |
+| 並進継承 | 静止/移動母体から同方向へ撃ったWorld速度差が母体速度と一致する。 |
+| 角速度継承 | 回転中心から離れた砲口だけ`omega cross r`分の接線速度を得る。 |
+| 予測一致 | 同一速度Source、Gravity、Dragで予測軌道とProjectile軌道が一致する。 |
+| Area Team | 直撃Filterと爆発Team Ruleが矛盾せず、Neutral設定も独立する。 |
+| Area遮蔽 | Physics/Ocean Mode、Layer、Sample数、遮蔽倍率がDamageとImpulseへ反映される。 |
+| 発射前検査 | 艦橋が前方にある時は発射せず、旋回後Clearになると発射できる。 |
+| 状態効果 | Refresh/Stack/Ignore、開始/Tick/終了回数、Source、残り時間、Pool Resetが正しい。 |
+| 保存 | 新規2 Componentと既存3 Componentの全設定がScene再読込後に一致する。 |
+| C++ ABI | 7追加Entryと2高水準WrapperがDebug/Releaseで同じ結果を返す。 |
+
+現行の機械照合基準はComponent 268件、Runtime API Entry 211件、C++ Script Template 24件である。
+
+## 95. Particle / VisualEffectのBillboard設定
+
+### 95.1 Projectから設定する
+
+1. Project内の`.scene`をダブルクリックしてSceneを開く。
+2. HierarchyでParticleSystemまたはVisualEffectを持つGameObjectを選択する。
+3. Inspectorの`描画モデル`を開く。
+4. FBX / OBJを粒として描く場合は`Render Asset`へAssetを設定する。板Particleを使う場合は空にする。
+5. `板の向き`から用途に合う方式を選ぶ。
+6. `速度方向`を選んだ場合だけ`速度方向の長さ`を調整する。
+7. Scene ViewとGame ViewのCamera位置、回転、Rollを別々に変え、両方で正しい向きになることを確認する。
+8. Sceneを保存して開き直し、選択値が維持されることを確認する。
+
+| 板の向き | 用途 | 向きの決め方 | 注意点 |
+| --- | --- | --- | --- |
+| カメラ正対 | 爆発、煙、光、円形の飛沫 | 描画対象View CameraのRight / Up。 | 既定値。Texture正面を常にCameraへ向ける。 |
+| Y軸固定 | 縦煙、炎、地上Marker | World YをUpとし、Camera方向へ水平回転する。 | 上下から見た完全正対より、垂直維持を優先する。 |
+| 速度方向 | 曳光、雨、船首飛沫、細長い粒 | VelocityをCamera Planeへ射影してUpとする。 | 速度が小さい時はCamera Facingへ戻る。長さ倍率を使える。 |
+| World XY固定 | 旧Scene互換、固定Plane表現 | World X / Yへ固定する。 | Cameraが回る一般的な3D Effectには通常使わない。 |
+
+### 95.2 Effect AssetとPlay中の変更
+
+`.effect`には`billboardMode`と`billboardStretch`を保存できる。Effect AssetをComponentへ適用すると、他のEmissionやLifetime設定と一緒にBillboard設定も反映される。`billboardMode`は0～3、`billboardStretch`は0.01以上である。
+
+C++ ScriptからPlay中に切り替える場合はRuntime Propertyを使う。
+
+```cpp
+GameObject effect = GameObject::Find("BowSplash");
+
+RuntimeProperty::SetInt(
+	effect,
+	"VisualEffect",
+	"BillboardMode",
+	2);
+RuntimeProperty::SetFloat(
+	effect,
+	"VisualEffect",
+	"BillboardStretch",
+	3.5f);
+```
+
+Component内部名は`ParticleSystem`または`VisualEffect`、Property名は`BillboardMode`と`BillboardStretch`である。文字列の大文字小文字と値型が違う場合は変更に失敗する。FBX / OBJ Render Assetが設定されている時も値は保存できるが、Model Particle描画には適用されない。
+
+### 95.3 受入試験
+
+| 試験 | 合格条件 |
+| --- | --- |
+| Camera Facing | CameraのYaw / Pitch / Rollを変えてもQuad正面が対象Viewへ向く。 |
+| View分離 | Scene ViewとGame Viewが異なるCameraでも、それぞれのViewへ正対する。 |
+| Y軸固定 | Cameraを上下へ動かしてもParticleのWorld Upが横倒れしない。 |
+| Velocity Facing | 速度方向が変わると板方向も変わり、Stretch 1と3で長さの差が出る。 |
+| 停止粒子 | Velocityがほぼ0でもNaNや消失を起こさずCamera Facingへ戻る。 |
+| Model粒子 | FBX / OBJ粒子の3D姿勢がBillboard設定で変化しない。 |
+| 保存 | Sceneと`.effect`のMode / Stretchが再読込後に一致する。 |
+| Runtime Property | int Modeとfloat Stretchの正しい型だけ成功し、不正Component名・Property名・型はfalseになる。 |
+
+この変更は既存Componentの描画設定追加であり、現行基準はComponent 268件、Runtime API Entry 211件、C++ Script Template 24件のままである。
+
+## 96. Camera追従と船体向けRailMovement
+
+### 96.1 Playerの向きへCameraを追従させる
+
+1. Project内の`.scene`をダブルクリックしてSceneを開く。
+2. HierarchyでGame Cameraを選択する。
+3. CameraまたはCinemachine Cameraの`追従対象`へPlayerや船を設定する。
+4. `プレイヤー追従プリセット`を押す。Camera Transformは位置`(0, 2, -6)`、回転`(0, 0, 0)`になり、位置Offset基準は`対象Local`、回転方式は`対象回転を継承`になる。
+5. Camera GameObjectの位置を、追従対象から見た右・上・前後Offsetとして調整する。
+6. Playし、PlayerがYaw回転した時にCamera位置と向きが一緒に回ることを確認する。
+
+| 位置オフセット基準 | 動作 | 主な用途 |
+| --- | --- | --- |
+| World固定 | Camera位置をWorld軸のOffsetとしてTarget位置へ加える。Targetが回ってもCameraの配置方向は変わらない。 | 固定方向から追う演出、旧Scene互換。 |
+| 対象Local | Camera位置をTargetのWorld回転で回してからTarget位置へ加える。 | Player後方Camera、船尾Camera、追従視点。 |
+
+| 回転方式 | 動作 | Camera Transform回転の意味 |
+| --- | --- | --- |
+| Camera角度を固定 | Target位置だけを追い、CameraのWorld角度を維持する。 | 旧Scene互換、固定俯瞰。 |
+| 対象回転を継承 | TargetのWorld回転へCamera回転を加える。 | 後方追従、機体視点。 |
+| 対象を見る | Camera位置からTarget位置へLook Atし、Camera回転を追加Offsetにする。 | 注視Camera、周回Camera。 |
+
+追従対象を未設定、削除、非Activeにした場合はCamera自身のWorld Transformを使う。位置Offsetが完全な0の場合は`(0, 2, -6)`へFallbackする。船体Pitch/Rollを一部だけ継承したい場合は、通常追従ではなく`水平線スタビライザー`を使う。
+
+### 96.2 RailMovementの移動方式を選ぶ
+
+1. Hierarchyで船を選択し、`ゲームプレイ > レール移動`を追加する。
+2. `Splineを作成して接続`を押し、Scene ViewまたはSpline Editorで制御点を編集する。
+3. 船へDynamic Rigidbody、Collider、Buoyancyを追加する。RigidbodyのKinematicはOFFにする。
+4. RailMovementの`船体推進`クイック設定を押す。
+5. Modelの船首に一致する`船首ローカル軸`を`+Z / -Z / +X / -X`から選ぶ。
+6. 水上船では`推力を水平にする`をONにし、波によるPitch/Rollで推力が海底や空へ向き過ぎないようにする。
+7. `横ずれ補助率`を調整する。0は推力とYaw操舵だけ、1はRail中央へ戻す横方向サーボを全適用する。船らしさを残す開始値は0.1～0.3である。
+8. `浮力併用プリセット`で位置追従軸を`(1,0,1)`、回転追従軸を`(0,1,0)`にし、Y位置とPitch/RollをBuoyancyへ任せる。
+
+| 移動方式 | 力の向き | 動き | 用途 |
+| --- | --- | --- | --- |
+| Transform追従 | Forceを使わずTransformを直接更新する。 | Pathへ正確に一致する。 | Camera経路、演出、物理不要Object。 |
+| Dynamic Rigidbody 物理サーボ | Spline先読み接線へ前進Forceを加え、目標位置へPD補正する。 | Rail拘束が強く、経路へ戻りやすい。 | 車両、移動床、強いオンレール制御。 |
+| Dynamic Rigidbody 船体推進 | 現在の船首ローカル軸へ推力を加え、Spline接線へYaw Torqueで旋回する。 | 船首が向くまで横滑りや旋回遅れが残る。 | Buoyancyを使う船、水上乗物。 |
+
+左右・上下OffsetとMovementModifierは、Transform方式だけでなく両方のDynamic Rigidbody方式の目標位置にも反映される。船体推進で横ずれ補助率を0にしても、Spline方向へ向くYaw操舵は継続する。`進行方向へ回転`をOFFにするとYaw操舵も行わない。
+
+### 96.3 受入試験
+
+| 試験 | 合格条件 |
+| --- | --- |
+| Camera Local位置 | Playerを90度Yaw回転すると、後方Offsetも同じ角度だけ回る。 |
+| Camera回転継承 | PlayerのYawがCamera向きへ反映され、Camera回転Offsetも維持される。 |
+| Look At | Camera位置を移動してもTarget中心を向き、零距離でNaNにならない。 |
+| 旧Scene互換 | ExtensionのないSceneはWorld固定位置・Camera角度固定で開く。 |
+| 物理サーボ | 船首がPathとずれていてもSpline接線方向へ直接追従Forceが出る。 |
+| 船体推進 | 船首軸を変えると推力方向も変わり、Spline接線へ直接横押しされない。 |
+| 浮力併用 | RailがY/Pitch/Rollを上書きせず、Buoyancyの上下動と傾きが残る。 |
+| 保存 | Camera方式、Rail方式、船首軸、水平推力、横ずれ補助率が再読込後も一致する。 |
+
+この変更は既存Camera / CinemachineCamera / RailMovementの拡張であり、現行基準はComponent 268件、Runtime API Entry 211件、C++ Script Template 24件のままである。
+
+## 97. Ocean Buoyancyを実Physics Shapeへ接続する
+
+### 97.1 旧AABBセル方式の問題
+
+旧経路はBuoyancyの船体サイズまたはCollider AABBを直方体セルへ分割し、Rigidbody Massを全セルへ均等配分していた。この方式ではCollider外の空間、船体の細い部分、上部構造を含むAABBまで排水体積として扱う。完全水没時の浮力も実Shape体積ではなく`Mass x 浮力設定`で決まり、部分浸水時の浮心はセル中央のWorld Yだけを変更した近似だった。
+
+旧復元Torqueと自動Collider用の喫水制限は、このAABB近似が起こす転覆と上部構造への誤作用を抑える補助だった。物体をWorld Upへ戻すTorqueは形状と質量分布を無視するため廃止し、喫水制限だけを特殊Shapeの計算範囲保護として残す。復元は実Shapeの静水圧作用点とRigidbody重心の位置差から発生させる。
+
+### 97.2 Runtime計算順
+
+1. Buoyancy対象のWorld Transform、船体軸、実Colliderの中心と寸法を固定更新内で取得する。自動物理では手入力の船体サイズと浮力中心を使わない。
+2. 船幅・船長を覆う固定5x5の25点で`SampleEditorOceanSurface`を呼び、描画と同じFFT時刻、変位、法線、表面速度を取得する。水力面数に関係なくFFT Sample数は25点で固定する。
+3. 25点の高さへ最小二乗Planeを当て、FFT Sample法線を15%混合して、体積と水線面積を求める安定水面Planeを作る。同じ25点は双線形補間し、各水力面頂点と中心の局所水位、法線、表面速度にも使う。欠損Sampleを含む区画は最小二乗Planeへ戻す。
+4. `EditorJoltPhysicsManager::GetSubmergedVolume`がPlay中の実Body ShapeをPlaneで切り、総体積、水没体積、水没部分の重心、Body重心、Shape境界寸法を返す。
+5. 自動物理は`effectiveDensity = buoyancyWaterDensity`とし、Joltへ反映済みの実質量と`density x displacedVolume x |gravity|`の釣り合いで喫水を決める。手動互換方式だけ`effectiveDensity = mass x buoyancyStrength / (|gravity| x totalVolume)`へ変換する。静水圧合力の大きさは表面三角形へ置き換えず、常にJoltの排水体積から求める。これにより開いたCollider Assetや反転法線が合計浮力を壊さない。
+6. 水面PlaneをShape高さの2%だけ上げてもう一度切り、`(raisedSubmergedVolume - submergedVolume) / deltaHeight`から水線面積を求める。`effectiveDensity x |gravity| x waterplaneArea`を上下剛性とし、自動物理は減衰比0.7、手動方式は`上下減衰 / 10`を使う。自動物理では水線二次Moment、排水体積、浮心と重心の高さからRoll/Pitchメタセンタ高さを求め、減衰比0.35の放射減衰Torqueを追加する。
+7. Auto ConvexとDynamic MeshColliderは、判定用Compoundの区間境界面を水力面へ混ぜず、Collider Assetの元三角形を最終Jolt重心基準へ変換して保存する。Primitiveとその他ShapeはBody ShapeをLeafまで展開する。512面を越える場合は総面積を保持する面積分位Samplingへ縮約する。
+8. 保存した各面を現在のBody TransformでWorldへ移し、各頂点で5x5補間水面との差を求めてSutherland-Hodgman Clipする。完全に水上の面は除外し、水面を横切る面は水没部分だけの面積、外向き法線、面積重心を求める。各面の`局所水深 x 面積 x 上向き投影率`を積分し、合計浮力の作用点だけをJolt浮心から最大Shape半径35%まで移す。作用点Offsetは0.08秒時定数で平滑化し、積分できないShapeはJolt浮心へ戻す。
+9. 各面中心の速度を`linearVelocity + angularDragScale x (angularVelocity x (panelCenter - centerOfMass))`で求め、その面位置で補間したFFT表面速度を引く。外向き法線へ入る速度成分から圧力抵抗、接線速度からReynolds数依存の表面摩擦を計算し、各面の力と`(panelCenter - centerOfMass) x panelForce`を合計する。面三角形は運動抵抗だけに使い、総静水圧はJolt排水体積が担当する。
+10. 自動物理では前回の浮心水相対速度との差を0.08秒時定数で平滑化する。正面、横、上下の投影面積を最大投影面積で正規化した係数と`effectiveDensity x submergedVolume`を掛け、各軸の並進付加質量Forceを浮心へ加える。前回角速度との差も0.1秒時定数で平滑化し、各回転軸の投影面積比、排水流体質量、形状二次Momentから回転付加慣性Torqueを求める。初回接水では履歴だけを作り、並進は6G、回転は`mass x shapeRadius x gravity x 4`を上限にする。
+11. 自動物理では船首軸方向の相対速度、Gravity、Shape船長からFroude数を求める。`submergedVolume^(2/3)`の基準面積、幅/長さ比、Fn 0.38付近の抵抗Hump、高速遷移を造波抵抗へ変換する。前後速度を1固定更新で反転させず、2Gを越えない。
+12. Objectごとの前回排水体積を保持し、排水体積の増加率と相対入水速度からSlammingを計算する。初回Sample、静止中、完全水没後は偽の着水衝撃を発生させない。
+13. 通常経路と特殊Shapeフォールバックの両方で、人工的なWorld Up復元Torqueを加えない。Jolt浮心または局所静水圧作用点と、Collider形状および`重心オフセット`から決まるJolt重心の距離だけで復元Momentを発生させる。放射減衰Torqueと回転付加慣性Torqueは角度を0へ強制しない。
+
+### 97.3 Shapeとフォールバック
+
+| Collider / Jolt Shape | Runtime浮力 |
+| --- | --- |
+| Box、Sphere、Capsule | Joltの実Shape水没体積、浮心、表面パネルを使う。Boxは船首と船尾の形が同じなので、船型差の検証には使わない。 |
+| Auto Convex | Model三角形を最長軸の最大1～16非重複区間へClipし、区間ごとのConvexHullをCompound化する。排水体積と浮心は複数Hull、圧力抗力と表面摩擦は元Collider Meshを使うため、合計浮力を保ちながら鋭い船首、船尾、平たい横腹の運動抵抗差を反映する。 |
+| Dynamic MeshCollider | 物理Body生成時にDynamic用ConvexHullへ変換されるため、そのHullを使う。三角形MeshCollider設定と精密接触BVHは削除しない。 |
+| Compound / Decorated Convex | Joltが子Shapeを再帰積算して体積と浮心を返す。水力面はLeaf Shapeを収集し、子の位置、回転、Scaleを反映して合成する。 |
+| 体積計算非対応の特殊Shape | 旧分布グリッドへフォールバックする。表面を取得できない場合は実Shape境界寸法の投影抗力へフォールバックする。AABB経路を通常船体の主計算には使わない。 |
+
+自動物理では実Colliderの中心と寸法が5x5 FFTプローブの広がりとフォールバック範囲を決める。手動方式だけ`船体サイズ`と`浮力中心`を使う。排水形状を変える場合はCollider Asset、Auto Convexの最大凸包数を調整する。重量物が下部へ集中する物体はRigidbodyの`重心オフセット`を設定し、形状とは独立した実際の質量分布を入力する。
+
+### 97.4 力の方向と設定の意味
+
+静水圧は波面法線方向ではなくGravityの反対方向へ加える。合計浮力はJolt排水体積から変えず、局所FFT水深は作用点だけを船首、船尾、左右へ移す。これにより船体より短い波でも船首だけが持ち上がるMomentを作り、単一Planeの浮力総量は維持する。`波の横押し`は互換名を維持するが、実Shape経路では着水衝撃方向をWorld上方向からFFT法線へ寄せる比率として使い、船を波の斜面方向へ常時横押ししない。
+
+自動物理の`目標水没率`は、`bodyDensity = waterDensity x targetSubmersionRatio`としてRigidbody自動質量へ接続する。0.55は平水面でCollider排水体積の約55%を沈める基準であり、実際の姿勢と喫水はShape、重心、積荷、波面によって変わる。手動方式の`浮力`は完全水没時の基準加速度で、概算平衡水没率は`|Gravity| / 浮力`である。
+
+`上下減衰`は実Shape経路では単純な速度倍率ではない。値を10で割ったものを水線面積から求める臨界減衰比として使う。5は0.5倍、10は臨界減衰、20は臨界減衰の2倍である。
+
+前後・横・上下の水抵抗は、各水没面の外向き法線がBoat Forward / Right / Upへどれだけ向くかで混合する圧力抗力係数である。相対流へ正面を向く面だけが強い圧力を受けるため、鋭い船首で前進する場合、平たい横腹で同じ方向へ進む場合、船尾を前へした後進、斜航で結果が変わる。`前後の水抵抗`はITTC表面摩擦の粗さ倍率にも使う。
+
+`回転抵抗`は、各面中心へ生じる回転速度成分の倍率である。面ごとの圧力と摩擦は実際の作用点からTorqueへ変換されるため、通常Shape経路で船体寸法だけを使う一様なAngular Dragは重ねない。
+
+自動物理の付加質量は物体が周囲の水も加速させる効果である。並進と回転の両方で船首方向、横方向、上下方向へ別Componentや船種Presetを置かず、実Shapeの軸別投影面積比から係数を決める。回転放射減衰は水面へ波を放射して失うエネルギーの低速近似であり、二次抗力がほぼ0になる小さいPitch / Roll角速度でも振動を抑える。造波抵抗は速度二乗だけでは表せない船長依存の抵抗増加をFroude数で補う。
+
+### 97.5 Lifecycleと性能
+
+- 水没体積、相対速度、角速度、平滑化加速度、局所浮力作用点の履歴はSceneへ保存せずPlay Runtimeだけに保持する。
+- Play開始、Play停止、Simulation無効化、Pool再配置を伴うTransform同期で履歴を消去する。
+- 1 BodyあたりのFFT Sampleは固定25点であり、水力面が最大512面まで増えてもSample数は変わらない。旧方式の最大256列Sampleより負荷を予測しやすく、各面の局所水面は25点から双線形補間する。
+- Jolt Shapeの体積積分は固定更新ごとに現在水面で1回、水没中は水線面積算出用の上昇水面で追加1回行う。CPU負荷はBody数に比例するため、大量の小破片へBuoyancyを付ける場合はComponentを無効化するかObject Pool側で接水対象を制限する。
+- Shape三角形の列挙とLeaf Shape展開はBodyごとの初回だけ行い、Root COM空間でCacheする。以降は最大512面のWorld変換、水面Clip、圧力・摩擦積算だけを固定更新で行う。Play停止時にCacheを破棄し、Body IDの世代番号をCache Keyへ含めて再生成Bodyとの取り違えを防ぐ。
+- 512面を越えるShapeは、元三角形の並びに対する面積分位Samplingを使う。各代表面へ受け持つ面積倍率を保持するため総表面積は失わないが、極端に細かい局所凹凸までをCFDのように再現するものではない。
+- 物理固定更新はPre Fixed Step Scriptを実行した後、SceneのComponent配列をGameObjectごとに1回だけ走査する。Rigidbody、Buoyancy、空力、拘束、外力、各FieldのPointerをその固定更新内だけCacheし、17系統の物理処理が同じSceneとComponentを個別に再検索しない。
+- WindZone、GravityField、RotatingFrame、FluidVolume、VortexField、PressureField、ElectromagneticFieldは共通Cacheから有効な発生源だけを参照する。固定更新ごとのローカル`vector`生成を行わず、前回確保したCapacityを再利用する。
+- 水力面は法線方向と接線方向の相対速度が両方ほぼ0の場合だけ、結果が0になる圧力係数、Reynolds数、ITTC摩擦係数の計算を省く。排水体積、浮心、水線面積、上下減衰、着水判定、最大512面の形状精度は変更しない。
+- 浮力計算は固定物理更新だけで実行し、描画処理へ物理更新を混在させない。
+
+### 97.6 受入試験
+
+| 試験 | 合格条件 |
+| --- | --- |
+| 平水面 | 設定から予想した喫水付近で静止し、継続的な上下発散がない。 |
+| 片側浸水 | 水没側へ浮心が移動し、重心との差から自然なTorqueが出る。 |
+| 波長が船長より短い波 | 船首・船尾のSample差が局所Planeへ反映され、中央1点だけの上下移動にならない。 |
+| 局所浮力作用点 | 合計浮力が`density x displacedVolume x gravity`から変わらず、船首だけが波へ乗る時は作用点移動によるPitch Momentが出る。 |
+| 急な回転 | Pitch / Roll / Yaw開始時に投影面積依存の回転付加慣性が出るが、初回接水や一定角速度で偽のTorqueを継続しない。 |
+| 速度域 | 同じ船体でもFroude数0.38付近で造波抵抗が増え、1固定更新で前後速度を反転させない。 |
+| 船首先行と横腹先行 | 同じAuto Convex船体と同じ速度で、鋭い船首を前へした方が横腹を前へした場合より圧力抵抗が小さい。 |
+| 前進と後進 | 船首と船尾の形が非対称なら、180度向きを変えた同速度移動で抵抗が変わる。 |
+| 横滑り | 前後抵抗より横抵抗を大きくした場合、前進を過度に失わず横速度が減衰する。舷側の水没面積が増えるほど抵抗も増える。 |
+| 斜航 | 船首を進行方向から外すと左右面の圧力作用点差からYaw Momentが生じる。重心へ一括した抵抗だけにならない。 |
+| 部分浸水面 | 水面を横切る三角形は全面積ではなく、水面下へClipされた面積だけが圧力と摩擦を受ける。 |
+| 静止 | FFT表面速度と船体面速度が等しい場合は圧力抵抗と表面摩擦が発生しない。 |
+| 着水 | 空中からの入水時だけSlammingが出て、完全水没後に毎固定更新繰り返さない。 |
+| Auto Convex | AABBの角や上部構造ではなく、生成Hullの水没体積で喫水と浮心が変わる。 |
+| Pool再利用 | 再配置前の排水体積が残らず、初回固定更新で偽の着水衝撃を出さない。 |
+| Rail併用 | RailがY / Pitch / Rollを直接上書きせず、Buoyancyによる上下動と傾きが残る。 |
+
+この変更は既存BuoyancyとJolt内部Queryの強化であり、Component数、公開Runtime API Entry数、C++ Script Template数は変わらない。
+
+## 98. レールシューティングSceneの制作手順
+
+この節は専用ゲーム画面を追加する仕様ではない。通常の`Project -> Scene -> Hierarchy -> Inspector -> Play`で、汎用Componentを組み合わせる。
+
+### 98.1 プレイヤー用レール
+
+1. ProjectのScenesフォルダーから対象Sceneをダブルクリックして開く。
+2. Hierarchyでプレイヤー艇を選び、`レール移動`を追加する。
+3. `Splineを作成して接続`を押し、Scene ViewまたはSpline Editorで制御点を追加する。
+4. 長い直線だけにせず、旋回、上り下り、海面の見せ場を制御点で作る。
+5. 船体へDynamic RigidbodyとBuoyancyがある場合は`船体推進`と`浮力併用プリセット`を選ぶ。RailはXZ/Yaw、BuoyancyはY/Pitch/Rollを担当する。
+6. プレイヤー艇へ`レール速度プロファイル`を追加し、0～1の進行率へ巡航、加速、旋回減速、終端減速のキーを置く。
+7. `レール区間`を追加し、高速区間、照準制限区間、Boss接近区間へZone IDを付ける。
+
+RailSpeedProfileは連続速度、RailZoneは名前付き区間と一時上書きを担当する。同じ用途を重複設定せず、地形カーブに沿った恒常的な速度はProfile、ゲーム進行で意味を持つ区間はZoneへ置く。
+
+### 98.2 Camera
+
+1. Main Cameraへ`カメラ追従コンポーザー`を追加する。
+2. 追従対象へプレイヤー艇を指定する。
+3. 追従Offsetを船体後方上、注視Offsetを船体前方へ設定する。
+4. 対象Yaw継承を有効にし、船が曲がっても後方位置が船基準で回ることを確認する。
+5. 水面ゲームではPitch/Roll安定化を有効にし、波の傾きをCameraへ100%渡さない。
+6. プレイヤー艇へ`速度フィードバック`を追加し、最低/最高速度とFOV範囲を実ゲーム速度に合わせる。
+
+Camera Blend中はBlendを優先する。Blend完了後は追従へ戻る。Camera Shake、Horizon Stabilizer、Feedback MixerはComposerを置き換えず最終演出として合成する。
+
+### 98.3 敵Wave
+
+1. 敵Prefab TemplateへModel、Collider、Health、DamageReceiver、Team、RailMovementまたは汎用移動Componentを付ける。
+2. Object PoolへTemplateとPool容量を設定する。
+3. Wave Rootへ`ウェーブ生成`を置き、Pool、生成数、間隔、Formationを設定する。
+4. 同じWave Rootへ`生成オブジェクト設定`を追加し、Rail Path、開始進行率、個体間の進行率差、速度倍率、Teamを設定する。
+5. 編隊全体に動きが必要なら`ウェーブ移動プロファイル`を追加する。
+6. Wave Spawned Actionで敵ScriptへTargetや難易度Dataを渡す。攻撃内容はWaveSpawnerへ入れない。
+
+敵数を増やすときにHierarchyへ敵を1体ずつ子として増やさない。Pool方式ならSpawn Countだけを変更し、生成個体の共通設定はSpawnedObjectSetup、位置関係はFormation、周期運動はWaveMotionProfileへ分ける。旧Sceneの子方式は互換として残す。
+
+### 98.4 推奨構成
+
+| Hierarchy Object | 推奨Component | 責務 |
+| --- | --- | --- |
+| Player Ship | Rigidbody、Buoyancy、RailMovement、RailSpeedProfile、RailZone、SpeedFeedback | 物理船体、レール進行、可動範囲、速度演出。 |
+| Main Camera | Camera、CameraFollowComposer、CameraFeedbackMixer | 追従姿勢と最終Camera演出。 |
+| Enemy Wave Root | WaveSpawner、SpawnedObjectSetup、WaveMotionProfile | 多数生成、共通初期化、編隊運動。 |
+| Enemy Pool | ObjectPool | 実体の再利用とRuntime Reset。 |
+| Enemy Template | Renderer、Collider、Health、Team、RailMovement、C++ Script | 1体分の見た目、判定、移動、ゲーム固有行動。 |
+
+### 98.5 Play確認
+
+1. Play前にScene ViewのSpline線、進行方向、左右・上下範囲を確認する。
+2. Play後にRail StateのCurrent Speed、Target Speed、OffsetとRailZone Runtime Indexを確認する。
+3. Cameraが対象のWorld位置だけでなくYawへ追従し、曲線上でも後方に留まることを確認する。
+4. SpeedFeedbackのRuntime速度率が0～1で変化し、FOVが速度に応じて連続変化することを確認する。
+5. Spawn Countを増やし、生成個体のRail Path、Team、速度が全個体へ適用されることを確認する。
+6. Poolへ返した個体を再生成し、速度倍率、Health、State、Timer等が前回状態を引き継がないことを確認する。
+7. Sine、8の字、交互運動でFormation中心が崩れず、Rail可動範囲を越えないことを確認する。
+
+### 98.6 責務境界
+
+- RailSpeedProfileは「どの進行率で何倍速か」までを持ち、敵全滅で停止する規則は持たない。
+- RailZoneは区間とAction通知までを持ち、Boss、BGM、会話の意味は持たない。
+- CameraFollowComposerはCamera姿勢を合成し、プレイヤー入力や船体物理を変更しない。
+- SpeedFeedbackは実速度を演出値へ変換し、Rail速度やRigidbody速度を変更しない。
+- SpawnedObjectSetupは生成直後の共通設定だけを行い、敵AIや攻撃を実行しない。
+- WaveMotionProfileはRail Offsetだけを作り、Damage、Target、Weaponを持たない。
+
+この章追加後の機械照合基準はComponent 274件、Runtime API Entry 214件、C++ Script Template 24件である。
+
+## 99. 大量配置の距離最適化とレールMarker制作手順
+
+この節は専用のレールシューティング画面を作る手順ではない。通常のScene編集で、既存の敵Root、港湾Root、Effect Root、Rail移動Objectへ汎用Componentを追加する。
+
+### 99.1 DistanceActivationで遠距離Objectを休止する
+
+1. Projectの`Assets/Scenes`から対象`.scene`をダブルクリックして開く。
+2. Hierarchyで、まとめて休止したい敵編隊Rootまたは背景小物Rootを選ぶ。
+3. Inspectorの`コンポーネントを追加 -> 最適化 -> 距離アクティベーション`を選ぶ。
+4. 距離基準を未設定にすれば最高Priority Camera、明示したい場合はPlayerまたはCamera Objectを割り当てる。
+5. 有効化距離を実体が必要になる距離、無効化距離をそれより大きい値へ設定する。例: 250m / 300m。
+6. Root配下をまとめて止める場合だけ`子階層も対象`を有効にする。
+7. PlayしてCameraを往復させ、300m超で休止し、250m以下で復帰することを確認する。
+
+境界値を同じにするとCamera揺れや船の波動でActive切替が頻発しやすい。無効化距離を有効化距離より10～25%大きくする。Object Poolからまだ生成していない敵を生成する機能ではなく、既に存在するObjectのRuntime負荷を止める機能である。
+
+### 99.2 SimulationLODで遠距離処理だけを落とす
+
+1. Hierarchyで敵、群衆、演出Root等を選ぶ。
+2. `コンポーネントを追加 -> 最適化 -> シミュレーション LOD`を追加する。
+3. Medium、Far、Culledを昇順で設定する。例: 100m / 250m / 500m。
+4. Farで不要なPhysics、Script、AI、Animation、Effectだけを選ぶ。
+5. 描画モデルのLODも必要なら、Renderer側の描画LODを別途設定する。SimulationLODだけではMeshを低ポリゴンへ差し替えない。
+6. Play中にInspectorの`Runtime LOD`がNear、Medium、Far、Culledへ変わることを確認する。
+7. Nearへ戻した時、Play前に有効だったComponentだけが復帰することを確認する。
+
+MediumはC++ Scriptへ段階を渡すための区分であり、現行EngineはMediumだけを理由にComponentを停止しない。Farは選択系統を停止し、CulledはObjectを休止する。遠距離でも低頻度Scriptを残したい場合は`FarでScript停止=false`にして、`SimulationLod::GetLevel`の値から独自更新周期を変える。
+
+親Rootと子Objectへ同時に最適化Componentを置く場合、両方で`子階層も対象=true`にしない。親が編隊全体、子が個別Effectなど別の距離基準を持つ場合は、片方の階層適用をfalseにして制御範囲を分離する。
+
+### 99.3 RailEventMarkerで進行地点へ処理を置く
+
+1. RailMovementを持つPlayer、Camera Rig、移動ObjectをHierarchyで選ぶ。
+2. `コンポーネントを追加 -> 入力・イベント -> レールイベントマーカー`を追加する。
+3. `Markerを追加`し、Marker ID、0～1進行率、通過方向、1回制限、Action名を設定する。
+4. Action対象へ処理を受けるC++ Script Objectを指定する。未設定ならRail移動Object自身が対象になる。
+5. C++ Script Asset作成で`移動・イベント / レールイベント受信`Templateを選ぶ。
+6. 生成ScriptをAction対象へ追加し、Marker側Action名を`OnRailMarker`へ合わせる。
+7. 生成コードの`markerId`分岐に、ActionRelay、WaveSpawner、Camera Blend等の呼出しを書く。
+8. Playして高速通過、逆走、Loop境界でも設定方向どおり1回だけ通知されることを確認する。
+
+Markerごとに空ObjectをHierarchyへ作らない。1つのRailEventMarker内部へ可変Entryとして保存する。視覚的な位置は`進行率 x Rail全長`で決まり、制御点を編集してRail長が変わっても正規化位置を維持する。
+
+### 99.4 推奨する配置単位
+
+| 対象 | Component | 推奨範囲 |
+| --- | --- | --- |
+| 敵編隊Root | DistanceActivation + SimulationLOD | 編隊全体の実体化と、近距離だけのAI / Animation / Physics。 |
+| 港湾・岩礁小物Root | DistanceActivation | Cameraから遠い静的小物をまとめて休止する。 |
+| 遠距離Effect Root | SimulationLOD | FarでParticle / VFX、CulledでRootを止める。 |
+| Player Rail Object | RailMovement + RailSpeedProfile + RailZone + RailEventMarker | 連続速度、区間状態、地点通過Actionを分離する。 |
+| Action受信Object | C++ Script / ActionRelay / ActionSequence | Marker IDをゲーム規則へ変換する。 |
+
+DistanceActivationとSimulationLODは同じObjectへ併用できる。最終実体状態はPlay開始時Active、距離Activation許可、LODがCulled未満のすべてを満たす時だけActiveになる。DistanceActivationを300m、SimulationLOD Culledを500mにした場合は300m側が先に休止するため、意図した最短境界を確認する。
+
+### 99.5 Play中の確認順
+
+1. Game ViewのFPSだけでなく、HierarchyのActive、InspectorのRuntime LOD、Physics挙動を同時に確認する。
+2. NearからFarへ移動し、AI、Animation、Effect、Physicsのうち選択した系統だけが止まることを確認する。
+3. Culled後にCameraを戻し、元のActive状態とPool Item状態へ復帰することを確認する。
+4. Railを高速度にしてMarkerを1Frameで飛び越えてもActionが欠落しないことを確認する。
+5. Loop RailとReverseで、順方向のみ / 逆方向のみが混線しないことを確認する。
+6. Play停止後、最適化がScene編集値へ書き戻されず、Marker通知済み表示がRuntime状態として消えることを確認する。
+
+### 99.6 責務境界
+
+- DistanceActivationは既存ObjectのActiveとPhysics実行を距離で切り替え、Prefab生成、敵状態の仮想化、描画LOD Asset生成を行わない。
+- SimulationLODは距離段階と実行系統停止を担当し、AIの判断内容、Animation品質、Mesh LOD段数を決めない。
+- RailEventMarkerは進行率通過とAction通知だけを担当し、Wave、Boss、BGM、会話というゲーム固有意味を持たない。
+- レールイベント受信TemplateはMarker IDを受ける開始コードであり、ステージ進行をEngine Managerへ固定しない。
+- シミュレーションLOD参照TemplateはRuntime Levelを読むだけで、EngineのActive制御をScript側へ重複実装しない。
+
+この節追加後の現行機械照合基準はComponent 277件、Runtime API Entry 216件、C++ Script Template 26件である。
+
+## 100. 遠距離Waveを実体化しない制作手順
+
+### 100.1 距離でWaveを開始する
+
+1. 敵Prefab TemplateをObject Poolへ登録し、同時出現数に合わせて初期容量と最大容量を設定する。
+2. Wave RootへWaveSpawnerを追加し、生成元を`ObjectPool 生成`にする。
+3. 生成基準位置へ敵が現れる地点を指定する。未設定ならWave RootのTransformを使う。
+4. 開始条件を`距離`へ変更する。
+5. 距離 SourceへPlayer ShipまたはPlayer Camera Rigを指定する。
+6. 開始距離を、敵が必要になる少し手前へ設定する。例: 描画距離500mなら開始距離450m。
+7. 生成数と編隊を設定し、`1Frame最大生成数`を4～16程度から調整する。
+8. Play開始直後はPool貸出個体がなく、Source接近後だけ複数Frameへ分散して生成されることを確認する。
+
+Wave RootをPlayerの子にしない。距離基準点がPlayerと一緒に動くと距離が変化しない。生成地点と接近Sourceを別Objectにする。
+
+### 100.2 Rail進行率、距離、外部開始の選択
+
+| 開始方式 | 適する用途 | 必須設定 |
+| --- | --- | --- |
+| Play開始 | Title演出直後など必ず即開始。 | なし。 |
+| RailFollower進行率 | 経路進行へ厳密に同期する敵配置。 | Rail Sourceと0～1進行率。 |
+| 距離 | 分岐Rail、自由Camera、広いSceneで接近時だけ必要な敵。 | 距離 Source、生成地点、開始距離。 |
+| 外部開始 | 敵全滅、会話終了、Button、任意ゲーム条件。 | C++ Scriptから`WaveSpawner::Start()`。 |
+
+ゲーム条件をWaveSpawner内部へ追加しない。条件判定はGenericCondition、RailEventMarker、C++ Script等で行い、外部開始APIへ接続する。
+
+### 100.3 生成Spikeを確認する
+
+1. 生成間隔を0、生成数を100、1Frame最大生成数を8にする。
+2. 距離条件を成立させる。
+3. 1Frameで100体出ず、最大8体ずつ生成されることをHierarchyと生成Actionで確認する。
+4. Pool容量不足時に処理が停止せず、空きができた後に残りが生成されることを確認する。
+5. 全生成完了Actionと全撃破Actionが別タイミングで一度だけ発生することを確認する。
+6. 実行中に外部Startしてfalseになり、既存敵の追跡が失われないことを確認する。
+
+### 100.4 Script Update負荷を落とす
+
+1. 多数の敵Rootまたは個体へSimulationLODを追加する。
+2. Medium / Far / Culled距離を設定する。
+3. Medium Script更新秒を`0.033`、Far Script更新秒を`0.2`から試す。
+4. Farでも低頻度状態処理を残すなら`FarでScript停止=false`、完全停止するならtrueにする。
+5. C++ Scriptの移動量、Timer、補間が受け取ったdeltaTimeを使用していることを確認する。
+6. BindAction入力とRail Marker通知がMedium間隔待ちにならないことを確認する。
+
+毎Frame必要なCamera追従やPlayer照準へ大きい更新秒を設定しない。敵の索敵、遠距離状態監視、環境小物Scriptなど、低頻度でも見た目や操作へ影響しない対象へ使う。
+
+### 100.5 組合せ例
+
+| Object | 設定 | 結果 |
+| --- | --- | --- |
+| Future Wave Root | WaveSpawner距離開始450m、最大8体/Frame | 接近前は個体を貸し出さず、接近後に分散生成。 |
+| Spawned Enemy | SimulationLOD 120/300/600m | MediumでScript 30Hz、Farで5Hzまたは停止、600mで休止。 |
+| Enemy Pool | 初期32、最大128、拡張可 | 同時出現数だけ実体を保持して再利用。 |
+| Player Rail | RailEventMarker | 厳密な演出地点は距離ではなく進行率Actionを使う。 |
+
+この節追加後の現行機械照合基準はComponent 277件、Runtime API Entry 218件、C++ Script Template 26件である。

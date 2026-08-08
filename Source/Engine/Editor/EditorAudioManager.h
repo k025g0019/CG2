@@ -74,6 +74,8 @@ public:
 	void Stop(int32_t gameObjectId);  // 指定 AudioSource が鳴らしている Voice だけを停止する。
 	void Draw();
 	bool Play(int32_t gameObjectId);  // AudioSource をイベントから一度再生する。
+	void SetPaused(bool isPaused);  // GamePause中は再生位置を維持したまま全Voiceを停止・再開する
+	bool IsPaused() const;  // Audio Pause状態を返す
 	void SetMasterVolume(float volume);  // 全 AudioSource へ掛ける最終音量を設定する。
 	float GetMasterVolume() const;  // 現在の Master 音量を返す。
 	void SetBusVolume(EditorAudioBus audioBus, float volume);  // SFX / BGM / Ambience / UI の音量を設定する。
@@ -95,6 +97,7 @@ private:
 		1.0f};
 	float masterVolume_ = 1.0f;
 	float playbackClock_ = 0.0f;
+	bool isPaused_ = false;  // Stopとは異なりVoiceと再生位置を保持する
 
 	AudioClip* LoadClip(const std::string& path);
 	AudioClip* CreateBuiltinClip(const std::string& path);  // builtin:// URI の軽量 PCM 音源を生成する。

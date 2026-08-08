@@ -3,8 +3,20 @@
 #include "EditorScriptManager.h"
 
 #include "EditorAssetUtility.h"
+#include "EditorActionSequenceManager.h"
+#include "EditorCameraEffectManager.h"
 #include "EditorComponentUtility.h"
+#include "EditorDamageManager.h"
+#include "EditorObjectPoolManager.h"
+#include "EditorOceanSystem.h"
+#include "EditorRailBranchManager.h"
+#include "EditorRuntimePropertyManager.h"
+#include "EditorSaveManager.h"
 #include "EditorSharedState.h"
+#include "EditorTargetingManager.h"
+#include "EditorWeaponManager.h"
+#include "EditorWeaponLoadoutManager.h"
+#include "EditorWaveSpawnerManager.h"
 #include "StringUtility.h"
 
 #include <Windows.h>
@@ -12,6 +24,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <functional>
 #include <sstream>
 
@@ -88,6 +101,17 @@ namespace {
 		editorVector.y = value.y;
 		editorVector.z = value.z;
 		return editorVector;
+	}
+
+	EditorScriptOceanSegmentHit ToScriptOceanSegmentHit(const EditorOceanSegmentHit& sourceHit) {
+		EditorScriptOceanSegmentHit scriptHit{};
+		scriptHit.oceanGameObjectId = sourceHit.oceanGameObjectId;
+		scriptHit.point = ToScriptVector3(sourceHit.position);
+		scriptHit.normal = ToScriptVector3(sourceHit.normal);
+		scriptHit.surfaceVelocity = ToScriptVector3(sourceHit.surfaceVelocity);
+		scriptHit.distance = sourceHit.distance;
+		scriptHit.normalizedDistance = sourceHit.normalizedDistance;
+		return scriptHit;
 	}
 
 	void CopyStringToFixedBuffer(const std::string& sourceText, char* destination, size_t destinationSize) {
@@ -245,7 +269,8 @@ void EditorScriptManager::Initialize(
 	inputActionActiveStates_.clear();
 	missingActionWarnings_.clear();
 	queuedUiEvents_.clear();
-	requestedScenePath_.clear();
+	requestedSceneLoad_ = {};
+	requestedSceneUnloadPath_.clear();
 	currentKeyState_.fill(0);
 	previousKeyState_.fill(0);
 	hotReloadCheckFrameTimer_ = 0;
@@ -258,6 +283,67 @@ void EditorScriptManager::Initialize(
 void EditorScriptManager::SetRailMovementManager(
 	EditorRailMovementManager* railMovementManager) {
 	railMovementManager_ = railMovementManager;
+}
+
+void EditorScriptManager::SetGameplayManagers(
+	EditorTargetingManager* targetingManager,
+	EditorDamageManager* damageManager,
+	EditorObjectPoolManager* objectPoolManager,
+	EditorWeaponManager* weaponManager,
+	EditorCameraEffectManager* cameraEffectManager,
+	EditorRailBranchManager* railBranchManager) {
+	targetingManager_ = targetingManager;
+	damageManager_ = damageManager;
+	objectPoolManager_ = objectPoolManager;
+	weaponManager_ = weaponManager;
+	cameraEffectManager_ = cameraEffectManager;
+	railBranchManager_ = railBranchManager;
+}
+
+void EditorScriptManager::SetWorkflowManagers(
+	EditorActionSequenceManager* actionSequenceManager,
+	EditorSaveManager* saveManager) {
+	actionSequenceManager_ = actionSequenceManager;
+	saveManager_ = saveManager;
+}
+
+void EditorScriptManager::SetReusableGameplayManagers(
+	EditorWeaponLoadoutManager* weaponLoadoutManager,
+	EditorTargetingManager* targetingManager,
+	EditorRuntimePropertyManager* runtimePropertyManager,
+	EditorWaveSpawnerManager* waveSpawnerManager) {
+	weaponLoadoutManager_ = weaponLoadoutManager;
+	targetingManager_ = targetingManager;
+	runtimePropertyManager_ = runtimePropertyManager;
+	waveSpawnerManager_ = waveSpawnerManager;
+}
+
+void EditorScriptManager::SetSceneRuntimeState(
+	float loadProgress,
+	bool isLoading,
+	const std::vector<std::string>& loadedScenePaths) {
+	sceneLoadProgress_ = (std::clamp)(loadProgress, 0.0f, 1.0f);
+	isSceneLoading_ = isLoading;
+	loadedScenePaths_.clear();
+	loadedScenePaths_.reserve(loadedScenePaths.size());
+
+	for (const std::string& scenePath : loadedScenePaths) {
+		loadedScenePaths_.push_back(
+			std::filesystem::path(scenePath).lexically_normal().generic_string());
+	}
+}
+
+bool EditorScriptManager::IsSceneRuntimeLoading() const {
+	return isSceneLoading_;
+}
+
+bool EditorScriptManager::IsSceneRuntimeLoaded(const std::string& scenePath) const {
+	const std::string normalizedScenePath =
+		std::filesystem::path(scenePath).lexically_normal().generic_string();
+	return std::find(
+		loadedScenePaths_.begin(),
+		loadedScenePaths_.end(),
+		normalizedScenePath) != loadedScenePaths_.end();
 }
 
 void EditorScriptManager::Start() {
@@ -277,6 +363,90 @@ void EditorScriptManager::Start() {
 	}
 
 	isStarted_ = true;
+}
+
+void EditorScriptManager::RegisterRuntimeHierarchy(int32_t rootGameObjectId) {
+	if (!isStarted_ || editorScene_ == nullptr) {
+		return;
+	}
+
+	std::vector<int32_t> pendingGameObjectIds{rootGameObjectId};
+
+	while (!pendingGameObjectIds.empty()) {
+		const int32_t gameObjectId = pendingGameObjectIds.back();
+		pendingGameObjectIds.pop_back();
+		EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+
+		if (gameObject == nullptr) {
+			continue;
+		}
+
+		for (size_t componentIndex = 0U; componentIndex < gameObject->components.size(); componentIndex++) {
+			const EditorComponent& component = gameObject->components[componentIndex];
+			const bool isScriptComponent =
+				component.type == EditorComponentType::Script ||
+				component.type == EditorComponentType::MonoBehaviour;
+
+			if (!isScriptComponent || !component.isActive || component.assetPath.empty()) {
+				continue;
+			}
+
+			const bool isDllPath =
+				component.assetPath.size() >= 4U &&
+				component.assetPath.substr(component.assetPath.size() - 4U) == ".dll";
+
+			if (!isDllPath) {
+				continue;
+			}
+
+			bool hasBinding = false;
+			const auto bindingIndicesIterator = scriptBindingIndicesByGameObjectId_.find(gameObjectId);
+
+			if (bindingIndicesIterator != scriptBindingIndicesByGameObjectId_.end()) {
+				for (const size_t bindingIndex : bindingIndicesIterator->second) {
+					if (bindingIndex < scriptBindings_.size() &&
+						scriptBindings_[bindingIndex].componentIndex == componentIndex) {
+						hasBinding = true;
+						break;
+					}
+				}
+			}
+
+			if (hasBinding) {
+				continue;
+			}
+
+			ScriptBinding scriptBinding{};
+			scriptBinding.gameObjectId = gameObjectId;
+			scriptBinding.componentIndex = componentIndex;
+			scriptBinding.componentType = component.type;
+			scriptBinding.dllPath = component.assetPath;
+			scriptBindings_.push_back(scriptBinding);
+			const size_t bindingIndex = scriptBindings_.size() - 1U;
+			scriptBindingIndicesByGameObjectId_[gameObjectId].push_back(bindingIndex);
+
+			ScriptModule* scriptModule = FindModule(component.assetPath);
+
+			if (scriptModule == nullptr || !scriptModule->isLoaded) {
+				LoadModule(component.assetPath);
+				scriptModule = FindModule(component.assetPath);
+			}
+			else if (std::find(
+				scriptModule->attachedGameObjectIds.begin(),
+				scriptModule->attachedGameObjectIds.end(),
+				gameObjectId) == scriptModule->attachedGameObjectIds.end()) {
+				scriptModule->attachedGameObjectIds.push_back(gameObjectId);
+			}
+
+			if (scriptModule != nullptr) {
+				StartBindingIfNeeded(scriptBindings_[bindingIndex], *scriptModule);
+			}
+		}
+
+		for (const int32_t childGameObjectId : gameObject->children) {
+			pendingGameObjectIds.push_back(childGameObjectId);
+		}
+	}
 }
 
 void EditorScriptManager::Update(const uint8_t* keyState, float deltaTime) {
@@ -342,11 +512,49 @@ void EditorScriptManager::Update(const uint8_t* keyState, float deltaTime) {
 		ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
 		if (scriptModule == nullptr || !scriptModule->isLoaded ||
 			!scriptBinding.hasStarted || !IsScriptBindingActive(scriptBinding)) {
+			scriptBinding.updateIntervalRemaining = 0.0f;
+			scriptBinding.accumulatedUpdateDeltaTime = 0.0f;
 			continue;
 		}
 
-		if (scriptModule->updateFunction != nullptr) {
-			scriptModule->updateFunction(scriptBinding.gameObjectId, deltaTime);
+		float scriptUpdateInterval = 0.0f;
+		const EditorGameObject* gameObject = editorScene_->FindGameObject(scriptBinding.gameObjectId);
+		const EditorComponent* simulationLod = gameObject != nullptr
+			? EditorComponentUtility::FindComponent(*gameObject, EditorComponentType::SimulationLOD)
+			: nullptr;
+
+		if (simulationLod != nullptr && simulationLod->isActive) {
+			if (simulationLod->simulationLodRuntimeLevel == 1) {
+				scriptUpdateInterval = (std::max)(
+					simulationLod->simulationLodMediumScriptInterval,
+					0.0f);
+			}
+			else if (simulationLod->simulationLodRuntimeLevel >= 2) {
+				scriptUpdateInterval = (std::max)(
+					simulationLod->simulationLodFarScriptInterval,
+					0.0f);
+			}
+		}
+
+		scriptBinding.accumulatedUpdateDeltaTime += deltaTime;
+		scriptBinding.updateIntervalRemaining -= deltaTime;
+
+		if (scriptUpdateInterval > 0.0f && scriptBinding.updateIntervalRemaining > 0.0f) {
+			continue;
+		}
+
+		const float scriptDeltaTime = scriptUpdateInterval > 0.0f
+			? scriptBinding.accumulatedUpdateDeltaTime
+			: deltaTime;
+		scriptBinding.accumulatedUpdateDeltaTime = 0.0f;
+		scriptBinding.updateIntervalRemaining = scriptUpdateInterval;
+
+		if (UsesInstanceApi(*scriptModule) && scriptBinding.instance != nullptr &&
+			scriptModule->updateInstanceFunction != nullptr) {
+			scriptModule->updateInstanceFunction(scriptBinding.instance, scriptDeltaTime);
+		}
+		else if (!UsesInstanceApi(*scriptModule) && scriptModule->updateFunction != nullptr) {
+			scriptModule->updateFunction(scriptBinding.gameObjectId, scriptDeltaTime);
 		}
 
 		if (shouldSynchronizeFields) {
@@ -392,8 +600,15 @@ void EditorScriptManager::FixedUpdate(float fixedDeltaTime) {
 
 			ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
 
-			if (scriptModule != nullptr && scriptModule->isLoaded &&
-				scriptModule->physicsEventFunction != nullptr) {
+			if (scriptModule == nullptr || !scriptModule->isLoaded) {
+				continue;
+			}
+
+			if (UsesInstanceApi(*scriptModule) && scriptBinding.instance != nullptr &&
+				scriptModule->physicsEventInstanceFunction != nullptr) {
+				scriptModule->physicsEventInstanceFunction(scriptBinding.instance, &scriptPhysicsEvent);
+			}
+			else if (!UsesInstanceApi(*scriptModule) && scriptModule->physicsEventFunction != nullptr) {
 				scriptModule->physicsEventFunction(gameObjectId, &scriptPhysicsEvent);
 			}
 		}
@@ -407,7 +622,11 @@ void EditorScriptManager::FixedUpdate(float fixedDeltaTime) {
 			continue;
 		}
 
-		if (scriptModule->fixedUpdateFunction != nullptr) {
+		if (UsesInstanceApi(*scriptModule) && scriptBinding.instance != nullptr &&
+			scriptModule->fixedUpdateInstanceFunction != nullptr) {
+			scriptModule->fixedUpdateInstanceFunction(scriptBinding.instance, fixedDeltaTime);
+		}
+		else if (!UsesInstanceApi(*scriptModule) && scriptModule->fixedUpdateFunction != nullptr) {
 			scriptModule->fixedUpdateFunction(scriptBinding.gameObjectId, fixedDeltaTime);
 		}
 	}
@@ -442,9 +661,7 @@ void EditorScriptManager::DispatchAnimationEvent(
 		}
 
 		ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
-		if (scriptModule == nullptr ||
-			!scriptModule->isLoaded ||
-			scriptModule->animationEventFunction == nullptr) {
+		if (scriptModule == nullptr || !scriptModule->isLoaded) {
 			continue;
 		}
 
@@ -454,7 +671,14 @@ void EditorScriptManager::DispatchAnimationEvent(
 			eventTime,
 			{localOffset.x, localOffset.y, localOffset.z},
 		};
-		scriptModule->animationEventFunction(gameObjectId, &scriptAnimationEvent);
+
+		if (UsesInstanceApi(*scriptModule) && scriptBinding.instance != nullptr &&
+			scriptModule->animationEventInstanceFunction != nullptr) {
+			scriptModule->animationEventInstanceFunction(scriptBinding.instance, &scriptAnimationEvent);
+		}
+		else if (!UsesInstanceApi(*scriptModule) && scriptModule->animationEventFunction != nullptr) {
+			scriptModule->animationEventFunction(gameObjectId, &scriptAnimationEvent);
+		}
 	}
 }
 
@@ -475,7 +699,8 @@ void EditorScriptManager::Stop() {
 	inputActionActiveStates_.clear();
 	missingActionWarnings_.clear();
 	queuedUiEvents_.clear();
-	requestedScenePath_.clear();
+	requestedSceneLoad_ = {};
+	requestedSceneUnloadPath_.clear();
 	currentKeyState_.fill(0);
 	previousKeyState_.fill(0);
 	hotReloadCheckFrameTimer_ = 0;
@@ -686,17 +911,59 @@ void EditorScriptManager::QueueUiEvent(
 	}
 }
 
+bool EditorScriptManager::QueueActionPayload(
+	int32_t gameObjectId,
+	const std::string& functionName,
+	const EditorScriptActionPayload& payload) {
+	const size_t previousCount = queuedUiEvents_.size();
+	QueueActionEvent(gameObjectId, functionName);
+
+	if (queuedUiEvents_.size() > previousCount) {
+		queuedUiEvents_.back().payload = payload;
+		return true;
+	}
+
+	return false;
+}
+
 bool EditorScriptManager::RequestSceneLoad(const std::string& scenePath) {
 	return RequestSceneLoadInternal(scenePath);
 }
 
-bool EditorScriptManager::ConsumeSceneLoadRequest(std::string& scenePath) {
-	if (requestedScenePath_.empty()) {
+bool EditorScriptManager::RequestSceneLoadAsync(const std::string& scenePath, bool isAdditive) {
+	return RequestSceneLoadInternal(scenePath, isAdditive, true);
+}
+
+bool EditorScriptManager::RequestSceneUnload(const std::string& scenePath) {
+	if (scenePath.empty()) {
 		return false;
 	}
 
-	scenePath.swap(requestedScenePath_);
-	requestedScenePath_.clear();
+	requestedSceneUnloadPath_ = std::filesystem::path(scenePath).generic_string();
+	return true;
+}
+
+bool EditorScriptManager::SetGameObjectActive(int32_t gameObjectId, bool isActive) {
+	return SetGameObjectActiveInternal(gameObjectId, isActive);
+}
+
+bool EditorScriptManager::ConsumeSceneLoadRequest(EditorSceneLoadRequest& sceneLoadRequest) {
+	if (requestedSceneLoad_.scenePath.empty()) {
+		return false;
+	}
+
+	sceneLoadRequest = requestedSceneLoad_;
+	requestedSceneLoad_ = {};
+	return true;
+}
+
+bool EditorScriptManager::ConsumeSceneUnloadRequest(std::string& scenePath) {
+	if (requestedSceneUnloadPath_.empty()) {
+		return false;
+	}
+
+	scenePath.swap(requestedSceneUnloadPath_);
+	requestedSceneUnloadPath_.clear();
 	return true;
 }
 
@@ -826,6 +1093,17 @@ bool EditorScriptManager::ScriptAddForceBridge(int32_t gameObjectId, const Edito
 	return gActiveScriptManager->AddForceInternal(gameObjectId, *force);
 }
 
+bool EditorScriptManager::ScriptAddForceAtPositionBridge(
+	int32_t gameObjectId,
+	const EditorScriptVector3* force,
+	const EditorScriptVector3* worldPosition) {
+	if (gActiveScriptManager == nullptr || force == nullptr || worldPosition == nullptr) {
+		return false;
+	}
+
+	return gActiveScriptManager->AddForceAtPositionInternal(gameObjectId, *force, *worldPosition);
+}
+
 bool EditorScriptManager::ScriptAddImpulseBridge(int32_t gameObjectId, const EditorScriptVector3* impulse) {
 	if (gActiveScriptManager == nullptr || impulse == nullptr) {
 		return false;
@@ -840,6 +1118,61 @@ bool EditorScriptManager::ScriptAddTorqueBridge(int32_t gameObjectId, const Edit
 	}
 
 	return gActiveScriptManager->AddTorqueInternal(gameObjectId, *torque);
+}
+
+int32_t EditorScriptManager::ScriptAddExplosionImpulseBridge(
+	const EditorScriptVector3* center,
+	float radius,
+	float impulseStrength,
+	float upwardModifier) {
+	if (gActiveScriptManager == nullptr || center == nullptr) {
+		return 0;
+	}
+
+	return gActiveScriptManager->AddExplosionImpulseInternal(
+		*center,
+		radius,
+		impulseStrength,
+		upwardModifier);
+}
+
+bool EditorScriptManager::ScriptAttachRopeBridge(
+	int32_t ownerGameObjectId,
+	int32_t targetGameObjectId,
+	const EditorScriptVector3* ownerLocalAnchor,
+	const EditorScriptVector3* targetAnchor,
+	float maximumLength) {
+	if (gActiveScriptManager == nullptr || ownerLocalAnchor == nullptr || targetAnchor == nullptr) {
+		return false;
+	}
+
+	return gActiveScriptManager->AttachRopeInternal(
+		ownerGameObjectId,
+		targetGameObjectId,
+		*ownerLocalAnchor,
+		*targetAnchor,
+		maximumLength);
+}
+
+bool EditorScriptManager::ScriptDetachRopeBridge(int32_t ownerGameObjectId) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->DetachRopeInternal(ownerGameObjectId);
+}
+
+bool EditorScriptManager::ScriptSetRopeLengthBridge(int32_t ownerGameObjectId, float maximumLength) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->SetRopeLengthInternal(ownerGameObjectId, maximumLength);
+}
+
+bool EditorScriptManager::ScriptRepairRopeBridge(int32_t ownerGameObjectId) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->RepairRopeInternal(ownerGameObjectId);
+}
+
+EditorScriptRopeState EditorScriptManager::ScriptGetRopeStateBridge(int32_t ownerGameObjectId) {
+	return gActiveScriptManager != nullptr
+		? gActiveScriptManager->GetRopeStateInternal(ownerGameObjectId)
+		: EditorScriptRopeState{};
 }
 
 EditorScriptAiSensorState EditorScriptManager::ScriptGetAiSensorStateBridge(int32_t gameObjectId, int32_t sensorKind) {
@@ -1088,6 +1421,21 @@ bool EditorScriptManager::ScriptIsGameObjectActiveBridge(int32_t gameObjectId) {
 		gActiveScriptManager->IsGameObjectActiveInternal(gameObjectId);
 }
 
+bool EditorScriptManager::ScriptSetComponentActiveBridge(
+	int32_t gameObjectId,
+	const char* componentTypeName,
+	bool isActive) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->SetComponentActiveInternal(gameObjectId, componentTypeName, isActive);
+}
+
+bool EditorScriptManager::ScriptIsComponentActiveBridge(
+	int32_t gameObjectId,
+	const char* componentTypeName) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->IsComponentActiveInternal(gameObjectId, componentTypeName);
+}
+
 bool EditorScriptManager::ScriptLoadSceneBridge(const char* scenePath) {
 	return gActiveScriptManager != nullptr && scenePath != nullptr &&
 		gActiveScriptManager->RequestSceneLoadInternal(scenePath);
@@ -1136,6 +1484,45 @@ bool EditorScriptManager::ScriptSetRailPathBridge(
 			gameObjectId,
 			railPathGameObjectId,
 			preservesProgress);
+}
+
+bool EditorScriptManager::ScriptSetRailMoveInputBridge(
+	int32_t gameObjectId,
+	const EditorScriptVector2* moveInput) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->railMovementManager_ != nullptr &&
+		moveInput != nullptr &&
+		gActiveScriptManager->railMovementManager_->SetMoveInput(
+			gameObjectId,
+			EditorScriptVector2{moveInput->x, moveInput->y});
+}
+
+bool EditorScriptManager::ScriptSetRailOffsetBridge(
+	int32_t gameObjectId,
+	const EditorScriptVector2* offset) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->railMovementManager_ != nullptr &&
+		offset != nullptr &&
+		gActiveScriptManager->railMovementManager_->SetOffset(
+			gameObjectId,
+			EditorScriptVector2{offset->x, offset->y});
+}
+
+bool EditorScriptManager::ScriptGetRailOffsetBridge(
+	int32_t gameObjectId,
+	EditorScriptVector2* offset) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->railMovementManager_ == nullptr ||
+		offset == nullptr) {
+		return false;
+	}
+
+	EditorScriptVector2 editorOffset{};
+
+	if (!gActiveScriptManager->railMovementManager_->GetOffset(gameObjectId, editorOffset)) {
+		return false;
+	}
+
+	offset->x = editorOffset.x;
+	offset->y = editorOffset.y;
+	return true;
 }
 
 bool EditorScriptManager::ScriptGetRailNormalizedProgressBridge(
@@ -1203,6 +1590,1685 @@ bool EditorScriptManager::ScriptConsumeRailEndReachedBridge(int32_t gameObjectId
 		gActiveScriptManager->railMovementManager_->ConsumeEndReached(gameObjectId);
 }
 
+bool EditorScriptManager::ScriptViewportPointToRayBridge(
+	const EditorScriptVector2* normalizedPosition,
+	EditorScriptRay* ray) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->targetingManager_ == nullptr ||
+		normalizedPosition == nullptr || ray == nullptr) {
+		return false;
+	}
+
+	EditorTargetingManager::AimRay aimRay{};
+
+	if (!gActiveScriptManager->targetingManager_->ViewportPointToRay(*normalizedPosition, aimRay)) {
+		return false;
+	}
+
+	ray->origin = ToScriptVector3(aimRay.origin);
+	ray->direction = ToScriptVector3(aimRay.direction);
+	return true;
+}
+
+bool EditorScriptManager::ScriptGetAimRayBridge(
+	int32_t screenAimGameObjectId,
+	EditorScriptRay* ray) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->targetingManager_ == nullptr ||
+		ray == nullptr) {
+		return false;
+	}
+
+	EditorTargetingManager::AimRay aimRay{};
+
+	if (!gActiveScriptManager->targetingManager_->GetAimRay(screenAimGameObjectId, aimRay)) {
+		return false;
+	}
+
+	ray->origin = ToScriptVector3(aimRay.origin);
+	ray->direction = ToScriptVector3(aimRay.direction);
+	return true;
+}
+
+bool EditorScriptManager::ScriptPhysicsRaycastBridge(
+	const EditorScriptRay* ray,
+	float distance,
+	EditorScriptPhysicsHit* hit) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->physicsManager_ == nullptr ||
+		ray == nullptr || hit == nullptr) {
+		return false;
+	}
+
+	EditorJoltPhysicsManager::PhysicsHit physicsHit{};
+	const bool hasHit = gActiveScriptManager->physicsManager_->Raycast(
+		ToEditorVector3(ray->origin),
+		ToEditorVector3(ray->direction),
+		distance,
+		physicsHit);
+
+	if (!hasHit) {
+		return false;
+	}
+
+	hit->gameObjectId = physicsHit.gameObjectId;
+	hit->point = ToScriptVector3(physicsHit.point);
+	hit->normal = ToScriptVector3(physicsHit.normal);
+	hit->distance = physicsHit.distance;
+	hit->isTrigger = physicsHit.isTrigger;
+	return true;
+}
+
+bool EditorScriptManager::ScriptPhysicsSphereCastBridge(
+	const EditorScriptRay* ray,
+	float radius,
+	float distance,
+	EditorScriptPhysicsHit* hit) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->physicsManager_ == nullptr ||
+		ray == nullptr || hit == nullptr) {
+		return false;
+	}
+
+	EditorJoltPhysicsManager::PhysicsHit physicsHit{};
+	const bool hasHit = gActiveScriptManager->physicsManager_->SphereCast(
+		ToEditorVector3(ray->origin),
+		radius,
+		ToEditorVector3(ray->direction),
+		distance,
+		physicsHit);
+
+	if (!hasHit) {
+		return false;
+	}
+
+	hit->gameObjectId = physicsHit.gameObjectId;
+	hit->point = ToScriptVector3(physicsHit.point);
+	hit->normal = ToScriptVector3(physicsHit.normal);
+	hit->distance = physicsHit.distance;
+	hit->isTrigger = physicsHit.isTrigger;
+	return true;
+}
+
+bool EditorScriptManager::ScriptPhysicsCapsuleCastBridge(
+	const EditorScriptRay* ray,
+	float radius,
+	float height,
+	float distance,
+	EditorScriptPhysicsHit* hit) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->physicsManager_ == nullptr ||
+		ray == nullptr || hit == nullptr) {
+		return false;
+	}
+
+	EditorJoltPhysicsManager::PhysicsHit physicsHit{};
+	const bool hasHit = gActiveScriptManager->physicsManager_->CapsuleCast(
+		ToEditorVector3(ray->origin),
+		radius,
+		height,
+		ToEditorVector3(ray->direction),
+		distance,
+		physicsHit);
+
+	if (!hasHit) {
+		return false;
+	}
+
+	hit->gameObjectId = physicsHit.gameObjectId;
+	hit->point = ToScriptVector3(physicsHit.point);
+	hit->normal = ToScriptVector3(physicsHit.normal);
+	hit->distance = physicsHit.distance;
+	hit->isTrigger = physicsHit.isTrigger;
+	return true;
+}
+
+bool EditorScriptManager::ScriptSampleOceanSurfaceBridge(
+	int32_t queryGameObjectId,
+	const EditorScriptVector3* worldPosition,
+	EditorScriptOceanSurfaceHit* hit) {
+	return ScriptSampleOceanSurfaceDetailedBridge(
+		queryGameObjectId,
+		worldPosition,
+		hit,
+		nullptr);
+}
+
+bool EditorScriptManager::ScriptSampleOceanSurfaceDetailedBridge(
+	int32_t queryGameObjectId,
+	const EditorScriptVector3* worldPosition,
+	EditorScriptOceanSurfaceHit* hit,
+	float* foam) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->editorScene_ == nullptr ||
+		worldPosition == nullptr || hit == nullptr) {
+		return false;
+	}
+
+	const uint64_t surfaceSampleKey = queryGameObjectId >= 0
+		? static_cast<uint64_t>(static_cast<uint32_t>(queryGameObjectId))
+		: 0xffffffffull;
+	const Vector3 queryPosition = ToEditorVector3(*worldPosition);
+	EditorOceanSurfaceSample surfaceSample{};
+
+	if (!SampleEditorOceanSurface(
+			*gActiveScriptManager->editorScene_,
+			-1,
+			queryPosition,
+			surfaceSampleKey,
+			GetEditorOceanElapsedTime(),
+			surfaceSample)) {
+		return false;
+	}
+
+	hit->oceanGameObjectId = surfaceSample.oceanGameObjectId;
+	hit->point = ToScriptVector3(surfaceSample.position);
+	hit->normal = ToScriptVector3(surfaceSample.normal);
+	hit->velocity = ToScriptVector3(surfaceSample.velocity);
+	hit->signedDistance = Dot(
+		Subtract(queryPosition, surfaceSample.position),
+		surfaceSample.normal);
+
+	if (foam != nullptr) {
+		*foam = surfaceSample.foam;
+	}
+
+	return true;
+}
+
+bool EditorScriptManager::ScriptGetWaterSurfaceFoamBridge(
+	int32_t gameObjectId,
+	float* foam) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		foam != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->GetWaterSurfaceFoam(
+			gameObjectId,
+			*foam);
+}
+
+bool EditorScriptManager::ScriptGetOceanProbeFoamBridge(
+	int32_t gameObjectId,
+	int32_t probeIndex,
+	float* foam) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		foam != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->GetOceanProbeFoam(
+			gameObjectId,
+			probeIndex,
+			*foam);
+}
+
+bool EditorScriptManager::ScriptApplyDamageBridge(
+	int32_t targetGameObjectId,
+	float damage,
+	int32_t sourceGameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->damageManager_ != nullptr &&
+		gActiveScriptManager->damageManager_->ApplyDamage(
+			targetGameObjectId,
+			damage,
+			sourceGameObjectId);
+}
+
+bool EditorScriptManager::ScriptApplyDamageContextBridge(EditorScriptDamageContext* damageContext) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->damageManager_ != nullptr &&
+		damageContext != nullptr &&
+		gActiveScriptManager->damageManager_->ApplyDamage(*damageContext);
+}
+
+bool EditorScriptManager::ScriptGetLastDamageContextBridge(
+	int32_t targetGameObjectId,
+	EditorScriptDamageContext* damageContext) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->damageManager_ != nullptr &&
+		damageContext != nullptr &&
+		gActiveScriptManager->damageManager_->GetLastDamageContext(
+			targetGameObjectId,
+			*damageContext);
+}
+
+bool EditorScriptManager::ScriptGetHealthBridge(
+	int32_t gameObjectId,
+	float* currentHealth,
+	float* maximumHealth) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->damageManager_ != nullptr &&
+		currentHealth != nullptr && maximumHealth != nullptr &&
+		gActiveScriptManager->damageManager_->GetHealth(
+			gameObjectId,
+			*currentHealth,
+			*maximumHealth);
+}
+
+bool EditorScriptManager::ScriptSetHealthBridge(int32_t gameObjectId, float currentHealth) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->damageManager_ != nullptr &&
+		gActiveScriptManager->damageManager_->SetHealth(gameObjectId, currentHealth);
+}
+
+int32_t EditorScriptManager::ScriptSpawnFromPoolBridge(
+	int32_t poolGameObjectId,
+	const EditorScriptVector3* position,
+	const EditorScriptVector3* rotation) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->objectPoolManager_ == nullptr ||
+		position == nullptr || rotation == nullptr) {
+		return -1;
+	}
+
+	return gActiveScriptManager->objectPoolManager_->Spawn(
+		poolGameObjectId,
+		ToEditorVector3(*position),
+		ToEditorVector3(*rotation));
+}
+
+int32_t EditorScriptManager::ScriptSpawnFromSpawnerBridge(int32_t spawnerGameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->objectPoolManager_ != nullptr
+		? gActiveScriptManager->objectPoolManager_->SpawnFromSpawner(spawnerGameObjectId)
+		: -1;
+}
+
+bool EditorScriptManager::ScriptReleaseToPoolBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->objectPoolManager_ != nullptr &&
+		gActiveScriptManager->objectPoolManager_->Release(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptFireHitscanBridge(int32_t weaponGameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->weaponManager_ != nullptr &&
+		gActiveScriptManager->weaponManager_->FireHitscan(weaponGameObjectId);
+}
+
+bool EditorScriptManager::ScriptFireProjectileBridge(int32_t emitterGameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->weaponManager_ != nullptr &&
+		gActiveScriptManager->weaponManager_->FireProjectile(emitterGameObjectId);
+}
+
+bool EditorScriptManager::ScriptGetWeaponAccuracySpreadBridge(
+	int32_t gameObjectId,
+	float* spreadDegrees) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->weaponManager_ != nullptr &&
+		spreadDegrees != nullptr &&
+		gActiveScriptManager->weaponManager_->GetAccuracySpread(gameObjectId, *spreadDegrees);
+}
+
+bool EditorScriptManager::ScriptPlayTimeScaleBridge(
+	int32_t gameObjectId,
+	float scaleOverride,
+	float durationOverride) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->PlayTimeScale(gameObjectId, scaleOverride, durationOverride);
+}
+
+float EditorScriptManager::ScriptGetTimeScaleBridge() {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr
+		? gActiveScriptManager->runtimePropertyManager_->GetTimeScale()
+		: 1.0f;
+}
+
+bool EditorScriptManager::ScriptGetInterceptPredictionBridge(
+	int32_t gameObjectId,
+	EditorScriptVector3* position,
+	float* timeSeconds) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->targetingManager_ == nullptr ||
+		position == nullptr || timeSeconds == nullptr) {
+		return false;
+	}
+
+	Vector3 predictedPosition{};
+
+	if (!gActiveScriptManager->targetingManager_->GetInterceptPrediction(
+		gameObjectId,
+		predictedPosition,
+		*timeSeconds)) {
+		return false;
+	}
+
+	*position = ToScriptVector3(predictedPosition);
+	return true;
+}
+
+bool EditorScriptManager::ScriptSetObjectiveBridge(
+	int32_t gameObjectId,
+	const char* objectiveId,
+	int32_t state,
+	float currentValue) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		objectiveId != nullptr && objectiveId[0] != '\0' &&
+		gActiveScriptManager->runtimePropertyManager_->SetObjective(
+			gameObjectId,
+			objectiveId,
+			state,
+			currentValue);
+}
+
+bool EditorScriptManager::ScriptGetObjectiveBridge(
+	int32_t gameObjectId,
+	const char* objectiveId,
+	int32_t* state,
+	float* currentValue,
+	float* targetValue) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		objectiveId != nullptr && objectiveId[0] != '\0' && state != nullptr &&
+		currentValue != nullptr && targetValue != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->GetObjective(
+			gameObjectId,
+			objectiveId,
+			*state,
+			*currentValue,
+			*targetValue);
+}
+
+bool EditorScriptManager::ScriptStartEncounterBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->waveSpawnerManager_ != nullptr &&
+		gActiveScriptManager->waveSpawnerManager_->StartEncounter(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptResolveSpawnPointBridge(
+	int32_t gameObjectId,
+	EditorScriptVector3* position,
+	EditorScriptVector3* rotation) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->waveSpawnerManager_ == nullptr ||
+		position == nullptr || rotation == nullptr) {
+		return false;
+	}
+
+	Vector3 resolvedPosition = ToEditorVector3(*position);
+	Vector3 resolvedRotation = ToEditorVector3(*rotation);
+
+	if (!gActiveScriptManager->waveSpawnerManager_->ResolveSpawnPoint(
+		gameObjectId,
+		resolvedPosition,
+		resolvedRotation)) {
+		return false;
+	}
+
+	*position = ToScriptVector3(resolvedPosition);
+	*rotation = ToScriptVector3(resolvedRotation);
+	return true;
+}
+
+bool EditorScriptManager::ScriptApplyDifficultyBridge(int32_t gameObjectId, int32_t difficultyIndex) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->ApplyDifficulty(gameObjectId, difficultyIndex);
+}
+
+bool EditorScriptManager::ScriptGetDamageDirectionBridge(
+	int32_t gameObjectId,
+	EditorScriptVector2* direction,
+	float* alpha,
+	int32_t* sourceGameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		direction != nullptr && alpha != nullptr && sourceGameObjectId != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->GetDamageDirection(
+			gameObjectId,
+			*direction,
+			*alpha,
+			*sourceGameObjectId);
+}
+
+bool EditorScriptManager::ScriptGetBallisticPredictionBridge(
+	int32_t gameObjectId,
+	EditorScriptBallisticPrediction* prediction) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->targetingManager_ == nullptr ||
+		prediction == nullptr) {
+		return false;
+	}
+
+	Vector3 launchDirection{};
+	Vector3 impactPosition{};
+	float flightTime = 0.0f;
+
+	if (!gActiveScriptManager->targetingManager_->GetBallisticPrediction(
+		gameObjectId,
+		launchDirection,
+		impactPosition,
+		flightTime)) {
+		*prediction = {};
+		return false;
+	}
+
+	const EditorGameObject* gameObject = gActiveScriptManager->editorScene_ != nullptr
+		? gActiveScriptManager->editorScene_->FindGameObject(gameObjectId)
+		: nullptr;
+	const EditorComponent* component = gameObject != nullptr
+		? EditorComponentUtility::FindComponent(*gameObject, EditorComponentType::BallisticPrediction)
+		: nullptr;
+	prediction->valid = true;
+	prediction->launchDirection = ToScriptVector3(launchDirection);
+	prediction->impactPosition = ToScriptVector3(impactPosition);
+	prediction->flightTime = flightTime;
+	prediction->trajectoryPointCount = component != nullptr
+		? static_cast<int32_t>(component->ballisticTrajectoryPoints.size())
+		: 0;
+	prediction->launchVelocity = component != nullptr
+		? ToScriptVector3(component->ballisticLaunchVelocity)
+		: EditorScriptVector3{};
+	prediction->sourceVelocity = component != nullptr
+		? ToScriptVector3(component->ballisticSourceVelocity)
+		: EditorScriptVector3{};
+	return true;
+}
+
+bool EditorScriptManager::ScriptGetBallisticTrajectoryPointBridge(
+	int32_t gameObjectId,
+	int32_t pointIndex,
+	EditorScriptVector3* point) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->targetingManager_ == nullptr ||
+		point == nullptr) {
+		return false;
+	}
+
+	Vector3 trajectoryPoint{};
+
+	if (!gActiveScriptManager->targetingManager_->GetBallisticTrajectoryPoint(
+		gameObjectId,
+		pointIndex,
+		trajectoryPoint)) {
+		return false;
+	}
+
+	*point = ToScriptVector3(trajectoryPoint);
+	return true;
+}
+
+bool EditorScriptManager::ScriptGetDamageEventBufferCountBridge(
+	int32_t gameObjectId,
+	int32_t* eventCount) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->damageManager_ != nullptr &&
+		eventCount != nullptr &&
+		gActiveScriptManager->damageManager_->GetDamageEventCount(gameObjectId, *eventCount);
+}
+
+bool EditorScriptManager::ScriptGetDamageEventBufferEntryBridge(
+	int32_t gameObjectId,
+	int32_t eventIndex,
+	EditorScriptDamageEvent* damageEvent) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->damageManager_ == nullptr ||
+		damageEvent == nullptr) {
+		return false;
+	}
+
+	EditorDamageEventRuntimeEntry runtimeEntry{};
+
+	if (!gActiveScriptManager->damageManager_->GetDamageEvent(
+		gameObjectId,
+		eventIndex,
+		runtimeEntry)) {
+		return false;
+	}
+
+	damageEvent->sourceGameObjectId = runtimeEntry.sourceGameObjectId;
+	damageEvent->worldDirection = ToScriptVector3(runtimeEntry.worldDirection);
+	damageEvent->damage = runtimeEntry.damage;
+	damageEvent->damageTagId = runtimeEntry.damageTagId;
+	damageEvent->remainingSeconds = runtimeEntry.remainingSeconds;
+	return true;
+}
+
+bool EditorScriptManager::ScriptSetGamePausedBridge(int32_t gameObjectId, bool isPaused) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->SetGamePaused(gameObjectId, isPaused);
+}
+
+bool EditorScriptManager::ScriptIsGamePausedBridge() {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->IsGamePaused();
+}
+
+bool EditorScriptManager::ScriptGetSurfaceWakeStateBridge(
+	int32_t gameObjectId,
+	float* speed,
+	float* intensity) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		speed != nullptr && intensity != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->GetSurfaceWakeState(
+			gameObjectId,
+			*speed,
+			*intensity);
+}
+
+bool EditorScriptManager::ScriptOceanSegmentCastBridge(
+	int32_t queryGameObjectId,
+	int32_t oceanGameObjectId,
+	const EditorScriptVector3* startPosition,
+	const EditorScriptVector3* endPosition,
+	float clearance,
+	EditorScriptOceanSegmentHit* hit) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->editorScene_ == nullptr ||
+		startPosition == nullptr || endPosition == nullptr || hit == nullptr) {
+		return false;
+	}
+
+	EditorOceanSegmentHit oceanHit{};
+	const uint64_t sampleKey = queryGameObjectId >= 0
+		? static_cast<uint64_t>(static_cast<uint32_t>(queryGameObjectId))
+		: 0xffffffffull;
+
+	if (!CastEditorOceanSegment(
+			*gActiveScriptManager->editorScene_,
+			oceanGameObjectId,
+			ToEditorVector3(*startPosition),
+			ToEditorVector3(*endPosition),
+			clearance,
+			sampleKey,
+			GetEditorOceanElapsedTime(),
+			16,
+			5,
+			oceanHit)) {
+		*hit = {};
+		return false;
+	}
+
+	*hit = ToScriptOceanSegmentHit(oceanHit);
+	return true;
+}
+
+bool EditorScriptManager::ScriptOceanRaycastBridge(
+	int32_t queryGameObjectId,
+	int32_t oceanGameObjectId,
+	const EditorScriptRay* ray,
+	float maximumDistance,
+	float clearance,
+	EditorScriptOceanSegmentHit* hit) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->editorScene_ == nullptr ||
+		ray == nullptr || hit == nullptr) {
+		return false;
+	}
+
+	EditorOceanSegmentHit oceanHit{};
+	const uint64_t sampleKey = queryGameObjectId >= 0
+		? static_cast<uint64_t>(static_cast<uint32_t>(queryGameObjectId))
+		: 0xffffffffull;
+
+	if (!RaycastEditorOceanSurface(
+			*gActiveScriptManager->editorScene_,
+			oceanGameObjectId,
+			ToEditorVector3(ray->origin),
+			ToEditorVector3(ray->direction),
+			maximumDistance,
+			clearance,
+			sampleKey,
+			GetEditorOceanElapsedTime(),
+			16,
+			5,
+			oceanHit)) {
+		*hit = {};
+		return false;
+	}
+
+	*hit = ToScriptOceanSegmentHit(oceanHit);
+	return true;
+}
+
+bool EditorScriptManager::ScriptQueryOceanOcclusionBridge(
+	int32_t queryGameObjectId,
+	int32_t oceanGameObjectId,
+	const EditorScriptVector3* startPosition,
+	const EditorScriptVector3* endPosition,
+	float clearance,
+	EditorScriptOceanOcclusion* occlusion) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->editorScene_ == nullptr ||
+		startPosition == nullptr || endPosition == nullptr || occlusion == nullptr) {
+		return false;
+	}
+
+	EditorOceanOcclusionResult result{};
+	const uint64_t sampleKey = queryGameObjectId >= 0
+		? static_cast<uint64_t>(static_cast<uint32_t>(queryGameObjectId))
+		: 0xffffffffull;
+
+	if (!QueryEditorOceanOcclusion(
+			*gActiveScriptManager->editorScene_,
+			oceanGameObjectId,
+			ToEditorVector3(*startPosition),
+			ToEditorVector3(*endPosition),
+			clearance,
+			sampleKey,
+			GetEditorOceanElapsedTime(),
+			16,
+			5,
+			result)) {
+		*occlusion = {};
+		return false;
+	}
+
+	occlusion->blocked = result.isBlocked;
+	occlusion->minimumClearance = result.minimumClearance;
+	occlusion->maximumSurfaceHeight = result.maximumSurfaceHeight;
+	occlusion->intersection = ToScriptOceanSegmentHit(result.intersection);
+	return true;
+}
+
+bool EditorScriptManager::ScriptGetWaterSurfaceStateBridge(
+	int32_t gameObjectId,
+	EditorScriptWaterSurfaceState* state) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->runtimePropertyManager_ == nullptr ||
+		state == nullptr) {
+		return false;
+	}
+
+	Vector3 position{};
+	Vector3 normal{};
+	Vector3 velocity{};
+
+	if (!gActiveScriptManager->runtimePropertyManager_->GetWaterSurfaceState(
+			gameObjectId,
+			state->state,
+			state->signedDistance,
+			state->oceanGameObjectId,
+			position,
+			normal,
+			velocity)) {
+		*state = {};
+		state->oceanGameObjectId = -1;
+		return false;
+	}
+
+	state->surfacePosition = ToScriptVector3(position);
+	state->surfaceNormal = ToScriptVector3(normal);
+	state->surfaceVelocity = ToScriptVector3(velocity);
+	return true;
+}
+
+bool EditorScriptManager::ScriptGetOceanProbeSampleBridge(
+	int32_t gameObjectId,
+	int32_t probeIndex,
+	EditorScriptOceanProbeSample* sample) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->runtimePropertyManager_ == nullptr ||
+		sample == nullptr) {
+		return false;
+	}
+
+	EditorOceanProbeEntry probeEntry{};
+
+	if (!gActiveScriptManager->runtimePropertyManager_->GetOceanProbeSample(
+			gameObjectId,
+			probeIndex,
+			probeEntry)) {
+		*sample = {};
+		return false;
+	}
+
+	sample->valid = probeEntry.isValid;
+	sample->distance = probeEntry.distance;
+	sample->position = ToScriptVector3(probeEntry.position);
+	sample->normal = ToScriptVector3(probeEntry.normal);
+	sample->velocity = ToScriptVector3(probeEntry.velocity);
+	sample->relativeHeight = probeEntry.relativeHeight;
+	return true;
+}
+
+bool EditorScriptManager::ScriptPlayCameraBlendBridge(int32_t componentOwnerGameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->cameraEffectManager_ != nullptr &&
+		gActiveScriptManager->cameraEffectManager_->PlayBlend(componentOwnerGameObjectId);
+}
+
+bool EditorScriptManager::ScriptPlayCameraShakeBridge(int32_t componentOwnerGameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->cameraEffectManager_ != nullptr &&
+		gActiveScriptManager->cameraEffectManager_->PlayShake(componentOwnerGameObjectId);
+}
+
+bool EditorScriptManager::ScriptTriggerRailBranchBridge(int32_t componentOwnerGameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->railBranchManager_ != nullptr &&
+		gActiveScriptManager->railBranchManager_->Trigger(componentOwnerGameObjectId);
+}
+
+bool EditorScriptManager::ScriptLoadSceneAsyncBridge(const char* scenePath, bool isAdditive) {
+	return gActiveScriptManager != nullptr && scenePath != nullptr &&
+		gActiveScriptManager->RequestSceneLoadAsync(scenePath, isAdditive);
+}
+
+bool EditorScriptManager::ScriptUnloadSceneBridge(const char* scenePath) {
+	return gActiveScriptManager != nullptr && scenePath != nullptr &&
+		gActiveScriptManager->RequestSceneUnload(scenePath);
+}
+
+float EditorScriptManager::ScriptGetSceneLoadProgressBridge() {
+	return gActiveScriptManager != nullptr ? gActiveScriptManager->sceneLoadProgress_ : 0.0f;
+}
+
+bool EditorScriptManager::ScriptIsSceneLoadingBridge() {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->isSceneLoading_;
+}
+
+bool EditorScriptManager::ScriptIsSceneLoadedBridge(const char* scenePath) {
+	if (gActiveScriptManager == nullptr || scenePath == nullptr) {
+		return false;
+	}
+
+	return gActiveScriptManager->IsSceneRuntimeLoaded(scenePath);
+}
+
+void EditorScriptManager::ScriptSetSceneFloatBridge(const char* key, float value) {
+	if (gActiveScriptManager != nullptr && key != nullptr && key[0] != '\0') {
+		gActiveScriptManager->sceneFloatValues_[key] = value;
+	}
+}
+
+bool EditorScriptManager::ScriptGetSceneFloatBridge(const char* key, float* value) {
+	if (gActiveScriptManager == nullptr || key == nullptr || value == nullptr) {
+		return false;
+	}
+
+	const auto valueIterator = gActiveScriptManager->sceneFloatValues_.find(key);
+	if (valueIterator == gActiveScriptManager->sceneFloatValues_.end()) {
+		return false;
+	}
+
+	*value = valueIterator->second;
+	return true;
+}
+
+void EditorScriptManager::ScriptSetSceneStringBridge(const char* key, const char* value) {
+	if (gActiveScriptManager != nullptr && key != nullptr && key[0] != '\0' && value != nullptr) {
+		gActiveScriptManager->sceneStringValues_[key] = value;
+	}
+}
+
+bool EditorScriptManager::ScriptGetSceneStringBridge(
+	const char* key,
+	char* value,
+	int32_t valueCapacity) {
+	if (gActiveScriptManager == nullptr || key == nullptr || value == nullptr || valueCapacity <= 0) {
+		return false;
+	}
+
+	const auto valueIterator = gActiveScriptManager->sceneStringValues_.find(key);
+	if (valueIterator == gActiveScriptManager->sceneStringValues_.end()) {
+		return false;
+	}
+
+	CopyStringToFixedBuffer(
+		valueIterator->second,
+		value,
+		static_cast<size_t>(valueCapacity));
+	return true;
+}
+
+bool EditorScriptManager::ScriptPlayActionSequenceBridge(int32_t sequenceGameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->actionSequenceManager_ != nullptr &&
+		gActiveScriptManager->actionSequenceManager_->Play(sequenceGameObjectId);
+}
+
+bool EditorScriptManager::ScriptPauseActionSequenceBridge(
+	int32_t sequenceGameObjectId,
+	bool isPaused) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->actionSequenceManager_ != nullptr &&
+		gActiveScriptManager->actionSequenceManager_->Pause(sequenceGameObjectId, isPaused);
+}
+
+bool EditorScriptManager::ScriptStopActionSequenceBridge(int32_t sequenceGameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->actionSequenceManager_ != nullptr &&
+		gActiveScriptManager->actionSequenceManager_->StopSequence(sequenceGameObjectId);
+}
+
+bool EditorScriptManager::ScriptSignalActionSequenceBridge(
+	int32_t sequenceGameObjectId,
+	const char* signalName) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->actionSequenceManager_ != nullptr &&
+		signalName != nullptr &&
+		gActiveScriptManager->actionSequenceManager_->Signal(sequenceGameObjectId, signalName);
+}
+
+bool EditorScriptManager::ScriptIsActionSequencePlayingBridge(int32_t sequenceGameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->actionSequenceManager_ != nullptr &&
+		gActiveScriptManager->actionSequenceManager_->IsPlaying(sequenceGameObjectId);
+}
+
+bool EditorScriptManager::ScriptSaveSlotBridge(const char* slotName) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->saveManager_ != nullptr &&
+		slotName != nullptr && gActiveScriptManager->saveManager_->SaveSlot(slotName);
+}
+
+bool EditorScriptManager::ScriptLoadSlotBridge(const char* slotName) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->saveManager_ != nullptr &&
+		slotName != nullptr && gActiveScriptManager->saveManager_->LoadSlot(slotName);
+}
+
+bool EditorScriptManager::ScriptDeleteSlotBridge(const char* slotName) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->saveManager_ != nullptr &&
+		slotName != nullptr && gActiveScriptManager->saveManager_->DeleteSlot(slotName);
+}
+
+bool EditorScriptManager::ScriptHasSlotBridge(const char* slotName) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->saveManager_ != nullptr &&
+		slotName != nullptr && gActiveScriptManager->saveManager_->HasSlot(slotName);
+}
+
+bool EditorScriptManager::ScriptActivateCheckpointBridge(
+	int32_t checkpointGameObjectId,
+	bool shouldLoad) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->saveManager_ != nullptr &&
+		gActiveScriptManager->saveManager_->ActivateCheckpoint(checkpointGameObjectId, shouldLoad);
+}
+
+void EditorScriptManager::ScriptSetSaveFloatBridge(const char* key, float value) {
+	if (gActiveScriptManager != nullptr && gActiveScriptManager->saveManager_ != nullptr &&
+		key != nullptr && key[0] != '\0') {
+		gActiveScriptManager->saveManager_->SetFloat(key, value);
+	}
+}
+
+bool EditorScriptManager::ScriptGetSaveFloatBridge(const char* key, float* value) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->saveManager_ != nullptr &&
+		key != nullptr && value != nullptr && gActiveScriptManager->saveManager_->GetFloat(key, *value);
+}
+
+void EditorScriptManager::ScriptSetSaveStringBridge(const char* key, const char* value) {
+	if (gActiveScriptManager != nullptr && gActiveScriptManager->saveManager_ != nullptr &&
+		key != nullptr && key[0] != '\0' && value != nullptr) {
+		gActiveScriptManager->saveManager_->SetString(key, value);
+	}
+}
+
+bool EditorScriptManager::ScriptGetSaveStringBridge(
+	const char* key,
+	char* value,
+	int32_t valueCapacity) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->saveManager_ == nullptr ||
+		key == nullptr || value == nullptr || valueCapacity <= 0) {
+		return false;
+	}
+
+	std::string savedValue;
+	if (!gActiveScriptManager->saveManager_->GetString(key, savedValue)) {
+		return false;
+	}
+
+	CopyStringToFixedBuffer(savedValue, value, static_cast<size_t>(valueCapacity));
+	return true;
+}
+
+bool EditorScriptManager::ScriptLoadoutSelectSlotBridge(int32_t gameObjectId, int32_t slotIndex) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->weaponLoadoutManager_ != nullptr &&
+		gActiveScriptManager->weaponLoadoutManager_->SelectSlot(gameObjectId, slotIndex);
+}
+
+bool EditorScriptManager::ScriptLoadoutSelectNextBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->weaponLoadoutManager_ != nullptr &&
+		gActiveScriptManager->weaponLoadoutManager_->SelectNext(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptLoadoutSelectPreviousBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->weaponLoadoutManager_ != nullptr &&
+		gActiveScriptManager->weaponLoadoutManager_->SelectPrevious(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptLoadoutFireBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->weaponLoadoutManager_ != nullptr &&
+		gActiveScriptManager->weaponLoadoutManager_->FireSelected(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptLoadoutReloadBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->weaponLoadoutManager_ != nullptr &&
+		gActiveScriptManager->weaponLoadoutManager_->Reload(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptLoadoutGetAmmoBridge(
+	int32_t gameObjectId,
+	int32_t* currentAmmo,
+	int32_t* reserveAmmo) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->weaponLoadoutManager_ != nullptr &&
+		currentAmmo != nullptr && reserveAmmo != nullptr &&
+		gActiveScriptManager->weaponLoadoutManager_->GetAmmo(gameObjectId, *currentAmmo, *reserveAmmo);
+}
+
+bool EditorScriptManager::ScriptLoadoutGetAmmoAtSlotBridge(
+	int32_t gameObjectId,
+	int32_t slotIndex,
+	int32_t* currentAmmo,
+	int32_t* reserveAmmo,
+	int32_t* maximumAmmo) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->weaponLoadoutManager_ != nullptr &&
+		currentAmmo != nullptr && reserveAmmo != nullptr && maximumAmmo != nullptr &&
+		gActiveScriptManager->weaponLoadoutManager_->GetAmmoAtSlot(
+			gameObjectId,
+			slotIndex,
+			*currentAmmo,
+			*reserveAmmo,
+			*maximumAmmo);
+}
+
+bool EditorScriptManager::ScriptLoadoutAddMagazineAmmoBridge(
+	int32_t gameObjectId,
+	int32_t slotIndex,
+	int32_t amount) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->weaponLoadoutManager_ != nullptr &&
+		gActiveScriptManager->weaponLoadoutManager_->AddMagazineAmmo(gameObjectId, slotIndex, amount);
+}
+
+bool EditorScriptManager::ScriptLoadoutAddReserveAmmoBridge(
+	int32_t gameObjectId,
+	int32_t slotIndex,
+	int32_t amount) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->weaponLoadoutManager_ != nullptr &&
+		gActiveScriptManager->weaponLoadoutManager_->AddReserveAmmo(gameObjectId, slotIndex, amount);
+}
+
+bool EditorScriptManager::ScriptLoadoutSetMagazineAmmoBridge(
+	int32_t gameObjectId,
+	int32_t slotIndex,
+	int32_t amount) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->weaponLoadoutManager_ != nullptr &&
+		gActiveScriptManager->weaponLoadoutManager_->SetMagazineAmmo(gameObjectId, slotIndex, amount);
+}
+
+bool EditorScriptManager::ScriptLoadoutSetReserveAmmoBridge(
+	int32_t gameObjectId,
+	int32_t slotIndex,
+	int32_t amount) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->weaponLoadoutManager_ != nullptr &&
+		gActiveScriptManager->weaponLoadoutManager_->SetReserveAmmo(gameObjectId, slotIndex, amount);
+}
+
+bool EditorScriptManager::ScriptLoadoutSetMaximumAmmoBridge(
+	int32_t gameObjectId,
+	int32_t slotIndex,
+	int32_t amount) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->weaponLoadoutManager_ != nullptr &&
+		gActiveScriptManager->weaponLoadoutManager_->SetMaximumAmmo(gameObjectId, slotIndex, amount);
+}
+
+bool EditorScriptManager::ScriptLoadoutRefillMagazineBridge(int32_t gameObjectId, int32_t slotIndex) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->weaponLoadoutManager_ != nullptr &&
+		gActiveScriptManager->weaponLoadoutManager_->RefillMagazine(gameObjectId, slotIndex);
+}
+
+bool EditorScriptManager::ScriptFireWeaponGroupBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->weaponManager_ != nullptr &&
+		gActiveScriptManager->weaponManager_->FireWeaponGroup(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptIsWeaponGroupFiringBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->weaponManager_ != nullptr &&
+		gActiveScriptManager->weaponManager_->IsWeaponGroupFiring(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptGetTurretAimStateBridge(
+	int32_t gameObjectId,
+	EditorScriptTurretAimState* state) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->editorScene_ == nullptr || state == nullptr) {
+		return false;
+	}
+
+	const EditorGameObject* gameObject = gActiveScriptManager->editorScene_->FindGameObject(gameObjectId);
+	const EditorComponent* component = gameObject != nullptr
+		? EditorComponentUtility::FindComponent(*gameObject, EditorComponentType::TurretAim)
+		: nullptr;
+
+	if (component == nullptr || !component->isActive) {
+		return false;
+	}
+
+	state->targetGameObjectId = component->turretCurrentTargetGameObjectId;
+	state->canReachTarget = component->turretCanReachTarget;
+	state->isAimed = component->turretIsAimed;
+	state->reservedPadding[0] = 0U;
+	state->reservedPadding[1] = 0U;
+	state->yawErrorDegrees = component->turretYawErrorDegrees;
+	state->pitchErrorDegrees = component->turretPitchErrorDegrees;
+	return true;
+}
+
+bool EditorScriptManager::ScriptGetFireLineStateBridge(
+	int32_t gameObjectId,
+	EditorScriptFireLineState* state) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->editorScene_ == nullptr || state == nullptr) {
+		return false;
+	}
+
+	const EditorComponent* component = EditorComponentUtility::FindInheritedComponent(
+		*gActiveScriptManager->editorScene_,
+		gameObjectId,
+		EditorComponentType::FireLineCheck);
+
+	if (component == nullptr || !component->isActive) {
+		return false;
+	}
+
+	state->isClear = component->fireLineClear;
+	state->reservedPadding[0] = 0U;
+	state->reservedPadding[1] = 0U;
+	state->reservedPadding[2] = 0U;
+	state->blockingGameObjectId = component->fireLineBlockingGameObjectId;
+	state->blockingDistance = component->fireLineBlockingDistance;
+	return true;
+}
+
+bool EditorScriptManager::ScriptApplyStatusEffectBridge(
+	int32_t gameObjectId,
+	const char* effectId,
+	int32_t sourceGameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		effectId != nullptr && effectId[0] != '\0' &&
+		gActiveScriptManager->runtimePropertyManager_->ApplyStatusEffect(gameObjectId, effectId, sourceGameObjectId);
+}
+
+bool EditorScriptManager::ScriptRemoveStatusEffectBridge(int32_t gameObjectId, const char* effectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		effectId != nullptr && effectId[0] != '\0' &&
+		gActiveScriptManager->runtimePropertyManager_->RemoveStatusEffect(gameObjectId, effectId);
+}
+
+bool EditorScriptManager::ScriptClearStatusEffectsBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->ClearStatusEffects(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptHasStatusEffectBridge(int32_t gameObjectId, const char* effectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		effectId != nullptr && effectId[0] != '\0' &&
+		gActiveScriptManager->runtimePropertyManager_->HasStatusEffect(gameObjectId, effectId);
+}
+
+bool EditorScriptManager::ScriptGetStatusEffectCountBridge(int32_t gameObjectId, int32_t* effectCount) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		effectCount != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->GetStatusEffectCount(gameObjectId, *effectCount);
+}
+
+bool EditorScriptManager::ScriptGetStatusEffectEntryBridge(
+	int32_t gameObjectId,
+	int32_t effectIndex,
+	EditorScriptStatusEffectEntry* effectEntry) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->runtimePropertyManager_ == nullptr ||
+		effectEntry == nullptr) {
+		return false;
+	}
+
+	EditorStatusEffectRuntimeEntry runtimeEntry{};
+
+	if (!gActiveScriptManager->runtimePropertyManager_->GetStatusEffectEntry(
+		gameObjectId,
+		effectIndex,
+		runtimeEntry)) {
+		return false;
+	}
+
+	*effectEntry = {};
+	const size_t copyLength = (std::min)(runtimeEntry.effectId.size(), sizeof(effectEntry->effectId) - 1u);
+	std::copy_n(runtimeEntry.effectId.data(), copyLength, effectEntry->effectId);
+	effectEntry->effectId[copyLength] = '\0';
+	effectEntry->sourceGameObjectId = runtimeEntry.sourceGameObjectId;
+	effectEntry->remainingSeconds = runtimeEntry.remainingSeconds;
+	effectEntry->tickRemainingSeconds = runtimeEntry.tickRemainingSeconds;
+	effectEntry->stackCount = runtimeEntry.stackCount;
+	return true;
+}
+
+bool EditorScriptManager::ScriptGetCurrentTargetBridge(
+	int32_t gameObjectId,
+	int32_t* targetGameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->targetingManager_ != nullptr &&
+		targetGameObjectId != nullptr &&
+		gActiveScriptManager->targetingManager_->GetCurrentTarget(gameObjectId, *targetGameObjectId);
+}
+
+bool EditorScriptManager::ScriptSetExplicitTargetBridge(
+	int32_t gameObjectId,
+	int32_t targetGameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->targetingManager_ != nullptr &&
+		gActiveScriptManager->targetingManager_->SetExplicitTarget(gameObjectId, targetGameObjectId);
+}
+
+bool EditorScriptManager::ScriptSetRuntimeFloatBridge(
+	int32_t gameObjectId,
+	const char* componentName,
+	const char* propertyName,
+	float value) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		componentName != nullptr && propertyName != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->SetFloat(gameObjectId, componentName, propertyName, value);
+}
+
+bool EditorScriptManager::ScriptGetRuntimeFloatBridge(
+	int32_t gameObjectId,
+	const char* componentName,
+	const char* propertyName,
+	float* value) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		componentName != nullptr && propertyName != nullptr && value != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->GetFloat(gameObjectId, componentName, propertyName, *value);
+}
+
+bool EditorScriptManager::ScriptSetRuntimeIntBridge(
+	int32_t gameObjectId,
+	const char* componentName,
+	const char* propertyName,
+	int32_t value) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		componentName != nullptr && propertyName != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->SetInt(gameObjectId, componentName, propertyName, value);
+}
+
+bool EditorScriptManager::ScriptGetRuntimeIntBridge(
+	int32_t gameObjectId,
+	const char* componentName,
+	const char* propertyName,
+	int32_t* value) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		componentName != nullptr && propertyName != nullptr && value != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->GetInt(gameObjectId, componentName, propertyName, *value);
+}
+
+bool EditorScriptManager::ScriptSetRuntimeBoolBridge(
+	int32_t gameObjectId,
+	const char* componentName,
+	const char* propertyName,
+	bool value) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		componentName != nullptr && propertyName != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->SetBool(gameObjectId, componentName, propertyName, value);
+}
+
+bool EditorScriptManager::ScriptGetRuntimeBoolBridge(
+	int32_t gameObjectId,
+	const char* componentName,
+	const char* propertyName,
+	bool* value) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		componentName != nullptr && propertyName != nullptr && value != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->GetBool(gameObjectId, componentName, propertyName, *value);
+}
+
+bool EditorScriptManager::ScriptSetRuntimeVector2Bridge(
+	int32_t gameObjectId,
+	const char* componentName,
+	const char* propertyName,
+	const EditorScriptVector2* value) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		componentName != nullptr && propertyName != nullptr && value != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->SetVector2(
+			gameObjectId,
+			componentName,
+			propertyName,
+			*value);
+}
+
+bool EditorScriptManager::ScriptGetRuntimeVector2Bridge(
+	int32_t gameObjectId,
+	const char* componentName,
+	const char* propertyName,
+	EditorScriptVector2* value) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		componentName != nullptr && propertyName != nullptr && value != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->GetVector2(
+			gameObjectId,
+			componentName,
+			propertyName,
+			*value);
+}
+
+bool EditorScriptManager::ScriptSetRuntimeVector3Bridge(
+	int32_t gameObjectId,
+	const char* componentName,
+	const char* propertyName,
+	const EditorScriptVector3* value) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		componentName != nullptr && propertyName != nullptr && value != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->SetVector3(
+			gameObjectId,
+			componentName,
+			propertyName,
+			{value->x, value->y, value->z});
+}
+
+bool EditorScriptManager::ScriptGetRuntimeVector3Bridge(
+	int32_t gameObjectId,
+	const char* componentName,
+	const char* propertyName,
+	EditorScriptVector3* value) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->runtimePropertyManager_ == nullptr ||
+		componentName == nullptr || propertyName == nullptr || value == nullptr) {
+		return false;
+	}
+
+	Vector3 runtimeValue{};
+
+	if (!gActiveScriptManager->runtimePropertyManager_->GetVector3(
+			gameObjectId,
+			componentName,
+			propertyName,
+			runtimeValue)) {
+		return false;
+	}
+
+	*value = {runtimeValue.x, runtimeValue.y, runtimeValue.z};
+	return true;
+}
+
+bool EditorScriptManager::ScriptPlayPropertyTweenBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->PlayTween(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptStopPropertyTweenBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->StopTween(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptIsPropertyTweenPlayingBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->IsTweenPlaying(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptRelayActionBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->Relay(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptHasComponentBridge(
+	int32_t gameObjectId,
+	const char* componentTypeName) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->HasComponentInternal(gameObjectId, componentTypeName);
+}
+
+bool EditorScriptManager::ScriptInvokeScriptActionBridge(
+	int32_t gameObjectId,
+	const char* functionName) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->InvokeScriptActionInternal(gameObjectId, functionName);
+}
+
+bool EditorScriptManager::ScriptInvokeScriptActionPayloadBridge(
+	int32_t gameObjectId,
+	const char* functionName,
+	const EditorScriptActionPayload* payload) {
+	if (gActiveScriptManager == nullptr || functionName == nullptr || payload == nullptr) {
+		return false;
+	}
+
+	return gActiveScriptManager->QueueActionPayload(gameObjectId, functionName, *payload);
+}
+
+bool EditorScriptManager::ScriptStartTimerBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->StartTimer(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptPauseTimerBridge(int32_t gameObjectId, bool isPaused) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->PauseTimer(gameObjectId, isPaused);
+}
+
+bool EditorScriptManager::ScriptGetTimerRemainingBridge(
+	int32_t gameObjectId,
+	float* remainingSeconds) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		remainingSeconds != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->GetTimerRemaining(gameObjectId, *remainingSeconds);
+}
+
+bool EditorScriptManager::ScriptChangeGenericStateBridge(
+	int32_t gameObjectId,
+	const char* stateName) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		stateName != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->ChangeState(gameObjectId, stateName);
+}
+
+bool EditorScriptManager::ScriptGetGenericStateBridge(
+	int32_t gameObjectId,
+	char* stateName,
+	int32_t stateNameCapacity) {
+	if (gActiveScriptManager == nullptr ||
+		gActiveScriptManager->runtimePropertyManager_ == nullptr ||
+		stateName == nullptr ||
+		stateNameCapacity <= 0) {
+		return false;
+	}
+
+	std::string stateNameValue;
+
+	if (!gActiveScriptManager->runtimePropertyManager_->GetState(gameObjectId, stateNameValue)) {
+		return false;
+	}
+
+	CopyStringToFixedBuffer(
+		stateNameValue,
+		stateName,
+		static_cast<size_t>(stateNameCapacity));
+	return true;
+}
+
+bool EditorScriptManager::ScriptSetAttributeValueBridge(int32_t gameObjectId, float value) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->SetAttribute(gameObjectId, value);
+}
+
+bool EditorScriptManager::ScriptGetAttributeValueBridge(
+	int32_t gameObjectId,
+	float* current,
+	float* maximum) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		current != nullptr &&
+		maximum != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->GetAttribute(gameObjectId, *current, *maximum);
+}
+
+bool EditorScriptManager::ScriptGetTargetLockStateBridge(
+	int32_t gameObjectId,
+	float* progress,
+	bool* isLocked,
+	int32_t* targetGameObjectId) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		progress != nullptr &&
+		isLocked != nullptr &&
+		targetGameObjectId != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->GetTargetLockState(
+			gameObjectId,
+			*progress,
+			*isLocked,
+			*targetGameObjectId);
+}
+
+bool EditorScriptManager::ScriptSetNamedAttributeValueBridge(
+	int32_t gameObjectId,
+	const char* attributeName,
+	float value) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		attributeName != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->SetNamedAttribute(gameObjectId, attributeName, value);
+}
+
+bool EditorScriptManager::ScriptGetNamedAttributeValueBridge(
+	int32_t gameObjectId,
+	const char* attributeName,
+	float* current,
+	float* maximum) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		attributeName != nullptr && current != nullptr && maximum != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->GetNamedAttribute(gameObjectId, attributeName, *current, *maximum);
+}
+
+bool EditorScriptManager::ScriptSetCounterValueBridge(int32_t gameObjectId, float value) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->SetCounter(gameObjectId, value);
+}
+
+bool EditorScriptManager::ScriptAddCounterValueBridge(int32_t gameObjectId, float deltaValue) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->AddCounter(gameObjectId, deltaValue);
+}
+
+bool EditorScriptManager::ScriptGetCounterValueBridge(int32_t gameObjectId, float* value) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		value != nullptr && gActiveScriptManager->runtimePropertyManager_->GetCounter(gameObjectId, *value);
+}
+
+bool EditorScriptManager::ScriptEvaluateGenericConditionBridge(int32_t gameObjectId, bool* result) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		result != nullptr && gActiveScriptManager->runtimePropertyManager_->EvaluateCondition(gameObjectId, *result);
+}
+
+bool EditorScriptManager::ScriptGetMultiTargetLockCountBridge(int32_t gameObjectId, int32_t* targetCount) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		targetCount != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->GetMultiTargetLockCount(gameObjectId, *targetCount);
+}
+
+bool EditorScriptManager::ScriptGetMultiTargetLockTargetBridge(
+	int32_t gameObjectId,
+	int32_t targetIndex,
+	int32_t* targetGameObjectId,
+	float* progress,
+	bool* isLocked) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		targetGameObjectId != nullptr && progress != nullptr && isLocked != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->GetMultiTargetLockTarget(
+			gameObjectId, targetIndex, *targetGameObjectId, *progress, *isLocked);
+}
+
+bool EditorScriptManager::ScriptGetGameplayDataValueBridge(
+	int32_t gameObjectId,
+	const char* key,
+	int32_t* valueType,
+	char* value,
+	int32_t valueCapacity) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->runtimePropertyManager_ == nullptr ||
+		key == nullptr || valueType == nullptr || value == nullptr || valueCapacity <= 0) {
+		return false;
+	}
+
+	std::string dataValue;
+
+	if (!gActiveScriptManager->runtimePropertyManager_->GetGameplayDataValue(gameObjectId, key, *valueType, dataValue)) {
+		return false;
+	}
+
+	CopyStringToFixedBuffer(dataValue, value, static_cast<size_t>(valueCapacity));
+	return true;
+}
+
+int32_t EditorScriptManager::ScriptHashDamageTagBridge(const char* damageTag) {
+	return damageTag != nullptr ? EditorDamageManager::HashDamageTag(damageTag) : 0;
+}
+
+int32_t EditorScriptManager::ScriptApplyAreaDamageBridge(
+	int32_t areaDamageGameObjectId,
+	int32_t instigatorGameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->damageManager_ != nullptr
+		? gActiveScriptManager->damageManager_->ApplyAreaDamage(areaDamageGameObjectId, instigatorGameObjectId)
+		: 0;
+}
+
+bool EditorScriptManager::ScriptDetonateProjectileBridge(int32_t projectileGameObjectId) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->weaponManager_ != nullptr &&
+		gActiveScriptManager->weaponManager_->DetonateProjectile(projectileGameObjectId);
+}
+
+bool EditorScriptManager::ScriptGetThreatTrackerCountBridge(
+	int32_t gameObjectId,
+	int32_t* threatCount) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		threatCount != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->GetThreatCount(gameObjectId, *threatCount);
+}
+
+bool EditorScriptManager::ScriptGetThreatTrackerEntryBridge(
+	int32_t gameObjectId,
+	int32_t threatIndex,
+	EditorScriptThreatInfo* threatInfo) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->runtimePropertyManager_ == nullptr ||
+		threatInfo == nullptr) {
+		return false;
+	}
+
+	EditorThreatRuntimeEntry threat{};
+
+	if (!gActiveScriptManager->runtimePropertyManager_->GetThreat(gameObjectId, threatIndex, threat)) {
+		return false;
+	}
+
+	threatInfo->projectileGameObjectId = threat.projectileGameObjectId;
+	threatInfo->sourceGameObjectId = threat.sourceGameObjectId;
+	threatInfo->distance = threat.distance;
+	threatInfo->closingSpeed = threat.closingSpeed;
+	threatInfo->estimatedArrivalSeconds = threat.estimatedArrivalSeconds;
+	return true;
+}
+
+bool EditorScriptManager::ScriptStartNamedCooldownBridge(
+	int32_t gameObjectId,
+	const char* cooldownName,
+	float durationOverride) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		cooldownName != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->StartCooldown(
+			gameObjectId, cooldownName, durationOverride);
+}
+
+bool EditorScriptManager::ScriptResetNamedCooldownBridge(
+	int32_t gameObjectId,
+	const char* cooldownName) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		cooldownName != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->ResetCooldown(gameObjectId, cooldownName);
+}
+
+bool EditorScriptManager::ScriptGetNamedCooldownBridge(
+	int32_t gameObjectId,
+	const char* cooldownName,
+	float* remainingSeconds,
+	bool* isReady) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->runtimePropertyManager_ != nullptr &&
+		cooldownName != nullptr && remainingSeconds != nullptr && isReady != nullptr &&
+		gActiveScriptManager->runtimePropertyManager_->GetCooldown(
+			gameObjectId, cooldownName, *remainingSeconds, *isReady);
+}
+
+bool EditorScriptManager::ScriptResetRuntimeStateBridge(int32_t gameObjectId) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->objectPoolManager_ == nullptr ||
+		gActiveScriptManager->editorScene_ == nullptr ||
+		gActiveScriptManager->editorScene_->FindGameObject(gameObjectId) == nullptr) {
+		return false;
+	}
+
+	gActiveScriptManager->objectPoolManager_->ResetObjectRuntimeState(gameObjectId);
+	return true;
+}
+
+bool EditorScriptManager::ScriptGetRailStateBridge(
+	int32_t gameObjectId,
+	EditorScriptRailState* state) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->railMovementManager_ != nullptr &&
+		state != nullptr && gActiveScriptManager->railMovementManager_->GetState(gameObjectId, *state);
+}
+
+bool EditorScriptManager::ScriptSetRailDistanceBridge(
+	int32_t gameObjectId,
+	float distance) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->railMovementManager_ != nullptr &&
+		gActiveScriptManager->railMovementManager_->SetDistance(gameObjectId, distance);
+}
+
+bool EditorScriptManager::ScriptGetRailClosestProgressBridge(
+	int32_t gameObjectId,
+	const EditorScriptVector3* worldPosition,
+	float* normalizedProgress) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->railMovementManager_ != nullptr &&
+		worldPosition != nullptr && normalizedProgress != nullptr &&
+		gActiveScriptManager->railMovementManager_->GetClosestNormalizedProgress(
+			gameObjectId,
+			{worldPosition->x, worldPosition->y, worldPosition->z},
+			*normalizedProgress);
+}
+
+bool EditorScriptManager::ScriptGetRailFrameBridge(
+	int32_t gameObjectId,
+	float normalizedProgress,
+	EditorScriptRailFrame* frame) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->railMovementManager_ != nullptr &&
+		frame != nullptr &&
+		gActiveScriptManager->railMovementManager_->GetRailFrame(
+			gameObjectId,
+			normalizedProgress,
+			*frame);
+}
+
+bool EditorScriptManager::ScriptSetRailSpeedProfileEnabledBridge(
+	int32_t gameObjectId,
+	bool isEnabled) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->editorScene_ == nullptr) {
+		return false;
+	}
+
+	EditorGameObject* gameObject = gActiveScriptManager->editorScene_->FindGameObject(gameObjectId);
+	EditorComponent* speedProfile = gameObject != nullptr
+		? EditorComponentUtility::FindComponent(*gameObject, EditorComponentType::RailSpeedProfile)
+		: nullptr;
+
+	if (speedProfile == nullptr) {
+		return false;
+	}
+
+	speedProfile->railSpeedProfileEnabled = isEnabled;
+	return true;
+}
+
+bool EditorScriptManager::ScriptGetRailSpeedMultiplierBridge(
+	int32_t gameObjectId,
+	float* speedMultiplier) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->railMovementManager_ != nullptr &&
+		speedMultiplier != nullptr &&
+		gActiveScriptManager->railMovementManager_->GetSpeedMultiplier(
+			gameObjectId,
+			*speedMultiplier);
+}
+
+bool EditorScriptManager::ScriptGetRailActiveZoneBridge(
+	int32_t gameObjectId,
+	char* zoneId,
+	int32_t zoneIdCapacity) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->editorScene_ == nullptr ||
+		zoneId == nullptr || zoneIdCapacity <= 0) {
+		return false;
+	}
+
+	const EditorGameObject* gameObject = gActiveScriptManager->editorScene_->FindGameObject(gameObjectId);
+	const EditorComponent* railZone = gameObject != nullptr
+		? EditorComponentUtility::FindComponent(*gameObject, EditorComponentType::RailZone)
+		: nullptr;
+
+	if (railZone == nullptr || railZone->railZoneActiveIndex < 0 ||
+		railZone->railZoneActiveIndex >= static_cast<int32_t>(railZone->railZoneEntries.size())) {
+		zoneId[0] = '\0';
+		return false;
+	}
+
+	CopyStringToFixedBuffer(
+		railZone->railZoneEntries[static_cast<size_t>(railZone->railZoneActiveIndex)].zoneId,
+		zoneId,
+		static_cast<size_t>(zoneIdCapacity));
+	return true;
+}
+
+bool EditorScriptManager::ScriptRearmRailEventMarkersBridge(
+	int32_t gameObjectId,
+	const char* markerId) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->railMovementManager_ != nullptr &&
+		gActiveScriptManager->railMovementManager_->RearmEventMarkers(
+			gameObjectId,
+			markerId != nullptr ? markerId : "");
+}
+
+bool EditorScriptManager::ScriptGetSimulationLodLevelBridge(
+	int32_t gameObjectId,
+	int32_t* lodLevel) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->editorScene_ == nullptr || lodLevel == nullptr) {
+		return false;
+	}
+
+	const EditorGameObject* gameObject = gActiveScriptManager->editorScene_->FindGameObject(gameObjectId);
+	const EditorComponent* simulationLod = gameObject != nullptr
+		? EditorComponentUtility::FindComponent(*gameObject, EditorComponentType::SimulationLOD)
+		: nullptr;
+
+	if (simulationLod == nullptr) {
+		return false;
+	}
+
+	*lodLevel = simulationLod->simulationLodRuntimeLevel;
+	return true;
+}
+
+bool EditorScriptManager::ScriptStartWaveSpawnerBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->waveSpawnerManager_ != nullptr &&
+		gActiveScriptManager->waveSpawnerManager_->StartWave(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptIsWaveSpawnerCompleteBridge(
+	int32_t gameObjectId,
+	bool waitsForAllDefeated) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->waveSpawnerManager_ != nullptr &&
+		gActiveScriptManager->waveSpawnerManager_->IsWaveComplete(
+			gameObjectId,
+			waitsForAllDefeated);
+}
+
 void EditorScriptManager::BuildScriptBindings() {
 	scriptBindings_.clear();
 	scriptBindingIndicesByGameObjectId_.clear();
@@ -1216,7 +3282,8 @@ void EditorScriptManager::BuildScriptBindings() {
 			continue;
 		}
 
-		for (const EditorComponent& component : gameObject.components) {
+		for (size_t componentIndex = 0U; componentIndex < gameObject.components.size(); componentIndex++) {
+			const EditorComponent& component = gameObject.components[componentIndex];
 			const bool isScriptComponent =
 				component.type == EditorComponentType::Script ||
 				component.type == EditorComponentType::MonoBehaviour;
@@ -1235,6 +3302,7 @@ void EditorScriptManager::BuildScriptBindings() {
 
 			ScriptBinding scriptBinding{};
 			scriptBinding.gameObjectId = gameObject.id;
+			scriptBinding.componentIndex = componentIndex;
 			scriptBinding.componentType = component.type;
 			scriptBinding.dllPath = component.assetPath;
 			scriptBindings_.push_back(scriptBinding);
@@ -1300,11 +3368,169 @@ void EditorScriptManager::BuildRuntimeApi() {
 	runtimeApi_.SetRailReverse = ScriptSetRailReverseBridge;
 	runtimeApi_.SetRailNormalizedProgress = ScriptSetRailNormalizedProgressBridge;
 	runtimeApi_.SetRailPath = ScriptSetRailPathBridge;
+	runtimeApi_.SetRailMoveInput = ScriptSetRailMoveInputBridge;
+	runtimeApi_.SetRailOffset = ScriptSetRailOffsetBridge;
+	runtimeApi_.GetRailOffset = ScriptGetRailOffsetBridge;
 	runtimeApi_.GetRailNormalizedProgress = ScriptGetRailNormalizedProgressBridge;
 	runtimeApi_.GetRailLength = ScriptGetRailLengthBridge;
 	runtimeApi_.GetRailPosition = ScriptGetRailPositionBridge;
 	runtimeApi_.GetRailDirection = ScriptGetRailDirectionBridge;
 	runtimeApi_.ConsumeRailEndReached = ScriptConsumeRailEndReachedBridge;
+	runtimeApi_.ViewportPointToRay = ScriptViewportPointToRayBridge;
+	runtimeApi_.GetAimRay = ScriptGetAimRayBridge;
+	runtimeApi_.PhysicsRaycast = ScriptPhysicsRaycastBridge;
+	runtimeApi_.PhysicsSphereCast = ScriptPhysicsSphereCastBridge;
+	runtimeApi_.PhysicsCapsuleCast = ScriptPhysicsCapsuleCastBridge;
+	runtimeApi_.ApplyDamage = ScriptApplyDamageBridge;
+	runtimeApi_.GetHealth = ScriptGetHealthBridge;
+	runtimeApi_.SetHealth = ScriptSetHealthBridge;
+	runtimeApi_.SpawnFromPool = ScriptSpawnFromPoolBridge;
+	runtimeApi_.SpawnFromSpawner = ScriptSpawnFromSpawnerBridge;
+	runtimeApi_.ReleaseToPool = ScriptReleaseToPoolBridge;
+	runtimeApi_.FireHitscan = ScriptFireHitscanBridge;
+	runtimeApi_.FireProjectile = ScriptFireProjectileBridge;
+	runtimeApi_.PlayCameraBlend = ScriptPlayCameraBlendBridge;
+	runtimeApi_.PlayCameraShake = ScriptPlayCameraShakeBridge;
+	runtimeApi_.TriggerRailBranch = ScriptTriggerRailBranchBridge;
+	runtimeApi_.LoadSceneAsync = ScriptLoadSceneAsyncBridge;
+	runtimeApi_.UnloadScene = ScriptUnloadSceneBridge;
+	runtimeApi_.GetSceneLoadProgress = ScriptGetSceneLoadProgressBridge;
+	runtimeApi_.IsSceneLoading = ScriptIsSceneLoadingBridge;
+	runtimeApi_.IsSceneLoaded = ScriptIsSceneLoadedBridge;
+	runtimeApi_.SetSceneFloat = ScriptSetSceneFloatBridge;
+	runtimeApi_.GetSceneFloat = ScriptGetSceneFloatBridge;
+	runtimeApi_.SetSceneString = ScriptSetSceneStringBridge;
+	runtimeApi_.GetSceneString = ScriptGetSceneStringBridge;
+	runtimeApi_.PlayActionSequence = ScriptPlayActionSequenceBridge;
+	runtimeApi_.PauseActionSequence = ScriptPauseActionSequenceBridge;
+	runtimeApi_.StopActionSequence = ScriptStopActionSequenceBridge;
+	runtimeApi_.SignalActionSequence = ScriptSignalActionSequenceBridge;
+	runtimeApi_.IsActionSequencePlaying = ScriptIsActionSequencePlayingBridge;
+	runtimeApi_.SaveSlot = ScriptSaveSlotBridge;
+	runtimeApi_.LoadSlot = ScriptLoadSlotBridge;
+	runtimeApi_.DeleteSlot = ScriptDeleteSlotBridge;
+	runtimeApi_.HasSlot = ScriptHasSlotBridge;
+	runtimeApi_.ActivateCheckpoint = ScriptActivateCheckpointBridge;
+	runtimeApi_.SetSaveFloat = ScriptSetSaveFloatBridge;
+	runtimeApi_.GetSaveFloat = ScriptGetSaveFloatBridge;
+	runtimeApi_.SetSaveString = ScriptSetSaveStringBridge;
+	runtimeApi_.GetSaveString = ScriptGetSaveStringBridge;
+	runtimeApi_.SampleOceanSurface = ScriptSampleOceanSurfaceBridge;
+	runtimeApi_.SetComponentActive = ScriptSetComponentActiveBridge;
+	runtimeApi_.IsComponentActive = ScriptIsComponentActiveBridge;
+	runtimeApi_.AddForceAtPosition = ScriptAddForceAtPositionBridge;
+	runtimeApi_.AddExplosionImpulse = ScriptAddExplosionImpulseBridge;
+	runtimeApi_.AttachRope = ScriptAttachRopeBridge;
+	runtimeApi_.DetachRope = ScriptDetachRopeBridge;
+	runtimeApi_.SetRopeLength = ScriptSetRopeLengthBridge;
+	runtimeApi_.RepairRope = ScriptRepairRopeBridge;
+	runtimeApi_.GetRopeState = ScriptGetRopeStateBridge;
+	runtimeApi_.LoadoutSelectSlot = ScriptLoadoutSelectSlotBridge;
+	runtimeApi_.LoadoutSelectNext = ScriptLoadoutSelectNextBridge;
+	runtimeApi_.LoadoutSelectPrevious = ScriptLoadoutSelectPreviousBridge;
+	runtimeApi_.LoadoutFire = ScriptLoadoutFireBridge;
+	runtimeApi_.LoadoutReload = ScriptLoadoutReloadBridge;
+	runtimeApi_.LoadoutGetAmmo = ScriptLoadoutGetAmmoBridge;
+	runtimeApi_.GetCurrentTarget = ScriptGetCurrentTargetBridge;
+	runtimeApi_.SetExplicitTarget = ScriptSetExplicitTargetBridge;
+	runtimeApi_.SetRuntimeFloat = ScriptSetRuntimeFloatBridge;
+	runtimeApi_.GetRuntimeFloat = ScriptGetRuntimeFloatBridge;
+	runtimeApi_.SetRuntimeInt = ScriptSetRuntimeIntBridge;
+	runtimeApi_.GetRuntimeInt = ScriptGetRuntimeIntBridge;
+	runtimeApi_.SetRuntimeBool = ScriptSetRuntimeBoolBridge;
+	runtimeApi_.GetRuntimeBool = ScriptGetRuntimeBoolBridge;
+	runtimeApi_.SetRuntimeVector3 = ScriptSetRuntimeVector3Bridge;
+	runtimeApi_.GetRuntimeVector3 = ScriptGetRuntimeVector3Bridge;
+	runtimeApi_.PlayPropertyTween = ScriptPlayPropertyTweenBridge;
+	runtimeApi_.StopPropertyTween = ScriptStopPropertyTweenBridge;
+	runtimeApi_.IsPropertyTweenPlaying = ScriptIsPropertyTweenPlayingBridge;
+	runtimeApi_.RelayAction = ScriptRelayActionBridge;
+	runtimeApi_.HasComponent = ScriptHasComponentBridge;
+	runtimeApi_.InvokeScriptAction = ScriptInvokeScriptActionBridge;
+	runtimeApi_.SetRuntimeVector2 = ScriptSetRuntimeVector2Bridge;
+	runtimeApi_.GetRuntimeVector2 = ScriptGetRuntimeVector2Bridge;
+	runtimeApi_.GetRailState = ScriptGetRailStateBridge;
+	runtimeApi_.SetRailDistance = ScriptSetRailDistanceBridge;
+	runtimeApi_.GetRailClosestProgress = ScriptGetRailClosestProgressBridge;
+	runtimeApi_.GetRailFrame = ScriptGetRailFrameBridge;
+	runtimeApi_.ApplyDamageContext = ScriptApplyDamageContextBridge;
+	runtimeApi_.GetLastDamageContext = ScriptGetLastDamageContextBridge;
+	runtimeApi_.InvokeScriptActionPayload = ScriptInvokeScriptActionPayloadBridge;
+	runtimeApi_.StartTimer = ScriptStartTimerBridge;
+	runtimeApi_.PauseTimer = ScriptPauseTimerBridge;
+	runtimeApi_.GetTimerRemaining = ScriptGetTimerRemainingBridge;
+	runtimeApi_.ChangeGenericState = ScriptChangeGenericStateBridge;
+	runtimeApi_.GetGenericState = ScriptGetGenericStateBridge;
+	runtimeApi_.SetAttributeValue = ScriptSetAttributeValueBridge;
+	runtimeApi_.GetAttributeValue = ScriptGetAttributeValueBridge;
+	runtimeApi_.GetTargetLockState = ScriptGetTargetLockStateBridge;
+	runtimeApi_.SetNamedAttributeValue = ScriptSetNamedAttributeValueBridge;
+	runtimeApi_.GetNamedAttributeValue = ScriptGetNamedAttributeValueBridge;
+	runtimeApi_.SetCounterValue = ScriptSetCounterValueBridge;
+	runtimeApi_.AddCounterValue = ScriptAddCounterValueBridge;
+	runtimeApi_.GetCounterValue = ScriptGetCounterValueBridge;
+	runtimeApi_.EvaluateGenericCondition = ScriptEvaluateGenericConditionBridge;
+	runtimeApi_.GetMultiTargetLockCount = ScriptGetMultiTargetLockCountBridge;
+	runtimeApi_.GetMultiTargetLockTarget = ScriptGetMultiTargetLockTargetBridge;
+	runtimeApi_.GetGameplayDataValue = ScriptGetGameplayDataValueBridge;
+	runtimeApi_.HashDamageTag = ScriptHashDamageTagBridge;
+	runtimeApi_.ApplyAreaDamage = ScriptApplyAreaDamageBridge;
+	runtimeApi_.DetonateProjectile = ScriptDetonateProjectileBridge;
+	runtimeApi_.GetThreatTrackerCount = ScriptGetThreatTrackerCountBridge;
+	runtimeApi_.GetThreatTrackerEntry = ScriptGetThreatTrackerEntryBridge;
+	runtimeApi_.StartNamedCooldown = ScriptStartNamedCooldownBridge;
+	runtimeApi_.ResetNamedCooldown = ScriptResetNamedCooldownBridge;
+	runtimeApi_.GetNamedCooldown = ScriptGetNamedCooldownBridge;
+	runtimeApi_.ResetRuntimeState = ScriptResetRuntimeStateBridge;
+	runtimeApi_.GetWeaponAccuracySpread = ScriptGetWeaponAccuracySpreadBridge;
+	runtimeApi_.PlayTimeScale = ScriptPlayTimeScaleBridge;
+	runtimeApi_.GetTimeScale = ScriptGetTimeScaleBridge;
+	runtimeApi_.GetInterceptPrediction = ScriptGetInterceptPredictionBridge;
+	runtimeApi_.SetObjective = ScriptSetObjectiveBridge;
+	runtimeApi_.GetObjective = ScriptGetObjectiveBridge;
+	runtimeApi_.StartEncounter = ScriptStartEncounterBridge;
+	runtimeApi_.ResolveSpawnPoint = ScriptResolveSpawnPointBridge;
+	runtimeApi_.ApplyDifficulty = ScriptApplyDifficultyBridge;
+	runtimeApi_.GetDamageDirection = ScriptGetDamageDirectionBridge;
+	runtimeApi_.GetBallisticPrediction = ScriptGetBallisticPredictionBridge;
+	runtimeApi_.GetBallisticTrajectoryPoint = ScriptGetBallisticTrajectoryPointBridge;
+	runtimeApi_.GetDamageEventBufferCount = ScriptGetDamageEventBufferCountBridge;
+	runtimeApi_.GetDamageEventBufferEntry = ScriptGetDamageEventBufferEntryBridge;
+	runtimeApi_.SetGamePaused = ScriptSetGamePausedBridge;
+	runtimeApi_.IsGamePaused = ScriptIsGamePausedBridge;
+	runtimeApi_.GetSurfaceWakeState = ScriptGetSurfaceWakeStateBridge;
+	runtimeApi_.OceanSegmentCast = ScriptOceanSegmentCastBridge;
+	runtimeApi_.OceanRaycast = ScriptOceanRaycastBridge;
+	runtimeApi_.QueryOceanOcclusion = ScriptQueryOceanOcclusionBridge;
+	runtimeApi_.GetWaterSurfaceState = ScriptGetWaterSurfaceStateBridge;
+	runtimeApi_.GetOceanProbeSample = ScriptGetOceanProbeSampleBridge;
+	runtimeApi_.LoadoutGetAmmoAtSlot = ScriptLoadoutGetAmmoAtSlotBridge;
+	runtimeApi_.LoadoutAddMagazineAmmo = ScriptLoadoutAddMagazineAmmoBridge;
+	runtimeApi_.LoadoutAddReserveAmmo = ScriptLoadoutAddReserveAmmoBridge;
+	runtimeApi_.LoadoutSetMagazineAmmo = ScriptLoadoutSetMagazineAmmoBridge;
+	runtimeApi_.LoadoutSetReserveAmmo = ScriptLoadoutSetReserveAmmoBridge;
+	runtimeApi_.LoadoutSetMaximumAmmo = ScriptLoadoutSetMaximumAmmoBridge;
+	runtimeApi_.LoadoutRefillMagazine = ScriptLoadoutRefillMagazineBridge;
+	runtimeApi_.FireWeaponGroup = ScriptFireWeaponGroupBridge;
+	runtimeApi_.IsWeaponGroupFiring = ScriptIsWeaponGroupFiringBridge;
+	runtimeApi_.GetTurretAimState = ScriptGetTurretAimStateBridge;
+	runtimeApi_.GetFireLineState = ScriptGetFireLineStateBridge;
+	runtimeApi_.ApplyStatusEffect = ScriptApplyStatusEffectBridge;
+	runtimeApi_.RemoveStatusEffect = ScriptRemoveStatusEffectBridge;
+	runtimeApi_.ClearStatusEffects = ScriptClearStatusEffectsBridge;
+	runtimeApi_.HasStatusEffect = ScriptHasStatusEffectBridge;
+	runtimeApi_.GetStatusEffectCount = ScriptGetStatusEffectCountBridge;
+	runtimeApi_.GetStatusEffectEntry = ScriptGetStatusEffectEntryBridge;
+	runtimeApi_.SampleOceanSurfaceDetailed = ScriptSampleOceanSurfaceDetailedBridge;
+	runtimeApi_.GetWaterSurfaceFoam = ScriptGetWaterSurfaceFoamBridge;
+	runtimeApi_.GetOceanProbeFoam = ScriptGetOceanProbeFoamBridge;
+	runtimeApi_.SetRailSpeedProfileEnabled = ScriptSetRailSpeedProfileEnabledBridge;
+	runtimeApi_.GetRailSpeedMultiplier = ScriptGetRailSpeedMultiplierBridge;
+	runtimeApi_.GetRailActiveZone = ScriptGetRailActiveZoneBridge;
+	runtimeApi_.RearmRailEventMarkers = ScriptRearmRailEventMarkersBridge;
+	runtimeApi_.GetSimulationLodLevel = ScriptGetSimulationLodLevelBridge;
+	runtimeApi_.StartWaveSpawner = ScriptStartWaveSpawnerBridge;
+	runtimeApi_.IsWaveSpawnerComplete = ScriptIsWaveSpawnerCompleteBridge;
 }
 
 void EditorScriptManager::StartBindingsForModule(ScriptModule& scriptModule) {
@@ -1325,6 +3551,17 @@ void EditorScriptManager::StartBindingIfNeeded(
 	if (!scriptModule.isLoaded || scriptBinding.hasStarted ||
 		!IsScriptBindingActive(scriptBinding)) {
 		return;
+	}
+
+	if (UsesInstanceApi(scriptModule) && scriptBinding.instance == nullptr) {
+		scriptBinding.instance = scriptModule.createInstanceFunction(scriptBinding.gameObjectId);
+
+		if (scriptBinding.instance == nullptr) {
+			PushConsoleMessage(
+				"C++ Script インスタンス生成失敗: GameObject=" +
+				std::to_string(scriptBinding.gameObjectId) + " DLL=" + scriptBinding.dllPath);
+			return;
+		}
 	}
 
 	std::vector<EditorScriptFieldDescriptor> fieldDescriptors;
@@ -1348,11 +3585,17 @@ void EditorScriptManager::StartBindingIfNeeded(
 		scriptBinding.hasSynchronizedFieldHash = true;
 	}
 
-	if (scriptModule.startFunction != nullptr) {
+	if (UsesInstanceApi(scriptModule) && scriptBinding.instance != nullptr &&
+		scriptModule.startInstanceFunction != nullptr) {
+		scriptModule.startInstanceFunction(scriptBinding.instance);
+	}
+	else if (!UsesInstanceApi(scriptModule) && scriptModule.startFunction != nullptr) {
 		scriptModule.startFunction(scriptBinding.gameObjectId);
 	}
 
 	scriptBinding.hasStarted = true;
+	scriptBinding.updateIntervalRemaining = 0.0f;
+	scriptBinding.accumulatedUpdateDeltaTime = 0.0f;
 }
 
 void EditorScriptManager::StopBindingsForModule(ScriptModule& scriptModule) {
@@ -1365,12 +3608,47 @@ void EditorScriptManager::StopBindingsForModule(ScriptModule& scriptModule) {
 			continue;
 		}
 
-		if (scriptModule.stopFunction != nullptr) {
+		if (UsesInstanceApi(scriptModule) && scriptBinding.instance != nullptr &&
+			scriptModule.stopInstanceFunction != nullptr) {
+			scriptModule.stopInstanceFunction(scriptBinding.instance);
+		}
+		else if (!UsesInstanceApi(scriptModule) && scriptModule.stopFunction != nullptr) {
 			scriptModule.stopFunction(scriptBinding.gameObjectId);
 		}
 
+		if (UsesInstanceApi(scriptModule) && scriptBinding.instance != nullptr) {
+			scriptModule.destroyInstanceFunction(scriptBinding.instance);
+			scriptBinding.instance = nullptr;
+		}
+
 		scriptBinding.hasStarted = false;
+		scriptBinding.updateIntervalRemaining = 0.0f;
+		scriptBinding.accumulatedUpdateDeltaTime = 0.0f;
 	}
+}
+
+bool EditorScriptManager::UsesInstanceApi(const ScriptModule& scriptModule) const {
+	return scriptModule.createInstanceFunction != nullptr &&
+		scriptModule.destroyInstanceFunction != nullptr;
+}
+
+bool EditorScriptManager::InvokeBindingAction(
+	const ScriptBinding& scriptBinding,
+	ScriptModule& scriptModule,
+	const char* functionName,
+	const EditorScriptInputActionContext& inputContext) {
+	if (functionName == nullptr) {
+		return false;
+	}
+
+	if (UsesInstanceApi(scriptModule)) {
+		return scriptBinding.instance != nullptr &&
+			scriptModule.invokeActionInstanceFunction != nullptr &&
+			scriptModule.invokeActionInstanceFunction(scriptBinding.instance, functionName, &inputContext);
+	}
+
+	return scriptModule.invokeActionFunction != nullptr &&
+		scriptModule.invokeActionFunction(scriptBinding.gameObjectId, functionName, &inputContext);
 }
 
 void EditorScriptManager::DispatchQueuedUiEvents() {
@@ -1392,6 +3670,13 @@ void EditorScriptManager::DispatchQueuedUiEvents() {
 		inputContext.valueType = uiEvent.valueType;
 		inputContext.buttonValue = uiEvent.buttonValue;
 		inputContext.vector2Value = uiEvent.vector2Value;
+		inputContext.payloadType = uiEvent.payload.type;
+		inputContext.payloadGameObjectId = uiEvent.payload.gameObjectId;
+		inputContext.payloadInt = uiEvent.payload.intValue;
+		inputContext.payloadFloat = uiEvent.payload.floatValue;
+		inputContext.payloadBool = uiEvent.payload.boolValue;
+		inputContext.payloadVector3 = uiEvent.payload.vector3Value;
+		CopyStringToFixedBuffer(uiEvent.payload.stringValue, inputContext.payloadString, sizeof(inputContext.payloadString));
 		const char* actionMapName = uiEvent.isUiEvent ? "UI" : "Event";
 		const char* actionName = uiEvent.isUiEvent ? "Button" : "Trigger";
 		const char* bindingPath = uiEvent.isUiEvent ? "UI/Button" : "Event/Trigger";
@@ -1417,15 +3702,16 @@ void EditorScriptManager::DispatchQueuedUiEvents() {
 				}
 
 				ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
-				if (scriptModule == nullptr || !scriptModule->isLoaded || scriptModule->invokeActionFunction == nullptr) {
+				if (scriptModule == nullptr || !scriptModule->isLoaded) {
 					continue;
 				}
 
 				hasScriptCandidate = true;
-				wasInvoked = scriptModule->invokeActionFunction(
-					scriptBinding.gameObjectId,
+				wasInvoked = InvokeBindingAction(
+					scriptBinding,
+					*scriptModule,
 					uiEvent.functionName.c_str(),
-					&inputContext);
+					inputContext);
 
 				if (wasInvoked) {
 					break;
@@ -1502,15 +3788,16 @@ void EditorScriptManager::DispatchInputActions() {
 						}
 
 						ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
-						if (scriptModule == nullptr || !scriptModule->isLoaded || scriptModule->invokeActionFunction == nullptr) {
+						if (scriptModule == nullptr || !scriptModule->isLoaded) {
 							continue;
 						}
 
 						hasScriptCandidate = true;
-						wasInvoked = scriptModule->invokeActionFunction(
-							scriptBinding.gameObjectId,
+						wasInvoked = InvokeBindingAction(
+							scriptBinding,
+							*scriptModule,
 							eventBinding.functionName.c_str(),
-							&inputContext);
+							inputContext);
 
 						if (wasInvoked) {
 							break;  // 1 つの Event 欄は、登録関数を持つ 1 つの C++ Component だけを呼ぶ。
@@ -1582,7 +3869,14 @@ void EditorScriptManager::DispatchInputActions() {
 void EditorScriptManager::ApplyComponentFieldsToInstance(
 	const ScriptBinding& scriptBinding,
 	ScriptModule& scriptModule) {
-	if (scriptModule.setFieldValueFunction == nullptr) {
+	const bool usesInstanceApi = UsesInstanceApi(scriptModule);
+	const bool canSetInstanceField =
+		usesInstanceApi && scriptBinding.instance != nullptr &&
+		scriptModule.setFieldValueInstanceFunction != nullptr;
+	const bool canSetLegacyField =
+		!usesInstanceApi && scriptModule.setFieldValueFunction != nullptr;
+
+	if (!canSetInstanceField && !canSetLegacyField) {
 		return;
 	}
 
@@ -1593,14 +3887,33 @@ void EditorScriptManager::ApplyComponentFieldsToInstance(
 
 	for (const EditorScriptProperty& scriptProperty : scriptComponent->scriptProperties) {
 		const EditorScriptFieldValue fieldValue = MakeScriptFieldValue(scriptProperty);
-		scriptModule.setFieldValueFunction(scriptBinding.gameObjectId, scriptProperty.name.c_str(), &fieldValue);
+
+		if (canSetInstanceField) {
+			scriptModule.setFieldValueInstanceFunction(
+				scriptBinding.instance,
+				scriptProperty.name.c_str(),
+				&fieldValue);
+		}
+		else {
+			scriptModule.setFieldValueFunction(
+				scriptBinding.gameObjectId,
+				scriptProperty.name.c_str(),
+				&fieldValue);
+		}
 	}
 }
 
 void EditorScriptManager::ReadInstanceFieldsToComponent(
 	const ScriptBinding& scriptBinding,
 	ScriptModule& scriptModule) {
-	if (scriptModule.getFieldValueFunction == nullptr) {
+	const bool usesInstanceApi = UsesInstanceApi(scriptModule);
+	const bool canGetInstanceField =
+		usesInstanceApi && scriptBinding.instance != nullptr &&
+		scriptModule.getFieldValueInstanceFunction != nullptr;
+	const bool canGetLegacyField =
+		!usesInstanceApi && scriptModule.getFieldValueFunction != nullptr;
+
+	if (!canGetInstanceField && !canGetLegacyField) {
 		return;
 	}
 
@@ -1611,10 +3924,17 @@ void EditorScriptManager::ReadInstanceFieldsToComponent(
 
 	for (EditorScriptProperty& scriptProperty : scriptComponent->scriptProperties) {
 		EditorScriptFieldValue fieldValue{};
-		if (!scriptModule.getFieldValueFunction(
+		const bool wasRead = canGetInstanceField
+			? scriptModule.getFieldValueInstanceFunction(
+				scriptBinding.instance,
+				scriptProperty.name.c_str(),
+				&fieldValue)
+			: scriptModule.getFieldValueFunction(
 				scriptBinding.gameObjectId,
 				scriptProperty.name.c_str(),
-				&fieldValue)) {
+				&fieldValue);
+
+		if (!wasRead) {
 			continue;
 		}
 
@@ -1664,14 +3984,13 @@ EditorComponent* EditorScriptManager::FindScriptComponent(const ScriptBinding& s
 	}
 
 	EditorGameObject* gameObject = editorScene_->FindGameObject(scriptBinding.gameObjectId);
-	if (gameObject == nullptr) {
+	if (gameObject == nullptr || scriptBinding.componentIndex >= gameObject->components.size()) {
 		return nullptr;
 	}
 
-	for (EditorComponent& component : gameObject->components) {
-		if (component.type == scriptBinding.componentType && component.assetPath == scriptBinding.dllPath) {
-			return &component;
-		}
+	EditorComponent& component = gameObject->components[scriptBinding.componentIndex];
+	if (component.type == scriptBinding.componentType && component.assetPath == scriptBinding.dllPath) {
+		return &component;
 	}
 
 	return nullptr;
@@ -1684,15 +4003,14 @@ bool EditorScriptManager::IsScriptBindingActive(const ScriptBinding& scriptBindi
 
 	const EditorGameObject* gameObject = editorScene_->FindGameObject(scriptBinding.gameObjectId);
 
-	if (gameObject == nullptr || !gameObject->isActive) {
+	if (gameObject == nullptr || !gameObject->isActive ||
+		scriptBinding.componentIndex >= gameObject->components.size()) {
 		return false;
 	}
 
-	for (const EditorComponent& component : gameObject->components) {
-		if (component.type == scriptBinding.componentType &&
-			component.assetPath == scriptBinding.dllPath) {
-			return component.isActive;
-		}
+	const EditorComponent& component = gameObject->components[scriptBinding.componentIndex];
+	if (component.type == scriptBinding.componentType && component.assetPath == scriptBinding.dllPath) {
+		return component.isActive;
 	}
 
 	return false;
@@ -1897,7 +4215,39 @@ bool EditorScriptManager::LoadModule(const std::string& dllPath) {
 		reinterpret_cast<EditorScriptGetActionCountFn>(GetProcAddress(moduleHandle, "EditorScript_GetActionCount"));
 	scriptModule.getActionNameFunction =
 		reinterpret_cast<EditorScriptGetActionNameFn>(GetProcAddress(moduleHandle, "EditorScript_GetActionName"));
+	scriptModule.createInstanceFunction =
+		reinterpret_cast<EditorScriptCreateInstanceFn>(GetProcAddress(moduleHandle, "EditorScript_CreateInstance"));
+	scriptModule.destroyInstanceFunction =
+		reinterpret_cast<EditorScriptDestroyInstanceFn>(GetProcAddress(moduleHandle, "EditorScript_DestroyInstance"));
+	scriptModule.startInstanceFunction =
+		reinterpret_cast<EditorScriptStartInstanceFn>(GetProcAddress(moduleHandle, "EditorScript_StartInstance"));
+	scriptModule.updateInstanceFunction =
+		reinterpret_cast<EditorScriptUpdateInstanceFn>(GetProcAddress(moduleHandle, "EditorScript_UpdateInstance"));
+	scriptModule.fixedUpdateInstanceFunction =
+		reinterpret_cast<EditorScriptFixedUpdateInstanceFn>(GetProcAddress(moduleHandle, "EditorScript_FixedUpdateInstance"));
+	scriptModule.physicsEventInstanceFunction =
+		reinterpret_cast<EditorScriptPhysicsEventInstanceFn>(GetProcAddress(moduleHandle, "EditorScript_OnPhysicsEventInstance"));
+	scriptModule.animationEventInstanceFunction =
+		reinterpret_cast<EditorScriptAnimationEventInstanceFn>(GetProcAddress(moduleHandle, "EditorScript_OnAnimationEventInstance"));
+	scriptModule.stopInstanceFunction =
+		reinterpret_cast<EditorScriptStopInstanceFn>(GetProcAddress(moduleHandle, "EditorScript_StopInstance"));
+	scriptModule.getFieldValueInstanceFunction =
+		reinterpret_cast<EditorScriptGetFieldValueInstanceFn>(GetProcAddress(moduleHandle, "EditorScript_GetFieldValueInstance"));
+	scriptModule.setFieldValueInstanceFunction =
+		reinterpret_cast<EditorScriptSetFieldValueInstanceFn>(GetProcAddress(moduleHandle, "EditorScript_SetFieldValueInstance"));
+	scriptModule.invokeActionInstanceFunction =
+		reinterpret_cast<EditorScriptInvokeActionInstanceFn>(GetProcAddress(moduleHandle, "EditorScript_InvokeActionInstance"));
 #pragma warning(pop)
+
+	const bool hasCreateInstance = scriptModule.createInstanceFunction != nullptr;
+	const bool hasDestroyInstance = scriptModule.destroyInstanceFunction != nullptr;
+
+	if (hasCreateInstance != hasDestroyInstance) {
+		moduleStatusMessages_[dllPath] = "DLL Instance API 不完全: Create / Destroy の両方が必要";
+		PushConsoleMessage("DLL Instance API 不完全: " + dllPath);
+		UnloadModule(scriptModule);
+		return false;
+	}
 
 	if (scriptModule.loadFunction == nullptr || !scriptModule.loadFunction(kEditorScriptApiVersion, &runtimeApi_)) {
 		moduleStatusMessages_[dllPath] = "DLL 初期化失敗";
@@ -1942,6 +4292,17 @@ void EditorScriptManager::UnloadModule(ScriptModule& scriptModule) {
 	scriptModule.invokeActionFunction = nullptr;
 	scriptModule.getActionCountFunction = nullptr;
 	scriptModule.getActionNameFunction = nullptr;
+	scriptModule.createInstanceFunction = nullptr;
+	scriptModule.destroyInstanceFunction = nullptr;
+	scriptModule.startInstanceFunction = nullptr;
+	scriptModule.updateInstanceFunction = nullptr;
+	scriptModule.fixedUpdateInstanceFunction = nullptr;
+	scriptModule.physicsEventInstanceFunction = nullptr;
+	scriptModule.animationEventInstanceFunction = nullptr;
+	scriptModule.stopInstanceFunction = nullptr;
+	scriptModule.getFieldValueInstanceFunction = nullptr;
+	scriptModule.setFieldValueInstanceFunction = nullptr;
+	scriptModule.invokeActionInstanceFunction = nullptr;
 	scriptModule.isLoaded = false;
 }
 
@@ -2213,6 +4574,20 @@ bool EditorScriptManager::AddForceInternal(int32_t gameObjectId, const EditorScr
 	return physicsManager_->AddForce(gameObjectId, ToEditorVector3(force));
 }
 
+bool EditorScriptManager::AddForceAtPositionInternal(
+	int32_t gameObjectId,
+	const EditorScriptVector3& force,
+	const EditorScriptVector3& worldPosition) {
+	if (physicsManager_ == nullptr) {
+		return false;
+	}
+
+	return physicsManager_->AddForceAtPosition(
+		gameObjectId,
+		ToEditorVector3(force),
+		ToEditorVector3(worldPosition));
+}
+
 bool EditorScriptManager::AddImpulseInternal(int32_t gameObjectId, const EditorScriptVector3& impulse) {
 	if (physicsManager_ == nullptr) {
 		return false;
@@ -2227,6 +4602,67 @@ bool EditorScriptManager::AddTorqueInternal(int32_t gameObjectId, const EditorSc
 	}
 
 	return physicsManager_->AddTorque(gameObjectId, ToEditorVector3(torque));
+}
+
+int32_t EditorScriptManager::AddExplosionImpulseInternal(
+	const EditorScriptVector3& center,
+	float radius,
+	float impulseStrength,
+	float upwardModifier) {
+	if (physicsManager_ == nullptr) {
+		return 0;
+	}
+
+	return physicsManager_->AddExplosionImpulse(
+		ToEditorVector3(center),
+		radius,
+		impulseStrength,
+		upwardModifier);
+}
+
+bool EditorScriptManager::AttachRopeInternal(
+	int32_t ownerGameObjectId,
+	int32_t targetGameObjectId,
+	const EditorScriptVector3& ownerLocalAnchor,
+	const EditorScriptVector3& targetAnchor,
+	float maximumLength) {
+	return physicsManager_ != nullptr && physicsManager_->AttachRope(
+		ownerGameObjectId,
+		targetGameObjectId,
+		ToEditorVector3(ownerLocalAnchor),
+		ToEditorVector3(targetAnchor),
+		maximumLength);
+}
+
+bool EditorScriptManager::DetachRopeInternal(int32_t ownerGameObjectId) {
+	return physicsManager_ != nullptr && physicsManager_->DetachRope(ownerGameObjectId);
+}
+
+bool EditorScriptManager::SetRopeLengthInternal(int32_t ownerGameObjectId, float maximumLength) {
+	return physicsManager_ != nullptr && physicsManager_->SetRopeLength(ownerGameObjectId, maximumLength);
+}
+
+bool EditorScriptManager::RepairRopeInternal(int32_t ownerGameObjectId) {
+	return physicsManager_ != nullptr && physicsManager_->RepairRope(ownerGameObjectId);
+}
+
+EditorScriptRopeState EditorScriptManager::GetRopeStateInternal(int32_t ownerGameObjectId) const {
+	EditorScriptRopeState ropeState{};
+	ropeState.targetGameObjectId = -1;
+
+	if (physicsManager_ == nullptr) {
+		return ropeState;
+	}
+
+	ropeState.hasComponent = physicsManager_->GetRopeState(
+		ownerGameObjectId,
+		ropeState.isActive,
+		ropeState.isBroken,
+		ropeState.targetGameObjectId,
+		ropeState.maximumLength,
+		ropeState.currentLength,
+		ropeState.currentTension);
+	return ropeState;
 }
 
 EditorScriptAiSensorState EditorScriptManager::GetAiSensorStateInternal(int32_t gameObjectId, int32_t sensorKind) const {
@@ -2566,6 +5002,11 @@ bool EditorScriptManager::SetGameObjectActiveInternal(int32_t gameObjectId, bool
 	}
 
 	gameObject->isActive = isActive;
+
+	if (physicsManager_ != nullptr) {
+		physicsManager_->SetGameObjectSimulationActive(gameObjectId, isActive);
+	}
+
 	return true;
 }
 
@@ -2578,7 +5019,106 @@ bool EditorScriptManager::IsGameObjectActiveInternal(int32_t gameObjectId) const
 	return gameObject != nullptr && gameObject->isActive;
 }
 
-bool EditorScriptManager::RequestSceneLoadInternal(const std::string& scenePath) {
+bool EditorScriptManager::SetComponentActiveInternal(
+	int32_t gameObjectId,
+	const char* componentTypeName,
+	bool isActive) {
+	if (editorScene_ == nullptr || componentTypeName == nullptr || componentTypeName[0] == '\0') {
+		return false;
+	}
+
+	EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+	if (gameObject == nullptr) {
+		return false;
+	}
+
+	for (EditorComponent& component : gameObject->components) {
+		if (ToString(component.type) != componentTypeName) {
+			continue;
+		}
+
+		component.isActive = isActive;
+
+		if (component.type == EditorComponentType::RigidBody && physicsManager_ != nullptr) {
+			physicsManager_->SetGameObjectSimulationActive(gameObjectId, isActive);
+		}
+
+		return true;
+	}
+
+	return false;
+}
+
+bool EditorScriptManager::IsComponentActiveInternal(
+	int32_t gameObjectId,
+	const char* componentTypeName) const {
+	if (editorScene_ == nullptr || componentTypeName == nullptr || componentTypeName[0] == '\0') {
+		return false;
+	}
+
+	const EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+	if (gameObject == nullptr) {
+		return false;
+	}
+
+	for (const EditorComponent& component : gameObject->components) {
+		if (ToString(component.type) == componentTypeName) {
+			return component.isActive;
+		}
+	}
+
+	return false;
+}
+
+bool EditorScriptManager::HasComponentInternal(
+	int32_t gameObjectId,
+	const char* componentTypeName) const {
+	if (editorScene_ == nullptr || componentTypeName == nullptr || componentTypeName[0] == '\0') {
+		return false;
+	}
+
+	const EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+
+	if (gameObject == nullptr) {
+		return false;
+	}
+
+	for (const EditorComponent& component : gameObject->components) {
+		if (ToString(component.type) == componentTypeName) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool EditorScriptManager::InvokeScriptActionInternal(
+	int32_t gameObjectId,
+	const char* functionName) {
+	if (!isStarted_ || editorScene_ == nullptr || functionName == nullptr || functionName[0] == '\0') {
+		return false;
+	}
+
+	const EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+
+	if (gameObject == nullptr || !gameObject->isActive) {
+		return false;
+	}
+
+	const std::vector<std::string> actionNames = GetRegisteredActionNames(gameObjectId);
+
+	if (std::find(actionNames.begin(), actionNames.end(), functionName) == actionNames.end()) {
+		return false;
+	}
+
+	QueueActionEvent(gameObjectId, functionName);
+	return true;
+}
+
+bool EditorScriptManager::RequestSceneLoadInternal(
+	const std::string& scenePath,
+	bool isAdditive,
+	bool isAsynchronous) {
 	if (scenePath.empty()) {
 		PushConsoleMessage("Scene: 遷移先が空です");
 		return false;
@@ -2607,7 +5147,9 @@ bool EditorScriptManager::RequestSceneLoadInternal(const std::string& scenePath)
 		return false;
 	}
 
-	requestedScenePath_ = normalizedScenePath;
+	requestedSceneLoad_.scenePath = normalizedScenePath;
+	requestedSceneLoad_.isAdditive = isAdditive;
+	requestedSceneLoad_.isAsynchronous = isAsynchronous;
 	return true;
 }
 

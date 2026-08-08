@@ -91,6 +91,8 @@ bool EffectAsset::LoadFromJson(const std::string& filePath) {
 	loadedAsset.shape = (std::clamp)(ReadInt(rootValue, "shape", loadedAsset.shape), 0, 3);
 	loadedAsset.simulationSpace = (std::clamp)(ReadInt(rootValue, "simulationSpace", loadedAsset.simulationSpace), 0, 1);
 	loadedAsset.motionType = (std::clamp)(ReadInt(rootValue, "motionType", loadedAsset.motionType), 0, 6);
+	loadedAsset.billboardMode = (std::clamp)(ReadInt(rootValue, "billboardMode", loadedAsset.billboardMode), 0, 3);
+	loadedAsset.billboardStretch = (std::max)(ReadFloat(rootValue, "billboardStretch", loadedAsset.billboardStretch), 0.01f);
 	loadedAsset.playOnAwake = ReadBool(rootValue, "playOnAwake", loadedAsset.playOnAwake);
 	loadedAsset.looping = ReadBool(rootValue, "looping", loadedAsset.looping);
 	loadedAsset.collision = ReadBool(rootValue, "collision", loadedAsset.collision);
@@ -133,6 +135,8 @@ void EffectAsset::ApplyToComponent(EditorComponent& component) const {
 	component.particleCollisionBounce = collisionBounce;
 	component.particleCollisionFriction = collisionFriction;
 	component.particleMotionType = motionType;
+	component.particleBillboardMode = billboardMode;
+	component.particleBillboardStretch = billboardStretch;
 	component.particleMotionCenter = motionCenter;
 	component.particleAngularSpeed = angularSpeed;
 	component.particleRadialAcceleration = radialAcceleration;

@@ -5,7 +5,9 @@
 #include <cstring>
 
 namespace {
-	constexpr uint32_t kTemporalDescriptorStartIndex = 57u;
+	// 0-159 は固定描画機能と ImGui が使用する。Temporal は履歴を View ごとに
+	// 分離するため、動的Texture領域の直前に連続した専用範囲を確保する。
+	constexpr uint32_t kTemporalDescriptorStartIndex = 160u;
 	constexpr uint32_t kDescriptorStride = 2u;
 	constexpr uint32_t kComputeConstantCount = 44u;
 	constexpr uint32_t kThreadGroupSize = 8u;
@@ -167,18 +169,39 @@ bool EditorTemporalRenderingManager::Execute(
 		sizeof(float) * 16u);
 	std::memcpy(&constants[40], viewportRect, sizeof(viewportRect));
 
-	const ResourceType ssrHistoryReadType = historyWriteIndex_ == 0u
-		? ResourceType::SsrHistory1
-		: ResourceType::SsrHistory0;
-	const ResourceType ssrHistoryWriteType = historyWriteIndex_ == 0u
-		? ResourceType::SsrHistory0
-		: ResourceType::SsrHistory1;
-	const ResourceType colorHistoryReadType = historyWriteIndex_ == 0u
-		? ResourceType::ColorHistory1
-		: ResourceType::ColorHistory0;
-	const ResourceType colorHistoryWriteType = historyWriteIndex_ == 0u
-		? ResourceType::ColorHistory0
-		: ResourceType::ColorHistory1;
+	const bool isGameViewHistory = viewHistoryIndex == 1u;
+	const uint32_t historyWriteIndex = historyWriteIndices_[viewHistoryIndex];
+	const ResourceType previousDepthType = isGameViewHistory
+		? ResourceType::PreviousDepthGame
+		: ResourceType::PreviousDepthScene;
+	const ResourceType ssrHistoryReadType = isGameViewHistory
+		? (historyWriteIndex == 0u
+			? ResourceType::SsrHistoryGame1
+			: ResourceType::SsrHistoryGame0)
+		: (historyWriteIndex == 0u
+			? ResourceType::SsrHistoryScene1
+			: ResourceType::SsrHistoryScene0);
+	const ResourceType ssrHistoryWriteType = isGameViewHistory
+		? (historyWriteIndex == 0u
+			? ResourceType::SsrHistoryGame0
+			: ResourceType::SsrHistoryGame1)
+		: (historyWriteIndex == 0u
+			? ResourceType::SsrHistoryScene0
+			: ResourceType::SsrHistoryScene1);
+	const ResourceType colorHistoryReadType = isGameViewHistory
+		? (historyWriteIndex == 0u
+			? ResourceType::ColorHistoryGame1
+			: ResourceType::ColorHistoryGame0)
+		: (historyWriteIndex == 0u
+			? ResourceType::ColorHistoryScene1
+			: ResourceType::ColorHistoryScene0);
+	const ResourceType colorHistoryWriteType = isGameViewHistory
+		? (historyWriteIndex == 0u
+			? ResourceType::ColorHistoryGame0
+			: ResourceType::ColorHistoryGame1)
+		: (historyWriteIndex == 0u
+			? ResourceType::ColorHistoryScene0
+			: ResourceType::ColorHistoryScene1);
 
 	const auto getSrvHandle = [this](ResourceType resourceType) {
 		return srvHandles_[static_cast<size_t>(resourceType)];
@@ -216,7 +239,7 @@ bool EditorTemporalRenderingManager::Execute(
 		commandList,
 		2u,
 		ResourceType::DisocclusionMask,
-		{sceneDepthSrvHandle, getSrvHandle(ResourceType::PreviousDepth), getSrvHandle(ResourceType::DilatedVelocity), sceneDepthSrvHandle},
+		{sceneDepthSrvHandle, getSrvHandle(previousDepthType), getSrvHandle(ResourceType::DilatedVelocity), sceneDepthSrvHandle},
 		constants)) {
 		return false;
 	}
@@ -321,16 +344,85 @@ bool EditorTemporalRenderingManager::Execute(
 			return false;
 		}
 
-		outputSrvHandle_ = getSrvHandle(colorHistoryWriteType);
+		// Scene / Game の履歴は完全分離し、表示用TextureだけをViewport矩形で共有する。
+		// これにより一方のカメラ履歴がもう一方の前フレーム色として読まれない。
+		ID3D12Resource* colorHistoryResource =
+			resources_[static_cast<size_t>(colorHistoryWriteType)].Get();
+		ID3D12Resource* temporalOutputResource =
+			resources_[static_cast<size_t>(ResourceType::TemporalOutput)].Get();
+
+		if (colorHistoryResource == nullptr || temporalOutputResource == nullptr) {
+			return false;
+		}
+
+		D3D12_RESOURCE_BARRIER copyBarriers[2]{};
+		copyBarriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		copyBarriers[0].Transition.pResource = colorHistoryResource;
+		copyBarriers[0].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		copyBarriers[0].Transition.StateBefore = kShaderReadState;
+		copyBarriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+		copyBarriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		copyBarriers[1].Transition.pResource = temporalOutputResource;
+		copyBarriers[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		copyBarriers[1].Transition.StateBefore = kShaderReadState;
+		copyBarriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+		commandList->ResourceBarrier(2u, copyBarriers);
+
+		const uint32_t viewportLeft = (std::min)(
+			static_cast<uint32_t>((std::max)(viewportX, 0.0f)),
+			renderWidth_);
+		const uint32_t viewportTop = (std::min)(
+			static_cast<uint32_t>((std::max)(viewportY, 0.0f)),
+			renderHeight_);
+		const uint32_t viewportRight = (std::min)(
+			viewportLeft + static_cast<uint32_t>((std::max)(viewportWidth, 1.0f)),
+			renderWidth_);
+		const uint32_t viewportBottom = (std::min)(
+			viewportTop + static_cast<uint32_t>((std::max)(viewportHeight, 1.0f)),
+			renderHeight_);
+
+		if (viewportLeft < viewportRight && viewportTop < viewportBottom) {
+			D3D12_TEXTURE_COPY_LOCATION destinationLocation{};
+			destinationLocation.pResource = temporalOutputResource;
+			destinationLocation.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+			destinationLocation.SubresourceIndex = 0u;
+			D3D12_TEXTURE_COPY_LOCATION sourceLocation{};
+			sourceLocation.pResource = colorHistoryResource;
+			sourceLocation.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+			sourceLocation.SubresourceIndex = 0u;
+			D3D12_BOX sourceBox{};
+			sourceBox.left = viewportLeft;
+			sourceBox.top = viewportTop;
+			sourceBox.front = 0u;
+			sourceBox.right = viewportRight;
+			sourceBox.bottom = viewportBottom;
+			sourceBox.back = 1u;
+			commandList->CopyTextureRegion(
+				&destinationLocation,
+				viewportLeft,
+				viewportTop,
+				0u,
+				&sourceLocation,
+				&sourceBox);
+		}
+
+		copyBarriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+		copyBarriers[0].Transition.StateAfter = kShaderReadState;
+		copyBarriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+		copyBarriers[1].Transition.StateAfter = kShaderReadState;
+		commandList->ResourceBarrier(2u, copyBarriers);
+		outputSrvHandle_ = getSrvHandle(ResourceType::TemporalOutput);
+		outputResourceType_ = ResourceType::TemporalOutput;
 	}
 	else {
 		outputSrvHandle_ = resolvedColorSrvHandle;
+		outputResourceType_ = ResourceType::ReflectionComposite;
 	}
 
 	if (!Dispatch(
 		commandList,
 		10u,
-		ResourceType::PreviousDepth,
+		previousDepthType,
 		{sceneDepthSrvHandle, sceneDepthSrvHandle, sceneDepthSrvHandle, sceneDepthSrvHandle},
 		constants)) {
 		return false;
@@ -349,7 +441,7 @@ bool EditorTemporalRenderingManager::Execute(
 	lastTemporalEnabled_[viewHistoryIndex] = temporalEnabled;
 
 	if (advanceHistoryFrame) {
-		historyWriteIndex_ = 1u - historyWriteIndex_;
+		historyWriteIndices_[viewHistoryIndex] = 1u - historyWriteIndex;
 	}
 
 	return true;
@@ -371,6 +463,10 @@ void EditorTemporalRenderingManager::Finalize() {
 
 D3D12_GPU_DESCRIPTOR_HANDLE EditorTemporalRenderingManager::GetOutputSrvHandle() const {
 	return outputSrvHandle_;
+}
+
+ID3D12Resource* EditorTemporalRenderingManager::GetOutputResource() const {
+	return resources_[static_cast<size_t>(outputResourceType_)].Get();
 }
 
 D3D12_GPU_DESCRIPTOR_HANDLE EditorTemporalRenderingManager::GetVelocitySrvHandle() const {
@@ -474,19 +570,25 @@ bool EditorTemporalRenderingManager::CreateSizeDependentResources(
 	uint32_t renderHeight) {
 
 	const std::array<DXGI_FORMAT, static_cast<size_t>(ResourceType::Count)> resourceFormats = {
-		DXGI_FORMAT_R16G16_FLOAT,
-		DXGI_FORMAT_R16G16_FLOAT,
-		DXGI_FORMAT_R32_FLOAT,
-		DXGI_FORMAT_R16_FLOAT,
-		DXGI_FORMAT_R16_FLOAT,
-		DXGI_FORMAT_R16G16B16A16_FLOAT,
-		DXGI_FORMAT_R16G16B16A16_FLOAT,
-		DXGI_FORMAT_R16G16B16A16_FLOAT,
-		DXGI_FORMAT_R16G16B16A16_FLOAT,
-		DXGI_FORMAT_R16G16B16A16_FLOAT,
-		DXGI_FORMAT_R16G16B16A16_FLOAT,
-		DXGI_FORMAT_R16G16B16A16_FLOAT,
-		DXGI_FORMAT_R16G16B16A16_FLOAT,
+		DXGI_FORMAT_R16G16_FLOAT,  // Velocity
+		DXGI_FORMAT_R16G16_FLOAT,  // DilatedVelocity
+		DXGI_FORMAT_R32_FLOAT,  // PreviousDepthScene
+		DXGI_FORMAT_R32_FLOAT,  // PreviousDepthGame
+		DXGI_FORMAT_R16_FLOAT,  // DisocclusionMask
+		DXGI_FORMAT_R16_FLOAT,  // ReactiveMask
+		DXGI_FORMAT_R16G16B16A16_FLOAT,  // SsrTrace
+		DXGI_FORMAT_R16G16B16A16_FLOAT,  // SsrCurrent
+		DXGI_FORMAT_R16G16B16A16_FLOAT,  // SsrHistoryScene0
+		DXGI_FORMAT_R16G16B16A16_FLOAT,  // SsrHistoryScene1
+		DXGI_FORMAT_R16G16B16A16_FLOAT,  // SsrHistoryGame0
+		DXGI_FORMAT_R16G16B16A16_FLOAT,  // SsrHistoryGame1
+		DXGI_FORMAT_R16G16B16A16_FLOAT,  // SsrDenoised
+		DXGI_FORMAT_R16G16B16A16_FLOAT,  // ReflectionComposite
+		DXGI_FORMAT_R16G16B16A16_FLOAT,  // ColorHistoryScene0
+		DXGI_FORMAT_R16G16B16A16_FLOAT,  // ColorHistoryScene1
+		DXGI_FORMAT_R16G16B16A16_FLOAT,  // ColorHistoryGame0
+		DXGI_FORMAT_R16G16B16A16_FLOAT,  // ColorHistoryGame1
+		DXGI_FORMAT_R16G16B16A16_FLOAT,  // TemporalOutput
 	};
 
 	for (uint32_t resourceIndex = 0u;
@@ -541,9 +643,10 @@ bool EditorTemporalRenderingManager::CreateSizeDependentResources(
 		uavHandles_[resourceIndex] = GetGpuDescriptorHandle(GetUavDescriptorIndex(resourceIndex));
 	}
 
-	historyWriteIndex_ = 0u;
+	historyWriteIndices_.fill(0u);
 	isHistoryValid_.fill(false);
 	outputSrvHandle_ = {};
+	outputResourceType_ = ResourceType::TemporalOutput;
 	lastSsrEnabled_.fill(false);
 	lastTemporalEnabled_.fill(false);
 
@@ -567,9 +670,11 @@ void EditorTemporalRenderingManager::ReleaseSizeDependentResources() {
 	uavHandles_.fill({});
 	renderWidth_ = 0u;
 	renderHeight_ = 0u;
-	historyWriteIndex_ = 0u;
+	historyWriteIndices_.fill(0u);
 	isHistoryValid_.fill(false);
 	previousViewportRects_.fill({});
+	outputSrvHandle_ = {};
+	outputResourceType_ = ResourceType::TemporalOutput;
 }
 
 bool EditorTemporalRenderingManager::Dispatch(

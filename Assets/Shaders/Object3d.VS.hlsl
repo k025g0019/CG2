@@ -42,6 +42,10 @@ struct VertexShaderOutput
     float3 worldPosition : TEXCOORD1;
     float4 shadowPosition : TEXCOORD2;
     float4 oceanData : TEXCOORD3;
+    float4 oceanSamplingData : TEXCOORD4;
+    nointerpolation float3 oceanWorldAxisX : TEXCOORD5;
+    nointerpolation float3 oceanWorldAxisY : TEXCOORD6;
+    nointerpolation float3 oceanWorldAxisZ : TEXCOORD7;
     float reflectionClipDistance : SV_ClipDistance0;
 };
 
@@ -76,6 +80,45 @@ void AccumulateOceanWave(
     height += waveSin * amplitude;
     gradient += direction * waveCos * amplitude * waveNumber;
     horizontalOffset += direction * waveCos * amplitude * choppiness;
+}
+
+void ApplyOceanInteraction(
+    float4 interaction,
+    float oceanTime,
+    inout float4 localPosition,
+    inout float3 localNormal)
+{
+    const float interactionRadius = max(interaction.w, 0.0f);
+    const float interactionAmplitude = interaction.z;
+
+    if (interactionRadius <= 0.001f || abs(interactionAmplitude) <= 0.0001f)
+    {
+        return;
+    }
+
+    const float2 centerOffset = localPosition.xz - interaction.xy;
+    const float centerDistance = length(centerOffset);
+
+    if (centerDistance >= interactionRadius)
+    {
+        return;
+    }
+
+    const float2 radialDirection = centerOffset / max(centerDistance, 0.0001f);
+    const float normalizedDistance = centerDistance / interactionRadius;
+    const float envelope = (1.0f - normalizedDistance) * (1.0f - normalizedDistance);
+    const float envelopeDerivative = -2.0f * (1.0f - normalizedDistance) / interactionRadius;
+    const float waveNumber = 6.28318530718f / max(interactionRadius * 0.35f, 0.5f);
+    const float phase = centerDistance * waveNumber - oceanTime * 4.0f;
+    const float waveSin = sin(phase);
+    const float waveCos = cos(phase);
+    const float radialSlope = interactionAmplitude *
+        (waveNumber * waveCos * envelope + waveSin * envelopeDerivative);
+    localPosition.y += interactionAmplitude * waveSin * envelope;
+    localNormal = normalize(localNormal + float3(
+        -radialDirection.x * radialSlope,
+        0.0f,
+        -radialDirection.y * radialSlope));
 }
 
 void ApplyOceanDisplacement(inout float4 localPosition, inout float3 localNormal)
@@ -147,6 +190,9 @@ void ApplyOceanSpectrumDisplacement(
             localNormal,
             cameraRelativePosition,
             oceanData);
+        const float oceanTime = gTransformationMatrix.oceanParams0.y * gTransformationMatrix.oceanParams3.z;
+        ApplyOceanInteraction(gTransformationMatrix.surfaceParams0, oceanTime, localPosition, localNormal);
+        ApplyOceanInteraction(gTransformationMatrix.surfaceParams1, oceanTime, localPosition, localNormal);
         return;
     }
 
@@ -156,13 +202,18 @@ void ApplyOceanSpectrumDisplacement(
     localPosition.xz += oceanResult.horizontalOffset;
     localPosition.y += oceanResult.height;
     localNormal = normalize(float3(-oceanResult.gradient.x, 1.0f, -oceanResult.gradient.y));
-    const float normalizedCrestHeight = saturate(
-        oceanResult.height / max(gTransformationMatrix.oceanParams0.w, 0.001f));
+    const float oceanTime = gTransformationMatrix.oceanParams0.y * gTransformationMatrix.oceanParams3.z;
+    ApplyOceanInteraction(gTransformationMatrix.surfaceParams0, oceanTime, localPosition, localNormal);
+    ApplyOceanInteraction(gTransformationMatrix.surfaceParams1, oceanTime, localPosition, localNormal);
+    const float normalizedWaveHeight = clamp(
+        oceanResult.height / max(gTransformationMatrix.oceanParams0.w, 0.001f),
+        -1.0f,
+        1.0f);
     oceanData = float4(
         oceanResult.compression,
         oceanResult.time,
         oceanResult.detailWeight,
-        normalizedCrestHeight);
+        normalizedWaveHeight);
 }
 
 VertexShaderOutput main(VertexShaderInput input)
@@ -176,16 +227,22 @@ VertexShaderOutput main(VertexShaderInput input)
         input.boneWeights,
         localPosition,
         localNormal);
+    const float4 oceanFftMetadata = gTransformationMatrix.oceanWaveData1[15];
+    const float2 oceanBasePosition =
+        localPosition.xz + gTransformationMatrix.oceanParams5.zw;
     ApplyOceanSpectrumDisplacement(localPosition, localNormal, output.oceanData);
-    ApplySurfaceVertexDeformation(
-        localPosition,
-        localNormal,
-        input.texcoord,
-        gTransformationMatrix.surfaceParams0,
-        gTransformationMatrix.surfaceParams1,
-        gTransformationMatrix.oceanParams4,
-        gTransformationMatrix.oceanParams5.zw,
-        input.instanceId);
+    if (gTransformationMatrix.oceanParams0.x < 0.5f)
+    {
+        ApplySurfaceVertexDeformation(
+            localPosition,
+            localNormal,
+            input.texcoord,
+            gTransformationMatrix.surfaceParams0,
+            gTransformationMatrix.surfaceParams1,
+            gTransformationMatrix.oceanParams4,
+            gTransformationMatrix.oceanParams5.zw,
+            input.instanceId);
+    }
 
     const float4 worldPosition = mul(localPosition, gTransformationMatrix.World);
     output.position = mul(localPosition, gTransformationMatrix.WVP);
@@ -193,6 +250,21 @@ VertexShaderOutput main(VertexShaderInput input)
     output.normal = normalize(mul(float4(localNormal, 0.0f), gTransformationMatrix.World).xyz);
     output.worldPosition = worldPosition.xyz;
     output.shadowPosition = mul(localPosition, gTransformationMatrix.lightWVP);
+    output.oceanSamplingData = gTransformationMatrix.oceanParams0.x >= 1.5f
+        ? float4(
+            oceanBasePosition,
+            oceanFftMetadata.x,
+            oceanFftMetadata.z)
+        : float4(0.0f, 0.0f, 0.0f, 0.0f);
+    output.oceanWorldAxisX = mul(
+        float4(1.0f, 0.0f, 0.0f, 0.0f),
+        gTransformationMatrix.World).xyz;
+    output.oceanWorldAxisY = mul(
+        float4(0.0f, 1.0f, 0.0f, 0.0f),
+        gTransformationMatrix.World).xyz;
+    output.oceanWorldAxisZ = mul(
+        float4(0.0f, 0.0f, 1.0f, 0.0f),
+        gTransformationMatrix.World).xyz;
 
     output.reflectionClipDistance = gTransformationMatrix.reflectionClipParams.x > 0.5f
         ? dot(worldPosition, gTransformationMatrix.reflectionClipPlane)

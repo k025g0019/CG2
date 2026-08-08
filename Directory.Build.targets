@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <PropertyGroup Condition="'$(CG2_ASAN)' == '1' and '$(MSBuildProjectName)' == 'CG2'">
+    <OutDir>x64\ReleaseASan\</OutDir>
+    <IntDir>x64\ReleaseASan\obj\</IntDir>
+    <WholeProgramOptimization>false</WholeProgramOptimization>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(CG2_ASAN)' == '1' and '$(MSBuildProjectName)' == 'CG2'">
+    <ClCompile>
+      <AdditionalOptions>%(AdditionalOptions) /fsanitize=address</AdditionalOptions>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);_DISABLE_VECTOR_ANNOTATION;_DISABLE_STRING_ANNOTATION</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalOptions>%(AdditionalOptions) /fsanitize=address</AdditionalOptions>
+    </Link>
+  </ItemDefinitionGroup>
+</Project>

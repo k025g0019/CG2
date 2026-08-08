@@ -86,6 +86,8 @@ public:
 	D3D12_GPU_DESCRIPTOR_HANDLE GetFilterSrvHandle() const;
 	D3D12_GPU_DESCRIPTOR_HANDLE GetSmaaOutputSrvHandle() const;
 	D3D12_GPU_DESCRIPTOR_HANDLE GetAutoExposureSrvHandle() const;
+	const std::array<float, 256u>& GetHistogramNormalized() const;
+	bool HasHistogramData() const;
 
 private:
 	enum class ResourceType : uint32_t {
@@ -136,9 +138,13 @@ private:
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> histogramRootSignature_;
 	Microsoft::WRL::ComPtr<ID3D12PipelineState> histogramPipelineState_;
 	Microsoft::WRL::ComPtr<ID3D12Resource> histogramResource_;
+	Microsoft::WRL::ComPtr<ID3D12Resource> histogramReadbackResource_;
 	D3D12_CPU_DESCRIPTOR_HANDLE histogramUavCpuHandle_{};
 	D3D12_GPU_DESCRIPTOR_HANDLE histogramSrvHandle_{};
 	D3D12_GPU_DESCRIPTOR_HANDLE histogramUavGpuHandle_{};
+	std::array<float, 256u> histogramNormalized_{};
+	bool isHistogramReadbackPending_ = false;
+	bool hasHistogramData_ = false;
 	std::array<Microsoft::WRL::ComPtr<ID3D12PipelineState>, kPipelineCount> pipelineStates_{};
 	std::array<Microsoft::WRL::ComPtr<ID3D12Resource>, static_cast<size_t>(ResourceType::Count)> resources_{};
 	std::array<D3D12_GPU_DESCRIPTOR_HANDLE, static_cast<size_t>(ResourceType::Count)> srvHandles_{};

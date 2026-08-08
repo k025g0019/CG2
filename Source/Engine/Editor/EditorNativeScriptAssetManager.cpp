@@ -2,6 +2,7 @@
 
 #include "Source/Engine/Core/EditorNativeScript.h"  // 生成対象の公開 C++ API もエンジンビルド時に検証する。
 
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <fstream>
@@ -9,6 +10,36 @@
 
 namespace {
 	constexpr std::array<unsigned char, 3> kUtf8Bom{{0xEFu, 0xBBu, 0xBFu}};  // 保存時に先頭へ付ける UTF-8 BOM。
+	constexpr std::array<
+		EditorNativeScriptTemplateInfo,
+		static_cast<size_t>(EditorNativeScriptTemplate::Count)> kTemplateInfos{{
+		{EditorNativeScriptTemplate::Empty, "基本", "空のスクリプト", "最小構成から独自処理を書きます。", "Script / MonoBehaviour"},
+		{EditorNativeScriptTemplate::PlayerController, "移動・入力", "プレイヤー移動", "Vector2入力でTransformを移動します。", "PlayerInput / Input / FreeTransform"},
+		{EditorNativeScriptTemplate::RailPlayer, "移動・入力", "レール移動操作", "入力をRailMovementの左右・上下Offsetへ渡します。", "RailMovement / PlayerInput / MovementModifier"},
+		{EditorNativeScriptTemplate::EnemyController, "戦闘・AI", "敵の基本制御", "TargetSelectorの結果を使う敵処理の開始コードです。", "TargetSelector / Health / HitscanWeapon / ProjectileEmitter"},
+		{EditorNativeScriptTemplate::TurretController, "戦闘・AI", "砲塔制御", "選択TargetへYaw/Pitchを向けて射撃する開始コードです。", "TargetSelector / HitscanWeapon / ProjectileEmitter"},
+		{EditorNativeScriptTemplate::HomingController, "戦闘・AI", "追尾制御", "TargetSteeringへ追尾開始・終了条件を追加します。", "TargetSelector / TargetSteering / Rigidbody"},
+		{EditorNativeScriptTemplate::BossController, "戦闘・AI", "体力フェーズ制御", "Health比率からフェーズを切り替える開始コードです。", "Health / ThresholdState / ActionSequence"},
+		{EditorNativeScriptTemplate::StageController, "Scene・進行", "Scene進行", "入力やゲーム条件からSceneを切り替えます。", "TimelineEvent / ActionSequence / Scene Asset"},
+		{EditorNativeScriptTemplate::LoadoutController, "戦闘・入力", "武器切替", "WeaponLoadoutの切替・射撃・リロードを入力へ接続します。", "WeaponLoadout / WeaponLoadoutSlot / PlayerInput"},
+		{EditorNativeScriptTemplate::PhysicsController, "物理", "Rigidbody移動", "FixedUpdateで入力方向へ力を加えます。", "RigidBody / Collider / ConstantForce"},
+		{EditorNativeScriptTemplate::HealthDamageController, "戦闘", "体力・破壊", "Healthを監視し0以下の終了処理を書く開始コードです。", "Health / DamageReceiver / Collider"},
+		{EditorNativeScriptTemplate::SpawnPoolController, "生成", "生成・Pool", "PrefabSpawnerまたはObjectPoolからObjectを生成します。", "PrefabSpawner / ObjectPool / WaveSpawner"},
+		{EditorNativeScriptTemplate::CameraEffectsController, "カメラ", "カメラ演出", "Camera BlendとShakeを入力・イベントから再生します。", "Camera / CameraBlend / CameraShake"},
+		{EditorNativeScriptTemplate::AnimationEffectController, "Animation・VFX", "Animation・Effect", "AnimationとParticle/VFXを同時に起動する開始コードです。", "Animator / Animation / ParticleSystem / VisualEffect"},
+		{EditorNativeScriptTemplate::AudioController, "Audio", "音量・音響制御", "AudioSourceの公開Propertyをゲーム中に変更します。", "AudioSource / AudioReverbZone / Audio Filter"},
+		{EditorNativeScriptTemplate::UiController, "UI", "UIイベント", "Button等からBindActionを呼ぶUI処理の開始コードです。", "Canvas / Button / Text / Image / UIValueBinding"},
+		{EditorNativeScriptTemplate::ActionEventController, "イベント", "Action・Sequence", "ActionRelayとActionSequenceをゲーム条件へ接続します。", "ActionRelay / ActionSequence / TimelineEvent / PropertyTween"},
+		{EditorNativeScriptTemplate::SaveCheckpointController, "保存", "Save・Checkpoint", "Save SlotとCheckpointを入力・イベントへ接続します。", "Saveable / Checkpoint"},
+		{EditorNativeScriptTemplate::OceanBuoyancyController, "海・物理", "海面問い合わせ", "描画と浮力が共有するOcean表面情報を取得します。", "Ocean / Buoyancy / RigidBody"},
+		{EditorNativeScriptTemplate::NavigationAiController, "Navigation・AI", "Target・経路AI", "Target取得後のNavigation/Steering条件を書く開始コードです。", "NavigationAgent / AIPathRequest / TargetSelector / AISteeringAgent"},
+		{EditorNativeScriptTemplate::RuntimePropertyController, "Component連携", "Component Property操作", "Component存在確認と公開Property変更を行います。", "任意Component / PropertyTween / ActionRelay"},
+		{EditorNativeScriptTemplate::ScoreController, "ゲーム進行", "スコア制御", "型付きAction PayloadをGenericCounterへ加算する開始コードです。", "GenericCounter / ActionRelay / UIValueBinding"},
+		{EditorNativeScriptTemplate::ComboController, "ゲーム進行", "コンボ制御", "命中ActionでComboを加算しTimer満了Actionでリセットします。", "GenericCounter / Timer / ActionRelay"},
+		{EditorNativeScriptTemplate::StageResultController, "Scene・進行", "ステージ結果", "ScoreからRankを決定しScene間データへ保存します。", "GenericCounter / GameplayData / SceneButton"},
+		{EditorNativeScriptTemplate::RailEventController, "移動・イベント", "レールイベント受信", "Rail進行率MarkerのIDを型付きAction Payloadとして受け取ります。", "RailMovement / RailEventMarker / ActionRelay"},
+		{EditorNativeScriptTemplate::SimulationLodController, "最適化", "シミュレーションLOD参照", "距離別のRuntime LOD段階をゲーム固有処理から参照します。", "SimulationLOD / Script"},
+	}};
 
 	void ReplaceAll(std::string& text, const std::string& oldText, const std::string& newText) {
 		size_t replacePosition = 0U;
@@ -18,11 +49,171 @@ namespace {
 			replacePosition += newText.size();
 		}
 	}
+
+	std::string MakeTemplateUpdateBody(EditorNativeScriptTemplate scriptTemplate) {
+		switch (scriptTemplate) {
+		case EditorNativeScriptTemplate::RailPlayer:
+			return "\t(void)deltaTime;\n\tRailFollower{GameObject{gameObjectId}}.SetMoveInput(moveInput_);\n";
+		case EditorNativeScriptTemplate::EnemyController:
+			return "\t(void)deltaTime;\n\tconst GameObject owner{gameObjectId};\n\tconst GameObject target = Targeting{owner}.GetCurrentTarget();\n\n\tif (!target.HasReference()) {\n\t\treturn;\n\t}\n\n\t// 距離、視界、攻撃間隔などゲーム固有条件をここへ追加する。\n";
+		case EditorNativeScriptTemplate::TurretController:
+			return "\t(void)deltaTime;\n\tconst GameObject owner{gameObjectId};\n\tconst GameObject target = Targeting{owner}.GetCurrentTarget();\n\n\tif (!target.HasReference()) {\n\t\treturn;\n\t}\n\n\t// Yaw台座とPitch砲身を公開GameObjectにしてTarget方向へ回転させる。\n";
+		case EditorNativeScriptTemplate::HomingController:
+			return "\t(void)deltaTime;\n\tconst GameObject owner{gameObjectId};\n\tconst GameObject target = Targeting{owner}.GetCurrentTarget();\n\n\tif (!target.HasReference()) {\n\t\treturn;\n\t}\n\n\t// 旋回・加速はTargetSteeringが行い、ここでは開始・爆発条件を書く。\n";
+		case EditorNativeScriptTemplate::BossController:
+			return "\t(void)deltaTime;\n\tfloat currentHealth = 0.0f;\n\tfloat maximumHealth = 0.0f;\n\n\tif (!Health{GameObject{gameObjectId}}.Get(currentHealth, maximumHealth) || maximumHealth <= 0.0f) {\n\t\treturn;\n\t}\n\n\tconst float healthRatio = currentHealth / maximumHealth;\n\t(void)healthRatio;  // Phase境界とActionSequence切替をゲーム側で実装する。\n";
+		case EditorNativeScriptTemplate::StageController:
+			return "\t(void)gameObjectId;\n\t(void)deltaTime;\n\n\tif (!nextScenePath_.empty() && Input::GetKeyDown(KeyCode::Space)) {\n\t\tSceneManager::LoadScene(nextScenePath_);\n\t}\n";
+		case EditorNativeScriptTemplate::LoadoutController:
+			return "\t(void)deltaTime;\n\tWeaponLoadout loadout{GameObject{gameObjectId}};\n\n\tif (Input::GetKeyDown(KeyCode::Q)) {\n\t\tloadout.Previous();\n\t}\n\n\tif (Input::GetKeyDown(KeyCode::E)) {\n\t\tloadout.Next();\n\t}\n\n\tif (Input::GetKeyDown(KeyCode::R)) {\n\t\tloadout.Reload();\n\t}\n";
+		case EditorNativeScriptTemplate::PhysicsController:
+			return "\t(void)gameObjectId;\n\t(void)deltaTime;  // 力の適用はFixedUpdateへ分離する。\n";
+		case EditorNativeScriptTemplate::HealthDamageController:
+			return "\t(void)deltaTime;\n\tconst GameObject owner{gameObjectId};\n\tfloat currentHealth = 0.0f;\n\tfloat maximumHealth = 0.0f;\n\n\tif (!Health{owner}.Get(currentHealth, maximumHealth)) {\n\t\treturn;\n\t}\n\n\tif (currentHealth <= 0.0f) {\n\t\towner.SetActive(false);  // 破壊演出やPool返却へ差し替える。\n\t}\n";
+		case EditorNativeScriptTemplate::SpawnPoolController:
+			return "\t(void)deltaTime;\n\n\tif (Input::GetKeyDown(KeyCode::Space)) {\n\t\tSpawner{GameObject{gameObjectId}}.Spawn();\n\t}\n";
+		case EditorNativeScriptTemplate::CameraEffectsController:
+			return "\t(void)deltaTime;\n\tCameraEffects cameraEffects{GameObject{gameObjectId}};\n\n\tif (Input::GetKeyDown(KeyCode::C)) {\n\t\tcameraEffects.PlayShake();\n\t}\n\n\tif (Input::GetKeyDown(KeyCode::V)) {\n\t\tcameraEffects.PlayBlend();\n\t}\n";
+		case EditorNativeScriptTemplate::AnimationEffectController:
+			return "\t(void)deltaTime;\n\n\tif (runtimeApi != nullptr && Input::GetKeyDown(KeyCode::Space)) {\n\t\tif (runtimeApi->PlayAnimation != nullptr) {\n\t\t\truntimeApi->PlayAnimation(gameObjectId);\n\t\t}\n\n\t\tif (runtimeApi->PlayEffect != nullptr) {\n\t\t\truntimeApi->PlayEffect(gameObjectId);\n\t\t}\n\t}\n";
+		case EditorNativeScriptTemplate::AudioController:
+			return "\t(void)deltaTime;\n\tconst GameObject owner{gameObjectId};\n\tfloat volume = 1.0f;\n\n\tif (!RuntimeProperty::GetFloat(owner, \"AudioSource\", \"Volume\", volume)) {\n\t\treturn;\n\t}\n\n\tif (Input::GetKeyDown(KeyCode::Q)) {\n\t\tvolume = volume > 0.1f ? volume - 0.1f : 0.0f;\n\t\tRuntimeProperty::SetFloat(owner, \"AudioSource\", \"Volume\", volume);\n\t}\n\n\tif (Input::GetKeyDown(KeyCode::E)) {\n\t\tvolume = volume < 0.9f ? volume + 0.1f : 1.0f;\n\t\tRuntimeProperty::SetFloat(owner, \"AudioSource\", \"Volume\", volume);\n\t}\n";
+		case EditorNativeScriptTemplate::UiController:
+			return "\t(void)gameObjectId;\n\t(void)deltaTime;  // Button/Toggle/SliderからOnClick/OnValueChangedを呼ぶ。\n";
+		case EditorNativeScriptTemplate::ActionEventController:
+			return "\t(void)deltaTime;\n\n\tif (Input::GetKeyDown(KeyCode::Space)) {\n\t\tconst GameObject owner{gameObjectId};\n\t\tActionRelay{owner}.Relay();\n\t\tActionSequence{owner}.Play();\n\t}\n";
+		case EditorNativeScriptTemplate::SaveCheckpointController:
+			return "\t(void)deltaTime;\n\n\tif (Input::GetKeyDown(KeyCode::F)) {\n\t\tSaveSystem::Save(\"Save01\");\n\t\tCheckpoint{GameObject{gameObjectId}}.Save();\n\t}\n\n\tif (Input::GetKeyDown(KeyCode::L)) {\n\t\tSaveSystem::Load(\"Save01\");\n\t}\n";
+		case EditorNativeScriptTemplate::OceanBuoyancyController:
+			return "\t(void)deltaTime;\n\tconst GameObject owner{gameObjectId};\n\tconst EditorScriptTransform transform = owner.GetTransform();\n\tEditorScriptOceanSurfaceHit oceanHit{};\n\n\tif (!Physics::SampleOceanSurface(owner, transform.position, oceanHit)) {\n\t\treturn;\n\t}\n\n\tconst float distanceToSurface = oceanHit.signedDistance;\n\t(void)distanceToSurface;  // 着水、航跡、AI判断などゲーム固有条件へ使う。\n";
+		case EditorNativeScriptTemplate::NavigationAiController:
+			return "\t(void)deltaTime;\n\tconst GameObject owner{gameObjectId};\n\tconst GameObject target = Targeting{owner}.GetCurrentTarget();\n\n\tif (!target.HasReference()) {\n\t\treturn;\n\t}\n\n\t// NavigationAgent、AIPathRequest、Steeringの目的地をTargetへ更新する。\n";
+		case EditorNativeScriptTemplate::RuntimePropertyController:
+			return "\t(void)deltaTime;\n\tconst GameObject owner{gameObjectId};\n\n\tif (Input::GetKeyDown(KeyCode::Space) && owner.HasComponent(\"ParticleSystem\")) {\n\t\tconst bool isActive = owner.IsComponentActive(\"ParticleSystem\");\n\t\towner.SetComponentActive(\"ParticleSystem\", !isActive);\n\t}\n";
+		case EditorNativeScriptTemplate::ScoreController:
+		case EditorNativeScriptTemplate::ComboController:
+		case EditorNativeScriptTemplate::StageResultController:
+		case EditorNativeScriptTemplate::RailEventController:
+			return "\t(void)gameObjectId;\n\t(void)deltaTime;  // 加算・確定はActionから受け取り、毎フレーム処理を増やさない。\n";
+		case EditorNativeScriptTemplate::SimulationLodController:
+			return "\t(void)deltaTime;\n\tint32_t lodLevel = 0;\n\n\tif (!SimulationLod{GameObject{gameObjectId}}.GetLevel(lodLevel)) {\n\t\treturn;\n\t}\n\n\t// 0=Near、1=Medium、2=Far、3=Culled。固有処理の頻度や品質選択に使う。\n\t(void)lodLevel;\n";
+		case EditorNativeScriptTemplate::PlayerController:
+			return "\tconst GameObject gameObject{gameObjectId};\n\tEditorScriptTransform transform = gameObject.GetTransform();\n\ttransform.position.x += moveInput_.x * moveSpeed_ * deltaTime;\n\ttransform.position.z += moveInput_.y * moveSpeed_ * deltaTime;\n\tgameObject.SetTransform(transform);\n";
+		case EditorNativeScriptTemplate::Count:
+		case EditorNativeScriptTemplate::Empty:
+		default:
+			return "\t(void)gameObjectId;\n\t(void)deltaTime;\n";
+		}
+	}
+
+	std::string MakeTemplateFixedUpdateBody(EditorNativeScriptTemplate scriptTemplate) {
+		if (scriptTemplate == EditorNativeScriptTemplate::PhysicsController) {
+			return "\t(void)fixedDeltaTime;\n\tconst EditorScriptVector3 movementForce{\n\t\tmoveInput_.x * moveSpeed_,\n\t\t0.0f,\n\t\tmoveInput_.y * moveSpeed_};\n\tRigidbody{gameObjectId}.AddForce(movementForce);\n";
+		}
+
+		return "\t(void)gameObjectId;\n\t(void)fixedDeltaTime;  // AddForce など周期を固定した物理処理を書く。\n";
+	}
+
+	std::string MakeTemplateFireBody(EditorNativeScriptTemplate scriptTemplate) {
+		if (scriptTemplate == EditorNativeScriptTemplate::RailPlayer ||
+			scriptTemplate == EditorNativeScriptTemplate::EnemyController ||
+			scriptTemplate == EditorNativeScriptTemplate::TurretController ||
+			scriptTemplate == EditorNativeScriptTemplate::LoadoutController) {
+			return "\tif (inputContext.phase == EditorScriptInputPhasePerformed) {\n\t\tWeaponLoadout{GameObject{inputContext.gameObjectId}}.Fire();\n\t}\n";
+		}
+
+		return "\tif (runtimeApi != nullptr && inputContext.phase == EditorScriptInputPhasePerformed) {\n\t\truntimeApi->Log(\"OnFire\");\n\t}\n";
+	}
+
+	std::string MakeTemplateClickBody(EditorNativeScriptTemplate scriptTemplate) {
+		if (scriptTemplate == EditorNativeScriptTemplate::UiController) {
+			return "\tif (inputContext.phase == EditorScriptInputPhasePerformed) {\n\t\tActionRelay{GameObject{inputContext.gameObjectId}}.Relay();\n\t}\n";
+		}
+
+		if (scriptTemplate == EditorNativeScriptTemplate::ScoreController) {
+			return "\tif (inputContext.phase != EditorScriptInputPhasePerformed) {\n\t\treturn;\n\t}\n\n\tfloat scoreDelta = 1.0f;\n\n\tif (inputContext.payloadType == EditorScriptActionPayloadTypeFloat) {\n\t\tscoreDelta = inputContext.payloadFloat;\n\t}\n\telse if (inputContext.payloadType == EditorScriptActionPayloadTypeInt) {\n\t\tscoreDelta = static_cast<float>(inputContext.payloadInt);\n\t}\n\n\tGenericCounter{GameObject{inputContext.gameObjectId}}.Add(scoreDelta);\n";
+		}
+
+		if (scriptTemplate == EditorNativeScriptTemplate::ComboController) {
+			return "\tif (inputContext.phase == EditorScriptInputPhasePerformed) {\n\t\tconst GameObject owner{inputContext.gameObjectId};\n\t\tGenericCounter{owner}.Add(1.0f);\n\t\tTimer{owner}.Start();\n\t}\n";
+		}
+
+		if (scriptTemplate == EditorNativeScriptTemplate::StageResultController) {
+			return "\tif (inputContext.phase != EditorScriptInputPhasePerformed) {\n\t\treturn;\n\t}\n\n\tfloat score = 0.0f;\n\n\tif (!GenericCounter{GameObject{inputContext.gameObjectId}}.Get(score)) {\n\t\treturn;\n\t}\n\n\tconst std::string rank = score >= 100000.0f ? \"S\" :\n\t\tscore >= 70000.0f ? \"A\" :\n\t\tscore >= 40000.0f ? \"B\" : \"C\";\n\tSceneManager::SetFloat(\"StageScore\", score);\n\tSceneManager::SetString(\"StageRank\", rank);\n";
+		}
+
+		return "\tif (runtimeApi != nullptr && inputContext.phase == EditorScriptInputPhasePerformed) {\n\t\truntimeApi->Log(\"OnClick\");\n\t}\n";
+	}
+
+	std::string MakeTemplateValueChangedBody(EditorNativeScriptTemplate scriptTemplate) {
+		if (scriptTemplate == EditorNativeScriptTemplate::ComboController) {
+			return "\tif (inputContext.phase == EditorScriptInputPhasePerformed) {\n\t\tGenericCounter{GameObject{inputContext.gameObjectId}}.Set(0.0f);\n\t}\n";
+		}
+
+		return "\tif (runtimeApi == nullptr || inputContext.phase != EditorScriptInputPhasePerformed) {\n\t\treturn;\n\t}\n\n\tif (inputContext.valueType == EditorScriptInputValueTypeButton) {\n\t\truntimeApi->Log(inputContext.buttonValue > 0.5f ? \"OnValueChanged: ON\" : \"OnValueChanged: OFF\");\n\t\treturn;\n\t}\n\n\tconst std::string message = \"OnValueChanged: \" + std::to_string(inputContext.vector2Value.x);\n\truntimeApi->Log(message.c_str());\n";
+	}
+
+	std::string MakeTemplateMethodDeclarations(EditorNativeScriptTemplate scriptTemplate) {
+		if (scriptTemplate == EditorNativeScriptTemplate::RailEventController) {
+			return "\tvoid OnRailMarker(const EditorScriptInputActionContext& inputContext);\n";
+		}
+
+		return {};
+	}
+
+	std::string MakeTemplateActionBindings(EditorNativeScriptTemplate scriptTemplate) {
+		if (scriptTemplate == EditorNativeScriptTemplate::RailEventController) {
+			return "\tBindAction(\"OnRailMarker\", [this](const EditorScriptInputActionContext& inputContext) { OnRailMarker(inputContext); });\n";
+		}
+
+		return {};
+	}
+
+	std::string MakeTemplateMethodDefinitions(
+		const std::string& scriptName,
+		EditorNativeScriptTemplate scriptTemplate) {
+		if (scriptTemplate != EditorNativeScriptTemplate::RailEventController) {
+			return {};
+		}
+
+		std::string methodText = R"SCRIPT(
+void __SCRIPT_NAME__::OnRailMarker(const EditorScriptInputActionContext& inputContext) {
+	if (runtimeApi == nullptr || inputContext.phase != EditorScriptInputPhasePerformed) {
+		return;
+	}
+
+	const std::string markerId = inputContext.payloadType == EditorScriptActionPayloadTypeString &&
+		inputContext.payloadString != nullptr
+		? inputContext.payloadString
+		: "";
+	const std::string message = "Rail Marker: " + markerId;
+	runtimeApi->Log(message.c_str());
+
+	// markerIdごとのゲーム固有処理はここへ追加する。
+}
+)SCRIPT";
+		ReplaceAll(methodText, "__SCRIPT_NAME__", scriptName);
+		return methodText;
+	}
+}
+
+int32_t EditorNativeScriptAssetManager::GetTemplateCount() {
+	return static_cast<int32_t>(kTemplateInfos.size());
+}
+
+const EditorNativeScriptTemplateInfo& EditorNativeScriptAssetManager::GetTemplateInfo(
+	int32_t templateIndex) {
+	const int32_t safeTemplateIndex = (std::clamp)(
+		templateIndex,
+		0,
+		static_cast<int32_t>(kTemplateInfos.size()) - 1);
+	return kTemplateInfos[static_cast<size_t>(safeTemplateIndex)];
 }
 
 EditorNativeScriptAssetResult EditorNativeScriptAssetManager::CreateNativeScriptAsset(
 	const std::string& requestedScriptName,
-	bool isDebugBuild) {
+	bool isDebugBuild,
+	EditorNativeScriptTemplate scriptTemplate) {
 	EditorNativeScriptAssetResult result{};
 	result.sanitizedScriptName = SanitizeScriptName(requestedScriptName);
 
@@ -53,8 +244,12 @@ EditorNativeScriptAssetResult EditorNativeScriptAssetManager::CreateNativeScript
 		 (result.sanitizedScriptName + ".dll"))
 			.generic_string();
 
-	const bool isHeaderWritten = WriteUtf8BomFile(result.headerFilePath, MakeHeaderText(result.sanitizedScriptName));
-	const bool isSourceWritten = WriteUtf8BomFile(result.sourceFilePath, MakeSourceText(result.sanitizedScriptName));
+	const bool isHeaderWritten = WriteUtf8BomFile(
+		result.headerFilePath,
+		MakeHeaderText(result.sanitizedScriptName, scriptTemplate));
+	const bool isSourceWritten = WriteUtf8BomFile(
+		result.sourceFilePath,
+		MakeSourceText(result.sanitizedScriptName, scriptTemplate));
 	const bool isDebugBuildFileWritten =
 		WriteUtf8BomFile(result.buildDebugFilePath, MakeBuildScriptText(result.sanitizedScriptName, true));
 	const bool isReleaseBuildFileWritten =
@@ -99,7 +294,9 @@ std::string EditorNativeScriptAssetManager::SanitizeScriptName(const std::string
 	return sanitizedScriptName;
 }
 
-std::string EditorNativeScriptAssetManager::MakeHeaderText(const std::string& scriptName) {
+std::string EditorNativeScriptAssetManager::MakeHeaderText(
+	const std::string& scriptName,
+	EditorNativeScriptTemplate scriptTemplate) {
 	std::string headerText = R"SCRIPT(#pragma once
 
 #include "EditorNativeScript.h"
@@ -133,36 +330,41 @@ private:
 	void OnFire(const EditorScriptInputActionContext& inputContext);
 	void OnClick(const EditorScriptInputActionContext& inputContext);
 	void OnValueChanged(const EditorScriptInputActionContext& inputContext);
+__TEMPLATE_METHOD_DECLARATIONS__
 };
 )SCRIPT";
 	ReplaceAll(headerText, "__SCRIPT_NAME__", scriptName);
+	ReplaceAll(headerText, "__TEMPLATE_METHOD_DECLARATIONS__", MakeTemplateMethodDeclarations(scriptTemplate));
 	return headerText;
 }
 
-std::string EditorNativeScriptAssetManager::MakeSourceText(const std::string& scriptName) {
+std::string EditorNativeScriptAssetManager::MakeSourceText(
+	const std::string& scriptName,
+	EditorNativeScriptTemplate scriptTemplate) {
 	std::string sourceText = R"SCRIPT(#include "__SCRIPT_NAME__.h"
 
-#include <memory>
+#include <new>
 #include <string>
-#include <unordered_map>
 
 namespace {
 	const EditorScriptRuntimeApi* runtimeApi = nullptr;  // Editor 本体が渡す実行 API。
-	std::unordered_map<int32_t, std::unique_ptr<__SCRIPT_NAME__>> scriptStates;  // GameObject ごとの C++ Component。
 
-	__SCRIPT_NAME__& GetState(int32_t gameObjectId) {
-		std::unique_ptr<__SCRIPT_NAME__>& scriptState = scriptStates[gameObjectId];
-
-		if (scriptState == nullptr) {
-			scriptState = std::make_unique<__SCRIPT_NAME__>();
+	struct ScriptInstance {
+		explicit ScriptInstance(int32_t ownerGameObjectId)
+			: gameObjectId(ownerGameObjectId) {
 		}
 
-		return *scriptState;
-	}
+		int32_t gameObjectId = -1;  // この Component を所有する GameObject。
+		__SCRIPT_NAME__ script;  // Component ごとに独立したユーザー状態。
+	};
 
 	__SCRIPT_NAME__& GetMetadataState() {
 		static __SCRIPT_NAME__ metadataState;  // Play 前の Inspector が型情報だけを取得する。
 		return metadataState;
+	}
+
+	ScriptInstance* GetScriptInstance(void* instance) {
+		return static_cast<ScriptInstance*>(instance);
 	}
 }
 
@@ -181,6 +383,7 @@ __SCRIPT_NAME__::__SCRIPT_NAME__() {
 	BindAction("OnFire", [this](const EditorScriptInputActionContext& inputContext) { OnFire(inputContext); });
 	BindAction("OnClick", [this](const EditorScriptInputActionContext& inputContext) { OnClick(inputContext); });
 	BindAction("OnValueChanged", [this](const EditorScriptInputActionContext& inputContext) { OnValueChanged(inputContext); });
+__TEMPLATE_ACTION_BINDINGS__
 }
 
 void __SCRIPT_NAME__::Start(int32_t gameObjectId) {
@@ -192,26 +395,11 @@ void __SCRIPT_NAME__::Start(int32_t gameObjectId) {
 }
 
 void __SCRIPT_NAME__::Update(int32_t gameObjectId, float deltaTime) {
-	if (runtimeApi == nullptr) {
-		return;
-	}
-
-	// Unity の Input.GetKeyDown + SceneManager.LoadScene と同じ用途で Scene を切り替える。
-	if (!nextScenePath_.empty() && Input::GetKeyDown(KeyCode::Space)) {
-		SceneManager::LoadScene(nextScenePath_);
-		return;
-	}
-
-	const GameObject gameObject{gameObjectId};
-	EditorScriptTransform transform = gameObject.GetTransform();
-	transform.position.x += moveInput_.x * moveSpeed_ * deltaTime;
-	transform.position.z += moveInput_.y * moveSpeed_ * deltaTime;
-	gameObject.SetTransform(transform);
+__TEMPLATE_UPDATE_BODY__
 }
 
 void __SCRIPT_NAME__::FixedUpdate(int32_t gameObjectId, float fixedDeltaTime) {
-	(void)gameObjectId;
-	(void)fixedDeltaTime;  // AddForce など周期を固定した物理処理を書く。
+__TEMPLATE_FIXED_UPDATE_BODY__
 }
 
 void __SCRIPT_NAME__::OnCollisionEnter(const EditorScriptPhysicsEvent& physicsEvent) {
@@ -249,30 +437,17 @@ void __SCRIPT_NAME__::OnJump(const EditorScriptInputActionContext& inputContext)
 }
 
 void __SCRIPT_NAME__::OnFire(const EditorScriptInputActionContext& inputContext) {
-	if (runtimeApi != nullptr && inputContext.phase == EditorScriptInputPhasePerformed) {
-		runtimeApi->Log("OnFire");
-	}
+__TEMPLATE_FIRE_BODY__
 }
 
 void __SCRIPT_NAME__::OnClick(const EditorScriptInputActionContext& inputContext) {
-	if (runtimeApi != nullptr && inputContext.phase == EditorScriptInputPhasePerformed) {
-		runtimeApi->Log("OnClick");
-	}
+__TEMPLATE_CLICK_BODY__
 }
 
 void __SCRIPT_NAME__::OnValueChanged(const EditorScriptInputActionContext& inputContext) {
-	if (runtimeApi == nullptr || inputContext.phase != EditorScriptInputPhasePerformed) {
-		return;
-	}
-
-	if (inputContext.valueType == EditorScriptInputValueTypeButton) {
-		runtimeApi->Log(inputContext.buttonValue > 0.5f ? "OnValueChanged: ON" : "OnValueChanged: OFF");
-		return;
-	}
-
-	const std::string message = "OnValueChanged: " + std::to_string(inputContext.vector2Value.x);
-	runtimeApi->Log(message.c_str());
+__TEMPLATE_VALUE_CHANGED_BODY__
 }
+__TEMPLATE_METHOD_DEFINITIONS__
 
 //================================================================
 // Editor と C++ Component を接続する DLL ABI
@@ -291,49 +466,72 @@ extern "C" __declspec(dllexport) bool EditorScript_Load(
 }
 
 extern "C" __declspec(dllexport) void EditorScript_Unload() {
-	scriptStates.clear();
 	EditorNativeScriptRuntime::SetRuntimeApi(nullptr);
 	runtimeApi = nullptr;
 }
 
-extern "C" __declspec(dllexport) void EditorScript_Start(int32_t gameObjectId) {
-	GetState(gameObjectId).Start(gameObjectId);
+extern "C" __declspec(dllexport) void* EditorScript_CreateInstance(int32_t gameObjectId) {
+	return new (std::nothrow) ScriptInstance(gameObjectId);
 }
 
-extern "C" __declspec(dllexport) void EditorScript_Update(int32_t gameObjectId, float deltaTime) {
-	GetState(gameObjectId).Update(gameObjectId, deltaTime);
+extern "C" __declspec(dllexport) void EditorScript_DestroyInstance(void* instance) {
+	delete GetScriptInstance(instance);
 }
 
-extern "C" __declspec(dllexport) void EditorScript_FixedUpdate(int32_t gameObjectId, float fixedDeltaTime) {
-	GetState(gameObjectId).FixedUpdate(gameObjectId, fixedDeltaTime);
+extern "C" __declspec(dllexport) void EditorScript_StartInstance(void* instance) {
+	ScriptInstance* scriptInstance = GetScriptInstance(instance);
+
+	if (scriptInstance != nullptr) {
+		scriptInstance->script.Start(scriptInstance->gameObjectId);
+	}
 }
 
-extern "C" __declspec(dllexport) void EditorScript_OnPhysicsEvent(
-	int32_t gameObjectId,
+extern "C" __declspec(dllexport) void EditorScript_UpdateInstance(void* instance, float deltaTime) {
+	ScriptInstance* scriptInstance = GetScriptInstance(instance);
+
+	if (scriptInstance != nullptr) {
+		scriptInstance->script.Update(scriptInstance->gameObjectId, deltaTime);
+	}
+}
+
+extern "C" __declspec(dllexport) void EditorScript_FixedUpdateInstance(void* instance, float fixedDeltaTime) {
+	ScriptInstance* scriptInstance = GetScriptInstance(instance);
+
+	if (scriptInstance != nullptr) {
+		scriptInstance->script.FixedUpdate(scriptInstance->gameObjectId, fixedDeltaTime);
+	}
+}
+
+extern "C" __declspec(dllexport) void EditorScript_OnPhysicsEventInstance(
+	void* instance,
 	const EditorScriptPhysicsEvent* physicsEvent) {
-	if (physicsEvent == nullptr) {
+	ScriptInstance* scriptInstance = GetScriptInstance(instance);
+
+	if (scriptInstance == nullptr || physicsEvent == nullptr) {
 		return;
 	}
 
-	GetState(gameObjectId).DispatchPhysicsEvent(*physicsEvent);
+	scriptInstance->script.DispatchPhysicsEvent(*physicsEvent);
 }
 
-extern "C" __declspec(dllexport) void EditorScript_OnAnimationEvent(
-	int32_t gameObjectId,
+extern "C" __declspec(dllexport) void EditorScript_OnAnimationEventInstance(
+	void* instance,
 	const EditorScriptAnimationEvent* animationEvent) {
-	if (animationEvent == nullptr) {
+	ScriptInstance* scriptInstance = GetScriptInstance(instance);
+
+	if (scriptInstance == nullptr || animationEvent == nullptr) {
 		return;
 	}
 
-	GetState(gameObjectId).OnAnimationEvent(*animationEvent);
+	scriptInstance->script.OnAnimationEvent(*animationEvent);
 }
 
-extern "C" __declspec(dllexport) void EditorScript_Stop(int32_t gameObjectId) {
-	const auto scriptStateIt = scriptStates.find(gameObjectId);
 
-	if (scriptStateIt != scriptStates.end()) {
-		scriptStateIt->second->Stop(gameObjectId);
-		scriptStates.erase(scriptStateIt);
+extern "C" __declspec(dllexport) void EditorScript_StopInstance(void* instance) {
+	ScriptInstance* scriptInstance = GetScriptInstance(instance);
+
+	if (scriptInstance != nullptr) {
+		scriptInstance->script.Stop(scriptInstance->gameObjectId);
 	}
 }
 
@@ -347,39 +545,55 @@ extern "C" __declspec(dllexport) bool EditorScript_GetFieldDescriptor(
 	return fieldDescriptor != nullptr && GetMetadataState().GetFieldDescriptor(fieldIndex, *fieldDescriptor);
 }
 
-extern "C" __declspec(dllexport) bool EditorScript_GetFieldValue(
-	int32_t gameObjectId,
+extern "C" __declspec(dllexport) bool EditorScript_GetFieldValueInstance(
+	void* instance,
 	const char* fieldName,
 	EditorScriptFieldValue* fieldValue) {
-	return fieldValue != nullptr && GetState(gameObjectId).GetFieldValue(fieldName, *fieldValue);
+	ScriptInstance* scriptInstance = GetScriptInstance(instance);
+	return scriptInstance != nullptr && fieldValue != nullptr &&
+		scriptInstance->script.GetFieldValue(fieldName, *fieldValue);
 }
 
-extern "C" __declspec(dllexport) bool EditorScript_SetFieldValue(
-	int32_t gameObjectId,
+extern "C" __declspec(dllexport) bool EditorScript_SetFieldValueInstance(
+	void* instance,
 	const char* fieldName,
 	const EditorScriptFieldValue* fieldValue) {
-	return fieldValue != nullptr && GetState(gameObjectId).SetFieldValue(fieldName, *fieldValue);
+	ScriptInstance* scriptInstance = GetScriptInstance(instance);
+	return scriptInstance != nullptr && fieldValue != nullptr &&
+		scriptInstance->script.SetFieldValue(fieldName, *fieldValue);
 }
 
-extern "C" __declspec(dllexport) bool EditorScript_InvokeAction(
-	int32_t gameObjectId,
+extern "C" __declspec(dllexport) bool EditorScript_InvokeActionInstance(
+	void* instance,
 	const char* functionName,
 	const EditorScriptInputActionContext* inputContext) {
-	return inputContext != nullptr && GetState(gameObjectId).InvokeAction(functionName, *inputContext);
+	ScriptInstance* scriptInstance = GetScriptInstance(instance);
+	return scriptInstance != nullptr && inputContext != nullptr &&
+		scriptInstance->script.InvokeAction(functionName, *inputContext);
 }
 
 extern "C" __declspec(dllexport) int32_t EditorScript_GetActionCount() {
-	return GetState(-1).GetActionCount();
+	return GetMetadataState().GetActionCount();
 }
 
 extern "C" __declspec(dllexport) bool EditorScript_GetActionName(
 	int32_t actionIndex,
 	char* actionName,
 	int32_t actionNameCapacity) {
-	return GetState(-1).GetActionName(actionIndex, actionName, actionNameCapacity);
+	return GetMetadataState().GetActionName(actionIndex, actionName, actionNameCapacity);
 }
 )SCRIPT";
 	ReplaceAll(sourceText, "__SCRIPT_NAME__", scriptName);
+	ReplaceAll(sourceText, "__TEMPLATE_UPDATE_BODY__", MakeTemplateUpdateBody(scriptTemplate));
+	ReplaceAll(sourceText, "__TEMPLATE_FIXED_UPDATE_BODY__", MakeTemplateFixedUpdateBody(scriptTemplate));
+	ReplaceAll(sourceText, "__TEMPLATE_FIRE_BODY__", MakeTemplateFireBody(scriptTemplate));
+	ReplaceAll(sourceText, "__TEMPLATE_CLICK_BODY__", MakeTemplateClickBody(scriptTemplate));
+	ReplaceAll(sourceText, "__TEMPLATE_VALUE_CHANGED_BODY__", MakeTemplateValueChangedBody(scriptTemplate));
+	ReplaceAll(sourceText, "__TEMPLATE_ACTION_BINDINGS__", MakeTemplateActionBindings(scriptTemplate));
+	ReplaceAll(
+		sourceText,
+		"__TEMPLATE_METHOD_DEFINITIONS__",
+		MakeTemplateMethodDefinitions(scriptName, scriptTemplate));
 	return sourceText;
 }
 
@@ -409,7 +623,9 @@ std::string EditorNativeScriptAssetManager::MakeBuildScriptText(const std::strin
 		<< " /LD /I \"%PROJECT_ROOT%\\Source\\Engine\\Core\" /I \"%PROJECT_ROOT%\" \"%SCRIPT_DIR%\\"
 		<< scriptName << ".cpp\" /Fe:\"%SCRIPT_DIR%\\x64\\" << configurationDirectory << "\\"
 		<< scriptName << ".dll\"\r\n"
-		<< "popd\r\n";
+		<< "set \"BUILD_RESULT=%ERRORLEVEL%\"\r\n"
+		<< "popd\r\n"
+		<< "exit /b %BUILD_RESULT%\r\n";
 
 	return buildScriptText.str();
 }

@@ -26,7 +26,8 @@ struct FinalCompositeConstants
     float padding3;
     float colorLutStrength;
     float gamutCompression;
-    float2 padding4;
+    float localContrast;
+    float outputDither;
 };
 
 ConstantBuffer<FinalCompositeConstants> gFinalComposite : register(b0);
@@ -105,6 +106,49 @@ float3 SampleColorGradingLut(float3 color)
     return lerp(lowerColor, upperColor, frac(lutCoordinate.b));
 }
 
+//================================================================
+// 局所コントラスト
+//================================================================
+
+float3 ApplyLocalContrast(float3 centerColor, float2 texcoord, float strength)
+{
+    if (strength <= 0.0001f)
+    {
+        return centerColor;
+    }
+
+    uint sceneWidth = 1u;
+    uint sceneHeight = 1u;
+    gSceneColor.GetDimensions(sceneWidth, sceneHeight);
+    const float2 texelSize = rcp(max(float2(sceneWidth, sceneHeight), 1.0f));
+    const float2 horizontalOffset = float2(texelSize.x, 0.0f);
+    const float2 verticalOffset = float2(0.0f, texelSize.y);
+    const float surroundingLuminance = 0.25f * (
+        Luminance(gSceneColor.SampleLevel(gSampler, saturate(texcoord + horizontalOffset), 0.0f).rgb) +
+        Luminance(gSceneColor.SampleLevel(gSampler, saturate(texcoord - horizontalOffset), 0.0f).rgb) +
+        Luminance(gSceneColor.SampleLevel(gSampler, saturate(texcoord + verticalOffset), 0.0f).rgb) +
+        Luminance(gSceneColor.SampleLevel(gSampler, saturate(texcoord - verticalOffset), 0.0f).rgb));
+    const float centerLuminance = Luminance(centerColor);
+    const float relativeDetail = clamp(
+        (centerLuminance - surroundingLuminance) /
+            max(surroundingLuminance, 0.04f),
+        -0.35f,
+        0.35f);
+    const float midtoneWeight =
+        smoothstep(0.015f, 0.12f, centerLuminance) *
+        (1.0f - smoothstep(2.0f, 8.0f, centerLuminance));
+    const float detailScale = max(
+        1.0f + relativeDetail * saturate(strength) * midtoneWeight,
+        0.0f);
+    return centerColor * detailScale;
+}
+
+float ApplyOutputDither(float2 pixelPosition)
+{
+    // 2つの一様乱数の差で三角分布を作り、低周波の階調縞だけを崩す。
+    return Hash12(pixelPosition) - Hash12(pixelPosition + float2(37.0f, 17.0f));
+}
+
 float4 main(PixelShaderInput input) : SV_TARGET0
 {
     const float2 centeredUv = input.texcoord - float2(0.5f, 0.5f);
@@ -127,7 +171,11 @@ float4 main(PixelShaderInput input) : SV_TARGET0
             0.0001f);
     }
 
-    float3 color = sceneColor * max(gFinalComposite.exposure, 0.0001f) * automaticExposure;
+    float3 color = ApplyLocalContrast(
+        sceneColor,
+        input.texcoord,
+        gFinalComposite.localContrast);
+    color *= max(gFinalComposite.exposure, 0.0001f) * automaticExposure;
     color = ApplyBradfordWhiteBalance(
         color,
         gFinalComposite.temperature,
@@ -179,5 +227,10 @@ float4 main(PixelShaderInput input) : SV_TARGET0
     const float grain = Hash12(input.position.xy) - 0.5f;
     color += grain * max(gFinalComposite.filmGrain, 0.0f) * 0.015f;
 
-    return float4(LinearToSRGB(max(color, 0.0f)), 1.0f);
+    float3 outputColor = LinearToSRGB(max(color, 0.0f));
+    outputColor +=
+        ApplyOutputDither(input.position.xy) *
+        max(gFinalComposite.outputDither, 0.0f) /
+        255.0f;
+    return float4(saturate(outputColor), 1.0f);
 }

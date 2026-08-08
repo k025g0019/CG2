@@ -1500,6 +1500,40 @@ bool EditorAssetUtility::LoadModelAsset(const std::string& path, ModelData& mode
 	return !modelData.vertices.empty();
 }
 
+bool EditorAssetUtility::GetModelColliderBounds(
+	const std::string& path,
+	Vector3& colliderCenter,
+	Vector3& colliderSize) {
+	const ModelData* modelData = GetSharedModelAssetData(path, false);  // 描画キャッシュから Bounds だけを参照する。
+	if (modelData == nullptr || modelData->vertices.empty()) {
+		return false;
+	}
+
+	Vector3 minimumPosition = {
+		modelData->vertices[0].position.x,
+		modelData->vertices[0].position.y,
+		modelData->vertices[0].position.z};
+	Vector3 maximumPosition = minimumPosition;
+	for (const VertexData& vertex : modelData->vertices) {
+		minimumPosition.x = (std::min)(minimumPosition.x, vertex.position.x);
+		minimumPosition.y = (std::min)(minimumPosition.y, vertex.position.y);
+		minimumPosition.z = (std::min)(minimumPosition.z, vertex.position.z);
+		maximumPosition.x = (std::max)(maximumPosition.x, vertex.position.x);
+		maximumPosition.y = (std::max)(maximumPosition.y, vertex.position.y);
+		maximumPosition.z = (std::max)(maximumPosition.z, vertex.position.z);
+	}
+
+	colliderCenter = {
+		(minimumPosition.x + maximumPosition.x) * 0.5f,
+		(minimumPosition.y + maximumPosition.y) * 0.5f,
+		(minimumPosition.z + maximumPosition.z) * 0.5f};
+	colliderSize = {
+		(std::max)(maximumPosition.x - minimumPosition.x, 0.01f),
+		(std::max)(maximumPosition.y - minimumPosition.y, 0.01f),
+		(std::max)(maximumPosition.z - minimumPosition.z, 0.01f)};
+	return true;
+}
+
 bool EditorAssetUtility::IsRenderTextureAssetPath(const std::string& path) {
 	return HasExtension(path, ".rendertexture");
 }

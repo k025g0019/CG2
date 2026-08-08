@@ -52,23 +52,30 @@ public:
 	void Finalize();
 
 	D3D12_GPU_DESCRIPTOR_HANDLE GetOutputSrvHandle() const;
+	ID3D12Resource* GetOutputResource() const;  // Auto Exposure等が正しいTemporal出力を遷移できるよう実Resourceを返す。
 	D3D12_GPU_DESCRIPTOR_HANDLE GetVelocitySrvHandle() const;
 
 private:
 	enum class ResourceType : uint32_t {
 		Velocity,
 		DilatedVelocity,
-		PreviousDepth,
+		PreviousDepthScene,
+		PreviousDepthGame,
 		DisocclusionMask,
 		ReactiveMask,
 		SsrTrace,
 		SsrCurrent,
-		SsrHistory0,
-		SsrHistory1,
+		SsrHistoryScene0,
+		SsrHistoryScene1,
+		SsrHistoryGame0,
+		SsrHistoryGame1,
 		SsrDenoised,
 		ReflectionComposite,
-		ColorHistory0,
-		ColorHistory1,
+		ColorHistoryScene0,
+		ColorHistoryScene1,
+		ColorHistoryGame0,
+		ColorHistoryGame1,
+		TemporalOutput,
 		Count,
 	};
 
@@ -102,9 +109,10 @@ private:
 	std::array<std::array<float, 16u>, kViewHistoryCount> previousViewProjectionMatrices_{};
 	std::array<std::array<float, 4u>, kViewHistoryCount> previousViewportRects_{};
 	D3D12_GPU_DESCRIPTOR_HANDLE outputSrvHandle_{};
+	ResourceType outputResourceType_ = ResourceType::TemporalOutput;
 	uint32_t renderWidth_ = 0u;
 	uint32_t renderHeight_ = 0u;
-	uint32_t historyWriteIndex_ = 0u;
+	std::array<uint32_t, kViewHistoryCount> historyWriteIndices_{};
 	std::array<bool, kViewHistoryCount> isHistoryValid_{};
 	std::array<bool, kViewHistoryCount> lastSsrEnabled_{};
 	std::array<bool, kViewHistoryCount> lastTemporalEnabled_{};

@@ -119,6 +119,7 @@ private:
 		SpectrumValue* destination,
 		uint32_t spectrumValueCount);
 	bool NeedsSpectrumRebuild(const EditorOceanRenderSettings& oceanSettings) const;
+	bool HasSimulationSettingsChanged(const EditorOceanRenderSettings& oceanSettings) const;  // FFT出力へ影響する非Spectrum設定の変更を調べる。
 	void ExecuteFft2D(
 		ID3D12GraphicsCommandList* commandList,
 		ID3D12Resource* fieldResource);
@@ -161,6 +162,7 @@ private:
 	uint32_t updateFrameCounter_ = 0u;
 	float domainLength_ = 1.0f;
 	float spectrumHeightScale_ = 1.0f;
+	float lastExecutedOceanTime_ = -1.0f;  // 同じ時刻・同じ設定のEditor待機フレームでFFTを再実行しない。
 	uint32_t submittedSurfaceSampleCount_ = 0u;
 	bool isInitialized_ = false;
 	bool hasActiveSettings_ = false;

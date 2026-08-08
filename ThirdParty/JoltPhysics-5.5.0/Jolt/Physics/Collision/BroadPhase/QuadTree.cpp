@@ -945,6 +945,10 @@ void QuadTree::NotifyBodiesAABBChanged(const BodyVector &inBodies, const Trackin
 		// Check if BodyID is correct
 		const Body *body = inBodies[cur->GetIndex()];
 		JPH_ASSERT(body->GetID() == *cur, "Provided BodyID doesn't match BodyID in body manager");
+		// A body can be removed while a queued bounds update is being drained.
+		// Do not turn its invalid location into an out-of-bounds allocator access.
+		if (inTracking[cur->GetIndex()].mBodyLocation.load(memory_order_relaxed) == Tracking::cInvalidBodyLocation)
+			continue;
 
 		// Get the new bounding box
 		const AABox &new_bounds = body->GetWorldSpaceBounds();

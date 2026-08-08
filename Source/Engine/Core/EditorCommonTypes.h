@@ -84,9 +84,9 @@ struct Material {
 	int32_t useOpacityMap;  // 0 以外なら t13 の Opacity Map を使う
 	int32_t alphaMode;  // 0=Opaque、1=Masked、2=Transparent
 	int32_t doubleSided;  // 0 以外なら Inspector 上で両面材質として扱う
-	float materialExtensionPadding0;  // HLSL cbuffer の 16byte 境界合わせ
-	float materialExtensionPadding1;  // HLSL cbuffer の 16byte 境界合わせ
-	float materialExtensionPadding2;  // HLSL cbuffer の 16byte 境界合わせ
+	float materialThickness;  // 透過と表面下散乱へ使う光路長
+	float materialWetness;  // 濡れによる色と粗さの変化量
+	float materialWaterlineHeight;  // World Yの水際中心
 	Vector2 uvTiling;  // UV の繰り返し回数
 	Vector2 uvOffset;  // UV の開始位置
 	float oceanEnabled;  // 1.0f なら Ocean 専用の海面材質を使う
@@ -104,7 +104,7 @@ struct Material {
 	float oceanMaterialPadding1;  // HLSL cbuffer の 16byte 境界合わせ
 	float oceanMaterialPadding2;  // HLSL cbuffer の 16byte 境界合わせ
 	int32_t surfaceMode;  // 0=通常、1=Terrain、2=Foliage
-	float surfaceMaterialPadding0;  // HLSL cbuffer の 16byte 境界合わせ
+	float materialWaterlineWidth;  // 水際の濡れ遷移幅
 	float surfaceMaterialPadding1;  // HLSL cbuffer の 16byte 境界合わせ
 	float surfaceMaterialPadding2;  // HLSL cbuffer の 16byte 境界合わせ
 };

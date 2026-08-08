@@ -225,7 +225,8 @@ void EditorGpuParticleManager::Update(
 
 void EditorGpuParticleManager::Draw(
 	ID3D12GraphicsCommandList* commandList,
-	const Matrix4x4& viewProjection) {
+	const Matrix4x4& viewProjection,
+	const Matrix4x4& viewMatrix) {
 	if (!hasEverSpawned_ ||
 		commandList == nullptr ||
 		particleBuffer_ == nullptr ||
@@ -253,8 +254,19 @@ void EditorGpuParticleManager::Draw(
 	commandList->SetPipelineState(graphicsPipelineState_.Get());
 	ParticleDrawConstants drawConstants{};
 	drawConstants.viewProjection = viewProjection;
+	const Matrix4x4 cameraMatrix = Inverse(viewMatrix);
+	drawConstants.cameraRight = {
+		cameraMatrix.matrix[0][0],
+		cameraMatrix.matrix[0][1],
+		cameraMatrix.matrix[0][2],
+		0.0f};
+	drawConstants.cameraUp = {
+		cameraMatrix.matrix[1][0],
+		cameraMatrix.matrix[1][1],
+		cameraMatrix.matrix[1][2],
+		0.0f};
 	drawConstants.renderGroup = 0u;
-	commandList->SetGraphicsRoot32BitConstants(0, 20u, &drawConstants, 0u);
+	commandList->SetGraphicsRoot32BitConstants(0, 28u, &drawConstants, 0u);
 	commandList->SetGraphicsRootShaderResourceView(1, particleBuffer_->GetGPUVirtualAddress());
 	commandList->SetGraphicsRootShaderResourceView(2, aliveListBuffer_->GetGPUVirtualAddress());
 	commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -271,7 +283,7 @@ void EditorGpuParticleManager::Draw(
 		}
 
 		drawConstants.renderGroup = modelMesh.renderGroup;
-		commandList->SetGraphicsRoot32BitConstants(0, 20u, &drawConstants, 0u);
+		commandList->SetGraphicsRoot32BitConstants(0, 28u, &drawConstants, 0u);
 		commandList->IASetVertexBuffers(0, 1u, &modelMesh.vertexBufferView);
 		commandList->DrawInstanced(modelMesh.vertexCount, kMaxParticleCount, 0u, 0u);
 	}
@@ -461,7 +473,7 @@ bool EditorGpuParticleManager::CreateGraphicsPipeline(
 	rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
 	rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
 	rootParameters[0].Constants.ShaderRegister = 0u;
-	rootParameters[0].Constants.Num32BitValues = 20u;
+	rootParameters[0].Constants.Num32BitValues = 28u;
 	rootParameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
 	rootParameters[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
 	rootParameters[1].Descriptor.ShaderRegister = 0u;
@@ -654,6 +666,11 @@ EditorGpuParticleManager::GpuParticleData EditorGpuParticleManager::ConvertSpawn
 		(std::max)(spawn.emissionStrength, 0.0f),
 		spawn.useCollision ? static_cast<float>(spawn.collisionMode + 1) : 0.0f,
 		(std::clamp)(spawn.collisionFriction, 0.0f, 1.0f)};
+	particle.orientation = {
+		static_cast<float>((std::clamp)(spawn.billboardMode, 0, 3)),
+		(std::max)(spawn.billboardStretch, 0.01f),
+		0.0f,
+		0.0f};
 	return particle;
 }
 

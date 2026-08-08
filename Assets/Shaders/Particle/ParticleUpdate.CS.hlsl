@@ -295,6 +295,13 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     {
         motionAcceleration += radialDirection * max(abs(particle.motion0.z), 1.0f);
     }
+    // 水煙は初速を保ったまま弱い上昇流と横方向の乱流で広がる。
+    else if (motionType == 8u)
+    {
+        motionAcceleration += noise * 2.25f;
+        motionAcceleration.y += max(abs(particle.motion0.w), 0.35f);
+        motionAcceleration -= radialDirection * min(particle.motion2.x, 0.0f);
+    }
 
     const float3 previousPosition = particle.positionLifetime.xyz;
     particle.velocitySize.xyz += (noise + motionAcceleration) * gParticleUpdate.deltaTime;

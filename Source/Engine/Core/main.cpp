@@ -3,8 +3,28 @@
 #pragma warning(pop)
 
 #include "GameScene.h"
+#include "../Editor/EditorWaterRailShooterSceneBuilder.h"
 
-int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
+#include <string>
+
+int WINAPI WinMain(
+	_In_ HINSTANCE instanceHandle,
+	_In_opt_ HINSTANCE,
+	_In_ LPSTR commandLine,
+	_In_ int) {
+	const std::string commandLineText = commandLine != nullptr ? commandLine : "";
+
+	//============================================================
+	// 開発用の非表示Scene生成
+	//============================================================
+
+	if (commandLineText.find("--generate-water-rail-shooter-0817") != std::string::npos) {
+		std::string resultMessage;
+		const bool isGenerated = EditorWaterRailShooterSceneBuilder::Generate(resultMessage);
+		OutputDebugStringA((resultMessage + "\n").c_str());
+		return isGenerated ? 0 : 1;
+	}
+
 	GameScene gameScene;  // GameScene は main から直接呼ぶ唯一の Scene 管理クラス。
 	gameScene.Initialize(instanceHandle);  // instanceHandle は Window 作成と DirectInput 初期化に必要な Windows アプリの実体。
 

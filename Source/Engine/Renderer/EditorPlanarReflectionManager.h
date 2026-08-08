@@ -34,6 +34,7 @@ public:
 
 	struct ProbeView {
 		int32_t sourceId = -1;
+		bool isOceanSurface = false;  // Ocean 用の暗黙 Capture は鏡面の全画面合成から除外する。
 		const EditorGameObject* gameObject = nullptr;
 		const EditorComponent* component = nullptr;
 		const EditorSceneObject* sceneObject = nullptr;
@@ -43,6 +44,7 @@ public:
 	const std::vector<ProbeView>& GetViews() const { return views_; }
 	const ProbeView* FindNearestView(const Vector3& cameraPosition) const;  // View ごとに最も近い反射面を選ぶ。
 	bool HasProbes() const { return !views_.empty(); }
+	bool HasCompositeProbes() const;  // 明示的な Reflection Probe だけを全画面合成の対象にする。
 
 private:
 	std::vector<ProbeView> views_;

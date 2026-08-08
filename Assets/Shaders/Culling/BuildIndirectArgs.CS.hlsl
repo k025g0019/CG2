@@ -45,7 +45,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     drawArguments.vertexCountPerInstance = gVisibility[objectIndex] != 0u
         ? gCullingObjects[objectIndex].vertexCount
         : 0u;
-    drawArguments.instanceCount = 1u;
+    drawArguments.instanceCount = gVisibility[objectIndex] != 0u ? 1u : 0u;
     drawArguments.startVertexLocation = 0u;
     drawArguments.startInstanceLocation = 0u;
     gDrawArguments[objectIndex] = drawArguments;

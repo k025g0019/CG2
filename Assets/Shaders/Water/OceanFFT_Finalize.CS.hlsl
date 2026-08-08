@@ -246,14 +246,17 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float centerHeight = GetHeight(x, z);
     const float2 centerDisplacement = GetHorizontalDisplacement(x, z);
     const float4 surfaceNormalFoam = GetNormalFoamAtIndex(x, z);
-    const float normalizedCrestHeight = saturate(
-        centerHeight / max(gMaxWaveHeight, 0.001f));
+    // 波頭だけでなく谷の深さもPixel Shaderへ渡し、横視点の体積吸収へ使う。
+    const float normalizedWaveHeight = clamp(
+        centerHeight / max(gMaxWaveHeight, 0.001f),
+        -1.0f,
+        1.0f);
 
     gDisplacementOutput[fieldIndex] = float4(
         centerDisplacement.x,
         centerHeight,
         centerDisplacement.y,
-        normalizedCrestHeight);
+        normalizedWaveHeight);
     gNormalFoamOutput[fieldIndex] = surfaceNormalFoam;
 
     if (dispatchThreadId.x == 0u && dispatchThreadId.y == 0u)

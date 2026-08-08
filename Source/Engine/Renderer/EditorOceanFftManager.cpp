@@ -74,14 +74,30 @@ bool EditorOceanFftManager::Execute(
 		return false;
 	}
 
-	if (NeedsSpectrumRebuild(oceanSettings) &&
+	const bool needsSpectrumRebuild = NeedsSpectrumRebuild(oceanSettings);
+	const bool hasSimulationSettingsChanged = HasSimulationSettingsChanged(oceanSettings);
+	const float effectiveOceanTime =
+		oceanElapsedTime * oceanSettings.timeScale * oceanSettings.waveSpeed;
+
+	if (needsSpectrumRebuild &&
 		!CreateSimulationResources(oceanSettings)) {
 		return false;
+	}
+
+	// Play前はOcean時刻を固定する。設定変更もSample要求もない待機フレームでは直前のGPU結果を再利用する。
+	if (hasValidOutput_ &&
+		!needsSpectrumRebuild &&
+		!hasSimulationSettingsChanged &&
+		std::fabs(lastExecutedOceanTime_ - effectiveOceanTime) <= 0.000001f &&
+		queuedSurfaceSampleRequests_.empty()) {
+		return true;
 	}
 
 	activeSettings_ = oceanSettings;
 	const bool shouldUpdateThisFrame =
 		!hasValidOutput_ ||
+		needsSpectrumRebuild ||
+		hasSimulationSettingsChanged ||
 		fftResolution_ < kMaximumFftResolution ||
 		(updateFrameCounter_ % 2u) == 0u;
 	updateFrameCounter_++;
@@ -126,7 +142,7 @@ bool EditorOceanFftManager::Execute(
 	}
 
 	OceanFftConstants constants{};
-	constants.oceanTime = oceanElapsedTime * oceanSettings.timeScale * oceanSettings.waveSpeed;
+	constants.oceanTime = effectiveOceanTime;
 	constants.gravity = kOceanGravity;
 	constants.waterDepth = (std::max)(oceanSettings.waterDepth, 0.1f);
 	constants.fftResolution = fftResolution_;
@@ -285,6 +301,7 @@ bool EditorOceanFftManager::Execute(
 		outputBarriers.data());
 	areOutputsShaderReadable_ = true;
 	hasValidOutput_ = true;
+	lastExecutedOceanTime_ = effectiveOceanTime;
 	return true;
 }
 
@@ -531,6 +548,7 @@ void EditorOceanFftManager::Finalize() {
 	updateFrameCounter_ = 0u;
 	domainLength_ = 1.0f;
 	spectrumHeightScale_ = 1.0f;
+	lastExecutedOceanTime_ = -1.0f;
 	submittedSurfaceSampleCount_ = 0u;
 	isInitialized_ = false;
 	hasActiveSettings_ = false;
@@ -946,6 +964,19 @@ bool EditorOceanFftManager::NeedsSpectrumRebuild(
 		oceanSettings.directionSpread != activeSettings_.directionSpread ||
 		oceanSettings.swellStrength != activeSettings_.swellStrength ||
 		oceanSettings.spectrumSeed != activeSettings_.spectrumSeed;
+}
+
+bool EditorOceanFftManager::HasSimulationSettingsChanged(
+	const EditorOceanRenderSettings& oceanSettings) const {
+	return !hasActiveSettings_ ||
+		oceanSettings.maxWaveHeight != activeSettings_.maxWaveHeight ||
+		oceanSettings.waveSpeed != activeSettings_.waveSpeed ||
+		oceanSettings.timeScale != activeSettings_.timeScale ||
+		oceanSettings.choppiness != activeSettings_.choppiness ||
+		oceanSettings.waterDepth != activeSettings_.waterDepth ||
+		oceanSettings.crestSharpness != activeSettings_.crestSharpness ||
+		oceanSettings.foamStrength != activeSettings_.foamStrength ||
+		oceanSettings.foamThreshold != activeSettings_.foamThreshold;
 }
 
 void EditorOceanFftManager::ExecuteFft2D(

@@ -46,6 +46,10 @@ struct VertexShaderOutput
     float4 currentClipPosition : TEXCOORD3;
     float4 previousClipPosition : TEXCOORD4;
     float2 motionVectorScale : TEXCOORD5;
+    float4 oceanSamplingData : TEXCOORD6;
+    nointerpolation float3 oceanWorldAxisX : TEXCOORD7;
+    nointerpolation float3 oceanWorldAxisY : TEXCOORD8;
+    nointerpolation float3 oceanWorldAxisZ : TEXCOORD9;
 };
 
 float2 NormalizeOceanDirection(float2 direction, float2 fallbackDirection)
@@ -161,13 +165,15 @@ void ApplyOceanSpectrumDisplacement(
     localPosition.xz += oceanResult.horizontalOffset;
     localPosition.y += oceanResult.height;
     localNormal = normalize(float3(-oceanResult.gradient.x, 1.0f, -oceanResult.gradient.y));
-    const float normalizedCrestHeight = saturate(
-        oceanResult.height / max(gTransformationMatrix.oceanParams0.w, 0.001f));
+    const float normalizedWaveHeight = clamp(
+        oceanResult.height / max(gTransformationMatrix.oceanParams0.w, 0.001f),
+        -1.0f,
+        1.0f);
     oceanData = float4(
         oceanResult.compression,
         oceanResult.time,
         oceanResult.detailWeight,
-        normalizedCrestHeight);
+        normalizedWaveHeight);
 }
 
 VertexShaderOutput main(VertexShaderInput input)
@@ -187,6 +193,9 @@ VertexShaderOutput main(VertexShaderInput input)
         input.boneWeights,
         localPosition,
         localNormal);
+    const float4 oceanFftMetadata = gTransformationMatrix.oceanWaveData1[15];
+    const float2 oceanBasePosition =
+        localPosition.xz + gTransformationMatrix.oceanParams5.zw;
     ApplyOceanSpectrumDisplacement(
         localPosition,
         localNormal,
@@ -224,5 +233,20 @@ VertexShaderOutput main(VertexShaderInput input)
     output.texcoord = input.texcoord;
     output.normal = normalize(mul(float4(localNormal, 0.0f), gTransformationMatrix.World).xyz);
     output.worldPosition = worldPosition.xyz;
+    output.oceanSamplingData = gTransformationMatrix.oceanParams0.x >= 1.5f
+        ? float4(
+            oceanBasePosition,
+            oceanFftMetadata.x,
+            oceanFftMetadata.z)
+        : float4(0.0f, 0.0f, 0.0f, 0.0f);
+    output.oceanWorldAxisX = mul(
+        float4(1.0f, 0.0f, 0.0f, 0.0f),
+        gTransformationMatrix.World).xyz;
+    output.oceanWorldAxisY = mul(
+        float4(0.0f, 1.0f, 0.0f, 0.0f),
+        gTransformationMatrix.World).xyz;
+    output.oceanWorldAxisZ = mul(
+        float4(0.0f, 0.0f, 1.0f, 0.0f),
+        gTransformationMatrix.World).xyz;
     return output;
 }

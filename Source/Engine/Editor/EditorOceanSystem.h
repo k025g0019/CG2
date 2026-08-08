@@ -44,6 +44,25 @@ struct EditorOceanSurfaceSample {
 	Vector3 position{0.0f, 0.0f, 0.0f};  // World 空間の水面位置
 	Vector3 normal{0.0f, 1.0f, 0.0f};  // World 空間の水面法線
 	Vector3 velocity{0.0f, 0.0f, 0.0f};  // World 空間での波粒子速度
+	float foam = 0.0f;  // 0..1 の砕波・圧縮泡率。航跡や着水Effectの強度へ利用する
+};
+
+struct EditorOceanSegmentHit {
+	bool isValid = false;  // 線分が水面へ到達した場合だけ true
+	int32_t oceanGameObjectId = -1;  // 交差した Ocean GameObject
+	Vector3 position{0.0f, 0.0f, 0.0f};  // World 空間の交点
+	Vector3 normal{0.0f, 1.0f, 0.0f};  // 交点の水面法線
+	Vector3 surfaceVelocity{0.0f, 0.0f, 0.0f};  // 交点の水面速度
+	float distance = 0.0f;  // 線分始点から交点までの距離
+	float normalizedDistance = 0.0f;  // 線分上の 0～1 位置
+};
+
+struct EditorOceanOcclusionResult {
+	bool hasOcean = false;  // Query 区間を覆う Ocean Sampleを1点以上取得できた
+	bool isBlocked = false;  // clearanceを含む水面より区間が下へ入った
+	float minimumClearance = 0.0f;  // 区間と水面の最小符号付き距離
+	float maximumSurfaceHeight = 0.0f;  // 走査点で得た最大水面World Y
+	EditorOceanSegmentHit intersection{};  // 最初の水面交点
 };
 
 float GetEditorOceanElapsedTime();  // 描画と物理が同じ波位相を使うための共通時刻
@@ -62,5 +81,42 @@ bool SampleEditorOceanSurface(
 	uint64_t surfaceSampleKey,
 	float oceanElapsedTime,
 	EditorOceanSurfaceSample& surfaceSample);  // 指定位置を覆う Ocean の水面を返す。ID=-1 は自動検索
+
+bool CastEditorOceanSegment(
+	const EditorScene& editorScene,
+	int32_t preferredOceanGameObjectId,
+	const Vector3& startPosition,
+	const Vector3& endPosition,
+	float clearance,
+	uint64_t surfaceSampleKey,
+	float oceanElapsedTime,
+	int32_t coarseStepCount,
+	int32_t refinementCount,
+	EditorOceanSegmentHit& segmentHit);  // 線分とFFT水面の最初の交点を返す
+
+bool RaycastEditorOceanSurface(
+	const EditorScene& editorScene,
+	int32_t preferredOceanGameObjectId,
+	const Vector3& rayOrigin,
+	const Vector3& rayDirection,
+	float maximumDistance,
+	float clearance,
+	uint64_t surfaceSampleKey,
+	float oceanElapsedTime,
+	int32_t coarseStepCount,
+	int32_t refinementCount,
+	EditorOceanSegmentHit& segmentHit);  // Ray方向を正規化してOcean線分判定へ渡す
+
+bool QueryEditorOceanOcclusion(
+	const EditorScene& editorScene,
+	int32_t preferredOceanGameObjectId,
+	const Vector3& startPosition,
+	const Vector3& endPosition,
+	float clearance,
+	uint64_t surfaceSampleKey,
+	float oceanElapsedTime,
+	int32_t coarseStepCount,
+	int32_t refinementCount,
+	EditorOceanOcclusionResult& occlusionResult);  // 遮蔽判定と最小Clearanceを同時に返す
 
 #pragma warning(pop)

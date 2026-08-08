@@ -16,7 +16,7 @@
 
 class EditorGpuParticleManager {
 public:
-	static constexpr uint32_t kMaxParticleCount = 262144u;
+	static constexpr uint32_t kMaxParticleCount = 32768u;
 	static constexpr uint32_t kMaxCollisionProxyCount = 32u;
 
 	struct CollisionProxy {
@@ -52,7 +52,8 @@ public:
 		const std::vector<CollisionProxy>& collisionProxies);  // Depth / Physics SDF 衝突を含むCompute更新を行う。
 	void Draw(
 		ID3D12GraphicsCommandList* commandList,
-		const Matrix4x4& viewProjection);  // AliveListを使ってGPUインスタンシング描画する。
+		const Matrix4x4& viewProjection,
+		const Matrix4x4& viewMatrix);  // Camera軸を使うBillboardとしてGPUインスタンシング描画する。
 
 private:
 	struct GpuFloat4 {
@@ -73,10 +74,13 @@ private:
 		GpuFloat4 motion1;  // xyz: 運動中心 / w: 波周波数。
 		GpuFloat4 motion2;  // x: 吸引力 / y: 現在回転 / z: 回転速度。
 		GpuFloat4 rendering;  // x: 描画モデルのグループ番号 / y: 放射強度。0 は板ポリゴン。
+		GpuFloat4 orientation;  // x: Billboard方式 / y: Velocity方向Scale。
 	};
 
 	struct ParticleDrawConstants {
 		Matrix4x4 viewProjection{};  // Particle のワールド位置を画面へ変換する行列。
+		GpuFloat4 cameraRight{};  // Camera World行列の右方向。
+		GpuFloat4 cameraUp{};  // Camera World行列の上方向。
 		uint32_t renderGroup = 0u;  // 0 は板、1 以上は読み込んだ FBX / OBJ グループ。
 		float padding[3]{0.0f, 0.0f, 0.0f};
 	};

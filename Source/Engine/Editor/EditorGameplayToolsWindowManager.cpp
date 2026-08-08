@@ -4,6 +4,7 @@
 #include "EditorSharedState.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -90,40 +91,94 @@ namespace {
 		return namedPointCount >= 2;
 	}
 
-	Vector3 MakeWaveOffset(
-		int32_t slotIndex,
-		int32_t objectCount,
-		int32_t formationPattern,
-		float spacing) {
-		const float safeSpacing = (std::max)(spacing, 0.0f);
-		const float centeredIndex =
-			static_cast<float>(slotIndex) - static_cast<float>(objectCount - 1) * 0.5f;
+	EditorComponent* FindRailMovementForPath(int32_t railPathGameObjectId) {
+		for (EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
+			EditorComponent* railMovementComponent = FindComponent(
+				&gameObject,
+				EditorComponentType::RailMovement);
 
-		if (formationPattern == 1) {
-			return {centeredIndex * safeSpacing, 0.0f, std::fabs(centeredIndex) * safeSpacing * 0.65f};
+			if (railMovementComponent != nullptr &&
+				railMovementComponent->railPathGameObjectId == railPathGameObjectId) {
+				return railMovementComponent;
+			}
 		}
 
-		if (formationPattern == 2) {
-			constexpr float kCircleRadians = 6.28318530718f;
-			const float angle = kCircleRadians * static_cast<float>(slotIndex) /
-				static_cast<float>((std::max)(objectCount, 1));
-			const float radius = safeSpacing * (std::max)(static_cast<float>(objectCount) * 0.18f, 1.0f);
-			return {std::cosf(angle) * radius, 0.0f, std::sinf(angle) * radius};
+		return nullptr;
+	}
+
+	int32_t ResolveSplinePointIndex(int32_t pointIndex, int32_t pointCount, bool isLooping) {
+		if (isLooping) {
+			const int32_t wrappedIndex = pointIndex % pointCount;
+			return wrappedIndex < 0 ? wrappedIndex + pointCount : wrappedIndex;
 		}
 
-		if (formationPattern == 3) {
-			const int32_t columnCount = (std::max)(
-				static_cast<int32_t>(std::ceil(std::sqrt(static_cast<float>((std::max)(objectCount, 1))))),
-				1);
-			const int32_t rowIndex = slotIndex / columnCount;
-			const int32_t columnIndex = slotIndex % columnCount;
-			return {
-				(static_cast<float>(columnIndex) - static_cast<float>(columnCount - 1) * 0.5f) * safeSpacing,
-				0.0f,
-				static_cast<float>(rowIndex) * safeSpacing};
+		return (std::clamp)(pointIndex, 0, pointCount - 1);
+	}
+
+	Vector3 EvaluateSplineCatmullRom(
+		const Vector3& firstPoint,
+		const Vector3& secondPoint,
+		const Vector3& thirdPoint,
+		const Vector3& fourthPoint,
+		float normalizedTime) {
+		const float squaredTime = normalizedTime * normalizedTime;
+		const float cubedTime = squaredTime * normalizedTime;
+		return {
+			0.5f * (
+				2.0f * secondPoint.x +
+				(-firstPoint.x + thirdPoint.x) * normalizedTime +
+				(2.0f * firstPoint.x - 5.0f * secondPoint.x + 4.0f * thirdPoint.x - fourthPoint.x) * squaredTime +
+				(-firstPoint.x + 3.0f * secondPoint.x - 3.0f * thirdPoint.x + fourthPoint.x) * cubedTime),
+			0.5f * (
+				2.0f * secondPoint.y +
+				(-firstPoint.y + thirdPoint.y) * normalizedTime +
+				(2.0f * firstPoint.y - 5.0f * secondPoint.y + 4.0f * thirdPoint.y - fourthPoint.y) * squaredTime +
+				(-firstPoint.y + 3.0f * secondPoint.y - 3.0f * thirdPoint.y + fourthPoint.y) * cubedTime),
+			0.5f * (
+				2.0f * secondPoint.z +
+				(-firstPoint.z + thirdPoint.z) * normalizedTime +
+				(2.0f * firstPoint.z - 5.0f * secondPoint.z + 4.0f * thirdPoint.z - fourthPoint.z) * squaredTime +
+				(-firstPoint.z + 3.0f * secondPoint.z - 3.0f * thirdPoint.z + fourthPoint.z) * cubedTime)};
+	}
+
+	std::vector<Vector3> BuildSplinePreviewPositions(
+		const std::vector<EditorGameObject*>& controlPoints,
+		const EditorComponent* railMovementComponent) {
+		std::vector<Vector3> previewPositions;
+
+		if (controlPoints.size() < 2u) {
+			return previewPositions;
 		}
 
-		return {centeredIndex * safeSpacing, 0.0f, 0.0f};
+		const bool isLooping = railMovementComponent != nullptr && railMovementComponent->railLoop;
+		const bool usesSmoothCurve =
+			railMovementComponent == nullptr || railMovementComponent->railUseSmoothCurve;
+		const int32_t pointCount = static_cast<int32_t>(controlPoints.size());
+		const int32_t segmentCount = isLooping ? pointCount : pointCount - 1;
+		const int32_t samplesPerSegment = usesSmoothCurve ? 16 : 1;
+		previewPositions.push_back(controlPoints.front()->translate);
+
+		for (int32_t segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
+			const int32_t firstIndex = ResolveSplinePointIndex(segmentIndex - 1, pointCount, isLooping);
+			const int32_t secondIndex = ResolveSplinePointIndex(segmentIndex, pointCount, isLooping);
+			const int32_t thirdIndex = ResolveSplinePointIndex(segmentIndex + 1, pointCount, isLooping);
+			const int32_t fourthIndex = ResolveSplinePointIndex(segmentIndex + 2, pointCount, isLooping);
+
+			for (int32_t sampleIndex = 1; sampleIndex <= samplesPerSegment; sampleIndex++) {
+				const float normalizedTime =
+					static_cast<float>(sampleIndex) / static_cast<float>(samplesPerSegment);
+				previewPositions.push_back(usesSmoothCurve ?
+					EvaluateSplineCatmullRom(
+						controlPoints[static_cast<size_t>(firstIndex)]->translate,
+						controlPoints[static_cast<size_t>(secondIndex)]->translate,
+						controlPoints[static_cast<size_t>(thirdIndex)]->translate,
+						controlPoints[static_cast<size_t>(fourthIndex)]->translate,
+						normalizedTime) :
+					controlPoints[static_cast<size_t>(thirdIndex)]->translate);
+			}
+		}
+
+		return previewPositions;
 	}
 
 	CanvasBounds BuildCanvasBounds(
@@ -281,7 +336,7 @@ void EditorGameplayToolsWindowManager::DrawSplineEditor() {
 	}
 	ImGui::SameLine();
 
-	if (ImGui::Button("制御点を追加", ImVec2(120.0f, 0.0f))) {
+	if (ImGui::Button("選択点の次へ追加", ImVec2(150.0f, 0.0f))) {
 		AddControlPoint();
 	}
 	ImGui::SameLine();
@@ -325,6 +380,8 @@ void EditorGameplayToolsWindowManager::DrawSplineEditor() {
 
 	railPathGameObject = g_editorScene.FindGameObject(selectedRailPathGameObjectId_);
 	std::vector<EditorGameObject*> controlPoints = CollectControlPoints(railPathGameObject);
+	EditorComponent* previewRailMovement = selectedRailMovement != nullptr ?
+		selectedRailMovement : FindRailMovementForPath(selectedRailPathGameObjectId_);
 
 	if (railPathGameObject == nullptr || controlPoints.size() < 2u) {
 		ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.25f, 1.0f), "2点以上を持つSplineを選択してください。");
@@ -397,8 +454,27 @@ void EditorGameplayToolsWindowManager::DrawSplineEditor() {
 				controlPoint->translate, bounds, canvasMinimum, canvasSize, showsSideView_));
 		}
 
-		for (size_t pointIndex = 1u; pointIndex < pointPositions.size(); pointIndex++) {
-			drawList->AddLine(pointPositions[pointIndex - 1u], pointPositions[pointIndex], IM_COL32(67, 211, 235, 255), 3.0f);
+		const std::vector<Vector3> previewPositions = BuildSplinePreviewPositions(
+			controlPoints,
+			previewRailMovement);
+		std::vector<ImVec2> previewCanvasPositions;
+		previewCanvasPositions.reserve(previewPositions.size());
+
+		for (const Vector3& previewPosition : previewPositions) {
+			previewCanvasPositions.push_back(ToCanvasPosition(
+				previewPosition,
+				bounds,
+				canvasMinimum,
+				canvasSize,
+				showsSideView_));
+		}
+
+		for (size_t pointIndex = 1u; pointIndex < previewCanvasPositions.size(); pointIndex++) {
+			drawList->AddLine(
+				previewCanvasPositions[pointIndex - 1u],
+				previewCanvasPositions[pointIndex],
+				IM_COL32(67, 211, 235, 255),
+				3.0f);
 		}
 
 		for (size_t pointIndex = 0u; pointIndex < pointPositions.size(); pointIndex++) {
@@ -454,6 +530,12 @@ void EditorGameplayToolsWindowManager::DrawSplineEditor() {
 		}
 
 		if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+			if (draggingControlPointGameObjectId_ >= 0) {
+				g_editorSceneSynchronizer.Update(
+					g_editorTextureFilePaths,
+					g_selectedPlacedSceneObjectIndex);
+			}
+
 			draggingControlPointGameObjectId_ = -1;
 		}
 	}
@@ -827,44 +909,64 @@ void EditorGameplayToolsWindowManager::CreateWaveFromSelection() {
 		return;
 	}
 
-	const int32_t templateGameObjectId = templateGameObject->id;
 	const std::string templateName = templateGameObject->name;
-	const Vector3 templatePosition = templateGameObject->translate;
+	const int32_t templateGameObjectId = templateGameObject->id;
+	Vector3 waveScale = templateGameObject->scale;
+	Vector3 waveRotation = templateGameObject->rotate;
+	Vector3 wavePosition = templateGameObject->translate;
+	g_editorScene.GetWorldTransform(
+		templateGameObjectId,
+		waveScale,
+		waveRotation,
+		wavePosition);
+	(void)waveScale;
 	g_editorScene.PushUndo();
+	const int32_t poolTemplateGameObjectId = g_editorScene.DuplicateGameObject(templateGameObjectId);
+
+	if (poolTemplateGameObjectId < 0) {
+		return;
+	}
+
+	EditorGameObject* poolTemplateGameObject = g_editorScene.FindGameObject(poolTemplateGameObjectId);
+
+	if (poolTemplateGameObject == nullptr) {
+		return;
+	}
+
+	poolTemplateGameObject->name = templateName + " Wave Template";
+	poolTemplateGameObject->isActive = false;
+	const int32_t poolGameObjectId = g_editorScene.CreateGameObject(templateName + " Wave Pool");
+	g_editorScene.AddComponent(poolGameObjectId, EditorComponentType::ObjectPool);
+	EditorComponent* poolComponent = FindComponent(
+		g_editorScene.FindGameObject(poolGameObjectId),
+		EditorComponentType::ObjectPool);
+
+	if (poolComponent != nullptr) {
+		poolComponent->objectPoolTemplateGameObjectId = poolTemplateGameObjectId;
+		poolComponent->objectPoolInitialSize = waveCount_;
+		poolComponent->objectPoolAllowExpand = false;
+	}
+
 	const int32_t waveGameObjectId = g_editorScene.CreateGameObject("Wave");
 	g_editorScene.AddComponent(waveGameObjectId, EditorComponentType::WaveSpawner);
+	EditorGameObject* waveGameObject = g_editorScene.FindGameObject(waveGameObjectId);
 
-	for (int32_t objectIndex = 0; objectIndex < waveCount_; objectIndex++) {
-		const int32_t duplicatedGameObjectId = g_editorScene.DuplicateGameObject(templateGameObjectId);
+	if (waveGameObject != nullptr) {
+		waveGameObject->translate = wavePosition;
+		waveGameObject->rotate = waveRotation;
+	}
 
-		if (duplicatedGameObjectId < 0) {
-			continue;
-		}
+	EditorComponent* waveComponent = FindComponent(
+		waveGameObject,
+		EditorComponentType::WaveSpawner);
 
-		g_editorScene.SetParent(duplicatedGameObjectId, waveGameObjectId);
-		EditorGameObject* duplicatedGameObject = g_editorScene.FindGameObject(duplicatedGameObjectId);
-
-		if (duplicatedGameObject == nullptr) {
-			continue;
-		}
-
-		char duplicatedName[192]{};
-		std::snprintf(
-			duplicatedName,
-			_countof(duplicatedName),
-			"%s %02d",
-			templateName.c_str(),
-			objectIndex + 1);
-		duplicatedGameObject->name = duplicatedName;
-		const Vector3 placementOffset = MakeWaveOffset(
-			objectIndex,
-			waveCount_,
-			waveFormationPattern_,
-			waveSpacing_);
-		duplicatedGameObject->translate = {
-			templatePosition.x + placementOffset.x,
-			templatePosition.y + placementOffset.y,
-			templatePosition.z + placementOffset.z};
+	if (waveComponent != nullptr) {
+		waveComponent->waveSpawnSourceMode = 0;
+		waveComponent->wavePoolGameObjectId = poolGameObjectId;
+		waveComponent->waveSpawnPointGameObjectId = waveGameObjectId;
+		waveComponent->waveSpawnCount = waveCount_;
+		waveComponent->waveFormationPattern = waveFormationPattern_ + 1;
+		waveComponent->waveFormationSpacing = waveSpacing_;
 	}
 
 	SetSingleSelectedGameObject(waveGameObjectId);
@@ -908,20 +1010,59 @@ void EditorGameplayToolsWindowManager::AddControlPoint() {
 		return;
 	}
 
+	const int32_t railPathGameObjectId = railPathGameObject->id;
+	size_t insertionIndex = controlPoints.size();
+
+	for (size_t pointIndex = 0u; pointIndex < controlPoints.size(); pointIndex++) {
+		if (controlPoints[pointIndex]->id == selectedControlPointGameObjectId_) {
+			insertionIndex = pointIndex + 1u;
+			break;
+		}
+	}
+
+	Vector3 newPointPosition{0.0f, 0.0f, 0.0f};
+
+	if (!controlPoints.empty() && insertionIndex < controlPoints.size()) {
+		newPointPosition = Multiply(
+			0.5f,
+			Add(
+				controlPoints[insertionIndex - 1u]->translate,
+				controlPoints[insertionIndex]->translate));
+	}
+	else if (controlPoints.size() >= 2u) {
+		const Vector3& lastPosition = controlPoints.back()->translate;
+		const Vector3& previousPosition = controlPoints[controlPoints.size() - 2u]->translate;
+		newPointPosition = Add(lastPosition, Subtract(lastPosition, previousPosition));
+	}
+	else if (!controlPoints.empty()) {
+		newPointPosition = Add(controlPoints.back()->translate, Vector3{0.0f, 0.0f, 12.0f});
+	}
+
 	g_editorScene.PushUndo();
 	char pointName[32]{};
 	std::snprintf(pointName, _countof(pointName), "Point %02d", static_cast<int32_t>(controlPoints.size()));
 	const int32_t pointGameObjectId = g_editorScene.CreateGameObject(pointName);
-	g_editorScene.SetParent(pointGameObjectId, railPathGameObject->id);
+	g_editorScene.SetParent(pointGameObjectId, railPathGameObjectId);
 	EditorGameObject* pointGameObject = g_editorScene.FindGameObject(pointGameObjectId);
 
 	if (pointGameObject != nullptr) {
-		pointGameObject->translate = controlPoints.empty()
-			? Vector3{0.0f, 0.0f, 0.0f}
-			: Vector3{
-				controlPoints.back()->translate.x,
-				controlPoints.back()->translate.y,
-				controlPoints.back()->translate.z + 12.0f};
+		pointGameObject->translate = newPointPosition;
+	}
+
+	railPathGameObject = g_editorScene.FindGameObject(railPathGameObjectId);
+
+	if (railPathGameObject != nullptr && insertionIndex < railPathGameObject->children.size()) {
+		auto newPointIterator = std::find(
+			railPathGameObject->children.begin(),
+			railPathGameObject->children.end(),
+			pointGameObjectId);
+
+		if (newPointIterator != railPathGameObject->children.end()) {
+			railPathGameObject->children.erase(newPointIterator);
+			railPathGameObject->children.insert(
+				railPathGameObject->children.begin() + static_cast<std::ptrdiff_t>(insertionIndex),
+				pointGameObjectId);
+		}
 	}
 
 	selectedControlPointGameObjectId_ = pointGameObjectId;

@@ -3,6 +3,8 @@
 struct ParticleCamera
 {
     row_major float4x4 viewProjection;
+    float4 cameraRight;
+    float4 cameraUp;
     uint renderGroup;
     float3 padding;
 };

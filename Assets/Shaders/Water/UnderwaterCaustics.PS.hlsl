@@ -31,6 +31,12 @@ struct PSInput
     float2 texcoord : TEXCOORD0;
 };
 
+struct OceanSurfaceDifferential
+{
+    float2 slope;
+    float curvature;
+};
+
 uint2 WrapOceanFftIndex(int2 index, uint resolution)
 {
     const uint resolutionMask = resolution - 1u;
@@ -79,16 +85,26 @@ float GetOceanSurfaceHeight(float2 localPosition)
     return waterHeight + SampleOceanFftHeight(localPosition) * max(abs(oceanVerticalScale), 0.0001f);
 }
 
-float2 ComputeOceanSlope(float2 localPosition)
+OceanSurfaceDifferential ComputeOceanSurfaceDifferential(float2 localPosition)
 {
+    OceanSurfaceDifferential differential;
     const float resolution = max(fftResolution, 1.0f);
     const float cellSize = 1.0f / max(inverseDomainLength * resolution, 0.0001f);
+    const float centerHeight = SampleOceanFftHeight(localPosition);
     const float heightLeft = SampleOceanFftHeight(localPosition - float2(cellSize, 0.0f));
     const float heightRight = SampleOceanFftHeight(localPosition + float2(cellSize, 0.0f));
     const float heightBack = SampleOceanFftHeight(localPosition - float2(0.0f, cellSize));
     const float heightFront = SampleOceanFftHeight(localPosition + float2(0.0f, cellSize));
-    return float2(heightRight - heightLeft, heightFront - heightBack) /
+    const float verticalScale = oceanVerticalScale;
+    differential.slope =
+        float2(heightRight - heightLeft, heightFront - heightBack) *
+        verticalScale /
         max(cellSize * 2.0f, 0.0001f);
+    differential.curvature =
+        (heightLeft + heightRight + heightBack + heightFront - centerHeight * 4.0f) *
+        verticalScale /
+        max(cellSize * cellSize, 0.0001f);
+    return differential;
 }
 
 float3 ReconstructWorldPosition(float2 texcoord, float deviceDepth)
@@ -98,10 +114,23 @@ float3 ReconstructWorldPosition(float2 texcoord, float deviceDepth)
     return worldPosition.xyz / max(abs(worldPosition.w), 0.00001f);
 }
 
-float ComputeCaustics(float3 worldPosition, float2 oceanLocalPosition, float2 oceanSlope)
+float2 ClampUnderwaterSourceUv(float2 sourceUv)
+{
+    const float2 minimumUv = viewportUvOffset + inverseRenderSize * 1.5f;
+    const float2 maximumUv =
+        viewportUvOffset +
+        viewportUvScale -
+        inverseRenderSize * 1.5f;
+    return clamp(sourceUv, minimumUv, maximumUv);
+}
+
+float ComputeCaustics(
+    float3 worldPosition,
+    float2 oceanLocalPosition,
+    OceanSurfaceDifferential differential)
 {
     const float2 focusedCoordinate =
-        oceanLocalPosition * 0.48f - oceanSlope * 1.7f;
+        oceanLocalPosition * 0.48f - differential.slope * 1.7f;
     const float2 flowA = float2(elapsedTime * 0.22f, elapsedTime * -0.17f);
     const float2 flowB = float2(elapsedTime * -0.13f, elapsedTime * 0.19f);
     const float2 coordinateA = focusedCoordinate + flowA;
@@ -109,8 +138,38 @@ float ComputeCaustics(float3 worldPosition, float2 oceanLocalPosition, float2 oc
     const float waveA = sin(coordinateA.x + sin(coordinateA.y * 1.7f));
     const float waveB = sin(coordinateB.y + sin(coordinateB.x * 1.4f));
     const float focusedLight = 1.0f - saturate(abs(waveA + waveB) * 0.7f);
-    const float slopeFocus = rcp(1.0f + dot(oceanSlope, oceanSlope) * 0.22f);
-    return focusedLight * focusedLight * focusedLight * slopeFocus;
+    const float slopeFocus = rcp(
+        1.0f + dot(differential.slope, differential.slope) * 0.22f);
+    const float resolution = max(fftResolution, 1.0f);
+    const float cellSize = 1.0f / max(inverseDomainLength * resolution, 0.0001f);
+    const float curvatureFocus = lerp(
+        0.82f,
+        1.65f,
+        saturate(abs(differential.curvature) * cellSize * 0.65f));
+    return focusedLight * focusedLight * focusedLight * slopeFocus * curvatureFocus;
+}
+
+float3 ApplyUnderwaterOptics(
+    float3 sourceColor,
+    float waterPathLength)
+{
+    const float safeAbsorptionDistance = max(absorptionDistance, 0.1f);
+    const float safePathLength = max(waterPathLength, 0.0f);
+    const float normalizedPathLength = safePathLength / safeAbsorptionDistance;
+    const float3 absorptionCoefficient =
+        max(1.0f - saturate(deepColor), 0.06f) /
+        safeAbsorptionDistance;
+    const float3 transmittance = exp(
+        -absorptionCoefficient * safePathLength);
+    const float scatteringWeight =
+        1.0f - exp(-normalizedPathLength * 0.72f);
+    const float3 scatteringColor = lerp(
+        shallowColor,
+        deepColor,
+        smoothstep(0.08f, 1.65f, normalizedPathLength));
+    return sourceColor * transmittance +
+        scatteringColor * (1.0f - transmittance) *
+        lerp(0.72f, 0.92f, scatteringWeight);
 }
 
 float4 main(PSInput input) : SV_TARGET0
@@ -128,15 +187,25 @@ float4 main(PSInput input) : SV_TARGET0
 
     if (depth >= 0.99999f)
     {
-        const float2 cameraSlope = ComputeOceanSlope(cameraOceanPosition);
+        const OceanSurfaceDifferential cameraDifferential =
+            ComputeOceanSurfaceDifferential(cameraOceanPosition);
         const float2 distortion =
-            cameraSlope * max(distortionStrength, 0.0f) * 0.0015f * cameraUnderwater;
+            cameraDifferential.slope *
+            max(distortionStrength, 0.0f) *
+            0.0015f *
+            cameraUnderwater;
         const float3 sourceColor = gSceneTexture.SampleLevel(
             gLinearSampler,
-            saturate(sourceUv + distortion),
+            ClampUnderwaterSourceUv(sourceUv + distortion),
             0.0f).rgb;
-        const float3 skyTint = lerp(sourceColor, deepColor, 0.42f);
-        return float4(lerp(sourceColor, skyTint, cameraUnderwater), 1.0f);
+        const float skyWaterPath =
+            max(absorptionDistance * 1.5f, cameraSubmergedDepth);
+        const float3 underwaterSkyColor = ApplyUnderwaterOptics(
+            sourceColor,
+            skyWaterPath);
+        return float4(
+            lerp(sourceColor, underwaterSkyColor, cameraUnderwater),
+            1.0f);
     }
 
     const float3 worldPosition = ReconstructWorldPosition(input.texcoord, depth);
@@ -144,28 +213,54 @@ float4 main(PSInput input) : SV_TARGET0
     const float boundsMask = ComputeOceanBoundsMask(oceanLocalPosition);
     const float surfaceHeight = GetOceanSurfaceHeight(oceanLocalPosition);
     const float submergedDepth = max(surfaceHeight - worldPosition.y, 0.0f);
+    const float geometryBoundarySoftness = max(
+        boundarySoftness,
+        fwidth(surfaceHeight - worldPosition.y) * 1.5f);
     const float geometryUnderwater =
-        smoothstep(-boundarySoftness, boundarySoftness, surfaceHeight - worldPosition.y) *
+        smoothstep(
+            -geometryBoundarySoftness,
+            geometryBoundarySoftness,
+            surfaceHeight - worldPosition.y) *
         boundsMask;
-    const float waterPathLength = max(submergedDepth, max(cameraSubmergedDepth, 0.0f));
-    const float absorption = 1.0f - exp(-waterPathLength / max(absorptionDistance, 0.1f));
-    const float3 waterTint = lerp(shallowColor, deepColor, saturate(absorption));
-    const float2 oceanSlope = ComputeOceanSlope(oceanLocalPosition);
-    const float caustics = ComputeCaustics(worldPosition, oceanLocalPosition, oceanSlope) *
+    const OceanSurfaceDifferential oceanDifferential =
+        ComputeOceanSurfaceDifferential(oceanLocalPosition);
+    const float3 oceanSurfaceNormal = normalize(float3(
+        -oceanDifferential.slope.x,
+        1.0f,
+        -oceanDifferential.slope.y));
+    const float3 cameraToGeometry = worldPosition - cameraPosition;
+    const float viewDistance = length(cameraToGeometry);
+    const float3 viewDirection = cameraToGeometry /
+        max(viewDistance, 0.0001f);
+    const float surfaceIncidence = max(
+        abs(dot(viewDirection, oceanSurfaceNormal)),
+        0.12f);
+    const float entryWaterPath = submergedDepth / surfaceIncidence;
+    const float waterPathLength = lerp(
+        entryWaterPath,
+        viewDistance,
+        cameraUnderwater);
+    const float caustics = ComputeCaustics(
+        worldPosition,
+        oceanLocalPosition,
+        oceanDifferential) *
         exp(-submergedDepth * 0.14f) * max(causticsIntensity, 0.0f) * geometryUnderwater;
     const float3 causticsColor = shallowColor * caustics;
     const float effectMask = saturate(max(geometryUnderwater * 0.72f, cameraUnderwater));
-    const float2 distortion = oceanSlope *
+    const float2 distortion = oceanDifferential.slope *
         max(distortionStrength, 0.0f) *
         0.0015f *
         effectMask;
     const float3 sourceColor = gSceneTexture.SampleLevel(
         gLinearSampler,
-        saturate(sourceUv + distortion),
+        ClampUnderwaterSourceUv(sourceUv + distortion),
         0.0f).rgb;
+    const float3 opticalColor = ApplyUnderwaterOptics(
+        sourceColor,
+        waterPathLength);
     const float3 absorbedColor = lerp(
         sourceColor,
-        sourceColor * waterTint + causticsColor,
+        opticalColor + causticsColor,
         effectMask);
     return float4(absorbedColor, 1.0f);
 }

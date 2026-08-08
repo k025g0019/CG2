@@ -56,12 +56,13 @@
 				</details>
 
 				<details class="nav-group" open>
-					<summary>実行系 <span>6</span></summary>
+					<summary>実行系 <span>7</span></summary>
 					<div class="nav-group-list">
 						<a class="nav-item" href="#physics-3d">3D 物理</a>
 						<a class="nav-item" href="#mesh-collision">メッシュ当たり判定</a>
 						<a class="nav-item" href="#input-system">入力</a>
 						<a class="nav-item" href="#script-component">C++ スクリプト</a>
+						<a class="nav-item" href="#workflow-foundations">Sequence / Save / Scene</a>
 						<a class="nav-item" href="#navigation">ナビゲーション</a>
 						<a class="nav-item" href="#ai-components">AI</a>
 					</div>
@@ -271,11 +272,35 @@ Stop でバックアップへ戻す</code></pre>
 					<li><strong>保存:</strong> 現在開いている Scene に上書き保存します。</li>
 					<li><strong>名前を付けて保存:</strong> 保存先と Scene 名を選んで保存します。</li>
 					<li><strong>読み込み:</strong> ファイル選択で Scene を読み込みます。</li>
-					<li><strong>Prefab:</strong> 選択 GameObject を再利用できるデータとして保存します。</li>
+					<li><strong>Prefab:</strong> 選択 GameObjectと子Hierarchyを再利用できるデータとして保存します。</li>
+					<li><strong>生成:</strong> Projectの.prefabをダブルクリック、またはScene Viewへドラッグします。</li>
+					<li><strong>Apply / Revert:</strong> Instanceの変更を生成元へ適用、または生成元の状態へ戻します。</li>
+					<li><strong>Variant:</strong> 基底Prefab Pathを保持する別Prefabを完全Snapshotとして保存します。</li>
 				</ul>
 				<p>
-					Unity の Prefab Apply / Revert、ネスト Prefab、差分表示までは未対応です。
+					Apply / RevertとHierarchy内参照のID再割当てに対応します。ネストPrefabの差分継承とOverride差分表示は未対応です。
 				</p>
+			</article>
+
+			<article class="api-card searchable-section" id="workflow-foundations">
+				<div class="api-card-head">
+					<h2>Sequence / Save / Scene Streaming</h2>
+					<a class="anchor-link" href="#workflow-foundations">#</a>
+				</div>
+				<table class="data-table">
+					<thead>
+						<tr><th>機能</th><th>使い方</th><th>実行内容</th><th>レベル</th></tr>
+					</thead>
+					<tbody>
+						<tr><td>アクションシーケンス</td><td>子GameObjectへシーケンスステップを追加します。</td><td>待機、並列、Script Action、Active、Scene、条件、SignalをHierarchy順に実行します。</td><td><span class="badge ready">実装済み</span></td></tr>
+						<tr><td>保存対象</td><td>一意な保存KeyとTransform、Active、Health、Rigidbody、Scriptの保存項目を選びます。</td><td>Version付きSlotへ保存し、破損・重複を検証後に一括復元します。</td><td><span class="badge ready">実装済み</span></td></tr>
+						<tr><td>チェックポイント</td><td>Slot名、Play開始時Save/Load、成功Actionを設定します。</td><td>Slot操作成功後に任意Script Actionを通知します。</td><td><span class="badge ready">実装済み</span></td></tr>
+						<tr><td>Scene Streaming</td><td>C++ ScriptのSceneManagerからAsync / Additive / Unloadを呼びます。</td><td>Worker Threadで解析し、描画Frame境界でSceneへ適用します。</td><td><span class="badge ready">実装済み</span></td></tr>
+					</tbody>
+				</table>
+				<div class="note-box">
+					<strong>検証:</strong> ウィンドウメニューの「ゲーム基盤検証 Scene を作成」でPrefab、Rail、Wave、Aim、Weapon、Pool、Sequence、Additive Scene、SaveをまとめたSceneを生成できます。
+				</div>
 			</article>
 
 			<article class="api-card searchable-section" id="physics-3d">
@@ -406,7 +431,7 @@ Move はキーそのものではなく「移動という行動」として扱う
 					<summary>作成手順</summary>
 				<ol class="step-list">
 					<li>Project で <code>C++ Script</code> を作り、名前を決めます。</li>
-					<li>生成された <code>.cpp</code> を開き、<code>EditorScript_Start</code> と <code>EditorScript_Update</code> などを書きます。</li>
+					<li>生成された <code>.h</code> / <code>.cpp</code> を開き、クラスの <code>Start</code> と <code>Update</code> などを書きます。Component実体の生成・破棄exportはひな型が用意します。</li>
 					<li><code>build_debug.bat</code> を実行して DLL をビルドします。</li>
 					<li>GameObject を選び、Inspector の一番下から <code>Script</code> または <code>MonoBehaviour</code> を追加します。</li>
 					<li>そのコンポーネントのアセット欄へ、生成された <code>.dll</code> を割り当てます。</li>
@@ -421,11 +446,12 @@ Move はキーそのものではなく「移動という行動」として扱う
 					</thead>
 					<tbody>
 						<tr><td>EditorScript_Load</td><td>DLL 読み込み時に 1 回呼ばれます。</td><td>API バージョン確認と <code>runtimeApi</code> 保持に使います。</td></tr>
-						<tr><td>EditorScript_Start</td><td>その GameObject の Play 開始時に 1 回呼ばれます。</td><td>初期化、ログ、初期速度設定に使います。</td></tr>
-						<tr><td>EditorScript_Update</td><td>毎フレーム呼ばれます。</td><td>入力、AI 判定、Transform 更新に使います。</td></tr>
-						<tr><td>EditorScript_FixedUpdate</td><td>固定時間で呼ばれます。</td><td>力、速度、物理ベース移動に使います。</td></tr>
-						<tr><td>EditorScript_OnPhysicsEvent</td><td>衝突 / Trigger のたびに呼ばれます。</td><td>接触相手 ID、法線、相対速度の利用に使います。</td></tr>
-						<tr><td>EditorScript_Stop</td><td>Play 停止時に呼ばれます。</td><td>GameObject 単位の一時状態破棄に使います。</td></tr>
+						<tr><td>EditorScript_CreateInstance / DestroyInstance</td><td>Script Componentごとに1組呼ばれます。</td><td>同じDLLを複数付けても共有しないC++クラス実体を生成・破棄します。</td></tr>
+						<tr><td>EditorScript_StartInstance</td><td>Inspector値反映後、Componentごとに1回呼ばれます。</td><td>初期化、ログ、初期速度設定に使います。</td></tr>
+						<tr><td>EditorScript_UpdateInstance</td><td>ActiveなComponentへ毎フレーム呼ばれます。</td><td>入力、AI判定、Transform更新に使います。</td></tr>
+						<tr><td>EditorScript_FixedUpdateInstance</td><td>固定時間で呼ばれます。</td><td>力、速度、物理ベース移動に使います。</td></tr>
+						<tr><td>EditorScript_OnPhysicsEventInstance</td><td>所有Objectの衝突 / Triggerごとに呼ばれます。</td><td>接触相手ID、法線、相対速度の利用に使います。</td></tr>
+						<tr><td>EditorScript_StopInstance</td><td>Play停止時、DestroyInstanceの前に呼ばれます。</td><td>購読解除などの終了処理に使います。</td></tr>
 					</tbody>
 				</table>
 				</details>
@@ -455,7 +481,7 @@ Move はキーそのものではなく「移動という行動」として扱う
 						<tr><th>関数</th><th>引数</th><th>戻り値</th><th>補足</th></tr>
 					</thead>
 					<tbody>
-						<tr><td><code>GetState(gameObjectId)</code></td><td><code>gameObjectId</code>: 今実行中の GameObject ID</td><td>その GameObject 専用の C++ 状態</td><td><code>std::unordered_map&lt;int32_t, ScriptClass&gt;</code> から取り出します。</td></tr>
+						<tr><td><code>ScriptInstance</code></td><td>Engineが渡す<code>void* instance</code></td><td>そのScript Component専用のC++状態</td><td>EngineがCreate / Destroyを管理するため、利用者側の<code>unordered_map</code>は不要です。</td></tr>
 						<tr><td><code>runtimeApi-&gt;GetTransform(gameObjectId)</code></td><td><code>gameObjectId</code>: Transform を読みたい GameObject ID</td><td><code>EditorScriptTransform</code></td><td><code>position / rotation / scale</code> の 3 要素が入ります。</td></tr>
 						<tr><td><code>runtimeApi-&gt;SetTransform(gameObjectId, &amp;transform)</code></td><td><code>gameObjectId</code>, <code>transform</code>: 書き戻す Transform</td><td>なし</td><td>Update 内で計算した位置、回転、拡縮を Editor 本体へ戻します。</td></tr>
 						<tr><td><code>runtimeApi-&gt;GetVelocity(gameObjectId)</code></td><td><code>gameObjectId</code>: Rigidbody 速度を読みたい GameObject ID</td><td><code>EditorScriptVector3</code></td><td><code>x / y / z</code> に現在の速度が入ります。Rigidbody がなければ 0 です。</td></tr>
@@ -715,16 +741,16 @@ EditorScript_Load
 	DLL 読み込み時に 1 回呼ばれます。
 	API バージョン確認と runtimeApi 保持に使います。
 
-EditorScript_Start
-	その GameObject の Play 開始時に 1 回呼ばれます。
+EditorScript_StartInstance
+	その Script Component の開始時に 1 回呼ばれます。
 	初期化、ログ、初期速度設定に使います。
 
-EditorScript_Update
-	毎フレーム呼ばれます。
+EditorScript_UpdateInstance
+	ActiveなComponentへ毎フレーム呼ばれます。
 	移動、回転、入力、AI 判定の基本更新に使います。
 
-NewNativeScript& state = GetState(gameObjectId);  // Update 内で使う速度などを持つ状態。
-EditorScriptTransform transform = runtimeApi->GetTransform(gameObjectId);  // Editor 側の Transform を取得する。
+// stateはEngineがComponentごとに生成したクラス実体。gameObjectIdは実体が保持する所有Object ID。
+EditorScriptTransform transform = runtimeApi->GetTransform(gameObjectId);
 const EditorScriptVector2 moveInput = runtimeApi->GetActionVector2(gameObjectId, "Player", "Move");
 
 transform.position.x += moveInput.x * state.moveSpeed * deltaTime;
@@ -770,10 +796,10 @@ runtimeApi->AddForce(gameObjectId, &force);</code></pre>
 					<button class="copy-button" type="button">Copy</button>
 					<pre><code>OnPhysicsEvent の構造体の読み方
 
-extern "C" __declspec(dllexport) void EditorScript_OnPhysicsEvent(
-	int32_t gameObjectId,
+extern "C" __declspec(dllexport) void EditorScript_OnPhysicsEventInstance(
+	void* instance,
 	const EditorScriptPhysicsEvent* physicsEvent) {
-	if (runtimeApi == nullptr || physicsEvent == nullptr) {
+	if (runtimeApi == nullptr || instance == nullptr || physicsEvent == nullptr) {
 		return;
 	}
 
@@ -784,7 +810,7 @@ extern "C" __declspec(dllexport) void EditorScript_OnPhysicsEvent(
 		float hitZ = physicsEvent->point.z;
 		float normalY = physicsEvent->normal.y;
 
-		(void)gameObjectId;
+		(void)instance;
 		(void)otherId;
 		(void)hitX;
 		(void)hitY;

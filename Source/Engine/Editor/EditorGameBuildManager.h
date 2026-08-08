@@ -12,6 +12,7 @@ struct EditorGameBuildSettings {
 	std::string outputDirectory = "Builds/CG2Game";
 	std::string startupScenePath;
 	std::vector<std::string> scenePaths;
+	bool includeOnlyReferencedAssets = true;  // trueならScene依存AssetとEngine共通Shaderだけを出力する。
 };
 
 //================================================================

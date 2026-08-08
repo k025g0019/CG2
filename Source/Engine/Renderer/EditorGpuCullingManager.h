@@ -53,10 +53,12 @@ public:
 		float viewportUvScaleX,
 		float viewportUvScaleY);
 
-	void ResolveReadback();
+	void ResolveReadback();  // 旧呼出互換。GPU Predication方式ではCPU読戻しを行わない。
 	void Finalize();
 
 	bool IsVisible(int32_t gameObjectId) const;
+	bool BeginPredication(ID3D12GraphicsCommandList* commandList, int32_t gameObjectId) const;  // 前Frame GPU結果を現在Drawの条件に設定する。
+	void EndPredication(ID3D12GraphicsCommandList* commandList) const;  // 後続Drawへ条件を漏らさない。
 
 private:
 	struct DrawArguments {
@@ -87,7 +89,6 @@ private:
 	Microsoft::WRL::ComPtr<ID3D12Resource> frustumVisibilityResource_;
 	Microsoft::WRL::ComPtr<ID3D12Resource> visibilityResource_;
 	Microsoft::WRL::ComPtr<ID3D12Resource> drawArgumentsResource_;
-	Microsoft::WRL::ComPtr<ID3D12Resource> drawArgumentsReadbackResource_;
 
 	D3D12_GPU_DESCRIPTOR_HANDLE objectSrvHandle_{};
 	D3D12_GPU_DESCRIPTOR_HANDLE frustumVisibilitySrvHandle_{};
@@ -96,8 +97,7 @@ private:
 	D3D12_GPU_DESCRIPTOR_HANDLE visibilityUavHandle_{};
 	D3D12_GPU_DESCRIPTOR_HANDLE drawArgumentsUavHandle_{};
 	std::vector<int32_t> submittedGameObjectIds_;
-	std::unordered_map<int32_t, bool> visibilityByGameObjectId_;
+	std::unordered_map<int32_t, uint32_t> submittedObjectIndexByGameObjectId_;
 	uint32_t submittedObjectCount_ = 0u;
-	bool hasPendingReadback_ = false;
 	bool isInitialized_ = false;
 };

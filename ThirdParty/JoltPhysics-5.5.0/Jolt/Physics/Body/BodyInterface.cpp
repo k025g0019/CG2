@@ -125,10 +125,14 @@ void BodyInterface::AddBody(const BodyID &inBodyID, EActivation inActivationMode
 	{
 		const Body &body = lock.GetBody();
 
-		// Add to broadphase
-		BodyID id = inBodyID;
-		BroadPhase::AddState add_state = mBroadPhase->AddBodiesPrepare(&id, 1);
-		mBroadPhase->AddBodiesFinalize(&id, 1, add_state);
+		// Add to broadphase only once. Callers normally guard this, but keeping
+		// the transition idempotent prevents duplicate tree entries.
+		if (!body.IsInBroadPhase())
+		{
+			BodyID id = inBodyID;
+			BroadPhase::AddState add_state = mBroadPhase->AddBodiesPrepare(&id, 1);
+			mBroadPhase->AddBodiesFinalize(&id, 1, add_state);
+		}
 
 		// Optionally activate body
 		if (inActivationMode == EActivation::Activate && !body.IsStatic())

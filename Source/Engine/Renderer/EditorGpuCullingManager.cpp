@@ -75,7 +75,7 @@ bool EditorGpuCullingManager::Execute(
 
 	if (objectCount == 0u) {
 		submittedObjectCount_ = 0u;
-		hasPendingReadback_ = false;
+		submittedObjectIndexByGameObjectId_.clear();
 		return true;
 	}
 
@@ -98,9 +98,12 @@ bool EditorGpuCullingManager::Execute(
 	objectUploadResource_->Unmap(0u, nullptr);
 
 	submittedGameObjectIds_.resize(objectCount);
+	submittedObjectIndexByGameObjectId_.clear();
+	submittedObjectIndexByGameObjectId_.reserve(objectCount);
 
 	for (uint32_t objectIndex = 0u; objectIndex < objectCount; objectIndex++) {
 		submittedGameObjectIds_[objectIndex] = cullingInputs[objectIndex].gameObjectId;
+		submittedObjectIndexByGameObjectId_[cullingInputs[objectIndex].gameObjectId] = objectIndex;
 	}
 
 	std::array<uint32_t, kComputeConstantCount> constants{};
@@ -188,7 +191,7 @@ bool EditorGpuCullingManager::Execute(
 	drawArgumentsBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 	drawArgumentsBarrier.Transition.pResource = drawArgumentsResource_.Get();
 	drawArgumentsBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-	drawArgumentsBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+	drawArgumentsBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PREDICATION;
 	drawArgumentsBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 	commandList->ResourceBarrier(1u, &drawArgumentsBarrier);
 
@@ -206,53 +209,18 @@ bool EditorGpuCullingManager::Execute(
 	commandList->ResourceBarrier(1u, &drawArgumentsUnorderedAccessBarrier);
 
 	drawArgumentsBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-	drawArgumentsBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
-	commandList->ResourceBarrier(1u, &drawArgumentsBarrier);
-	commandList->CopyBufferRegion(
-		drawArgumentsReadbackResource_.Get(),
-		0u,
-		drawArgumentsResource_.Get(),
-		0u,
-		static_cast<UINT64>(objectCount) * sizeof(DrawArguments));
-
-	drawArgumentsBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
-	drawArgumentsBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+	drawArgumentsBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PREDICATION;
 	commandList->ResourceBarrier(1u, &drawArgumentsBarrier);
 
 	submittedObjectCount_ = objectCount;
-	hasPendingReadback_ = true;
 	return true;
 }
 
 void EditorGpuCullingManager::ResolveReadback() {
-	if (!hasPendingReadback_ || submittedObjectCount_ == 0u || drawArgumentsReadbackResource_ == nullptr) {
-		return;
-	}
-
-	const SIZE_T readbackSize = static_cast<SIZE_T>(submittedObjectCount_) * sizeof(DrawArguments);
-	D3D12_RANGE readRange{0u, readbackSize};
-	void* mappedDrawArguments = nullptr;
-	HRESULT result = drawArgumentsReadbackResource_->Map(0u, &readRange, &mappedDrawArguments);
-
-	if (FAILED(result) || mappedDrawArguments == nullptr) {
-		return;
-	}
-
-	const DrawArguments* drawArguments = static_cast<const DrawArguments*>(mappedDrawArguments);
-	visibilityByGameObjectId_.clear();
-
-	for (uint32_t objectIndex = 0u; objectIndex < submittedObjectCount_; objectIndex++) {
-		visibilityByGameObjectId_[submittedGameObjectIds_[objectIndex]] =
-			drawArguments[objectIndex].vertexCountPerInstance > 0u;
-	}
-
-	D3D12_RANGE noWriteRange{0u, 0u};
-	drawArgumentsReadbackResource_->Unmap(0u, &noWriteRange);
-	hasPendingReadback_ = false;
+	// GPU結果は次FrameのSetPredicationから直接参照するため、CPU Mapは不要。
 }
 
 void EditorGpuCullingManager::Finalize() {
-	drawArgumentsReadbackResource_.Reset();
 	drawArgumentsResource_.Reset();
 	visibilityResource_.Reset();
 	frustumVisibilityResource_.Reset();
@@ -265,20 +233,42 @@ void EditorGpuCullingManager::Finalize() {
 	srvDescriptorHeap_ = nullptr;
 	srvDescriptorSize_ = 0u;
 	submittedGameObjectIds_.clear();
-	visibilityByGameObjectId_.clear();
+	submittedObjectIndexByGameObjectId_.clear();
 	submittedObjectCount_ = 0u;
-	hasPendingReadback_ = false;
 	isInitialized_ = false;
 }
 
 bool EditorGpuCullingManager::IsVisible(int32_t gameObjectId) const {
-	const auto visibilityIterator = visibilityByGameObjectId_.find(gameObjectId);
+	(void)gameObjectId;
+	return true;
+}
 
-	if (visibilityIterator == visibilityByGameObjectId_.end()) {
-		return true;
+bool EditorGpuCullingManager::BeginPredication(
+	ID3D12GraphicsCommandList* commandList,
+	int32_t gameObjectId) const {
+	if (!isInitialized_ || commandList == nullptr || drawArgumentsResource_ == nullptr) {
+		return false;
 	}
 
-	return visibilityIterator->second;
+	const auto objectIndexIterator = submittedObjectIndexByGameObjectId_.find(gameObjectId);
+
+	if (objectIndexIterator == submittedObjectIndexByGameObjectId_.end()) {
+		return false;
+	}
+
+	const UINT64 predicateOffset =
+		static_cast<UINT64>(objectIndexIterator->second) * sizeof(DrawArguments);
+	commandList->SetPredication(
+		drawArgumentsResource_.Get(),
+		predicateOffset,
+		D3D12_PREDICATION_OP_NOT_EQUAL_ZERO);
+	return true;
+}
+
+void EditorGpuCullingManager::EndPredication(ID3D12GraphicsCommandList* commandList) const {
+	if (commandList != nullptr) {
+		commandList->SetPredication(nullptr, 0u, D3D12_PREDICATION_OP_EQUAL_ZERO);
+	}
 }
 
 bool EditorGpuCullingManager::CreateRootSignatureAndPipelineStates(
@@ -450,21 +440,10 @@ bool EditorGpuCullingManager::CreateBuffers() {
 		drawArgumentsBufferSize,
 		D3D12_HEAP_TYPE_DEFAULT,
 		D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
-		D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+		D3D12_RESOURCE_STATE_PREDICATION,
 		drawArgumentsResource_);
 
 	if (FAILED(result) || drawArgumentsResource_ == nullptr) {
-		return false;
-	}
-
-	result = createBuffer(
-		drawArgumentsBufferSize,
-		D3D12_HEAP_TYPE_READBACK,
-		D3D12_RESOURCE_FLAG_NONE,
-		D3D12_RESOURCE_STATE_COPY_DEST,
-		drawArgumentsReadbackResource_);
-
-	if (FAILED(result) || drawArgumentsReadbackResource_ == nullptr) {
 		return false;
 	}
 

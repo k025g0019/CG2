@@ -81,6 +81,7 @@ private:
 	std::vector<NavigationLink> links_;  // 現在の NavMeshLink 一覧。
 	std::unordered_map<int32_t, Vector3> agentVelocities_;  // Agent ごとの水平移動速度。
 	std::unordered_map<int32_t, Vector3> agentDestinations_;  // 自動再経路探索 OFF の Agent が使う固定目的地。
+	float navigationRebuildRemainingSeconds_ = 0.0f;  // 静的Surface/Obstacleを毎フレーム全再収集しないための残り時間。
 	bool isStarted_ = false;  // Play 中の Navigation が開始済みなら true。
 
 	void BuildNavigationData(bool shouldLog);  // Surface / Obstacle / Volume / Link を Scene から収集する。

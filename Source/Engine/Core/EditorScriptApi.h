@@ -6,7 +6,7 @@
 // DLL Script と Editor 本体が共有する C 互換 API
 //================================================================
 
-constexpr uint32_t kEditorScriptApiVersion = 6U;  // RailFollower API を末尾追加した DLL 互換バージョン。
+constexpr uint32_t kEditorScriptApiVersion = 7U;  // 既存DLL互換を維持し、追加APIは構造体末尾だけへ拡張する。
 
 enum EditorScriptPhysicsEventType : int32_t {
 	EditorScriptPhysicsEventTypeCollisionEnter = 0,
@@ -105,6 +105,16 @@ enum EditorScriptInputValueType : int32_t {
 	EditorScriptInputValueTypeVector2 = 1,
 };
 
+enum EditorScriptActionPayloadType : int32_t {
+	EditorScriptActionPayloadTypeNone = 0,
+	EditorScriptActionPayloadTypeGameObject = 1,
+	EditorScriptActionPayloadTypeInt = 2,
+	EditorScriptActionPayloadTypeFloat = 3,
+	EditorScriptActionPayloadTypeBool = 4,
+	EditorScriptActionPayloadTypeVector3 = 5,
+	EditorScriptActionPayloadTypeString = 6,
+};
+
 struct EditorScriptFieldValue {
 	int32_t type;
 	bool boolValue;
@@ -136,6 +146,25 @@ struct EditorScriptInputActionContext {
 	char actionMapName[64];
 	char actionName[64];
 	char bindingPath[128];
+	int32_t payloadType;  // EditorScriptActionPayloadType
+	int32_t payloadGameObjectId;
+	int32_t payloadInt;
+	float payloadFloat;
+	bool payloadBool;
+	uint8_t payloadPadding[3];
+	EditorScriptVector3 payloadVector3;
+	char payloadString[256];
+};
+
+struct EditorScriptActionPayload {
+	int32_t type;
+	int32_t gameObjectId;
+	int32_t intValue;
+	float floatValue;
+	bool boolValue;
+	uint8_t reservedPadding[3];
+	EditorScriptVector3 vector3Value;
+	char stringValue[256];
 };
 
 struct EditorScriptPhysicsEvent {
@@ -148,6 +177,147 @@ struct EditorScriptPhysicsEvent {
 	float separation;
 	bool isTrigger;
 	uint8_t reservedPadding[3];
+};
+
+struct EditorScriptRay {
+	EditorScriptVector3 origin;
+	EditorScriptVector3 direction;
+};
+
+struct EditorScriptPhysicsHit {
+	int32_t gameObjectId;
+	EditorScriptVector3 point;
+	EditorScriptVector3 normal;
+	float distance;
+	bool isTrigger;
+	uint8_t reservedPadding[3];
+};
+
+struct EditorScriptOceanSurfaceHit {
+	int32_t oceanGameObjectId;
+	EditorScriptVector3 point;
+	EditorScriptVector3 normal;
+	EditorScriptVector3 velocity;
+	float signedDistance;
+};
+
+struct EditorScriptOceanSegmentHit {
+	int32_t oceanGameObjectId;
+	EditorScriptVector3 point;
+	EditorScriptVector3 normal;
+	EditorScriptVector3 surfaceVelocity;
+	float distance;
+	float normalizedDistance;
+};
+
+struct EditorScriptOceanOcclusion {
+	bool blocked;
+	uint8_t reservedPadding[3];
+	float minimumClearance;
+	float maximumSurfaceHeight;
+	EditorScriptOceanSegmentHit intersection;
+};
+
+struct EditorScriptWaterSurfaceState {
+	int32_t state;  // 0=Above、1=Entering、2=Underwater、3=Leaving
+	float signedDistance;
+	int32_t oceanGameObjectId;
+	EditorScriptVector3 surfacePosition;
+	EditorScriptVector3 surfaceNormal;
+	EditorScriptVector3 surfaceVelocity;
+};
+
+struct EditorScriptOceanProbeSample {
+	bool valid;
+	uint8_t reservedPadding[3];
+	float distance;
+	EditorScriptVector3 position;
+	EditorScriptVector3 normal;
+	EditorScriptVector3 velocity;
+	float relativeHeight;
+};
+
+//============================================================
+// Damage Context
+//============================================================
+
+struct EditorScriptDamageContext {
+	int32_t targetGameObjectId = -1;  // DamageReceiver / Healthを持つ被弾対象
+	int32_t sourceGameObjectId = -1;  // ProjectileやWeaponなど、直接Damageを発生させたObject
+	int32_t instigatorGameObjectId = -1;  // 発射者や攻撃者など、Damageの責任主体
+	EditorScriptVector3 hitPosition{};  // World空間の命中位置
+	EditorScriptVector3 hitNormal{0.0f, 1.0f, 0.0f};  // World空間の命中面法線
+	EditorScriptVector3 impulse{};  // 対象Rigidbodyへ加える瞬間力
+	float baseDamage = 0.0f;  // DamageReceiver倍率を適用する前の値
+	float appliedDamage = 0.0f;  // Runtimeが実際にHealthから減らした値
+	int32_t userTag = 0;  // ゲーム側が任意用途へ使う識別値。固定Enumの意味は持たない
+};
+
+struct EditorScriptThreatInfo {
+	int32_t projectileGameObjectId = -1;  // 接近中のProjectile実体
+	int32_t sourceGameObjectId = -1;  // Projectileを発射したGameObject
+	float distance = 0.0f;  // Tracker対象までのWorld距離
+	float closingSpeed = 0.0f;  // 対象へ近づく相対速度
+	float estimatedArrivalSeconds = 0.0f;  // 最接近までの予測秒数
+};
+
+struct EditorScriptBallisticPrediction {
+	bool valid;
+	uint8_t reservedPadding[3];
+	EditorScriptVector3 launchDirection;
+	EditorScriptVector3 impactPosition;
+	float flightTime;
+	int32_t trajectoryPointCount;
+	EditorScriptVector3 launchVelocity;  // 発射元速度を含む初期World速度
+	EditorScriptVector3 sourceVelocity;  // 発射母体から継承した作用点速度
+};
+
+struct EditorScriptFireLineState {
+	bool isClear;
+	uint8_t reservedPadding[3];
+	int32_t blockingGameObjectId;
+	float blockingDistance;
+};
+
+struct EditorScriptStatusEffectEntry {
+	char effectId[64];
+	int32_t sourceGameObjectId;
+	float remainingSeconds;
+	float tickRemainingSeconds;
+	int32_t stackCount;
+};
+
+struct EditorScriptDamageEvent {
+	int32_t sourceGameObjectId;
+	EditorScriptVector3 worldDirection;
+	float damage;
+	int32_t damageTagId;
+	float remainingSeconds;
+};
+
+#pragma warning(push)
+#pragma warning(disable : 4820)
+struct EditorScriptRailState {
+	bool hasComponent;
+	bool isReady;
+	bool isPaused;
+	bool isReversed;
+	bool endReached;
+	uint8_t reservedPadding[3];
+	float normalizedProgress;
+	float traveledDistance;
+	float totalDistance;
+	float currentSpeed;
+	float targetSpeed;
+	EditorScriptVector2 offset;
+};
+#pragma warning(pop)
+
+struct EditorScriptRailFrame {
+	EditorScriptVector3 position;
+	EditorScriptVector3 forward;
+	EditorScriptVector3 right;
+	EditorScriptVector3 up;
 };
 
 //================================================================
@@ -221,6 +391,32 @@ struct EditorScriptAnimationState {
 	char currentClipName[64];
 };
 
+#pragma warning(push)
+#pragma warning(disable : 4820)
+struct EditorScriptRopeState {
+	bool hasComponent;
+	bool isActive;
+	bool isBroken;
+	bool reservedPadding;
+	int32_t targetGameObjectId;
+	float maximumLength;
+	float currentLength;
+	float currentTension;
+};
+#pragma warning(pop)
+
+#pragma warning(push)
+#pragma warning(disable : 4820)
+struct EditorScriptTurretAimState {
+	int32_t targetGameObjectId;
+	bool canReachTarget;
+	bool isAimed;
+	uint8_t reservedPadding[2];
+	float yawErrorDegrees;
+	float pitchErrorDegrees;
+};
+#pragma warning(pop)
+
 struct EditorScriptRuntimeApi {
 	uint32_t apiVersion;
 	uint32_t reservedPadding;
@@ -291,6 +487,183 @@ struct EditorScriptRuntimeApi {
 	bool (*GetRailPosition)(int32_t gameObjectId, float normalizedProgress, EditorScriptVector3* position);
 	bool (*GetRailDirection)(int32_t gameObjectId, float normalizedProgress, EditorScriptVector3* direction);
 	bool (*ConsumeRailEndReached)(int32_t gameObjectId);
+	bool (*ViewportPointToRay)(const EditorScriptVector2* normalizedPosition, EditorScriptRay* ray);
+	bool (*GetAimRay)(int32_t screenAimGameObjectId, EditorScriptRay* ray);
+	bool (*PhysicsRaycast)(const EditorScriptRay* ray, float distance, EditorScriptPhysicsHit* hit);
+	bool (*PhysicsSphereCast)(const EditorScriptRay* ray, float radius, float distance, EditorScriptPhysicsHit* hit);
+	bool (*PhysicsCapsuleCast)(const EditorScriptRay* ray, float radius, float height, float distance, EditorScriptPhysicsHit* hit);
+	bool (*ApplyDamage)(int32_t targetGameObjectId, float damage, int32_t sourceGameObjectId);
+	bool (*GetHealth)(int32_t gameObjectId, float* currentHealth, float* maximumHealth);
+	bool (*SetHealth)(int32_t gameObjectId, float currentHealth);
+	int32_t (*SpawnFromPool)(int32_t poolGameObjectId, const EditorScriptVector3* position, const EditorScriptVector3* rotation);
+	int32_t (*SpawnFromSpawner)(int32_t spawnerGameObjectId);
+	bool (*ReleaseToPool)(int32_t gameObjectId);
+	bool (*FireHitscan)(int32_t weaponGameObjectId);
+	bool (*FireProjectile)(int32_t emitterGameObjectId);
+	bool (*PlayCameraBlend)(int32_t componentOwnerGameObjectId);
+	bool (*PlayCameraShake)(int32_t componentOwnerGameObjectId);
+	bool (*TriggerRailBranch)(int32_t componentOwnerGameObjectId);
+	bool (*LoadSceneAsync)(const char* scenePath, bool isAdditive);
+	bool (*UnloadScene)(const char* scenePath);
+	float (*GetSceneLoadProgress)();
+	bool (*IsSceneLoading)();
+	bool (*IsSceneLoaded)(const char* scenePath);
+	void (*SetSceneFloat)(const char* key, float value);
+	bool (*GetSceneFloat)(const char* key, float* value);
+	void (*SetSceneString)(const char* key, const char* value);
+	bool (*GetSceneString)(const char* key, char* value, int32_t valueCapacity);
+	bool (*PlayActionSequence)(int32_t sequenceGameObjectId);
+	bool (*PauseActionSequence)(int32_t sequenceGameObjectId, bool isPaused);
+	bool (*StopActionSequence)(int32_t sequenceGameObjectId);
+	bool (*SignalActionSequence)(int32_t sequenceGameObjectId, const char* signalName);
+	bool (*IsActionSequencePlaying)(int32_t sequenceGameObjectId);
+	bool (*SaveSlot)(const char* slotName);
+	bool (*LoadSlot)(const char* slotName);
+	bool (*DeleteSlot)(const char* slotName);
+	bool (*HasSlot)(const char* slotName);
+	bool (*ActivateCheckpoint)(int32_t checkpointGameObjectId, bool shouldLoad);
+	void (*SetSaveFloat)(const char* key, float value);
+	bool (*GetSaveFloat)(const char* key, float* value);
+	void (*SetSaveString)(const char* key, const char* value);
+	bool (*GetSaveString)(const char* key, char* value, int32_t valueCapacity);
+	bool (*SampleOceanSurface)(
+		int32_t queryGameObjectId,
+		const EditorScriptVector3* worldPosition,
+		EditorScriptOceanSurfaceHit* hit);
+	bool (*SetComponentActive)(int32_t gameObjectId, const char* componentTypeName, bool isActive);
+	bool (*IsComponentActive)(int32_t gameObjectId, const char* componentTypeName);
+	bool (*AddForceAtPosition)(int32_t gameObjectId, const EditorScriptVector3* force, const EditorScriptVector3* worldPosition);
+	int32_t (*AddExplosionImpulse)(const EditorScriptVector3* center, float radius, float impulseStrength, float upwardModifier);
+	bool (*AttachRope)(int32_t ownerGameObjectId, int32_t targetGameObjectId, const EditorScriptVector3* ownerLocalAnchor, const EditorScriptVector3* targetAnchor, float maximumLength);
+	bool (*DetachRope)(int32_t ownerGameObjectId);
+	bool (*SetRopeLength)(int32_t ownerGameObjectId, float maximumLength);
+	bool (*RepairRope)(int32_t ownerGameObjectId);
+	EditorScriptRopeState (*GetRopeState)(int32_t ownerGameObjectId);
+	// ABI 互換のため、新しい RailFollower API は RuntimeApi の末尾へ追加する。
+	bool (*SetRailMoveInput)(int32_t gameObjectId, const EditorScriptVector2* moveInput);
+	bool (*SetRailOffset)(int32_t gameObjectId, const EditorScriptVector2* offset);
+	bool (*GetRailOffset)(int32_t gameObjectId, EditorScriptVector2* offset);
+	// ABI互換のため、再利用Gameplay APIも必ず末尾へ追加する。
+	bool (*LoadoutSelectSlot)(int32_t gameObjectId, int32_t slotIndex);
+	bool (*LoadoutSelectNext)(int32_t gameObjectId);
+	bool (*LoadoutSelectPrevious)(int32_t gameObjectId);
+	bool (*LoadoutFire)(int32_t gameObjectId);
+	bool (*LoadoutReload)(int32_t gameObjectId);
+	bool (*LoadoutGetAmmo)(int32_t gameObjectId, int32_t* currentAmmo, int32_t* reserveAmmo);
+	bool (*GetCurrentTarget)(int32_t gameObjectId, int32_t* targetGameObjectId);
+	bool (*SetExplicitTarget)(int32_t gameObjectId, int32_t targetGameObjectId);
+	bool (*SetRuntimeFloat)(int32_t gameObjectId, const char* componentName, const char* propertyName, float value);
+	bool (*GetRuntimeFloat)(int32_t gameObjectId, const char* componentName, const char* propertyName, float* value);
+	bool (*SetRuntimeInt)(int32_t gameObjectId, const char* componentName, const char* propertyName, int32_t value);
+	bool (*GetRuntimeInt)(int32_t gameObjectId, const char* componentName, const char* propertyName, int32_t* value);
+	bool (*SetRuntimeBool)(int32_t gameObjectId, const char* componentName, const char* propertyName, bool value);
+	bool (*GetRuntimeBool)(int32_t gameObjectId, const char* componentName, const char* propertyName, bool* value);
+	bool (*SetRuntimeVector3)(int32_t gameObjectId, const char* componentName, const char* propertyName, const EditorScriptVector3* value);
+	bool (*GetRuntimeVector3)(int32_t gameObjectId, const char* componentName, const char* propertyName, EditorScriptVector3* value);
+	bool (*PlayPropertyTween)(int32_t gameObjectId);
+	bool (*StopPropertyTween)(int32_t gameObjectId);
+	bool (*IsPropertyTweenPlaying)(int32_t gameObjectId);
+	bool (*RelayAction)(int32_t gameObjectId);
+	// ABI互換のため、Component連携とRail照会APIは必ず構造体末尾へ追加する。
+	bool (*HasComponent)(int32_t gameObjectId, const char* componentTypeName);
+	bool (*InvokeScriptAction)(int32_t gameObjectId, const char* functionName);
+	bool (*SetRuntimeVector2)(int32_t gameObjectId, const char* componentName, const char* propertyName, const EditorScriptVector2* value);
+	bool (*GetRuntimeVector2)(int32_t gameObjectId, const char* componentName, const char* propertyName, EditorScriptVector2* value);
+	bool (*GetRailState)(int32_t gameObjectId, EditorScriptRailState* state);
+	bool (*SetRailDistance)(int32_t gameObjectId, float distance);
+	bool (*GetRailClosestProgress)(int32_t gameObjectId, const EditorScriptVector3* worldPosition, float* normalizedProgress);
+	bool (*GetRailFrame)(int32_t gameObjectId, float normalizedProgress, EditorScriptRailFrame* frame);
+	// ABI互換のため、情報付きDamage APIはRuntimeApiの末尾へ追加する。
+	bool (*ApplyDamageContext)(EditorScriptDamageContext* damageContext);
+	bool (*GetLastDamageContext)(int32_t targetGameObjectId, EditorScriptDamageContext* damageContext);
+	bool (*InvokeScriptActionPayload)(int32_t gameObjectId, const char* functionName, const EditorScriptActionPayload* payload);
+	bool (*StartTimer)(int32_t gameObjectId);
+	bool (*PauseTimer)(int32_t gameObjectId, bool isPaused);
+	bool (*GetTimerRemaining)(int32_t gameObjectId, float* remainingSeconds);
+	bool (*ChangeGenericState)(int32_t gameObjectId, const char* stateName);
+	bool (*GetGenericState)(int32_t gameObjectId, char* stateName, int32_t stateNameCapacity);
+	bool (*SetAttributeValue)(int32_t gameObjectId, float value);
+	bool (*GetAttributeValue)(int32_t gameObjectId, float* current, float* maximum);
+	bool (*GetTargetLockState)(int32_t gameObjectId, float* progress, bool* isLocked, int32_t* targetGameObjectId);
+	// ABI互換のため、複数Target・名前付き値・条件・Data APIは末尾へ追加する。
+	bool (*SetNamedAttributeValue)(int32_t gameObjectId, const char* attributeName, float value);
+	bool (*GetNamedAttributeValue)(int32_t gameObjectId, const char* attributeName, float* current, float* maximum);
+	bool (*SetCounterValue)(int32_t gameObjectId, float value);
+	bool (*AddCounterValue)(int32_t gameObjectId, float deltaValue);
+	bool (*GetCounterValue)(int32_t gameObjectId, float* value);
+	bool (*EvaluateGenericCondition)(int32_t gameObjectId, bool* result);
+	bool (*GetMultiTargetLockCount)(int32_t gameObjectId, int32_t* targetCount);
+	bool (*GetMultiTargetLockTarget)(int32_t gameObjectId, int32_t targetIndex, int32_t* targetGameObjectId, float* progress, bool* isLocked);
+	bool (*GetGameplayDataValue)(int32_t gameObjectId, const char* key, int32_t* valueType, char* value, int32_t valueCapacity);
+	// ABI互換のため、Damage・Threat・Cooldown・Reset APIは必ず構造体末尾へ追加する。
+	int32_t (*HashDamageTag)(const char* damageTag);
+	int32_t (*ApplyAreaDamage)(int32_t areaDamageGameObjectId, int32_t instigatorGameObjectId);
+	bool (*DetonateProjectile)(int32_t projectileGameObjectId);
+	bool (*GetThreatTrackerCount)(int32_t gameObjectId, int32_t* threatCount);
+	bool (*GetThreatTrackerEntry)(int32_t gameObjectId, int32_t threatIndex, EditorScriptThreatInfo* threatInfo);
+	bool (*StartNamedCooldown)(int32_t gameObjectId, const char* cooldownName, float durationOverride);
+	bool (*ResetNamedCooldown)(int32_t gameObjectId, const char* cooldownName);
+	bool (*GetNamedCooldown)(int32_t gameObjectId, const char* cooldownName, float* remainingSeconds, bool* isReady);
+	bool (*ResetRuntimeState)(int32_t gameObjectId);
+	// ABI互換のため、Weapon合成状態とTimeScale APIは必ず構造体末尾へ追加する。
+	bool (*GetWeaponAccuracySpread)(int32_t gameObjectId, float* spreadDegrees);
+	bool (*PlayTimeScale)(int32_t gameObjectId, float scaleOverride, float durationOverride);
+	float (*GetTimeScale)();
+	// ABI互換のため、照準・Mission・Encounter APIは必ず構造体末尾へ追加する。
+	bool (*GetInterceptPrediction)(int32_t gameObjectId, EditorScriptVector3* position, float* timeSeconds);
+	bool (*SetObjective)(int32_t gameObjectId, const char* objectiveId, int32_t state, float currentValue);
+	bool (*GetObjective)(int32_t gameObjectId, const char* objectiveId, int32_t* state, float* currentValue, float* targetValue);
+	bool (*StartEncounter)(int32_t gameObjectId);
+	bool (*ResolveSpawnPoint)(int32_t gameObjectId, EditorScriptVector3* position, EditorScriptVector3* rotation);
+	bool (*ApplyDifficulty)(int32_t gameObjectId, int32_t difficultyIndex);
+	bool (*GetDamageDirection)(int32_t gameObjectId, EditorScriptVector2* direction, float* alpha, int32_t* sourceGameObjectId);
+	// ABI互換のため、弾道・複数被弾・永続Pause・航跡APIは必ず構造体末尾へ追加する。
+	bool (*GetBallisticPrediction)(int32_t gameObjectId, EditorScriptBallisticPrediction* prediction);
+	bool (*GetBallisticTrajectoryPoint)(int32_t gameObjectId, int32_t pointIndex, EditorScriptVector3* point);
+	bool (*GetDamageEventBufferCount)(int32_t gameObjectId, int32_t* eventCount);
+	bool (*GetDamageEventBufferEntry)(int32_t gameObjectId, int32_t eventIndex, EditorScriptDamageEvent* damageEvent);
+	bool (*SetGamePaused)(int32_t gameObjectId, bool isPaused);
+	bool (*IsGamePaused)();
+	bool (*GetSurfaceWakeState)(int32_t gameObjectId, float* speed, float* intensity);
+	// ABI互換のため、FFT水面Gameplay Query APIは必ず構造体末尾へ追加する。
+	bool (*OceanSegmentCast)(int32_t queryGameObjectId, int32_t oceanGameObjectId, const EditorScriptVector3* startPosition, const EditorScriptVector3* endPosition, float clearance, EditorScriptOceanSegmentHit* hit);
+	bool (*OceanRaycast)(int32_t queryGameObjectId, int32_t oceanGameObjectId, const EditorScriptRay* ray, float maximumDistance, float clearance, EditorScriptOceanSegmentHit* hit);
+	bool (*QueryOceanOcclusion)(int32_t queryGameObjectId, int32_t oceanGameObjectId, const EditorScriptVector3* startPosition, const EditorScriptVector3* endPosition, float clearance, EditorScriptOceanOcclusion* occlusion);
+	bool (*GetWaterSurfaceState)(int32_t gameObjectId, EditorScriptWaterSurfaceState* state);
+	bool (*GetOceanProbeSample)(int32_t gameObjectId, int32_t probeIndex, EditorScriptOceanProbeSample* sample);
+	// ABI互換のため、武器運用・砲塔状態APIは必ず構造体末尾へ追加する。
+	bool (*LoadoutGetAmmoAtSlot)(int32_t gameObjectId, int32_t slotIndex, int32_t* currentAmmo, int32_t* reserveAmmo, int32_t* maximumAmmo);
+	bool (*LoadoutAddMagazineAmmo)(int32_t gameObjectId, int32_t slotIndex, int32_t amount);
+	bool (*LoadoutAddReserveAmmo)(int32_t gameObjectId, int32_t slotIndex, int32_t amount);
+	bool (*LoadoutSetMagazineAmmo)(int32_t gameObjectId, int32_t slotIndex, int32_t amount);
+	bool (*LoadoutSetReserveAmmo)(int32_t gameObjectId, int32_t slotIndex, int32_t amount);
+	bool (*LoadoutSetMaximumAmmo)(int32_t gameObjectId, int32_t slotIndex, int32_t amount);
+	bool (*LoadoutRefillMagazine)(int32_t gameObjectId, int32_t slotIndex);
+	bool (*FireWeaponGroup)(int32_t gameObjectId);
+	bool (*IsWeaponGroupFiring)(int32_t gameObjectId);
+	bool (*GetTurretAimState)(int32_t gameObjectId, EditorScriptTurretAimState* state);
+	// ABI互換のため、発射前検査と時間制Effect APIは必ず構造体末尾へ追加する。
+	bool (*GetFireLineState)(int32_t gameObjectId, EditorScriptFireLineState* state);
+	bool (*ApplyStatusEffect)(int32_t gameObjectId, const char* effectId, int32_t sourceGameObjectId);
+	bool (*RemoveStatusEffect)(int32_t gameObjectId, const char* effectId);
+	bool (*ClearStatusEffects)(int32_t gameObjectId);
+	bool (*HasStatusEffect)(int32_t gameObjectId, const char* effectId);
+	bool (*GetStatusEffectCount)(int32_t gameObjectId, int32_t* effectCount);
+	bool (*GetStatusEffectEntry)(int32_t gameObjectId, int32_t effectIndex, EditorScriptStatusEffectEntry* effectEntry);
+	// ABI互換のため、Ocean詳細Sample APIは既存構造体を変えず末尾へ追加する。
+	bool (*SampleOceanSurfaceDetailed)(int32_t queryGameObjectId, const EditorScriptVector3* worldPosition, EditorScriptOceanSurfaceHit* hit, float* foam);
+	bool (*GetWaterSurfaceFoam)(int32_t gameObjectId, float* foam);
+	bool (*GetOceanProbeFoam)(int32_t gameObjectId, int32_t probeIndex, float* foam);
+	// ABI互換のため、Rail制作支援APIは既存構造体を変えず末尾へ追加する。
+	bool (*SetRailSpeedProfileEnabled)(int32_t gameObjectId, bool isEnabled);
+	bool (*GetRailSpeedMultiplier)(int32_t gameObjectId, float* speedMultiplier);
+	bool (*GetRailActiveZone)(int32_t gameObjectId, char* zoneId, int32_t zoneIdCapacity);
+	// ABI互換のため、Rail MarkerとSimulation LOD照会APIは末尾へ追加する。
+	bool (*RearmRailEventMarkers)(int32_t gameObjectId, const char* markerId);
+	bool (*GetSimulationLodLevel)(int32_t gameObjectId, int32_t* lodLevel);
+	// ABI互換のため、Wave外部制御APIは既存構造体の末尾へ追加する。
+	bool (*StartWaveSpawner)(int32_t gameObjectId);
+	bool (*IsWaveSpawnerComplete)(int32_t gameObjectId, bool waitsForAllDefeated);
 };
 
 extern "C" {
@@ -309,4 +682,18 @@ extern "C" {
 	typedef bool(__cdecl* EditorScriptInvokeActionFn)(int32_t gameObjectId, const char* functionName, const EditorScriptInputActionContext* inputContext);
 	typedef int32_t(__cdecl* EditorScriptGetActionCountFn)();
 	typedef bool(__cdecl* EditorScriptGetActionNameFn)(int32_t actionIndex, char* actionName, int32_t actionNameCapacity);
+
+	// Component ごとの状態をエンジン側で所有する新しい任意 ABI。
+	// Create / Destroy が両方ある DLL だけを Instance API として扱い、旧 DLL は従来の gameObjectId API で実行する。
+	typedef void* (__cdecl* EditorScriptCreateInstanceFn)(int32_t gameObjectId);
+	typedef void(__cdecl* EditorScriptDestroyInstanceFn)(void* instance);
+	typedef void(__cdecl* EditorScriptStartInstanceFn)(void* instance);
+	typedef void(__cdecl* EditorScriptUpdateInstanceFn)(void* instance, float deltaTime);
+	typedef void(__cdecl* EditorScriptFixedUpdateInstanceFn)(void* instance, float fixedDeltaTime);
+	typedef void(__cdecl* EditorScriptPhysicsEventInstanceFn)(void* instance, const EditorScriptPhysicsEvent* physicsEvent);
+	typedef void(__cdecl* EditorScriptAnimationEventInstanceFn)(void* instance, const EditorScriptAnimationEvent* animationEvent);
+	typedef void(__cdecl* EditorScriptStopInstanceFn)(void* instance);
+	typedef bool(__cdecl* EditorScriptGetFieldValueInstanceFn)(void* instance, const char* fieldName, EditorScriptFieldValue* fieldValue);
+	typedef bool(__cdecl* EditorScriptSetFieldValueInstanceFn)(void* instance, const char* fieldName, const EditorScriptFieldValue* fieldValue);
+	typedef bool(__cdecl* EditorScriptInvokeActionInstanceFn)(void* instance, const char* functionName, const EditorScriptInputActionContext* inputContext);
 }

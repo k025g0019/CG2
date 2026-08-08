@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <array>
 #include <string>
+#include <vector>
 
 #pragma warning(push)
 #pragma warning(disable : 4820)
@@ -129,7 +130,8 @@ struct EditorSceneObject {
 	bool usesCustomMesh;  // true なら内部基本形ではなく、読み込んだ実メッシュの頂点バッファを使う
 	int32_t gameObjectId;  // 対応する EditorGameObject の ID
 	int32_t textureIndex;  // SRV 配列内で使う Texture 番号
-	Transforms transform;  // SceneView 上で編集する Transform
+	Transforms transform;  // SceneView ギズモで編集する分解済みワールドTransform
+	Matrix4x4 worldMatrix;  // 親子SRTを合成した描画用ワールド行列
 	std::string name;  // Hierarchy / Project 表示用の名前
 	std::string assetPath;  // この SceneObject が参照しているモデルアセットのパス
 	ID3D12Resource* transformationResource;  // WVP / World を GPU へ渡す ConstantBuffer
@@ -161,6 +163,9 @@ struct EditorSceneObject {
 	uint32_t skinMatrixCount;  // GPU へ確保済みの Bone 行列数
 	int32_t currentSkinClipIndex;  // 最後に書き込んだ Animation Clip 番号
 	float currentSkinTime;  // 同一姿勢を複数描画パスで進めないための最終再生秒
+	std::string currentSkinMaskPath;  // 現在適用中の AvatarMask アセットまたは Bone 名リスト
+	std::vector<std::string> currentSkinMaskBoneNames;  // AvatarMask が Animation を許可する Bone 名
+	bool usesSkinMask = false;  // 読み込み済みの AvatarMask が有効なら true
 	bool usesSkinning;  // Bone Weight と姿勢 Buffer が有効なモデルだけ true
 	Vector3 customMeshLocalBoundsCenter;  // 実メッシュのローカル包囲中心
 	Vector3 customMeshLocalBoundsSize;  // 実メッシュのローカル包囲サイズ

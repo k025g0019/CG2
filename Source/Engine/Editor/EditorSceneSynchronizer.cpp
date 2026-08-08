@@ -3,6 +3,9 @@
 #include "EditorAnimationManager.h"
 #include "EditorAssetUtility.h"
 #include "EditorOceanSystem.h"
+#include "EditorSharedState.h"
+#include "Source/Engine/Core/Matrix.h"
+#include "Source/Engine/Core/Vector&Matrix.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -13,12 +16,50 @@
 
 namespace {
 	constexpr float kOceanHorizonExpansion = 8.0f;
+	constexpr uint32_t kOffscreenSkinPoseUpdateInterval = 12u;
+
+	bool IsInsideExpandedGameView(const Vector3& worldPosition) {
+		const Matrix4x4 viewProjectionMatrix = Multiply(
+			EditorSharedState::g_gameViewMatrix,
+			EditorSharedState::g_gameProjectionMatrix);
+		const float clipX =
+			worldPosition.x * viewProjectionMatrix.matrix[0][0] +
+			worldPosition.y * viewProjectionMatrix.matrix[1][0] +
+			worldPosition.z * viewProjectionMatrix.matrix[2][0] +
+			viewProjectionMatrix.matrix[3][0];
+		const float clipY =
+			worldPosition.x * viewProjectionMatrix.matrix[0][1] +
+			worldPosition.y * viewProjectionMatrix.matrix[1][1] +
+			worldPosition.z * viewProjectionMatrix.matrix[2][1] +
+			viewProjectionMatrix.matrix[3][1];
+		const float clipZ =
+			worldPosition.x * viewProjectionMatrix.matrix[0][2] +
+			worldPosition.y * viewProjectionMatrix.matrix[1][2] +
+			worldPosition.z * viewProjectionMatrix.matrix[2][2] +
+			viewProjectionMatrix.matrix[3][2];
+		const float clipW =
+			worldPosition.x * viewProjectionMatrix.matrix[0][3] +
+			worldPosition.y * viewProjectionMatrix.matrix[1][3] +
+			worldPosition.z * viewProjectionMatrix.matrix[2][3] +
+			viewProjectionMatrix.matrix[3][3];
+		constexpr float kExpandedFrustumScale = 1.35f;
+
+		if (clipW <= 0.0001f) {
+			return false;
+		}
+
+		return std::fabs(clipX) <= clipW * kExpandedFrustumScale &&
+			std::fabs(clipY) <= clipW * kExpandedFrustumScale &&
+			clipZ >= -clipW * 0.05f &&
+			clipZ <= clipW * 1.05f;
+	}
 
 	struct SynchronizedGameObjectData {
 		const EditorGameObject* gameObject = nullptr;
 		const EditorComponent* modelRenderer = nullptr;
 		const EditorComponent* skinnedMeshRenderer = nullptr;
 		const EditorComponent* spriteRenderer = nullptr;
+		const EditorComponent* tilemap = nullptr;
 		const EditorComponent* meshFilter = nullptr;
 		const EditorComponent* reflectionProbe = nullptr;
 		const EditorComponent* ocean = nullptr;
@@ -26,6 +67,7 @@ namespace {
 		const EditorComponent* foliage = nullptr;
 		const EditorComponent* animation = nullptr;
 		const EditorComponent* animator = nullptr;
+		const EditorComponent* avatarMask = nullptr;
 	};
 
 	SynchronizedGameObjectData CollectSynchronizedGameObjectData(const EditorGameObject& gameObject) {
@@ -43,11 +85,31 @@ namespace {
 			case EditorComponentType::SpriteRenderer:
 				synchronizedData.spriteRenderer = &component;
 				break;
+			case EditorComponentType::LineRenderer:
+			case EditorComponentType::TrailRenderer:
+			case EditorComponentType::BillboardRenderer:
+			case EditorComponentType::TilemapRenderer:
+			case EditorComponentType::LensFlare:
+			case EditorComponentType::Projector:
+			case EditorComponentType::DecalProjector:
+				if (synchronizedData.spriteRenderer == nullptr) {
+					synchronizedData.spriteRenderer = &component;
+				}
+				break;
+			case EditorComponentType::Tilemap:
+				synchronizedData.tilemap = &component;
+				break;
 			case EditorComponentType::MeshFilter:
 				synchronizedData.meshFilter = &component;
 				break;
 			case EditorComponentType::ReflectionProbe:
 				synchronizedData.reflectionProbe = &component;
+				break;
+			case EditorComponentType::LightProbeGroup:
+			case EditorComponentType::LightProbeProxyVolume:
+				if (synchronizedData.reflectionProbe == nullptr) {
+					synchronizedData.reflectionProbe = &component;
+				}
 				break;
 			case EditorComponentType::Ocean:
 				synchronizedData.ocean = &component;
@@ -63,6 +125,9 @@ namespace {
 				break;
 			case EditorComponentType::Animator:
 				synchronizedData.animator = &component;
+				break;
+			case EditorComponentType::AvatarMask:
+				synchronizedData.avatarMask = &component;
 				break;
 			default:
 				break;
@@ -115,7 +180,7 @@ namespace {
 		ModelData modelData{};
 		const int32_t safeResolution = NormalizeOceanGridResolution(gridResolution);
 		// 元FFT版の輪郭密度を保ちつつ、1024全面描画より軽い連続LODへ制限する。
-		constexpr int32_t kMaximumPhysicalResolution = 512;
+		constexpr int32_t kMaximumPhysicalResolution = 768;
 		const int32_t physicalResolution =
 			(std::min)(safeResolution, kMaximumPhysicalResolution);
 		const float safeSize = (std::max)(oceanSize, 1.0f);
@@ -499,6 +564,14 @@ namespace {
 		sceneObject.materialData->anisotropy = rendererComponent != nullptr ? rendererComponent->anisotropy : 0.0f;
 		sceneObject.materialData->anisotropyRotation =
 			rendererComponent != nullptr ? rendererComponent->anisotropyRotation : 0.0f;
+		sceneObject.materialData->materialThickness =
+			rendererComponent != nullptr ? (std::max)(rendererComponent->materialThickness, 0.001f) : 0.1f;
+		sceneObject.materialData->materialWetness =
+			rendererComponent != nullptr ? (std::clamp)(rendererComponent->materialWetness, 0.0f, 1.0f) : 0.0f;
+		sceneObject.materialData->materialWaterlineHeight =
+			rendererComponent != nullptr ? rendererComponent->materialWaterlineHeight : 0.0f;
+		sceneObject.materialData->materialWaterlineWidth =
+			rendererComponent != nullptr ? (std::max)(rendererComponent->materialWaterlineWidth, 0.001f) : 0.25f;
 		sceneObject.materialData->specularTint = rendererComponent != nullptr ? rendererComponent->specularTint : 0.0f;
 		sceneObject.materialData->sheen = rendererComponent != nullptr ? rendererComponent->sheen : 0.0f;
 		sceneObject.materialData->sheenTint = rendererComponent != nullptr ? rendererComponent->sheenTint : 0.5f;
@@ -564,14 +637,18 @@ void EditorSceneSynchronizer::Initialize(
 void EditorSceneSynchronizer::Update(
 	const std::vector<std::string>& textureFilePaths,
 	int32_t& selectedPlacedSceneObjectIndex) {
+	static uint32_t synchronizationFrameIndex = 0u;
+	synchronizationFrameIndex++;
 	if (editorScene_ == nullptr || sceneObjectManager_ == nullptr) {
 		return;
 	}
 
 	std::vector<EditorSceneObject>& sceneObjects = sceneObjectManager_->GetSceneObjects();  // 描画用 SceneObject 配列を直接編集する
 	const std::vector<EditorGameObject>& gameObjects = editorScene_->GetGameObjects();
-	std::vector<SynchronizedGameObjectData> synchronizedGameObjects;
-	std::unordered_map<int32_t, size_t> synchronizedGameObjectIndices;
+	static std::vector<SynchronizedGameObjectData> synchronizedGameObjects;
+	static std::unordered_map<int32_t, size_t> synchronizedGameObjectIndices;
+	synchronizedGameObjects.clear();
+	synchronizedGameObjectIndices.clear();
 	synchronizedGameObjects.reserve(gameObjects.size());
 	synchronizedGameObjectIndices.reserve(gameObjects.size());
 
@@ -580,6 +657,34 @@ void EditorSceneSynchronizer::Update(
 		const size_t synchronizedIndex = synchronizedGameObjects.size();
 		synchronizedGameObjects.push_back(CollectSynchronizedGameObjectData(gameObject));
 		synchronizedGameObjectIndices.emplace(gameObject.id, synchronizedIndex);
+	}
+
+	const EditorGameObject* activeCameraObject = nullptr;
+	const EditorComponent* globalLightProbe = nullptr;
+	bool hasActiveFlareLayer = false;
+
+	for (const SynchronizedGameObjectData& synchronizedData : synchronizedGameObjects) {
+		const EditorGameObject& gameObject = *synchronizedData.gameObject;
+
+		if (!gameObject.isActive) {
+			continue;
+		}
+
+		for (const EditorComponent& component : gameObject.components) {
+			if (!component.isActive) {
+				continue;
+			}
+
+			if (activeCameraObject == nullptr && component.type == EditorComponentType::Camera) {
+				activeCameraObject = &gameObject;
+			}
+
+			if (globalLightProbe == nullptr && component.type == EditorComponentType::LightProbeGroup) {
+				globalLightProbe = &component;
+			}
+
+			hasActiveFlareLayer |= component.type == EditorComponentType::FlareLayer;
+		}
 	}
 
 	// 後ろから削除することで erase 後の index ずれを避ける
@@ -599,6 +704,10 @@ void EditorSceneSynchronizer::Update(
 				synchronizedGameObjects[synchronizedGameObjectIterator->second];
 
 			if (sceneObject.type == EditorSceneObjectType::Model) {
+				const bool hasActiveModelRenderer =
+					synchronizedData.gameObject->isActive &&
+					((synchronizedData.modelRenderer != nullptr && synchronizedData.modelRenderer->isActive) ||
+					 (synchronizedData.skinnedMeshRenderer != nullptr && synchronizedData.skinnedMeshRenderer->isActive));
 				const bool hasActiveOcean =
 					synchronizedData.gameObject->isActive &&
 					synchronizedData.ocean != nullptr &&
@@ -607,13 +716,19 @@ void EditorSceneSynchronizer::Update(
 					synchronizedData.gameObject->isActive &&
 					synchronizedData.terrain != nullptr &&
 					synchronizedData.terrain->isActive;
-				shouldRemove = synchronizedData.modelRenderer == nullptr &&
-					synchronizedData.skinnedMeshRenderer == nullptr &&
+				shouldRemove = !hasActiveModelRenderer &&
 					!hasActiveOcean &&
 					!hasActiveTerrain;
 			}
 			else {
-				shouldRemove = synchronizedData.spriteRenderer == nullptr;
+				const bool isLensFlare =
+					synchronizedData.spriteRenderer != nullptr &&
+					synchronizedData.spriteRenderer->type == EditorComponentType::LensFlare;
+				shouldRemove =
+					!synchronizedData.gameObject->isActive ||
+					synchronizedData.spriteRenderer == nullptr ||
+					!synchronizedData.spriteRenderer->isActive ||
+					(isLensFlare && !hasActiveFlareLayer);
 			}
 		}
 
@@ -634,7 +749,8 @@ void EditorSceneSynchronizer::Update(
 		}
 	}
 
-	std::unordered_map<int32_t, int32_t> sceneObjectIndices;
+	static std::unordered_map<int32_t, int32_t> sceneObjectIndices;
+	sceneObjectIndices.clear();
 	sceneObjectIndices.reserve(sceneObjects.size() + synchronizedGameObjects.size());
 
 	for (int32_t sceneObjectIndex = 0;
@@ -653,17 +769,42 @@ void EditorSceneSynchronizer::Update(
 			? synchronizedData.modelRenderer
 			: skinnedMeshRenderer;
 		const EditorComponent* spriteRenderer = synchronizedData.spriteRenderer;
+		EditorComponent spriteRendererOverride{};
+
+		if (spriteRenderer != nullptr &&
+			spriteRenderer->type == EditorComponentType::TilemapRenderer &&
+			synchronizedData.tilemap != nullptr &&
+			synchronizedData.tilemap->isActive &&
+			spriteRenderer->assetPath.empty() &&
+			spriteRenderer->textureAssetPath.empty()) {
+			spriteRendererOverride = *spriteRenderer;
+			spriteRendererOverride.assetPath = synchronizedData.tilemap->assetPath;
+			spriteRendererOverride.textureAssetPath = synchronizedData.tilemap->assetPath;
+			spriteRenderer = &spriteRendererOverride;
+		}
 		const EditorComponent* meshFilter = synchronizedData.meshFilter;
-		const EditorComponent* reflectionProbe = synchronizedData.reflectionProbe;
+		const EditorComponent* reflectionProbe = synchronizedData.reflectionProbe != nullptr
+			? synchronizedData.reflectionProbe
+			: globalLightProbe;
 		const EditorComponent* ocean = synchronizedData.ocean;
 		const EditorComponent* terrain = synchronizedData.terrain;
 		const EditorComponent* foliage = synchronizedData.foliage;
 		const EditorComponent* animation = synchronizedData.animation;
 		const EditorComponent* animator = synchronizedData.animator;
+		const EditorComponent* avatarMask = synchronizedData.avatarMask;
 		const bool hasOcean = gameObject.isActive && ocean != nullptr && ocean->isActive;
 		const bool hasTerrain = gameObject.isActive && terrain != nullptr && terrain->isActive;
-		const bool hasModelRenderer = modelRenderer != nullptr || hasOcean || hasTerrain;
-		const bool hasSpriteRenderer = spriteRenderer != nullptr;
+		const bool hasActiveModelRenderer =
+			gameObject.isActive && modelRenderer != nullptr && modelRenderer->isActive;
+		const bool hasModelRenderer = hasActiveModelRenderer || hasOcean || hasTerrain;
+		const bool isLensFlare =
+			spriteRenderer != nullptr &&
+			spriteRenderer->type == EditorComponentType::LensFlare;
+		const bool hasSpriteRenderer =
+			gameObject.isActive &&
+			spriteRenderer != nullptr &&
+			spriteRenderer->isActive &&
+			(!isLensFlare || hasActiveFlareLayer);
 
 		if (!hasModelRenderer && !hasSpriteRenderer) {
 			continue;
@@ -673,6 +814,16 @@ void EditorSceneSynchronizer::Update(
 		EditorSceneObjectType sceneObjectType =
 			hasModelRenderer ? EditorSceneObjectType::Model : EditorSceneObjectType::Sprite;
 		int32_t sceneObjectIndex = -1;
+		Vector3 worldScale = gameObject.scale;
+		Vector3 worldRotation = gameObject.rotate;
+		Vector3 worldPosition = gameObject.translate;
+		Matrix4x4 synchronizedWorldMatrix = MakeIdentity4x4();
+		editorScene_->GetWorldTransformAndMatrix(
+			gameObject.id,
+			worldScale,
+			worldRotation,
+			worldPosition,
+			synchronizedWorldMatrix);
 
 		// 既に GameObject と紐づく SceneObject があるか ID 索引から探す
 		const auto sceneObjectIterator = sceneObjectIndices.find(gameObject.id);
@@ -707,7 +858,7 @@ void EditorSceneSynchronizer::Update(
 			sceneObjectIndex = sceneObjectManager_->CreateObject(
 				sceneObjectType,
 				textureIndex,
-				Transforms{gameObject.scale, gameObject.rotate, gameObject.translate},
+				Transforms{worldScale, worldRotation, worldPosition},
 				gameObject.name);
 			if (sceneObjectIndex < 0) {
 				continue;
@@ -721,9 +872,49 @@ void EditorSceneSynchronizer::Update(
 		// GameObject の Transform を描画用 SceneObject へコピーする
 		EditorSceneObject& sceneObject =
 			sceneObjects[static_cast<size_t>(sceneObjectIndex)];
-		sceneObject.transform.translate = gameObject.translate;
-		sceneObject.transform.rotate = gameObject.rotate;
-		sceneObject.transform.scale = gameObject.scale;
+		sceneObject.transform.translate = worldPosition;
+		sceneObject.transform.rotate = worldRotation;
+		sceneObject.transform.scale = worldScale;
+		sceneObject.worldMatrix = synchronizedWorldMatrix;
+
+		if (spriteRenderer != nullptr &&
+			(spriteRenderer->type == EditorComponentType::BillboardRenderer ||
+			 spriteRenderer->type == EditorComponentType::LensFlare) &&
+			activeCameraObject != nullptr) {
+			sceneObject.transform.rotate = activeCameraObject->rotate;
+		}
+
+		if (synchronizedData.tilemap != nullptr && synchronizedData.tilemap->isActive) {
+			sceneObject.transform.scale.x *= (std::max)(synchronizedData.tilemap->colliderSize.x, 0.01f);
+			sceneObject.transform.scale.y *= (std::max)(synchronizedData.tilemap->colliderSize.y, 0.01f);
+		}
+
+		if (spriteRenderer != nullptr &&
+			(spriteRenderer->type == EditorComponentType::Projector ||
+			 spriteRenderer->type == EditorComponentType::DecalProjector)) {
+			sceneObject.transform.scale.x *= (std::max)(spriteRenderer->colliderSize.x, 0.01f);
+			sceneObject.transform.scale.y *= (std::max)(spriteRenderer->colliderSize.y, 0.01f);
+		}
+
+		if (spriteRenderer != nullptr && spriteRenderer->type == EditorComponentType::LineRenderer) {
+			sceneObject.transform.scale.x *= (std::max)(spriteRenderer->colliderSize.x, 0.01f);
+			sceneObject.transform.scale.y *= (std::max)(spriteRenderer->colliderSize.y, 0.01f);
+		}
+
+		const bool requiresDerivedRenderMatrix =
+			(spriteRenderer != nullptr &&
+			 (spriteRenderer->type == EditorComponentType::BillboardRenderer ||
+			  spriteRenderer->type == EditorComponentType::LensFlare ||
+			  spriteRenderer->type == EditorComponentType::Projector ||
+			  spriteRenderer->type == EditorComponentType::DecalProjector ||
+			  spriteRenderer->type == EditorComponentType::LineRenderer)) ||
+			(synchronizedData.tilemap != nullptr && synchronizedData.tilemap->isActive);
+		if (requiresDerivedRenderMatrix) {
+			sceneObject.worldMatrix = MakeAffineMatrix(
+				sceneObject.transform.scale,
+				sceneObject.transform.rotate,
+				sceneObject.transform.translate);
+		}
 		sceneObject.name = gameObject.name;
 		sceneObject.surface = {};
 
@@ -979,7 +1170,16 @@ void EditorSceneSynchronizer::Update(
 				sceneObjectManager_->ClearCustomModelMesh(sceneObjectIndex);
 			}
 
-			if (skinnedMeshRenderer != nullptr && modelData != nullptr && sceneObject.usesSkinning) {
+			const bool shouldUpdateOffscreenSkinPose =
+				(static_cast<uint32_t>(gameObject.id) + synchronizationFrameIndex) %
+					kOffscreenSkinPoseUpdateInterval == 0u;
+			const bool shouldUpdateSkinPose =
+				!EditorSharedState::g_isGameViewVisible ||
+				IsInsideExpandedGameView(worldPosition) ||
+				shouldUpdateOffscreenSkinPose;
+
+			if (skinnedMeshRenderer != nullptr && modelData != nullptr &&
+				sceneObject.usesSkinning && shouldUpdateSkinPose) {
 				int32_t skinClipIndex = animation != nullptr ? animation->animationClipIndex : 0;
 				float skinPlaybackTime = animationManager_ != nullptr
 					? animationManager_->GetAnimationTime(gameObject.id)
@@ -996,7 +1196,10 @@ void EditorSceneSynchronizer::Update(
 					sceneObjectIndex,
 					*modelData,
 					skinClipIndex,
-					skinPlaybackTime);
+					skinPlaybackTime,
+					avatarMask != nullptr && avatarMask->isActive
+						? avatarMask->assetPath
+						: std::string{});
 			}
 
 			sceneObject.cullMode = hasOcean

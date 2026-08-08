@@ -66,6 +66,10 @@ private:
 	std::unordered_map<int32_t, bool> visibleTargets_;  // 視界センサーが前フレーム対象を見ていたか。
 	std::unordered_map<int64_t, EditorAiSensorResult> sensorResults_;  // Sensor 種類ごとの直近結果。
 	std::unordered_map<int64_t, Vector3> sensorPreviousPositions_;  // 動き検出で前回位置を比較するための記録。
+	std::unordered_map<int64_t, float> aiUpdateRemainingSeconds_;  // Agent/Sensorごとの次回思考までの時間。
+	std::unordered_map<int64_t, float> aiAccumulatedDeltaSeconds_;  // 間引いた時間を次回思考へまとめて渡す。
+	std::unordered_map<int64_t, Vector3> cachedAgentDirections_;  // 思考の間も移動補間を続けるための直近方向。
+	std::unordered_map<int64_t, EditorComponent> cachedRuntimeAgents_;  // Definition適用済み設定を思考間で再利用する。
 	bool isStarted_ = false;  // Play 中の AI が開始済みなら true。
 
 	void UpdateAgent(EditorGameObject& gameObject, EditorComponent& aiComponent, float deltaTime);  // 行動系 AI を 1 つ更新する。

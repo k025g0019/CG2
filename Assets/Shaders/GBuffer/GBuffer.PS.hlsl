@@ -66,6 +66,8 @@
     float surfaceMaterialPadding2;
 };
 
+#include "../Water/OceanSurface.hlsli"
+
 ConstantBuffer<Material> gMaterial : register(b0);
 
 struct DirectionalLightData
@@ -137,6 +139,10 @@ struct PixelShaderInput
     float4 currentClipPosition : TEXCOORD3;
     float4 previousClipPosition : TEXCOORD4;
     float2 motionVectorScale : TEXCOORD5;
+    float4 oceanSamplingData : TEXCOORD6;
+    nointerpolation float3 oceanWorldAxisX : TEXCOORD7;
+    nointerpolation float3 oceanWorldAxisY : TEXCOORD8;
+    nointerpolation float3 oceanWorldAxisZ : TEXCOORD9;
     bool isFrontFace : SV_IsFrontFace;
 };
 
@@ -226,148 +232,16 @@ float3 ApplyNormalMap(
         normal * max(tangentNormal.z, 0.001f));
 }
 
-float FastOceanSin(float phase)
+float ComputeOceanShallowWeight(float normalDotView, float normalizedWaveHeight)
 {
-    return sin(phase);
-}
-
-float FastOceanCos(float phase)
-{
-    return cos(phase);
-}
-
-float3 ApplyOceanDetailNormal(
-    float3 surfaceNormal,
-    float3 worldPosition,
-    float oceanTime,
-    float detailWeight)
-{
-    const float detailStrength = max(gMaterial.oceanDetailNormalStrength, 0.0f);
-
-    if (detailStrength <= 0.0001f)
-    {
-        return surfaceNormal;
-    }
-
-    // 低周波の法線は遠景にも残し、高周波だけを距離と画面上の大きさで落とす。
-    const float worldFootprint = max(
-        length(ddx(worldPosition.xz)),
-        length(ddy(worldPosition.xz)));
-    const float2 horizonBandWeights = saturate(
-        1.0f - worldFootprint * float2(0.035f, 0.08f));
-    const float2 horizonDirection0 = float2(0.91f, 0.41f);
-    const float2 horizonDirection1 = float2(-0.36f, 0.93f);
-    const float horizonPhase0 =
-        dot(worldPosition.xz, horizonDirection0) * 0.18f + oceanTime * 0.32f;
-    const float horizonPhase1 =
-        dot(worldPosition.xz, horizonDirection1) * 0.42f - oceanTime * 0.46f;
-    float2 detailGradient =
-        horizonDirection0 * FastOceanCos(horizonPhase0) * 0.055f * horizonBandWeights.x +
-        horizonDirection1 * FastOceanCos(horizonPhase1) * 0.028f * horizonBandWeights.y;
-
-    const float nearDetailWeight = saturate(detailWeight);
-    const float3 bandWeights = saturate(
-        1.0f - worldFootprint * float3(2.4f, 4.4f, 8.0f)) * nearDetailWeight;
-
-    if (bandWeights.x > 0.0001f)
-    {
-        const float phase0 =
-            dot(worldPosition.xz, float2(0.82f, 0.57f)) * 7.4f + oceanTime * 2.1f;
-        detailGradient +=
-            float2(0.82f, 0.57f) * FastOceanCos(phase0) * 0.12f * bandWeights.x;
-
-        const float phase1 =
-            dot(worldPosition.xz, float2(-0.46f, 0.89f)) * 13.7f + oceanTime * 3.4f;
-        detailGradient +=
-            float2(-0.46f, 0.89f) * FastOceanCos(phase1) * 0.075f * bandWeights.y;
-    }
-
-    if (bandWeights.z > 0.0001f)
-    {
-        const float phase2 =
-            dot(worldPosition.xz, float2(0.96f, -0.28f)) * 25.0f - oceanTime * 5.2f;
-        detailGradient +=
-            float2(0.96f, -0.28f) * FastOceanCos(phase2) * 0.035f * bandWeights.z;
-    }
-
-    const float distortionScale = 1.0f + max(gMaterial.oceanRefractionDistortion, 0.0f) * 3.0f;
-    const float3 detailOffset = float3(-detailGradient.x, 0.0f, -detailGradient.y);
-    return normalize(surfaceNormal + detailOffset * detailStrength * distortionScale);
-}
-
-float ComputeOceanFoam(float3 worldPosition, float3 normal, float4 oceanData)
-{
-    const float foamStrength = max(gMaterial.oceanFoamStrength, 0.0f);
-
-    if (foamStrength <= 0.0001f)
-    {
-        return 0.0f;
-    }
-
-    const float foamThreshold = min(saturate(gMaterial.oceanFoamThreshold), 0.999f);
-    const float compressionWidth = max(fwidth(oceanData.x), 0.015f);
-    const float compressionFoam = smoothstep(
-        max(foamThreshold - compressionWidth, 0.0f),
-        min(foamThreshold + compressionWidth * 2.0f, 1.0f),
-        oceanData.x);
-    const float slopeFoam = smoothstep(0.16f, 0.52f, 1.0f - saturate(normal.y));
-    const float crestFoam = smoothstep(0.68f, 0.96f, oceanData.w);
-    const float foamCoverage =
-        compressionFoam * lerp(0.72f, 0.92f, saturate(gMaterial.oceanCrestSharpness)) +
-        slopeFoam * 0.14f +
-        crestFoam * 0.10f;
-
-    if (foamCoverage <= 0.0001f)
-    {
-        return 0.0f;
-    }
-
-    const float breakupWeight = saturate(oceanData.z);
-    float foamVariation = 0.82f;
-
-    if (breakupWeight > 0.0001f)
-    {
-        const float foamWarp = FastOceanSin(
-            dot(worldPosition.xz, float2(-0.23f, 0.97f)) * 0.31f - oceanData.y * 0.18f);
-        const float foamPattern =
-            FastOceanSin(
-                dot(worldPosition.xz, float2(0.73f, -0.68f)) * 1.15f +
-                oceanData.y * 0.55f + foamWarp * 0.85f) *
-            0.5f + 0.5f;
-        const float secondaryPattern =
-            FastOceanSin(
-                dot(worldPosition.xz, float2(-0.61f, -0.79f)) * 0.47f -
-                oceanData.y * 0.27f) *
-            0.5f + 0.5f;
-        const float continuousVariation = lerp(
-            0.72f,
-            1.0f,
-            saturate(foamPattern * 0.65f + secondaryPattern * 0.35f));
-        foamVariation = lerp(foamVariation, continuousVariation, breakupWeight);
-    }
-
-    return saturate(
-        foamCoverage *
-        0.78f *
-        foamVariation *
-        foamStrength);
-}
-
-float ComputeOceanShallowWeight(float normalDotView, float normalizedCrestHeight)
-{
-    const float absorptionDistance = max(gMaterial.oceanAbsorptionDistance, 0.1f);
-    const float waterDepth = max(gMaterial.oceanWaterDepth, 0.1f);
-
-    // Forward と同じ吸収近似を使い、Scene View / Game View の色差を作らない。
-    const float depthTransmission = rcp(1.0f + waterDepth / absorptionDistance);
-    const float surfaceTransmission = 0.08f + depthTransmission * 0.92f;
-    const float viewTransmission = lerp(0.48f, 1.0f, saturate(normalDotView));
-    const float crestTransmission =
-        smoothstep(0.08f, 0.82f, saturate(normalizedCrestHeight)) *
-        lerp(0.28f, 0.62f, saturate(gMaterial.oceanCrestSharpness));
-    return saturate(
-        (surfaceTransmission * viewTransmission + crestTransmission) *
-        max(gMaterial.oceanColorBlendScale, 0.01f));
+    const float opticalPathLength =
+        max(gMaterial.oceanWaterDepth, 0.1f) /
+        max(saturate(normalDotView), 0.24f);
+    return EvaluateOceanShallowWeight(
+        opticalPathLength,
+        normalizedWaveHeight,
+        gMaterial.oceanAbsorptionDistance,
+        gMaterial.oceanColorBlendScale);
 }
 
 GBufferOutput main(PixelShaderInput input)
@@ -442,44 +316,53 @@ GBufferOutput main(PixelShaderInput input)
         bitangent);
     float3 surfaceAlbedo = max(baseColor.rgb, 0.0f);
 
+    float4 oceanSurfaceData = input.oceanData;
+
     if (gMaterial.oceanEnabled >= 0.5f)
     {
-        worldNormal = ApplyOceanDetailNormal(
-            worldNormal,
+        float3 oceanFftNormal =
+            gMaterial.doubleSided != 0 && !input.isFrontFace ? -input.normal : input.normal;
+        ResolveOceanPixelSurface(
+            input.oceanSamplingData,
+            input.oceanWorldAxisX,
+            input.oceanWorldAxisY,
+            input.oceanWorldAxisZ,
+            oceanFftNormal,
+            oceanSurfaceData);
+        const OceanSurfaceFrame oceanSurfaceFrame = EvaluateOceanSurfaceFrame(
+            oceanFftNormal,
             input.worldPosition,
-            input.oceanData.y,
-            input.oceanData.z);
+            oceanSurfaceData,
+            gMaterial.oceanDetailNormalStrength,
+            gMaterial.oceanCrestSharpness);
+        // Deferred側もForward側と同じ滑らかな光学法線を格納する。
+        // 微細法線をそのままGBufferへ入れると、強い光で粒状の反射へ戻る。
+        worldNormal = EvaluateOceanOpticalNormal(oceanSurfaceFrame);
         const float normalDotView = saturate(dot(worldNormal, viewDirection));
-        const float shallowWeight = ComputeOceanShallowWeight(normalDotView, input.oceanData.w);
-        const float foam = ComputeOceanFoam(input.worldPosition, worldNormal, input.oceanData);
-        surfaceAlbedo = lerp(
-            max(gMaterial.oceanDeepColor, 0.0f),
-            surfaceAlbedo,
-            shallowWeight);
-        const float horizonBlend =
-            (1.0f - normalDotView) *
-            (1.0f - normalDotView) *
-            0.32f;
-        const float3 horizonWaterColor = lerp(
-            max(gMaterial.oceanDeepColor, 0.0f),
-            max(baseColor.rgb, 0.0f),
-            0.42f);
-        surfaceAlbedo = lerp(surfaceAlbedo, horizonWaterColor, horizonBlend);
-        surfaceAlbedo = lerp(surfaceAlbedo, float3(0.82f, 0.94f, 0.98f), foam);
+        const float shallowWeight = ComputeOceanShallowWeight(normalDotView, oceanSurfaceData.w);
+        const float foam = EvaluateOceanFoam(
+            input.worldPosition,
+            oceanSurfaceData,
+            oceanSurfaceFrame,
+            gMaterial.oceanFoamStrength,
+            gMaterial.oceanFoamThreshold,
+            gMaterial.oceanCrestSharpness);
+        const float oceanCrest = smoothstep(0.38f, 0.92f, saturate(oceanSurfaceData.w));
+        surfaceAlbedo = EvaluateOceanWaterColor(
+            gMaterial.oceanDeepColor,
+            baseColor.rgb,
+            shallowWeight,
+            foam,
+            oceanSurfaceFrame,
+            oceanSurfaceData.w,
+            normalDotView);
         metallic = 0.0f;
-        roughness = lerp(
-            clamp(gMaterial.oceanRoughness, 0.12f, 1.0f),
-            0.72f,
+        roughness = EvaluateOceanRoughness(
+            clamp(gMaterial.oceanRoughness, 0.055f, 1.0f),
+            worldNormal,
+            oceanSurfaceFrame.interpolationVariance,
+            oceanCrest,
             foam);
-
-        // 遠景の高周波法線を粗さへ畳み込み、SSR と直接光の点状ちらつきを抑える。
-        const float normalVariance = max(
-            dot(ddx(worldNormal), ddx(worldNormal)),
-            dot(ddy(worldNormal), ddy(worldNormal)));
-        roughness = clamp(
-            sqrt(roughness * roughness + min(normalVariance, 1.0f)),
-            0.12f,
-            1.0f);
         surfaceTransmission *=
             (1.0f - foam) *
             lerp(0.55f, 1.0f, shallowWeight);

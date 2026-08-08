@@ -4,18 +4,25 @@
 #include "EditorScene.h"
 #include "EditorSharedState.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
 using namespace EditorSharedState;
 
 namespace {
-	Vector3 TransformDirectionByRotation(const Vector3& rotation, const Vector3& direction) {
-		const Matrix4x4 rotationMatrix = MakeAffineMatrix(
-			{1.0f, 1.0f, 1.0f},
-			rotation,
-			{0.0f, 0.0f, 0.0f});
-		return Normalize(Transform(direction, rotationMatrix));
+	Vector3 ResolveWorldUp(const Matrix4x4& worldMatrix) {
+		const Vector3 worldUp{
+			worldMatrix.matrix[1][0],
+			worldMatrix.matrix[1][1],
+			worldMatrix.matrix[1][2]};
+		const float lengthSquared = Dot(worldUp, worldUp);
+
+		if (lengthSquared <= 0.000001f) {
+			return {0.0f, 1.0f, 0.0f};
+		}
+
+		return Normalize(worldUp);
 	}
 
 	Matrix4x4 MakeReflectionMatrix(const Vector3& planePoint, const Vector3& planeNormal) {
@@ -111,6 +118,47 @@ void EditorPlanarReflectionManager::CollectProbes(
 		probeView.sceneObject = sceneObject;
 		views_.push_back(probeView);
 	}
+
+	// 明示的な鏡面 Probe がない Scene では、Ocean を反射 Capture 面の候補として使う。
+	// 既存 Probe がある場合は従来の選択と全画面合成を優先し、挙動を変えない。
+	if (!views_.empty()) {
+		return;
+	}
+
+	for (const EditorGameObject& gameObject : scene.GetGameObjects()) {
+		if (!gameObject.isActive) {
+			continue;
+		}
+
+		const EditorComponent* oceanComponent = EditorComponentUtility::FindComponent(
+			gameObject,
+			EditorComponentType::Ocean);
+
+		if (oceanComponent == nullptr || !oceanComponent->isActive) {
+			continue;
+		}
+
+		const EditorSceneObject* sceneObject = nullptr;
+
+		for (const EditorSceneObject& candidate : sceneObjects) {
+			if (candidate.gameObjectId == gameObject.id && candidate.ocean.isEnabled) {
+				sceneObject = &candidate;
+				break;
+			}
+		}
+
+		if (sceneObject == nullptr || sceneObject->ocean.reflectionStrength <= 0.001f) {
+			continue;
+		}
+
+		ProbeView oceanView{};
+		oceanView.sourceId = gameObject.id;
+		oceanView.isOceanSurface = true;
+		oceanView.gameObject = &gameObject;
+		oceanView.component = oceanComponent;
+		oceanView.sceneObject = sceneObject;
+		views_.push_back(oceanView);
+	}
 }
 
 void EditorPlanarReflectionManager::UpdateCameras(
@@ -121,17 +169,22 @@ void EditorPlanarReflectionManager::UpdateCameras(
 	const Matrix4x4& gameViewMatrix,
 	const Matrix4x4& gameProjectionMatrix) {
 	for (ProbeView& probeView : views_) {
-		const EditorGameObject& gameObject = *probeView.gameObject;
+		if (probeView.gameObject == nullptr ||
+			probeView.component == nullptr ||
+			probeView.sceneObject == nullptr) {
+			continue;
+		}
+
 		const EditorComponent& component = *probeView.component;
-		const Matrix4x4 reflectorWorld = MakeAffineMatrix(
-			gameObject.scale,
-			gameObject.rotate,
-			gameObject.translate);
+		const Matrix4x4& reflectorWorld = probeView.sceneObject->worldMatrix;
 
 		// Reflection Probe のローカル Y 面を反射面とする。
-		// メッシュの最薄軸から推測すると、FBX の余白や非一様スケールで反射位置が変わる。
-		const Vector3 reflectorCenter = Transform(component.colliderCenter, reflectorWorld);
-		const Vector3 localUp = TransformDirectionByRotation(gameObject.rotate, {0.0f, 1.0f, 0.0f});
+		// Ocean は GameObject 原点、明示 Probe は Collider Center を面上の基準点にする。
+		const Vector3 localCenter = probeView.isOceanSurface
+			? Vector3{0.0f, 0.0f, 0.0f}
+			: component.colliderCenter;
+		const Vector3 reflectorCenter = Transform(localCenter, reflectorWorld);
+		const Vector3 localUp = ResolveWorldUp(reflectorWorld);
 		const float halfThickness = 0.0f;  // Center を反射面そのものとし、Probe 範囲の厚みで位置をずらさない。
 
 		probeView.sceneCam = BuildReflectionCamera(
@@ -157,19 +210,39 @@ EditorPlanarReflectionManager::FindNearestView(const Vector3& cameraPosition) co
 	float nearestDistanceSquared = (std::numeric_limits<float>::max)();
 
 	for (const ProbeView& probeView : views_) {
-		if (probeView.gameObject == nullptr || probeView.component == nullptr) {
+		if (probeView.gameObject == nullptr ||
+			probeView.component == nullptr ||
+			probeView.sceneObject == nullptr) {
 			continue;
 		}
 
-		const Matrix4x4 reflectorWorld = MakeAffineMatrix(
-			probeView.gameObject->scale,
-			probeView.gameObject->rotate,
-			probeView.gameObject->translate);
+		const Matrix4x4& reflectorWorld = probeView.sceneObject->worldMatrix;
+		const Vector3 localCenter = probeView.isOceanSurface
+			? Vector3{0.0f, 0.0f, 0.0f}
+			: probeView.component->colliderCenter;
 		const Vector3 reflectorCenter = Transform(
-			probeView.component->colliderCenter,
+			localCenter,
 			reflectorWorld);
 		const Vector3 cameraOffset = Subtract(cameraPosition, reflectorCenter);
-		const float distanceSquared = Dot(cameraOffset, cameraOffset);
+		float distanceSquared = Dot(cameraOffset, cameraOffset);
+
+		if (probeView.isOceanSurface) {
+			const Matrix4x4 reflectorWorldToLocal = Inverse(reflectorWorld);
+			const Vector3 localCameraPosition = Transform(
+				cameraPosition,
+				reflectorWorldToLocal);
+			const float localHalfExtent =
+				(std::max)(probeView.sceneObject->ocean.size, 1.0f) * 4.0f;
+			const float overflowX = (std::max)(
+				std::abs(localCameraPosition.x) - localHalfExtent,
+				0.0f);
+			const float overflowZ = (std::max)(
+				std::abs(localCameraPosition.z) - localHalfExtent,
+				0.0f);
+			distanceSquared =
+				(overflowX * overflowX + overflowZ * overflowZ) * 1024.0f +
+				localCameraPosition.y * localCameraPosition.y;
+		}
 
 		if (distanceSquared >= nearestDistanceSquared) {
 			continue;
@@ -180,4 +253,14 @@ EditorPlanarReflectionManager::FindNearestView(const Vector3& cameraPosition) co
 	}
 
 	return nearestView;
+}
+
+bool EditorPlanarReflectionManager::HasCompositeProbes() const {
+	for (const ProbeView& probeView : views_) {
+		if (!probeView.isOceanSurface) {
+			return true;
+		}
+	}
+
+	return false;
 }

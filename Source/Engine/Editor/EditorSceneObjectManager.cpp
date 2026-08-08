@@ -5,10 +5,13 @@
 #include "StringUtility.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 
 #pragma warning(disable : 5045)
 
@@ -91,6 +94,161 @@ namespace {
 			sampledMatrices);
 		return !sampledMatrices.empty();
 	}
+
+	std::string TrimAvatarMaskToken(const std::string& text) {
+		size_t firstCharacter = 0u;
+		while (firstCharacter < text.size() &&
+			std::isspace(static_cast<unsigned char>(text[firstCharacter])) != 0) {
+			firstCharacter++;
+		}
+
+		size_t lastCharacter = text.size();
+		while (lastCharacter > firstCharacter &&
+			std::isspace(static_cast<unsigned char>(text[lastCharacter - 1u])) != 0) {
+			lastCharacter--;
+		}
+
+		std::string trimmedText = text.substr(firstCharacter, lastCharacter - firstCharacter);
+		if (trimmedText.size() >= 3u &&
+			static_cast<unsigned char>(trimmedText[0]) == 0xefu &&
+			static_cast<unsigned char>(trimmedText[1]) == 0xbbu &&
+			static_cast<unsigned char>(trimmedText[2]) == 0xbfu) {
+			trimmedText.erase(0u, 3u);
+		}
+
+		return trimmedText;
+	}
+
+	void ParseAvatarMaskText(
+		std::string maskText,
+		std::vector<std::string>& boneNames) {
+		for (char& character : maskText) {
+			if (character == '|' || character == ',' || character == ';') {
+				character = '\n';
+			}
+		}
+
+		std::istringstream maskStream(maskText);
+		std::string maskLine;
+		while (std::getline(maskStream, maskLine)) {
+			const size_t commentPosition = maskLine.find('#');
+			if (commentPosition != std::string::npos) {
+				maskLine.erase(commentPosition);
+			}
+
+			std::string boneName = TrimAvatarMaskToken(maskLine);
+			if (boneName.empty() || boneName[0] == '-') {
+				continue;
+			}
+
+			if (boneName[0] == '+') {
+				boneName = TrimAvatarMaskToken(boneName.substr(1u));
+			}
+
+			if (!boneName.empty() &&
+				std::find(boneNames.begin(), boneNames.end(), boneName) == boneNames.end()) {
+				boneNames.push_back(boneName);
+			}
+		}
+	}
+
+	bool TryResolveAvatarMaskPath(
+		const std::string& avatarMaskAssetPath,
+		std::filesystem::path& resolvedPath) {
+		const std::filesystem::path requestedPath(avatarMaskAssetPath);
+		std::error_code fileError;
+		if (std::filesystem::is_regular_file(requestedPath, fileError) && !fileError) {
+			resolvedPath = requestedPath;
+			return true;
+		}
+
+		std::filesystem::path searchDirectory = std::filesystem::current_path(fileError);
+		if (fileError) {
+			return false;
+		}
+
+		for (int32_t parentDepth = 0; parentDepth < 6; parentDepth++) {
+			const std::filesystem::path candidatePath = searchDirectory / requestedPath;
+			fileError.clear();
+
+			if (std::filesystem::is_regular_file(candidatePath, fileError) && !fileError) {
+				resolvedPath = candidatePath;
+				return true;
+			}
+
+			const std::filesystem::path parentDirectory = searchDirectory.parent_path();
+			if (parentDirectory == searchDirectory) {
+				break;
+			}
+
+			searchDirectory = parentDirectory;
+		}
+
+		return false;
+	}
+
+	bool LoadAvatarMaskBoneNames(
+		const std::string& avatarMaskAssetPath,
+		std::vector<std::string>& boneNames) {
+		boneNames.clear();
+		if (avatarMaskAssetPath.empty()) {
+			return false;
+		}
+
+		std::filesystem::path resolvedPath;
+		if (TryResolveAvatarMaskPath(avatarMaskAssetPath, resolvedPath)) {
+			std::ifstream maskFile(resolvedPath, std::ios::binary);
+			if (!maskFile.is_open()) {
+				return false;
+			}
+
+			std::ostringstream maskText;
+			maskText << maskFile.rdbuf();
+			ParseAvatarMaskText(maskText.str(), boneNames);
+			return !boneNames.empty();
+		}
+
+		const bool isInlineMask =
+			avatarMaskAssetPath.find_first_of("|,;") != std::string::npos ||
+			(avatarMaskAssetPath.find('/') == std::string::npos &&
+			 avatarMaskAssetPath.find('\\') == std::string::npos &&
+			 avatarMaskAssetPath.find('.') == std::string::npos);
+		if (!isInlineMask) {
+			return false;
+		}
+
+		ParseAvatarMaskText(avatarMaskAssetPath, boneNames);
+		return !boneNames.empty();
+	}
+
+	std::string ToLowerAvatarMaskText(const std::string& text) {
+		std::string lowerText = text;
+		for (char& character : lowerText) {
+			character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+		}
+
+		return lowerText;
+	}
+
+	bool IsBoneEnabledByAvatarMask(
+		const std::string& boneName,
+		const std::vector<std::string>& maskBoneNames) {
+		const std::string lowerBoneName = ToLowerAvatarMaskText(boneName);
+		for (const std::string& maskBoneName : maskBoneNames) {
+			std::string lowerMaskBoneName = ToLowerAvatarMaskText(maskBoneName);
+			const bool usesPrefixMatch = !lowerMaskBoneName.empty() && lowerMaskBoneName.back() == '*';
+			if (usesPrefixMatch) {
+				lowerMaskBoneName.pop_back();
+			}
+
+			if ((!usesPrefixMatch && lowerBoneName == lowerMaskBoneName) ||
+				(usesPrefixMatch && lowerBoneName.starts_with(lowerMaskBoneName))) {
+				return true;
+			}
+		}
+
+		return false;
+	}
 }
 
 void EditorSceneObjectManager::Initialize(ID3D12Device* device) {
@@ -121,6 +279,10 @@ int32_t EditorSceneObjectManager::CreateObject(
 	sceneObject.gameObjectId = -1;
 	sceneObject.textureIndex = textureIndex;
 	sceneObject.transform = initialTransform;
+	sceneObject.worldMatrix = MakeAffineMatrix(
+		initialTransform.scale,
+		initialTransform.rotate,
+		initialTransform.translate);
 	sceneObject.name = name;
 	sceneObject.assetPath.clear();
 	sceneObject.textureAssetPath.clear();
@@ -286,9 +448,9 @@ int32_t EditorSceneObjectManager::CreateObject(
 	sceneObject.materialData->useOpacityMap = FALSE;
 	sceneObject.materialData->alphaMode = 0;
 	sceneObject.materialData->doubleSided = FALSE;
-	sceneObject.materialData->materialExtensionPadding0 = 0.0f;
-	sceneObject.materialData->materialExtensionPadding1 = 0.0f;
-	sceneObject.materialData->materialExtensionPadding2 = 0.0f;
+	sceneObject.materialData->materialThickness = 0.1f;
+	sceneObject.materialData->materialWetness = 0.0f;
+	sceneObject.materialData->materialWaterlineHeight = 0.0f;
 	sceneObject.materialData->uvTiling = {1.0f, 1.0f};
 	sceneObject.materialData->uvOffset = {0.0f, 0.0f};
 	sceneObject.materialData->oceanEnabled = 0.0f;
@@ -306,7 +468,7 @@ int32_t EditorSceneObjectManager::CreateObject(
 	sceneObject.materialData->oceanMaterialPadding1 = 0.0f;
 	sceneObject.materialData->oceanMaterialPadding2 = 0.0f;
 	sceneObject.materialData->surfaceMode = 0;
-	sceneObject.materialData->surfaceMaterialPadding0 = 0.0f;
+	sceneObject.materialData->materialWaterlineWidth = 0.25f;
 	sceneObject.materialData->surfaceMaterialPadding1 = 0.0f;
 	sceneObject.materialData->surfaceMaterialPadding2 = 0.0f;
 	sceneObject.cullMode = 0;
@@ -344,6 +506,37 @@ bool EditorSceneObjectManager::SetCustomTexture(int32_t sceneObjectIndex, const 
 	}
 
 	return isLoaded;
+}
+
+D3D12_GPU_DESCRIPTOR_HANDLE EditorSceneObjectManager::GetOrLoadUiTexture(
+	const std::string& textureAssetPath) {
+	if (textureAssetPath.empty()) {
+		return {};
+	}
+
+	const auto cachedTextureIterator = cachedUiTextures_.find(textureAssetPath);
+
+	if (cachedTextureIterator != cachedUiTextures_.end()) {
+		return cachedTextureIterator->second.srvGpuHandle;
+	}
+
+	CachedUiTexture cachedTexture{};
+	const bool isLoaded = LoadTextureResource(
+		textureAssetPath,
+		cachedTexture.textureResource,
+		cachedTexture.uploadResource,
+		cachedTexture.srvGpuHandle,
+		cachedTexture.descriptorIndex);
+
+	if (!isLoaded) {
+		// 存在しないパスを毎フレーム再読込しないよう、失敗結果も空Handleとして保持する。
+		cachedUiTextures_.emplace(textureAssetPath, cachedTexture);
+		return {};
+	}
+
+	const D3D12_GPU_DESCRIPTOR_HANDLE textureHandle = cachedTexture.srvGpuHandle;
+	cachedUiTextures_.emplace(textureAssetPath, cachedTexture);
+	return textureHandle;
 }
 
 bool EditorSceneObjectManager::SetMaterialTexture(
@@ -675,6 +868,9 @@ bool EditorSceneObjectManager::SetCustomModelMesh(
 		sceneObject.skinMatrixCount = static_cast<uint32_t>(initialSkinMatrices->size());
 		sceneObject.currentSkinClipIndex = -1;
 		sceneObject.currentSkinTime = -1.0f;
+		sceneObject.currentSkinMaskPath.clear();
+		sceneObject.currentSkinMaskBoneNames.clear();
+		sceneObject.usesSkinMask = false;
 		sceneObject.usesSkinning = true;
 	}
 
@@ -689,7 +885,8 @@ bool EditorSceneObjectManager::UpdateSkinnedPose(
 	int32_t sceneObjectIndex,
 	const ModelData& modelData,
 	int32_t clipIndex,
-	float playbackTime) {
+	float playbackTime,
+	const std::string& avatarMaskAssetPath) {
 	if (sceneObjectIndex < 0 ||
 		sceneObjectIndex >= static_cast<int32_t>(sceneObjects_.size())) {
 		return false;
@@ -703,7 +900,16 @@ bool EditorSceneObjectManager::UpdateSkinnedPose(
 		return false;
 	}
 
-	if (sceneObject.currentSkinClipIndex == clipIndex &&
+	const bool avatarMaskChanged = sceneObject.currentSkinMaskPath != avatarMaskAssetPath;
+	if (avatarMaskChanged) {
+		sceneObject.currentSkinMaskPath = avatarMaskAssetPath;
+		sceneObject.usesSkinMask = LoadAvatarMaskBoneNames(
+			avatarMaskAssetPath,
+			sceneObject.currentSkinMaskBoneNames);
+	}
+
+	if (!avatarMaskChanged &&
+		sceneObject.currentSkinClipIndex == clipIndex &&
 		std::abs(sceneObject.currentSkinTime - playbackTime) <= 0.000001f) {
 		return true;
 	}
@@ -712,6 +918,18 @@ bool EditorSceneObjectManager::UpdateSkinnedPose(
 	if (!SampleSkinPose(modelData, clipIndex, playbackTime, sampledMatrices) ||
 		sampledMatrices.size() != static_cast<size_t>(sceneObject.skinMatrixCount)) {
 		return false;
+	}
+
+	if (sceneObject.usesSkinMask &&
+		modelData.defaultSkinMatrices.size() == sampledMatrices.size() &&
+		modelData.skinBoneNames.size() == sampledMatrices.size()) {
+		for (size_t boneIndex = 0u; boneIndex < sampledMatrices.size(); boneIndex++) {
+			if (!IsBoneEnabledByAvatarMask(
+				modelData.skinBoneNames[boneIndex],
+				sceneObject.currentSkinMaskBoneNames)) {
+				sampledMatrices[boneIndex] = modelData.defaultSkinMatrices[boneIndex];
+			}
+		}
 	}
 
 	const size_t skinBufferSize =
@@ -751,6 +969,9 @@ void EditorSceneObjectManager::ClearSkinningResources(int32_t sceneObjectIndex) 
 	sceneObject.skinMatrixCount = 0u;
 	sceneObject.currentSkinClipIndex = -1;
 	sceneObject.currentSkinTime = -1.0f;
+	sceneObject.currentSkinMaskPath.clear();
+	sceneObject.currentSkinMaskBoneNames.clear();
+	sceneObject.usesSkinMask = false;
 	sceneObject.usesSkinning = false;
 }
 
@@ -818,6 +1039,17 @@ void EditorSceneObjectManager::ReleaseAll() {
 	}
 
 	sceneObjects_.clear();  // Resource 解放後に配列自体を空にする
+
+	for (auto& cachedTexturePair : cachedUiTextures_) {
+		CachedUiTexture& cachedTexture = cachedTexturePair.second;
+		ReleaseTextureResource(
+			cachedTexture.textureResource,
+			cachedTexture.uploadResource,
+			cachedTexture.srvGpuHandle,
+			cachedTexture.descriptorIndex);
+	}
+
+	cachedUiTextures_.clear();
 }
 
 std::vector<EditorSceneObject>& EditorSceneObjectManager::GetSceneObjects() {
@@ -845,7 +1077,7 @@ int32_t EditorSceneObjectManager::AcquireCustomTextureDescriptorIndex() {
 }
 
 void EditorSceneObjectManager::ReleaseCustomTextureDescriptorIndex(int32_t descriptorIndex) {
-	if (descriptorIndex < 128) {
+	if (descriptorIndex < 198) {
 		return;
 	}
 

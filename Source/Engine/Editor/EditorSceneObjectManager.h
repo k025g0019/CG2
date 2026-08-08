@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #pragma warning(push)
@@ -30,8 +31,10 @@ public:
 		int32_t sceneObjectIndex,
 		const ModelData& modelData,
 		int32_t clipIndex,
-		float playbackTime);  // 現在姿勢を更新し、更新前の姿勢を Motion Vector 用に保持する
+		float playbackTime,
+		const std::string& avatarMaskAssetPath);  // 現在姿勢を更新し、AvatarMask と Motion Vector 用の前姿勢を適用する
 	bool SetCustomTexture(int32_t sceneObjectIndex, const std::string& textureAssetPath);  // 任意画像を SceneObject 専用 Texture として GPU へ読み込む
+	D3D12_GPU_DESCRIPTOR_HANDLE GetOrLoadUiTexture(const std::string& textureAssetPath);  // Game View UI 用画像を共有キャッシュから返す
 	bool SetMaterialTexture(
 		int32_t sceneObjectIndex,
 		EditorMaterialTextureSlot textureSlot,
@@ -47,10 +50,18 @@ public:
 	const std::vector<EditorSceneObject>& GetSceneObjects() const;  // 読み取り専用の SceneObject 配列
 
 private:
+	struct CachedUiTexture {
+		ID3D12Resource* textureResource = nullptr;  // UI画像のGPU Texture本体
+		ID3D12Resource* uploadResource = nullptr;  // 初回転送が完了するまで保持するUpload Buffer
+		D3D12_GPU_DESCRIPTOR_HANDLE srvGpuHandle{};  // ImGuiのImage描画へ渡すSRV
+		int32_t descriptorIndex = -1;  // 共通SRV Heap内の割り当て番号
+	};
+
 	ID3D12Device* device_ = nullptr;  // GPU Resource 作成に使う DirectX12 Device
 	std::vector<EditorSceneObject> sceneObjects_;  // Scene 上に表示するモデル / スプライトの描画用データ
+	std::unordered_map<std::string, CachedUiTexture> cachedUiTextures_;  // 同じUI画像をGameObjectごとに重複ロードしない
 	std::vector<int32_t> freeCustomTextureDescriptorIndices_;  // 削除済み SceneObject から回収した SRV 番号
-	int32_t nextCustomTextureDescriptorIndex_ = 128;  // 0-127 は描画機能、128 以降は GameObject ごとの画像 SRV に使う
+	int32_t nextCustomTextureDescriptorIndex_ = 198;  // 0-197 は描画機能・View別Temporal履歴・動的Font、198以降を画像SRVへ使う。
 	ID3D12Resource* CreateVertexResource(size_t sizeInBytes) const;  // 実メッシュ頂点を書き込む Upload Buffer を作る
 	ID3D12Resource* CreateTransformationResource() const;  // WVP / World 行列を書き込む Upload Buffer を作る
 	ID3D12Resource* CreateMaterialResource() const;  // GameObject ごとの Material 値を書き込む Upload Buffer を作る

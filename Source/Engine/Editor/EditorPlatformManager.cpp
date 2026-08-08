@@ -9,6 +9,179 @@ using namespace EditorSharedState;
 
 namespace {
 	//================================================================
+	// ImGui 動的 Font Texture 用 Descriptor
+	//================================================================
+
+	constexpr uint32_t kImGuiSrvDescriptorFirstIndex = 123u;
+	constexpr uint32_t kImGuiSrvDescriptorCount = 37u;
+
+	struct ImGuiSrvDescriptorAllocator {
+		ID3D12DescriptorHeap* descriptorHeap = nullptr;
+		UINT descriptorSize = 0u;
+		std::array<bool, kImGuiSrvDescriptorCount> isDescriptorUsed{};
+	};
+
+	ImGuiSrvDescriptorAllocator g_imguiSrvDescriptorAllocator{};
+
+	float GetEditorUiScale(HWND windowHandle) {
+		const UINT windowDpi = windowHandle != nullptr ? GetDpiForWindow(windowHandle) : 96u;
+		const float dpiScale = static_cast<float>((std::max)(windowDpi, 96u)) / 96.0f;
+		return (std::clamp)(dpiScale, 1.0f, 2.0f);
+	}
+
+	void ApplyEditorVisualTheme(float uiScale) {
+		ImGui::StyleColorsDark();
+		ImGuiStyle& style = ImGui::GetStyle();
+		style.WindowPadding = ImVec2(10.0f, 9.0f);
+		style.FramePadding = ImVec2(8.0f, 5.0f);
+		style.CellPadding = ImVec2(7.0f, 5.0f);
+		style.ItemSpacing = ImVec2(8.0f, 6.0f);
+		style.ItemInnerSpacing = ImVec2(6.0f, 5.0f);
+		style.TouchExtraPadding = ImVec2(0.0f, 0.0f);
+		style.IndentSpacing = 18.0f;
+		style.ScrollbarSize = 14.0f;
+		style.GrabMinSize = 12.0f;
+		style.WindowBorderSize = 1.0f;
+		style.ChildBorderSize = 1.0f;
+		style.PopupBorderSize = 1.0f;
+		style.FrameBorderSize = 1.0f;
+		style.TabBorderSize = 0.0f;
+		style.TabBarBorderSize = 1.0f;
+		style.WindowRounding = 5.0f;
+		style.ChildRounding = 4.0f;
+		style.FrameRounding = 3.0f;
+		style.PopupRounding = 4.0f;
+		style.ScrollbarRounding = 8.0f;
+		style.GrabRounding = 3.0f;
+		style.TabRounding = 4.0f;
+		style.SeparatorTextBorderSize = 1.0f;
+		style.SeparatorTextAlign = ImVec2(0.0f, 0.5f);
+		style.SeparatorTextPadding = ImVec2(12.0f, 4.0f);
+		style.DockingSeparatorSize = 2.0f;
+		style.DisabledAlpha = 0.48f;
+
+		ImVec4* colors = style.Colors;
+		colors[ImGuiCol_Text] = ImVec4(0.90f, 0.92f, 0.94f, 1.0f);
+		colors[ImGuiCol_TextDisabled] = ImVec4(0.48f, 0.53f, 0.58f, 1.0f);
+		colors[ImGuiCol_WindowBg] = ImVec4(0.055f, 0.067f, 0.080f, 1.0f);
+		colors[ImGuiCol_ChildBg] = ImVec4(0.065f, 0.078f, 0.092f, 1.0f);
+		colors[ImGuiCol_PopupBg] = ImVec4(0.070f, 0.083f, 0.098f, 0.98f);
+		colors[ImGuiCol_Border] = ImVec4(0.18f, 0.22f, 0.26f, 0.90f);
+		colors[ImGuiCol_BorderShadow] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+		colors[ImGuiCol_FrameBg] = ImVec4(0.095f, 0.125f, 0.155f, 1.0f);
+		colors[ImGuiCol_FrameBgHovered] = ImVec4(0.13f, 0.19f, 0.24f, 1.0f);
+		colors[ImGuiCol_FrameBgActive] = ImVec4(0.16f, 0.25f, 0.31f, 1.0f);
+		colors[ImGuiCol_TitleBg] = ImVec4(0.045f, 0.055f, 0.067f, 1.0f);
+		colors[ImGuiCol_TitleBgActive] = ImVec4(0.075f, 0.105f, 0.13f, 1.0f);
+		colors[ImGuiCol_MenuBarBg] = ImVec4(0.045f, 0.055f, 0.067f, 1.0f);
+		colors[ImGuiCol_ScrollbarBg] = ImVec4(0.035f, 0.043f, 0.052f, 0.70f);
+		colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.22f, 0.28f, 0.33f, 1.0f);
+		colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.29f, 0.37f, 0.43f, 1.0f);
+		colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.34f, 0.48f, 0.55f, 1.0f);
+		colors[ImGuiCol_CheckMark] = ImVec4(0.28f, 0.78f, 0.78f, 1.0f);
+		colors[ImGuiCol_SliderGrab] = ImVec4(0.24f, 0.67f, 0.69f, 1.0f);
+		colors[ImGuiCol_SliderGrabActive] = ImVec4(0.34f, 0.86f, 0.82f, 1.0f);
+		colors[ImGuiCol_Button] = ImVec4(0.11f, 0.27f, 0.31f, 1.0f);
+		colors[ImGuiCol_ButtonHovered] = ImVec4(0.15f, 0.40f, 0.43f, 1.0f);
+		colors[ImGuiCol_ButtonActive] = ImVec4(0.18f, 0.51f, 0.52f, 1.0f);
+		colors[ImGuiCol_Header] = ImVec4(0.10f, 0.25f, 0.29f, 0.90f);
+		colors[ImGuiCol_HeaderHovered] = ImVec4(0.14f, 0.39f, 0.42f, 1.0f);
+		colors[ImGuiCol_HeaderActive] = ImVec4(0.18f, 0.50f, 0.50f, 1.0f);
+		colors[ImGuiCol_Separator] = ImVec4(0.17f, 0.22f, 0.26f, 1.0f);
+		colors[ImGuiCol_SeparatorHovered] = ImVec4(0.22f, 0.58f, 0.60f, 1.0f);
+		colors[ImGuiCol_SeparatorActive] = ImVec4(0.28f, 0.74f, 0.73f, 1.0f);
+		colors[ImGuiCol_ResizeGrip] = ImVec4(0.18f, 0.48f, 0.50f, 0.30f);
+		colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.24f, 0.66f, 0.66f, 0.70f);
+		colors[ImGuiCol_ResizeGripActive] = ImVec4(0.28f, 0.78f, 0.75f, 1.0f);
+		colors[ImGuiCol_Tab] = ImVec4(0.075f, 0.105f, 0.13f, 1.0f);
+		colors[ImGuiCol_TabHovered] = ImVec4(0.15f, 0.39f, 0.42f, 1.0f);
+		colors[ImGuiCol_TabSelected] = ImVec4(0.11f, 0.31f, 0.35f, 1.0f);
+		colors[ImGuiCol_TabDimmed] = ImVec4(0.055f, 0.067f, 0.080f, 1.0f);
+		colors[ImGuiCol_TabDimmedSelected] = ImVec4(0.085f, 0.18f, 0.21f, 1.0f);
+		colors[ImGuiCol_DockingPreview] = ImVec4(0.20f, 0.72f, 0.72f, 0.55f);
+		colors[ImGuiCol_DockingEmptyBg] = ImVec4(0.035f, 0.043f, 0.052f, 1.0f);
+		colors[ImGuiCol_TableHeaderBg] = ImVec4(0.085f, 0.12f, 0.145f, 1.0f);
+		colors[ImGuiCol_TableBorderStrong] = ImVec4(0.18f, 0.23f, 0.27f, 1.0f);
+		colors[ImGuiCol_TableBorderLight] = ImVec4(0.12f, 0.15f, 0.18f, 1.0f);
+		colors[ImGuiCol_TableRowBgAlt] = ImVec4(0.10f, 0.13f, 0.15f, 0.38f);
+		colors[ImGuiCol_TextSelectedBg] = ImVec4(0.18f, 0.55f, 0.56f, 0.45f);
+		colors[ImGuiCol_NavCursor] = ImVec4(0.35f, 0.88f, 0.84f, 1.0f);
+
+		style.ScaleAllSizes(uiScale);
+	}
+
+	void AllocateImGuiSrvDescriptor(
+		ImGui_ImplDX12_InitInfo* initInfo,
+		D3D12_CPU_DESCRIPTOR_HANDLE* cpuDescriptorHandle,
+		D3D12_GPU_DESCRIPTOR_HANDLE* gpuDescriptorHandle) {
+		if (initInfo == nullptr || cpuDescriptorHandle == nullptr || gpuDescriptorHandle == nullptr) {
+			return;
+		}
+
+		auto* allocator = static_cast<ImGuiSrvDescriptorAllocator*>(initInfo->UserData);
+		if (allocator == nullptr || allocator->descriptorHeap == nullptr || allocator->descriptorSize == 0u) {
+			return;
+		}
+
+		for (uint32_t descriptorOffset = 0u;
+			descriptorOffset < kImGuiSrvDescriptorCount;
+			descriptorOffset++) {
+			if (allocator->isDescriptorUsed[descriptorOffset]) {
+				continue;
+			}
+
+			allocator->isDescriptorUsed[descriptorOffset] = true;
+			const uint32_t descriptorIndex = kImGuiSrvDescriptorFirstIndex + descriptorOffset;
+			*cpuDescriptorHandle = GetCPUDescriptorHandle(
+				allocator->descriptorHeap,
+				allocator->descriptorSize,
+				descriptorIndex);
+			*gpuDescriptorHandle = GetGPUDescriptorHandle(
+				allocator->descriptorHeap,
+				allocator->descriptorSize,
+				descriptorIndex);
+			return;
+		}
+
+		assert(false && "ImGui SRV descriptor range is exhausted.");
+	}
+
+	void ReleaseImGuiSrvDescriptor(
+		ImGui_ImplDX12_InitInfo* initInfo,
+		D3D12_CPU_DESCRIPTOR_HANDLE cpuDescriptorHandle,
+		D3D12_GPU_DESCRIPTOR_HANDLE) {
+		if (initInfo == nullptr) {
+			return;
+		}
+
+		auto* allocator = static_cast<ImGuiSrvDescriptorAllocator*>(initInfo->UserData);
+		if (allocator == nullptr || allocator->descriptorHeap == nullptr || allocator->descriptorSize == 0u) {
+			return;
+		}
+
+		const D3D12_CPU_DESCRIPTOR_HANDLE firstDescriptorHandle = GetCPUDescriptorHandle(
+			allocator->descriptorHeap,
+			allocator->descriptorSize,
+			kImGuiSrvDescriptorFirstIndex);
+		if (cpuDescriptorHandle.ptr < firstDescriptorHandle.ptr) {
+			return;
+		}
+
+		const SIZE_T descriptorByteOffset = cpuDescriptorHandle.ptr - firstDescriptorHandle.ptr;
+		if (descriptorByteOffset % static_cast<SIZE_T>(allocator->descriptorSize) != 0u) {
+			return;
+		}
+
+		const SIZE_T descriptorOffset =
+			descriptorByteOffset / static_cast<SIZE_T>(allocator->descriptorSize);
+		if (descriptorOffset >= static_cast<SIZE_T>(kImGuiSrvDescriptorCount)) {
+			return;
+		}
+
+		allocator->isDescriptorUsed[static_cast<size_t>(descriptorOffset)] = false;
+	}
+
+	//================================================================
 	// 初期化失敗時の終亁E��汁E
 	//================================================================
 
@@ -1147,6 +1320,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	ComPtr<IDxcBlob> pixelShaderBlob = CompileShader(
 		L"Assets/Shaders/Object3d.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
+	ComPtr<IDxcBlob> oceanSurfacePixelShaderBlob = CompileShader(
+		L"Assets/Shaders/Water/OceanSurface.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
 
 	ComPtr<IDxcBlob> objectReflectionMaskPixelShaderBlob = CompileShader(
 		L"Assets/Shaders/Object3dReflectionMask.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
@@ -1197,6 +1374,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		logStream);
 	ComPtr<IDxcBlob> ssaoBlurPixelShaderBlob = CompileShader(
 		L"Assets/Shaders/Shadow/ContactShadow.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> ssgiPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/PostProcess/SSGI.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
 		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> skyboxPixelShaderBlob = CompileShader(
@@ -1411,6 +1592,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		fxaaPixelShaderBlob == nullptr ||
 		ssaoPixelShaderBlob == nullptr ||
 		ssaoBlurPixelShaderBlob == nullptr ||
+		ssgiPixelShaderBlob == nullptr ||
 		skyboxPixelShaderBlob == nullptr ||
 		planarReflectionPixelShaderBlob == nullptr ||
 		sharpenPixelShaderBlob == nullptr ||
@@ -1539,6 +1721,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	// 0-10 は既存描画、11-17 は PBR Map、18-19 は Ocean FFT、20-21 は現在 / 前 Bone 行列。
 	// 22-23 は水面専用パスが読む不透明 Scene Color / Depth、24 は Viewport ごとの水面復元定数。
+	// 水面SSRでWorldを画面へ戻すため、逆行列20値にView軸と投影倍率12値を加える。
 	D3D12_ROOT_PARAMETER rootParameters[25] = {};
 
 	rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -1608,12 +1791,13 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	}
 
 	rootParameters[18].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
-	rootParameters[18].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+	// FFT変位はVSの輪郭生成とPSの連続面シェーディングで共有する。
+	rootParameters[18].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 	rootParameters[18].Descriptor.ShaderRegister = 14u;
 	rootParameters[18].Descriptor.RegisterSpace = 0u;
 
 	rootParameters[19].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
-	rootParameters[19].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+	rootParameters[19].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 	rootParameters[19].Descriptor.ShaderRegister = 15u;
 	rootParameters[19].Descriptor.RegisterSpace = 0u;
 
@@ -1641,7 +1825,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	rootParameters[24].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	rootParameters[24].Constants.ShaderRegister = 3u;
 	rootParameters[24].Constants.RegisterSpace = 0u;
-	rootParameters[24].Constants.Num32BitValues = 20u;
+	rootParameters[24].Constants.Num32BitValues = 32u;
 
 	descriptionRootSignature.pParameters = rootParameters;
 	descriptionRootSignature.NumParameters = _countof(rootParameters);
@@ -2056,6 +2240,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	// 水面は不透明物の Color / Depth を Shader で読み、屈折後の完成色を出力する。
 	// Depth SRV と DSV を同時に束縛しないため、可視判定も Shader 側で行う。
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC waterSurfacePipelineStateDesc = graphicsPipelineStateDesc;
+	waterSurfacePipelineStateDesc.PS = {
+		oceanSurfacePixelShaderBlob->GetBufferPointer(),
+		oceanSurfacePixelShaderBlob->GetBufferSize()};
 	waterSurfacePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
 	waterSurfacePipelineStateDesc.DepthStencilState.DepthEnable = FALSE;
 	waterSurfacePipelineStateDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
@@ -2383,7 +2570,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	// Post-process PSOs share common state (no depth, no culling, no vertex buffer)
 	auto CreatePostProcessPSO = [&](const char* psoName, IDxcBlob* psBlob,
-	                                DXGI_FORMAT rtvFormat) -> ComPtr<ID3D12PipelineState> {
+	                                DXGI_FORMAT rtvFormat,
+	                                bool additiveBlend = false) -> ComPtr<ID3D12PipelineState> {
 		if (psBlob == nullptr || fullscreenVertexShaderBlob == nullptr) {
 			Log(std::string("CreatePostProcessPSO skipped: ") + psoName + " shader blob is null");
 			return nullptr;
@@ -2394,10 +2582,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		desc.VS = {fullscreenVertexShaderBlob->GetBufferPointer(), fullscreenVertexShaderBlob->GetBufferSize()};
 		desc.PS = {psBlob->GetBufferPointer(), psBlob->GetBufferSize()};
 		D3D12_BLEND_DESC blendDesc{};
-		blendDesc.RenderTarget[0].BlendEnable = FALSE;
+		blendDesc.RenderTarget[0].BlendEnable = additiveBlend ? TRUE : FALSE;
 		blendDesc.RenderTarget[0].LogicOpEnable = FALSE;
 		blendDesc.RenderTarget[0].SrcBlend = D3D12_BLEND_ONE;
-		blendDesc.RenderTarget[0].DestBlend = D3D12_BLEND_ZERO;
+		blendDesc.RenderTarget[0].DestBlend = additiveBlend ? D3D12_BLEND_ONE : D3D12_BLEND_ZERO;
 		blendDesc.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
 		blendDesc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
 		blendDesc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
@@ -3880,25 +4068,73 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	ImGuiIO& io = ImGui::GetIO(); // io は Docking 有効化や Font 設定を行う ImGui の入出力設定、E
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable; // DockingEnable でウィンドウのドラチE��移動�Eドッキングを許可する、E
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 	io.ConfigDockingWithShift = false; // Shift なしで Docking できるようにして Unity 風の操作感にする、E
-	ImGui::StyleColorsDark(); // 既孁EUI と合わせて Dark Style を基準にする、E
+	io.ConfigWindowsMoveFromTitleBarOnly = true;
+	const float editorUiScale = GetEditorUiScale(windowHandle);
+	ApplyEditorVisualTheme(editorUiScale);
 	ImGui_ImplWin32_Init(windowHandle); // Win32 backend は HWND からマウス・キーボ�Eド�E力を受け取る、E
 
-	// DX12 backend は SRV Heap 0 番めEImGui Font Texture 用に使ぁE��E
-	ImGui_ImplDX12_Init(
-		device.Get(),
-		static_cast<int>(swapChainDesc.BufferCount),
-		rtvDesc.Format,
-		srvDescriptorHeap,
-		GetCPUDescriptorHandle(srvDescriptorHeap, srvDescriptorSize, 0),
-		GetGPUDescriptorHandle(srvDescriptorHeap, srvDescriptorSize, 0));
+	// 動的 Font Atlas が文字サイズごとの Glyph Texture を更新できるよう、複数 SRV 対応 API を使う。
+	g_imguiSrvDescriptorAllocator.descriptorHeap = srvDescriptorHeap;
+	g_imguiSrvDescriptorAllocator.descriptorSize = srvDescriptorSize;
+	g_imguiSrvDescriptorAllocator.isDescriptorUsed.fill(false);
 
-	// meiryo.ttc があれ�E日本誁EUI が文字化けしなぁE��ぁE��読み込む、E
-	if (std::filesystem::exists("C:/Windows/Fonts/meiryo.ttc")) {
-		io.Fonts->AddFontFromFileTTF(
-			"C:/Windows/Fonts/meiryo.ttc", 16.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
+	ImGui_ImplDX12_InitInfo imguiDx12InitInfo{};
+	imguiDx12InitInfo.Device = device.Get();
+	imguiDx12InitInfo.CommandQueue = commandQueue.Get();
+	imguiDx12InitInfo.NumFramesInFlight = static_cast<int>(swapChainDesc.BufferCount);
+	imguiDx12InitInfo.RTVFormat = rtvDesc.Format;
+	imguiDx12InitInfo.DSVFormat = DXGI_FORMAT_UNKNOWN;
+	imguiDx12InitInfo.UserData = &g_imguiSrvDescriptorAllocator;
+	imguiDx12InitInfo.SrvDescriptorHeap = srvDescriptorHeap;
+	imguiDx12InitInfo.SrvDescriptorAllocFn = AllocateImGuiSrvDescriptor;
+	imguiDx12InitInfo.SrvDescriptorFreeFn = ReleaseImGuiSrvDescriptor;
+
+	if (!ImGui_ImplDX12_Init(&imguiDx12InitInfo)) {
+		RequestInitializationFailure();
+		return;
 	}
 
+	ComPtr<ID3D12PipelineState> ssgiPipelineState = CreatePostProcessPSO(
+		"SSGI", ssgiPixelShaderBlob.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT, true);
+	if (ssgiPipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
+	// 日本語UIはDPIに合わせたGlyphを構築し、拡大表示時の文字の粗さを防ぐ。
+	const float editorFontSize = 16.0f * editorUiScale;
+	ImFontConfig editorFontConfig{};
+	editorFontConfig.OversampleH = 0;
+	editorFontConfig.OversampleV = 0;
+	editorFontConfig.PixelSnapH = false;
+	ImFont* editorFont = nullptr;
+	const std::array<const char*, 3u> editorFontCandidates = {
+		"C:/Windows/Fonts/YuGothM.ttc",
+		"C:/Windows/Fonts/meiryo.ttc",
+		"C:/Windows/Fonts/msgothic.ttc"};
+
+	for (const char* editorFontPath : editorFontCandidates) {
+		if (!std::filesystem::exists(editorFontPath)) {
+			continue;
+		}
+
+		editorFont = io.Fonts->AddFontFromFileTTF(
+			editorFontPath,
+			editorFontSize,
+			&editorFontConfig,
+			io.Fonts->GetGlyphRangesJapanese());
+		break;
+	}
+
+	if (editorFont == nullptr) {
+		editorFont = io.Fonts->AddFontDefault();
+	}
+
+	io.FontDefault = editorFont;
+
+	// 16px は Editor UI の基準値。Game View の Text は要求サイズで動的に再ラスタライズされる。
 	io.Fonts->Build(); // Font Atlas をここで構築し、最初�Eフレームで日本語フォントを使える状態にする、E
 #endif
 
@@ -4003,6 +4239,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_fxaaPixelShaderBlob = fxaaPixelShaderBlob;
 	g_ssaoPixelShaderBlob = ssaoPixelShaderBlob;
 	g_ssaoBlurPixelShaderBlob = ssaoBlurPixelShaderBlob;
+	g_ssgiPixelShaderBlob = ssgiPixelShaderBlob;
 	g_skyboxPixelShaderBlob = skyboxPixelShaderBlob;
 	g_planarReflectionPixelShaderBlob = planarReflectionPixelShaderBlob;
 	g_sharpenPixelShaderBlob = sharpenPixelShaderBlob;
@@ -4042,6 +4279,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_fxaaPipelineState = fxaaPipelineState;
 	g_ssaoPipelineState = ssaoPipelineState;
 	g_ssaoBlurPipelineState = ssaoBlurPipelineState;
+	g_ssgiPipelineState = ssgiPipelineState;
 	g_skyboxPipelineState = skyboxPipelineState;
 	g_planarReflectionPipelineState = planarReflectionPipelineState;
 	g_sharpenPipelineState = sharpenPipelineState;
@@ -4510,6 +4748,15 @@ int EditorPlatformManager::Finalize() {
 		g_colorGradingLut->Release();
 		g_colorGradingLut = nullptr;
 	}
+	if (g_customColorGradingLutUploadResource != nullptr) {
+		g_customColorGradingLutUploadResource->Release();
+		g_customColorGradingLutUploadResource = nullptr;
+	}
+	if (g_customColorGradingLutResource != nullptr) {
+		g_customColorGradingLutResource->Release();
+		g_customColorGradingLutResource = nullptr;
+	}
+	g_loadedColorGradingLutAssetPath.clear();
 	if (hdrRenderTarget != nullptr) {
 		hdrRenderTarget->Release();
 		hdrRenderTarget = nullptr;

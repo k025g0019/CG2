@@ -6,6 +6,8 @@
     float4 color : COLOR0;
 };
 
+#include "OceanSprayMist.hlsli"
+
 float4 main(PSInput input) : SV_TARGET0
 {
     const float2 centerOffset = input.texcoord * 2.0f - 1.0f;
@@ -43,6 +45,15 @@ float4 main(PSInput input) : SV_TARGET0
         const float projectileCore = saturate(1.0f - dot(centerOffset, centerOffset) * 5.0f);
         alphaShape = max(projectileCore, trailWidth * trailLength);
         particleColor *= 1.75f;
+    }
+    // 水煙は泡の板ではなく、低周波の霧と細かな飛沫を同じ粒子内で分離する。
+    else if (particleStyle == 8u)
+    {
+        EvaluateOceanSprayMist(
+            input.texcoord,
+            particleColor,
+            particleColor,
+            alphaShape);
     }
 
     return float4(particleColor, input.color.a * alphaShape);

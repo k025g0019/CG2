@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <cstdint>
 #include <string>
 
 #pragma warning(push)
@@ -17,14 +18,59 @@ struct EditorNativeScriptAssetResult {
 	std::string message;  // GUI に出す成否メッセージ。
 };
 
+enum class EditorNativeScriptTemplate {
+	Empty,
+	PlayerController,
+	RailPlayer,
+	EnemyController,
+	TurretController,
+	HomingController,
+	BossController,
+	StageController,
+	LoadoutController,
+	PhysicsController,
+	HealthDamageController,
+	SpawnPoolController,
+	CameraEffectsController,
+	AnimationEffectController,
+	AudioController,
+	UiController,
+	ActionEventController,
+	SaveCheckpointController,
+	OceanBuoyancyController,
+	NavigationAiController,
+	RuntimePropertyController,
+	ScoreController,
+	ComboController,
+	StageResultController,
+	RailEventController,
+	SimulationLodController,
+	Count,
+};
+
+struct EditorNativeScriptTemplateInfo {
+	EditorNativeScriptTemplate type = EditorNativeScriptTemplate::Empty;
+	const char* category = "基本";  // 選択UIでまとめるComponentカテゴリ。
+	const char* displayName = "空のスクリプト";  // Inspectorへ表示する日本語名。
+	const char* description = "最小構成から処理を書きます。";  // 生成される処理の用途。
+	const char* recommendedComponents = "Script";  // 組み合わせる既存Componentの目安。
+};
+
 class EditorNativeScriptAssetManager {
 public:
-	static EditorNativeScriptAssetResult CreateNativeScriptAsset(const std::string& requestedScriptName, bool isDebugBuild);  // GUI から C++ Script 雛形をまとめて生成する。
+	static EditorNativeScriptAssetResult CreateNativeScriptAsset(
+		const std::string& requestedScriptName,
+		bool isDebugBuild,
+		EditorNativeScriptTemplate scriptTemplate = EditorNativeScriptTemplate::Empty);  // 選択した用途別雛形をまとめて生成する。
+	static int32_t GetTemplateCount();  // Inspectorへ公開するテンプレート数を返す。
+	static const EditorNativeScriptTemplateInfo& GetTemplateInfo(int32_t templateIndex);  // 用途・推奨Componentを含む選択情報を返す。
 
 private:
 	static std::string SanitizeScriptName(const std::string& requestedScriptName);  // クラス名や DLL 名に使えない文字を除去する。
-	static std::string MakeHeaderText(const std::string& scriptName);  // DLL 側の状態クラスを生成する .h テンプレート。
-	static std::string MakeSourceText(const std::string& scriptName);  // EditorScriptApi を使う .cpp テンプレート。
+	static std::string MakeHeaderText(
+		const std::string& scriptName,
+		EditorNativeScriptTemplate scriptTemplate);  // DLL 側の状態クラスを生成する用途別 .h テンプレート。
+	static std::string MakeSourceText(const std::string& scriptName, EditorNativeScriptTemplate scriptTemplate);  // EditorScriptApi を使う用途別 .cpp テンプレート。
 	static std::string MakeBuildScriptText(const std::string& scriptName, bool isDebug);  // DLL を cl /LD で作る bat テンプレート。
 	static bool WriteUtf8BomFile(const std::string& filePath, const std::string& text);  // 文字化け防止のため UTF-8 BOM 付きで保存する。
 };

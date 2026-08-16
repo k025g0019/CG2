@@ -1,6 +1,8 @@
 ﻿#include "WaterRailShooter0817.h"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -95,6 +97,80 @@ namespace {
 		if (stageController.HasReference()) {
 			GenericStateMachine{stageController}.ChangeState(stateName);
 		}
+	}
+
+	// マウスが狙っている洋上/敵の着弾点へ "PlayerAimTarget" を毎フレーム移動する。
+	// Weapon 20mm の ProjectileEmitter を AimMode=Ballistic にし、BallisticPrediction の
+	// Target GameObject をこの Marker に向けておくと、既存の未改造 BallisticPrediction が
+	// 重力込みの発射角度・初速を自動計算し、クリック地点へ時間差で着弾する曲射弾になる。
+	// BallisticPrediction(InitialSpeed=650, MaximumTime=4)の到達範囲(理論上限2600)を
+	// 超えないよう、狙う座標の探索距離もある程度に抑える。水平線付近を狙うと際限なく
+	// 遠い交点になり、届かず発射に失敗する(BallisticValid=false)ため。
+	constexpr float kAimTargetMaximumDistance = 1200.0f;
+	constexpr float kAimTargetFallbackDistance = 400.0f;
+
+	void UpdateAimTarget(const GameObject& playerShip) {
+		const GameObject aimTarget = Find("PlayerAimTarget");
+
+		if (!aimTarget.HasReference()) {
+			return;
+		}
+
+		EditorScriptRay cameraAimRay{};
+
+		if (!Physics::GetAimRay(playerShip, cameraAimRay)) {
+			return;
+		}
+
+		// 旧実装はGetAimRayの始点(カメラ位置)を自機の位置へすり替えていた
+		// (Physics::Raycastが自機を除外できず、カメラ位置からのレイをそのまま
+		// 使うと自機の船体に当たってしまっていたための応急処置)。
+		// しかし始点だけ下げて方向はカメラのままだと、画面上でマウスが指している
+		// 延長線とは別の直線になり、狙った場所より手前・下に着弾する原因になっていた。
+		// RaycastIgnoringHierarchyで自機を確実に除外できるようになったので、
+		// カメラの本当のレイ(cameraAimRay)をそのまま使う。
+		const EditorScriptRay& aimRay = cameraAimRay;
+
+		EditorScriptPhysicsHit physicsHit{};
+		const bool hasPhysicsHit = Physics::RaycastIgnoringHierarchy(
+			aimRay,
+			kAimTargetMaximumDistance,
+			playerShip,
+			physicsHit);
+
+		EditorScriptOceanSegmentHit oceanHit{};
+		const bool hasOceanHit = Ocean::Raycast(playerShip, aimRay, kAimTargetMaximumDistance, oceanHit);
+
+		EditorScriptVector3 impactPoint{};
+
+		if (hasPhysicsHit && (!hasOceanHit || physicsHit.distance <= oceanHit.distance)) {
+			impactPoint = physicsHit.point;
+		}
+		else if (hasOceanHit) {
+			impactPoint = oceanHit.point;
+		}
+		else {
+			// 水平線付近を狙うとOcean::Raycastが探索距離内で波面に届かないことがある。
+			// その場合はレイとY=0平面(海面の近似)との交点を使い、空中に外れないようにする。
+			float fallbackDistance = kAimTargetFallbackDistance;
+
+			if (std::fabs(aimRay.direction.y) > 0.0001f) {
+				const float planeDistance = -aimRay.origin.y / aimRay.direction.y;
+
+				if (planeDistance > 0.0f) {
+					fallbackDistance = (std::min)(planeDistance, kAimTargetMaximumDistance);
+				}
+			}
+
+			impactPoint = {
+				aimRay.origin.x + aimRay.direction.x * fallbackDistance,
+				aimRay.origin.y + aimRay.direction.y * fallbackDistance,
+				aimRay.origin.z + aimRay.direction.z * fallbackDistance};
+		}
+
+		EditorScriptTransform transform = aimTarget.GetTransform();
+		transform.position = impactPoint;
+		aimTarget.SetTransform(transform);
 	}
 
 	void AddSalvage(float salvageAmount) {
@@ -318,6 +394,10 @@ void WaterRailShooter0817::Update(int32_t gameObjectId, float deltaTime) {
 	const GameObject stageController = Find("StageController");
 
 	if (playerShip.HasReference() && gameObjectId == playerShip.GetInstanceId()) {
+		if (!sharedGameState.isPlayerDestroyed && !sharedGameState.isMissionClear) {
+			UpdateAimTarget(playerShip);
+		}
+
 		if (isPlayerFireHeld_ && !sharedGameState.isPlayerDestroyed && !sharedGameState.isMissionClear) {
 			WeaponLoadout{playerShip}.Fire();
 		}

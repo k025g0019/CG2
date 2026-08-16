@@ -16,11 +16,16 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
 
 namespace {
 	constexpr float kWeaponEpsilon = 0.0001f;
 	constexpr float kProjectileAimDistance = 1000.0f;
 	constexpr float kDegreesToRadians = 0.01745329251994329577f;
+	constexpr char kProjectileDebugLogPath[] = "Logs/ProjectileDebugLog.md";
 
 	Vector3 AddVector3(const Vector3& firstValue, const Vector3& secondValue) {
 		return {
@@ -123,6 +128,7 @@ void EditorWeaponManager::Start() {
 	pendingWeaponGroupShots_.clear();
 	visualRecoilRuntimes_.clear();
 	accuracyRandomState_ = 0x434732u;
+	ResetProjectileDebugLog();
 
 	if (editorScene_ != nullptr) {
 		for (EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
@@ -272,19 +278,6 @@ bool EditorWeaponManager::FireProjectile(int32_t emitterGameObjectId) {
 		projectileCooldowns_[emitterGameObjectId] > 0.0f ||
 		!EvaluateFireLine(emitterGameObjectId, true)) {
 		return false;
-	}
-
-	if (emitterGameObject->name == "Weapon 20mm") {
-		char debugBuffer[256];
-		std::snprintf(
-			debugBuffer,
-			sizeof(debugBuffer),
-			"[Weapon20mm] FireProjectile pool=%d spawn=%d speed=%.1f damage=%.1f\n",
-			projectileComponent->projectilePoolGameObjectId,
-			projectileComponent->projectileSpawnPointGameObjectId,
-			projectileComponent->projectileSpeed,
-			projectileComponent->projectileDamage);
-		OutputDebugStringA(debugBuffer);
 	}
 
 	return QueueFireRequest(emitterGameObjectId, true);
@@ -814,7 +807,16 @@ int32_t EditorWeaponManager::ExecuteProjectileShot(
 		return -1;
 	}
 
-	const int32_t aimMode = (std::clamp)(projectile->projectileAimMode, 0, 3);
+	const bool isFireTraceWeapon = IsProjectileDebugLoggingEnabled(emitterGameObjectId);
+	const std::string fireTraceEmitterName = isFireTraceWeapon && emitter != nullptr ? emitter->name : std::string();
+
+	if (projectile->projectileHitscanResolution) {
+		// ダメージ判定はHitscanWeapon側で即座に解決する。この関数が生成する弾は
+		// 見た目専用(ActiveProjectile.damage=0)になる。Spawnを伴わないためポインタは無効化しない。
+		ExecuteHitscanShot(emitterGameObjectId, patternYawDegrees);
+	}
+
+	const int32_t aimMode = (std::clamp)(projectile->projectileAimMode, 0, 4);
 	EditorTargetingManager::AimRay aimRay{};
 
 	if (aimMode == 0 && !BuildAimRay(projectile->projectileAimGameObjectId, aimRay)) {
@@ -844,7 +846,16 @@ int32_t EditorWeaponManager::ExecuteProjectileShot(
 	Vector3 projectileGravity{};
 	float projectileDrag = 0.0f;
 	float muzzleSpeed = (std::max)(projectile->projectileSpeed, 0.0f);
+	Vector3 fireTraceEndPosition = spawnPosition;  // 狙点(World)。Log用
+	Vector3 fireTraceToTarget{};  // 狙点 - 発射点。Log用
+	float fireTraceStraightDistance = 0.0f;  // toTargetの長さ。Log用
+	float fireTraceFlightTime = 0.0f;  // 弾道計算に使った目標飛行時間。Log用
+	int32_t fireTraceTrajectoryMode = -1;  // aimMode==4時のTrajectoryMode。Log用
 	const EditorComponent* ballisticPrediction = nullptr;
+	bool useKinematicPath = false;
+	Vector3 kinematicTargetPosition{};
+	float kinematicFlightTime = 0.0f;
+	float kinematicArcHeight = 0.0f;
 
 	if (aimMode == 3) {
 		const int32_t predictionGameObjectId = projectile->projectileBallisticPredictionGameObjectId >= 0
@@ -868,6 +879,95 @@ int32_t EditorWeaponManager::ExecuteProjectileShot(
 		projectileDrag = (std::max)(ballisticPrediction->ballisticDrag, 0.0f);
 		muzzleSpeed = (std::max)(ballisticPrediction->ballisticInitialSpeed, 0.0f);
 	}
+	else if (aimMode == 4) {
+		// 可変速度モード。projectileBallisticPredictionGameObjectId が指す座標を目標に、
+		// TimeMode(距離依存/固定)で飛行時間を決め、TrajectoryMode(物理/俯角固定/位置補間)で
+		// 実際の飛び方を決める。固定初速で発射時間を探索するBallisticPrediction(AimMode=3)とは
+		// 異なり、いずれの組み合わせも閉じた式のみで解けるため探索失敗が起こらない。
+		const int32_t targetPointGameObjectId = projectile->projectileBallisticPredictionGameObjectId >= 0
+			? projectile->projectileBallisticPredictionGameObjectId
+			: targetGameObjectId;
+		const EditorGameObject* aimTargetPoint = editorScene_->FindGameObject(targetPointGameObjectId);
+
+		if (aimTargetPoint == nullptr || !aimTargetPoint->isActive) {
+			return -1;
+		}
+
+		Vector3 targetPointScale{};
+		Vector3 targetPointRotation{};
+		Vector3 targetPosition = aimTargetPoint->translate;
+		editorScene_->GetWorldTransform(aimTargetPoint->id, targetPointScale, targetPointRotation, targetPosition);
+		(void)targetPointScale;
+		(void)targetPointRotation;
+		fireTraceEndPosition = targetPosition;
+		fireTraceTrajectoryMode = projectile->projectileVariableSpeedTrajectoryMode;
+
+		const Vector3 toTarget = SubtractVector3(targetPosition, spawnPosition);
+		const float straightDistance = GetVectorLength(toTarget);
+		fireTraceToTarget = toTarget;
+		fireTraceStraightDistance = straightDistance;
+
+		float flightTime = 0.0f;
+		if (projectile->projectileVariableSpeedTimeMode == 1) {
+			// 固定時間: 距離によらず常に同じ秒数で着弾する
+			flightTime = (std::max)(projectile->projectileVariableSpeedFixedFlightTime, kWeaponEpsilon);
+		}
+		else {
+			// 距離依存: flightTime = distance / DistanceFactor をMin/MaxでClampする。
+			// DistanceFactorは弾の実速度(projectileSpeed)とは別物で、弾道の見え方だけを
+			// 決める基準値(小さいほど遠距離で長い滞空時間になり弧がはっきり見える)。
+			const float distanceFactor = (std::max)(projectile->projectileVariableSpeedDistanceFactor, 1.0f);
+			const float minimumFlightTime = (std::max)(projectile->projectileVariableSpeedMinimumFlightTime, kWeaponEpsilon);
+			const float maximumFlightTime = (std::max)(projectile->projectileVariableSpeedMaximumFlightTime, minimumFlightTime);
+			flightTime = (std::clamp)(straightDistance / distanceFactor, minimumFlightTime, maximumFlightTime);
+		}
+		fireTraceFlightTime = flightTime;
+
+		if (projectile->projectileVariableSpeedTrajectoryMode == 2) {
+			// 位置補間: 物理を一切使わず、毎フレームStart-Target間を直接位置指定で動かす
+			if (straightDistance <= kWeaponEpsilon) {
+				return -1;
+			}
+
+			useKinematicPath = true;
+			kinematicTargetPosition = targetPosition;
+			kinematicFlightTime = flightTime;
+			kinematicArcHeight = projectile->projectileVariableSpeedArcHeight;
+			direction = MultiplyVector3(1.0f / straightDistance, toTarget);
+			muzzleSpeed = straightDistance / flightTime;
+			projectileGravity = {};
+		}
+		else if (projectile->projectileVariableSpeedTrajectoryMode == 1) {
+			// 俯角固定: 水平方向へまっすぐ狙い、Y軸だけ固定角度分だけ下向きに足す簡易近似
+			const Vector3 horizontalToTarget{toTarget.x, 0.0f, toTarget.z};
+			const float horizontalDistance = GetVectorLength(horizontalToTarget);
+			const Vector3 horizontalDirection = horizontalDistance > kWeaponEpsilon
+				? MultiplyVector3(1.0f / horizontalDistance, horizontalToTarget)
+				: Vector3{0.0f, 0.0f, 1.0f};
+			const float depressionRadians = projectile->projectileVariableSpeedDepressionAngleDegrees * kDegreesToRadians;
+			direction = NormalizeVector3({
+				horizontalDirection.x * std::cos(depressionRadians),
+				-std::sin(depressionRadians),
+				horizontalDirection.z * std::cos(depressionRadians)});
+			muzzleSpeed = straightDistance / flightTime;
+			projectileGravity = {};
+		}
+		else {
+			// 物理: 重力込みで指定時間ちょうどに着弾する初速ベクトルを閉じた式で解く
+			projectileGravity = editorScene_->GetPhysicsSettings().gravity;
+			const Vector3 requiredVelocity = MultiplyVector3(
+				1.0f / flightTime,
+				SubtractVector3(toTarget, MultiplyVector3(0.5f * flightTime * flightTime, projectileGravity)));
+			const float requiredSpeed = GetVectorLength(requiredVelocity);
+
+			if (requiredSpeed <= kWeaponEpsilon) {
+				return -1;
+			}
+
+			direction = MultiplyVector3(1.0f / requiredSpeed, requiredVelocity);
+			muzzleSpeed = requiredSpeed;
+		}
+	}
 	else if (projectile->projectileInheritSourceVelocity) {
 		const int32_t sourceVelocityGameObjectId = projectile->projectileSourceVelocityGameObjectId >= 0
 			? projectile->projectileSourceVelocityGameObjectId
@@ -890,43 +990,65 @@ int32_t EditorWeaponManager::ExecuteProjectileShot(
 
 	const EditorGameObject* target = editorScene_->FindGameObject(targetGameObjectId);
 
-	if (aimMode != 3 && target != nullptr && target->isActive) {
+	// aimMode==3(BallisticPrediction)とaimMode==4(可変速度)は、直前で重力込みの
+	// initialVelocity(方向込み)を既に閉じた式で解いている。ここで direction を
+	// Normalize(target - muzzle) の直線方向に上書きすると、速度の大きさだけ弾道計算の
+	// 値を使い、向きは常に target への直線になってしまい着弾が破綻する
+	// (水面クリック時に発射直後から下向きに撃ち込む原因だった)。aimMode==0/1/2 の
+	// 直接照準系だけをこの上書き対象にする。
+	if (aimMode != 3 && aimMode != 4 && target != nullptr && target->isActive) {
 		direction = NormalizeVector3(SubtractVector3(ResolveWorldPosition(*editorScene_, *target), spawnPosition));
 	}
 
+	const Vector3 fireTraceDirectionBeforeAccuracy = direction;  // Accuracy(拡散)適用前の弾道解。Log用
 	direction = ApplyAccuracy(emitterGameObjectId, direction, patternYawDegrees);
 	const Vector3 safePosition = AddVector3(
 		spawnPosition,
-		MultiplyVector3((std::max)(projectile->projectileRadius, 0.0f) + 0.05f, direction));
+		MultiplyVector3((std::max)(projectile->projectileRadius, 0.0f) + projectile->projectileSpawnClearance, direction));
 	const int32_t projectileGameObjectId = objectPoolManager_->Spawn(
 		projectile->projectilePoolGameObjectId,
 		safePosition,
 		spawnRotation);
 
 	if (projectileGameObjectId < 0) {
-		if (emitterGameObjectId >= 0) {
-			const EditorGameObject* failedEmitter = editorScene_->FindGameObject(emitterGameObjectId);
-			if (failedEmitter != nullptr && failedEmitter->name == "Weapon 20mm") {
-				OutputDebugStringA("[Weapon20mm] ObjectPool::Spawn failed\n");
-			}
-		}
 		return -1;
 	}
 
-	if (emitterGameObjectId >= 0) {
-		const EditorGameObject* spawnedEmitter = editorScene_->FindGameObject(emitterGameObjectId);
-		if (spawnedEmitter != nullptr && spawnedEmitter->name == "Weapon 20mm") {
-			char debugBuffer[384];
-			std::snprintf(
-				debugBuffer,
-				sizeof(debugBuffer),
-				"[Weapon20mm] Spawned id=%d position=(%.2f,%.2f,%.2f) safe=(%.2f,%.2f,%.2f) direction=(%.2f,%.2f,%.2f)\n",
-				projectileGameObjectId,
-				spawnPosition.x, spawnPosition.y, spawnPosition.z,
-				safePosition.x, safePosition.y, safePosition.z,
-				direction.x, direction.y, direction.z);
-			OutputDebugStringA(debugBuffer);
+	if (isFireTraceWeapon) {
+		++projectileDebugLogShotSequence_;
+		std::ostringstream block;
+		block << std::fixed << std::setprecision(3);
+		block << "## Shot #" << projectileDebugLogShotSequence_ << " — "
+			<< (fireTraceEmitterName.empty() ? "(unnamed)" : fireTraceEmitterName)
+			<< " (GameObject " << emitterGameObjectId << ")\n\n";
+		block << "- aimMode: " << aimMode;
+		if (aimMode == 4) {
+			block << " (可変速度), trajectoryMode: " << fireTraceTrajectoryMode
+				<< (fireTraceTrajectoryMode == 2 ? " (位置補間)"
+					: fireTraceTrajectoryMode == 1 ? " (俯角固定)" : " (物理)");
 		}
+		block << "\n";
+		block << "- spawnPoint(World, Clearance適用前): ("
+			<< spawnPosition.x << ", " << spawnPosition.y << ", " << spawnPosition.z << ")\n";
+		block << "- safePosition(実発射座標, Clearance適用後): ("
+			<< safePosition.x << ", " << safePosition.y << ", " << safePosition.z << ")\n";
+		block << "- targetPosition(狙点, World): ("
+			<< fireTraceEndPosition.x << ", " << fireTraceEndPosition.y << ", " << fireTraceEndPosition.z << ")\n";
+		if (aimMode == 4) {
+			block << "- toTarget(targetPosition - spawnPosition): ("
+				<< fireTraceToTarget.x << ", " << fireTraceToTarget.y << ", " << fireTraceToTarget.z
+				<< "), straightDistance: " << fireTraceStraightDistance << "\n";
+			block << "- flightTime(弾道計算に使った目標到達時間): " << fireTraceFlightTime << " 秒\n";
+			block << "- gravity: (" << projectileGravity.x << ", " << projectileGravity.y << ", " << projectileGravity.z << ")\n";
+		}
+		block << "- direction(Accuracy拡散適用前, 弾道計算の解そのもの): ("
+			<< fireTraceDirectionBeforeAccuracy.x << ", " << fireTraceDirectionBeforeAccuracy.y << ", "
+			<< fireTraceDirectionBeforeAccuracy.z << ")\n";
+		block << "- direction(Accuracy拡散適用後, 実際に発射される方向): ("
+			<< direction.x << ", " << direction.y << ", " << direction.z << ")\n";
+		block << "- muzzleSpeed(初速の大きさ): " << muzzleSpeed << "\n";
+		block << "- spawnedProjectileGameObjectId: " << projectileGameObjectId << "\n\n";
+		AppendProjectileDebugLog(block.str());
 	}
 
 	// Spawn() がプール拡張時に新規 GameObject をシーンへ追加すると配列が再確保され、
@@ -941,29 +1063,6 @@ int32_t EditorWeaponManager::ExecuteProjectileShot(
 	}
 
 	EditorGameObject* projectileGameObject = editorScene_->FindGameObject(projectileGameObjectId);
-	if (projectileGameObject != nullptr && emitterGameObjectId >= 0) {
-		const EditorGameObject* spawnedEmitter = editorScene_->FindGameObject(emitterGameObjectId);
-		if (spawnedEmitter != nullptr && spawnedEmitter->name == "Weapon 20mm") {
-			const EditorComponent* modelRenderer = EditorComponentUtility::FindComponent(
-				*projectileGameObject,
-				EditorComponentType::ModelRenderer);
-			char debugBuffer[512];
-			std::snprintf(
-				debugBuffer,
-				sizeof(debugBuffer),
-				"[Weapon20mm] Visual id=%d active=%d scale=(%.3f,%.3f,%.3f) asset=%s position=(%.2f,%.2f,%.2f)\n",
-				projectileGameObject->id,
-				projectileGameObject->isActive ? 1 : 0,
-				projectileGameObject->scale.x,
-				projectileGameObject->scale.y,
-				projectileGameObject->scale.z,
-				modelRenderer != nullptr ? modelRenderer->assetPath.c_str() : "<no ModelRenderer>",
-				projectileGameObject->translate.x,
-				projectileGameObject->translate.y,
-				projectileGameObject->translate.z);
-			OutputDebugStringA(debugBuffer);
-		}
-	}
 
 	if (projectileGameObject != nullptr && targetGameObjectId >= 0) {
 		EditorComponent* steering = EditorComponentUtility::FindComponent(*projectileGameObject, EditorComponentType::TargetSteering);
@@ -992,28 +1091,26 @@ int32_t EditorWeaponManager::ExecuteProjectileShot(
 	activeProjectile.velocity = AddVector3(MultiplyVector3(muzzleSpeed, direction), sourceVelocity);
 	activeProjectile.speed = GetVectorLength(activeProjectile.velocity);
 	activeProjectile.direction = NormalizeVector3(activeProjectile.velocity);
-	if (emitterGameObjectId >= 0) {
-		const EditorGameObject* velocityEmitter = editorScene_->FindGameObject(emitterGameObjectId);
-		if (velocityEmitter != nullptr && velocityEmitter->name == "Weapon 20mm") {
-			char debugBuffer[256];
-			std::snprintf(
-				debugBuffer,
-				sizeof(debugBuffer),
-				"[Weapon20mm] velocity=(%.2f,%.2f,%.2f) magnitude=%.2f\n",
-				activeProjectile.velocity.x,
-				activeProjectile.velocity.y,
-				activeProjectile.velocity.z,
-				activeProjectile.speed);
-			OutputDebugStringA(debugBuffer);
-		}
-	}
 	activeProjectile.gravity = projectileGravity;
 	activeProjectile.drag = projectileDrag;
+	activeProjectile.useKinematicPath = useKinematicPath;
+	activeProjectile.kinematicStartPosition = spawnPosition;
+	activeProjectile.kinematicTargetPosition = kinematicTargetPosition;
+	activeProjectile.kinematicTotalFlightTime = kinematicFlightTime;
+	activeProjectile.kinematicElapsedTime = 0.0f;
+	activeProjectile.kinematicArcHeight = kinematicArcHeight;
+	activeProjectile.tracerStretchEnabled = projectile->projectileTracerStretchEnabled;
+	activeProjectile.tracerLengthScale = projectile->projectileTracerLengthScale;
+	activeProjectile.tracerMinimumLength = projectile->projectileTracerMinimumLength;
+	activeProjectile.tracerThickness = projectile->projectileTracerThickness;
 	activeProjectile.radius = (std::max)(projectile->projectileRadius, 0.0f);
-	activeProjectile.damage = (std::max)(projectile->projectileDamage, 0.0f);
+	activeProjectile.damage = projectile->projectileHitscanResolution
+		? 0.0f
+		: (std::max)(projectile->projectileDamage, 0.0f);
 	activeProjectile.damageTagId = EditorDamageManager::HashDamageTag(projectile->projectileDamageTag);
 	activeProjectile.remainingLifetime = (std::max)(projectile->projectileLifetime, 0.01f);
 	activeProjectile.oceanCollision = projectile->projectileOceanCollision;
+	activeProjectile.oceanQueryInstanceId = nextOceanQueryInstanceId_++;
 	const EditorComponent* impactPhysics = projectileGameObject != nullptr
 		? EditorComponentUtility::FindComponent(
 			*projectileGameObject,
@@ -1281,6 +1378,49 @@ std::string EditorWeaponManager::ResolveSurfaceTag(int32_t hitGameObjectId) cons
 	}
 
 	return "Default";
+}
+
+void EditorWeaponManager::ResetProjectileDebugLog() {
+	std::error_code directoryError;
+	std::filesystem::create_directories("Logs", directoryError);
+
+	std::ofstream logFile(kProjectileDebugLogPath, std::ios::trunc);
+
+	if (logFile.is_open()) {
+		logFile << "# Projectile Debug Log\n\n"
+			"ProjectileDebugLogger Componentが付いていてComponentが有効なGameObjectから発射された弾のみ、"
+			"ここへ発射時の弾道計算内訳と毎Frameの移動・命中判定を記録します。\n"
+			"このFileはPlayを開始するたびに空になります(蓄積して重くならないようにするため)。\n\n";
+	}
+
+	projectileDebugLogShotSequence_ = 0u;
+	projectileDebugLogFrameSequence_ = 0u;
+}
+
+bool EditorWeaponManager::IsProjectileDebugLoggingEnabled(int32_t gameObjectId) const {
+	if (editorScene_ == nullptr) {
+		return false;
+	}
+
+	const EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+
+	if (gameObject == nullptr) {
+		return false;
+	}
+
+	const EditorComponent* logger = EditorComponentUtility::FindComponent(
+		*gameObject,
+		EditorComponentType::ProjectileDebugLogger);
+
+	return logger != nullptr && logger->isActive;
+}
+
+void EditorWeaponManager::AppendProjectileDebugLog(const std::string& markdownBlock) const {
+	std::ofstream logFile(kProjectileDebugLogPath, std::ios::app);
+
+	if (logFile.is_open()) {
+		logFile << markdownBlock;
+	}
 }
 
 int32_t EditorWeaponManager::ResolveTeamId(int32_t gameObjectId) const {
@@ -1706,23 +1846,66 @@ void EditorWeaponManager::UpdateProjectiles(float deltaTime) {
 				continue;
 			}
 
-			const Vector3 acceleration{
-				activeProjectile.gravity.x - activeProjectile.drag * activeProjectile.velocity.x,
-				activeProjectile.gravity.y - activeProjectile.drag * activeProjectile.velocity.y,
-				activeProjectile.gravity.z - activeProjectile.drag * activeProjectile.velocity.z};
-			const Vector3 frameDisplacement{
-				activeProjectile.velocity.x * deltaTime + 0.5f * acceleration.x * deltaTime * deltaTime,
-				activeProjectile.velocity.y * deltaTime + 0.5f * acceleration.y * deltaTime * deltaTime,
-				activeProjectile.velocity.z * deltaTime + 0.5f * acceleration.z * deltaTime * deltaTime};
-			activeProjectile.velocity = {
-				activeProjectile.velocity.x + acceleration.x * deltaTime,
-				activeProjectile.velocity.y + acceleration.y * deltaTime,
-				activeProjectile.velocity.z + acceleration.z * deltaTime};
-			activeProjectile.speed = GetVectorLength(activeProjectile.velocity);
+			Vector3 frameDisplacement{};
+
+			if (activeProjectile.useKinematicPath) {
+				// 物理を使わず、Start-Target間を放物線状(頂点でkinematicArcHeightだけ持ち上げる)に
+				// 位置補間する。速度はここでは表示・他システム参照用に逆算するだけ。
+				const float totalTime = (std::max)(activeProjectile.kinematicTotalFlightTime, kWeaponEpsilon);
+				const float previousElapsed = (std::min)(activeProjectile.kinematicElapsedTime, totalTime);
+				const float nextElapsed = (std::min)(activeProjectile.kinematicElapsedTime + deltaTime, totalTime);
+				const auto sampleKinematicPosition = [&](float elapsed) {
+					const float normalizedTime = elapsed / totalTime;
+					const Vector3 lerped = AddVector3(
+						activeProjectile.kinematicStartPosition,
+						MultiplyVector3(
+							normalizedTime,
+							SubtractVector3(activeProjectile.kinematicTargetPosition, activeProjectile.kinematicStartPosition)));
+					const float arcOffset = 4.0f * activeProjectile.kinematicArcHeight * normalizedTime * (1.0f - normalizedTime);
+					return Vector3{lerped.x, lerped.y + arcOffset, lerped.z};
+				};
+				const Vector3 previousPosition = sampleKinematicPosition(previousElapsed);
+				const Vector3 nextPosition = sampleKinematicPosition(nextElapsed);
+				frameDisplacement = SubtractVector3(nextPosition, previousPosition);
+				activeProjectile.kinematicElapsedTime = nextElapsed;
+				activeProjectile.velocity = deltaTime > kWeaponEpsilon
+					? MultiplyVector3(1.0f / deltaTime, frameDisplacement)
+					: Vector3{};
+				activeProjectile.speed = GetVectorLength(activeProjectile.velocity);
+			}
+			else {
+				const Vector3 acceleration{
+					activeProjectile.gravity.x - activeProjectile.drag * activeProjectile.velocity.x,
+					activeProjectile.gravity.y - activeProjectile.drag * activeProjectile.velocity.y,
+					activeProjectile.gravity.z - activeProjectile.drag * activeProjectile.velocity.z};
+				frameDisplacement = {
+					activeProjectile.velocity.x * deltaTime + 0.5f * acceleration.x * deltaTime * deltaTime,
+					activeProjectile.velocity.y * deltaTime + 0.5f * acceleration.y * deltaTime * deltaTime,
+					activeProjectile.velocity.z * deltaTime + 0.5f * acceleration.z * deltaTime * deltaTime};
+				activeProjectile.velocity = {
+					activeProjectile.velocity.x + acceleration.x * deltaTime,
+					activeProjectile.velocity.y + acceleration.y * deltaTime,
+					activeProjectile.velocity.z + acceleration.z * deltaTime};
+				activeProjectile.speed = GetVectorLength(activeProjectile.velocity);
+			}
+
 			const float travelDistance = GetVectorLength(frameDisplacement);
 
 			if (travelDistance > kWeaponEpsilon) {
 				activeProjectile.direction = MultiplyVector3(1.0f / travelDistance, frameDisplacement);
+			}
+
+			if (activeProjectile.tracerStretchEnabled && travelDistance > kWeaponEpsilon) {
+				// 位置(translate)や衝突判定には触れず、見た目(Scale/Rotate)だけを
+				// 曳光弾風に進行方向へ引き伸ばす。次フレームの起点は変えない。
+				const float tracerLength = (std::max)(
+					travelDistance * activeProjectile.tracerLengthScale,
+					activeProjectile.tracerMinimumLength);
+				projectileGameObject->scale.x = activeProjectile.tracerThickness;
+				projectileGameObject->scale.y = activeProjectile.tracerThickness;
+				projectileGameObject->scale.z = tracerLength;
+				projectileGameObject->rotate.x = -std::asin((std::clamp)(activeProjectile.direction.y, -1.0f, 1.0f));
+				projectileGameObject->rotate.y = std::atan2(activeProjectile.direction.x, activeProjectile.direction.z);
 			}
 
 			const Vector3 projectileStart = projectileGameObject->translate;
@@ -1744,7 +1927,7 @@ void EditorWeaponManager::UpdateProjectiles(float deltaTime) {
 				physicsHit);
 			EditorOceanSegmentHit oceanHit{};
 			const uint64_t oceanQueryKey =
-				(static_cast<uint64_t>(static_cast<uint32_t>(activeProjectile.gameObjectId)) << 32u) |
+				(static_cast<uint64_t>(activeProjectile.oceanQueryInstanceId) << 32u) |
 				0x50524f4au;
 			const bool hasOceanHit = activeProjectile.oceanCollision &&
 				collisionDistance > kWeaponEpsilon && CastEditorOceanSegment(
@@ -1760,6 +1943,37 @@ void EditorWeaponManager::UpdateProjectiles(float deltaTime) {
 				oceanHit);
 			const bool usesOceanHit = hasOceanHit &&
 				(!hasHit || oceanHit.distance < physicsHit.distance);
+
+			if (IsProjectileDebugLoggingEnabled(activeProjectile.ownerGameObjectId)) {
+				++projectileDebugLogFrameSequence_;
+				std::ostringstream block;
+				block << std::fixed << std::setprecision(3);
+				block << "### Frame #" << projectileDebugLogFrameSequence_
+					<< " — Projectile GameObject " << activeProjectile.gameObjectId
+					<< " (Owner " << activeProjectile.ownerGameObjectId << ")\n\n";
+				block << "- start: (" << projectileStart.x << ", " << projectileStart.y << ", " << projectileStart.z << ")"
+					<< " / end(衝突なしの場合の到達点): (" << projectileEnd.x << ", " << projectileEnd.y << ", " << projectileEnd.z << ")\n";
+				block << "- velocity: (" << activeProjectile.velocity.x << ", " << activeProjectile.velocity.y << ", "
+					<< activeProjectile.velocity.z << "), speed: " << activeProjectile.speed << "\n";
+				block << "- travelDistance(このFrameの移動距離): " << travelDistance
+					<< ", traveledDistance(累積): " << activeProjectile.traveledDistance << "\n";
+				block << "- hasPhysicsHit: " << (hasHit ? "true" : "false");
+				if (hasHit) {
+					block << ", physicsHit.point: (" << physicsHit.point.x << ", " << physicsHit.point.y << ", "
+						<< physicsHit.point.z << "), distance: " << physicsHit.distance
+						<< ", gameObjectId: " << physicsHit.gameObjectId;
+				}
+				block << "\n";
+				block << "- hasOceanHit: " << (hasOceanHit ? "true" : "false");
+				if (hasOceanHit) {
+					block << ", oceanHit.point: (" << oceanHit.point.x << ", " << oceanHit.point.y << ", "
+						<< oceanHit.point.z << "), distance: " << oceanHit.distance
+						<< ", oceanGameObjectId: " << oceanHit.oceanGameObjectId;
+				}
+				block << "\n";
+				block << "- usesOceanHit(この Frame の命中採用先): " << (usesOceanHit ? "Ocean" : (hasHit ? "Physics" : "なし")) << "\n\n";
+				AppendProjectileDebugLog(block.str());
+			}
 
 			if (usesOceanHit) {
 				ExecuteImpactResponse(
@@ -1781,9 +1995,6 @@ void EditorWeaponManager::UpdateProjectiles(float deltaTime) {
 				shouldRelease = true;
 			}
 			else if (hasHit) {
-				if (activeProjectile.ownerGameObjectId == 58 && physicsHit.gameObjectId == 46) {
-					OutputDebugStringA("[Weapon20mm] projectile hit PlayerShip\n");
-				}
 				if (damageManager_ != nullptr) {
 					EditorScriptDamageContext damageContext{};
 					damageContext.targetGameObjectId = physicsHit.gameObjectId;

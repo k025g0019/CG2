@@ -664,6 +664,12 @@ struct EditorScriptRuntimeApi {
 	// ABI互換のため、Wave外部制御APIは既存構造体の末尾へ追加する。
 	bool (*StartWaveSpawner)(int32_t gameObjectId);
 	bool (*IsWaveSpawnerComplete)(int32_t gameObjectId, bool waitsForAllDefeated);
+	// ABI互換のため、階層除外Raycast APIは既存構造体を変えず末尾へ追加する。
+	bool (*PhysicsRaycastIgnoringHierarchy)(
+		const EditorScriptRay* ray,
+		float distance,
+		int32_t ignoreHierarchyRootGameObjectId,
+		EditorScriptPhysicsHit* hit);
 };
 
 extern "C" {

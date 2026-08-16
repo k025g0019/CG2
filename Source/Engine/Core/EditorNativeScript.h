@@ -540,6 +540,22 @@ public:
 			runtimeApi->PhysicsRaycast(&ray, distance, &hit);
 	}
 
+	// ignoreHierarchyRoot自身およびその子孫を丸ごと無視してRaycastする(自機や自機に載っている
+	// 武器・部品を狙点判定へ誤検出させないためのAPI)。
+	static bool RaycastIgnoringHierarchy(
+		const EditorScriptRay& ray,
+		float distance,
+		const GameObject& ignoreHierarchyRoot,
+		EditorScriptPhysicsHit& hit) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->PhysicsRaycastIgnoringHierarchy != nullptr &&
+			runtimeApi->PhysicsRaycastIgnoringHierarchy(
+				&ray,
+				distance,
+				ignoreHierarchyRoot.GetInstanceId(),
+				&hit);
+	}
+
 	static bool SphereCast(
 		const EditorScriptRay& ray,
 		float radius,

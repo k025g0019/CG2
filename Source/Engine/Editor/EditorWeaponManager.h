@@ -76,6 +76,7 @@ private:
 		int32_t damageTagId = 0;  // 固定Enumではない文字列Damage Tagの安定Hash
 		float remainingLifetime = 0.0f;  // Poolへ戻るまでの残り秒数
 		bool oceanCollision = true;  // FFT水面とのフレーム間交差を判定する
+		uint32_t oceanQueryInstanceId = 0u;  // Pool再利用ID衝突を避けるためFFT Surface Sample Keyに混ぜる発射固有値
 		float traveledDistance = 0.0f;  // Arming Distance判定用の累積移動距離
 		float armingDistance = 0.0f;  // この距離まではPhysics/Ocean命中を無効化する
 		std::vector<int32_t> ignoredGameObjectIds;  // 発射者階層、Team、明示除外、貫通済みObject
@@ -89,6 +90,16 @@ private:
 		int32_t maximumRicochets = 0;
 		int32_t ricochetCount = 0;
 		std::vector<EditorProjectileSurfaceModifierEntry> surfaceModifiers;
+		bool useKinematicPath = false;  // trueなら物理を使わずStart/Target間を直接位置補間する(可変速度モード用)
+		Vector3 kinematicStartPosition{0.0f, 0.0f, 0.0f};
+		Vector3 kinematicTargetPosition{0.0f, 0.0f, 0.0f};
+		float kinematicTotalFlightTime = 0.0f;
+		float kinematicElapsedTime = 0.0f;
+		float kinematicArcHeight = 0.0f;  // 軌道頂点(t=0.5)へ追加するWorld Y方向の高さ
+		bool tracerStretchEnabled = false;  // trueなら曳光弾風にScale/Rotateを見た目だけ書き換える
+		float tracerLengthScale = 1.0f;  // 1フレームの移動距離に掛ける倍率
+		float tracerMinimumLength = 2.0f;  // 見た目のScale Zの下限
+		float tracerThickness = 0.15f;  // Scale X/Yに使う太さ
 	};
 
 	struct PendingShot {
@@ -132,6 +143,7 @@ private:
 	std::vector<PendingWeaponGroupShot> pendingWeaponGroupShots_;  // Group Sequentialの未発射Weapon列
 	std::unordered_map<int32_t, VisualRecoilRuntime> visualRecoilRuntimes_;  // Weapon所有者ごとの表示反動差分
 	uint32_t accuracyRandomState_ = 0x434732u;  // Playごとに再現可能なSpread乱数
+	uint32_t nextOceanQueryInstanceId_ = 1u;  // Projectile発射ごとに一意なFFT Surface Sample Key発行用
 	bool isStarted_ = false;  // Play中だけ入力と飛翔を更新する
 
 	bool ShouldFire(
@@ -188,6 +200,13 @@ private:
 		int32_t actionTargetGameObjectId,
 		const std::string& actionName,
 		float value) const;  // 武器通知を任意Script Actionへ渡す
+
+	void ResetProjectileDebugLog();  // Play開始時にLogs/ProjectileDebugLog.mdを空にする
+	bool IsProjectileDebugLoggingEnabled(int32_t gameObjectId) const;  // 同じGameObjectにProjectileDebugLoggerが付いているか調べる
+	void AppendProjectileDebugLog(const std::string& markdownBlock) const;  // 詳細Log Fileへ追記する
+
+	uint32_t projectileDebugLogShotSequence_ = 0u;  // 発射Log見出し用の連番
+	uint32_t projectileDebugLogFrameSequence_ = 0u;  // 毎Frame Log見出し用の連番
 };
 
 #pragma warning(pop)

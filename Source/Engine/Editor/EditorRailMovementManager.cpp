@@ -1190,7 +1190,7 @@ void EditorRailMovementManager::FixedUpdate(float fixedDeltaTime) {
 				snprintf(
 					debugBuffer,
 					sizeof(debugBuffer),
-					"[RailShip] %s mode=%d target=%.2f vAlong=%.2f engine=%.2f fwdErr=%.2f latErr=%.2f clamp=%.2f compMass=%.2f bodyMass=%.2f force=%.2f vel=(%.2f,%.2f,%.2f) pos=(%.2f,%.2f,%.2f) traveled=%.1f/%.1f\n",
+					"[RailShip] %s mode=%d target=%.2f vAlong=%.2f engine=%.2f fwdErr=%.2f latErr=%.2f clamp=%.2f compMass=%.2f bodyMass=%.2f force=%.2f vel=(%.2f,%.2f,%.2f) angVel=(%.2f,%.2f,%.2f) pos=(%.2f,%.2f,%.2f) rot=(%.2f,%.2f,%.2f) traveled=%.1f/%.1f\n",
 					gameObject.name.c_str(),
 					railMovementComponent->railMovementMode,
 					debugTargetForwardSpeed,
@@ -1205,9 +1205,15 @@ void EditorRailMovementManager::FixedUpdate(float fixedDeltaTime) {
 					rigidBodyComponent->velocity.x,
 					rigidBodyComponent->velocity.y,
 					rigidBodyComponent->velocity.z,
+					rigidBodyComponent->angularVelocity.x,
+					rigidBodyComponent->angularVelocity.y,
+					rigidBodyComponent->angularVelocity.z,
 					worldPosition.x,
 					worldPosition.y,
 					worldPosition.z,
+					gameObject.rotate.x,
+					gameObject.rotate.y,
+					gameObject.rotate.z,
 					runtimeState.traveledDistance,
 					runtimeState.totalDistance);
 				OutputDebugStringA(debugBuffer);

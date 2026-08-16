@@ -365,6 +365,7 @@ namespace {
 		"SimulationLOD",
 		"RailEventMarker",
 		"SceneStreaming",
+		"ProjectileDebugLogger",
 	};
 	constexpr int32_t kEditorComponentTypeCount =
 		static_cast<int32_t>(sizeof(kEditorComponentTypeNames) / sizeof(kEditorComponentTypeNames[0]));
@@ -2466,7 +2467,24 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 					     << "|" << component.projectileSourceVelocityGameObjectId
 					     << "|" << component.projectileUseParentRigidBody
 					     << "|" << component.projectileLinearVelocityInheritance
-					     << "|" << component.projectileAngularVelocityInheritance << "\n";
+					     << "|" << component.projectileAngularVelocityInheritance
+					     << "|" << component.projectileVariableSpeedMinimumFlightTime
+					     << "|" << component.projectileVariableSpeedMaximumFlightTime << "\n";
+					file << "ProjectileVariableSpeedExtension|" << gameObject.id
+					     << "|" << component.projectileVariableSpeedTimeMode
+					     << "|" << component.projectileVariableSpeedFixedFlightTime
+					     << "|" << component.projectileVariableSpeedTrajectoryMode
+					     << "|" << component.projectileVariableSpeedDepressionAngleDegrees
+					     << "|" << component.projectileVariableSpeedArcHeight
+					     << "|" << component.projectileVariableSpeedDistanceFactor << "\n";
+					file << "ProjectileTracerExtension|" << gameObject.id
+					     << "|" << component.projectileTracerStretchEnabled
+					     << "|" << component.projectileTracerLengthScale
+					     << "|" << component.projectileTracerMinimumLength
+					     << "|" << component.projectileTracerThickness
+					     << "|" << component.projectileHitscanResolution << "\n";
+					file << "ProjectileSpawnClearanceExtension|" << gameObject.id
+					     << "|" << component.projectileSpawnClearance << "\n";
 				}
 			}
 
@@ -5076,6 +5094,51 @@ if (elements.size() >= 13u) {
 					component.projectileUseParentRigidBody = ToInt(elements[6]) != 0;
 					component.projectileLinearVelocityInheritance = ToFloat(elements[7]);
 					component.projectileAngularVelocityInheritance = ToFloat(elements[8]);
+					if (elements.size() >= 11u) {
+						component.projectileVariableSpeedMinimumFlightTime = ToFloat(elements[9]);
+						component.projectileVariableSpeedMaximumFlightTime = ToFloat(elements[10]);
+					}
+				}
+			}
+		}
+		else if (elements[0] == "ProjectileVariableSpeedExtension" && elements.size() >= 6u) {
+			const int32_t ownerId = ToInt(elements[1]);
+			for (EditorGameObject& object : loadedGameObjects) if (object.id == ownerId) {
+				for (EditorComponent& component : object.components) if (component.type == EditorComponentType::ProjectileEmitter) {
+					component.projectileVariableSpeedTimeMode = ToInt(elements[2]);
+					component.projectileVariableSpeedFixedFlightTime = ToFloat(elements[3]);
+					component.projectileVariableSpeedTrajectoryMode = ToInt(elements[4]);
+					component.projectileVariableSpeedDepressionAngleDegrees = ToFloat(elements[5]);
+					if (elements.size() >= 7u) {
+						component.projectileVariableSpeedArcHeight = ToFloat(elements[6]);
+					}
+					if (elements.size() >= 8u) {
+						component.projectileVariableSpeedDistanceFactor = ToFloat(elements[7]);
+					}
+				}
+			}
+		}
+		else if (elements[0] == "ProjectileTracerExtension" && elements.size() >= 5u) {
+			const int32_t ownerId = ToInt(elements[1]);
+			for (EditorGameObject& object : loadedGameObjects) if (object.id == ownerId) {
+				for (EditorComponent& component : object.components) if (component.type == EditorComponentType::ProjectileEmitter) {
+					component.projectileTracerStretchEnabled = ToInt(elements[2]) != 0;
+					component.projectileTracerLengthScale = ToFloat(elements[3]);
+					component.projectileTracerMinimumLength = ToFloat(elements[4]);
+					if (elements.size() >= 6u) {
+						component.projectileTracerThickness = ToFloat(elements[5]);
+					}
+					if (elements.size() >= 7u) {
+						component.projectileHitscanResolution = ToInt(elements[6]) != 0;
+					}
+				}
+			}
+		}
+		else if (elements[0] == "ProjectileSpawnClearanceExtension" && elements.size() >= 3u) {
+			const int32_t ownerId = ToInt(elements[1]);
+			for (EditorGameObject& object : loadedGameObjects) if (object.id == ownerId) {
+				for (EditorComponent& component : object.components) if (component.type == EditorComponentType::ProjectileEmitter) {
+					component.projectileSpawnClearance = ToFloat(elements[2]);
 				}
 			}
 		}
@@ -7125,6 +7188,7 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 	component.projectileDamage = 10.0f;
 	component.projectileDamageTag = "Projectile";
 	component.projectileRadius = 0.15f;
+	component.projectileSpawnClearance = 0.05f;
 	component.projectileLifetime = 5.0f;
 	component.projectileInterval = 0.25f;
 	component.projectileAutomatic = false;
@@ -7136,6 +7200,19 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 	component.projectileUseParentRigidBody = true;
 	component.projectileLinearVelocityInheritance = 1.0f;
 	component.projectileAngularVelocityInheritance = 1.0f;
+	component.projectileVariableSpeedMinimumFlightTime = 0.2f;
+	component.projectileVariableSpeedMaximumFlightTime = 1.2f;
+	component.projectileVariableSpeedDistanceFactor = 300.0f;
+	component.projectileVariableSpeedTimeMode = 0;
+	component.projectileVariableSpeedFixedFlightTime = 1.5f;
+	component.projectileVariableSpeedTrajectoryMode = 0;
+	component.projectileVariableSpeedDepressionAngleDegrees = 15.0f;
+	component.projectileVariableSpeedArcHeight = 5.0f;
+	component.projectileTracerStretchEnabled = false;
+	component.projectileTracerLengthScale = 1.0f;
+	component.projectileTracerMinimumLength = 2.0f;
+	component.projectileTracerThickness = 0.15f;
+	component.projectileHitscanResolution = false;
 	component.projectileActionTargetGameObjectId = -1;
 	component.projectileFiredActionName = "OnProjectileFired";
 	component.projectileHitActionName = "OnProjectileHit";

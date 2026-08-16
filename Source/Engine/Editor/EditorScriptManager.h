@@ -188,6 +188,7 @@ private:
 		EditorScriptActionPayload payload{};  // 任意の型付きAction値。
 	};
 
+	uint32_t nextOceanQueryCallId_ = 1u;  // GameObjectId固定のOcean Query呼び出しごとにSample Keyを一意化する
 	EditorScene* editorScene_ = nullptr;  // Script Component を探す対象 Scene
 	EditorInputManager* inputManager_ = nullptr;  // PlayerInput Action を読む入力 API
 	EditorAnimationManager* animationManager_ = nullptr;  // Animation の再生状態と現在時刻を読む API
@@ -379,6 +380,11 @@ private:
 	static bool ScriptViewportPointToRayBridge(const EditorScriptVector2* normalizedPosition, EditorScriptRay* ray);
 	static bool ScriptGetAimRayBridge(int32_t screenAimGameObjectId, EditorScriptRay* ray);
 	static bool ScriptPhysicsRaycastBridge(const EditorScriptRay* ray, float distance, EditorScriptPhysicsHit* hit);
+	static bool ScriptPhysicsRaycastIgnoringHierarchyBridge(
+		const EditorScriptRay* ray,
+		float distance,
+		int32_t ignoreHierarchyRootGameObjectId,
+		EditorScriptPhysicsHit* hit);
 	static bool ScriptPhysicsSphereCastBridge(const EditorScriptRay* ray, float radius, float distance, EditorScriptPhysicsHit* hit);
 	static bool ScriptPhysicsCapsuleCastBridge(const EditorScriptRay* ray, float radius, float height, float distance, EditorScriptPhysicsHit* hit);
 	static bool ScriptSampleOceanSurfaceBridge(

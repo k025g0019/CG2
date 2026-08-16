@@ -566,6 +566,8 @@ enum class EditorComponentType {
 	RailEventMarker,
 	// 距離に応じてAdditive Sceneを非同期読込・破棄する
 	SceneStreaming,
+	// 付いているGameObjectのProjectile発射・飛翔を詳細Markdown Logへ記録する(付け外しでOn/Off)
+	ProjectileDebugLogger,
 	// Component 種類数。範囲チェックに使う
 	Count,
 };
@@ -1459,6 +1461,7 @@ std::string waveStartedActionName;  // 条件成立時に通知する任意Scrip
 	float projectileDamage;  // 命中時の基礎ダメージ
 	std::string projectileDamageTag;  // DamageTagModifierへ渡す文字列Tag
 	float projectileRadius;  // 連続SphereCastへ使う弾半径
+	float projectileSpawnClearance;  // 発射位置から安全距離として足すオフセット(既定0.05、発射元の当たり判定を確実に抜けたい武器はここを大きくする)
 	float projectileLifetime;  // 自動的にPoolへ戻すまでの秒数
 	float projectileInterval;  // 次に発射できるまでの秒数
 	bool projectileAutomatic;  // trueなら押下中に間隔発射、falseなら押した瞬間だけ発射
@@ -1466,13 +1469,26 @@ std::string waveStartedActionName;  // 条件成立時に通知する任意Scrip
 	std::string projectileFiredActionName;  // 発射時に通知する任意Script Action
 	std::string projectileHitActionName;  // 命中時に通知する任意Script Action
 	bool projectileOceanCollision;  // フレーム移動区間とFFT水面の交差を判定する
-	int32_t projectileAimMode;  // 0=ScreenAim、1=Transform Forward、2=Target、3=BallisticPrediction
+	int32_t projectileAimMode;  // 0=ScreenAim、1=Transform Forward、2=Target、3=BallisticPrediction、4=VariableSpeed(可変速度で直接着弾点を狙う)
 	int32_t projectileBallisticPredictionGameObjectId;  // -1ならEmitter所有者
 	bool projectileInheritSourceVelocity;
 	int32_t projectileSourceVelocityGameObjectId;  // -1ならEmitter所有者
 	bool projectileUseParentRigidBody;
 	float projectileLinearVelocityInheritance;
 	float projectileAngularVelocityInheritance;
+	float projectileVariableSpeedMinimumFlightTime;  // AimMode=4(可変速度)TimeMode=0(距離依存)の最短飛行時間 秒
+	float projectileVariableSpeedMaximumFlightTime;  // AimMode=4(可変速度)TimeMode=0(距離依存)の最長飛行時間 秒
+	float projectileVariableSpeedDistanceFactor;  // TimeMode=0で flightTime=distance/この値 を計算する基準速度。武器の実速度(projectileSpeed)とは別物で、弾道の見え方だけを調整する
+	int32_t projectileVariableSpeedTimeMode;  // 0=距離に応じて時間を決める、1=固定時間
+	float projectileVariableSpeedFixedFlightTime;  // TimeMode=1で使う固定飛行時間 秒
+	int32_t projectileVariableSpeedTrajectoryMode;  // 0=物理(初速+重力)、1=俯角固定の直線、2=物理無視の位置補間
+	float projectileVariableSpeedDepressionAngleDegrees;  // TrajectoryMode=1で水平から下へ足す角度
+	float projectileVariableSpeedArcHeight;  // TrajectoryMode=2で軌道頂点へ足す高さ
+	bool projectileTracerStretchEnabled;  // trueならこの弾を曳光弾風に引き伸ばして表示する
+	float projectileTracerLengthScale;  // 1フレームの移動距離に掛ける倍率(見た目の長さ調整)
+	float projectileTracerMinimumLength;  // 最低限のScale Z(発射直後や低速時に点にならない下限)
+	float projectileTracerThickness;  // Scale X/Yに使う太さ。小さいほど弾ではなく細い線に見える
+	bool projectileHitscanResolution;  // trueなら発射時にHitscanWeaponで即ダメージ解決し、この弾は演出専用(ダメージ0)にする
 	// DamageReceiver 設定
 	float damageMultiplier;  // 受け取った基礎ダメージへ掛ける倍率
 	float damageInvulnerabilitySeconds;  // 1回受けた後に次を無視する秒数

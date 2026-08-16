@@ -399,6 +399,9 @@ void EditorTargetingManager::Update(float deltaTime) {
 			POINT cursorPosition{};
 
 			if (GetCursorPos(&cursorPosition)) {
+				const POINT screenPos = cursorPosition;
+				const bool converted = ScreenToClient(g_windowHandle, &cursorPosition);
+
 				nextPosition.x =
 					(static_cast<float>(cursorPosition.x) - g_editorGameX) / g_editorGameWidth;
 				nextPosition.y =
@@ -409,20 +412,8 @@ void EditorTargetingManager::Update(float deltaTime) {
 					std::sqrt(inputDeltaX * inputDeltaX + inputDeltaY * inputDeltaY) * 30.0f,
 					0.0f,
 					1.0f);
-
-				// デバッグログ: マウス入力取得状況
-				static uint32_t debugCounter = 0u;
-				if ((debugCounter++ % 60u) == 0u) {
-					char debugBuffer[256];
-					snprintf(
-						debugBuffer,
-						sizeof(debugBuffer),
-						"[ScreenAim] mouse=(%d,%d) game=(%.0f,%.0f,%.0fx%.0f) normalized=(%.2f,%.2f)\n",
-						cursorPosition.x, cursorPosition.y,
-						g_editorGameX, g_editorGameY, g_editorGameWidth, g_editorGameHeight,
-						nextPosition.x, nextPosition.y);
-					OutputDebugStringA(debugBuffer);
-				}
+				(void)screenPos;
+				(void)converted;
 			}
 		}
 		else if (screenAimComponent->screenAimInputMode == 1 && inputManager_ != nullptr) {

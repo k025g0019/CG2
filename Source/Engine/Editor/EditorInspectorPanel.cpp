@@ -381,6 +381,7 @@ namespace {
 		{"ゲームプレイ", "ダメージ受信", EditorComponentType::DamageReceiver},
 		{"ゲームプレイ", "レイ射撃", EditorComponentType::HitscanWeapon},
 		{"ゲームプレイ", "弾発射", EditorComponentType::ProjectileEmitter},
+		{"ゲームプレイ", "弾道デバッグログ", EditorComponentType::ProjectileDebugLogger},
 		{"ゲームプレイ", "武器ロードアウト", EditorComponentType::WeaponLoadout},
 		{"ゲームプレイ", "武器スロット", EditorComponentType::WeaponLoadoutSlot},
 		{"ゲームプレイ", "ターゲット選択", EditorComponentType::TargetSelector},
@@ -3835,11 +3836,11 @@ namespace {
 		const EditorGameObject& ownerGameObject,
 		EditorComponent& component) {
 		DrawTextRow("説明", "ObjectPoolから弾を取得し、毎フレーム連続Castで高速弾のすり抜けを防ぎます。");
-		const char* aimModes[] = {"画面照準", "Transform前方", "Target", "弾道予測"};
-		component.projectileAimMode = (std::clamp)(component.projectileAimMode, 0, 3);
-		DrawComboRow("照準Source", component.projectileAimMode, aimModes, 4);
+		const char* aimModes[] = {"画面照準", "Transform前方", "Target", "弾道予測", "可変速度"};
+		component.projectileAimMode = (std::clamp)(component.projectileAimMode, 0, 4);
+		DrawComboRow("照準Source", component.projectileAimMode, aimModes, 5);
 		DrawGameObjectReferenceRow(context, ownerGameObject, "照準/Selector", component.projectileAimGameObjectId, "画面中央/このObject", true);
-		DrawGameObjectReferenceRow(context, ownerGameObject, "弾道予測", component.projectileBallisticPredictionGameObjectId, "このObject", true);
+		DrawGameObjectReferenceRow(context, ownerGameObject, "弾道予測/可変速度Target", component.projectileBallisticPredictionGameObjectId, "このObject", true);
 		DrawGameObjectReferenceRow(context, ownerGameObject, "入力Object", component.projectileInputGameObjectId, "このObject", true);
 		DrawGameObjectReferenceRow(context, ownerGameObject, "弾ObjectPool", component.projectilePoolGameObjectId, "未設定", false);
 		DrawGameObjectReferenceRow(context, ownerGameObject, "発射位置", component.projectileSpawnPointGameObjectId, "このObject", true);
@@ -3849,6 +3850,7 @@ namespace {
 		DrawFloatRow("ダメージ", component.projectileDamage, 1.0f, 0.0f, 1000000.0f);
 		DrawStringInputRow("Damage Tag", component.projectileDamageTag);
 		DrawFloatRow("判定半径", component.projectileRadius, 0.01f, 0.0f, 10000.0f);
+		DrawFloatRow("発射位置の安全距離", component.projectileSpawnClearance, 0.05f, 0.0f, 10000.0f);
 		DrawFloatRow("寿命", component.projectileLifetime, 0.05f, 0.01f, 3600.0f);
 		DrawFloatRow("発射間隔", component.projectileInterval, 0.01f, 0.0f, 3600.0f);
 		DrawCheckboxRow("押下中に連射", component.projectileAutomatic);
@@ -3858,6 +3860,23 @@ namespace {
 		DrawCheckboxRow("親Rigidbodyを検索", component.projectileUseParentRigidBody);
 		DrawFloatRow("並進速度継承", component.projectileLinearVelocityInheritance, 0.01f, -10.0f, 10.0f);
 		DrawFloatRow("角速度継承", component.projectileAngularVelocityInheritance, 0.01f, -10.0f, 10.0f);
+		const char* variableSpeedTimeModes[] = {"距離に応じる", "固定時間"};
+		component.projectileVariableSpeedTimeMode = (std::clamp)(component.projectileVariableSpeedTimeMode, 0, 1);
+		DrawComboRow("可変速度: 時間の決め方", component.projectileVariableSpeedTimeMode, variableSpeedTimeModes, 2);
+		DrawFloatRow("可変速度: 最短飛行時間(距離依存時)", component.projectileVariableSpeedMinimumFlightTime, 0.01f, 0.01f, 3600.0f);
+		DrawFloatRow("可変速度: 最長飛行時間(距離依存時)", component.projectileVariableSpeedMaximumFlightTime, 0.01f, 0.01f, 3600.0f);
+		DrawFloatRow("可変速度: 距離÷この値=飛行時間(距離依存時)", component.projectileVariableSpeedDistanceFactor, 1.0f, 1.0f, 100000.0f);
+		DrawFloatRow("可変速度: 固定飛行時間", component.projectileVariableSpeedFixedFlightTime, 0.01f, 0.01f, 3600.0f);
+		const char* variableSpeedTrajectoryModes[] = {"物理(初速+重力)", "俯角固定の直線", "位置補間(物理無視)"};
+		component.projectileVariableSpeedTrajectoryMode = (std::clamp)(component.projectileVariableSpeedTrajectoryMode, 0, 2);
+		DrawComboRow("可変速度: 弾道方式", component.projectileVariableSpeedTrajectoryMode, variableSpeedTrajectoryModes, 3);
+		DrawFloatRow("可変速度: 俯角(度)", component.projectileVariableSpeedDepressionAngleDegrees, 0.1f, -89.0f, 89.0f);
+		DrawFloatRow("可変速度: 弧の高さ", component.projectileVariableSpeedArcHeight, 0.1f, -10000.0f, 10000.0f);
+		DrawCheckboxRow("曳光弾ストレッチ表示", component.projectileTracerStretchEnabled);
+		DrawFloatRow("曳光弾: 長さ倍率", component.projectileTracerLengthScale, 0.01f, 0.0f, 100.0f);
+		DrawFloatRow("曳光弾: 最小長さ", component.projectileTracerMinimumLength, 0.1f, 0.0f, 10000.0f);
+		DrawFloatRow("曳光弾: 太さ", component.projectileTracerThickness, 0.01f, 0.001f, 100.0f);
+		DrawCheckboxRow("Hitscanで即ダメージ解決(この弾は演出専用)", component.projectileHitscanResolution);
 		DrawGameObjectReferenceRow(context, ownerGameObject, "Action対象", component.projectileActionTargetGameObjectId, "このObject", true);
 		DrawScriptActionRow(context, ownerGameObject, component.projectileActionTargetGameObjectId, "発射Action通知", component.projectileFiredActionName);
 		DrawScriptActionRow(context, ownerGameObject, component.projectileActionTargetGameObjectId, "命中Action通知", component.projectileHitActionName);
@@ -4412,6 +4431,15 @@ namespace {
 		DrawGameObjectReferenceRow(context, owner, "AreaDamage", component.projectileDetonatorAreaDamageGameObjectId, "このObject", true);
 		DrawGameObjectReferenceRow(context, owner, "Action対象", component.projectileDetonatorActionTargetGameObjectId, "このObject", true);
 		DrawScriptActionRow(context, owner, component.projectileDetonatorActionTargetGameObjectId, "起爆Action", component.projectileDetonatedActionName);
+	}
+
+	void DrawProjectileDebugLoggerComponent(EditorComponent& component) {
+		DrawTextRow("説明",
+			"同じGameObjectのProjectileEmitterが発射する弾の詳細なLog(発射時の弾道計算内訳、"
+			"毎Frameの移動・命中判定)を Logs/ProjectileDebugLog.md へ書き出します。"
+			"Playを開始するたびに前回分のLogは消去されます。Componentの付け外し・上部の有効/無効で"
+			"On/Offできます。");
+		DrawTextRow("状態", component.isActive ? "有効" : "無効");
 	}
 
 	void DrawThreatTrackerComponent(
@@ -6873,6 +6901,9 @@ namespace {
 			break;
 		case EditorComponentType::ProjectileDetonator:
 			DrawProjectileDetonatorComponent(context, gameObject, component);
+			break;
+		case EditorComponentType::ProjectileDebugLogger:
+			DrawProjectileDebugLoggerComponent(component);
 			break;
 		case EditorComponentType::ThreatTracker:
 			DrawThreatTrackerComponent(context, gameObject, component);

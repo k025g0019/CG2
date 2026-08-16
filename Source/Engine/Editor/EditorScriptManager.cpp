@@ -1656,6 +1656,56 @@ bool EditorScriptManager::ScriptPhysicsRaycastBridge(
 	return true;
 }
 
+bool EditorScriptManager::ScriptPhysicsRaycastIgnoringHierarchyBridge(
+	const EditorScriptRay* ray,
+	float distance,
+	int32_t ignoreHierarchyRootGameObjectId,
+	EditorScriptPhysicsHit* hit) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->physicsManager_ == nullptr ||
+		gActiveScriptManager->editorScene_ == nullptr || ray == nullptr || hit == nullptr) {
+		return false;
+	}
+
+	EditorScene& editorScene = *gActiveScriptManager->editorScene_;
+	std::vector<int32_t> ignoredGameObjectIds;
+
+	if (ignoreHierarchyRootGameObjectId >= 0) {
+		// Root自身または祖先にRootを持つ全Objectを除外リストへ集める(発射時のBuildAttackIgnoredGameObjectsと同じ考え方)。
+		for (const EditorGameObject& candidate : editorScene.GetGameObjects()) {
+			int32_t currentGameObjectId = candidate.id;
+
+			while (currentGameObjectId >= 0) {
+				if (currentGameObjectId == ignoreHierarchyRootGameObjectId) {
+					ignoredGameObjectIds.push_back(candidate.id);
+					break;
+				}
+
+				const EditorGameObject* currentGameObject = editorScene.FindGameObject(currentGameObjectId);
+				currentGameObjectId = currentGameObject != nullptr ? currentGameObject->parentId : -1;
+			}
+		}
+	}
+
+	EditorJoltPhysicsManager::PhysicsHit physicsHit{};
+	const bool hasHit = gActiveScriptManager->physicsManager_->RaycastIgnoringGameObjects(
+		ToEditorVector3(ray->origin),
+		ToEditorVector3(ray->direction),
+		distance,
+		ignoredGameObjectIds,
+		physicsHit);
+
+	if (!hasHit) {
+		return false;
+	}
+
+	hit->gameObjectId = physicsHit.gameObjectId;
+	hit->point = ToScriptVector3(physicsHit.point);
+	hit->normal = ToScriptVector3(physicsHit.normal);
+	hit->distance = physicsHit.distance;
+	hit->isTrigger = physicsHit.isTrigger;
+	return true;
+}
+
 bool EditorScriptManager::ScriptPhysicsSphereCastBridge(
 	const EditorScriptRay* ray,
 	float radius,
@@ -2167,9 +2217,13 @@ bool EditorScriptManager::ScriptOceanRaycastBridge(
 	}
 
 	EditorOceanSegmentHit oceanHit{};
-	const uint64_t sampleKey = queryGameObjectId >= 0
-		? static_cast<uint64_t>(static_cast<uint32_t>(queryGameObjectId))
-		: 0xffffffffull;
+	// queryGameObjectId(自機など毎フレーム不変のID)だけをKeyにすると、GPU FFT読み戻し
+	// キャッシュが「前回そのIDで問い合わせた別のレイ位置」の古い結果を即返してしまう
+	// (Weapon側のOcean Segment Castと同種の不具合)。呼び出しごとに一意な値を混ぜて、
+	// 常にその場で正確なCPU波高計算を使わせる。
+	const uint64_t sampleKey =
+		(static_cast<uint64_t>(static_cast<uint32_t>(queryGameObjectId)) << 32u) |
+		static_cast<uint64_t>(gActiveScriptManager->nextOceanQueryCallId_++);
 
 	if (!RaycastEditorOceanSurface(
 			*gActiveScriptManager->editorScene_,
@@ -3531,6 +3585,7 @@ void EditorScriptManager::BuildRuntimeApi() {
 	runtimeApi_.GetSimulationLodLevel = ScriptGetSimulationLodLevelBridge;
 	runtimeApi_.StartWaveSpawner = ScriptStartWaveSpawnerBridge;
 	runtimeApi_.IsWaveSpawnerComplete = ScriptIsWaveSpawnerCompleteBridge;
+	runtimeApi_.PhysicsRaycastIgnoringHierarchy = ScriptPhysicsRaycastIgnoringHierarchyBridge;
 }
 
 void EditorScriptManager::StartBindingsForModule(ScriptModule& scriptModule) {

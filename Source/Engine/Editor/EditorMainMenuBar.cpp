@@ -1444,7 +1444,10 @@ void EditorMainMenuBar::Draw(
 		ImGui::Separator();
 
 		if (ImGui::MenuItem("保存", "Ctrl+S")) {
-			if (g_currentScenePath.empty()) {
+			if (runtimeManager_->IsPlaying()) {
+				consoleMessages.push_back("File: Play中はシーンを保存できません（Stopしてから保存してください）");
+			}
+			else if (g_currentScenePath.empty()) {
 				const std::string defaultScenePath = BuildDefaultScenePath();
 				strncpy_s(sceneSavePathBuffer, sizeof(sceneSavePathBuffer), defaultScenePath.c_str(), _TRUNCATE);
 				shouldOpenSceneSaveAsPopup = true;
@@ -1845,7 +1848,10 @@ void EditorMainMenuBar::Draw(
 		ImGui::TextDisabled("例: Assets/Scenes/Sample.scene");
 
 		if (ImGui::Button("保存する", ImVec2(160.0f, 0.0f))) {
-			if (SaveSceneToPath(editorScene_, sceneSavePathBuffer, consoleMessages)) {
+			if (runtimeManager_->IsPlaying()) {
+				consoleMessages.push_back("File: Play中はシーンを保存できません（Stopしてから保存してください）");
+			}
+			else if (SaveSceneToPath(editorScene_, sceneSavePathBuffer, consoleMessages)) {
 				autoSaveElapsedSeconds_ = 0.0f;
 				observedScenePath_ = g_currentScenePath;
 				lastAutoSaveStatus_ = "手動保存済み";
@@ -1969,8 +1975,11 @@ void EditorMainMenuBar::Draw(
 			"C++ 遷移: Input::GetKeyDown(KeyCode::Space) / SceneManager::LoadScene(\"Assets/Scenes/Stage.scene\")");
 
 		if (ImGui::Button("ゲームを書き出す", ImVec2(180.0f, 0.0f))) {
-			if (!g_currentScenePath.empty()) {
+			if (!g_currentScenePath.empty() && !runtimeManager_->IsPlaying()) {
 				SaveSceneToPath(editorScene_, g_currentScenePath, consoleMessages);
+			}
+			else if (runtimeManager_->IsPlaying()) {
+				consoleMessages.push_back("File: Play中はシーンを保存できません（Stopしてから書き出してください）");
 			}
 
 			gameBuildSettings.productName = productNameBuffer;

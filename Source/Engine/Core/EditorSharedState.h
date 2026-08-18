@@ -966,6 +966,7 @@ namespace EditorSharedState {
 	inline bool g_isGameplayTimelineWindowVisible = false;  // trueなら汎用Event Timelineを表示する。
 	inline bool g_isStateGraphWindowVisible = false;  // trueなら汎用Threshold State Graphを表示する。
 	inline bool g_isDiagnosticsWindowVisible = false;  // trueならProfilerとScene Validatorを表示する。
+	inline bool g_isLogMonitorWindowVisible = false;  // trueなら汎用ログ・監視Windowを表示する。
 	inline bool g_isGameViewUsingSceneCamera = true; // true �Ȃ� Camera Component ���Ȃ����� Scene �J�������p���Ă���B
 
 	// g_viewport / g_scissorRect �� DirectX �� SceneView �������֕`�����߂̋�`�B

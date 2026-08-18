@@ -381,7 +381,6 @@ namespace {
 		{"ゲームプレイ", "ダメージ受信", EditorComponentType::DamageReceiver},
 		{"ゲームプレイ", "レイ射撃", EditorComponentType::HitscanWeapon},
 		{"ゲームプレイ", "弾発射", EditorComponentType::ProjectileEmitter},
-		{"ゲームプレイ", "弾道デバッグログ", EditorComponentType::ProjectileDebugLogger},
 		{"ゲームプレイ", "武器ロードアウト", EditorComponentType::WeaponLoadout},
 		{"ゲームプレイ", "武器スロット", EditorComponentType::WeaponLoadoutSlot},
 		{"ゲームプレイ", "ターゲット選択", EditorComponentType::TargetSelector},
@@ -4143,6 +4142,60 @@ namespace {
 		const char* steeringModes[] = {"Transform", "Rigidbody Force"};
 		component.targetSteeringMode = (std::clamp)(component.targetSteeringMode, 0, 1);
 		DrawComboRow("移動方式", component.targetSteeringMode, steeringModes, 2);
+
+		DrawTextRow("移動Mode", "Targetからの相対位置で動く基本移動。敵パターンごとにComponentを増やさずここで切り替えます。");
+		const char* moveModes[] = {
+			"Direct (直進追尾)",
+			"ArcApproach (旋回接近)",
+			"Parallel (並走)",
+			"Chase (後方追跡)",
+			"KeepDistance (距離維持)",
+			"PlayerRelativeMove (相対移動)",
+			"Retreat (離脱)"};
+		component.targetSteeringMoveMode = (std::clamp)(component.targetSteeringMoveMode, 0, 6);
+		DrawComboRow("移動Mode", component.targetSteeringMoveMode, moveModes, 7);
+
+		if (component.targetSteeringMoveMode == 2 || component.targetSteeringMoveMode == 6) {
+			DrawFloatRow("横Offset (右+/左-)", component.targetSteeringSideOffset, 0.1f, -100000.0f, 100000.0f);
+			DrawFloatRow("前後Offset", component.targetSteeringForwardOffset, 0.1f, -100000.0f, 100000.0f);
+			DrawFloatRow("高さOffset", component.targetSteeringVerticalOffset, 0.1f, -100000.0f, 100000.0f);
+		}
+
+		if (component.targetSteeringMoveMode == 3 || component.targetSteeringMoveMode == 4) {
+			DrawFloatRow("目標距離", component.targetSteeringTargetDistance, 0.1f, 0.0f, 100000.0f);
+		}
+
+		if (component.targetSteeringMoveMode == 4) {
+			DrawFloatRow("距離Margin", component.targetSteeringDistanceMargin, 0.1f, 0.0f, 100000.0f);
+			DrawFloatRow("横Offset (右+/左-)", component.targetSteeringSideOffset, 0.1f, -100000.0f, 100000.0f);
+		}
+
+		if (component.targetSteeringMoveMode == 5) {
+			DrawTextRow("相対Offset", "x=右、y=上、z=前。Target基準の開始位置から終了位置へ移動します。横切り・正面通過・離脱に使います。");
+			DrawVector3Row("開始Offset", component.targetSteeringStartOffset, 0.1f, -100000.0f, 100000.0f);
+			DrawVector3Row("終了Offset", component.targetSteeringEndOffset, 0.1f, -100000.0f, 100000.0f);
+		}
+
+		if (component.targetSteeringMoveMode >= 2) {
+			DrawFloatRow("相対位置追従速度 (0=最大速度)", component.targetSteeringPositionLerpSpeed, 0.1f, 0.0f, 100000.0f);
+		}
+
+		DrawFloatRow("継続秒 (0=無期限)", component.targetSteeringDuration, 0.01f, 0.0f, 3600.0f);
+		const char* nextMoveModes[] = {
+			"維持",
+			"Direct (直進追尾)",
+			"ArcApproach (旋回接近)",
+			"Parallel (並走)",
+			"Chase (後方追跡)",
+			"KeepDistance (距離維持)",
+			"PlayerRelativeMove (相対移動)",
+			"Retreat (離脱)"};
+		int32_t nextMoveModeIndex = (std::clamp)(component.targetSteeringNextMoveMode + 1, 0, 7);
+		if (DrawComboRow("完了後のMode", nextMoveModeIndex, nextMoveModes, 8)) {
+			component.targetSteeringNextMoveMode = nextMoveModeIndex - 1;
+		}
+		DrawGameObjectReferenceRow(context, ownerGameObject, "完了Action対象", component.targetSteeringActionTargetGameObjectId, "このObject", true);
+		DrawScriptActionRow(context, ownerGameObject, component.targetSteeringActionTargetGameObjectId, "完了Action", component.targetSteeringCompletedActionName);
 	}
 
 	void DrawTargetPointComponent(EditorComponent& component) {
@@ -4431,15 +4484,6 @@ namespace {
 		DrawGameObjectReferenceRow(context, owner, "AreaDamage", component.projectileDetonatorAreaDamageGameObjectId, "このObject", true);
 		DrawGameObjectReferenceRow(context, owner, "Action対象", component.projectileDetonatorActionTargetGameObjectId, "このObject", true);
 		DrawScriptActionRow(context, owner, component.projectileDetonatorActionTargetGameObjectId, "起爆Action", component.projectileDetonatedActionName);
-	}
-
-	void DrawProjectileDebugLoggerComponent(EditorComponent& component) {
-		DrawTextRow("説明",
-			"同じGameObjectのProjectileEmitterが発射する弾の詳細なLog(発射時の弾道計算内訳、"
-			"毎Frameの移動・命中判定)を Logs/ProjectileDebugLog.md へ書き出します。"
-			"Playを開始するたびに前回分のLogは消去されます。Componentの付け外し・上部の有効/無効で"
-			"On/Offできます。");
-		DrawTextRow("状態", component.isActive ? "有効" : "無効");
 	}
 
 	void DrawThreatTrackerComponent(
@@ -5236,8 +5280,24 @@ namespace {
 				component.waveSpawnPointGameObjectId,
 				"このObject",
 				true);
-			DrawIntRow("生成数", component.waveSpawnCount);
+			DrawIntRow("生成数(総数)", component.waveSpawnCount);
 			component.waveSpawnCount = (std::clamp)(component.waveSpawnCount, 1, 1024);
+			DrawIntRow("同時存在目標数(0=一括生成)", component.waveTargetAliveCount);
+			component.waveTargetAliveCount = (std::clamp)(component.waveTargetAliveCount, 0, 1024);
+
+			if (component.waveTargetAliveCount > 0) {
+				DrawTextRow("ラッシュ",
+					"この数を画面内に保つよう、撃破されるたびに総数へ達するまで補充します。"
+					"SpawnPointSetを設定すると補充のたびに別方向から出現します。");
+				DrawGameObjectReferenceRow(
+					context,
+					ownerGameObject,
+					"補充SpawnPointSet",
+					component.waveSpawnPointSetGameObjectId,
+					"編隊配置のまま",
+					true);
+			}
+
 			DrawIntRow("1Frame最大生成数", component.waveSpawnMaximumPerFrame);
 			component.waveSpawnMaximumPerFrame = (std::clamp)(component.waveSpawnMaximumPerFrame, 1, 1024);
 			const char* formationPatterns[] = {"同一点", "横列", "V字", "円", "グリッド"};
@@ -6901,9 +6961,6 @@ namespace {
 			break;
 		case EditorComponentType::ProjectileDetonator:
 			DrawProjectileDetonatorComponent(context, gameObject, component);
-			break;
-		case EditorComponentType::ProjectileDebugLogger:
-			DrawProjectileDebugLoggerComponent(component);
 			break;
 		case EditorComponentType::ThreatTracker:
 			DrawThreatTrackerComponent(context, gameObject, component);

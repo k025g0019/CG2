@@ -160,11 +160,34 @@ void EditorWaveSpawnerManager::Update(float deltaTime) {
 			1,
 			1024);
 
+		// 同時存在目標数が設定されている場合、生きている個体がその数に満たない分だけ補充する。
+		// 0 なら従来どおり総数を一気に出し切る。
+		const int32_t targetAliveCount = (std::max)(waveComponent->waveTargetAliveCount, 0);
+		int32_t spawnAllowance = waveRuntime.targetSpawnCount;
+
+		if (targetAliveCount > 0) {
+			int32_t aliveCount = 0;
+
+			for (const SpawnRecord& spawnRecord : waveRuntime.spawnRecords) {
+				if (!IsSpawnRecordDefeated(spawnRecord)) {
+					aliveCount++;
+				}
+			}
+
+			spawnAllowance = (std::max)(targetAliveCount - aliveCount, 0);
+		}
+
+		if (spawnAllowance <= 0) {
+			CompleteWaveIfNeeded(*waveGameObject, *waveComponent, waveRuntime);
+			continue;
+		}
+
 		if (spawnInterval <= 0.0f) {
 			int32_t spawnedCountThisFrame = 0;
 
 			while (waveRuntime.nextSpawnIndex < waveRuntime.targetSpawnCount &&
-				spawnedCountThisFrame < maximumSpawnsPerFrame) {
+				spawnedCountThisFrame < maximumSpawnsPerFrame &&
+				spawnedCountThisFrame < spawnAllowance) {
 				const int32_t spawnedGameObjectId = SpawnNext(*waveGameObject, *waveComponent, waveRuntime);
 
 				if (spawnedGameObjectId < 0) {
@@ -202,6 +225,7 @@ void EditorWaveSpawnerManager::Update(float deltaTime) {
 
 		while (waveRuntime.spawnTimer <= 0.0f &&
 			spawnedCountThisFrame < maximumSpawnsPerFrame &&
+			spawnedCountThisFrame < spawnAllowance &&
 			waveRuntime.nextSpawnIndex < waveRuntime.targetSpawnCount) {
 			const int32_t spawnedGameObjectId = SpawnNext(*waveGameObject, *waveComponent, waveRuntime);
 
@@ -383,8 +407,21 @@ int32_t EditorWaveSpawnerManager::SpawnNext(
 			spawnRotation,
 			spawnPosition);
 		(void)spawnScale;
-		const EditorComponent* spawnPointSet = EditorComponentUtility::FindComponent(ownerGameObject, EditorComponentType::SpawnPointSet);
-		if (spawnPointSet != nullptr && spawnPointSet->isActive) ResolveSpawnPoint(ownerGameObject.id, spawnPosition, spawnRotation);
+		// Spawn方向の分散は既存のSpawnPointSetを再利用する。所有者自身に付いていればそれを使い、
+		// waveSpawnPointSetGameObjectId が指定されていれば別Objectの一覧を使う。
+		// これにより「倒すたびに右→左→正面→後方と別方向から補充する」をScene設定だけで作れる。
+		const int32_t spawnPointSetGameObjectId = component.waveSpawnPointSetGameObjectId >= 0
+			? component.waveSpawnPointSetGameObjectId
+			: ownerGameObject.id;
+		const EditorGameObject* spawnPointSetGameObject =
+			editorScene_->FindGameObject(spawnPointSetGameObjectId);
+		const EditorComponent* spawnPointSet = spawnPointSetGameObject != nullptr
+			? EditorComponentUtility::FindComponent(*spawnPointSetGameObject, EditorComponentType::SpawnPointSet)
+			: nullptr;
+
+		if (spawnPointSet != nullptr && spawnPointSet->isActive) {
+			ResolveSpawnPoint(spawnPointSetGameObjectId, spawnPosition, spawnRotation);
+		}
 		const Vector3 worldOffset = TransformOffset(formationOffset, spawnRotation);
 		spawnPosition = {
 			spawnPosition.x + worldOffset.x,

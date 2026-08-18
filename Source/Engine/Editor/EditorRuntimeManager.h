@@ -12,6 +12,7 @@
 #include "Source/Engine/Effect/EditorEffekseerManager.h"
 #include "EditorInputManager.h"
 #include "EditorLocalMoveManager.h"
+#include "EditorLogMonitorManager.h"
 #include "EditorNavigationManager.h"
 #include "EditorObjectPoolManager.h"
 #include "EditorPhysicsManager.h"
@@ -71,6 +72,8 @@ public:
 	const EditorPhysicsManager& GetPhysicsManager() const;  // 読み取り専用の物理デバッグ情報を返す。
 	EditorProfilerManager& GetProfilerManager();  // Diagnostics WindowへRuntime各系統のCPU時間を公開する。
 	const EditorProfilerManager& GetProfilerManager() const;  // 読み取り専用Profiler。
+	EditorLogMonitorManager& GetLogMonitorManager();  // Log Monitor PanelがWatch Entryを編集するために返す。
+	const EditorLogMonitorManager& GetLogMonitorManager() const;  // 読み取り専用版。
 	EditorReplayManager& GetReplayManager();  // Diagnostics Windowから入力記録・再生を操作する。
 	const EditorReplayManager& GetReplayManager() const;  // 読み取り専用Replay状態。
 	bool PlayEffect(int32_t gameObjectId);  // .effect と .efk を拡張子に応じて再生する。
@@ -115,6 +118,7 @@ private:
 	EditorNavigationManager navigationManager_;  // NavigationAgent / NavMesh 系 Component の実行担当
 	EditorPhysicsManager physicsManager_;  // RigidBody / Collider の実行担当
 	EditorProfilerManager profilerManager_;  // Runtime各系統のCPU時間、平均、Peakを保持する担当
+	EditorLogMonitorManager logMonitorManager_;  // GameObject/Component/System横断の汎用ログ・監視担当
 	EditorReplayManager replayManager_;  // Keyboard入力とdeltaTimeを記録し、同じScene開始状態から再生する担当
 	EditorSaveManager saveManager_;  // Saveable登録、Slot、Checkpointの保存・復元担当
 	EditorSceneOptimizationManager sceneOptimizationManager_;  // 距離実体化とSimulation LODの統合担当

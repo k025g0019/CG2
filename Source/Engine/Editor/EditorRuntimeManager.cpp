@@ -49,6 +49,7 @@ void EditorRuntimeManager::Initialize(EditorScene* editorScene, std::vector<std:
 		&inputManager_,
 		&audioManager_,
 		&effectManager_);
+	logMonitorManager_.Initialize(editorScene_, &profilerManager_, &weaponManager_, &runtimePropertyManager_);
 	objectPoolManager_.SetRuntimeResetCallback([this](int32_t gameObjectId) {
 		if (editorScene_ == nullptr) {
 			return;
@@ -269,6 +270,9 @@ void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 		uiBindingManager_.Update();
 		cameraEffectManager_.Update(deltaTime);
 	});
+	profileUpdate("Log Monitor", [this, deltaTime]() {
+		logMonitorManager_.Update(deltaTime);
+	});
 	PublishSceneRuntimeState();
 }
 #pragma warning(pop)
@@ -357,6 +361,14 @@ const EditorProfilerManager& EditorRuntimeManager::GetProfilerManager() const {
 	return profilerManager_;
 }
 
+EditorLogMonitorManager& EditorRuntimeManager::GetLogMonitorManager() {
+	return logMonitorManager_;
+}
+
+const EditorLogMonitorManager& EditorRuntimeManager::GetLogMonitorManager() const {
+	return logMonitorManager_;
+}
+
 EditorReplayManager& EditorRuntimeManager::GetReplayManager() {
 	return replayManager_;
 }
@@ -422,10 +434,12 @@ void EditorRuntimeManager::StartRuntimeSystems(bool shouldReinitializeScript) {
 	runtimePropertyManager_.Start();
 	gameplayEventManager_.Start();
 	saveManager_.Start();
+	logMonitorManager_.Start();
 	PublishSceneRuntimeState();
 }
 
 void EditorRuntimeManager::StopRuntimeSystems() {
+	logMonitorManager_.Stop();
 	sceneOptimizationManager_.Stop();
 	saveManager_.Stop();
 	actionSequenceManager_.Stop();

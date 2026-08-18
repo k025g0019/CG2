@@ -76,6 +76,7 @@ void GameScene::Initialize(_In_ HINSTANCE instanceHandle) {
 	animationWindowManager_.Initialize();  // Property Animation Clip を Timeline で編集する独立 Window 担当。
 	gameplayToolsWindowManager_.Initialize();  // 汎用Spline、Event Timeline、State Graphを初期化する。
 	diagnosticsWindowManager_.Initialize();  // Runtime負荷とScene設定不足を検査できる状態にする。
+	logMonitorWindowManager_.Initialize();  // 汎用ログ・監視の選択UIを使うための担当。
 	renderManager_.Initialize();  // DirectX12 の描画コマンドを積む Renderer 担当。
 }
 
@@ -115,6 +116,7 @@ void GameScene::Update() {
 	animationWindowManager_.Update();  // Timeline Preview の時間進行と Record 中の Key 化を更新する。
 	gameplayToolsWindowManager_.Update();  // Gameplay編集WindowはDraw時編集のため状態維持だけを行う。
 	diagnosticsWindowManager_.Update();  // 表示中だけ一定間隔でScene構成を静的検査する。
+	logMonitorWindowManager_.Update();  // 選択UIはDraw中に編集するためUpdateは空実装。
 	renderManager_.Update();  // Renderer は Draw で GPU コマンドを発行するため Update は空実装。
 }
 
@@ -148,6 +150,7 @@ void GameScene::Draw() {
 	animationWindowManager_.Draw();  // Animation Clip の Timeline、Track、Keyframe、Event を描画する。
 	gameplayToolsWindowManager_.Draw();  // 汎用Spline、Event Timeline、State Graphを描画する。
 	diagnosticsWindowManager_.Draw();  // ProfilerとScene Validatorを独立Windowへ描画する。
+	logMonitorWindowManager_.Draw();  // 汎用ログ・監視の選択UIを独立Windowへ描画する。
 	imguiFrameManager_.Draw();  // ImGui の DrawData を確定し、Renderer が GPU に送れる状態にする。
 	renderManager_.Draw();  // 3D/2D オブジェクト、ImGui、Present、Fence 待ちまでを実行する。
 }

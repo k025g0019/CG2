@@ -218,6 +218,10 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
 	<ClCompile Include="Source\Engine\Animation\PropertyAnimationClip.cpp" />
 	<ClCompile Include="Source\Engine\Editor\EditorAnimationWindowManager.cpp" />
 	<ClCompile Include="Source\Engine\Editor\EditorDiagnosticsWindowManager.cpp" />
+	<ClCompile Include="Source\Engine\Editor\EditorLogFieldRegistry.generated.cpp" />
+	<ClCompile Include="Source\Engine\Editor\EditorLogMonitorManager.cpp" />
+	<ClCompile Include="Source\Engine\Editor\EditorLogMonitorWindowManager.cpp" />
+	<ClCompile Include="Source\Engine\Editor\EditorLogSystemProviders.cpp" />
 	<ClCompile Include="Source\Engine\Editor\EditorProfilerManager.cpp" />
 	<ClCompile Include="Source\Engine\Editor\EditorReplayManager.cpp" />
 	<ClCompile Include="Source\Engine\Effect\EffectAsset.cpp" />
@@ -577,6 +581,11 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
 	<ClInclude Include="Source\Engine\Animation\PropertyAnimationClip.h" />
 	<ClInclude Include="Source\Engine\Editor\EditorAnimationWindowManager.h" />
 	<ClInclude Include="Source\Engine\Editor\EditorDiagnosticsWindowManager.h" />
+	<ClInclude Include="Source\Engine\Editor\EditorLogFieldKind.h" />
+	<ClInclude Include="Source\Engine\Editor\EditorLogFieldRegistry.generated.h" />
+	<ClInclude Include="Source\Engine\Editor\EditorLogMonitorManager.h" />
+	<ClInclude Include="Source\Engine\Editor\EditorLogMonitorWindowManager.h" />
+	<ClInclude Include="Source\Engine\Editor\EditorLogSystemProviders.h" />
 	<ClInclude Include="Source\Engine\Editor\EditorProfilerManager.h" />
 	<ClInclude Include="Source\Engine\Editor\EditorReplayManager.h" />
 	<ClInclude Include="Source\Engine\Effect\EffectAsset.h" />

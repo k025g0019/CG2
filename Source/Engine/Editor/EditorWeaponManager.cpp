@@ -15,17 +15,11 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
-#include <filesystem>
-#include <fstream>
-#include <iomanip>
-#include <sstream>
 
 namespace {
 	constexpr float kWeaponEpsilon = 0.0001f;
 	constexpr float kProjectileAimDistance = 1000.0f;
 	constexpr float kDegreesToRadians = 0.01745329251994329577f;
-	constexpr char kProjectileDebugLogPath[] = "Logs/ProjectileDebugLog.md";
 
 	Vector3 AddVector3(const Vector3& firstValue, const Vector3& secondValue) {
 		return {
@@ -128,7 +122,6 @@ void EditorWeaponManager::Start() {
 	pendingWeaponGroupShots_.clear();
 	visualRecoilRuntimes_.clear();
 	accuracyRandomState_ = 0x434732u;
-	ResetProjectileDebugLog();
 
 	if (editorScene_ != nullptr) {
 		for (EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
@@ -807,9 +800,6 @@ int32_t EditorWeaponManager::ExecuteProjectileShot(
 		return -1;
 	}
 
-	const bool isFireTraceWeapon = IsProjectileDebugLoggingEnabled(emitterGameObjectId);
-	const std::string fireTraceEmitterName = isFireTraceWeapon && emitter != nullptr ? emitter->name : std::string();
-
 	if (projectile->projectileHitscanResolution) {
 		// ダメージ判定はHitscanWeapon側で即座に解決する。この関数が生成する弾は
 		// 見た目専用(ActiveProjectile.damage=0)になる。Spawnを伴わないためポインタは無効化しない。
@@ -846,11 +836,6 @@ int32_t EditorWeaponManager::ExecuteProjectileShot(
 	Vector3 projectileGravity{};
 	float projectileDrag = 0.0f;
 	float muzzleSpeed = (std::max)(projectile->projectileSpeed, 0.0f);
-	Vector3 fireTraceEndPosition = spawnPosition;  // 狙点(World)。Log用
-	Vector3 fireTraceToTarget{};  // 狙点 - 発射点。Log用
-	float fireTraceStraightDistance = 0.0f;  // toTargetの長さ。Log用
-	float fireTraceFlightTime = 0.0f;  // 弾道計算に使った目標飛行時間。Log用
-	int32_t fireTraceTrajectoryMode = -1;  // aimMode==4時のTrajectoryMode。Log用
 	const EditorComponent* ballisticPrediction = nullptr;
 	bool useKinematicPath = false;
 	Vector3 kinematicTargetPosition{};
@@ -899,13 +884,9 @@ int32_t EditorWeaponManager::ExecuteProjectileShot(
 		editorScene_->GetWorldTransform(aimTargetPoint->id, targetPointScale, targetPointRotation, targetPosition);
 		(void)targetPointScale;
 		(void)targetPointRotation;
-		fireTraceEndPosition = targetPosition;
-		fireTraceTrajectoryMode = projectile->projectileVariableSpeedTrajectoryMode;
 
 		const Vector3 toTarget = SubtractVector3(targetPosition, spawnPosition);
 		const float straightDistance = GetVectorLength(toTarget);
-		fireTraceToTarget = toTarget;
-		fireTraceStraightDistance = straightDistance;
 
 		float flightTime = 0.0f;
 		if (projectile->projectileVariableSpeedTimeMode == 1) {
@@ -921,7 +902,6 @@ int32_t EditorWeaponManager::ExecuteProjectileShot(
 			const float maximumFlightTime = (std::max)(projectile->projectileVariableSpeedMaximumFlightTime, minimumFlightTime);
 			flightTime = (std::clamp)(straightDistance / distanceFactor, minimumFlightTime, maximumFlightTime);
 		}
-		fireTraceFlightTime = flightTime;
 
 		if (projectile->projectileVariableSpeedTrajectoryMode == 2) {
 			// 位置補間: 物理を一切使わず、毎フレームStart-Target間を直接位置指定で動かす
@@ -1000,7 +980,6 @@ int32_t EditorWeaponManager::ExecuteProjectileShot(
 		direction = NormalizeVector3(SubtractVector3(ResolveWorldPosition(*editorScene_, *target), spawnPosition));
 	}
 
-	const Vector3 fireTraceDirectionBeforeAccuracy = direction;  // Accuracy(拡散)適用前の弾道解。Log用
 	direction = ApplyAccuracy(emitterGameObjectId, direction, patternYawDegrees);
 	const Vector3 safePosition = AddVector3(
 		spawnPosition,
@@ -1012,43 +991,6 @@ int32_t EditorWeaponManager::ExecuteProjectileShot(
 
 	if (projectileGameObjectId < 0) {
 		return -1;
-	}
-
-	if (isFireTraceWeapon) {
-		++projectileDebugLogShotSequence_;
-		std::ostringstream block;
-		block << std::fixed << std::setprecision(3);
-		block << "## Shot #" << projectileDebugLogShotSequence_ << " — "
-			<< (fireTraceEmitterName.empty() ? "(unnamed)" : fireTraceEmitterName)
-			<< " (GameObject " << emitterGameObjectId << ")\n\n";
-		block << "- aimMode: " << aimMode;
-		if (aimMode == 4) {
-			block << " (可変速度), trajectoryMode: " << fireTraceTrajectoryMode
-				<< (fireTraceTrajectoryMode == 2 ? " (位置補間)"
-					: fireTraceTrajectoryMode == 1 ? " (俯角固定)" : " (物理)");
-		}
-		block << "\n";
-		block << "- spawnPoint(World, Clearance適用前): ("
-			<< spawnPosition.x << ", " << spawnPosition.y << ", " << spawnPosition.z << ")\n";
-		block << "- safePosition(実発射座標, Clearance適用後): ("
-			<< safePosition.x << ", " << safePosition.y << ", " << safePosition.z << ")\n";
-		block << "- targetPosition(狙点, World): ("
-			<< fireTraceEndPosition.x << ", " << fireTraceEndPosition.y << ", " << fireTraceEndPosition.z << ")\n";
-		if (aimMode == 4) {
-			block << "- toTarget(targetPosition - spawnPosition): ("
-				<< fireTraceToTarget.x << ", " << fireTraceToTarget.y << ", " << fireTraceToTarget.z
-				<< "), straightDistance: " << fireTraceStraightDistance << "\n";
-			block << "- flightTime(弾道計算に使った目標到達時間): " << fireTraceFlightTime << " 秒\n";
-			block << "- gravity: (" << projectileGravity.x << ", " << projectileGravity.y << ", " << projectileGravity.z << ")\n";
-		}
-		block << "- direction(Accuracy拡散適用前, 弾道計算の解そのもの): ("
-			<< fireTraceDirectionBeforeAccuracy.x << ", " << fireTraceDirectionBeforeAccuracy.y << ", "
-			<< fireTraceDirectionBeforeAccuracy.z << ")\n";
-		block << "- direction(Accuracy拡散適用後, 実際に発射される方向): ("
-			<< direction.x << ", " << direction.y << ", " << direction.z << ")\n";
-		block << "- muzzleSpeed(初速の大きさ): " << muzzleSpeed << "\n";
-		block << "- spawnedProjectileGameObjectId: " << projectileGameObjectId << "\n\n";
-		AppendProjectileDebugLog(block.str());
 	}
 
 	// Spawn() がプール拡張時に新規 GameObject をシーンへ追加すると配列が再確保され、
@@ -1378,49 +1320,6 @@ std::string EditorWeaponManager::ResolveSurfaceTag(int32_t hitGameObjectId) cons
 	}
 
 	return "Default";
-}
-
-void EditorWeaponManager::ResetProjectileDebugLog() {
-	std::error_code directoryError;
-	std::filesystem::create_directories("Logs", directoryError);
-
-	std::ofstream logFile(kProjectileDebugLogPath, std::ios::trunc);
-
-	if (logFile.is_open()) {
-		logFile << "# Projectile Debug Log\n\n"
-			"ProjectileDebugLogger Componentが付いていてComponentが有効なGameObjectから発射された弾のみ、"
-			"ここへ発射時の弾道計算内訳と毎Frameの移動・命中判定を記録します。\n"
-			"このFileはPlayを開始するたびに空になります(蓄積して重くならないようにするため)。\n\n";
-	}
-
-	projectileDebugLogShotSequence_ = 0u;
-	projectileDebugLogFrameSequence_ = 0u;
-}
-
-bool EditorWeaponManager::IsProjectileDebugLoggingEnabled(int32_t gameObjectId) const {
-	if (editorScene_ == nullptr) {
-		return false;
-	}
-
-	const EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
-
-	if (gameObject == nullptr) {
-		return false;
-	}
-
-	const EditorComponent* logger = EditorComponentUtility::FindComponent(
-		*gameObject,
-		EditorComponentType::ProjectileDebugLogger);
-
-	return logger != nullptr && logger->isActive;
-}
-
-void EditorWeaponManager::AppendProjectileDebugLog(const std::string& markdownBlock) const {
-	std::ofstream logFile(kProjectileDebugLogPath, std::ios::app);
-
-	if (logFile.is_open()) {
-		logFile << markdownBlock;
-	}
 }
 
 int32_t EditorWeaponManager::ResolveTeamId(int32_t gameObjectId) const {
@@ -1943,37 +1842,6 @@ void EditorWeaponManager::UpdateProjectiles(float deltaTime) {
 				oceanHit);
 			const bool usesOceanHit = hasOceanHit &&
 				(!hasHit || oceanHit.distance < physicsHit.distance);
-
-			if (IsProjectileDebugLoggingEnabled(activeProjectile.ownerGameObjectId)) {
-				++projectileDebugLogFrameSequence_;
-				std::ostringstream block;
-				block << std::fixed << std::setprecision(3);
-				block << "### Frame #" << projectileDebugLogFrameSequence_
-					<< " — Projectile GameObject " << activeProjectile.gameObjectId
-					<< " (Owner " << activeProjectile.ownerGameObjectId << ")\n\n";
-				block << "- start: (" << projectileStart.x << ", " << projectileStart.y << ", " << projectileStart.z << ")"
-					<< " / end(衝突なしの場合の到達点): (" << projectileEnd.x << ", " << projectileEnd.y << ", " << projectileEnd.z << ")\n";
-				block << "- velocity: (" << activeProjectile.velocity.x << ", " << activeProjectile.velocity.y << ", "
-					<< activeProjectile.velocity.z << "), speed: " << activeProjectile.speed << "\n";
-				block << "- travelDistance(このFrameの移動距離): " << travelDistance
-					<< ", traveledDistance(累積): " << activeProjectile.traveledDistance << "\n";
-				block << "- hasPhysicsHit: " << (hasHit ? "true" : "false");
-				if (hasHit) {
-					block << ", physicsHit.point: (" << physicsHit.point.x << ", " << physicsHit.point.y << ", "
-						<< physicsHit.point.z << "), distance: " << physicsHit.distance
-						<< ", gameObjectId: " << physicsHit.gameObjectId;
-				}
-				block << "\n";
-				block << "- hasOceanHit: " << (hasOceanHit ? "true" : "false");
-				if (hasOceanHit) {
-					block << ", oceanHit.point: (" << oceanHit.point.x << ", " << oceanHit.point.y << ", "
-						<< oceanHit.point.z << "), distance: " << oceanHit.distance
-						<< ", oceanGameObjectId: " << oceanHit.oceanGameObjectId;
-				}
-				block << "\n";
-				block << "- usesOceanHit(この Frame の命中採用先): " << (usesOceanHit ? "Ocean" : (hasHit ? "Physics" : "なし")) << "\n\n";
-				AppendProjectileDebugLog(block.str());
-			}
 
 			if (usesOceanHit) {
 				ExecuteImpactResponse(

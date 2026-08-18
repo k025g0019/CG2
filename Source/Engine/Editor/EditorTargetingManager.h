@@ -41,6 +41,8 @@ public:
 	bool GetInterceptPrediction(int32_t ownerGameObjectId, Vector3& position, float& time) const;
 	bool GetBallisticPrediction(int32_t ownerGameObjectId, Vector3& launchDirection, Vector3& impactPosition, float& flightTime) const;  // 重力・抗力込みの発射方向と着弾予測を返す
 	bool GetBallisticTrajectoryPoint(int32_t ownerGameObjectId, int32_t pointIndex, Vector3& point) const;  // 描画やScriptから軌道点を読む
+	bool SetSteeringMoveMode(int32_t steeringGameObjectId, int32_t moveMode);  // Scriptから敵1体の移動Modeを切り替える。Mode経過秒もリセットする
+	bool GetSteeringMoveMode(int32_t steeringGameObjectId, int32_t& moveMode) const;  // 現在の移動Modeを返す。Runtime遷移後の値を含む
 
 private:
 	EditorScene* editorScene_ = nullptr;  // ScreenAimとReticle UIを検索するScene
@@ -50,6 +52,9 @@ private:
 	bool isStarted_ = false;  // Play中だけ入力を反映する
 	std::unordered_map<int32_t, float> steeringElapsedSeconds_;  // TargetSteeringごとの開始Delay経過時間
 	std::unordered_map<int32_t, float> steeringSpeeds_;  // Transform追従時の現在速度
+	std::unordered_map<int32_t, int32_t> steeringActiveMoveModes_;  // Runtimeで遷移した現在の移動Mode。-1は未初期化
+	std::unordered_map<int32_t, float> steeringModeElapsedSeconds_;  // 現在の移動Modeに入ってからの経過秒
+	std::unordered_map<int32_t, bool> steeringModeCompletionNotified_;  // 現在のMode instanceで完了Actionを通知済みか。毎Frame通知を防ぐ
 	std::unordered_map<int32_t, int32_t> explicitTargets_;  // Scriptが明示したSelector Target
 	std::unordered_map<int32_t, float> screenAimInputStrengths_;  // AimAssistが生入力を奪わないための0～1入力強度
 	std::unordered_map<int32_t, float> targetSelectorUpdateRemainingSeconds_;  // AI Selectorの次回探索までの秒数

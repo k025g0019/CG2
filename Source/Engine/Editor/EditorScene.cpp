@@ -365,7 +365,6 @@ namespace {
 		"SimulationLOD",
 		"RailEventMarker",
 		"SceneStreaming",
-		"ProjectileDebugLogger",
 	};
 	constexpr int32_t kEditorComponentTypeCount =
 		static_cast<int32_t>(sizeof(kEditorComponentTypeNames) / sizeof(kEditorComponentTypeNames[0]));
@@ -2745,6 +2744,33 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 				     << "|" << component.waveMotionFrequency
 				     << "|" << component.waveMotionPhaseStep
 				     << "|" << component.waveMotionBlendInSeconds << "\n";
+			}
+
+			if (component.type == EditorComponentType::WaveSpawner) {
+				file << "WaveSustainExtension|" << gameObject.id
+				     << "|" << component.waveTargetAliveCount
+				     << "|" << component.waveSpawnPointSetGameObjectId << "\n";
+			}
+
+			if (component.type == EditorComponentType::TargetSteering) {
+				file << "TargetSteeringMoveExtension|" << gameObject.id
+				     << "|" << component.targetSteeringMoveMode
+				     << "|" << component.targetSteeringSideOffset
+				     << "|" << component.targetSteeringForwardOffset
+				     << "|" << component.targetSteeringVerticalOffset
+				     << "|" << component.targetSteeringTargetDistance
+				     << "|" << component.targetSteeringDistanceMargin
+				     << "|" << component.targetSteeringDuration
+				     << "|" << component.targetSteeringNextMoveMode
+				     << "|" << component.targetSteeringStartOffset.x
+				     << "|" << component.targetSteeringStartOffset.y
+				     << "|" << component.targetSteeringStartOffset.z
+				     << "|" << component.targetSteeringEndOffset.x
+				     << "|" << component.targetSteeringEndOffset.y
+				     << "|" << component.targetSteeringEndOffset.z
+				     << "|" << component.targetSteeringPositionLerpSpeed
+				     << "|" << component.targetSteeringActionTargetGameObjectId
+				     << "|" << EncodeSceneToken(component.targetSteeringCompletedActionName) << "\n";
 			}
 
 			if (component.type == EditorComponentType::DistanceActivation) {
@@ -5466,6 +5492,39 @@ if (elements.size() >= 13u) {
 				}
 			}
 		}
+		else if (elements[0] == "WaveSustainExtension" && elements.size() >= 4u) {
+			const int32_t ownerId = ToInt(elements[1]);
+
+			for (EditorGameObject& object : loadedGameObjects) if (object.id == ownerId) {
+				for (EditorComponent& component : object.components) if (component.type == EditorComponentType::WaveSpawner) {
+					component.waveTargetAliveCount = ToInt(elements[2]);
+					component.waveSpawnPointSetGameObjectId = ToInt(elements[3]);
+				}
+			}
+		}
+		else if (elements[0] == "TargetSteeringMoveExtension" && elements.size() >= 19u) {
+			const int32_t ownerId = ToInt(elements[1]);
+
+			for (EditorGameObject& object : loadedGameObjects) if (object.id == ownerId) {
+				for (EditorComponent& component : object.components) if (component.type == EditorComponentType::TargetSteering) {
+					component.targetSteeringMoveMode = ToInt(elements[2]);
+					component.targetSteeringSideOffset = ToFloat(elements[3]);
+					component.targetSteeringForwardOffset = ToFloat(elements[4]);
+					component.targetSteeringVerticalOffset = ToFloat(elements[5]);
+					component.targetSteeringTargetDistance = ToFloat(elements[6]);
+					component.targetSteeringDistanceMargin = ToFloat(elements[7]);
+					component.targetSteeringDuration = ToFloat(elements[8]);
+					component.targetSteeringNextMoveMode = ToInt(elements[9]);
+					component.targetSteeringStartOffset = {
+						ToFloat(elements[10]), ToFloat(elements[11]), ToFloat(elements[12])};
+					component.targetSteeringEndOffset = {
+						ToFloat(elements[13]), ToFloat(elements[14]), ToFloat(elements[15])};
+					component.targetSteeringPositionLerpSpeed = ToFloat(elements[16]);
+					component.targetSteeringActionTargetGameObjectId = ToInt(elements[17]);
+					component.targetSteeringCompletedActionName = DecodeSceneToken(elements[18]);
+				}
+			}
+		}
 		else if (elements[0] == "DistanceActivationExtension" && elements.size() >= 6u) {
 			const int32_t ownerId = ToInt(elements[1]);
 
@@ -5872,6 +5931,37 @@ if (elements.size() >= 13u) {
 					break;
 				}
 
+				break;
+			}
+		}
+		else if (elements[0] == "ComponentAddOverride" && elements.size() >= 3) {
+			const int32_t ownerId = ToInt(elements[1]);
+			const EditorComponentType componentType = ComponentTypeFromIndex(ToInt(elements[2]));
+			for (EditorGameObject& gameObject : loadedGameObjects) {
+				if (gameObject.id != ownerId) continue;
+				if (EditorComponentUtility::FindComponent(gameObject, componentType) == nullptr) {
+					gameObject.components.push_back(CreateComponent(componentType));
+				}
+				break;
+			}
+		}
+		else if (elements[0] == "TargetSteeringBaseOverride" && elements.size() >= 10) {
+			const int32_t ownerId = ToInt(elements[1]);
+			for (EditorGameObject& gameObject : loadedGameObjects) {
+				if (gameObject.id != ownerId) continue;
+				EditorComponent* steering = EditorComponentUtility::FindComponent(
+					gameObject,
+					EditorComponentType::TargetSteering);
+				if (steering != nullptr) {
+					steering->targetSteeringTargetGameObjectId = ToInt(elements[2]);
+					steering->targetSteeringSelectorGameObjectId = ToInt(elements[3]);
+					steering->targetSteeringTurnSpeed = ToFloat(elements[4]);
+					steering->targetSteeringAcceleration = ToFloat(elements[5]);
+					steering->targetSteeringMaximumSpeed = ToFloat(elements[6]);
+					steering->targetSteeringStartDelay = ToFloat(elements[7]);
+					steering->targetSteeringPredictionSeconds = ToFloat(elements[8]);
+					steering->targetSteeringMode = ToInt(elements[9]);
+				}
 				break;
 			}
 		}
@@ -6784,6 +6874,9 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.waveCompletedActionName = "OnWaveCompleted";
 		component.waveAllDefeatedActionName = "OnWaveAllDefeated";
 		component.waveSpawnRailStartNormalized = -1.0f;
+		// 既定は0=従来どおり一括生成。既存Sceneの挙動を変えない。
+		component.waveTargetAliveCount = 0;
+		component.waveSpawnPointSetGameObjectId = -1;
 		component.timelineSourceMode = 0;
 		component.timelineSourceGameObjectId = -1;
 		component.timelineTriggerValue = 0.0f;
@@ -7311,6 +7404,21 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 	component.targetSteeringStartDelay = 0.0f;
 	component.targetSteeringPredictionSeconds = 0.0f;
 	component.targetSteeringMode = 0;
+	// 既定は従来どおりのDirect(Targetへ真っすぐ旋回・前進)。
+	// 既存SceneのTargetSteeringは拡張行が無ければこの値のまま読み込まれるため挙動は変わらない。
+	component.targetSteeringMoveMode = 0;
+	component.targetSteeringSideOffset = 25.0f;
+	component.targetSteeringForwardOffset = 0.0f;
+	component.targetSteeringVerticalOffset = 0.0f;
+	component.targetSteeringTargetDistance = 120.0f;
+	component.targetSteeringDistanceMargin = 15.0f;
+	component.targetSteeringDuration = 0.0f;
+	component.targetSteeringNextMoveMode = -1;
+	component.targetSteeringStartOffset = {80.0f, 0.0f, 50.0f};
+	component.targetSteeringEndOffset = {-80.0f, 0.0f, 20.0f};
+	component.targetSteeringPositionLerpSpeed = 0.0f;
+	component.targetSteeringActionTargetGameObjectId = -1;
+	component.targetSteeringCompletedActionName = "";
 	component.movementModifierLocalPositionOffset = {0.0f, 0.0f, 0.0f};
 	component.movementModifierLocalRotationOffset = {0.0f, 0.0f, 0.0f};
 	component.movementModifierAxisMask = 7;

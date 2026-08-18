@@ -762,6 +762,9 @@ void EditorTargetingManager::Stop() {
 	isStarted_ = false;
 	steeringElapsedSeconds_.clear();
 	steeringSpeeds_.clear();
+	steeringActiveMoveModes_.clear();
+	steeringModeElapsedSeconds_.clear();
+	steeringModeCompletionNotified_.clear();
 	explicitTargets_.clear();
 	screenAimInputStrengths_.clear();
 	targetSelectorUpdateRemainingSeconds_.clear();
@@ -1328,40 +1331,254 @@ void EditorTargetingManager::UpdateTargetSteering(float deltaTime) {
 			targetPosition.z += targetRigidBody->velocity.z * steeringComponent->targetSteeringPredictionSeconds;
 		}
 
-		const Vector3 targetOffset = SubtractVector3(targetPosition, ownerPosition);
-		const float horizontalDistance = std::sqrt(
-			targetOffset.x * targetOffset.x + targetOffset.z * targetOffset.z);
-
-		if (GetVectorLength(targetOffset) <= kRayEpsilon) {
-			continue;
-		}
-
-		const float desiredYaw = std::atan2(targetOffset.x, targetOffset.z);
-		const float desiredPitch = -std::atan2(targetOffset.y, (std::max)(horizontalDistance, kRayEpsilon));
-		const float maximumTurn = steeringComponent->targetSteeringTurnSpeed * kPi / 180.0f * deltaTime;
-		steeringGameObject.rotate.y = MoveTowardsAngle(steeringGameObject.rotate.y, desiredYaw, maximumTurn);
-		steeringGameObject.rotate.x = MoveTowardsAngle(steeringGameObject.rotate.x, desiredPitch, maximumTurn);
-		const Vector3 forward = GetForwardVector(steeringGameObject.rotate);
-
-		if (steeringComponent->targetSteeringMode == 1 && physicsManager_ != nullptr) {
-			physicsManager_->AddForce(
+		// Runtime側の現在Modeを解決する。Scriptが SetSteeringMoveMode で切り替えた値を優先し、
+		// 未初期化ならScene設定値から始める。
+		auto activeModeIterator = steeringActiveMoveModes_.find(steeringGameObject.id);
+		if (activeModeIterator == steeringActiveMoveModes_.end()) {
+			activeModeIterator = steeringActiveMoveModes_.emplace(
 				steeringGameObject.id,
-				{
-					forward.x * steeringComponent->targetSteeringAcceleration,
-					forward.y * steeringComponent->targetSteeringAcceleration,
-					forward.z * steeringComponent->targetSteeringAcceleration});
+				(std::clamp)(steeringComponent->targetSteeringMoveMode, 0, 6)).first;
+			steeringModeElapsedSeconds_[steeringGameObject.id] = 0.0f;
+			steeringModeCompletionNotified_[steeringGameObject.id] = false;
 		}
-		else {
-			float& currentSpeed = steeringSpeeds_[steeringGameObject.id];
-			currentSpeed = MoveTowards(
-				currentSpeed,
-				steeringComponent->targetSteeringMaximumSpeed,
-				steeringComponent->targetSteeringAcceleration * deltaTime);
-			steeringGameObject.translate.x += forward.x * currentSpeed * deltaTime;
-			steeringGameObject.translate.y += forward.y * currentSpeed * deltaTime;
-			steeringGameObject.translate.z += forward.z * currentSpeed * deltaTime;
+
+		const int32_t activeMoveMode = activeModeIterator->second;
+		float& modeElapsedSeconds = steeringModeElapsedSeconds_[steeringGameObject.id];
+		bool& hasNotifiedCompletion = steeringModeCompletionNotified_[steeringGameObject.id];
+		modeElapsedSeconds += deltaTime;
+
+		// Targetのworld姿勢から、右・前の基準軸を作る。Playerがレールを進んでも
+		// 相対位置を維持できるよう、毎Frame Targetの向きから軸を取り直す。
+		Vector3 targetScale{};
+		Vector3 targetRotation{};
+		Vector3 targetOrigin{};
+		editorScene_->GetWorldTransform(targetGameObjectId, targetScale, targetRotation, targetOrigin);
+		(void)targetScale;
+		const Vector3 targetForward = GetForwardVector(targetRotation);
+		const Vector3 horizontalForward = NormalizeVector3({targetForward.x, 0.0f, targetForward.z});
+		const Vector3 targetRight{horizontalForward.z, 0.0f, -horizontalForward.x};
+
+		// 各Modeが「どこへ行きたいか」を desiredPosition として決め、
+		// 実際の移動は共通処理(旋回 + 前進、または相対位置追従)で行う。
+		Vector3 desiredPosition = targetPosition;
+		bool usesPositionFollow = false;
+		bool hasReachedGoal = false;
+
+		const auto makeRelativePosition = [&](float right, float up, float forwardOffset) {
+			return Vector3{
+				targetOrigin.x + targetRight.x * right + horizontalForward.x * forwardOffset,
+				targetOrigin.y + up,
+				targetOrigin.z + targetRight.z * right + horizontalForward.z * forwardOffset};
+		};
+
+		switch (activeMoveMode) {
+			case 2: {
+				// Parallel: Targetの左右へ一定距離を保って並走する。
+				desiredPosition = makeRelativePosition(
+					steeringComponent->targetSteeringSideOffset,
+					steeringComponent->targetSteeringVerticalOffset,
+					steeringComponent->targetSteeringForwardOffset);
+				usesPositionFollow = true;
+				break;
+			}
+			case 3: {
+				// Chase: Target後方から追跡し、目標距離まで詰めたら完了扱いにする。
+				const float chaseDistance = (std::max)(steeringComponent->targetSteeringTargetDistance, 0.0f);
+				desiredPosition = makeRelativePosition(0.0f, steeringComponent->targetSteeringVerticalOffset, -chaseDistance);
+				usesPositionFollow = true;
+				hasReachedGoal =
+					GetVectorLength(SubtractVector3(targetPosition, ownerPosition)) <= chaseDistance + kRayEpsilon;
+				break;
+			}
+			case 4: {
+				// KeepDistance: 近すぎれば離れ、遠すぎれば近づき、適正距離ならほぼ並走する。
+				const float keepDistance = (std::max)(steeringComponent->targetSteeringTargetDistance, 0.0f);
+				const float margin = (std::max)(steeringComponent->targetSteeringDistanceMargin, 0.0f);
+				const Vector3 toOwner = SubtractVector3(ownerPosition, targetOrigin);
+				const float currentDistance = GetVectorLength(toOwner);
+				const Vector3 awayDirection = currentDistance > kRayEpsilon
+					? MultiplyVector3(1.0f / currentDistance, toOwner)
+					: MultiplyVector3(-1.0f, horizontalForward);
+				// 適正距離のときは現在方位を保ったまま横Offsetぶんだけ流す。
+				const float desiredRadius = currentDistance < keepDistance - margin
+					? keepDistance
+					: currentDistance > keepDistance + margin
+						? keepDistance
+						: currentDistance;
+				desiredPosition = {
+					targetOrigin.x + awayDirection.x * desiredRadius + targetRight.x * steeringComponent->targetSteeringSideOffset,
+					targetOrigin.y + steeringComponent->targetSteeringVerticalOffset,
+					targetOrigin.z + awayDirection.z * desiredRadius + targetRight.z * steeringComponent->targetSteeringSideOffset};
+				usesPositionFollow = true;
+				break;
+			}
+			case 5: {
+				// PlayerRelativeMove: Target相対の開始Offsetから終了Offsetへ移動する。
+				// 横切り、正面高速通過、横方向への離脱をScene設定だけで作るための汎用Mode。
+				const float duration = (std::max)(steeringComponent->targetSteeringDuration, kRayEpsilon);
+				const float normalizedTime = (std::clamp)(modeElapsedSeconds / duration, 0.0f, 1.0f);
+				const Vector3& startOffset = steeringComponent->targetSteeringStartOffset;
+				const Vector3& endOffset = steeringComponent->targetSteeringEndOffset;
+				desiredPosition = makeRelativePosition(
+					startOffset.x + (endOffset.x - startOffset.x) * normalizedTime,
+					startOffset.y + (endOffset.y - startOffset.y) * normalizedTime,
+					startOffset.z + (endOffset.z - startOffset.z) * normalizedTime);
+				usesPositionFollow = true;
+				hasReachedGoal = normalizedTime >= 1.0f;
+				break;
+			}
+			case 6: {
+				// Retreat: Target相対Offset方向へ離れ続ける。攻撃後の離脱に使う。
+				desiredPosition = makeRelativePosition(
+					steeringComponent->targetSteeringSideOffset,
+					steeringComponent->targetSteeringVerticalOffset,
+					steeringComponent->targetSteeringForwardOffset);
+				usesPositionFollow = true;
+				break;
+			}
+			case 0:
+			case 1:
+			default:
+				// Direct / ArcApproach はどちらもTarget自身を目指す。
+				// 差は旋回速度の設定値で表現する(小さいほど大きく弧を描く)。
+				desiredPosition = targetPosition;
+				usesPositionFollow = false;
+				break;
+		}
+
+		// 進みたい方向。相対位置Modeでは目的地へのベクトル、直進系ではTargetへのベクトル。
+		const Vector3 moveOffset = SubtractVector3(desiredPosition, ownerPosition);
+		const float moveDistance = GetVectorLength(moveOffset);
+
+		if (moveDistance > kRayEpsilon) {
+			const float horizontalDistance = std::sqrt(moveOffset.x * moveOffset.x + moveOffset.z * moveOffset.z);
+			const float desiredYaw = std::atan2(moveOffset.x, moveOffset.z);
+			const float desiredPitch = -std::atan2(moveOffset.y, (std::max)(horizontalDistance, kRayEpsilon));
+			const float maximumTurn = steeringComponent->targetSteeringTurnSpeed * kPi / 180.0f * deltaTime;
+			// 船首を徐々に目標方向へ向け、その船首方向へ前進させる(横滑りさせない)。
+			steeringGameObject.rotate.y = MoveTowardsAngle(steeringGameObject.rotate.y, desiredYaw, maximumTurn);
+			steeringGameObject.rotate.x = MoveTowardsAngle(steeringGameObject.rotate.x, desiredPitch, maximumTurn);
+			const Vector3 forward = GetForwardVector(steeringGameObject.rotate);
+
+			if (steeringComponent->targetSteeringMode == 1 && physicsManager_ != nullptr) {
+				physicsManager_->AddForce(
+					steeringGameObject.id,
+					{
+						forward.x * steeringComponent->targetSteeringAcceleration,
+						forward.y * steeringComponent->targetSteeringAcceleration,
+						forward.z * steeringComponent->targetSteeringAcceleration});
+			}
+			else {
+				float& currentSpeed = steeringSpeeds_[steeringGameObject.id];
+				currentSpeed = MoveTowards(
+					currentSpeed,
+					steeringComponent->targetSteeringMaximumSpeed,
+					steeringComponent->targetSteeringAcceleration * deltaTime);
+				// 相対位置Modeは目的地を追い越さないよう、残り距離で1Frameの移動量を制限する。
+				float frameDistance = currentSpeed * deltaTime;
+
+				if (usesPositionFollow) {
+					const float followSpeed = steeringComponent->targetSteeringPositionLerpSpeed > 0.0f
+						? steeringComponent->targetSteeringPositionLerpSpeed
+						: currentSpeed;
+					frameDistance = (std::min)(followSpeed * deltaTime, moveDistance);
+				}
+
+				steeringGameObject.translate.x += forward.x * frameDistance;
+				steeringGameObject.translate.y += forward.y * frameDistance;
+				steeringGameObject.translate.z += forward.z * frameDistance;
+			}
+		}
+
+		// Duration経過またはMode固有の到達条件でNextMoveModeへ遷移し、完了Actionを通知する。
+		const bool hasDurationElapsed =
+			steeringComponent->targetSteeringDuration > 0.0f &&
+			modeElapsedSeconds >= steeringComponent->targetSteeringDuration;
+
+		// 現在のMode instanceにつき一度だけ通知する。遷移先が無い場合(Scriptに次の行動を
+		// 任せる場合)でも、毎Frame同じActionを投げ続けないようにする。
+		if ((hasDurationElapsed || hasReachedGoal) && !hasNotifiedCompletion) {
+			hasNotifiedCompletion = true;
+
+			if (scriptManager_ != nullptr && !steeringComponent->targetSteeringCompletedActionName.empty()) {
+				const int32_t actionTargetGameObjectId =
+					steeringComponent->targetSteeringActionTargetGameObjectId >= 0
+						? steeringComponent->targetSteeringActionTargetGameObjectId
+						: steeringGameObject.id;
+				EditorScriptActionPayload payload{};
+				payload.type = EditorScriptActionPayloadTypeGameObject;
+				payload.gameObjectId = steeringGameObject.id;
+				scriptManager_->QueueActionPayload(
+					actionTargetGameObjectId,
+					steeringComponent->targetSteeringCompletedActionName,
+					payload);
+			}
+
+			const int32_t nextMoveMode = steeringComponent->targetSteeringNextMoveMode;
+
+			if (nextMoveMode >= 0 && nextMoveMode != activeMoveMode) {
+				// Scene設定だけで完結する敵はここで次のModeへ進み、新しいModeで再び通知できるようにする。
+				activeModeIterator->second = (std::clamp)(nextMoveMode, 0, 6);
+				modeElapsedSeconds = 0.0f;
+				hasNotifiedCompletion = false;
+			}
 		}
 	}
+}
+
+bool EditorTargetingManager::SetSteeringMoveMode(int32_t steeringGameObjectId, int32_t moveMode) {
+	if (editorScene_ == nullptr) {
+		return false;
+	}
+
+	const EditorGameObject* steeringGameObject = editorScene_->FindGameObject(steeringGameObjectId);
+
+	if (steeringGameObject == nullptr) {
+		return false;
+	}
+
+	const EditorComponent* steeringComponent = EditorComponentUtility::FindComponent(
+		*steeringGameObject,
+		EditorComponentType::TargetSteering);
+
+	if (steeringComponent == nullptr) {
+		return false;
+	}
+
+	steeringActiveMoveModes_[steeringGameObjectId] = (std::clamp)(moveMode, 0, 6);
+	steeringModeElapsedSeconds_[steeringGameObjectId] = 0.0f;
+	steeringModeCompletionNotified_[steeringGameObjectId] = false;
+	return true;
+}
+
+bool EditorTargetingManager::GetSteeringMoveMode(int32_t steeringGameObjectId, int32_t& moveMode) const {
+	const auto activeModeIterator = steeringActiveMoveModes_.find(steeringGameObjectId);
+
+	if (activeModeIterator != steeringActiveMoveModes_.end()) {
+		moveMode = activeModeIterator->second;
+		return true;
+	}
+
+	if (editorScene_ == nullptr) {
+		return false;
+	}
+
+	const EditorGameObject* steeringGameObject = editorScene_->FindGameObject(steeringGameObjectId);
+
+	if (steeringGameObject == nullptr) {
+		return false;
+	}
+
+	const EditorComponent* steeringComponent = EditorComponentUtility::FindComponent(
+		*steeringGameObject,
+		EditorComponentType::TargetSteering);
+
+	if (steeringComponent == nullptr) {
+		return false;
+	}
+
+	moveMode = (std::clamp)(steeringComponent->targetSteeringMoveMode, 0, 6);
+	return true;
 }
 
 void EditorTargetingManager::UpdateReticleUi(const EditorComponent& screenAimComponent) {

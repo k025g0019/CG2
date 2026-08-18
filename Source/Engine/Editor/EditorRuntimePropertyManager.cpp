@@ -2363,6 +2363,12 @@ bool EditorRuntimePropertyManager::SetFloat(
 	else if (componentName == "Health" && propertyName == "Current") component->healthCurrent = value;
 	else if (componentName == "TargetSteering" && propertyName == "MaximumSpeed") component->targetSteeringMaximumSpeed = value;
 	else if (componentName == "TargetSteering" && propertyName == "TurnSpeed") component->targetSteeringTurnSpeed = value;
+	// 相対移動のOffsetや目標距離もScriptから差し替えられるようにし、
+	// 同じ敵Prefabのまま左右どちらから並走するかなどをWave側で振り分けられるようにする。
+	else if (componentName == "TargetSteering" && propertyName == "SideOffset") component->targetSteeringSideOffset = value;
+	else if (componentName == "TargetSteering" && propertyName == "ForwardOffset") component->targetSteeringForwardOffset = value;
+	else if (componentName == "TargetSteering" && propertyName == "TargetDistance") component->targetSteeringTargetDistance = (std::max)(value, 0.0f);
+	else if (componentName == "TargetSteering" && propertyName == "Duration") component->targetSteeringDuration = (std::max)(value, 0.0f);
 	else if (componentName == "TargetPoint" && propertyName == "Priority") component->targetPointPriority = value;
 	else if (componentName == "TargetPoint" && propertyName == "Radius") component->targetPointRadius = (std::max)(value, 0.01f);
 	else if (componentName == "TargetSelector" && propertyName == "OceanClearance") component->targetSelectorOceanClearance = (std::max)(value, 0.0f);
@@ -2419,8 +2425,14 @@ bool EditorRuntimePropertyManager::GetFloat(
 	else if (componentName == "RailMovement" && propertyName == "OffsetMoveSpeed") value = component->railOffsetMoveSpeed;
 	else if (componentName == "RailMovement" && propertyName == "ShipLateralAssist") value = component->railShipLateralAssist;
 	else if (componentName == "Health" && propertyName == "Current") value = component->healthCurrent;
+	// HP割合でBoss段階増援などを判定できるよう、最大値も読めるようにする。
+	else if (componentName == "Health" && propertyName == "Maximum") value = component->healthMaximum;
 	else if (componentName == "TargetSteering" && propertyName == "MaximumSpeed") value = component->targetSteeringMaximumSpeed;
 	else if (componentName == "TargetSteering" && propertyName == "TurnSpeed") value = component->targetSteeringTurnSpeed;
+	else if (componentName == "TargetSteering" && propertyName == "SideOffset") value = component->targetSteeringSideOffset;
+	else if (componentName == "TargetSteering" && propertyName == "ForwardOffset") value = component->targetSteeringForwardOffset;
+	else if (componentName == "TargetSteering" && propertyName == "TargetDistance") value = component->targetSteeringTargetDistance;
+	else if (componentName == "TargetSteering" && propertyName == "Duration") value = component->targetSteeringDuration;
 	else if (componentName == "TargetPoint" && propertyName == "Priority") value = component->targetPointPriority;
 	else if (componentName == "TargetPoint" && propertyName == "Radius") value = component->targetPointRadius;
 	else if (componentName == "TargetSelector" && propertyName == "OceanClearance") value = component->targetSelectorOceanClearance;
@@ -2452,6 +2464,18 @@ bool EditorRuntimePropertyManager::SetInt(
 
 	if (componentName == "TargetSelector" && component != nullptr && propertyName == "TeamFilter") {
 		component->targetSelectorTeamFilter = (std::clamp)(value, 0, 3);
+		return true;
+	}
+
+	// 敵1体の行動遷移(Chase→Parallel→Retreatなど)をScriptから切り替えるための入口。
+	// Runtime側の現在Modeも同時に更新するため、TargetingManagerへ委譲する。
+	if (componentName == "TargetSteering" && component != nullptr && propertyName == "MoveMode") {
+		component->targetSteeringMoveMode = (std::clamp)(value, 0, 6);
+
+		if (targetingManager_ != nullptr) {
+			targetingManager_->SetSteeringMoveMode(gameObjectId, component->targetSteeringMoveMode);
+		}
+
 		return true;
 	}
 
@@ -2515,6 +2539,16 @@ bool EditorRuntimePropertyManager::GetInt(
 
 	if (componentName == "TargetSelector" && component != nullptr && propertyName == "TeamFilter") {
 		value = component->targetSelectorTeamFilter;
+		return true;
+	}
+
+	if (componentName == "TargetSteering" && component != nullptr && propertyName == "MoveMode") {
+		// Runtime遷移後の実際のModeを優先して返す。
+		if (targetingManager_ != nullptr && targetingManager_->GetSteeringMoveMode(gameObjectId, value)) {
+			return true;
+		}
+
+		value = component->targetSteeringMoveMode;
 		return true;
 	}
 

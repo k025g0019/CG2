@@ -58,6 +58,7 @@ public:
 		int32_t maximumCount,
 		std::vector<ThreatInfo>& threats) const;  // 接近軌道にあるProjectileを到達予測順で返す
 	void ResetRuntimeState(int32_t gameObjectId);  // Pool再利用時に武器Cooldownを初期化する
+	int32_t GetActiveProjectileCount() const { return static_cast<int32_t>(activeProjectiles_.size()); }  // 飛翔中Projectile数。System向けLog Providerが参照する
 
 private:
 	struct ActiveProjectile {
@@ -200,13 +201,6 @@ private:
 		int32_t actionTargetGameObjectId,
 		const std::string& actionName,
 		float value) const;  // 武器通知を任意Script Actionへ渡す
-
-	void ResetProjectileDebugLog();  // Play開始時にLogs/ProjectileDebugLog.mdを空にする
-	bool IsProjectileDebugLoggingEnabled(int32_t gameObjectId) const;  // 同じGameObjectにProjectileDebugLoggerが付いているか調べる
-	void AppendProjectileDebugLog(const std::string& markdownBlock) const;  // 詳細Log Fileへ追記する
-
-	uint32_t projectileDebugLogShotSequence_ = 0u;  // 発射Log見出し用の連番
-	uint32_t projectileDebugLogFrameSequence_ = 0u;  // 毎Frame Log見出し用の連番
 };
 
 #pragma warning(pop)

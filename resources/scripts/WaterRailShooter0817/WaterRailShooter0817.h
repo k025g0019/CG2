@@ -16,11 +16,19 @@ public:
 
 private:
 	bool isPlayerFireHeld_ = false;
+	// GameObject名の検索はScene全体の線形走査なので、このInstanceがTitle/Resultの
+	// どちらのControllerかは初回Updateで一度だけ判定して保持する。
+	bool hasResolvedSceneRole_ = false;
+	bool isTitleController_ = false;
+	bool isShopController_ = false;
+	bool isResultController_ = false;
 
 	void OnPlayerFire(const EditorScriptInputActionContext& inputContext);
 	void OnPlayerReload(const EditorScriptInputActionContext& inputContext);
 	void OnNextWeapon(const EditorScriptInputActionContext& inputContext);
 	void OnEnemyFire(const EditorScriptInputActionContext& inputContext);
+	// TargetSteering が Duration 経過や Chase 到達を通知したときに、敵1体の行動を次段階へ進める。
+	void OnEnemyMoveCompleted(const EditorScriptInputActionContext& inputContext);
 	void OnSmallBoatDestroyed(const EditorScriptInputActionContext& inputContext);
 	void OnMissileBoatDestroyed(const EditorScriptInputActionContext& inputContext);
 	void OnBattleACompleted(const EditorScriptInputActionContext& inputContext);

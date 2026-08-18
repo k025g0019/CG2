@@ -566,8 +566,6 @@ enum class EditorComponentType {
 	RailEventMarker,
 	// 距離に応じてAdditive Sceneを非同期読込・破棄する
 	SceneStreaming,
-	// 付いているGameObjectのProjectile発射・飛翔を詳細Markdown Logへ記録する(付け外しでOn/Off)
-	ProjectileDebugLogger,
 	// Component 種類数。範囲チェックに使う
 	Count,
 };
@@ -1329,6 +1327,10 @@ std::string waveStartedActionName;  // 条件成立時に通知する任意Scrip
 	std::string waveCompletedActionName;  // 全生成時に生成数Payload付きで通知する任意Script Action
 	std::string waveAllDefeatedActionName;  // 全撃破または全返却時に通知する任意Script Action
 	float waveSpawnRailStartNormalized;  // 生成物が RailMovement を持つ時のレール開始進行率。-1 なら生成物自身の設定
+	// Wave 生存数維持(ラッシュ)設定。0 なら従来どおり waveSpawnCount 体を一度に出し切る。
+	// 1 以上ならこの数を画面内に保つよう、撃破されるたびに waveSpawnCount へ達するまで補充する。
+	int32_t waveTargetAliveCount;
+	int32_t waveSpawnPointSetGameObjectId;  // SpawnPointSet 所有者。設定すると補充のたびに別方向から出現させる。-1 で編隊配置のまま
 	// 旧 RailShooterEnemy 保存互換値。新規機能から参照しない
 	int32_t enemySpawnFollowerGameObjectId;  // 出現判定に使う Rail Movement 所有者
 	float enemySpawnNormalized;  // 所有者のレール進行率がこの値へ達したら出現する
@@ -1596,6 +1598,21 @@ std::string waveStartedActionName;  // 条件成立時に通知する任意Scrip
 	float targetSteeringStartDelay;  // Play開始後の待機秒数
 	float targetSteeringPredictionSeconds;  // Target速度の先読み秒数
 	int32_t targetSteeringMode;  // 0=Transform、1=Rigidbody Force
+	// TargetSteering 移動Mode設定。Targetからの相対位置で動く敵の基本移動をここへ集約し、
+	// パターンごとの専用Componentを増やさずSceneの設定だけで挙動を切り替えられるようにする。
+	int32_t targetSteeringMoveMode;  // 0=Direct、1=ArcApproach、2=Parallel、3=Chase、4=KeepDistance、5=PlayerRelativeMove、6=Retreat
+	float targetSteeringSideOffset;  // Parallel/Relative: Target右方向へのOffset。負で左側
+	float targetSteeringForwardOffset;  // Parallel/Relative: Target前方向へのOffset
+	float targetSteeringVerticalOffset;  // Parallel/Relative: World Y方向のOffset
+	float targetSteeringTargetDistance;  // Chase/KeepDistance: 維持したいTargetとの距離
+	float targetSteeringDistanceMargin;  // KeepDistance: この範囲内なら接近も離脱もしない
+	float targetSteeringDuration;  // 0より大きいとこの秒数でNextMoveModeへ遷移する
+	int32_t targetSteeringNextMoveMode;  // Duration経過またはChase到達時に切り替える移動Mode。-1で維持
+	Vector3 targetSteeringStartOffset;  // PlayerRelativeMove: 開始位置のTarget相対Offset(x=右、y=上、z=前)
+	Vector3 targetSteeringEndOffset;  // PlayerRelativeMove: 終了位置のTarget相対Offset(x=右、y=上、z=前)
+	float targetSteeringPositionLerpSpeed;  // 相対位置へ追従する速度。0で最大速度をそのまま使う
+	int32_t targetSteeringActionTargetGameObjectId;  // Mode完了通知先。-1なら所有者
+	std::string targetSteeringCompletedActionName;  // Duration経過やChase到達で通知する任意Script Action
 	// MovementModifier 設定
 	Vector3 movementModifierLocalPositionOffset;  // 基準姿勢へ加えるローカル位置
 	Vector3 movementModifierLocalRotationOffset;  // 基準姿勢へ加えるEuler回転Degree

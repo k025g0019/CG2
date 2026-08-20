@@ -456,6 +456,14 @@ struct EditorScriptRuntimeApi {
 	bool (*PlayEffect)(int32_t gameObjectId);
 	bool (*PlayEffectAt)(int32_t gameObjectId, const char* effectAssetPath, const EditorScriptVector3* localOffset);
 	void (*StopEffect)(int32_t gameObjectId);
+	// AudioSource を Script から任意のタイミングで鳴らす。Effect 系と同じ設計。
+	bool (*PlayAudio)(int32_t gameObjectId);
+	void (*StopAudio)(int32_t gameObjectId);
+	// Bus は 0=SFX / 1=BGM / 2=Ambience / 3=UI。BGM ダッキング等に使う。
+	void (*SetAudioBusVolume)(int32_t audioBus, float volume);
+	float (*GetAudioBusVolume)(int32_t audioBus);
+	void (*SetAudioMasterVolume)(float volume);
+	float (*GetAudioMasterVolume)();
 	int32_t (*GetAliveParticleCount)(int32_t gameObjectId);
 	bool (*GetAnimatorFloat)(int32_t gameObjectId, const char* parameterName, float* value);
 	bool (*GetAnimatorInt)(int32_t gameObjectId, const char* parameterName, int32_t* value);
@@ -670,6 +678,13 @@ struct EditorScriptRuntimeApi {
 		float distance,
 		int32_t ignoreHierarchyRootGameObjectId,
 		EditorScriptPhysicsHit* hit);
+	// ABI互換のため、位置指定Effekseer再生APIは既存構造体を変えず末尾へ追加する。
+	// GameObjectを介さず任意のWorld座標へ.efk/.efkefcを再生する(EffectManager::PlayEffekseer)。
+	int32_t (*PlayEffekseerAtPosition)(const char* effectAssetPath, const EditorScriptVector3* position, const EditorScriptVector3* rotationEuler);
+	bool (*SetEffekseerEffectPosition)(int32_t effekseerPlaybackHandle, const EditorScriptVector3* position);
+	void (*StopEffekseerEffectAtPosition)(int32_t effekseerPlaybackHandle);
+	// ABI互換のため、EffectDefinition(.effectdef)のWorld座標再生APIは末尾へ追加する。
+	bool (*PlayVfxAtPosition)(const char* effectId, const EditorScriptVector3* position);
 };
 
 extern "C" {

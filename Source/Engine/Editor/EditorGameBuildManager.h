@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -32,9 +33,9 @@ public:
 
 private:
 	static bool LoadSettingsFile(
-		const std::string& filePath,
+		const std::filesystem::path& filePath,
 		EditorGameBuildSettings& buildSettings);
 	static bool SaveSettingsFile(
-		const std::string& filePath,
+		const std::filesystem::path& filePath,
 		const EditorGameBuildSettings& buildSettings);
 };

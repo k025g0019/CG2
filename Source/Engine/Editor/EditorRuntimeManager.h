@@ -10,6 +10,7 @@
 #include "EditorDamageManager.h"
 #include "Source/Engine/Effect/EditorEffectManager.h"
 #include "Source/Engine/Effect/EditorEffekseerManager.h"
+#include "Source/Engine/Effect/EditorVfxManager.h"
 #include "EditorInputManager.h"
 #include "EditorLocalMoveManager.h"
 #include "EditorLogMonitorManager.h"
@@ -64,6 +65,8 @@ public:
 	const EditorEffectManager& GetEffectManager() const;  // 読み取り専用版
 	EditorEffekseerManager& GetEffekseerManager();  // Platform / Renderer から公式 Effekseer Runtime を操作する。
 	const EditorEffekseerManager& GetEffekseerManager() const;  // 読み取り専用版。
+	EditorVfxManager& GetVfxManager();  // Stage1 VFX(Billboard/Flipbook/Ribbon/Ring)のPlayEffect等を操作するために返す。
+	const EditorVfxManager& GetVfxManager() const;  // 読み取り専用版。
 	EditorAudioManager& GetAudioManager();  // Audio Mixer とイベント再生を操作するために返す。
 	const EditorAudioManager& GetAudioManager() const;  // 読み取り専用版。
 	EditorRailMovementManager& GetRailMovementManager();  // Spline Editor と Script から実行状態を操作するために返す。
@@ -85,6 +88,9 @@ public:
 	float GetSceneLoadProgress() const;  // 非同期読込の0～1進捗を返す。
 	bool IsSceneLoading() const;  // 非同期読込が完了待ちならtrue。
 	bool IsSceneLoaded(const std::string& scenePath) const;  // PrimaryまたはAdditive Sceneが有効か返す。
+	bool StartSceneTransition(const EditorGameObject& ownerGameObject, const EditorComponent& transitionComponent);  // SceneTransition Extensionを使ってCamera Dive/色フェード付きの遷移を開始する。
+	bool IsSceneTransitionActive() const;  // 遷移演出の実行中なら true。
+	void GetSceneTransitionOverlay(Vector3& color, float& alpha) const;  // Game ViewへオーバーレイするColorとAlphaを返す。
 
 private:
 	EditorScene* editorScene_ = nullptr;  // Play 実行対象の Scene
@@ -98,6 +104,7 @@ private:
 	EditorConstraintManager constraintManager_;  // Constraint 系 Component の実行担当
 	EditorEffectManager effectManager_;  // ParticleSystem / VisualEffect と Animation Event の実行担当
 	EditorEffekseerManager effekseerManager_;  // .efk / .efkefc の公式 DX12 Runtime 実行担当
+	EditorVfxManager vfxManager_;  // Stage1 VFX(Billboard/Flipbook/Ribbon/Ring)のCPU管理担当
 	EditorScriptManager scriptManager_;  // Script / MonoBehaviour Component の実行入口
 	EditorInputManager inputManager_;  // Input Component の実行担当
 	EditorTargetingManager targetingManager_;  // 画面照準とGame View Ray変換の実行担当
@@ -142,6 +149,30 @@ private:
 	bool pendingSceneIsAdditive_ = false;  // 追加読込ならtrue
 	bool isSceneLoading_ = false;  // Future完了待ちならtrue
 	float sceneLoadProgress_ = 0.0f;  // 0=未開始、0.1=解析中、1=適用完了
+
+	struct SceneTransitionRuntimeState {
+		bool active = false;  // 演出の実行中ならtrue
+		int32_t type = 0;  // 1=FadeColor,2=Wipe,3=CameraDive
+		std::string targetScenePath;  // 覆い終わった瞬間に読み込むScene
+		float outDuration = 0.8f;  // 覆うまでの秒数
+		float holdSeconds = 0.2f;  // 覆った状態を維持する秒数
+		float inDuration = 0.8f;  // 見せ終わるまでの秒数
+		Vector3 color{1.0f, 1.0f, 1.0f};  // Overlay色
+		int32_t cameraDiveSourceGameObjectId = -1;  // Dive開始基準Object。-1なら遷移開始時のCamera位置。
+		Vector3 cameraDivePositionOffset{0.0f, 60.0f, 0.0f};  // Dive開始位置の相対Offset
+		Vector3 cameraDiveRotationDegrees{90.0f, 0.0f, 0.0f};  // Dive開始角度(絶対Euler度)
+		int32_t phase = 0;  // 0=CoveringOut,1=Holding,2=RevealingIn
+		float elapsed = 0.0f;  // 現在Phase内の経過秒数
+		Transforms diveOverheadTransform{};  // Hold中に静止する見下ろし姿勢(新Scene Camera基準)
+		Transforms diveEndTransform{};  // 新Scene読込直後に確定する着地先Camera World姿勢
+		bool diveActive = false;  // typeがCameraDiveの時だけtrue
+	};
+
+	SceneTransitionRuntimeState sceneTransitionState_;  // Scene切替演出のRuntime状態
+
+	void UpdateSceneTransition(float deltaTime);  // 演出Phaseを進め、覆い終わった瞬間に実Sceneを読み込む。
+	void BeginSceneTransitionRevealPhase();  // 新Scene読込直後にDive終了姿勢を確定してRevealへ移る。
+	bool TryStartSceneTransitionForRequest(const std::string& scenePath);  // Script/SceneButtonが要求したLoadを、現在Sceneの一致するSceneTransitionへ差し替える。
 
 	void StartRuntimeSystems(bool shouldReinitializeScript);  // 現在 Scene の各 Runtime を開始する。
 	void StopRuntimeSystems();  // Scene 切替前または Play 停止時に各 Runtime を止める。

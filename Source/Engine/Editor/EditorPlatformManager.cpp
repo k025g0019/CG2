@@ -983,7 +983,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = dsvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
 	// dsvHandle は DepthStencilView を作�Eする CPU 側ハンドル、E
 
-	auto createDepthStencilResource = [&](uint32_t width, uint32_t height) -> ID3D12Resource* {
+	auto createDepthStencilResource = [&device, &depthClearValue](
+			uint32_t width,
+			uint32_t height,
+			D3D12_RESOURCE_STATES initialState) -> ID3D12Resource* {
 		// depthStencilResourceDesc は SceneView と同じサイズの Depth バッファ設定、E
 		D3D12_RESOURCE_DESC depthStencilResourceDesc{};
 		depthStencilResourceDesc.Width = width;
@@ -1004,7 +1007,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			&depthStencilHeapProperties,
 			D3D12_HEAP_FLAG_NONE,
 			&depthStencilResourceDesc,
-			D3D12_RESOURCE_STATE_DEPTH_WRITE,
+			initialState,
 			&depthClearValue,
 			IID_PPV_ARGS(&newDepthStencilResource));
 		assert(SUCCEEDED(createDepthResult));
@@ -1012,9 +1015,16 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		return newDepthStencilResource;
 	};
 
-	ID3D12Resource* depthStencilResource = createDepthStencilResource(renderWidth, renderHeight);
+	ID3D12Resource* depthStencilResource = createDepthStencilResource(
+		renderWidth,
+		renderHeight,
+		D3D12_RESOURCE_STATE_DEPTH_WRITE);
 	// depthStencilResource は現在の描画サイズに合わせた Depth バッファ、E
 	device->CreateDepthStencilView(depthStencilResource, &dsvDesc, dsvHandle);
+	ID3D12Resource* opaqueDepthCopyResource = createDepthStencilResource(
+		renderWidth,
+		renderHeight,
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
 	D3D12_CPU_DESCRIPTOR_HANDLE depthSrvHandleCPU = GetCPUDescriptorHandle(
 		srvDescriptorHeap,
@@ -1030,6 +1040,18 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	depthSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 	depthSrvDesc.Texture2D.MipLevels = 1;
 	device->CreateShaderResourceView(depthStencilResource, &depthSrvDesc, depthSrvHandleCPU);
+	D3D12_CPU_DESCRIPTOR_HANDLE opaqueDepthCopySrvHandleCPU = GetCPUDescriptorHandle(
+		srvDescriptorHeap,
+		device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV),
+		kRuntimeOpaqueDepthCopySrvDescriptorIndex);
+	D3D12_GPU_DESCRIPTOR_HANDLE opaqueDepthCopySrvHandleGPU = GetGPUDescriptorHandle(
+		srvDescriptorHeap,
+		device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV),
+		kRuntimeOpaqueDepthCopySrvDescriptorIndex);
+	device->CreateShaderResourceView(
+		opaqueDepthCopyResource,
+		&depthSrvDesc,
+		opaqueDepthCopySrvHandleCPU);
 
 	D3D12_CLEAR_VALUE shadowClearValue{};
 	shadowClearValue.Format = DXGI_FORMAT_D32_FLOAT;
@@ -1324,6 +1346,18 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		L"Assets/Shaders/Water/OceanSurface.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
 		includeHandler.Get(),
 		logStream);
+	ComPtr<IDxcBlob> oceanTessellationVertexShaderBlob = CompileShader(
+		L"Assets/Shaders/Water/OceanTessellation.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> oceanTessellationHullShaderBlob = CompileShader(
+		L"Assets/Shaders/Water/OceanTessellation.HS.hlsl", L"hs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> oceanTessellationDomainShaderBlob = CompileShader(
+		L"Assets/Shaders/Water/OceanTessellation.DS.hlsl", L"ds_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
 
 	ComPtr<IDxcBlob> objectReflectionMaskPixelShaderBlob = CompileShader(
 		L"Assets/Shaders/Object3dReflectionMask.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
@@ -1561,6 +1595,14 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		L"Assets/Shaders/Particle/ParticleModel.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
 		includeHandler.Get(),
 		logStream);
+	ComPtr<IDxcBlob> vfxPrimitiveVertexShaderBlob = CompileShader(
+		L"Assets/Shaders/Effect/EffectPrimitive.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> vfxPrimitivePixelShaderBlob = CompileShader(
+		L"Assets/Shaders/Effect/EffectPrimitive.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
 	ComPtr<IDxcBlob> oceanFftUpdateSpectrumShaderBlob = CompileShader(
 		L"Assets/Shaders/Water/OceanFFT_UpdateSpectrum.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
 		includeHandler.Get(),
@@ -1638,6 +1680,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		particlePixelShaderBlob == nullptr ||
 		particleModelVertexShaderBlob == nullptr ||
 		particleModelPixelShaderBlob == nullptr ||
+		vfxPrimitiveVertexShaderBlob == nullptr ||
+		vfxPrimitivePixelShaderBlob == nullptr ||
 		oceanFftUpdateSpectrumShaderBlob == nullptr ||
 		oceanFftRowShaderBlob == nullptr ||
 		oceanFftTransposeShaderBlob == nullptr ||
@@ -1722,7 +1766,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	// 0-10 は既存描画、11-17 は PBR Map、18-19 は Ocean FFT、20-21 は現在 / 前 Bone 行列。
 	// 22-23 は水面専用パスが読む不透明 Scene Color / Depth、24 は Viewport ごとの水面復元定数。
 	// 水面SSRでWorldを画面へ戻すため、逆行列20値にView軸と投影倍率12値を加える。
-	D3D12_ROOT_PARAMETER rootParameters[25] = {};
+	D3D12_ROOT_PARAMETER rootParameters[26] = {};
 
 	rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 	rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -1825,7 +1869,14 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	rootParameters[24].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	rootParameters[24].Constants.ShaderRegister = 3u;
 	rootParameters[24].Constants.RegisterSpace = 0u;
-	rootParameters[24].Constants.Num32BitValues = 32u;
+	rootParameters[24].Constants.Num32BitValues = 29u;
+
+	// Hardware TessellationはVS用b0と同じTransformをHS/DSから読む。
+	// Pixel用b0とRegisterを重ねないため、同じResourceを独立したb4へ束縛する。
+	rootParameters[25].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+	rootParameters[25].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+	rootParameters[25].Descriptor.ShaderRegister = 4u;
+	rootParameters[25].Descriptor.RegisterSpace = 0u;
 
 	descriptionRootSignature.pParameters = rootParameters;
 	descriptionRootSignature.NumParameters = _countof(rootParameters);
@@ -1968,6 +2019,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		0, nullptr, reinterpret_cast<void**>(&spriteTransformationMatrixData));
 	spriteTransformationMatrixData->WVP = MakeIdentity4x4();
 	spriteTransformationMatrixData->previousWVP = MakeIdentity4x4();
+	spriteTransformationMatrixData->oceanRenderParams = {};
 	spriteTransformationMatrixData->temporalParams = {};
 	spriteTransformationMatrixData->World = MakeIdentity4x4();
 	spriteTransformationMatrixData->lightWVP = MakeIdentity4x4();
@@ -1982,6 +2034,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		0, nullptr, reinterpret_cast<void**>(&sphereTransformationMatrixData));
 	sphereTransformationMatrixData->WVP = MakeIdentity4x4();
 	sphereTransformationMatrixData->previousWVP = MakeIdentity4x4();
+	sphereTransformationMatrixData->oceanRenderParams = {};
 	sphereTransformationMatrixData->temporalParams = {};
 	sphereTransformationMatrixData->World = MakeIdentity4x4();
 	sphereTransformationMatrixData->lightWVP = MakeIdentity4x4();
@@ -2237,16 +2290,19 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	Log(logStream, "Init Stage: transparent pso created");
 
-	// 水面は不透明物の Color / Depth を Shader で読み、屈折後の完成色を出力する。
-	// Depth SRV と DSV を同時に束縛しないため、可視判定も Shader 側で行う。
+	// 水面はコピー済みの不透明DepthをShaderで読み、元Depthへ水面自身の深度を書き込む。
+	// 手前の波が奥の波・Foamに上書きされないよう、通常のDepth Testを有効にする。
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC waterSurfacePipelineStateDesc = graphicsPipelineStateDesc;
 	waterSurfacePipelineStateDesc.PS = {
 		oceanSurfacePixelShaderBlob->GetBufferPointer(),
 		oceanSurfacePixelShaderBlob->GetBufferSize()};
 	waterSurfacePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
-	waterSurfacePipelineStateDesc.DepthStencilState.DepthEnable = FALSE;
-	waterSurfacePipelineStateDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
-	waterSurfacePipelineStateDesc.DSVFormat = DXGI_FORMAT_UNKNOWN;
+	waterSurfacePipelineStateDesc.DepthStencilState.DepthEnable = TRUE;
+	waterSurfacePipelineStateDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+	// Tessellation Patch の共有辺や両面描画の同一深度Fragmentを再描画しない。
+	// LESS_EQUALでは同じ水面を二重に評価し、法線量に応じた発光線として見えていた。
+	waterSurfacePipelineStateDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+	waterSurfacePipelineStateDesc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
 
 	ComPtr<ID3D12PipelineState> waterSurfacePipelineState;
 	hr = device->CreateGraphicsPipelineState(
@@ -2260,6 +2316,37 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	}
 
 	Log(logStream, "Init Stage: water surface pso created");
+
+	// Ocean専用のHardware Tessellation。辺の画面Pixel長からHSが分割係数を決め、
+	// DSが細分化後の各頂点で既存FFT変位を再評価する。
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC waterTessellationPipelineStateDesc =
+		waterSurfacePipelineStateDesc;
+	waterTessellationPipelineStateDesc.VS = {
+		oceanTessellationVertexShaderBlob->GetBufferPointer(),
+		oceanTessellationVertexShaderBlob->GetBufferSize()};
+	waterTessellationPipelineStateDesc.HS = {
+		oceanTessellationHullShaderBlob->GetBufferPointer(),
+		oceanTessellationHullShaderBlob->GetBufferSize()};
+	waterTessellationPipelineStateDesc.DS = {
+		oceanTessellationDomainShaderBlob->GetBufferPointer(),
+		oceanTessellationDomainShaderBlob->GetBufferSize()};
+	waterTessellationPipelineStateDesc.PrimitiveTopologyType =
+		D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH;
+
+	ComPtr<ID3D12PipelineState> waterTessellationPipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&waterTessellationPipelineStateDesc,
+		IID_PPV_ARGS(waterTessellationPipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || waterTessellationPipelineState == nullptr) {
+		Log(logStream, std::format(
+			"Water tessellation PSO Create failed. hr=0x{:08X}",
+			static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	Log(logStream, "Init Stage: water tessellation pso created");
 
 	// Transmission材質はScene Color / Depthを読み、屈折込みの完成色を直接HDRへ書く。
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC refractiveSurfacePipelineStateDesc =
@@ -2478,7 +2565,13 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	postProcessDescriptorRange6[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
 	postProcessDescriptorRange6[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-	D3D12_ROOT_PARAMETER postProcessRootParameters[7] = {};
+	D3D12_DESCRIPTOR_RANGE postProcessDescriptorRange7[1] = {};
+	postProcessDescriptorRange7[0].BaseShaderRegister = 7u;
+	postProcessDescriptorRange7[0].NumDescriptors = 1u;
+	postProcessDescriptorRange7[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	postProcessDescriptorRange7[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_ROOT_PARAMETER postProcessRootParameters[8] = {};
 	postProcessRootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
 	postProcessRootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	postProcessRootParameters[0].DescriptorTable.pDescriptorRanges = postProcessDescriptorRange0;
@@ -2516,6 +2609,12 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	postProcessRootParameters[6].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	postProcessRootParameters[6].DescriptorTable.pDescriptorRanges = postProcessDescriptorRange6;
 	postProcessRootParameters[6].DescriptorTable.NumDescriptorRanges = _countof(postProcessDescriptorRange6);
+
+	// t7 は FinalComposite の遠景Heat Shimmerが近景を除外するためのScene Depth。
+	postProcessRootParameters[7].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	postProcessRootParameters[7].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	postProcessRootParameters[7].DescriptorTable.pDescriptorRanges = postProcessDescriptorRange7;
+	postProcessRootParameters[7].DescriptorTable.NumDescriptorRanges = _countof(postProcessDescriptorRange7);
 
 	D3D12_STATIC_SAMPLER_DESC postProcessSampler{};
 	postProcessSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -2873,6 +2972,19 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	if (!isGpuParticleInitialized) {
 		Log(logStream, "GPU particle initialization failed");
+		RequestInitializationFailure();
+		return;
+	}
+
+	const bool isVfxRendererInitialized = g_vfxRenderer.Initialize(
+		device.Get(),
+		vfxPrimitiveVertexShaderBlob.Get(),
+		vfxPrimitivePixelShaderBlob.Get(),
+		DXGI_FORMAT_R16G16B16A16_FLOAT,
+		DXGI_FORMAT_D24_UNORM_S8_UINT);
+
+	if (!isVfxRendererInitialized) {
+		Log(logStream, "VFX renderer initialization failed");
 		RequestInitializationFailure();
 		return;
 	}
@@ -3314,6 +3426,11 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			depthStencilResource = nullptr;
 		}
 
+		if (opaqueDepthCopyResource != nullptr) {
+			opaqueDepthCopyResource->Release();
+			opaqueDepthCopyResource = nullptr;
+		}
+
 		renderWidth = width; // renderWidth / renderHeight は新しい SwapChain サイズ、E
 		renderHeight = height;
 
@@ -3334,9 +3451,20 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			device->CreateRenderTargetView(swapChainResources[bufferIndex], &rtvDesc, rtvHandles[bufferIndex]);
 		}
 
-		depthStencilResource = createDepthStencilResource(renderWidth, renderHeight);
+		depthStencilResource = createDepthStencilResource(
+			renderWidth,
+			renderHeight,
+			D3D12_RESOURCE_STATE_DEPTH_WRITE);
+		opaqueDepthCopyResource = createDepthStencilResource(
+			renderWidth,
+			renderHeight,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 		// DepthStencil も新しい renderWidth / renderHeight に合わせて再生成する、E
 		device->CreateDepthStencilView(depthStencilResource, &dsvDesc, dsvHandle);
+		device->CreateShaderResourceView(
+			opaqueDepthCopyResource,
+			&depthSrvDesc,
+			opaqueDepthCopySrvHandleCPU);
 	};
 
 	hr = commandAllocator->Reset(); // チE��スチャアチE�Eロード用に CommandAllocator と CommandList を記録可能状態へ戻す、E
@@ -4134,6 +4262,31 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	io.FontDefault = editorFont;
 
+	// Text/TextMeshProUGUIのtextFontIndexが選ぶFont候補。0番はeditorFontと同じ既定Font。
+	// 見つからない候補はnullptrのままにし、描画側でeditorFontへFallbackする。
+	EditorSharedState::g_uiFontVariants[0] = editorFont;
+	const std::array<std::pair<int32_t, const char*>, 4u> uiFontVariantCandidates = {{
+		{1, "C:/Windows/Fonts/meiryo.ttc"},
+		{2, "C:/Windows/Fonts/msgothic.ttc"},
+		{3, "C:/Windows/Fonts/msmincho.ttc"},
+		{4, "C:/Windows/Fonts/YuGothB.ttc"}}};
+
+	for (const auto& [variantIndex, variantPath] : uiFontVariantCandidates) {
+		if (!std::filesystem::exists(variantPath)) {
+			continue;
+		}
+
+		ImFontConfig variantFontConfig{};
+		variantFontConfig.OversampleH = 0;
+		variantFontConfig.OversampleV = 0;
+		variantFontConfig.PixelSnapH = false;
+		EditorSharedState::g_uiFontVariants[static_cast<size_t>(variantIndex)] = io.Fonts->AddFontFromFileTTF(
+			variantPath,
+			editorFontSize,
+			&variantFontConfig,
+			io.Fonts->GetGlyphRangesJapanese());
+	}
+
 	// 16px は Editor UI の基準値。Game View の Text は要求サイズで動的に再ラスタライズされる。
 	io.Fonts->Build(); // Font Atlas をここで構築し、最初�Eフレームで日本語フォントを使える状態にする、E
 #endif
@@ -4178,6 +4331,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_depthStencilResource = depthStencilResource;
 	g_depthSrvHandleCPU = depthSrvHandleCPU;
 	g_depthSrvHandleGPU = depthSrvHandleGPU;
+	g_opaqueDepthCopyResource = opaqueDepthCopyResource;
+	g_opaqueDepthCopySrvHandleCPU = opaqueDepthCopySrvHandleCPU;
+	g_opaqueDepthCopySrvHandleGPU = opaqueDepthCopySrvHandleGPU;
 	g_shadowMapResource = shadowMapResource;
 	g_shadowMapSrvCpuHandle = shadowMapSrvCpuHandle;
 	g_shadowMapSrvGpuHandle = shadowMapSrvGpuHandle;
@@ -4266,6 +4422,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_weightedOitPipelineState = weightedOitPipelineState;
 	g_weightedOitCullNonePipelineState = weightedOitCullNonePipelineState;
 	g_waterSurfacePipelineState = waterSurfacePipelineState;
+	g_waterTessellationPipelineState = waterTessellationPipelineState;
 	g_refractiveSurfacePipelineState = refractiveSurfacePipelineState;
 	g_refractiveSurfaceCullNonePipelineState = refractiveSurfaceCullNonePipelineState;
 	g_shadowPipelineState = shadowPipelineState;
@@ -4471,6 +4628,7 @@ int EditorPlatformManager::Finalize() {
 	auto& dsvHandle = g_dsvHandle;
 	auto& shadowDsvHandle = g_shadowDsvHandle;
 	auto& depthStencilResource = g_depthStencilResource;
+	auto& opaqueDepthCopyResource = g_opaqueDepthCopyResource;
 	auto& shadowMapResource = g_shadowMapResource;
 	auto& shadowMapSrvCpuHandle = g_shadowMapSrvCpuHandle;
 	auto& shadowMapSrvGpuHandle = g_shadowMapSrvGpuHandle;
@@ -4671,6 +4829,7 @@ int EditorPlatformManager::Finalize() {
 	g_gpuCullingManager.Finalize();
 	g_oceanFftManager.Finalize();
 	g_gpuParticleManager.Finalize();
+	g_vfxRenderer.Finalize();
 	g_postProcessQualityManager.Finalize();
 	g_temporalRenderingManager.Finalize();
 	g_depthHierarchyManager.Finalize();
@@ -4760,6 +4919,10 @@ int EditorPlatformManager::Finalize() {
 	if (hdrRenderTarget != nullptr) {
 		hdrRenderTarget->Release();
 		hdrRenderTarget = nullptr;
+	}
+	if (opaqueDepthCopyResource != nullptr) {
+		opaqueDepthCopyResource->Release();
+		opaqueDepthCopyResource = nullptr;
 	}
 	depthStencilResource->Release();
 	swapChainResources[0]->Release();

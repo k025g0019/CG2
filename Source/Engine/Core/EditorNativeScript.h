@@ -1657,6 +1657,97 @@ private:
 	int32_t gameObjectId_ = -1;
 };
 
+// AudioSource を持つ GameObject を Script から鳴らす。
+// 例: Audio{GameObject::Find("SFX Explosion Small")}.Play();
+class Audio final {
+public:
+	explicit Audio(const GameObject& gameObject)
+		: gameObjectId_(gameObject.GetInstanceId()) {
+	}
+
+	bool Play() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->PlayAudio != nullptr &&
+			runtimeApi->PlayAudio(gameObjectId_);
+	}
+
+	void Stop() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->StopAudio != nullptr) {
+			runtimeApi->StopAudio(gameObjectId_);
+		}
+	}
+
+	// Bus は 0=SFX / 1=BGM / 2=Ambience / 3=UI。BGM ダッキング等に使う。
+	static void SetBusVolume(int32_t audioBus, float volume) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi != nullptr && runtimeApi->SetAudioBusVolume != nullptr) {
+			runtimeApi->SetAudioBusVolume(audioBus, volume);
+		}
+	}
+
+	static float GetBusVolume(int32_t audioBus) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->GetAudioBusVolume != nullptr
+			? runtimeApi->GetAudioBusVolume(audioBus)
+			: 0.0f;
+	}
+
+	static void SetMasterVolume(float volume) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi != nullptr && runtimeApi->SetAudioMasterVolume != nullptr) {
+			runtimeApi->SetAudioMasterVolume(volume);
+		}
+	}
+
+	static float GetMasterVolume() {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->GetAudioMasterVolume != nullptr
+			? runtimeApi->GetAudioMasterVolume()
+			: 0.0f;
+	}
+
+private:
+	int32_t gameObjectId_ = -1;
+};
+
+// GameObjectを介さず任意のWorld座標へEffekseer(.efk/.efkefc)を再生する。
+// 爆発・着弾・水しぶきなど、Effect専用GameObjectを予め置けない使い捨て演出向け。
+// 例: EffectManager::PlayEffekseer("Assets/Effects/Explosion.efkefc", position);
+class EffectManager final {
+public:
+	// 戻り値はSetPosition/Stopに渡すHandle(失敗時-1)。位置追従が不要なら戻り値を捨ててよい。
+	static int32_t PlayEffekseer(
+		const std::string& effectAssetPath,
+		const EditorScriptVector3& position,
+		const EditorScriptVector3& rotationEuler = EditorScriptVector3{}) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (effectAssetPath.empty() || runtimeApi == nullptr || runtimeApi->PlayEffekseerAtPosition == nullptr) {
+			return -1;
+		}
+
+		return runtimeApi->PlayEffekseerAtPosition(effectAssetPath.c_str(), &position, &rotationEuler);
+	}
+
+	static bool SetPosition(int32_t effekseerPlaybackHandle, const EditorScriptVector3& position) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return effekseerPlaybackHandle >= 0 && runtimeApi != nullptr && runtimeApi->SetEffekseerEffectPosition != nullptr &&
+			runtimeApi->SetEffekseerEffectPosition(effekseerPlaybackHandle, &position);
+	}
+
+	static void Stop(int32_t effekseerPlaybackHandle) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (effekseerPlaybackHandle >= 0 && runtimeApi != nullptr && runtimeApi->StopEffekseerEffectAtPosition != nullptr) {
+			runtimeApi->StopEffekseerEffectAtPosition(effekseerPlaybackHandle);
+		}
+	}
+};
+
 class TimeScale final {
 public:
 	explicit TimeScale(const GameObject& gameObject)

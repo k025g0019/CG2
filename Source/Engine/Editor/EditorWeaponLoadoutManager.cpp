@@ -228,6 +228,19 @@ bool EditorWeaponLoadoutManager::GetSelectedWeapon(
 	return true;
 }
 
+bool EditorWeaponLoadoutManager::GetSelectedSlotName(
+	int32_t loadoutGameObjectId,
+	std::string& slotName) const {
+	const EditorComponent* slotComponent = FindSelectedSlot(loadoutGameObjectId);
+
+	if (slotComponent == nullptr || slotComponent->weaponSlotName.empty()) {
+		return false;
+	}
+
+	slotName = slotComponent->weaponSlotName;
+	return true;
+}
+
 bool EditorWeaponLoadoutManager::GetAmmo(
 	int32_t loadoutGameObjectId,
 	int32_t& currentAmmo,

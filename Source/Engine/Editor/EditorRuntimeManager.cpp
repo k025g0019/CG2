@@ -7,14 +7,16 @@
 #include <chrono>
 #include <exception>
 #include <filesystem>
+#include <numbers>
 
 void EditorRuntimeManager::Initialize(EditorScene* editorScene, std::vector<std::string>* consoleMessages) {
 	editorScene_ = editorScene;  // Play / Stop のたびに操作する Scene
 	consoleMessages_ = consoleMessages;  // Runtime 内のイベントログ出力先
 	effectManager_.Initialize(editorScene_, consoleMessages_);
 	effekseerManager_.InitializeScene(editorScene_, consoleMessages_);
+	vfxManager_.Initialize(editorScene_, consoleMessages_);
 	aiManager_.Initialize(editorScene_, &physicsManager_, consoleMessages_);
-	scriptManager_.Initialize(editorScene_, &inputManager_, &animationManager_, &effectManager_, &aiManager_, &physicsManager_, consoleMessages_);
+	scriptManager_.Initialize(editorScene_, &inputManager_, &animationManager_, &effectManager_, &audioManager_, &aiManager_, &physicsManager_, consoleMessages_);
 	inputManager_.Initialize(editorScene_, consoleMessages_);
 	animationManager_.Initialize(editorScene_, &effectManager_, &scriptManager_, consoleMessages_);
 	audioManager_.Initialize(editorScene_, &physicsManager_);
@@ -37,8 +39,10 @@ void EditorRuntimeManager::Initialize(EditorScene* editorScene, std::vector<std:
 		&objectPoolManager_,
 		&scriptManager_,
 		&effectManager_,
+		&vfxManager_,
 		&audioManager_,
-		&cameraEffectManager_);
+		&cameraEffectManager_,
+		consoleMessages_);
 	weaponLoadoutManager_.Initialize(editorScene_, &weaponManager_, &scriptManager_);
 	runtimePropertyManager_.Initialize(
 		editorScene_,
@@ -98,7 +102,12 @@ void EditorRuntimeManager::Initialize(EditorScene* editorScene, std::vector<std:
 	physicsManager_.SetPreFixedStepCallback([this](float fixedDeltaTime) {
 		railMovementManager_.FixedUpdate(fixedDeltaTime);
 	});
+	physicsManager_.SetPostFixedStepCallback([this](float fixedDeltaTime) {
+		railMovementManager_.PostFixedUpdate(fixedDeltaTime);
+	});
 	scriptManager_.SetRailMovementManager(&railMovementManager_);
+	scriptManager_.SetEffekseerManager(&effekseerManager_);
+	scriptManager_.SetVfxManager(&vfxManager_);
 	scriptManager_.SetGameplayManagers(
 		&targetingManager_,
 		&damageManager_,
@@ -115,7 +124,7 @@ void EditorRuntimeManager::Initialize(EditorScene* editorScene, std::vector<std:
 		&objectPoolManager_,
 		&scriptManager_);
 	gameplayEventManager_.Initialize(editorScene_, &railMovementManager_, &scriptManager_);
-	uiBindingManager_.Initialize(editorScene_, &railMovementManager_);
+	uiBindingManager_.Initialize(editorScene_, &railMovementManager_, &weaponLoadoutManager_);
 	rollingMoveManager_.Initialize(editorScene_, &physicsManager_);
 	navigationManager_.Initialize(editorScene_, &physicsManager_, consoleMessages_);
 	saveManager_.Initialize(editorScene_, &physicsManager_, &scriptManager_, consoleMessages_);
@@ -132,6 +141,12 @@ void EditorRuntimeManager::Initialize(EditorScene* editorScene, std::vector<std:
 #pragma warning(disable : 5045)
 void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 	if (!isPlaying_ || editorScene_ == nullptr) {
+		return;
+	}
+
+	if (sceneTransitionState_.active) {
+		// 演出中はSceneが切り替わる可能性があるため、他のGameplay系Updateを止めて専念する。
+		UpdateSceneTransition(deltaTime);
 		return;
 	}
 
@@ -152,6 +167,12 @@ void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 		EditorSceneLoadRequest sceneLoadRequest{};
 
 		if (scriptManager_.ConsumeSceneLoadRequest(sceneLoadRequest)) {
+			const bool isPlainSyncLoad = !sceneLoadRequest.isAsynchronous && !sceneLoadRequest.isAdditive;
+
+			if (isPlainSyncLoad && TryStartSceneTransitionForRequest(sceneLoadRequest.scenePath)) {
+				return true;
+			}
+
 			if (sceneLoadRequest.isAsynchronous || sceneLoadRequest.isAdditive) {
 				RequestSceneLoadAsync(sceneLoadRequest.scenePath, sceneLoadRequest.isAdditive);
 			}
@@ -260,6 +281,7 @@ void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 	profileUpdate("Effect", [this, deltaTime]() {
 		effectManager_.Update(deltaTime);
 		effekseerManager_.Update(deltaTime);
+		vfxManager_.Update(deltaTime);
 	});
 	profileUpdate("Audio and Haptics", [this, deltaTime]() {
 		audioManager_.Update(deltaTime);
@@ -388,10 +410,13 @@ void EditorRuntimeManager::StartRuntimeSystems(bool shouldReinitializeScript) {
 			&inputManager_,
 			&animationManager_,
 			&effectManager_,
+			&audioManager_,
 			&aiManager_,
 			&physicsManager_,
 			consoleMessages_);
 		scriptManager_.SetRailMovementManager(&railMovementManager_);
+		scriptManager_.SetEffekseerManager(&effekseerManager_);
+		scriptManager_.SetVfxManager(&vfxManager_);
 		scriptManager_.SetGameplayManagers(
 			&targetingManager_,
 			&damageManager_,
@@ -419,6 +444,7 @@ void EditorRuntimeManager::StartRuntimeSystems(bool shouldReinitializeScript) {
 	cameraEffectManager_.Start();
 	effectManager_.Start();
 	effekseerManager_.Start();
+	vfxManager_.Start();
 	animationManager_.Start();
 	localMoveManager_.Start();
 	railMovementManager_.Start();
@@ -431,6 +457,9 @@ void EditorRuntimeManager::StartRuntimeSystems(bool shouldReinitializeScript) {
 	audioManager_.Start();
 	StartHapticSources();
 	scriptManager_.Start();
+	// Pool Itemの複製(Duplicate + 物理/Script登録)はPlay中に行うと単発のHitchになるため、
+	// Physics/ScriptのStartが済んだこの時点で初期容量分をまとめて実体化しておく。
+	objectPoolManager_.PrewarmAllPools();
 	runtimePropertyManager_.Start();
 	gameplayEventManager_.Start();
 	saveManager_.Start();
@@ -456,6 +485,7 @@ void EditorRuntimeManager::StopRuntimeSystems() {
 	physicsManager_.StopSimulation();
 	effectManager_.Stop();
 	effekseerManager_.Stop();
+	vfxManager_.Stop();
 	animationManager_.Stop();
 	audioManager_.Stop();
 	StopHapticSources();
@@ -617,6 +647,14 @@ const EditorEffekseerManager& EditorRuntimeManager::GetEffekseerManager() const 
 	return effekseerManager_;
 }
 
+EditorVfxManager& EditorRuntimeManager::GetVfxManager() {
+	return vfxManager_;
+}
+
+const EditorVfxManager& EditorRuntimeManager::GetVfxManager() const {
+	return vfxManager_;
+}
+
 bool EditorRuntimeManager::PlayEffect(int32_t gameObjectId) {
 	const bool hasBuiltInEffect = effectManager_.PlayEffect(gameObjectId);
 	const bool hasEffekseerEffect = effekseerManager_.PlayEffect(gameObjectId);
@@ -744,6 +782,246 @@ bool EditorRuntimeManager::IsSceneLoaded(const std::string& scenePath) const {
 		[&normalizedScenePath](const AdditiveSceneRecord& record) {
 			return record.scenePath == normalizedScenePath;
 		});
+}
+
+namespace {
+	// EditorGameViewManager.cpp の FindRuntimeCameraComponent 相当。
+	// SceneTransitionのDive着地姿勢を求めるためだけに、最優先Cameraの生Transformを直接読む。
+	bool FindHighestPriorityCameraRawTransform(const EditorScene& scene, Transforms& outTransform) {
+		const EditorGameObject* selectedGameObject = nullptr;
+		const EditorComponent* selectedComponent = nullptr;
+		int32_t selectedPriority = INT32_MIN;
+
+		for (const EditorGameObject& gameObject : scene.GetGameObjects()) {
+			if (!gameObject.isActive) {
+				continue;
+			}
+
+			const EditorComponent* cameraComponent =
+				EditorComponentUtility::FindComponent(gameObject, EditorComponentType::Camera);
+			if (cameraComponent == nullptr || !cameraComponent->isActive) {
+				cameraComponent =
+					EditorComponentUtility::FindComponent(gameObject, EditorComponentType::CinemachineCamera);
+			}
+
+			if (cameraComponent == nullptr || !cameraComponent->isActive ||
+				cameraComponent->cameraPriority <= selectedPriority) {
+				continue;
+			}
+
+			selectedGameObject = &gameObject;
+			selectedComponent = cameraComponent;
+			selectedPriority = cameraComponent->cameraPriority;
+		}
+
+		if (selectedGameObject == nullptr || selectedComponent == nullptr) {
+			return false;
+		}
+
+		outTransform.translate = selectedGameObject->translate;
+		outTransform.rotate = selectedGameObject->rotate;
+		outTransform.scale = {1.0f, 1.0f, 1.0f};
+		return true;
+	}
+
+	Transforms LerpTransformsLocal(const Transforms& sourceTransform, const Transforms& targetTransform, float ratio) {
+		const auto lerpFloat = [](float sourceValue, float targetValue, float lerpRatio) {
+			return sourceValue + (targetValue - sourceValue) * lerpRatio;
+		};
+		Transforms result{};
+		result.translate = {
+			lerpFloat(sourceTransform.translate.x, targetTransform.translate.x, ratio),
+			lerpFloat(sourceTransform.translate.y, targetTransform.translate.y, ratio),
+			lerpFloat(sourceTransform.translate.z, targetTransform.translate.z, ratio)};
+		result.rotate = {
+			lerpFloat(sourceTransform.rotate.x, targetTransform.rotate.x, ratio),
+			lerpFloat(sourceTransform.rotate.y, targetTransform.rotate.y, ratio),
+			lerpFloat(sourceTransform.rotate.z, targetTransform.rotate.z, ratio)};
+		result.scale = {1.0f, 1.0f, 1.0f};
+		return result;
+	}
+
+	float SmoothStepRatio(float ratio) {
+		const float clamped = (std::clamp)(ratio, 0.0f, 1.0f);
+		return clamped * clamped * (3.0f - 2.0f * clamped);
+	}
+}
+
+bool EditorRuntimeManager::StartSceneTransition(
+	const EditorGameObject& ownerGameObject,
+	const EditorComponent& transitionComponent) {
+	(void)ownerGameObject;
+
+	if (!isPlaying_ || editorScene_ == nullptr) {
+		return false;
+	}
+
+	if (sceneTransitionState_.active) {
+		return false;  // 多重起動は禁止。先に開始した演出を優先する。
+	}
+
+	if (transitionComponent.sceneTransitionType == 0 || transitionComponent.sceneTransitionTargetScenePath.empty()) {
+		return false;
+	}
+
+	sceneTransitionState_ = SceneTransitionRuntimeState{};
+	sceneTransitionState_.active = true;
+	sceneTransitionState_.type = transitionComponent.sceneTransitionType;
+	sceneTransitionState_.targetScenePath = transitionComponent.sceneTransitionTargetScenePath;
+	sceneTransitionState_.outDuration = (std::max)(transitionComponent.sceneTransitionOutDuration, 0.001f);
+	sceneTransitionState_.holdSeconds = (std::max)(transitionComponent.sceneTransitionHoldSeconds, 0.0f);
+	sceneTransitionState_.inDuration = (std::max)(transitionComponent.sceneTransitionInDuration, 0.001f);
+	sceneTransitionState_.color = transitionComponent.sceneTransitionColor;
+	sceneTransitionState_.cameraDiveSourceGameObjectId = transitionComponent.sceneTransitionCameraDiveSourceGameObjectId;
+	sceneTransitionState_.cameraDivePositionOffset = transitionComponent.sceneTransitionCameraDivePositionOffset;
+	sceneTransitionState_.cameraDiveRotationDegrees = transitionComponent.sceneTransitionCameraDiveRotationDegrees;
+	sceneTransitionState_.diveActive = (sceneTransitionState_.type == 3);
+	sceneTransitionState_.phase = 0;
+	sceneTransitionState_.elapsed = 0.0f;
+
+	if (consoleMessages_ != nullptr) {
+		consoleMessages_->push_back("Scene: 遷移演出開始 -> " + sceneTransitionState_.targetScenePath);
+	}
+
+	return true;
+}
+
+bool EditorRuntimeManager::TryStartSceneTransitionForRequest(const std::string& scenePath) {
+	if (editorScene_ == nullptr || sceneTransitionState_.active) {
+		return false;
+	}
+
+	const std::string normalizedTargetPath =
+		std::filesystem::path(scenePath).lexically_normal().generic_string();
+
+	for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
+		if (!gameObject.isActive) {
+			continue;
+		}
+
+		const EditorComponent* transitionComponent =
+			EditorComponentUtility::FindComponent(gameObject, EditorComponentType::SceneTransition);
+
+		if (transitionComponent == nullptr || !transitionComponent->isActive ||
+			transitionComponent->sceneTransitionType == 0) {
+			continue;
+		}
+
+		const std::string normalizedComponentPath = std::filesystem::path(
+			transitionComponent->sceneTransitionTargetScenePath).lexically_normal().generic_string();
+
+		if (normalizedComponentPath == normalizedTargetPath) {
+			return StartSceneTransition(gameObject, *transitionComponent);
+		}
+	}
+
+	return false;
+}
+
+bool EditorRuntimeManager::IsSceneTransitionActive() const {
+	return sceneTransitionState_.active;
+}
+
+void EditorRuntimeManager::GetSceneTransitionOverlay(Vector3& color, float& alpha) const {
+	color = sceneTransitionState_.color;
+
+	if (!sceneTransitionState_.active) {
+		alpha = 0.0f;
+		return;
+	}
+
+	if (sceneTransitionState_.phase == 0) {
+		alpha = (std::clamp)(sceneTransitionState_.elapsed / sceneTransitionState_.outDuration, 0.0f, 1.0f);
+	}
+	else if (sceneTransitionState_.phase == 1) {
+		alpha = 1.0f;
+	}
+	else {
+		alpha = 1.0f - (std::clamp)(sceneTransitionState_.elapsed / sceneTransitionState_.inDuration, 0.0f, 1.0f);
+	}
+}
+
+void EditorRuntimeManager::BeginSceneTransitionRevealPhase() {
+	SceneTransitionRuntimeState& state = sceneTransitionState_;
+	state.phase = 1;
+	state.elapsed = 0.0f;
+
+	if (!state.diveActive || editorScene_ == nullptr) {
+		return;
+	}
+
+	Transforms landingTransform{};
+	bool foundLandingTransform = FindHighestPriorityCameraRawTransform(*editorScene_, landingTransform);
+
+	if (state.cameraDiveSourceGameObjectId >= 0) {
+		const EditorGameObject* sourceObject = editorScene_->FindGameObject(state.cameraDiveSourceGameObjectId);
+		if (sourceObject != nullptr) {
+			landingTransform.translate = sourceObject->translate;
+			foundLandingTransform = true;
+		}
+	}
+
+	if (!foundLandingTransform) {
+		state.diveActive = false;  // Cameraが見つからない場合はOverlayのみの演出にする。
+		return;
+	}
+
+	state.diveEndTransform = landingTransform;
+	state.diveOverheadTransform.translate = {
+		landingTransform.translate.x + state.cameraDivePositionOffset.x,
+		landingTransform.translate.y + state.cameraDivePositionOffset.y,
+		landingTransform.translate.z + state.cameraDivePositionOffset.z};
+	constexpr float degreesToRadians = std::numbers::pi_v<float> / 180.0f;
+	state.diveOverheadTransform.rotate = {
+		state.cameraDiveRotationDegrees.x * degreesToRadians,
+		state.cameraDiveRotationDegrees.y * degreesToRadians,
+		state.cameraDiveRotationDegrees.z * degreesToRadians};
+	state.diveOverheadTransform.scale = {1.0f, 1.0f, 1.0f};
+
+	EditorSharedState::g_runtimeGameCameraOverrideTransform = state.diveOverheadTransform;
+	EditorSharedState::g_runtimeGameCameraOverrideActive = true;
+}
+
+void EditorRuntimeManager::UpdateSceneTransition(float deltaTime) {
+	SceneTransitionRuntimeState& state = sceneTransitionState_;
+	state.elapsed += deltaTime;
+
+	if (state.phase == 0) {
+		if (state.elapsed >= state.outDuration) {
+			const std::string targetPath = state.targetScenePath;
+			LoadSceneForPlay(targetPath);  // このタイミングで実際にSceneを差し替える(画面は覆われている)
+			BeginSceneTransitionRevealPhase();
+		}
+	}
+	else if (state.phase == 1) {
+		if (state.diveActive) {
+			EditorSharedState::g_runtimeGameCameraOverrideTransform = state.diveOverheadTransform;
+			EditorSharedState::g_runtimeGameCameraOverrideActive = true;
+		}
+
+		if (state.elapsed >= state.holdSeconds) {
+			state.phase = 2;
+			state.elapsed = 0.0f;
+		}
+	}
+	else {
+		const float ratio = SmoothStepRatio(state.elapsed / state.inDuration);
+
+		if (state.diveActive) {
+			EditorSharedState::g_runtimeGameCameraOverrideTransform =
+				LerpTransformsLocal(state.diveOverheadTransform, state.diveEndTransform, ratio);
+			EditorSharedState::g_runtimeGameCameraOverrideActive = true;
+		}
+
+		if (state.elapsed >= state.inDuration) {
+			state.active = false;
+
+			if (state.diveActive) {
+				// 最終姿勢は既に着地Cameraと一致しているため、上書きを止めても見た目は連続する。
+				EditorSharedState::g_runtimeGameCameraOverrideActive = false;
+			}
+		}
+	}
 }
 
 bool EditorRuntimeManager::UpdateAutomaticSceneStreaming() {

@@ -12,47 +12,43 @@ namespace {
 	constexpr int32_t kWeapon40mmSlot = 1;
 	constexpr int32_t kRocketSlot = 2;
 	constexpr int32_t kMissileSlot = 3;
-	constexpr int32_t kWeapon40mmPrice = 300;
-	constexpr int32_t kRocketPrice = 250;
-	constexpr int32_t kMissilePrice = 400;
-	constexpr float kBattleAProgress = 0.08f;
-	constexpr float kCheckpoint1Progress = 0.30f;
-	constexpr float kBattleBProgress = 0.37f;
 	constexpr float kStormProgress = 0.52f;
-	constexpr float kCheckpoint2Progress = 0.64f;
-	constexpr float kBossStartProgress = 0.73f;
-	constexpr float kBossStopProgress = 0.80f;
+	// ボスは廃止。Railが終端(進行率1.0)へ到達した時点でMission Clearにする。
+	constexpr float kRailCompleteProgress = 0.999f;
+
+	// Enemy encounter redesign: 22 rail-progress-gated events (E01..E22) replace the old
+	// Battle A / Battle B two-wave design. Each fires its EncounterController exactly once
+	// when the player's rail progress crosses the given fraction.
+	constexpr float kEvent01Progress = 0.03f;
+	constexpr float kEvent02Progress = 0.06f;
+	constexpr float kEvent03Progress = 0.10f;
+	constexpr float kEvent04Progress = 0.15f;
+	constexpr float kEvent05Progress = 0.20f;
+	constexpr float kEvent06Progress = 0.24f;
+	constexpr float kEvent07Progress = 0.28f;
+	constexpr float kEvent08Progress = 0.32f;
+	constexpr float kEvent09Progress = 0.36f;
+	constexpr float kEvent10Progress = 0.40f;
+	constexpr float kEvent11Progress = 0.44f;
+	constexpr float kEvent12Progress = 0.48f;
+	constexpr float kEvent13Progress = 0.53f;
+	constexpr float kEvent14Progress = 0.59f;
+	constexpr float kEvent15Progress = 0.62f;
+	constexpr float kEvent16Progress = 0.66f;
+	constexpr float kEvent17Progress = 0.71f;
+	constexpr float kEvent18Progress = 0.73f;
+	constexpr float kEvent19Progress = 0.77f;
+	constexpr float kEvent20Progress = 0.81f;
+	constexpr float kEvent21Progress = 0.86f;
+	constexpr float kEvent22Progress = 0.93f;
 	constexpr const char* kTitleScenePath = "Assets/Scenes/Title.scene";
 	constexpr const char* kGameplayScenePath = "Assets/Scenes/WaterRailShooter_0817.scene";
-	constexpr const char* kShopScenePath = "Assets/Scenes/Shop.scene";
 	constexpr const char* kResultScenePath = "Assets/Scenes/Result.scene";
 
-	// Title / Shop / Result の各Sceneでこの名前のGameObjectへScript Componentを付けると、
+	// Title / Result の各Sceneでこの名前のGameObjectへScript Componentを付けると、
 	// そのSceneの入口処理としてUpdateが分岐する。
 	constexpr const char* kTitleControllerName = "TitleController";
-	constexpr const char* kShopControllerName = "ShopController";
 	constexpr const char* kResultControllerName = "ResultController";
-
-	// ショップ往復でゲーム進行を持ち越すためのキー。
-	// Script DLLはScene遷移でFreeLibraryされる可能性があるため、DLLのグローバル変数ではなく
-	// エンジン側が保持するScene永続値(SceneManager)へ必ず退避する。
-	constexpr const char* kShopReturnPendingKey = "ShopReturnPending";
-	constexpr const char* kShopRailProgressKey = "ShopRailProgress";
-	constexpr const char* kShopSalvageKey = "ShopSalvage";
-	constexpr const char* kShopCheckpointIndexKey = "ShopCheckpointIndex";
-	constexpr const char* kShopEquippedSlotKey = "ShopEquippedSlot";
-	constexpr const char* kShopOwned40mmKey = "ShopOwned40mm";
-	constexpr const char* kShopOwnedRocketKey = "ShopOwnedRocket";
-	constexpr const char* kShopOwnedMissileKey = "ShopOwnedMissile";
-	constexpr const char* kShopBattleAStartedKey = "ShopBattleAStarted";
-	constexpr const char* kShopBattleACompletedKey = "ShopBattleACompleted";
-	constexpr const char* kShopBattleBStartedKey = "ShopBattleBStarted";
-	constexpr const char* kShopBattleBCompletedKey = "ShopBattleBCompleted";
-	constexpr const char* kShopStormStartedKey = "ShopStormStarted";
-	constexpr const char* kShopCheckpoint1OpenedKey = "ShopCheckpoint1Opened";
-	constexpr const char* kShopCheckpoint2OpenedKey = "ShopCheckpoint2Opened";
-	constexpr const char* kShopSmallBoatCountKey = "ShopSmallBoatCount";
-	constexpr const char* kShopMissileBoatCountKey = "ShopMissileBoatCount";
 
 	// Scene間で結果を受け渡すためのキー。SceneManagerの永続値はScene遷移をまたいで残る。
 	constexpr const char* kResultIsClearKey = "ResultIsClear";
@@ -74,32 +70,44 @@ namespace {
 		constexpr int32_t kRetreat = 6;
 	}
 
-	// Boss HP段階で増援Waveを呼ぶ閾値。Boss自身はSpawn処理を持たず、
-	// 何をどこから何体出すかはWaveSpawner側の設定に任せる。
-	constexpr float kBossReinforcement75Threshold = 0.75f;
-	constexpr float kBossReinforcement50Threshold = 0.50f;
-	constexpr float kBossReinforcement25Threshold = 0.25f;
-
 	const EditorScriptRuntimeApi* runtimeApi = nullptr;
 	std::unordered_map<int32_t, std::unique_ptr<WaterRailShooter0817>> scriptStates;
 
 	struct SharedGameState {
 		bool isInitialized = false;
-		bool isCheckpoint1Opened = false;
-		bool isCheckpoint2Opened = false;
 		bool isBattleACompleted = false;
 		bool isBattleAStarted = false;
 		bool isBattleBStarted = false;
 		bool isBattleBCompleted = false;
 		bool isStormStarted = false;
-		bool isBossStarted = false;
-		bool isBossRailSlowed = false;
 		bool isPlayerDestroyed = false;
 		bool isMissionClear = false;
-		bool isBossMainGunDestroyed = false;
-		bool isBossMissileDestroyed = false;
-		bool isBossEngineDestroyed = false;
-		int32_t checkpointIndex = 0;
+		// Enemy encounter redesign: one-shot flags for E01..E22.
+		bool isEvent01Started = false;
+		bool isEvent02Started = false;
+		bool isEvent03Started = false;
+		bool isEvent04Started = false;
+		bool isEvent05Started = false;
+		bool isEvent06Started = false;
+		bool isEvent07Started = false;
+		bool isEvent08Started = false;
+		bool isEvent09Started = false;
+		bool isEvent10Started = false;
+		bool isEvent11Started = false;
+		bool isEvent12Started = false;
+		bool isEvent13Started = false;
+		bool isEvent14Started = false;
+		bool isEvent15Started = false;
+		bool isEvent16Started = false;
+		bool isEvent17Started = false;
+		bool isEvent18Started = false;
+		bool isEvent19Started = false;
+		bool isEvent20Started = false;
+		bool isEvent21Started = false;
+		bool isEvent22Started = false;
+		// Checkpointは廃止済み。MidRush/MaxRush完了フラグ自体は他の用途に使う可能性があるため残す。
+		bool isMidRushCompleted = false;
+		bool isMaxRushCompleted = false;
 		int32_t equippedWeaponSlot = kWeapon20mmSlot;
 		int32_t smallBoatDestroyedCount = 0;
 		int32_t missileBoatDestroyedCount = 0;
@@ -107,14 +115,90 @@ namespace {
 		// 死亡・クリア後、Result Sceneへ移るまでの待ち状態。
 		bool isResultTransitionPending = false;
 		float resultTransitionRemainingSeconds = 0.0f;
-		// Boss HP段階の増援。同じ閾値で二重に発火しないよう一度だけtrueにする。
-		bool isBossReinforcement75Started = false;
-		bool isBossReinforcement50Started = false;
-		bool isBossReinforcement25Started = false;
-		std::array<bool, 4> ownedWeapons{true, false, false, false};
+		// Shop廃止に伴い、購入の概念自体を削除。最終的にどの武器を積むかは未定のため、
+		// 全スロットを既定で所持済みにしてEキーでの切替だけで全武器を試せるようにしておく。
+		std::array<bool, 4> ownedWeapons{true, true, true, true};
+		// 敵撃破エフェクトはScene上に実在するParticleSystem Component(FX Explosion Small/Large)を
+		// 使う。外部.effectdefファイルの文字列呼び出しはしない。既定でGameObjectはisActive=falseに
+		// してあるので、撃破位置へ移動させてから一定時間だけSetActive(true)にし、時間が来たら
+		// SetActive(false)へ戻す。
+		float explosionSmallRemainingSeconds = 0.0f;
+		float explosionLargeRemainingSeconds = 0.0f;
 	};
 
 	SharedGameState sharedGameState;
+
+	constexpr float kExplosionEffectActiveSeconds = 0.5f;
+
+	// Scene上に実在するParticleSystem Component(FX Explosion Small/Large、EFFECTS配下)を
+	// 撃破位置へ移動してから一定時間だけ有効化する。外部.effectdefファイルへの文字列参照は
+	// 使わない(Inspectorから見える・触れる通常のComponentのみで完結させる)。
+	void PlayEnemyDestroyedEffect(const EditorScriptInputActionContext& inputContext, bool isLargeExplosion) {
+		const int32_t destroyedGameObjectId = inputContext.payloadType == EditorScriptActionPayloadTypeGameObject
+			? inputContext.payloadGameObjectId
+			: -1;
+
+		if (destroyedGameObjectId < 0) {
+			return;
+		}
+
+		const GameObject explosionEffect = Find(isLargeExplosion ? "FX Explosion Large" : "FX Explosion Small");
+
+		if (!explosionEffect.HasReference()) {
+			return;
+		}
+
+		const EditorScriptTransform destroyedTransform = GameObject{destroyedGameObjectId}.GetTransform();
+		explosionEffect.SetTransform(destroyedTransform);
+		explosionEffect.SetActive(true);
+
+		// SetActive(true)だけではParticleは1つも出ない。EffectManagerはEmitterごとに
+		// isPlayingを持ち、Play開始時のPlayOnAwake判定かPlayEffect()でしかtrueにならないため、
+		// ここで明示的に再生を開始する(これが無いと「重いのに何も見えない」状態になる)。
+		if (runtimeApi != nullptr && runtimeApi->PlayEffect != nullptr) {
+			runtimeApi->PlayEffect(explosionEffect.GetInstanceId());
+		}
+
+		(isLargeExplosion
+			? sharedGameState.explosionLargeRemainingSeconds
+			: sharedGameState.explosionSmallRemainingSeconds) = kExplosionEffectActiveSeconds;
+	}
+
+	// 撃破効果音等と違いUpdateで毎フレーム呼ぶ必要があるため、StageController側のUpdateから
+	// 一度だけ呼ぶ。時間切れになったExplosion GameObjectをSetActive(false)へ戻すだけの処理。
+	void StopEnemyDestroyedEffect(const char* effectGameObjectName) {
+		const GameObject explosionEffect = Find(effectGameObjectName);
+
+		if (!explosionEffect.HasReference()) {
+			return;
+		}
+
+		// Emitterの発生だけ止める。既に出ているParticleはGPU側で寿命分だけ残って消えるため、
+		// 爆発が途中でぶつ切りにならない。
+		if (runtimeApi != nullptr && runtimeApi->StopEffect != nullptr) {
+			runtimeApi->StopEffect(explosionEffect.GetInstanceId());
+		}
+
+		explosionEffect.SetActive(false);
+	}
+
+	void UpdateEnemyDestroyedEffects(float deltaTime) {
+		if (sharedGameState.explosionSmallRemainingSeconds > 0.0f) {
+			sharedGameState.explosionSmallRemainingSeconds -= deltaTime;
+
+			if (sharedGameState.explosionSmallRemainingSeconds <= 0.0f) {
+				StopEnemyDestroyedEffect("FX Explosion Small");
+			}
+		}
+
+		if (sharedGameState.explosionLargeRemainingSeconds > 0.0f) {
+			sharedGameState.explosionLargeRemainingSeconds -= deltaTime;
+
+			if (sharedGameState.explosionLargeRemainingSeconds <= 0.0f) {
+				StopEnemyDestroyedEffect("FX Explosion Large");
+			}
+		}
+	}
 
 	WaterRailShooter0817& GetState(int32_t gameObjectId) {
 		std::unique_ptr<WaterRailShooter0817>& scriptState = scriptStates[gameObjectId];
@@ -169,50 +253,6 @@ namespace {
 		float value = defaultValue;
 		SceneManager::GetFloat(key, value);
 		return value;
-	}
-
-	// ショップへ行く直前に、ゲーム側の進行状況をScene永続値へ退避する。
-	// Scene遷移でDLLのグローバル(sharedGameState)が消えても復元できるようにする。
-	void SaveProgressForShop(float railProgress) {
-		float salvage = 0.0f;
-		GenericCounter{Find("SALVAGE Counter")}.Get(salvage);
-
-		SceneManager::SetFloat(kShopRailProgressKey, railProgress);
-		SceneManager::SetFloat(kShopSalvageKey, salvage);
-		SceneManager::SetFloat(kShopCheckpointIndexKey, static_cast<float>(sharedGameState.checkpointIndex));
-		SceneManager::SetFloat(kShopEquippedSlotKey, static_cast<float>(sharedGameState.equippedWeaponSlot));
-		SceneManager::SetFloat(kShopOwned40mmKey, sharedGameState.ownedWeapons[kWeapon40mmSlot] ? 1.0f : 0.0f);
-		SceneManager::SetFloat(kShopOwnedRocketKey, sharedGameState.ownedWeapons[kRocketSlot] ? 1.0f : 0.0f);
-		SceneManager::SetFloat(kShopOwnedMissileKey, sharedGameState.ownedWeapons[kMissileSlot] ? 1.0f : 0.0f);
-		SceneManager::SetFloat(kShopBattleAStartedKey, sharedGameState.isBattleAStarted ? 1.0f : 0.0f);
-		SceneManager::SetFloat(kShopBattleACompletedKey, sharedGameState.isBattleACompleted ? 1.0f : 0.0f);
-		SceneManager::SetFloat(kShopBattleBStartedKey, sharedGameState.isBattleBStarted ? 1.0f : 0.0f);
-		SceneManager::SetFloat(kShopBattleBCompletedKey, sharedGameState.isBattleBCompleted ? 1.0f : 0.0f);
-		SceneManager::SetFloat(kShopStormStartedKey, sharedGameState.isStormStarted ? 1.0f : 0.0f);
-		SceneManager::SetFloat(kShopCheckpoint1OpenedKey, sharedGameState.isCheckpoint1Opened ? 1.0f : 0.0f);
-		SceneManager::SetFloat(kShopCheckpoint2OpenedKey, sharedGameState.isCheckpoint2Opened ? 1.0f : 0.0f);
-		SceneManager::SetFloat(kShopSmallBoatCountKey, static_cast<float>(sharedGameState.smallBoatDestroyedCount));
-		SceneManager::SetFloat(kShopMissileBoatCountKey, static_cast<float>(sharedGameState.missileBoatDestroyedCount));
-	}
-
-	// ショップから戻ってきたゲーム側で、退避した進行状況を sharedGameState へ書き戻す。
-	// レール位置とSALVAGE Counterの復元は呼び出し側が続けて行う。
-	void RestoreProgressFromShop() {
-		sharedGameState.checkpointIndex = static_cast<int32_t>(ReadSceneFloat(kShopCheckpointIndexKey));
-		sharedGameState.equippedWeaponSlot = static_cast<int32_t>(ReadSceneFloat(kShopEquippedSlotKey));
-		sharedGameState.ownedWeapons[kWeapon20mmSlot] = true;
-		sharedGameState.ownedWeapons[kWeapon40mmSlot] = ReadSceneFloat(kShopOwned40mmKey) > 0.5f;
-		sharedGameState.ownedWeapons[kRocketSlot] = ReadSceneFloat(kShopOwnedRocketKey) > 0.5f;
-		sharedGameState.ownedWeapons[kMissileSlot] = ReadSceneFloat(kShopOwnedMissileKey) > 0.5f;
-		sharedGameState.isBattleAStarted = ReadSceneFloat(kShopBattleAStartedKey) > 0.5f;
-		sharedGameState.isBattleACompleted = ReadSceneFloat(kShopBattleACompletedKey) > 0.5f;
-		sharedGameState.isBattleBStarted = ReadSceneFloat(kShopBattleBStartedKey) > 0.5f;
-		sharedGameState.isBattleBCompleted = ReadSceneFloat(kShopBattleBCompletedKey) > 0.5f;
-		sharedGameState.isStormStarted = ReadSceneFloat(kShopStormStartedKey) > 0.5f;
-		sharedGameState.isCheckpoint1Opened = ReadSceneFloat(kShopCheckpoint1OpenedKey) > 0.5f;
-		sharedGameState.isCheckpoint2Opened = ReadSceneFloat(kShopCheckpoint2OpenedKey) > 0.5f;
-		sharedGameState.smallBoatDestroyedCount = static_cast<int32_t>(ReadSceneFloat(kShopSmallBoatCountKey));
-		sharedGameState.missileBoatDestroyedCount = static_cast<int32_t>(ReadSceneFloat(kShopMissileBoatCountKey));
 	}
 
 	// 死亡・クリアのどちらでもここを通し、結果をScene間永続値へ記録してから
@@ -292,41 +332,6 @@ namespace {
 		}
 	}
 
-	// Boss HP割合を読み、閾値を跨いだ段階の増援Waveを一度だけ開始する。
-	void UpdateBossReinforcements() {
-		const GameObject boss = Find("BossShip");
-
-		if (!boss.HasReference()) {
-			return;
-		}
-
-		float currentHealth = 0.0f;
-		float maximumHealth = 0.0f;
-
-		if (!RuntimeProperty::GetFloat(boss, "Health", "Current", currentHealth) ||
-			!RuntimeProperty::GetFloat(boss, "Health", "Maximum", maximumHealth) ||
-			maximumHealth <= 0.0f) {
-			return;
-		}
-
-		const float healthRatio = currentHealth / maximumHealth;
-
-		if (!sharedGameState.isBossReinforcement75Started && healthRatio <= kBossReinforcement75Threshold) {
-			sharedGameState.isBossReinforcement75Started = true;
-			StartReinforcementWave("Boss75 Wave");
-		}
-
-		if (!sharedGameState.isBossReinforcement50Started && healthRatio <= kBossReinforcement50Threshold) {
-			sharedGameState.isBossReinforcement50Started = true;
-			StartReinforcementWave("Boss50 Wave");
-		}
-
-		if (!sharedGameState.isBossReinforcement25Started && healthRatio <= kBossReinforcement25Threshold) {
-			sharedGameState.isBossReinforcement25Started = true;
-			StartReinforcementWave("Boss25 Wave");
-		}
-	}
-
 	// マウスが狙っている洋上/敵の着弾点へ "PlayerAimTarget" を毎フレーム移動する。
 	// Weapon 20mm の ProjectileEmitter を AimMode=Ballistic にし、BallisticPrediction の
 	// Target GameObject をこの Marker に向けておくと、既存の未改造 BallisticPrediction が
@@ -401,6 +406,26 @@ namespace {
 		aimTarget.SetTransform(transform);
 	}
 
+	// AUDIO 配下の AudioSource を名前で鳴らす。assetPath が空のスロットは
+	// EditorAudioManager 側で何もせず戻るため、音声ファイル未設定でも安全に呼べる。
+	void PlaySfx(const char* audioObjectName) {
+		const GameObject audioObject = Find(audioObjectName);
+
+		if (audioObject.HasReference()) {
+			Audio{audioObject}.Play();
+		}
+	}
+
+	// 装備中の武器に対応する発砲音を鳴らす。
+	void PlayEquippedWeaponFireSfx() {
+		switch (sharedGameState.equippedWeaponSlot) {
+		case kWeapon40mmSlot: PlaySfx("SFX Fire 40mm"); break;
+		case kRocketSlot:     PlaySfx("SFX Fire Rocket"); break;
+		case kMissileSlot:    PlaySfx("SFX Fire Missile"); break;
+		default:              PlaySfx("SFX Fire 20mm"); break;
+		}
+	}
+
 	void AddSalvage(float salvageAmount) {
 		const GameObject salvageCounter = Find("SALVAGE Counter");
 
@@ -415,51 +440,6 @@ namespace {
 		Log("SALVAGE: " + std::to_string(static_cast<int32_t>(currentSalvage)));
 	}
 
-	bool SpendSalvage(int32_t price) {
-		const GameObject salvageCounter = Find("SALVAGE Counter");
-
-		if (!salvageCounter.HasReference()) {
-			return false;
-		}
-
-		GenericCounter counter{salvageCounter};
-		float currentSalvage = 0.0f;
-
-		if (!counter.Get(currentSalvage) || currentSalvage < static_cast<float>(price)) {
-			Log("SHOP: SALVAGEが不足しています");
-			return false;
-		}
-
-		return counter.Set(currentSalvage - static_cast<float>(price));
-	}
-
-	void SetOwnedIndicators(bool isShopVisible) {
-		SetActive("OWNED 40mm", isShopVisible && sharedGameState.ownedWeapons[kWeapon40mmSlot]);
-		SetActive("OWNED Rocket", isShopVisible && sharedGameState.ownedWeapons[kRocketSlot]);
-		SetActive("OWNED Missile", isShopVisible && sharedGameState.ownedWeapons[kMissileSlot]);
-	}
-
-	void SetShopVisible(bool isVisible) {
-		const std::array<const char*, 10> shopObjectNames = {
-			"SHOP UI",
-			"SHOP Title",
-			"SHOP Buy 40mm",
-			"SHOP Buy Rocket",
-			"SHOP Buy Missile",
-			"LOADOUT Equip 20mm",
-			"LOADOUT Equip 40mm",
-			"LOADOUT Equip Rocket",
-			"LOADOUT Equip Missile",
-			"SHOP Continue",
-		};
-
-		for (const char* shopObjectName : shopObjectNames) {
-			SetActive(shopObjectName, isVisible);
-		}
-
-		SetOwnedIndicators(isVisible);
-	}
-
 	void EquipWeapon(int32_t slotIndex) {
 		if (slotIndex < 0 || slotIndex >= static_cast<int32_t>(sharedGameState.ownedWeapons.size()) ||
 			!sharedGameState.ownedWeapons[static_cast<size_t>(slotIndex)]) {
@@ -469,8 +449,7 @@ namespace {
 
 		const GameObject playerShip = Find("PlayerShip");
 
-		// Shop SceneにはPlayerShipが存在しない。その場合は選択だけを記録し、
-		// ゲームへ戻ったときの復元処理が実際のWeaponLoadoutへ反映する。
+		// PlayerShipが見つからない場合は選択だけを記録する(通常のゲームプレイでは起きない)。
 		if (!playerShip.HasReference()) {
 			sharedGameState.equippedWeaponSlot = slotIndex;
 			Log("LOADOUT: slot " + std::to_string(slotIndex) + " を選択(ゲーム復帰時に装備)");
@@ -499,81 +478,29 @@ namespace {
 		}
 	}
 
-	void BuyWeapon(int32_t slotIndex, int32_t price, const char* weaponName) {
-		if (slotIndex < 0 || slotIndex >= static_cast<int32_t>(sharedGameState.ownedWeapons.size())) {
+	// ボスは廃止。Railが終端へ到達した時点でMission Clearにする(OnRailCompleted参照)。
+	void OnRailCompleted() {
+		if (sharedGameState.isMissionClear) {
 			return;
 		}
 
-		if (sharedGameState.ownedWeapons[static_cast<size_t>(slotIndex)]) {
-			Log(std::string("SHOP: ") + weaponName + " は購入済みです");
-			return;
+		sharedGameState.isMissionClear = true;
+		PlaySfx("SFX Explosion Large");
+		const GameObject mainBgm = Find("BGM Main");
+
+		if (mainBgm.HasReference()) {
+			Audio{mainBgm}.Stop();
 		}
 
-		if (!SpendSalvage(price)) {
-			return;
-		}
-
-		sharedGameState.ownedWeapons[static_cast<size_t>(slotIndex)] = true;
-		SetOwnedIndicators(true);
-		Log(std::string("SHOP: ") + weaponName + " を購入しました");
-	}
-
-	void SaveCheckpointState() {
-		float salvage = 0.0f;
-		GenericCounter{Find("SALVAGE Counter")}.Get(salvage);
-		SaveSystem::SetFloat("SALVAGE", salvage);
-		SaveSystem::SetFloat("Owned40mm", sharedGameState.ownedWeapons[kWeapon40mmSlot] ? 1.0f : 0.0f);
-		SaveSystem::SetFloat("OwnedRocket", sharedGameState.ownedWeapons[kRocketSlot] ? 1.0f : 0.0f);
-		SaveSystem::SetFloat("OwnedMissile", sharedGameState.ownedWeapons[kMissileSlot] ? 1.0f : 0.0f);
-		SaveSystem::SetFloat("EquippedSlot", static_cast<float>(sharedGameState.equippedWeaponSlot));
-		SaveSystem::SetFloat("CheckpointIndex", static_cast<float>(sharedGameState.checkpointIndex));
-		SaveSystem::Save("water_rail_shooter_0817_progress");
-	}
-
-	void OpenCheckpoint(int32_t checkpointIndex) {
-		sharedGameState.checkpointIndex = checkpointIndex;
-
-		const GameObject playerShip = Find("PlayerShip");
-		RailFollower{playerShip}.Pause();
-		SetState(checkpointIndex == 1 ? "Checkpoint1" : "Checkpoint2");
-
-		const GameObject checkpoint = Find(checkpointIndex == 1 ? "Checkpoint 1" : "Checkpoint 2");
-
-		if (checkpoint.HasReference()) {
-			Checkpoint{checkpoint}.Save();
-		}
-
-		SaveCheckpointState();
-		Log(checkpointIndex == 1 ? "CHECKPOINT 1" : "CHECKPOINT 2");
-
-		// ショップはゲーム内UIではなく独立したShop Sceneへ行く。
-		// 戻ってきたときにこの位置から再開できるよう、進行状況を退避してから遷移する。
-		float railProgress = 0.0f;
-		RailFollower{playerShip}.GetNormalizedProgress(railProgress);
-		SaveProgressForShop(railProgress);
-		SceneManager::SetFloat(kShopReturnPendingKey, 1.0f);
-		Log("SHOP: Shop Sceneへ移動");
-		SceneManager::LoadScene(kShopScenePath);
-	}
-
-	void ActivateBoss() {
-		sharedGameState.isBossStarted = true;
-		SetActive("BossShip", true);
-		SetActive("Boss Main Gun", true);
-		SetActive("Boss Missile Launcher", true);
-		SetActive("Boss Engine", true);
-		SetActive("HUD Boss HP", true);
-		SetState("Boss");
-		ObjectiveTracker{Find("StageController")}.Set("Boss", ObjectiveState::Active, 0.0f);
-		Log("BOSS: 大型艦が出現");
-	}
-
-	void HideBoss() {
-		SetActive("Boss Main Gun", false);
-		SetActive("Boss Missile Launcher", false);
-		SetActive("Boss Engine", false);
-		SetActive("BossShip", false);
-		SetActive("HUD Boss HP", false);
+		RailFollower{Find("PlayerShip")}.Pause();
+		AddSalvage(500.0f);
+		PlaySfx("SFX Mission Clear");
+		SetActive("MISSION CLEAR Text", true);
+		SetActive("RESULT Button", true);
+		SetState("Clear");
+		ObjectiveTracker{Find("StageController")}.Set("Clear", ObjectiveState::Completed, 1.0f);
+		Log("MISSION CLEAR (RAIL COMPLETE)");
+		BeginResultTransition(true);
 	}
 }
 
@@ -589,24 +516,13 @@ WaterRailShooter0817::WaterRailShooter0817() {
 	BindAction("OnEnemyMoveCompleted", [this](const EditorScriptInputActionContext& context) { OnEnemyMoveCompleted(context); });
 	BindAction("OnSmallBoatDestroyed", [this](const EditorScriptInputActionContext& context) { OnSmallBoatDestroyed(context); });
 	BindAction("OnMissileBoatDestroyed", [this](const EditorScriptInputActionContext& context) { OnMissileBoatDestroyed(context); });
+	BindAction("OnGunBoatDestroyed", [this](const EditorScriptInputActionContext& context) { OnGunBoatDestroyed(context); });
+	BindAction("OnHighSpeedBoatDestroyed", [this](const EditorScriptInputActionContext& context) { OnHighSpeedBoatDestroyed(context); });
 	BindAction("OnBattleACompleted", [this](const EditorScriptInputActionContext& context) { OnBattleACompleted(context); });
 	BindAction("OnBattleBCompleted", [this](const EditorScriptInputActionContext& context) { OnBattleBCompleted(context); });
-	BindAction("OnBuy40mm", [this](const EditorScriptInputActionContext& context) { OnBuy40mm(context); });
-	BindAction("OnBuyRocket", [this](const EditorScriptInputActionContext& context) { OnBuyRocket(context); });
-	BindAction("OnBuyMissile", [this](const EditorScriptInputActionContext& context) { OnBuyMissile(context); });
-	BindAction("OnEquip20mm", [this](const EditorScriptInputActionContext& context) { OnEquip20mm(context); });
-	BindAction("OnEquip40mm", [this](const EditorScriptInputActionContext& context) { OnEquip40mm(context); });
-	BindAction("OnEquipRocket", [this](const EditorScriptInputActionContext& context) { OnEquipRocket(context); });
-	BindAction("OnEquipMissile", [this](const EditorScriptInputActionContext& context) { OnEquipMissile(context); });
-	BindAction("OnContinue", [this](const EditorScriptInputActionContext& context) { OnContinue(context); });
+	BindAction("OnMidRushCompleted", [this](const EditorScriptInputActionContext& context) { OnMidRushCompleted(context); });
+	BindAction("OnMaxRushCompleted", [this](const EditorScriptInputActionContext& context) { OnMaxRushCompleted(context); });
 	BindAction("OnPlayerDestroyed", [this](const EditorScriptInputActionContext& context) { OnPlayerDestroyed(context); });
-	BindAction("OnBossMainGunDestroyed", [this](const EditorScriptInputActionContext& context) { OnBossMainGunDestroyed(context); });
-	BindAction("OnBossMissileDestroyed", [this](const EditorScriptInputActionContext& context) { OnBossMissileDestroyed(context); });
-	BindAction("OnBossEngineDestroyed", [this](const EditorScriptInputActionContext& context) { OnBossEngineDestroyed(context); });
-	BindAction("OnBossPhase1", [this](const EditorScriptInputActionContext& context) { OnBossPhase1(context); });
-	BindAction("OnBossPhase2", [this](const EditorScriptInputActionContext& context) { OnBossPhase2(context); });
-	BindAction("OnBossPhase3", [this](const EditorScriptInputActionContext& context) { OnBossPhase3(context); });
-	BindAction("OnBossDestroyed", [this](const EditorScriptInputActionContext& context) { OnBossDestroyed(context); });
 	BindAction("OnResult", [this](const EditorScriptInputActionContext& context) { OnResult(context); });
 	BindAction("OnRestart", [this](const EditorScriptInputActionContext& context) { OnRestart(context); });
 	BindAction("OnLoadoutChanged", [this](const EditorScriptInputActionContext& context) { OnLoadoutChanged(context); });
@@ -620,18 +536,6 @@ void WaterRailShooter0817::Start(int32_t gameObjectId) {
 		// 次のプレイのために、前回の結果待ち状態を必ず捨てる。
 		sharedGameState = {};
 		Log("TITLE: PRESS SPACE TO START");
-		return;
-	}
-
-	const GameObject shopController = Find(kShopControllerName);
-
-	if (shopController.HasReference() && gameObjectId == shopController.GetInstanceId()) {
-		// ゲーム側から退避した所持状況を復元し、この Scene 内で購入・装備できる状態にする。
-		RestoreProgressFromShop();
-		GenericCounter{Find("SALVAGE Counter")}.Set(ReadSceneFloat(kShopSalvageKey));
-		SetShopVisible(true);
-		Log("SHOP: 開店 / SALVAGE " +
-			std::to_string(static_cast<int32_t>(ReadSceneFloat(kShopSalvageKey))));
 		return;
 	}
 
@@ -659,40 +563,13 @@ void WaterRailShooter0817::Start(int32_t gameObjectId) {
 		return;
 	}
 
-	// ショップから戻ってきた場合は、初期化ではなく退避しておいた進行状況を復元する。
-	const bool isReturningFromShop = ReadSceneFloat(kShopReturnPendingKey) > 0.5f;
-
 	sharedGameState = {};
 	sharedGameState.isInitialized = true;
-	sharedGameState.ownedWeapons[kWeapon20mmSlot] = true;
 
-	if (isReturningFromShop) {
-		RestoreProgressFromShop();
-		sharedGameState.isInitialized = true;
-	}
-
-	SetShopVisible(false);
 	SetActive("MISSION CLEAR Text", false);
 	SetActive("RESULT Button", false);
 	SetActive("MISSION FAILED Text", false);
 	SetActive("RESTART Button", false);
-	SetActive("HUD Boss HP", false);
-
-	if (isReturningFromShop) {
-		// フラグは一度で使い切る。以後の通常起動を巻き込まないようにする。
-		SceneManager::SetFloat(kShopReturnPendingKey, 0.0f);
-
-		GenericCounter{Find("SALVAGE Counter")}.Set(ReadSceneFloat(kShopSalvageKey));
-		EquipWeapon(sharedGameState.equippedWeaponSlot);
-
-		const GameObject playerShip = Find("PlayerShip");
-		const float railProgress = ReadSceneFloat(kShopRailProgressKey);
-		RailFollower{playerShip}.JumpTo(railProgress);
-		RailFollower{playerShip}.Resume();
-		SetState(sharedGameState.checkpointIndex == 1 ? "BattleB" : "BossApproach");
-		Log("SHOP: ゲームへ復帰 / 進行率 " + std::to_string(railProgress));
-		return;
-	}
 
 	EquipWeapon(kWeapon20mmSlot);
 	SetState("Approach");
@@ -706,24 +583,26 @@ void WaterRailShooter0817::Update(int32_t gameObjectId, float deltaTime) {
 		hasResolvedSceneRole_ = true;
 		const GameObject titleController = Find(kTitleControllerName);
 		isTitleController_ = titleController.HasReference() && gameObjectId == titleController.GetInstanceId();
-		const GameObject shopController = Find(kShopControllerName);
-		isShopController_ = shopController.HasReference() && gameObjectId == shopController.GetInstanceId();
 		const GameObject resultController = Find(kResultControllerName);
 		isResultController_ = resultController.HasReference() && gameObjectId == resultController.GetInstanceId();
+		// DEBUG_SCENE_ROLE: 2回目以降のPlayでSceneRoleが正しく再判定されているかを確認するための一時ログ。
+		Log("DEBUG_SCENE_ROLE: gameObjectId=" + std::to_string(gameObjectId) +
+			" isTitleController=" + std::to_string(isTitleController_) +
+			" isResultController=" + std::to_string(isResultController_) +
+			" titleFound=" + std::to_string(titleController.HasReference()) +
+			" resultFound=" + std::to_string(resultController.HasReference()));
 	}
 
 	// Title Scene: Spaceでゲーム本編へ。
 	if (isTitleController_) {
 		if (Input::GetKeyDown(KeyCode::Space)) {
 			Log("TITLE: START GAME");
-			SceneManager::LoadScene(kGameplayScenePath);
+			const bool loadOk = SceneManager::LoadScene(kGameplayScenePath);
+			// DEBUG_SCENE_ROLE: LoadSceneの戻り値そのものを見て、要求が拒否されているのか
+			// それとも別の理由(Sceneは切り替わったが表示/入力側が更新されない等)かを切り分ける。
+			Log(std::string("DEBUG_SCENE_ROLE: LoadScene(Gameplay) result=") + (loadOk ? "true" : "false"));
 		}
 
-		return;
-	}
-
-	// Shop Scene: 操作は全てボタン(OnBuy* / OnEquip* / OnContinue)なので毎Frameの処理は無い。
-	if (isShopController_) {
 		return;
 	}
 
@@ -731,7 +610,8 @@ void WaterRailShooter0817::Update(int32_t gameObjectId, float deltaTime) {
 	if (isResultController_) {
 		if (Input::GetKeyDown(KeyCode::Space)) {
 			Log("RESULT: BACK TO TITLE");
-			SceneManager::LoadScene(kTitleScenePath);
+			const bool loadOk = SceneManager::LoadScene(kTitleScenePath);
+			Log(std::string("DEBUG_SCENE_ROLE: LoadScene(Title) result=") + (loadOk ? "true" : "false"));
 		}
 
 		return;
@@ -746,7 +626,22 @@ void WaterRailShooter0817::Update(int32_t gameObjectId, float deltaTime) {
 		}
 
 		if (isPlayerFireHeld_ && !sharedGameState.isPlayerDestroyed && !sharedGameState.isMissionClear) {
+			// Fire() は連射入力中は毎フレーム呼ばれ、実際に発砲したかは戻り値から判別できない。
+			// 装弾数が減った瞬間だけを「1発出た」と見なすことで、武器ごとの発射間隔に
+			// そのまま同期した発砲音になる(20mmの0.09s連射でも二重に鳴らない)。
+			int32_t ammoBeforeFire = 0;
+			int32_t reserveBeforeFire = 0;
+			const bool hasAmmoBeforeFire =
+				WeaponLoadout{playerShip}.GetAmmo(ammoBeforeFire, reserveBeforeFire);
 			WeaponLoadout{playerShip}.Fire();
+			int32_t ammoAfterFire = 0;
+			int32_t reserveAfterFire = 0;
+
+			if (hasAmmoBeforeFire &&
+				WeaponLoadout{playerShip}.GetAmmo(ammoAfterFire, reserveAfterFire) &&
+				ammoAfterFire < ammoBeforeFire) {
+				PlayEquippedWeaponFireSfx();
+			}
 		}
 
 		return;
@@ -757,13 +652,16 @@ void WaterRailShooter0817::Update(int32_t gameObjectId, float deltaTime) {
 		return;
 	}
 
+	UpdateEnemyDestroyedEffects(deltaTime);
+
 	// 死亡・クリア後は表示を少し見せてからResult Sceneへ移る。Spaceで即スキップできる。
 	if (sharedGameState.isResultTransitionPending) {
 		sharedGameState.resultTransitionRemainingSeconds -= deltaTime;
 
 		if (sharedGameState.resultTransitionRemainingSeconds <= 0.0f || Input::GetKeyDown(KeyCode::Space)) {
 			sharedGameState.isResultTransitionPending = false;
-			SceneManager::LoadScene(kResultScenePath);
+			const bool loadOk = SceneManager::LoadScene(kResultScenePath);
+			Log(std::string("DEBUG_SCENE_ROLE: LoadScene(Result) result=") + (loadOk ? "true" : "false"));
 		}
 
 		return;
@@ -779,34 +677,84 @@ void WaterRailShooter0817::Update(int32_t gameObjectId, float deltaTime) {
 		return;
 	}
 
-	if (!sharedGameState.isBattleAStarted && railProgress >= kBattleAProgress) {
-		sharedGameState.isBattleAStarted = true;
-		EncounterController{Find("Battle A Encounter")}.Start();
+	// Enemy encounter redesign: E01..E12 fire before Checkpoint 1.
+	if (!sharedGameState.isEvent01Started && railProgress >= kEvent01Progress) {
+		sharedGameState.isEvent01Started = true;
+		EncounterController{Find("E01 Encounter")}.Start();
+		Log("EVENT 01: START");
+	}
+
+	if (!sharedGameState.isEvent02Started && railProgress >= kEvent02Progress) {
+		sharedGameState.isEvent02Started = true;
+		EncounterController{Find("E02 Encounter")}.Start();
+		Log("EVENT 02: START");
+	}
+
+	if (!sharedGameState.isEvent03Started && railProgress >= kEvent03Progress) {
+		sharedGameState.isEvent03Started = true;
+		EncounterController{Find("E03 Encounter")}.Start();
+		Log("EVENT 03: START");
+	}
+
+	if (!sharedGameState.isEvent04Started && railProgress >= kEvent04Progress) {
+		sharedGameState.isEvent04Started = true;
+		EncounterController{Find("E04 Encounter")}.Start();
+		Log("EVENT 04: START");
+	}
+
+	if (!sharedGameState.isEvent05Started && railProgress >= kEvent05Progress) {
+		sharedGameState.isEvent05Started = true;
+		EncounterController{Find("E05 Encounter")}.Start();
+		Log("EVENT 05: START");
+	}
+
+	if (!sharedGameState.isEvent06Started && railProgress >= kEvent06Progress) {
+		sharedGameState.isEvent06Started = true;
+		EncounterController{Find("E06 Encounter")}.Start();
+		Log("EVENT 06: START");
+	}
+
+	if (!sharedGameState.isEvent07Started && railProgress >= kEvent07Progress) {
+		sharedGameState.isEvent07Started = true;
+		EncounterController{Find("E07 Encounter")}.Start();
+		Log("EVENT 07: START");
+	}
+
+	if (!sharedGameState.isEvent08Started && railProgress >= kEvent08Progress) {
+		sharedGameState.isEvent08Started = true;
+		EncounterController{Find("E08 Encounter")}.Start();
+		Log("EVENT 08: START");
+	}
+
+	if (!sharedGameState.isEvent09Started && railProgress >= kEvent09Progress) {
+		sharedGameState.isEvent09Started = true;
+		EncounterController{Find("E09 Encounter")}.Start();
+		Log("EVENT 09: START");
+	}
+
+	if (!sharedGameState.isEvent10Started && railProgress >= kEvent10Progress) {
+		sharedGameState.isEvent10Started = true;
+		EncounterController{Find("E10 Encounter")}.Start();
+		Log("EVENT 10: START");
+	}
+
+	if (!sharedGameState.isEvent11Started && railProgress >= kEvent11Progress) {
+		sharedGameState.isEvent11Started = true;
+		EncounterController{Find("E11 Encounter")}.Start();
+		Log("EVENT 11: START");
+	}
+
+	if (!sharedGameState.isEvent12Started && railProgress >= kEvent12Progress) {
+		sharedGameState.isEvent12Started = true;
 		SetState("BattleA");
 		ObjectiveTracker{stageController}.Set("BattleA", ObjectiveState::Active, 0.0f);
-		Log("BATTLE A: START");
+		EncounterController{Find("E12 Encounter")}.Start();
+		Log("EVENT 12: START (MidRushEncounter)");
 	}
 
-	if (!sharedGameState.isCheckpoint1Opened && railProgress >= kCheckpoint1Progress) {
-		if (!sharedGameState.isBattleACompleted) {
-			RailFollower{playerShip}.Pause();
-			return;
-		}
-
-		sharedGameState.isCheckpoint1Opened = true;
-		OpenCheckpoint(1);
-		return;
-	}
-
-	if (sharedGameState.checkpointIndex >= 1 && !sharedGameState.isBattleBStarted &&
-		railProgress >= kBattleBProgress) {
-		sharedGameState.isBattleBStarted = true;
-		EncounterController{Find("Battle B Encounter")}.Start();
-		SetState("BattleB");
-		ObjectiveTracker{stageController}.Set("BattleB", ObjectiveState::Active, 0.0f);
-		Log("BATTLE B: START");
-	}
-
+	// Checkpointは廃止(Shop往復のための仕組みだった)。Railは各Encounterのクリアを待たず、
+	// 進行率だけで最後まで流れ続ける。MidRush/MaxRushEncounter完了フラグ自体は
+	// (今後何かに使う可能性があるため)sharedGameStateへ残すが、Railを止める用途では使わない。
 	if (!sharedGameState.isStormStarted && railProgress >= kStormProgress) {
 		sharedGameState.isStormStarted = true;
 		SetState("Storm");
@@ -815,33 +763,72 @@ void WaterRailShooter0817::Update(int32_t gameObjectId, float deltaTime) {
 		Log("STORM SECTION");
 	}
 
-	if (sharedGameState.checkpointIndex == 1 && !sharedGameState.isCheckpoint2Opened &&
-		railProgress >= kCheckpoint2Progress) {
-		if (!sharedGameState.isBattleBCompleted) {
-			RailFollower{playerShip}.Pause();
-			return;
-		}
-
-		sharedGameState.isCheckpoint2Opened = true;
-		OpenCheckpoint(2);
-		return;
+	// E13..E22
+	if (!sharedGameState.isEvent13Started && railProgress >= kEvent13Progress) {
+		sharedGameState.isEvent13Started = true;
+		EncounterController{Find("E13 Encounter")}.Start();
+		Log("EVENT 13: START");
 	}
 
-	if (sharedGameState.checkpointIndex >= 2 && !sharedGameState.isBossStarted &&
-		railProgress >= kBossStartProgress) {
-		ActivateBoss();
+	if (!sharedGameState.isEvent14Started && railProgress >= kEvent14Progress) {
+		sharedGameState.isEvent14Started = true;
+		EncounterController{Find("E14 Encounter")}.Start();
+		Log("EVENT 14: START");
 	}
 
-	if (sharedGameState.isBossStarted && !sharedGameState.isBossRailSlowed &&
-		railProgress >= kBossStopProgress) {
-		sharedGameState.isBossRailSlowed = true;
-		RailFollower{playerShip}.SetSpeed(18.0f);
-		Log("BOSS: SIDE-BY-SIDE COMBAT");
+	if (!sharedGameState.isEvent15Started && railProgress >= kEvent15Progress) {
+		sharedGameState.isEvent15Started = true;
+		EncounterController{Find("E15 Encounter")}.Start();
+		Log("EVENT 15: START");
 	}
 
-	// Boss戦中はHP段階を監視し、閾値を跨いだところで増援Waveへ開始要求を出す。
-	if (sharedGameState.isBossStarted) {
-		UpdateBossReinforcements();
+	if (!sharedGameState.isEvent16Started && railProgress >= kEvent16Progress) {
+		sharedGameState.isEvent16Started = true;
+		EncounterController{Find("E16 Encounter")}.Start();
+		Log("EVENT 16: START");
+	}
+
+	if (!sharedGameState.isEvent17Started && railProgress >= kEvent17Progress) {
+		sharedGameState.isEvent17Started = true;
+		EncounterController{Find("E17 Encounter")}.Start();
+		Log("EVENT 17: START");
+	}
+
+	if (!sharedGameState.isEvent18Started && railProgress >= kEvent18Progress) {
+		sharedGameState.isEvent18Started = true;
+		EncounterController{Find("E18 Encounter")}.Start();
+		Log("EVENT 18: START");
+	}
+
+	if (!sharedGameState.isEvent19Started && railProgress >= kEvent19Progress) {
+		sharedGameState.isEvent19Started = true;
+		EncounterController{Find("E19 Encounter")}.Start();
+		Log("EVENT 19: START");
+	}
+
+	if (!sharedGameState.isEvent20Started && railProgress >= kEvent20Progress) {
+		sharedGameState.isEvent20Started = true;
+		EncounterController{Find("E20 Encounter")}.Start();
+		Log("EVENT 20: START");
+	}
+
+	if (!sharedGameState.isEvent21Started && railProgress >= kEvent21Progress) {
+		sharedGameState.isEvent21Started = true;
+		SetState("BattleB");
+		ObjectiveTracker{stageController}.Set("BattleB", ObjectiveState::Active, 0.0f);
+		EncounterController{Find("E21 Encounter")}.Start();
+		Log("EVENT 21: START (MaxRushEncounter)");
+	}
+
+	if (!sharedGameState.isEvent22Started && railProgress >= kEvent22Progress) {
+		sharedGameState.isEvent22Started = true;
+		EncounterController{Find("E22 Encounter")}.Start();
+		Log("EVENT 22: START");
+	}
+
+	// ボスは廃止。Railが終端(進行率1.0)へ到達したらMission Clearにする。
+	if (!sharedGameState.isMissionClear && railProgress >= kRailCompleteProgress) {
+		OnRailCompleted();
 	}
 }
 
@@ -860,19 +847,27 @@ void WaterRailShooter0817::OnPlayerFire(const EditorScriptInputActionContext& in
 
 void WaterRailShooter0817::OnPlayerReload(const EditorScriptInputActionContext& inputContext) {
 	if (IsPerformed(inputContext)) {
-		WeaponLoadout{GameObject{inputContext.gameObjectId}}.Reload();
+		if (WeaponLoadout{GameObject{inputContext.gameObjectId}}.Reload()) {
+			PlaySfx("SFX Reload");
+		}
 	}
 }
 
 void WaterRailShooter0817::OnNextWeapon(const EditorScriptInputActionContext& inputContext) {
 	if (IsPerformed(inputContext)) {
 		EquipNextOwnedWeapon();
+		PlaySfx("SFX Weapon Switch");
 	}
 }
 
 void WaterRailShooter0817::OnEnemyFire(const EditorScriptInputActionContext& inputContext) {
 	if (IsPerformed(inputContext) && !sharedGameState.isPlayerDestroyed && !sharedGameState.isMissionClear) {
-		Weapon{GameObject{inputContext.gameObjectId}}.FireProjectile();
+		Log("DEBUG_FIRE: OnEnemyFire received for gameObjectId=" + std::to_string(inputContext.gameObjectId));
+
+		// 実際に発射できた時だけ鳴らす(Cooldown中や対象不在では鳴らさない)。
+		if (Weapon{GameObject{inputContext.gameObjectId}}.FireProjectile()) {
+			PlaySfx("SFX Enemy Fire");
+		}
 	}
 }
 
@@ -886,8 +881,9 @@ void WaterRailShooter0817::OnEnemyMoveCompleted(const EditorScriptInputActionCon
 }
 
 void WaterRailShooter0817::OnSmallBoatDestroyed(const EditorScriptInputActionContext& inputContext) {
-	(void)inputContext;
+	PlayEnemyDestroyedEffect(inputContext, false);
 	sharedGameState.smallBoatDestroyedCount++;
+	PlaySfx("SFX Explosion Small");
 	AddSalvage(20.0f);
 
 	if (sharedGameState.isBattleBStarted) {
@@ -903,14 +899,31 @@ void WaterRailShooter0817::OnSmallBoatDestroyed(const EditorScriptInputActionCon
 }
 
 void WaterRailShooter0817::OnMissileBoatDestroyed(const EditorScriptInputActionContext& inputContext) {
-	(void)inputContext;
+	PlayEnemyDestroyedEffect(inputContext, true);
 	sharedGameState.missileBoatDestroyedCount++;
 	sharedGameState.battleBDestroyedCount++;
+	PlaySfx("SFX Explosion Small");
 	AddSalvage(40.0f);
 	ObjectiveTracker{Find("StageController")}.Set(
 		"BattleB",
 		ObjectiveState::Active,
 		static_cast<float>(sharedGameState.battleBDestroyedCount));
+}
+
+// 機関砲艇 / 高速艇はテンプレート側で死亡Action名を設定済みだが、
+// これまでハンドラが無く撃破しても何も起きなかった。Salvageと撃破音をここで処理する。
+void WaterRailShooter0817::OnGunBoatDestroyed(const EditorScriptInputActionContext& inputContext) {
+	PlayEnemyDestroyedEffect(inputContext, false);
+	sharedGameState.smallBoatDestroyedCount++;
+	PlaySfx("SFX Explosion Small");
+	AddSalvage(35.0f);
+}
+
+void WaterRailShooter0817::OnHighSpeedBoatDestroyed(const EditorScriptInputActionContext& inputContext) {
+	PlayEnemyDestroyedEffect(inputContext, false);
+	sharedGameState.smallBoatDestroyedCount++;
+	PlaySfx("SFX Explosion Small");
+	AddSalvage(15.0f);
 }
 
 void WaterRailShooter0817::OnBattleACompleted(const EditorScriptInputActionContext& inputContext) {
@@ -927,69 +940,21 @@ void WaterRailShooter0817::OnBattleBCompleted(const EditorScriptInputActionConte
 	Log("BATTLE B: COMPLETE");
 }
 
+void WaterRailShooter0817::OnMidRushCompleted(const EditorScriptInputActionContext& inputContext) {
+	(void)inputContext;
+	sharedGameState.isMidRushCompleted = true;
+	Log("MID RUSH: COMPLETE");
+}
+
+void WaterRailShooter0817::OnMaxRushCompleted(const EditorScriptInputActionContext& inputContext) {
+	(void)inputContext;
+	sharedGameState.isMaxRushCompleted = true;
+	Log("MAX RUSH: COMPLETE");
+}
+
 //================================================================
-// Shop / Loadout / Checkpoint
+// Loadout
 //================================================================
-
-void WaterRailShooter0817::OnBuy40mm(const EditorScriptInputActionContext& inputContext) {
-	if (IsPerformed(inputContext)) {
-		BuyWeapon(kWeapon40mmSlot, kWeapon40mmPrice, "40mm Autocannon");
-	}
-}
-
-void WaterRailShooter0817::OnBuyRocket(const EditorScriptInputActionContext& inputContext) {
-	if (IsPerformed(inputContext)) {
-		BuyWeapon(kRocketSlot, kRocketPrice, "Rocket Pod");
-	}
-}
-
-void WaterRailShooter0817::OnBuyMissile(const EditorScriptInputActionContext& inputContext) {
-	if (IsPerformed(inputContext)) {
-		BuyWeapon(kMissileSlot, kMissilePrice, "Anti-Ship Missile");
-	}
-}
-
-void WaterRailShooter0817::OnEquip20mm(const EditorScriptInputActionContext& inputContext) {
-	if (IsPerformed(inputContext)) {
-		EquipWeapon(kWeapon20mmSlot);
-	}
-}
-
-void WaterRailShooter0817::OnEquip40mm(const EditorScriptInputActionContext& inputContext) {
-	if (IsPerformed(inputContext)) {
-		EquipWeapon(kWeapon40mmSlot);
-	}
-}
-
-void WaterRailShooter0817::OnEquipRocket(const EditorScriptInputActionContext& inputContext) {
-	if (IsPerformed(inputContext)) {
-		EquipWeapon(kRocketSlot);
-	}
-}
-
-void WaterRailShooter0817::OnEquipMissile(const EditorScriptInputActionContext& inputContext) {
-	if (IsPerformed(inputContext)) {
-		EquipWeapon(kMissileSlot);
-	}
-}
-
-void WaterRailShooter0817::OnContinue(const EditorScriptInputActionContext& inputContext) {
-	if (!IsPerformed(inputContext)) {
-		return;
-	}
-
-	// Shop Sceneの「Continue」。購入・装備の結果をScene永続値へ書き戻してからゲームへ戻る。
-	float salvage = 0.0f;
-	GenericCounter{Find("SALVAGE Counter")}.Get(salvage);
-	SceneManager::SetFloat(kShopSalvageKey, salvage);
-	SceneManager::SetFloat(kShopEquippedSlotKey, static_cast<float>(sharedGameState.equippedWeaponSlot));
-	SceneManager::SetFloat(kShopOwned40mmKey, sharedGameState.ownedWeapons[kWeapon40mmSlot] ? 1.0f : 0.0f);
-	SceneManager::SetFloat(kShopOwnedRocketKey, sharedGameState.ownedWeapons[kRocketSlot] ? 1.0f : 0.0f);
-	SceneManager::SetFloat(kShopOwnedMissileKey, sharedGameState.ownedWeapons[kMissileSlot] ? 1.0f : 0.0f);
-	SaveCheckpointState();
-	Log("SHOP: CONTINUE -> ゲームへ戻る");
-	SceneManager::LoadScene(kGameplayScenePath);
-}
 
 //================================================================
 // Player death / Boss phases / Result
@@ -998,84 +963,14 @@ void WaterRailShooter0817::OnContinue(const EditorScriptInputActionContext& inpu
 void WaterRailShooter0817::OnPlayerDestroyed(const EditorScriptInputActionContext& inputContext) {
 	(void)inputContext;
 	sharedGameState.isPlayerDestroyed = true;
+	PlaySfx("SFX Explosion Large");
 	RailFollower{Find("PlayerShip")}.Pause();
-	SetShopVisible(false);
+	PlaySfx("SFX Mission Failed");
 	SetActive("MISSION FAILED Text", true);
 	SetActive("RESTART Button", true);
 	SetState("Failed");
 	Log("PLAYER: DESTROYED");
 	BeginResultTransition(false);
-}
-
-void WaterRailShooter0817::OnBossMainGunDestroyed(const EditorScriptInputActionContext& inputContext) {
-	(void)inputContext;
-
-	if (!sharedGameState.isBossMainGunDestroyed) {
-		sharedGameState.isBossMainGunDestroyed = true;
-		SetActive("Boss Main Gun", false);
-		AddSalvage(80.0f);
-		Log("BOSS PART: MAIN GUN DESTROYED");
-	}
-}
-
-void WaterRailShooter0817::OnBossMissileDestroyed(const EditorScriptInputActionContext& inputContext) {
-	(void)inputContext;
-
-	if (!sharedGameState.isBossMissileDestroyed) {
-		sharedGameState.isBossMissileDestroyed = true;
-		SetActive("Boss Missile Launcher", false);
-		AddSalvage(80.0f);
-		Log("BOSS PART: MISSILE LAUNCHER DESTROYED");
-	}
-}
-
-void WaterRailShooter0817::OnBossEngineDestroyed(const EditorScriptInputActionContext& inputContext) {
-	(void)inputContext;
-
-	if (!sharedGameState.isBossEngineDestroyed) {
-		sharedGameState.isBossEngineDestroyed = true;
-		SetActive("Boss Engine", false);
-		RailFollower{Find("PlayerShip")}.SetSpeed(14.0f);
-		AddSalvage(120.0f);
-		Log("BOSS PART: ENGINE DESTROYED / FINAL PHASE");
-	}
-}
-
-void WaterRailShooter0817::OnBossPhase1(const EditorScriptInputActionContext& inputContext) {
-	(void)inputContext;
-	RailFollower{Find("PlayerShip")}.SetSpeed(24.0f);
-	Log("BOSS PHASE 1: APPROACH");
-}
-
-void WaterRailShooter0817::OnBossPhase2(const EditorScriptInputActionContext& inputContext) {
-	(void)inputContext;
-	RailFollower{Find("PlayerShip")}.SetSpeed(20.0f);
-	Log("BOSS PHASE 2: BROADSIDE");
-}
-
-void WaterRailShooter0817::OnBossPhase3(const EditorScriptInputActionContext& inputContext) {
-	(void)inputContext;
-	RailFollower{Find("PlayerShip")}.SetSpeed(16.0f);
-	Log("BOSS PHASE 3: STERN / ENGINE");
-}
-
-void WaterRailShooter0817::OnBossDestroyed(const EditorScriptInputActionContext& inputContext) {
-	(void)inputContext;
-
-	if (sharedGameState.isMissionClear) {
-		return;
-	}
-
-	sharedGameState.isMissionClear = true;
-	RailFollower{Find("PlayerShip")}.Pause();
-	HideBoss();
-	AddSalvage(500.0f);
-	SetActive("MISSION CLEAR Text", true);
-	SetActive("RESULT Button", true);
-	SetState("Clear");
-	ObjectiveTracker{Find("StageController")}.Set("Boss", ObjectiveState::Completed, 1.0f);
-	Log("MISSION CLEAR");
-	BeginResultTransition(true);
 }
 
 void WaterRailShooter0817::OnResult(const EditorScriptInputActionContext& inputContext) {

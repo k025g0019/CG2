@@ -68,6 +68,11 @@ void EditorDiagnosticsWindowManager::Draw() {
 			ImGui::EndTabItem();
 		}
 
+		if (ImGui::BeginTabItem("VFX")) {
+			DrawVfx();
+			ImGui::EndTabItem();
+		}
+
 		if (ImGui::BeginTabItem("Scene Validator")) {
 			DrawSceneValidation();
 			ImGui::EndTabItem();
@@ -246,6 +251,52 @@ void EditorDiagnosticsWindowManager::DrawProfiler() {
 			ImGui::Text("%.3f", sample.averageMilliseconds);
 			ImGui::TableSetColumnIndex(3);
 			ImGui::Text("%.3f", sample.peakMilliseconds);
+		}
+
+		ImGui::EndTable();
+	}
+#endif
+}
+
+void EditorDiagnosticsWindowManager::DrawVfx() {
+#ifdef USE_IMGUI
+	using namespace EditorSharedState;
+
+	if (!g_editorRuntimeManager.IsPlaying()) {
+		ImGui::TextDisabled("Play中のみStage1 VFX(Billboard/Flipbook/Ribbon/Ring)の状態を表示します。");
+		return;
+	}
+
+	const EditorVfxManager::DebugStats stats = g_editorRuntimeManager.GetVfxManager().GetDebugStats();
+	ImGui::Text("Active Effect数: %d", stats.activeEffectCount);
+	ImGui::Text("Active Emitter(Node)数: %d", stats.activeEmitterCount);
+	ImGui::Text("Particle数(Billboard粒子+Ribbon履歴点+Ring): %d", stats.activeParticleCount);
+	ImGui::Text("Effect Pool使用数: %d / %d", stats.poolUsedCount, stats.poolCapacity);
+	ImGui::Separator();
+
+	if (ImGui::BeginTable(
+			"VfxEffectTable",
+			5,
+			ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+		ImGui::TableSetupColumn("Effect名");
+		ImGui::TableSetupColumn("Node数");
+		ImGui::TableSetupColumn("Particle数");
+		ImGui::TableSetupColumn("描画方式");
+		ImGui::TableSetupColumn("LOD Spawn倍率 / 追従");
+		ImGui::TableHeadersRow();
+
+		for (const EditorVfxManager::DebugEffectEntry& entry : stats.effects) {
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextUnformatted(entry.effectId.c_str());
+			ImGui::TableSetColumnIndex(1);
+			ImGui::Text("%d", entry.nodeCount);
+			ImGui::TableSetColumnIndex(2);
+			ImGui::Text("%d", entry.particleCount);
+			ImGui::TableSetColumnIndex(3);
+			ImGui::TextUnformatted(entry.drawModeSummary.c_str());
+			ImGui::TableSetColumnIndex(4);
+			ImGui::Text("%.2f / %s", entry.lodSpawnMultiplier, entry.isFollowing ? "追従" : "固定");
 		}
 
 		ImGui::EndTable();

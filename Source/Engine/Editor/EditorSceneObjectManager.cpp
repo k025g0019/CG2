@@ -388,6 +388,7 @@ int32_t EditorSceneObjectManager::CreateObject(
 	sceneObject.transformationData->oceanWaveData1 = {};
 	sceneObject.transformationData->surfaceParams0 = {};
 	sceneObject.transformationData->surfaceParams1 = {};
+	sceneObject.transformationData->oceanRenderParams = {};
 	sceneObject.gameTransformationData->WVP = MakeIdentity4x4();
 	sceneObject.gameTransformationData->previousWVP = MakeIdentity4x4();
 	sceneObject.gameTransformationData->temporalParams = {};
@@ -405,6 +406,7 @@ int32_t EditorSceneObjectManager::CreateObject(
 	sceneObject.gameTransformationData->oceanWaveData1 = {};
 	sceneObject.gameTransformationData->surfaceParams0 = {};
 	sceneObject.gameTransformationData->surfaceParams1 = {};
+	sceneObject.gameTransformationData->oceanRenderParams = {};
 	sceneObject.materialData->color = {1.0f, 1.0f, 1.0f, 1.0f};  // Mesh の初期色は白。Inspector の Renderer 色で上書きされる。
 	sceneObject.materialData->enableLighting =
 		type == EditorSceneObjectType::Model ? TRUE : FALSE;  // Model はライトあり、Sprite は Texture 色をそのまま出す。
@@ -456,21 +458,45 @@ int32_t EditorSceneObjectManager::CreateObject(
 	sceneObject.materialData->oceanEnabled = 0.0f;
 	sceneObject.materialData->oceanFoamStrength = 0.0f;
 	sceneObject.materialData->oceanRoughness = 0.12f;
-	sceneObject.materialData->oceanColorBlendScale = 1.0f;
+	sceneObject.materialData->oceanColorBlendScale = 1.15f;
 	sceneObject.materialData->oceanDeepColor = {0.0f, 0.0f, 0.0f};
-	sceneObject.materialData->oceanMaterialPadding = 0.0f;
+	sceneObject.materialData->oceanPerPixelDisplacementStrength = 0.0f;
 	sceneObject.materialData->oceanDetailNormalStrength = 0.0f;
 	sceneObject.materialData->oceanFoamThreshold = 0.58f;
 	sceneObject.materialData->oceanAbsorptionDistance = 18.0f;
 	sceneObject.materialData->oceanRefractionDistortion = 0.08f;
 	sceneObject.materialData->oceanWaterDepth = 80.0f;
 	sceneObject.materialData->oceanCrestSharpness = 0.65f;
-	sceneObject.materialData->oceanMaterialPadding1 = 0.0f;
-	sceneObject.materialData->oceanMaterialPadding2 = 0.0f;
+	sceneObject.materialData->oceanPerPixelDisplacementSteps = 4.0f;
+	sceneObject.materialData->oceanPerPixelDisplacementDistance = 45.0f;
 	sceneObject.materialData->surfaceMode = 0;
 	sceneObject.materialData->materialWaterlineWidth = 0.25f;
 	sceneObject.materialData->surfaceMaterialPadding1 = 0.0f;
 	sceneObject.materialData->surfaceMaterialPadding2 = 0.0f;
+	sceneObject.materialData->oceanSunDiffuseInfluence = 1.0f;
+	sceneObject.materialData->oceanSunSpecularInfluence = 1.0f;
+	sceneObject.materialData->oceanSunGlitterInfluence = 1.0f;
+	sceneObject.materialData->oceanSkyReflectionInfluence = 1.0f;
+	sceneObject.materialData->oceanAmbientInfluence = 1.0f;
+	sceneObject.materialData->oceanDiffuseFloor = 0.22f;
+	sceneObject.materialData->oceanGlitterIntensity = 1.0f;
+	sceneObject.materialData->oceanGlitterSharpness = 0.5f;
+	sceneObject.materialData->oceanGlitterDensity = 1.0f;
+	sceneObject.materialData->oceanGlitterThreshold = 0.0f;
+	sceneObject.materialData->oceanGlitterMaxClamp = 7.5f;
+	sceneObject.materialData->oceanLightingExtensionPadding0 = 0.0f;
+	sceneObject.materialData->oceanMacroReflectionInfluence = 1.0f;
+	sceneObject.materialData->oceanCurvatureInfluence = 1.0f;
+	sceneObject.materialData->oceanTroughOcclusionStrength = 0.08f;
+	sceneObject.materialData->oceanCrestHazeStrength = 0.16f;
+	sceneObject.materialData->oceanCrestDetailBoost = 0.18f;
+	sceneObject.materialData->oceanSlopeRefractionInfluence = 0.35f;
+	sceneObject.materialData->oceanMediumWaveStrength = 1.35f;
+	sceneObject.materialData->oceanWaveColorSeparation = 0.22f;
+	sceneObject.materialData->oceanShapeRoughnessVariation = 0.18f;
+	sceneObject.materialData->oceanDetailFilterSharpness = 1.55f;
+	sceneObject.materialData->oceanGrazingShapeVisibility = 0.35f;
+	sceneObject.materialData->oceanDebugView = 0.0f;
 	sceneObject.cullMode = 0;
 	sceneObjects_.push_back(sceneObject);
 

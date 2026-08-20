@@ -33,6 +33,7 @@ private:
 
 	void ValidateScene();
 	void DrawProfiler();
+	void DrawVfx();
 	void DrawSceneValidation();
 	void DrawReplay();
 	void DrawRenderTargets();

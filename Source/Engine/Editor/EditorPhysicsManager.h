@@ -72,6 +72,7 @@ public:
 	const std::vector<PhysicsDebugCast>& GetFrameDebugCasts() const;  // 直近フレームで実行した Ray / ShapeCast 一覧
 	float GetFixedTimeStep() const;  // Script 側の FixedUpdate とそろえる固定時間
 	void SetPreFixedStepCallback(std::function<void(float)> callback);  // Jolt 更新直前に汎用の物理制御を固定時間で実行する
+	void SetPostFixedStepCallback(std::function<void(float)> callback);  // Jolt 更新(積分)直後、最終姿勢確定後に固定時間で実行する
 
 private:
 	struct PhysicsStepObject {
@@ -128,6 +129,7 @@ private:
 	std::vector<PhysicsStepObject*> pressureFieldObjects_;  // 圧力計算が使う有効な場だけの索引
 	std::vector<PhysicsStepObject*> electromagneticFieldObjects_;  // 電磁計算が使う有効な場だけの索引
 	std::function<void(float)> preFixedStepCallback_;  // Rail などが描画 FPS に依存せず力を加えるための固定更新入口
+	std::function<void(float)> postFixedStepCallback_;  // Jolt積分後、最終姿勢確定後に呼ぶ固定更新入口(Rail絶対角度制限のHard Clamp等)
 	float fixedTimeStep_ = 1.0f / 60.0f;  // 物理だけを進める固定時間。Unity の FixedUpdate 相当
 	float fixedTimeAccumulator_ = 0.0f;  // 可変 deltaTime を固定時間へ分割するための蓄積時間
 	float simulationElapsedTime_ = 0.0f;  // WindZone の連続した乱流位相を固定更新時間で進める

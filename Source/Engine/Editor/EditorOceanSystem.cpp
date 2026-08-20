@@ -356,6 +356,7 @@ namespace {
 		const Vector3& worldPosition,
 		uint64_t surfaceSampleKey,
 		float oceanElapsedTime,
+		bool allowsUnboundedSampling,
 		EditorOceanSurfaceSample& surfaceSample) {
 		const Matrix4x4 oceanWorldMatrix = editorScene.GetWorldMatrix(oceanGameObject.id);
 		const Matrix4x4 inverseOceanWorldMatrix = Inverse(oceanWorldMatrix);
@@ -363,8 +364,12 @@ namespace {
 		const float localHalfExtent =
 			(std::max)(oceanComponent.oceanSize, 1.0f) * 4.0f;
 
-		if (std::abs(targetLocalPosition.x) > localHalfExtent ||
-			std::abs(targetLocalPosition.z) > localHalfExtent) {
+		// 描画Oceanはカメラを中心に繰り返される無限水面として扱う。
+		// Buoyancy等がOceanを明示指定した場合も同じ座標規約でサンプルを続ける。
+		// 自動検出だけは、離れた局所水域を誤選択しないよう従来の範囲判定を残す。
+		if (!allowsUnboundedSampling &&
+			(std::abs(targetLocalPosition.x) > localHalfExtent ||
+			 std::abs(targetLocalPosition.z) > localHalfExtent)) {
 			return false;
 		}
 
@@ -522,6 +527,7 @@ namespace {
 
 			if (wakeComponent == nullptr ||
 				!wakeComponent->isActive ||
+				!wakeComponent->surfaceWakeAffectOceanSurface ||
 				wakeComponent->surfaceWakeCurrentIntensity <= 0.0001f ||
 				(wakeComponent->surfaceWakeOceanGameObjectId >= 0 &&
 				 wakeComponent->surfaceWakeOceanGameObjectId != surfaceSample.oceanGameObjectId)) {
@@ -540,11 +546,13 @@ namespace {
 				continue;
 			}
 
-			const float interactionRadius = (std::max)(wakeComponent->surfaceWakeWidth * 4.0f, 0.5f);
+			const float interactionRadius = (std::max)(
+				wakeComponent->surfaceWakeWidth * wakeComponent->surfaceWakeWaveRadiusScale,
+				0.5f);
 			const float interactionAmplitude =
 				wakeComponent->surfaceWakeCurrentIntensity *
 				(std::max)(wakeComponent->surfaceWakeWidth, 0.1f) *
-				0.10f;
+				(std::max)(wakeComponent->surfaceWakeWaveAmplitudeScale, 0.0f);
 			const float offsetX = surfaceSample.position.x - interactionPosition.x;
 			const float offsetZ = surfaceSample.position.z - interactionPosition.z;
 			const float interactionDistance = std::sqrt(offsetX * offsetX + offsetZ * offsetZ);
@@ -672,6 +680,7 @@ bool SampleEditorOceanSurface(
 			worldPosition,
 			surfaceSampleKey,
 			oceanElapsedTime,
+			true,
 			surfaceSample);
 	}
 
@@ -695,6 +704,7 @@ bool SampleEditorOceanSurface(
 				worldPosition,
 				surfaceSampleKey,
 				oceanElapsedTime,
+				false,
 				candidateSurfaceSample)) {
 			continue;
 		}

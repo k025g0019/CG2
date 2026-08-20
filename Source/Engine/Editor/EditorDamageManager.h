@@ -3,6 +3,7 @@
 #include "EditorScene.h"
 
 #include <cstdint>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
@@ -34,6 +35,7 @@ public:
 	bool GetDamageEventCount(int32_t gameObjectId, int32_t& eventCount) const;  // 有効期間内の複数被弾件数を返す
 	bool GetDamageEvent(int32_t gameObjectId, int32_t eventIndex, EditorDamageEventRuntimeEntry& damageEvent) const;  // 指定被弾履歴を返す
 	bool GetHealth(int32_t gameObjectId, float& currentHealth, float& maximumHealth) const;  // ScriptやUIからHealthを読む
+	const std::string& GetLastApplyResult() const { return lastApplyResult_; }  // 直前のDamage適用結果。射撃判定Logから失敗理由を参照する
 	bool SetHealth(int32_t gameObjectId, float currentHealth);  // 回復やCheckpointからHealthを設定する
 	void ResetRuntimeState(int32_t gameObjectId);  // Pool再利用時にHealth・無敵・死亡状態を初期化する
 
@@ -47,13 +49,14 @@ private:
 	std::unordered_set<int32_t> pendingDeactivationIds_;  // 死亡ActionをScriptへ渡した次フレームに無効化する集合
 	std::unordered_map<int32_t, EditorScriptDamageContext> lastDamageContexts_;  // 被弾Actionから参照できる最後のDamage情報
 	std::unordered_map<int32_t, uint64_t> damageSequences_;
+	std::string lastApplyResult_ = "NotApplied";  // ApplyDamageが最後に成功または失敗した理由
 
 	void QueueAction(
 		const EditorGameObject& ownerGameObject,
 		const EditorComponent* damageReceiver,
 		const std::string& actionName,
 		float value) const;  // 任意Actionを所有者または指定先Scriptへ通知する
-	int32_t ResolveDamageTarget(int32_t hitGameObjectId, float& hitZoneMultiplier) const;  // HitZoneからHealth所有Objectと部位倍率を解決する
+	int32_t ResolveDamageTarget(int32_t hitGameObjectId, float& hitZoneMultiplier) const;  // HitZoneと親階層からHealth所有Objectと部位倍率を解決する
 	float ResolveDamageTagMultiplier(const EditorGameObject& targetGameObject, int32_t damageTagId) const;  // Tag耐性・弱点倍率を返す
 	void RecordDamageEvent(const EditorScriptDamageContext& damageContext);  // Damage確定値を複数方向HUD用履歴へ保存する
 };

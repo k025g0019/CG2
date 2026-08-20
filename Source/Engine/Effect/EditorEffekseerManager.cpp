@@ -154,6 +154,16 @@ void EditorEffekseerManager::Update(float deltaTime) {
 	updateParameter.DeltaFrame = deltaTime * 60.0f;
 	manager_->Update(updateParameter);
 
+	// PlayEffectAtで発生させたSlotのうち再生が終わったものをここで回収する(Sceneに紐づかないためStopEffectAtが呼ばれない限り自動では消えない)。
+	for (auto anonymousInstanceIterator = anonymousInstances_.begin(); anonymousInstanceIterator != anonymousInstances_.end();) {
+		if (!manager_->Exists(anonymousInstanceIterator->second.handle)) {
+			anonymousInstanceIterator = anonymousInstances_.erase(anonymousInstanceIterator);
+		}
+		else {
+			++anonymousInstanceIterator;
+		}
+	}
+
 	for (auto& instancePair : instances_) {
 		EffectInstance& instance = instancePair.second;
 
@@ -181,6 +191,7 @@ void EditorEffekseerManager::Stop() {
 	}
 
 	instances_.clear();
+	anonymousInstances_.clear();
 	elapsedTime_ = 0.0f;
 	isPlaying_ = false;
 }
@@ -266,6 +277,71 @@ int32_t EditorEffekseerManager::GetAliveEffectCount(int32_t gameObjectId) const 
 		}
 	}
 	return aliveCount;
+}
+
+int32_t EditorEffekseerManager::PlayEffectAt(
+	const std::string& assetPath,
+	const Vector3& position,
+	const Vector3& rotationEuler) {
+	if (!isPlaying_ || manager_ == nullptr || !IsEffekseerAssetPath(assetPath)) {
+		return -1;
+	}
+
+	Effekseer::EffectRef effect = LoadEffect(assetPath);
+	if (effect == nullptr) {
+		return -1;
+	}
+
+	const Effekseer::Handle handle = manager_->Play(effect, position.x, position.y, position.z);
+	if (handle < 0) {
+		return -1;
+	}
+
+	manager_->SetRotation(handle, rotationEuler.x, rotationEuler.y, rotationEuler.z);
+
+	AnonymousEffectInstance instance{};
+	instance.handle = handle;
+	instance.position = position;
+	instance.rotationEuler = rotationEuler;
+
+	const int32_t effectAtId = nextAnonymousInstanceId_++;
+	anonymousInstances_.emplace(effectAtId, instance);
+	return effectAtId;
+}
+
+void EditorEffekseerManager::SetEffectPositionAt(int32_t effectAtId, const Vector3& position) {
+	if (manager_ == nullptr) {
+		return;
+	}
+
+	const auto anonymousInstanceIterator = anonymousInstances_.find(effectAtId);
+	if (anonymousInstanceIterator == anonymousInstances_.end()) {
+		return;
+	}
+
+	AnonymousEffectInstance& instance = anonymousInstanceIterator->second;
+	if (!manager_->Exists(instance.handle)) {
+		return;
+	}
+
+	instance.position = position;
+	manager_->SetLocation(instance.handle, position.x, position.y, position.z);
+}
+
+void EditorEffekseerManager::StopEffectAt(int32_t effectAtId) {
+	if (manager_ == nullptr) {
+		return;
+	}
+
+	const auto anonymousInstanceIterator = anonymousInstances_.find(effectAtId);
+	if (anonymousInstanceIterator == anonymousInstances_.end()) {
+		return;
+	}
+
+	if (manager_->Exists(anonymousInstanceIterator->second.handle)) {
+		manager_->StopEffect(anonymousInstanceIterator->second.handle);
+	}
+	anonymousInstances_.erase(anonymousInstanceIterator);
 }
 
 bool EditorEffekseerManager::IsEffekseerAssetPath(const std::string& assetPath) {

@@ -94,23 +94,49 @@ struct Material {
 	float oceanRoughness;  // Ocean 専用の反射粗さ
 	float oceanColorBlendScale;  // 浅瀬色と深海色の混合幅
 	Vector3 oceanDeepColor;  // 海面の深い部分へ使う色
-	float oceanMaterialPadding;  // HLSL cbuffer の 16byte 境界合わせ
+	float oceanPerPixelDisplacementStrength;  // 近景のMedium WaveをPixel Shaderで奥行き補正する強さ
 	float oceanDetailNormalStrength;  // ピクセル単位の細波法線強度
 	float oceanFoamThreshold;  // 波面圧縮から泡を出す閾値
 	float oceanAbsorptionDistance;  // Beer-Lambert 近似へ使う吸収距離
 	float oceanRefractionDistortion;  // 細波による屈折方向の歪み
 	float oceanWaterDepth;  // 色吸収へ使う海面の水深
 	float oceanCrestSharpness;  // 泡の波頭判定へ使う尖り
-	float oceanMaterialPadding1;  // HLSL cbuffer の 16byte 境界合わせ
-	float oceanMaterialPadding2;  // HLSL cbuffer の 16byte 境界合わせ
+	float oceanPerPixelDisplacementSteps;  // Pixel Shaderで使う固定レイ反復回数
+	float oceanPerPixelDisplacementDistance;  // Pixel変位を適用するカメラ距離
 	int32_t surfaceMode;  // 0=通常、1=Terrain、2=Foliage
 	float materialWaterlineWidth;  // 水際の濡れ遷移幅
 	float surfaceMaterialPadding1;  // HLSL cbuffer の 16byte 境界合わせ
 	float surfaceMaterialPadding2;  // HLSL cbuffer の 16byte 境界合わせ
+	// Ocean Sun Lighting / Glitter 設定。OceanSurface.PS.hlsl だけが読む拡張領域
+	float oceanSunDiffuseInfluence;  // 波面法線とSUN方向から出す明暗差の影響率
+	float oceanSunSpecularInfluence;  // SUNの鏡面ハイライトの影響率
+	float oceanSunGlitterInfluence;  // Sun Glitterの影響率
+	float oceanSkyReflectionInfluence;  // 空/画面反射の影響率
+	float oceanAmbientInfluence;  // Ambient / Sky Fillの影響率
+	float oceanDiffuseFloor;  // directional diffuseの最低値
+	float oceanGlitterIntensity;  // グリッター全体の強さ
+	float oceanGlitterSharpness;  // グリッター粒の鋭さ
+	float oceanGlitterDensity;  // グリッター粒の分散・密度
+	float oceanGlitterThreshold;  // グリッターが出始める反射整列の閾値
+	float oceanGlitterMaxClamp;  // グリッターの最大輝度クランプ
+	float oceanLightingExtensionPadding0;  // HLSL cbuffer の 16byte 境界合わせ
+	// Ocean 大波形状の光学表現。SUN強度とは独立して昼間の波形を読みやすくする
+	float oceanMacroReflectionInfluence;  // Sky Reflectionへ使うLarge/Medium Normalの混合率
+	float oceanCurvatureInfluence;  // 符号付き曲率から波頭と谷を抽出する感度
+	float oceanTroughOcclusionStrength;  // 谷のSky Ambientを弱める最大量
+	float oceanCrestHazeStrength;  // Foam直前の青白い波頭散乱
+	float oceanCrestDetailBoost;  // 波頭でFine Normalを増やす量
+	float oceanSlopeRefractionInfluence;  // 急斜面で屈折を強める量
+	float oceanMediumWaveStrength;  // Large Waveへ重ねるMedium Normalの強さ
+	float oceanWaveColorSeparation;  // 曲率による波頭と谷の水色色差
+	float oceanShapeRoughnessVariation;  // 波頭と谷の反射粗さの差
+	float oceanDetailFilterSharpness;  // 近距離でMedium/Fine Normalを保持する範囲
+	float oceanGrazingShapeVisibility;  // 浅い視線角でも曲率色を残す割合
+	float oceanDebugView;  // Ocean Debug View 番号。0=通常描画。旧 oceanShapeLightingPadding0 の流用
 };
 
 static_assert(offsetof(Material, uvTransform) == 96u, "Material と HLSL cbuffer の uvTransform 開始位置が一致していません。");
-static_assert(sizeof(Material) == 368u, "Material と HLSL cbuffer のサイズが一致していません。");
+static_assert(sizeof(Material) == 464u, "Material と HLSL cbuffer のサイズが一致していません。");
 
 constexpr int32_t kMaxEmissiveLights = 8;
 
@@ -183,14 +209,15 @@ struct TransformationMatrix {
 	Vector4 oceanParams5;  // x=スペクトルシード、y=波頭の尖り、zw=カメラ追従 LOD のローカル XZ 中心
 	std::array<Vector4, 16u> oceanWaveData0;  // xy=方向、z=波数、w=振幅
 	std::array<Vector4, 16u> oceanWaveData1;  // x=角周波数、y=位相、zw=予約
-	Vector4 surfaceParams0;  // x=描画種別、y=時刻、z=風変位量、w=風速
-	Vector4 surfaceParams1;  // xy=風向き、z=空間周波数、w=Height/Density map 有効
+	Vector4 surfaceParams0;  // 通常Surface=x:描画種別,y:時刻,z:風変位量,w:風速 / Ocean=xy:局所波中心,z:振幅,w:半径
+	Vector4 surfaceParams1;  // 通常Surface=xy:風向き,z:空間周波数,w:Height/Density map有効 / Ocean=2つ目の局所波
+	Vector4 oceanRenderParams;  // x=GPU細分化有効、y=目標Pixel長、z=最大係数、w=Viewport高さ
 	Vector4 temporalParams;  // x=現在の波時刻、y=前フレームの波時刻、zw=Viewport / RenderTarget 比率
 	Matrix4x4 previousWVP;  // 前フレームの位置を再投影し、Object / Skinned Motion Vector を作る
 };
 
 static_assert(
-	sizeof(TransformationMatrix) == 944u,
+	sizeof(TransformationMatrix) == 960u,
 	"TransformationMatrix と Ocean HLSL cbuffer のサイズが一致していません。");
 
 struct Sprite {

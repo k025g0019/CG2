@@ -74,6 +74,7 @@ void EditorDamageManager::Initialize(
 	pendingDeactivationIds_.clear();
 	lastDamageContexts_.clear();
 	damageSequences_.clear();
+	lastApplyResult_ = "NotApplied";
 }
 
 void EditorDamageManager::Start() {
@@ -82,6 +83,7 @@ void EditorDamageManager::Start() {
 	pendingDeactivationIds_.clear();
 	lastDamageContexts_.clear();
 	damageSequences_.clear();
+	lastApplyResult_ = "NotApplied";
 
 	if (editorScene_ == nullptr) {
 		return;
@@ -213,7 +215,13 @@ bool EditorDamageManager::ApplyDamage(
 bool EditorDamageManager::ApplyDamage(EditorScriptDamageContext& damageContext) {
 	damageContext.appliedDamage = 0.0f;
 
-	if (editorScene_ == nullptr || damageContext.baseDamage <= 0.0f) {
+	if (editorScene_ == nullptr) {
+		lastApplyResult_ = "SceneUnavailable";
+		return false;
+	}
+
+	if (damageContext.baseDamage <= 0.0f) {
+		lastApplyResult_ = "BaseDamageNotPositive";
 		return false;
 	}
 
@@ -223,6 +231,7 @@ bool EditorDamageManager::ApplyDamage(EditorScriptDamageContext& damageContext) 
 		hitZoneMultiplier);
 	EditorGameObject* targetGameObject = editorScene_->FindGameObject(damageContext.targetGameObjectId);
 	if (targetGameObject == nullptr || !targetGameObject->isActive) {
+		lastApplyResult_ = "DamageTargetMissingOrInactive";
 		return false;
 	}
 
@@ -231,11 +240,13 @@ bool EditorDamageManager::ApplyDamage(EditorScriptDamageContext& damageContext) 
 		EditorComponentType::Health);
 
 	if (healthComponent == nullptr || !healthComponent->isActive) {
+		lastApplyResult_ = "HealthMissingOrInactive";
 		return false;
 	}
 
 	const auto invulnerabilityIterator = invulnerabilityTimers_.find(damageContext.targetGameObjectId);
 	if (invulnerabilityIterator != invulnerabilityTimers_.end() && invulnerabilityIterator->second > 0.0f) {
+		lastApplyResult_ = "Invulnerable";
 		return false;
 	}
 
@@ -249,6 +260,7 @@ bool EditorDamageManager::ApplyDamage(EditorScriptDamageContext& damageContext) 
 	const float appliedDamage = damageContext.baseDamage * hitZoneMultiplier * damageMultiplier * damageTagMultiplier;
 
 	if (appliedDamage <= 0.0f) {
+		lastApplyResult_ = "DamageMultiplierRejected";
 		return false;
 	}
 
@@ -257,6 +269,7 @@ bool EditorDamageManager::ApplyDamage(EditorScriptDamageContext& damageContext) 
 		0.0f,
 		(std::max)(healthComponent->healthMaximum, 0.0f));
 	damageContext.appliedDamage = appliedDamage;
+	lastApplyResult_ = "Applied";
 	lastDamageContexts_[damageContext.targetGameObjectId] = damageContext;
 	damageSequences_[damageContext.targetGameObjectId]++;
 	RecordDamageEvent(damageContext);
@@ -291,11 +304,18 @@ bool EditorDamageManager::ApplyDamage(EditorScriptDamageContext& damageContext) 
 	deadGameObjectIds_.insert(damageContext.targetGameObjectId);
 
 	if (damageReceiver != nullptr && damageReceiver->isActive) {
-		QueueAction(
-			*targetGameObject,
-			damageReceiver,
-			damageReceiver->deathActionName,
-			0.0f);
+		if (scriptManager_ != nullptr && !damageReceiver->deathActionName.empty()) {
+			const int32_t actionTargetGameObjectId = damageReceiver->damageActionTargetGameObjectId >= 0
+				? damageReceiver->damageActionTargetGameObjectId
+				: targetGameObject->id;
+			EditorScriptActionPayload payload{};
+			payload.type = EditorScriptActionPayloadTypeGameObject;
+			payload.gameObjectId = targetGameObject->id;
+			scriptManager_->QueueActionPayload(
+				actionTargetGameObjectId,
+				damageReceiver->deathActionName,
+				payload);
+		}
 
 		if (damageReceiver->damageDeactivateOnDeath) {
 			pendingDeactivationIds_.insert(damageContext.targetGameObjectId);
@@ -804,14 +824,34 @@ int32_t EditorDamageManager::ResolveDamageTarget(
 		*hitGameObject,
 		EditorComponentType::HitZone);
 
-	if (hitZone == nullptr || !hitZone->isActive) {
-		return hitGameObjectId;
+	if (hitZone != nullptr && hitZone->isActive) {
+		hitZoneMultiplier = (std::max)(hitZone->hitZoneDamageMultiplier, 0.0f);
+
+		if (hitZone->hitZoneHealthGameObjectId >= 0) {
+			return hitZone->hitZoneHealthGameObjectId;
+		}
 	}
 
-	hitZoneMultiplier = (std::max)(hitZone->hitZoneDamageMultiplier, 0.0f);
-	return hitZone->hitZoneHealthGameObjectId >= 0
-		? hitZone->hitZoneHealthGameObjectId
-		: hitGameObjectId;
+	// Imported ModelのColliderが子GameObjectへ分かれていても、親のHealthへDamageを届ける。
+	const EditorGameObject* damageTargetGameObject = hitGameObject;
+
+	while (damageTargetGameObject != nullptr) {
+		const EditorComponent* health = EditorComponentUtility::FindComponent(
+			*damageTargetGameObject,
+			EditorComponentType::Health);
+
+		if (health != nullptr && health->isActive) {
+			return damageTargetGameObject->id;
+		}
+
+		if (damageTargetGameObject->parentId < 0) {
+			break;
+		}
+
+		damageTargetGameObject = editorScene_->FindGameObject(damageTargetGameObject->parentId);
+	}
+
+	return hitGameObjectId;
 }
 
 float EditorDamageManager::ResolveDamageTagMultiplier(

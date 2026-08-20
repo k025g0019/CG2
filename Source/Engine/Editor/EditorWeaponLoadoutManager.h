@@ -27,6 +27,7 @@ public:
 	bool FireSelected(int32_t loadoutGameObjectId);  // 弾薬を消費して選択Weaponを1回発射する。
 	bool Reload(int32_t loadoutGameObjectId);  // 選択SlotのReloadを開始する。
 	bool GetSelectedWeapon(int32_t loadoutGameObjectId, int32_t& weaponGameObjectId) const;  // 選択Weapon IDを返す。
+	bool GetSelectedSlotName(int32_t loadoutGameObjectId, std::string& slotName) const;  // HUD等へ選択中の武器名を返す。
 	bool GetAmmo(int32_t loadoutGameObjectId, int32_t& currentAmmo, int32_t& reserveAmmo) const;  // 選択Slotの弾薬を返す。
 	bool GetAmmoAtSlot(int32_t loadoutGameObjectId, int32_t slotIndex, int32_t& currentAmmo, int32_t& reserveAmmo, int32_t& maximumAmmo) const;  // 任意Slotの弾薬を返す。-1は選択Slot。
 	bool AddMagazineAmmo(int32_t loadoutGameObjectId, int32_t slotIndex, int32_t amount);  // Magazineへ加算して0～Maximumへ収める。

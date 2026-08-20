@@ -8,9 +8,11 @@
 #include "ThirdParty/imgui-docking/imgui-docking/imgui_internal.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <numbers>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -70,6 +72,18 @@ namespace {
 		const EditorGameObject& cameraGameObject,
 		const EditorComponent& cameraComponent) {
 		Transforms gameCameraTransform = ResolveWorldTransform(cameraGameObject);
+		const EditorComponent* horizonStabilizer = EditorComponentUtility::FindComponent(
+			cameraGameObject,
+			EditorComponentType::CameraHorizonStabilizer);
+
+		// Constraint更新済みのWorld Transformを再度Camera Followで上書きしない。
+		// これにより船体Yawは追従しつつ、Pitch/Roll継承率をInspectorから調整できる。
+		if (horizonStabilizer != nullptr &&
+			horizonStabilizer->isActive &&
+			horizonStabilizer->horizonSourceGameObjectId >= 0) {
+			return gameCameraTransform;
+		}
+
 		if (cameraComponent.connectedGameObjectId < 0 ||
 			cameraComponent.connectedGameObjectId == cameraGameObject.id) {
 			return gameCameraTransform;
@@ -229,6 +243,284 @@ namespace {
 			(std::clamp)(color.y, 0.0f, 1.0f),
 			(std::clamp)(color.z, 0.0f, 1.0f),
 			(std::clamp)(alpha, 0.0f, 1.0f));
+	}
+
+	ImFont* ResolveUiFont(int32_t fontIndex) {
+		if (fontIndex < 0 || fontIndex >= EditorSharedState::kUiFontVariantCount) {
+			return ImGui::GetFont();
+		}
+
+		ImFont* resolvedFont = EditorSharedState::g_uiFontVariants[static_cast<size_t>(fontIndex)];
+		return resolvedFont != nullptr ? resolvedFont : ImGui::GetFont();
+	}
+
+	// Rainbow/Wave演出用に1文字ずつ位置・色をずらして描画する。通常のAddTextと違い、
+	// 影も含めて文字ごとに個別のPositionへ描く(波で上下する文字に影も追従させるため)。
+	void DrawTextWithPerCharacterEffect(
+		ImDrawList* drawList,
+		ImFont* font,
+		float fontSize,
+		ImVec2 basePosition,
+		const Vector3& baseColor,
+		float alpha,
+		const std::string& text,
+		int32_t effectType,
+		float paramA,
+		float paramB,
+		float paramC,
+		float elapsedSeconds) {
+		const char* cursor = text.c_str();
+		const char* textEnd = text.c_str() + text.size();
+		int32_t characterIndex = 0;
+		float penX = basePosition.x;
+
+		while (cursor < textEnd) {
+			unsigned int codepoint = 0;
+			const int32_t byteCount = ImTextCharFromUtf8(&codepoint, cursor, textEnd);
+			const int32_t safeByteCount = (std::max)(byteCount, 1);
+			const char* charBegin = cursor;
+			const char* charEnd = cursor + safeByteCount;
+
+			const float advance = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, charBegin, charEnd).x;
+
+			Vector3 characterColor = baseColor;
+			float characterYOffset = 0.0f;
+
+			if (effectType == 5) {
+				// レインボー: 文字Indexと時間で色相を回し続ける
+				float hue = paramA * elapsedSeconds + paramB * static_cast<float>(characterIndex);
+				hue -= std::floor(hue);
+				float rainbowR = 0.0f;
+				float rainbowG = 0.0f;
+				float rainbowB = 0.0f;
+				ImGui::ColorConvertHSVtoRGB(hue, 1.0f, 1.0f, rainbowR, rainbowG, rainbowB);
+				characterColor = {rainbowR, rainbowG, rainbowB};
+			}
+			else if (effectType == 6) {
+				// 波: 文字Indexごとに位相をずらしたSin波で上下させる
+				characterYOffset = std::sin(
+					static_cast<float>(characterIndex) * paramB + elapsedSeconds * paramC) * paramA;
+			}
+
+			const ImVec2 characterPosition{penX, basePosition.y + characterYOffset};
+			const ImU32 shadowColor = IM_COL32(0, 0, 0, static_cast<int>(190 * alpha));
+			const ImU32 characterDrawColor = ImGui::ColorConvertFloat4ToU32(
+				ImVec4(characterColor.x, characterColor.y, characterColor.z, alpha));
+
+			drawList->AddText(
+				font, fontSize,
+				ImVec2(characterPosition.x + 2.0f, characterPosition.y + 2.0f),
+				shadowColor, charBegin, charEnd);
+			drawList->AddText(font, fontSize, characterPosition, characterDrawColor, charBegin, charEnd);
+
+			penX += advance;
+			cursor = charEnd;
+			characterIndex++;
+		}
+	}
+
+	// 疑似乱数のように見える値を、時刻由来のSeedから決定的に作る(true RNGを使わずFrame間で再現可能にする)。
+	float PseudoRandomFromSeed(float seed) {
+		const float sineValue = std::sin(seed * 91.7f + 12.9898f) * 43758.5453f;
+		return sineValue - std::floor(sineValue);
+	}
+
+	// 常時動き続けるText演出(発光/輪郭発光/色収差/微振動/不規則点滅/脈動/残像/簡易グリッチ)をまとめて描画する。
+	// Rainbow/Waveと違い、これらは文字ごとではなく文字列全体へ複数回AddTextする(発光の縁取りやRGB分離など)。
+	void DrawTextWithContinuousEffect(
+		ImDrawList* drawList,
+		ImFont* font,
+		float fontSize,
+		ImVec2 basePosition,
+		const Vector3& baseColor,
+		float alpha,
+		const char* label,
+		int32_t effectType,
+		float paramA,
+		float paramB,
+		float paramC,
+		float elapsedSeconds) {
+		const auto drawPass = [&](ImVec2 position, const Vector3& color, float passAlpha, float passSize) {
+			if (passAlpha <= 0.001f || passSize < 1.0f) {
+				return;
+			}
+			const ImU32 passColor = ImGui::ColorConvertFloat4ToU32(
+				ImVec4(color.x, color.y, color.z, (std::clamp)(passAlpha, 0.0f, 1.0f)));
+			drawList->AddText(font, passSize, position, passColor, label);
+		};
+
+		if (effectType == 4) {
+			// 点滅: ParamA秒間隔で完全にOn/Offする(表示され続ける間ずっと繰り返す)
+			const float blinkInterval = (std::max)(paramA, 0.02f);
+			const float phase = std::fmod(elapsedSeconds, blinkInterval * 2.0f);
+			if (phase < blinkInterval) {
+				drawPass(
+					ImVec2(basePosition.x + 2.0f, basePosition.y + 2.0f),
+					{0.0f, 0.0f, 0.0f}, alpha * 0.7f, fontSize);
+				drawPass(basePosition, baseColor, alpha, fontSize);
+			}
+		}
+		else if (effectType == 7) {
+			// 発光: 8方向へ薄いGlow色を重ねてから本体を描く。脈動でGlowの半径と強さが上下する。
+			const float breathing = paramB > 0.0f ? 1.0f + paramC * std::sin(elapsedSeconds * paramB) : 1.0f;
+			const float radius = (std::max)(paramA, 0.0f) * (std::max)(breathing, 0.1f);
+			const Vector3 glowColor = {
+				(std::min)(baseColor.x * 0.5f + 0.5f, 1.0f),
+				(std::min)(baseColor.y * 0.5f + 0.5f, 1.0f),
+				(std::min)(baseColor.z * 0.5f + 0.5f, 1.0f)};
+			constexpr int32_t kDirectionCount = 8;
+			for (int32_t directionIndex = 0; directionIndex < kDirectionCount; directionIndex++) {
+				const float angle = (static_cast<float>(directionIndex) / static_cast<float>(kDirectionCount)) *
+					2.0f * std::numbers::pi_v<float>;
+				const ImVec2 offsetPosition{
+					basePosition.x + std::cos(angle) * radius,
+					basePosition.y + std::sin(angle) * radius};
+				drawPass(offsetPosition, glowColor, alpha * 0.16f, fontSize);
+			}
+			drawPass(
+				ImVec2(basePosition.x + 2.0f, basePosition.y + 2.0f),
+				{0.0f, 0.0f, 0.0f}, alpha * 0.7f, fontSize);
+			drawPass(basePosition, baseColor, alpha, fontSize);
+		}
+		else if (effectType == 8) {
+			// 輪郭の発光: 文字本体は普通の色。輪郭だけ8方向オフセットでGlow色を薄く重ねて縁取る。
+			const float breathing = paramB > 0.0f ? 1.0f + paramC * std::sin(elapsedSeconds * paramB) : 1.0f;
+			const float thickness = (std::max)(paramA, 0.1f) * (std::max)(breathing, 0.1f);
+			const Vector3 glowColor = {
+				(std::min)(baseColor.x * 0.4f + 0.6f, 1.0f),
+				(std::min)(baseColor.y * 0.4f + 0.6f, 1.0f),
+				(std::min)(baseColor.z * 0.4f + 0.6f, 1.0f)};
+			constexpr int32_t kDirectionCount = 8;
+			for (int32_t directionIndex = 0; directionIndex < kDirectionCount; directionIndex++) {
+				const float angle = (static_cast<float>(directionIndex) / static_cast<float>(kDirectionCount)) *
+					2.0f * std::numbers::pi_v<float>;
+				const ImVec2 offsetPosition{
+					basePosition.x + std::cos(angle) * thickness,
+					basePosition.y + std::sin(angle) * thickness};
+				drawPass(offsetPosition, glowColor, alpha * 0.55f * (std::clamp)(breathing, 0.0f, 2.0f), fontSize);
+			}
+			drawPass(
+				ImVec2(basePosition.x + 2.0f, basePosition.y + 2.0f),
+				{0.0f, 0.0f, 0.0f}, alpha * 0.7f, fontSize);
+			drawPass(basePosition, baseColor, alpha, fontSize);
+		}
+		else if (effectType == 9) {
+			// 色収差: 赤/青コピーを左右へずらして薄く重ね、最後に本来の色で本体を描く。
+			const float breathing = paramB > 0.0f ? 1.0f + paramC * std::sin(elapsedSeconds * paramB) : 1.0f;
+			const float offsetAmount = (std::max)(paramA, 0.0f) * (std::max)(breathing, 0.0f);
+			drawPass(
+				ImVec2(basePosition.x - offsetAmount, basePosition.y),
+				{1.0f, 0.15f, 0.15f}, alpha * 0.65f, fontSize);
+			drawPass(
+				ImVec2(basePosition.x + offsetAmount, basePosition.y),
+				{0.15f, 0.35f, 1.0f}, alpha * 0.65f, fontSize);
+			drawPass(
+				ImVec2(basePosition.x + 2.0f, basePosition.y + 2.0f),
+				{0.0f, 0.0f, 0.0f}, alpha * 0.7f, fontSize);
+			drawPass(basePosition, baseColor, alpha, fontSize);
+		}
+		else if (effectType == 10) {
+			// 微振動: 複数の周波数を足したSinで、規則性の薄い揺れを作る(真の乱数は使わない)。
+			const float amplitude = (std::max)(paramA, 0.0f);
+			const float speed = (std::max)(paramB, 0.01f);
+			const float jitterX = amplitude * 0.5f * (
+				std::sin(elapsedSeconds * speed * 13.7f) + std::sin(elapsedSeconds * speed * 7.1f + 1.3f));
+			const float jitterY = amplitude * 0.5f * (
+				std::sin(elapsedSeconds * speed * 17.3f + 2.1f) + std::sin(elapsedSeconds * speed * 9.9f + 0.4f));
+			const ImVec2 jitteredPosition{basePosition.x + jitterX, basePosition.y + jitterY};
+			drawPass(
+				ImVec2(jitteredPosition.x + 2.0f, jitteredPosition.y + 2.0f),
+				{0.0f, 0.0f, 0.0f}, alpha * 0.7f, fontSize);
+			drawPass(jitteredPosition, baseColor, alpha, fontSize);
+		}
+		else if (effectType == 11) {
+			// 不規則点滅: 周波数の異なる複数のSinを合成し、蛍光灯のようなランダム風の明滅を作る。
+			const float speed = (std::max)(paramB, 0.01f);
+			const float rawFlicker =
+				std::sin(elapsedSeconds * speed * 2.1f) +
+				std::sin(elapsedSeconds * speed * 5.3f + 1.1f) +
+				std::sin(elapsedSeconds * speed * 11.7f + 2.9f);
+			const float normalizedFlicker = (std::clamp)(rawFlicker / 3.0f * 0.5f + 0.5f, 0.0f, 1.0f);
+			const float flickerAlpha = alpha * ((std::clamp)(paramA, 0.0f, 1.0f) +
+				(1.0f - (std::clamp)(paramA, 0.0f, 1.0f)) * normalizedFlicker);
+			drawPass(
+				ImVec2(basePosition.x + 2.0f, basePosition.y + 2.0f),
+				{0.0f, 0.0f, 0.0f}, flickerAlpha * 0.7f, fontSize);
+			drawPass(basePosition, baseColor, flickerAlpha, fontSize);
+		}
+		else if (effectType == 12) {
+			// 脈動: FontSizeを1.0〜ParamA倍の間でゆっくり往復させ、心拍のような拡縮を作る。
+			const float maximumScale = (std::max)(paramA, 1.0f);
+			const float speed = (std::max)(paramB, 0.01f);
+			const float scale = 1.0f + (maximumScale - 1.0f) * 0.5f * (1.0f + std::sin(elapsedSeconds * speed));
+			const float scaledSize = fontSize * scale;
+			const ImVec2 centeredPosition{
+				basePosition.x - (scaledSize - fontSize) * 0.25f,
+				basePosition.y - (scaledSize - fontSize) * 0.5f};
+			drawPass(
+				ImVec2(centeredPosition.x + 2.0f, centeredPosition.y + 2.0f),
+				{0.0f, 0.0f, 0.0f}, alpha * 0.7f, scaledSize);
+			drawPass(centeredPosition, baseColor, alpha, scaledSize);
+		}
+		else if (effectType == 13) {
+			// 残像: 現在位置をSin/Cosの軌道で少し動かし、少し過去の軌道位置に薄いコピーを複数残す。
+			const float amplitude = (std::max)(paramA, 0.0f);
+			const float speed = (std::max)(paramB, 0.01f);
+			const int32_t trailCount = (std::clamp)(static_cast<int32_t>(paramC + 0.5f), 2, 6);
+			const auto driftAt = [&](float time) {
+				return ImVec2{
+					amplitude * std::sin(time * speed),
+					amplitude * 0.5f * std::cos(time * speed * 1.3f)};
+			};
+			constexpr float kTrailLagSeconds = 0.05f;
+			for (int32_t trailIndex = trailCount; trailIndex >= 1; trailIndex--) {
+				const ImVec2 trailDrift = driftAt(elapsedSeconds - kTrailLagSeconds * static_cast<float>(trailIndex));
+				const ImVec2 trailPosition{basePosition.x + trailDrift.x, basePosition.y + trailDrift.y};
+				const float trailAlpha = alpha * 0.35f * std::pow(0.55f, static_cast<float>(trailIndex - 1));
+				drawPass(trailPosition, baseColor, trailAlpha, fontSize);
+			}
+			const ImVec2 mainDrift = driftAt(elapsedSeconds);
+			const ImVec2 mainPosition{basePosition.x + mainDrift.x, basePosition.y + mainDrift.y};
+			drawPass(
+				ImVec2(mainPosition.x + 2.0f, mainPosition.y + 2.0f),
+				{0.0f, 0.0f, 0.0f}, alpha * 0.7f, fontSize);
+			drawPass(mainPosition, baseColor, alpha, fontSize);
+		}
+		else if (effectType == 14) {
+			// 簡易グリッチ: 発生頻度ごとのCycleを区切り、周期の先頭付近だけ「欠け」、
+			// その後の短い間だけRGB分離+位置ズレを見せる。オフセット量はCycle番号から決定的な擬似乱数で決める。
+			const float frequency = (std::max)(paramB, 0.05f);
+			const float intensity = (std::clamp)(paramC, 0.0f, 1.0f);
+			const float cycleLength = 1.0f / frequency;
+			const float cyclePhase = std::fmod((std::max)(elapsedSeconds, 0.0f), cycleLength) / cycleLength;
+			const float cycleIndex = std::floor(elapsedSeconds / cycleLength);
+			const float randomOffset = (PseudoRandomFromSeed(cycleIndex) - 0.5f) * 2.0f * paramA * intensity;
+
+			constexpr float kSkipWindow = 0.06f;
+			constexpr float kGlitchWindow = 0.22f;
+
+			if (intensity > 0.001f && cyclePhase < kSkipWindow) {
+				// 一瞬だけ完全に欠ける
+				return;
+			}
+
+			if (intensity > 0.001f && cyclePhase < kGlitchWindow) {
+				const ImVec2 glitchedPosition{basePosition.x + randomOffset, basePosition.y};
+				drawPass(
+					ImVec2(glitchedPosition.x - paramA * 0.6f * intensity, glitchedPosition.y),
+					{1.0f, 0.2f, 0.2f}, alpha * 0.7f, fontSize);
+				drawPass(
+					ImVec2(glitchedPosition.x + paramA * 0.6f * intensity, glitchedPosition.y),
+					{0.2f, 0.4f, 1.0f}, alpha * 0.7f, fontSize);
+				drawPass(glitchedPosition, baseColor, alpha, fontSize);
+			}
+			else {
+				drawPass(
+					ImVec2(basePosition.x + 2.0f, basePosition.y + 2.0f),
+					{0.0f, 0.0f, 0.0f}, alpha * 0.7f, fontSize);
+				drawPass(basePosition, baseColor, alpha, fontSize);
+			}
+		}
 	}
 
 	const EditorComponent* FindActiveComponent(
@@ -894,26 +1186,148 @@ namespace {
 				}
 
 				if (isTextComponent) {
+					// 出現演出(1回だけ): Alpha/Scale/表示文字数を変化させる。
+					float appearAlphaMultiplier = 1.0f;
+					float appearScaleMultiplier = 1.0f;
+					size_t appearVisibleCharacterCount = std::string::npos;
+					EditorComponent* textEffect =
+						EditorComponentUtility::FindComponent(gameObject, EditorComponentType::TextEffect);
+					const bool hasAnyTextEffect =
+						textEffect != nullptr && textEffect->isActive &&
+						(textEffect->textAppearEffectType != 0 || textEffect->textContinuousEffectType != 0);
+
+					if (hasAnyTextEffect) {
+						if (!textEffect->textEffectRuntimeWasActive) {
+							textEffect->textEffectRuntimeElapsed = 0.0f;
+							textEffect->textEffectRuntimeWasActive = true;
+						}
+
+						textEffect->textEffectRuntimeElapsed += ImGui::GetIO().DeltaTime;
+					}
+					else if (textEffect != nullptr) {
+						textEffect->textEffectRuntimeWasActive = false;
+						textEffect->textEffectRuntimeElapsed = 0.0f;
+					}
+
+					if (hasAnyTextEffect && textEffect->textAppearEffectType != 0) {
+						const float appearTime = textEffect->textEffectRuntimeElapsed - textEffect->textAppearDelay;
+						const float appearDuration = (std::max)(textEffect->textAppearDuration, 0.001f);
+
+						if (appearTime < 0.0f) {
+							// 開始遅延中は各効果の開始状態(非表示・文字数0・縮小0)を維持する
+							switch (textEffect->textAppearEffectType) {
+							case 1: appearAlphaMultiplier = 0.0f; break;
+							case 2: appearVisibleCharacterCount = 0u; break;
+							case 3: appearScaleMultiplier = 0.0f; break;
+							default: break;
+							}
+						}
+						else {
+							const float progress = (std::clamp)(appearTime / appearDuration, 0.0f, 1.0f);
+
+							if (textEffect->textAppearEffectType == 1) {
+								// フェードイン: 0→1
+								appearAlphaMultiplier = progress;
+							}
+							else if (textEffect->textAppearEffectType == 2) {
+								// タイプライター: ParamA文字/秒で先頭から表示していく
+								const float charCount =
+									appearTime * (std::max)(textEffect->textAppearParamA, 0.1f);
+								appearVisibleCharacterCount =
+									static_cast<size_t>((std::max)(charCount, 0.0f));
+							}
+							else if (textEffect->textAppearEffectType == 3) {
+								// スケールポップ: 0→ParamA倍→1倍とオーバーシュートして収束する
+								const float overshoot = (std::max)(textEffect->textAppearParamA, 1.0f);
+								appearScaleMultiplier = progress < 0.5f
+									? (progress * 2.0f) * overshoot
+									: overshoot - (progress - 0.5f) * 2.0f * (overshoot - 1.0f);
+							}
+						}
+					}
+
+					std::string effectLabelBuffer;
+					const char* drawLabel = buttonLabel;
+
+					if (appearVisibleCharacterCount != std::string::npos) {
+						effectLabelBuffer = uiComponent->buttonLabel.substr(
+							0, (std::min)(appearVisibleCharacterCount, uiComponent->buttonLabel.size()));
+						drawLabel = effectLabelBuffer.c_str();
+					}
+
 					const float fontSize = (std::clamp)(
-						resolvedSize.y * fontScale,
-						8.0f,
+						resolvedSize.y * fontScale * appearScaleMultiplier,
+						0.0f,
 						512.0f);
-					ImDrawList* drawList = ImGui::GetWindowDrawList();
-					const ImU32 textColor = ImGui::ColorConvertFloat4ToU32(
-						ToImGuiColor(renderColor, renderAlpha));
-					const ImU32 shadowColor = IM_COL32(0, 0, 0, 190);
-					drawList->AddText(
-						ImGui::GetFont(),
-						fontSize,
-						ImVec2(buttonPosition.x + 2.0f, buttonPosition.y + 2.0f),
-						shadowColor,
-						buttonLabel);
-					drawList->AddText(
-						ImGui::GetFont(),
-						fontSize,
-						buttonPosition,
-						textColor,
-						buttonLabel);
+					const float effectiveAlpha = (std::clamp)(renderAlpha * appearAlphaMultiplier, 0.0f, 1.0f);
+					ImFont* resolvedFont = ResolveUiFont(uiComponent->textFontIndex);
+					const ImVec2 textCenterOffset{
+						resolvedSize.x * uiScaleX * 0.5f * (1.0f - appearScaleMultiplier),
+						resolvedSize.y * uiScaleY * 0.5f * (1.0f - appearScaleMultiplier)};
+					const ImVec2 scaledPosition{
+						buttonPosition.x + textCenterOffset.x,
+						buttonPosition.y + textCenterOffset.y};
+
+					if (fontSize >= 1.0f && effectiveAlpha > 0.001f) {
+						ImDrawList* drawList = ImGui::GetWindowDrawList();
+						const int32_t continuousType =
+							hasAnyTextEffect ? textEffect->textContinuousEffectType : 0;
+						const float continuousElapsed = hasAnyTextEffect
+							? (std::max)(textEffect->textEffectRuntimeElapsed - textEffect->textContinuousDelay, 0.0f)
+							: 0.0f;
+
+						if (continuousType == 2 || continuousType == 3) {
+							// レインボー/波: 文字ごとに個別Positionへ描く
+							DrawTextWithPerCharacterEffect(
+								drawList,
+								resolvedFont,
+								fontSize,
+								scaledPosition,
+								renderColor,
+								effectiveAlpha,
+								drawLabel,
+								continuousType == 2 ? 5 : 6,
+								textEffect->textContinuousParamA,
+								textEffect->textContinuousParamB,
+								textEffect->textContinuousParamC,
+								continuousElapsed);
+						}
+						else if (continuousType != 0) {
+							// 点滅/発光/輪郭発光/色収差/微振動/不規則点滅/脈動/残像/簡易グリッチ。
+							// DrawTextWithContinuousEffect内部の分岐番号(4,7-14)は、旧textEffectTypeの
+							// 番号をそのまま流用しているため、textContinuousEffectType(1,4-11)に+3する。
+							DrawTextWithContinuousEffect(
+								drawList,
+								resolvedFont,
+								fontSize,
+								scaledPosition,
+								renderColor,
+								effectiveAlpha,
+								drawLabel,
+								continuousType + 3,
+								textEffect->textContinuousParamA,
+								textEffect->textContinuousParamB,
+								textEffect->textContinuousParamC,
+								continuousElapsed);
+						}
+						else {
+							const ImU32 textColor = ImGui::ColorConvertFloat4ToU32(
+								ToImGuiColor(renderColor, effectiveAlpha));
+							const ImU32 shadowColor = IM_COL32(0, 0, 0, static_cast<int>(190 * effectiveAlpha));
+							drawList->AddText(
+								resolvedFont,
+								fontSize,
+								ImVec2(scaledPosition.x + 2.0f, scaledPosition.y + 2.0f),
+								shadowColor,
+								drawLabel);
+							drawList->AddText(
+								resolvedFont,
+								fontSize,
+								scaledPosition,
+								textColor,
+								drawLabel);
+						}
+					}
 					if (hasMaskClip) {
 						ImGui::PopClipRect();
 					}
@@ -948,7 +1362,17 @@ namespace {
 					}
 
 					if (isClicked && canInteract && uiComponent->type == EditorComponentType::SceneButton) {
-						g_editorRuntimeManager.RequestSceneLoad(uiComponent->sceneButtonScenePath);
+						const EditorComponent* sceneTransition = EditorComponentUtility::FindComponent(
+							gameObject,
+							EditorComponentType::SceneTransition);
+						const bool startedTransition =
+							sceneTransition != nullptr &&
+							sceneTransition->isActive &&
+							g_editorRuntimeManager.StartSceneTransition(gameObject, *sceneTransition);
+
+						if (!startedTransition) {
+							g_editorRuntimeManager.RequestSceneLoad(uiComponent->sceneButtonScenePath);
+						}
 					}
 				}
 
@@ -1053,6 +1477,18 @@ namespace {
 		}
 
 		ImGui::PopClipRect();
+
+		Vector3 transitionColor{1.0f, 1.0f, 1.0f};
+		float transitionAlpha = 0.0f;
+		g_editorRuntimeManager.GetSceneTransitionOverlay(transitionColor, transitionAlpha);
+
+		if (transitionAlpha > 0.001f) {
+			ImDrawList* overlayDrawList = ImGui::GetWindowDrawList();
+			overlayDrawList->AddRectFilled(
+				gameContentPosition,
+				ImVec2(gameContentPosition.x + gameWidth, gameContentPosition.y + gameHeight),
+				ImGui::ColorConvertFloat4ToU32(ToImGuiColor(transitionColor, transitionAlpha)));
+		}
 	}
 }
 

@@ -17,6 +17,8 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 #endif
 
 namespace {
+std::wstring standaloneWindowTitle = kDefaultGameWindowTitle;
+
 std::string WideToUtf8(const std::wstring& text) {
 	if (text.empty()) {
 		return {};
@@ -32,7 +34,33 @@ std::string WideToUtf8(const std::wstring& text) {
 
 	return convertedText;
 }
+
+std::wstring Utf8ToWide(const std::string& text) {
+	if (text.empty()) {
+		return {};
+	}
+
+	const int convertedSize = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
+
+	if (convertedSize <= 0) {
+		return {};
+	}
+
+	std::wstring convertedText(static_cast<size_t>(convertedSize), L'\0');
+	MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, convertedText.data(), convertedSize);
+
+	if (!convertedText.empty() && convertedText.back() == L'\0') {
+		convertedText.pop_back();
+	}
+
+	return convertedText;
+}
 }  // namespace
+
+void SetStandaloneWindowTitle(const std::string& windowTitle) {
+	const std::wstring convertedTitle = Utf8ToWide(windowTitle);
+	standaloneWindowTitle = convertedTitle.empty() ? kDefaultGameWindowTitle : convertedTitle;
+}
 
 HWND CreateMainWindow(HINSTANCE instanceHandle, std::ostream& logStream) {
 	// ウィンドウの作成ルールを Windows に登録するための設定
@@ -61,7 +89,7 @@ HWND CreateMainWindow(HINSTANCE instanceHandle, std::ostream& logStream) {
 	// AdjustWindowRect 後のサイズを使い、描画領域が kClientWidth / kClientHeight になるように作る
 	HWND windowHandle = CreateWindow(
 		windowClass.lpszClassName,
-		kWindowTitle,
+		EditorSharedState::g_isStandaloneGame ? standaloneWindowTitle.c_str() : kWindowTitle,
 		WS_OVERLAPPEDWINDOW,
 		CW_USEDEFAULT,
 		CW_USEDEFAULT,
@@ -99,6 +127,14 @@ LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPAR
 		return 1;
 	case WM_CLOSE: {
 		using namespace EditorSharedState;
+
+		// Play中に閉じると、保存されるg_editorSceneがRuntimeで動いた後の状態
+		// (船の位置など)になってしまい、次回変な場所から始まる原因になる。
+		// 閉じる前に必ずStopして、Play開始前のバックアップへ復元してから保存する。
+		if (g_editorRuntimeManager.IsPlaying()) {
+			g_editorRuntimeManager.TogglePlay();
+		}
+
 		std::string savePath = g_currentScenePath;
 
 		if (g_isEditorSceneInitialized && savePath.empty()) {

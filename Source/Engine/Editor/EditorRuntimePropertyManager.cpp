@@ -256,6 +256,18 @@ void EditorRuntimePropertyManager::Start() {
 			continue;
 		}
 
+		if (effectManager_ != nullptr) {
+			const EditorComponent* surfaceWake = EditorComponentUtility::FindComponent(
+				*mutableGameObject,
+				EditorComponentType::SurfaceWakeEmitter);
+
+			if (surfaceWake != nullptr) {
+				effectManager_->StopEffect(surfaceWake->surfaceWakeLeftEffectGameObjectId);
+				effectManager_->StopEffect(surfaceWake->surfaceWakeRightEffectGameObjectId);
+				effectManager_->StopEffect(surfaceWake->surfaceWakeBowEffectGameObjectId);
+			}
+		}
+
 		if (EditorComponent* gamePause = EditorComponentUtility::FindComponent(*mutableGameObject, EditorComponentType::GamePause)) {
 			gamePause->gamePausePaused = false;
 		}
@@ -1348,12 +1360,23 @@ void EditorRuntimePropertyManager::UpdateSurfaceWakes(float deltaTime) {
 
 			Vector3 effectScale{};
 			Vector3 effectRotation{};
-			Vector3 effectPosition{};
+			Vector3 unusedEffectPosition{};
 			editorScene_->GetWorldTransform(
 				effectGameObjectId,
 				effectScale,
 				effectRotation,
-				effectPosition);
+				unusedEffectPosition);  // 位置は下でOwner追従に上書きするため、ここではScale/Rotationだけ使う。
+
+			// FX Wake Left/Right/BowはEFFECTS配下の独立GameObjectで、船に追従する親子関係を
+			// 持たない。ここでOwner(船)のWorld位置+Local取り付けオフセットから毎フレーム
+			// 追従位置を計算しないと、航跡が常に原点付近に固定されたまま船だけ離れていく
+			// (=画面外に出て何も見えない)ことになる。
+			const Vector3 attachLocalOffset = effectIndex == 2u
+				? Vector3{0.0f, 0.0f, 2.5f}
+				: Vector3{effectIndex == 0u ? -1.0f : 1.0f, 0.0f, -2.0f};
+			Vector3 effectPosition = AddRuntimeVector(
+				ownerPosition,
+				TransformDirection(attachLocalOffset, ownerRotation));
 			EditorOceanSurfaceSample oceanSample{};
 			const uint64_t sampleKey =
 				(static_cast<uint64_t>(static_cast<uint32_t>(owner.id)) << 32u) |
@@ -1385,16 +1408,48 @@ void EditorRuntimePropertyManager::UpdateSurfaceWakes(float deltaTime) {
 			}
 
 			if (particle != nullptr) {
-				const float bowMultiplier = effectIndex == 2u ? 1.25f : 1.0f;
-				particle->particleRate = (std::max)(surfaceWake->surfaceWakeMaximumEmissionRate, 0.0f) * intensity * bowMultiplier;
-				particle->particleSize = (std::max)(surfaceWake->surfaceWakeWidth, 0.01f);
+				const bool isBowEffect = effectIndex == 2u;
+				const float bowMultiplier = isBowEffect ? 1.25f : 1.0f;
+				const float wakeWidth = (std::max)(surfaceWake->surfaceWakeWidth, 0.01f);
+				const Vector3 localDirection = isBowEffect
+					? Vector3{0.0f, 0.72f, -0.35f}
+					: Vector3{0.0f, 0.14f, -1.0f};
+				particle->animationPlayOnAwake = false;
+				particle->color = isBowEffect
+					? Vector3{0.78f, 0.92f, 1.0f}
+					: Vector3{0.66f, 0.86f, 0.96f};
+				particle->particleEndColor = {0.9f, 0.97f, 1.0f};
+				particle->particleRate =
+					(std::max)(surfaceWake->surfaceWakeMaximumEmissionRate, 0.0f) *
+					intensity * bowMultiplier;
+				particle->particleSize = wakeWidth * (isBowEffect ? 0.08f : 0.10f);
+				particle->particleEndSize = wakeWidth * (isBowEffect ? 0.04f : 0.14f);
 				particle->particleLifetime = (std::max)(surfaceWake->surfaceWakeLifetime, 0.01f);
+				particle->particleSpeed = (isBowEffect ? 2.2f : 0.9f) + intensity * 0.65f;
+				particle->particleMaxCount = 256;
+				particle->particleShape = 2;
+				particle->particleSimulationSpace = 0;
+				particle->particleBillboardMode = 2;
+				particle->particleBillboardStretch = isBowEffect ? 3.0f : 5.0f;
+				particle->particleDuration = 3600.0f;
+				particle->particleLooping = true;
+				particle->particlePrewarm = false;
+				particle->particleBurstCount = 0;
+				particle->particleShapeRadius = wakeWidth * (isBowEffect ? 0.07f : 0.06f);
+				particle->particleShapeAngle = isBowEffect ? 12.0f : 6.0f;
+				particle->particleDirection = TransformDirection(localDirection, ownerRotation);
+				particle->particleStartAlpha = isBowEffect ? 0.62f : 0.48f;
+				particle->particleEndAlpha = 0.0f;
+				particle->particleEmissionStrength = isBowEffect ? 0.16f : 0.08f;
+				particle->particleEndSpeedMultiplier = 0.22f;
+				particle->particleNoiseStrength = isBowEffect ? 0.06f : 0.025f;
+				particle->particleNoiseFrequency = 0.8f;
 			}
 
 			if (shouldEmit && !wasEmitting) {
 				effectManager_->PlayEffect(effectGameObjectId);
 			}
-			else if (!shouldEmit && wasEmitting) {
+			else if (!shouldEmit) {
 				effectManager_->StopEffect(effectGameObjectId);
 			}
 		}

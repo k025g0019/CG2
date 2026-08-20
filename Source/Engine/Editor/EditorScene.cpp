@@ -365,6 +365,8 @@ namespace {
 		"SimulationLOD",
 		"RailEventMarker",
 		"SceneStreaming",
+		"TextEffect",
+		"SceneTransition",
 	};
 	constexpr int32_t kEditorComponentTypeCount =
 		static_cast<int32_t>(sizeof(kEditorComponentTypeNames) / sizeof(kEditorComponentTypeNames[0]));
@@ -1881,6 +1883,54 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 				     << "|" << component.railMaximumYawAngle
 				     << "|" << component.railYawRestorationStrength
 				     << "|" << component.railYawDamping
+				     << "|" << (component.railYawSafetyAssistEnabled ? 1 : 0)
+				     << "|" << component.railYawSafetyStage1Degrees
+				     << "|" << component.railYawSafetyStage2Degrees
+				     << "|" << component.railYawSafetyStage4Degrees
+				     << "|" << component.railYawSafetyMaxRestorationScale
+				     << "|" << component.railYawSafetyMinSpeedScale
+				     << "|" << component.railMaxForwardRecoveryError
+				     << "|" << (component.railAttitudeSafetyAssistEnabled ? 1 : 0)
+				     << "|" << component.railRollFreeDegrees
+				     << "|" << component.railRollEmergencyDegrees
+				     << "|" << component.railPitchFreeDegrees
+				     << "|" << component.railPitchEmergencyDegrees
+				     << "|" << component.railAttitudeSafetyStrength
+				     << "|" << component.railAttitudeSafetyDamping
+				     << "|" << component.railAttitudeSafetyMaxTorque
+				     << "|" << component.railAttitudeSafetyMinForwardScale
+				     << "|" << component.railPhysicalCatchupSpeedMultiplier
+				     << "|" << (component.railAttitudeAngleLimitEnabled ? 1 : 0)
+				     << "|" << component.railAttitudeAngleLimitMaxPitchDegrees
+				     << "|" << component.railAttitudeAngleLimitMaxRollDegrees
+				     << "|" << component.railAttitudeAngleSoftLimitStrength
+				     << "|" << component.railAttitudeAngleSoftLimitDamping
+				     << "|" << component.railAttitudeAngleSoftLimitMaxTorque
+				     << "|" << (component.railAttitudeAngleSoftLimitEnabled ? 1 : 0)
+				     << "|" << component.railEngineSpeedGain
+				     << "|" << component.railEngineAccelResponse
+				     << "|" << component.railEngineDecelResponse
+				     << "|" << component.railEngineMaxAcceleration
+				     << "|" << component.railSteeringBaseLookAheadDistance
+				     << "|" << component.railSteeringLookAheadTime
+				     << "|" << component.railSteeringYawGain
+				     << "|" << component.railSteeringYawDamping
+				     << "|" << component.railSteeringMaxYawAngularAcceleration
+				     << "|" << component.railLateralAssistDeadZone
+				     << "|" << component.railLateralAssistSoftRadius
+				     << "|" << component.railLateralAssistEmergencyRadius
+				     << "|" << component.railLateralAssistMaxMultiplier
+				     << "|" << (component.railHullLateralGripEnabled ? 1 : 0)
+				     << "|" << component.railHullLateralGripStrength
+				     << "|" << component.railHullLateralGripMaxAcceleration
+				     << "|" << component.railHullLateralGripMinSpeed
+				     << "|" << component.railHullLateralGripFullSpeed
+				     << "|" << component.railHullLateralGripDeadZoneSpeed
+				     << "|" << component.railHullLateralGripSlipStartDegrees
+				     << "|" << component.railHullLateralGripSlipFullDegrees
+				     << "|" << component.railMode2MaxCombinedAcceleration
+				     << "|" << component.railMode2MovementStyle
+				     << "|" << component.railRideYawSampleDistance
 				     << "\n";
 			}
 
@@ -1907,6 +1957,7 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 				     << "|" << component.compositeSsgiRadiusPixels
 				     << "|" << EncodeSceneToken(component.compositeColorLutAssetPath)
 				     << "|" << component.compositeColorLutStrength
+				     << "|" << component.compositeDebugView
 				     << "\n";
 			}
 
@@ -1939,6 +1990,69 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 				     << "|" << component.volumetricCloudColor.x
 				     << "|" << component.volumetricCloudColor.y
 				     << "|" << component.volumetricCloudColor.z
+				     << "\n";
+				file << "EnvironmentHeatExtension"
+				     << "|" << gameObject.id
+				     << "|" << component.environmentHeatIntensity
+				     << "|" << component.environmentHeatHorizonCenter
+				     << "|" << component.environmentHeatHorizonWidth
+				     << "|" << component.environmentHeatSunInfluence
+				     << "|" << component.environmentHeatDistortionScale
+				     << "\n";
+			}
+
+			// Sun の方位角/高度/色温度は独立行にし、旧 Scene の巨大な Component 列を維持する。
+			if (component.type == EditorComponentType::Light) {
+				file << "SunSystemExtension"
+				     << "|" << gameObject.id
+				     << "|" << component.sunAzimuthDegrees
+				     << "|" << component.sunElevationDegrees
+				     << "|" << (component.sunUseAzimuthElevation ? 1 : 0)
+				     << "|" << component.sunTemperatureKelvin
+				     << "|" << (component.sunUseColorTemperature ? 1 : 0)
+				     << "|" << (component.sunAutoTemperatureFromElevation ? 1 : 0)
+				     << "\n";
+			}
+
+			// Ocean の SUN Lighting / Glitter 調整項目は独立行にし、旧 Scene の巨大な Component 列を維持する。
+			if (component.type == EditorComponentType::Ocean) {
+				file << "OceanSunLightingExtension"
+				     << "|" << gameObject.id
+				     << "|" << component.oceanSunDiffuseInfluence
+				     << "|" << component.oceanSunSpecularInfluence
+				     << "|" << component.oceanSunGlitterInfluence
+				     << "|" << component.oceanSkyReflectionInfluence
+				     << "|" << component.oceanAmbientInfluence
+				     << "|" << component.oceanDiffuseFloor
+				     << "|" << component.oceanGlitterIntensity
+				     << "|" << component.oceanGlitterSharpness
+				     << "|" << component.oceanGlitterDensity
+				     << "|" << component.oceanGlitterThreshold
+				     << "|" << component.oceanGlitterMaxClamp
+				     << "\n";
+				file << "OceanShapeLightingExtension"
+				     << "|" << gameObject.id
+				     << "|" << component.oceanMacroReflectionInfluence
+				     << "|" << component.oceanCurvatureInfluence
+				     << "|" << component.oceanTroughOcclusionStrength
+				     << "|" << component.oceanCrestHazeStrength
+				     << "|" << component.oceanCrestDetailBoost
+				     << "|" << component.oceanSlopeRefractionInfluence
+				     << "|" << component.oceanMediumWaveStrength
+				     << "|" << component.oceanWaveColorSeparation
+				     << "|" << component.oceanShapeRoughnessVariation
+				     << "|" << component.oceanDetailFilterSharpness
+				     << "|" << component.oceanGrazingShapeVisibility
+				     << "|" << component.oceanDebugView
+				     << "\n";
+				file << "OceanGeometryExtension"
+				     << "|" << gameObject.id
+				     << "|" << component.oceanPerPixelDisplacementStrength
+				     << "|" << component.oceanPerPixelDisplacementSteps
+				     << "|" << component.oceanPerPixelDisplacementDistance
+				     << "|" << (component.oceanGpuTessellationEnabled ? 1 : 0)
+				     << "|" << component.oceanTessellationTargetPixels
+				     << "|" << component.oceanTessellationMaximumFactor
 				     << "\n";
 			}
 
@@ -2426,7 +2540,10 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 				     << "|" << component.surfaceWakeMaximumSpeed
 				     << "|" << component.surfaceWakeWidth
 				     << "|" << component.surfaceWakeLifetime
-				     << "|" << component.surfaceWakeMaximumEmissionRate << "\n";
+				     << "|" << component.surfaceWakeMaximumEmissionRate
+				     << "|" << (component.surfaceWakeAffectOceanSurface ? 1 : 0)
+				     << "|" << component.surfaceWakeWaveAmplitudeScale
+				     << "|" << component.surfaceWakeWaveRadiusScale << "\n";
 			}
 
 			if (component.type == EditorComponentType::TrajectoryRenderer) {
@@ -2607,6 +2724,47 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 				     << "|" << component.horizonWorldUp.z
 				     << "|" << component.horizonDamping
 				     << "|" << component.horizonMaximumRollDegrees
+				     << "\n";
+			}
+
+			if (component.type == EditorComponentType::TextEffect) {
+				file << "TextEffectExtension|" << gameObject.id
+				     << "|" << component.textAppearEffectType
+				     << "|" << component.textAppearDuration
+				     << "|" << component.textAppearDelay
+				     << "|" << component.textAppearParamA
+				     << "|" << component.textContinuousEffectType
+				     << "|" << component.textContinuousDelay
+				     << "|" << component.textContinuousParamA
+				     << "|" << component.textContinuousParamB
+				     << "|" << component.textContinuousParamC
+				     << "\n";
+			}
+
+			if (component.type == EditorComponentType::Text ||
+				component.type == EditorComponentType::TextMeshProUGUI) {
+				file << "TextFontExtension|" << gameObject.id
+				     << "|" << component.textFontIndex
+				     << "\n";
+			}
+
+			if (component.type == EditorComponentType::SceneTransition) {
+				file << "SceneTransitionExtension|" << gameObject.id
+				     << "|" << component.sceneTransitionType
+				     << "|" << EncodeSceneToken(component.sceneTransitionTargetScenePath)
+				     << "|" << component.sceneTransitionOutDuration
+				     << "|" << component.sceneTransitionHoldSeconds
+				     << "|" << component.sceneTransitionInDuration
+				     << "|" << component.sceneTransitionColor.x
+				     << "|" << component.sceneTransitionColor.y
+				     << "|" << component.sceneTransitionColor.z
+				     << "|" << component.sceneTransitionCameraDiveSourceGameObjectId
+				     << "|" << component.sceneTransitionCameraDivePositionOffset.x
+				     << "|" << component.sceneTransitionCameraDivePositionOffset.y
+				     << "|" << component.sceneTransitionCameraDivePositionOffset.z
+				     << "|" << component.sceneTransitionCameraDiveRotationDegrees.x
+				     << "|" << component.sceneTransitionCameraDiveRotationDegrees.y
+				     << "|" << component.sceneTransitionCameraDiveRotationDegrees.z
 				     << "\n";
 			}
 
@@ -4260,6 +4418,84 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 						component.railYawDamping = ToFloat(elements[22]);
 					}
 
+					if (elements.size() >= 29u) {
+						component.railYawSafetyAssistEnabled = ToInt(elements[23]) != 0;
+						component.railYawSafetyStage1Degrees = ToFloat(elements[24]);
+						component.railYawSafetyStage2Degrees = ToFloat(elements[25]);
+						component.railYawSafetyStage4Degrees = ToFloat(elements[26]);
+						component.railYawSafetyMaxRestorationScale = ToFloat(elements[27]);
+						component.railYawSafetyMinSpeedScale = ToFloat(elements[28]);
+					}
+
+					if (elements.size() >= 39u) {
+						component.railMaxForwardRecoveryError = ToFloat(elements[29]);
+						component.railAttitudeSafetyAssistEnabled = ToInt(elements[30]) != 0;
+						component.railRollFreeDegrees = ToFloat(elements[31]);
+						component.railRollEmergencyDegrees = ToFloat(elements[32]);
+						component.railPitchFreeDegrees = ToFloat(elements[33]);
+						component.railPitchEmergencyDegrees = ToFloat(elements[34]);
+						component.railAttitudeSafetyStrength = ToFloat(elements[35]);
+						component.railAttitudeSafetyDamping = ToFloat(elements[36]);
+						component.railAttitudeSafetyMaxTorque = ToFloat(elements[37]);
+						component.railAttitudeSafetyMinForwardScale = ToFloat(elements[38]);
+					}
+
+					if (elements.size() >= 40u) {
+						component.railPhysicalCatchupSpeedMultiplier = ToFloat(elements[39]);
+					}
+
+					if (elements.size() >= 43u) {
+						component.railAttitudeAngleLimitEnabled = ToInt(elements[40]) != 0;
+						component.railAttitudeAngleLimitMaxPitchDegrees = ToFloat(elements[41]);
+						component.railAttitudeAngleLimitMaxRollDegrees = ToFloat(elements[42]);
+					}
+
+					if (elements.size() >= 46u) {
+						component.railAttitudeAngleSoftLimitStrength = ToFloat(elements[43]);
+						component.railAttitudeAngleSoftLimitDamping = ToFloat(elements[44]);
+						component.railAttitudeAngleSoftLimitMaxTorque = ToFloat(elements[45]);
+					}
+
+					if (elements.size() >= 47u) {
+						component.railAttitudeAngleSoftLimitEnabled = ToInt(elements[46]) != 0;
+					}
+
+					if (elements.size() >= 60u) {
+						component.railEngineSpeedGain = ToFloat(elements[47]);
+						component.railEngineAccelResponse = ToFloat(elements[48]);
+						component.railEngineDecelResponse = ToFloat(elements[49]);
+						component.railEngineMaxAcceleration = ToFloat(elements[50]);
+						component.railSteeringBaseLookAheadDistance = ToFloat(elements[51]);
+						component.railSteeringLookAheadTime = ToFloat(elements[52]);
+						component.railSteeringYawGain = ToFloat(elements[53]);
+						component.railSteeringYawDamping = ToFloat(elements[54]);
+						component.railSteeringMaxYawAngularAcceleration = ToFloat(elements[55]);
+						component.railLateralAssistDeadZone = ToFloat(elements[56]);
+						component.railLateralAssistSoftRadius = ToFloat(elements[57]);
+						component.railLateralAssistEmergencyRadius = ToFloat(elements[58]);
+						component.railLateralAssistMaxMultiplier = ToFloat(elements[59]);
+					}
+
+					if (elements.size() >= 68u) {
+						component.railHullLateralGripEnabled = ToInt(elements[60]) != 0;
+						component.railHullLateralGripStrength = ToFloat(elements[61]);
+						component.railHullLateralGripMaxAcceleration = ToFloat(elements[62]);
+						component.railHullLateralGripMinSpeed = ToFloat(elements[63]);
+						component.railHullLateralGripFullSpeed = ToFloat(elements[64]);
+						component.railHullLateralGripDeadZoneSpeed = ToFloat(elements[65]);
+						component.railHullLateralGripSlipStartDegrees = ToFloat(elements[66]);
+						component.railHullLateralGripSlipFullDegrees = ToFloat(elements[67]);
+					}
+
+					if (elements.size() >= 69u) {
+						component.railMode2MaxCombinedAcceleration = ToFloat(elements[68]);
+					}
+
+					if (elements.size() >= 71u) {
+						component.railMode2MovementStyle = ToInt(elements[69]);
+						component.railRideYawSampleDistance = ToFloat(elements[70]);
+					}
+
 					break;
 				}
 				break;
@@ -4318,6 +4554,10 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 						component.compositeColorLutAssetPath = DecodeSceneToken(elements[8]);
 						component.compositeColorLutStrength = (std::clamp)(ToFloat(elements[9]), 0.0f, 1.0f);
 					}
+
+					if (elements.size() >= 11u) {
+						component.compositeDebugView = (std::clamp)(ToInt(elements[10]), 0, 4);
+					}
 					break;
 				}
 
@@ -4374,6 +4614,158 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 						ToFloat(elements[11]),
 						ToFloat(elements[12]),
 						ToFloat(elements[13])};
+					break;
+				}
+
+				break;
+			}
+		}
+		else if (elements[0] == "EnvironmentHeatExtension" && elements.size() >= 7u) {
+			const int32_t ownerId = ToInt(elements[1]);
+
+			for (EditorGameObject& gameObject : loadedGameObjects) {
+				if (gameObject.id != ownerId) {
+					continue;
+				}
+
+				for (EditorComponent& component : gameObject.components) {
+					if (component.type != EditorComponentType::Environment) {
+						continue;
+					}
+
+					component.environmentHeatIntensity = (std::clamp)(ToFloat(elements[2]), 0.0f, 1.0f);
+					component.environmentHeatHorizonCenter = (std::clamp)(ToFloat(elements[3]), 0.0f, 1.0f);
+					component.environmentHeatHorizonWidth = (std::clamp)(ToFloat(elements[4]), 0.01f, 1.0f);
+					component.environmentHeatSunInfluence = (std::clamp)(ToFloat(elements[5]), 0.0f, 1.0f);
+					component.environmentHeatDistortionScale = (std::max)(ToFloat(elements[6]), 0.01f);
+					break;
+				}
+
+				break;
+			}
+		}
+		else if (elements[0] == "SunSystemExtension" && elements.size() >= 8u) {
+			const int32_t ownerId = ToInt(elements[1]);
+
+			for (EditorGameObject& gameObject : loadedGameObjects) {
+				if (gameObject.id != ownerId) {
+					continue;
+				}
+
+				for (EditorComponent& component : gameObject.components) {
+					if (component.type != EditorComponentType::Light) {
+						continue;
+					}
+
+					component.sunAzimuthDegrees = ToFloat(elements[2]);
+					component.sunElevationDegrees = ToFloat(elements[3]);
+					component.sunUseAzimuthElevation = ToInt(elements[4]) != 0;
+					component.sunTemperatureKelvin = (std::max)(ToFloat(elements[5]), 1000.0f);
+					component.sunUseColorTemperature = ToInt(elements[6]) != 0;
+					component.sunAutoTemperatureFromElevation = ToInt(elements[7]) != 0;
+					break;
+				}
+
+				break;
+			}
+		}
+		else if (elements[0] == "OceanSunLightingExtension" && elements.size() >= 13u) {
+			const int32_t ownerId = ToInt(elements[1]);
+
+			for (EditorGameObject& gameObject : loadedGameObjects) {
+				if (gameObject.id != ownerId) {
+					continue;
+				}
+
+				for (EditorComponent& component : gameObject.components) {
+					if (component.type != EditorComponentType::Ocean) {
+						continue;
+					}
+
+					component.oceanSunDiffuseInfluence = (std::max)(ToFloat(elements[2]), 0.0f);
+					component.oceanSunSpecularInfluence = (std::max)(ToFloat(elements[3]), 0.0f);
+					component.oceanSunGlitterInfluence = (std::max)(ToFloat(elements[4]), 0.0f);
+					component.oceanSkyReflectionInfluence = (std::max)(ToFloat(elements[5]), 0.0f);
+					component.oceanAmbientInfluence = (std::max)(ToFloat(elements[6]), 0.0f);
+					component.oceanDiffuseFloor = (std::clamp)(ToFloat(elements[7]), 0.0f, 1.0f);
+					component.oceanGlitterIntensity = (std::max)(ToFloat(elements[8]), 0.0f);
+					component.oceanGlitterSharpness = (std::clamp)(ToFloat(elements[9]), 0.0f, 1.0f);
+					component.oceanGlitterDensity = (std::max)(ToFloat(elements[10]), 0.01f);
+					component.oceanGlitterThreshold = (std::clamp)(ToFloat(elements[11]), 0.0f, 1.0f);
+					component.oceanGlitterMaxClamp = (std::max)(ToFloat(elements[12]), 0.1f);
+					break;
+				}
+
+				break;
+			}
+		}
+		else if (elements[0] == "OceanShapeLightingExtension" && elements.size() >= 8u) {
+			const int32_t ownerId = ToInt(elements[1]);
+
+			for (EditorGameObject& gameObject : loadedGameObjects) {
+				if (gameObject.id != ownerId) {
+					continue;
+				}
+
+				for (EditorComponent& component : gameObject.components) {
+					if (component.type != EditorComponentType::Ocean) {
+						continue;
+					}
+
+					component.oceanMacroReflectionInfluence = (std::clamp)(ToFloat(elements[2]), 0.0f, 2.0f);
+					component.oceanCurvatureInfluence = (std::clamp)(ToFloat(elements[3]), 0.0f, 4.0f);
+					component.oceanTroughOcclusionStrength = (std::clamp)(ToFloat(elements[4]), 0.0f, 0.25f);
+					component.oceanCrestHazeStrength = (std::clamp)(ToFloat(elements[5]), 0.0f, 1.0f);
+					component.oceanCrestDetailBoost = (std::clamp)(ToFloat(elements[6]), 0.0f, 1.0f);
+					component.oceanSlopeRefractionInfluence = (std::clamp)(ToFloat(elements[7]), 0.0f, 2.0f);
+
+					if (elements.size() >= 11u) {
+						component.oceanMediumWaveStrength = (std::clamp)(ToFloat(elements[8]), 0.0f, 3.0f);
+						component.oceanWaveColorSeparation = (std::clamp)(ToFloat(elements[9]), 0.0f, 1.0f);
+						component.oceanShapeRoughnessVariation = (std::clamp)(ToFloat(elements[10]), 0.0f, 0.5f);
+					}
+
+					if (elements.size() >= 13u) {
+						component.oceanDetailFilterSharpness = (std::clamp)(ToFloat(elements[11]), 0.5f, 2.5f);
+						component.oceanGrazingShapeVisibility = (std::clamp)(ToFloat(elements[12]), 0.0f, 1.0f);
+					}
+
+					if (elements.size() >= 14u) {
+						component.oceanDebugView = (std::clamp)(
+							ToInt(elements[13]),
+							0,
+							kOceanDebugViewCount - 1);
+					}
+					break;
+				}
+
+				break;
+			}
+		}
+		else if (elements[0] == "OceanGeometryExtension" && elements.size() >= 8u) {
+			const int32_t ownerId = ToInt(elements[1]);
+
+			for (EditorGameObject& gameObject : loadedGameObjects) {
+				if (gameObject.id != ownerId) {
+					continue;
+				}
+
+				for (EditorComponent& component : gameObject.components) {
+					if (component.type != EditorComponentType::Ocean) {
+						continue;
+					}
+
+					component.oceanPerPixelDisplacementStrength =
+						(std::clamp)(ToFloat(elements[2]), 0.0f, 0.5f);
+					component.oceanPerPixelDisplacementSteps =
+						(std::clamp)(ToInt(elements[3]), 1, 6);
+					component.oceanPerPixelDisplacementDistance =
+						(std::clamp)(ToFloat(elements[4]), 5.0f, 150.0f);
+					component.oceanGpuTessellationEnabled = ToInt(elements[5]) != 0;
+					component.oceanTessellationTargetPixels =
+						(std::clamp)(ToFloat(elements[6]), 4.0f, 64.0f);
+					component.oceanTessellationMaximumFactor =
+						(std::clamp)(ToFloat(elements[7]), 1.0f, 8.0f);
 					break;
 				}
 
@@ -5058,16 +5450,35 @@ if (elements.size() >= 13u) {
 		else if (elements[0] == "SurfaceWakeEmitterExtension" && elements.size() >= 11u) {
 			const int32_t ownerId = ToInt(elements[1]);
 			for (EditorGameObject& object : loadedGameObjects) if (object.id == ownerId) {
-				for (EditorComponent& component : object.components) if (component.type == EditorComponentType::SurfaceWakeEmitter) {
-					component.surfaceWakeOceanGameObjectId = ToInt(elements[2]);
-					component.surfaceWakeLeftEffectGameObjectId = ToInt(elements[3]);
-					component.surfaceWakeRightEffectGameObjectId = ToInt(elements[4]);
-					component.surfaceWakeBowEffectGameObjectId = ToInt(elements[5]);
-					component.surfaceWakeMinimumSpeed = ToFloat(elements[6]);
-					component.surfaceWakeMaximumSpeed = ToFloat(elements[7]);
-					component.surfaceWakeWidth = ToFloat(elements[8]);
-					component.surfaceWakeLifetime = ToFloat(elements[9]);
-					component.surfaceWakeMaximumEmissionRate = ToFloat(elements[10]);
+				EditorComponent* surfaceWakeComponent = nullptr;
+
+				for (EditorComponent& component : object.components) {
+					if (component.type == EditorComponentType::SurfaceWakeEmitter) {
+						surfaceWakeComponent = &component;
+						break;
+					}
+				}
+
+				// Extensionだけを持つ旧Sceneも、通常保存後と同じComponent構造へ復元する。
+				if (surfaceWakeComponent == nullptr) {
+					object.components.push_back(CreateComponent(EditorComponentType::SurfaceWakeEmitter));
+					surfaceWakeComponent = &object.components.back();
+				}
+
+				surfaceWakeComponent->surfaceWakeOceanGameObjectId = ToInt(elements[2]);
+				surfaceWakeComponent->surfaceWakeLeftEffectGameObjectId = ToInt(elements[3]);
+				surfaceWakeComponent->surfaceWakeRightEffectGameObjectId = ToInt(elements[4]);
+				surfaceWakeComponent->surfaceWakeBowEffectGameObjectId = ToInt(elements[5]);
+				surfaceWakeComponent->surfaceWakeMinimumSpeed = ToFloat(elements[6]);
+				surfaceWakeComponent->surfaceWakeMaximumSpeed = ToFloat(elements[7]);
+				surfaceWakeComponent->surfaceWakeWidth = ToFloat(elements[8]);
+				surfaceWakeComponent->surfaceWakeLifetime = ToFloat(elements[9]);
+				surfaceWakeComponent->surfaceWakeMaximumEmissionRate = ToFloat(elements[10]);
+
+				if (elements.size() >= 14u) {
+					surfaceWakeComponent->surfaceWakeAffectOceanSurface = ToInt(elements[11]) != 0;
+					surfaceWakeComponent->surfaceWakeWaveAmplitudeScale = ToFloat(elements[12]);
+					surfaceWakeComponent->surfaceWakeWaveRadiusScale = ToFloat(elements[13]);
 				}
 			}
 		}
@@ -5308,6 +5719,49 @@ if (elements.size() >= 13u) {
 					component.horizonWorldUp = {ToFloat(elements[13]), ToFloat(elements[14]), ToFloat(elements[15])};
 					component.horizonDamping = ToFloat(elements[16]);
 					component.horizonMaximumRollDegrees = ToFloat(elements[17]);
+				}
+			}
+		}
+		else if (elements[0] == "TextEffectExtension" && elements.size() >= 11u) {
+			const int32_t ownerId = ToInt(elements[1]);
+			for (EditorGameObject& object : loadedGameObjects) if (object.id == ownerId) {
+				for (EditorComponent& component : object.components) if (component.type == EditorComponentType::TextEffect) {
+					component.textAppearEffectType = ToInt(elements[2]);
+					component.textAppearDuration = ToFloat(elements[3]);
+					component.textAppearDelay = ToFloat(elements[4]);
+					component.textAppearParamA = ToFloat(elements[5]);
+					component.textContinuousEffectType = ToInt(elements[6]);
+					component.textContinuousDelay = ToFloat(elements[7]);
+					component.textContinuousParamA = ToFloat(elements[8]);
+					component.textContinuousParamB = ToFloat(elements[9]);
+					component.textContinuousParamC = ToFloat(elements[10]);
+				}
+			}
+		}
+		else if (elements[0] == "TextFontExtension" && elements.size() >= 3u) {
+			const int32_t ownerId = ToInt(elements[1]);
+			for (EditorGameObject& object : loadedGameObjects) if (object.id == ownerId) {
+				for (EditorComponent& component : object.components) {
+					if (component.type == EditorComponentType::Text ||
+						component.type == EditorComponentType::TextMeshProUGUI) {
+						component.textFontIndex = ToInt(elements[2]);
+					}
+				}
+			}
+		}
+		else if (elements[0] == "SceneTransitionExtension" && elements.size() >= 17u) {
+			const int32_t ownerId = ToInt(elements[1]);
+			for (EditorGameObject& object : loadedGameObjects) if (object.id == ownerId) {
+				for (EditorComponent& component : object.components) if (component.type == EditorComponentType::SceneTransition) {
+					component.sceneTransitionType = ToInt(elements[2]);
+					component.sceneTransitionTargetScenePath = DecodeSceneToken(elements[3]);
+					component.sceneTransitionOutDuration = ToFloat(elements[4]);
+					component.sceneTransitionHoldSeconds = ToFloat(elements[5]);
+					component.sceneTransitionInDuration = ToFloat(elements[6]);
+					component.sceneTransitionColor = {ToFloat(elements[7]), ToFloat(elements[8]), ToFloat(elements[9])};
+					component.sceneTransitionCameraDiveSourceGameObjectId = ToInt(elements[10]);
+					component.sceneTransitionCameraDivePositionOffset = {ToFloat(elements[11]), ToFloat(elements[12]), ToFloat(elements[13])};
+					component.sceneTransitionCameraDiveRotationDegrees = {ToFloat(elements[14]), ToFloat(elements[15]), ToFloat(elements[16])};
 				}
 			}
 		}
@@ -6601,6 +7055,35 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.oceanRefractionDistortion = 0.08f;
 		component.oceanShallowColor = {0.04f, 0.34f, 0.46f};
 		component.oceanDeepColor = {0.005f, 0.045f, 0.11f};
+		component.oceanSunDiffuseInfluence = 1.0f;
+		component.oceanSunSpecularInfluence = 1.0f;
+		component.oceanSunGlitterInfluence = 1.0f;
+		component.oceanSkyReflectionInfluence = 1.0f;
+		component.oceanAmbientInfluence = 1.0f;
+		component.oceanDiffuseFloor = 0.22f;
+		component.oceanGlitterIntensity = 1.0f;
+		component.oceanGlitterSharpness = 0.5f;
+		component.oceanGlitterDensity = 1.0f;
+		component.oceanGlitterThreshold = 0.0f;
+		component.oceanGlitterMaxClamp = 7.5f;
+		component.oceanMacroReflectionInfluence = 1.0f;
+		component.oceanCurvatureInfluence = 1.0f;
+		component.oceanTroughOcclusionStrength = 0.08f;
+		component.oceanCrestHazeStrength = 0.16f;
+		component.oceanCrestDetailBoost = 0.18f;
+		component.oceanSlopeRefractionInfluence = 0.35f;
+		component.oceanMediumWaveStrength = 1.35f;
+		component.oceanWaveColorSeparation = 0.22f;
+		component.oceanShapeRoughnessVariation = 0.18f;
+		component.oceanDetailFilterSharpness = 1.55f;
+		component.oceanGrazingShapeVisibility = 0.35f;
+		component.oceanDebugView = 0;
+		component.oceanPerPixelDisplacementStrength = 0.0f;
+		component.oceanPerPixelDisplacementSteps = 4;
+		component.oceanPerPixelDisplacementDistance = 45.0f;
+		component.oceanGpuTessellationEnabled = false;
+		component.oceanTessellationTargetPixels = 12.0f;
+		component.oceanTessellationMaximumFactor = 4.0f;
 		component.buoyancyOceanGameObjectId = -1;
 		component.buoyancyCenterOffset = {0.0f, 0.0f, 0.0f};
 		component.buoyancyHullSize = {3.0f, 1.2f, 6.0f};
@@ -6650,12 +7133,138 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.railMaximumYawAngle = 0.0f;
 		component.railYawRestorationStrength = 10.0f;
 		component.railYawDamping = 5.0f;
+		component.railYawSafetyAssistEnabled = true;
+		component.railYawSafetyStage1Degrees = 10.0f;
+		component.railYawSafetyStage2Degrees = 20.0f;
+		component.railYawSafetyStage4Degrees = 45.0f;
+		component.railYawSafetyMaxRestorationScale = 3.0f;
+		component.railYawSafetyMinSpeedScale = 0.15f;
+		component.railMaxForwardRecoveryError = 20.0f;
+		// 既存の段階的Attitude Safety(復元Torque)は既定OFF、単純な絶対角度制限を既定ONにする。
+		// 今回のPlayerShipテスト設定。既存機能は削除せずInspectorから独立にON/OFFできる。
+		component.railAttitudeSafetyAssistEnabled = false;
+		component.railRollFreeDegrees = 15.0f;
+		component.railRollEmergencyDegrees = 45.0f;
+		component.railPitchFreeDegrees = 12.0f;
+		component.railPitchEmergencyDegrees = 40.0f;
+		component.railAttitudeSafetyStrength = 10.0f;
+		component.railAttitudeSafetyDamping = 5.0f;
+		component.railAttitudeSafetyMaxTorque = 8.0f;
+		component.railAttitudeSafetyMinForwardScale = 0.1f;
+		component.railPhysicalCatchupSpeedMultiplier = 1.15f;
+		component.railAttitudeAngleLimitEnabled = true;
+		component.railAttitudeAngleLimitMaxPitchDegrees = 15.0f;
+		component.railAttitudeAngleLimitMaxRollDegrees = 15.0f;
+		component.railAttitudeAngleSoftLimitEnabled = false;
+		component.railAttitudeAngleSoftLimitStrength = 15.0f;
+		component.railAttitudeAngleSoftLimitDamping = 6.0f;
+		component.railAttitudeAngleSoftLimitMaxTorque = 20.0f;
+		component.railEngineSpeedGain = 3.0f;
+		component.railEngineAccelResponse = 8.0f;
+		component.railEngineDecelResponse = 4.0f;
+		component.railEngineMaxAcceleration = 14.0f;
+		component.railSteeringBaseLookAheadDistance = 8.0f;
+		component.railSteeringLookAheadTime = 0.4f;
+		component.railSteeringYawGain = 6.0f;
+		component.railSteeringYawDamping = 4.0f;
+		component.railSteeringMaxYawAngularAcceleration = 8.0f;
+		component.railLateralAssistDeadZone = 1.0f;
+		component.railLateralAssistSoftRadius = 3.0f;
+		component.railLateralAssistEmergencyRadius = 6.0f;
+		component.railLateralAssistMaxMultiplier = 1.0f;
+		component.railHullLateralGripEnabled = true;
+		component.railHullLateralGripStrength = 2.0f;
+		component.railHullLateralGripMaxAcceleration = 20.0f;
+		component.railHullLateralGripMinSpeed = 3.0f;
+		component.railHullLateralGripFullSpeed = 15.0f;
+		component.railHullLateralGripDeadZoneSpeed = 0.5f;
+		component.railHullLateralGripSlipStartDegrees = 5.0f;
+		component.railHullLateralGripSlipFullDegrees = 30.0f;
+		component.railMode2MaxCombinedAcceleration = 60.0f;
+		component.railMode2MovementStyle = 0;
+		component.railRideYawSampleDistance = 2.0f;
 		component.railMovementRange = {5.0f, 3.0f};
 		component.railStartOffset = {0.0f, 0.0f};
 		component.railOffsetMoveSpeed = 8.0f;
 		component.railUsePlayerInput = false;
 		component.railInputActionMapName = "Player";
 		component.railInputActionName = "Move";
+		// Runtime診断値。Playで毎FixedUpdateに上書きされるため保存対象にしない。
+		component.buoyancyDebugBuoyancyForce = 0.0f;
+		component.buoyancyDebugPressureDragForce = 0.0f;
+		component.buoyancyDebugPressureUpwardForce = 0.0f;
+		component.buoyancyDebugSkinFrictionForce = 0.0f;
+		component.buoyancyDebugAddedMassForce = 0.0f;
+		component.buoyancyDebugSlammingForce = 0.0f;
+		component.buoyancyDebugWaveMakingResistance = 0.0f;
+		component.buoyancyDebugSubmergedRatio = 0.0f;
+		component.buoyancyDebugWettedArea = 0.0f;
+		component.buoyancyDebugTrimAngleDegrees = 0.0f;
+		component.buoyancyDebugForwardSpeed = 0.0f;
+		component.buoyancyDebugWeightForce = 0.0f;
+		component.buoyancyDebugAddedMassCoriolisTorque = {0.0f, 0.0f, 0.0f};
+		component.buoyancyDebugSideslipAngleDegrees = 0.0f;
+		component.railDebugFollowForce = {0.0f, 0.0f, 0.0f};
+		component.railDebugFollowTorque = {0.0f, 0.0f, 0.0f};
+		component.railDebugPositionError = {0.0f, 0.0f, 0.0f};
+		component.railDebugYawError = 0.0f;
+		component.railDebugAppliedPositionInfluence = {0.0f, 0.0f, 0.0f};
+		component.railDebugAppliedRotationInfluence = {0.0f, 0.0f, 0.0f};
+		component.railDebugCurrentSpeed = 0.0f;
+		component.railDebugActualForwardSpeed = 0.0f;
+		component.railDebugYawSafetySpeedScale = 1.0f;
+		component.railDebugYawSafetyRestorationScale = 1.0f;
+		component.railDebugForwardPositionScale = 1.0f;
+		component.railDebugForwardPositionError = 0.0f;
+		component.railDebugLateralPositionError = 0.0f;
+		component.railDebugForwardCorrectionForce = 0.0f;
+		component.railDebugLateralCorrectionForce = 0.0f;
+		component.railDebugBoatPitchDegrees = 0.0f;
+		component.railDebugBoatRollDegrees = 0.0f;
+		component.railDebugPitchSafetyFactor = 0.0f;
+		component.railDebugRollSafetyFactor = 0.0f;
+		component.railDebugAttitudeRecoveryTorque = {0.0f, 0.0f, 0.0f};
+		component.railDebugGameplayRailProgress = 0.0f;
+		component.railDebugPhysicalRailProgress = 0.0f;
+		component.railDebugPhysicalTargetSpeed = 0.0f;
+		component.railDebugPitchAngleLimited = 0.0f;
+		component.railDebugRollAngleLimited = 0.0f;
+		component.railDebugClosestRailDistance = 0.0f;
+		component.railDebugClosestRailDistanceDelta = 0.0f;
+		component.railDebugSteeringLookAheadDistance = 0.0f;
+		component.railDebugSteeringYawErrorDegrees = 0.0f;
+		component.railDebugEngineAcceleration = 0.0f;
+		component.railDebugLateralAssistAcceleration = 0.0f;
+		component.railDebugLateralAssistScale = 0.0f;
+		component.railDebugYawAngularVelocity = 0.0f;
+		component.railDebugShipForward = {0.0f, 0.0f, 0.0f};
+		component.railDebugShipRight = {0.0f, 0.0f, 0.0f};
+		component.railDebugForwardVelocitySlipAngleDegrees = 0.0f;
+		component.railDebugLateralSpeed = 0.0f;
+		component.railDebugHullLateralGripAcceleration = 0.0f;
+		component.railDebugHullLateralGripScale = 0.0f;
+		component.railDebugHullLateralGripSpeedFactor = 0.0f;
+		component.railDebugHullLateralGripSlipFactor = 0.0f;
+		component.railDebugHorizontalSpeed = 0.0f;
+		component.railDebugPreClampAcceleration = 0.0f;
+		component.railDebugPostClampAcceleration = 0.0f;
+		component.railDebugMode2ClampScale = 1.0f;
+		component.railDebugRailRidePosition = {0.0f, 0.0f, 0.0f};
+		component.railDebugRailRideActualPosition = {0.0f, 0.0f, 0.0f};
+		component.railDebugRailRidePositionErrorXZ = 0.0f;
+		component.railDebugRailRideForward = {0.0f, 0.0f, 0.0f};
+		component.railDebugRailRideTargetYawDegrees = 0.0f;
+		component.railDebugRailRideFinalYawDegrees = 0.0f;
+		component.railDebugRailRideYawErrorDegrees = 0.0f;
+		component.railDebugRailRideVelocityXZ = {0.0f, 0.0f, 0.0f};
+		component.railDebugRailRideActualVelocityXZ = {0.0f, 0.0f, 0.0f};
+		component.railDebugRailRideVelocityDirectionErrorDegrees = 0.0f;
+		component.railDebugRailRidePhysicsY = 0.0f;
+		component.railDebugRailRideFinalY = 0.0f;
+		component.railDebugRailRidePhysicsPitchDegrees = 0.0f;
+		component.railDebugRailRideFinalPitchDegrees = 0.0f;
+		component.railDebugRailRidePhysicsRollDegrees = 0.0f;
+		component.railDebugRailRideFinalRollDegrees = 0.0f;
 		component.aerodynamicAirDensity = 1.225f;
 		component.aerodynamicDragCoefficient = 0.47f;
 		component.aerodynamicReferenceArea = 1.0f;
@@ -6968,6 +7577,7 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.compositeSsgiRadiusPixels = 14.0f;
 		component.compositeColorLutAssetPath.clear();
 		component.compositeColorLutStrength = 1.0f;
+		component.compositeDebugView = 0;
 	}
 
 	if (type == EditorComponentType::Environment) {
@@ -6991,6 +7601,11 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.volumetricCloudLightAbsorption = 1.25f;
 		component.volumetricCloudSilverLining = 0.75f;
 		component.volumetricCloudColor = {0.92f, 0.96f, 1.0f};
+		component.environmentHeatIntensity = 0.0f;
+		component.environmentHeatHorizonCenter = 0.46f;
+		component.environmentHeatHorizonWidth = 0.16f;
+		component.environmentHeatSunInfluence = 0.55f;
+		component.environmentHeatDistortionScale = 0.65f;
 	}
 
 	if (type == EditorComponentType::Camera) {
@@ -7073,6 +7688,12 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.colliderSize.x = 20.0f;  // Spot の内側角度。
 		component.colliderSize.y = 35.0f;  // Spot の外側角度。
 		component.colliderSize.z = 2.0f;  // Area の半径相当。
+		component.sunAzimuthDegrees = 45.0f;
+		component.sunElevationDegrees = 55.0f;
+		component.sunUseAzimuthElevation = false;  // 既定はTransform回転を使い、既存Sceneの見た目を変えない。
+		component.sunTemperatureKelvin = 5500.0f;  // 昼光相当。
+		component.sunUseColorTemperature = false;  // 既定はcolorフィールドをそのまま使う。
+		component.sunAutoTemperatureFromElevation = false;
 	}
 	else if (type == EditorComponentType::NavigationAgent) {
 		component.navAgentRadius = 0.5f;
@@ -7697,6 +8318,9 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 	component.surfaceWakeWidth = 1.5f;
 	component.surfaceWakeLifetime = 4.0f;
 	component.surfaceWakeMaximumEmissionRate = 80.0f;
+	component.surfaceWakeAffectOceanSurface = false;
+	component.surfaceWakeWaveAmplitudeScale = 0.10f;
+	component.surfaceWakeWaveRadiusScale = 4.0f;
 	component.surfaceWakeCurrentSpeed = 0.0f;
 	component.surfaceWakeCurrentIntensity = 0.0f;
 	component.trajectoryPredictionGameObjectId = -1;
@@ -7860,6 +8484,29 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 	component.sceneStreamingUnloadWhenFar = true;
 	component.sceneStreamingRuntimeLoaded = false;
 	component.sceneStreamingRuntimePending = false;
+	component.textAppearEffectType = 0;
+	component.textAppearDuration = 0.6f;
+	component.textAppearDelay = 0.0f;
+	component.textAppearParamA = 12.0f;
+	component.textContinuousEffectType = 0;
+	component.textContinuousDelay = 0.0f;
+	component.textContinuousParamA = 8.0f;
+	component.textContinuousParamB = 0.35f;
+	component.textContinuousParamC = 3.0f;
+	component.textEffectRuntimeElapsed = 0.0f;
+	component.textEffectRuntimeWasActive = false;
+	component.textFontIndex = 0;
+	component.sceneTransitionType = 0;
+	component.sceneTransitionTargetScenePath = "";
+	component.sceneTransitionOutDuration = 0.8f;
+	component.sceneTransitionHoldSeconds = 0.2f;
+	component.sceneTransitionInDuration = 0.8f;
+	component.sceneTransitionColor = {1.0f, 1.0f, 1.0f};
+	component.sceneTransitionCameraDiveSourceGameObjectId = -1;
+	component.sceneTransitionCameraDivePositionOffset = {0.0f, 60.0f, 0.0f};
+	component.sceneTransitionCameraDiveRotationDegrees = {90.0f, 0.0f, 0.0f};
+	component.sceneTransitionRuntimeState = 0;
+	component.sceneTransitionRuntimeElapsed = 0.0f;
 
 	return component;
 }

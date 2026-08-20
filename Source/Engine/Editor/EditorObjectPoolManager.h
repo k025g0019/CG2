@@ -24,6 +24,7 @@ public:
 		EditorScriptManager* scriptManager);  // Pool、物理Body、生成Actionを接続する
 	void PreparePools();  // Physics開始前はTemplateだけを登録し、残りの容量は初回貸出時まで実体化しない
 	void Start();  // 全Pool Itemを待機状態へ移し、SpawnerのRuntimeを初期化する
+	void PrewarmAllPools();  // Play開始直後に全Poolのinitial容量を実体化し、Play中の複製Hitchを無くす
 	void Update(float deltaTime);  // Play開始または一定間隔Spawnerを進める
 	void Stop();  // RuntimeのPool対応表を破棄する
 	int32_t Spawn(int32_t poolGameObjectId, const Vector3& position, const Vector3& rotation);  // 空きItemを指定姿勢で有効化する
@@ -63,6 +64,8 @@ private:
 	bool isStarted_ = false;  // Play中だけ自動生成を進める
 	std::function<void(int32_t)> runtimeResetCallback_;  // RuntimeManagerが各Systemの状態初期化をまとめる
 
+	int32_t CreatePoolItem(PoolRuntime& poolRuntime, int32_t ownerGameObjectId);  // Templateを複製して待機Itemを1つ実体化する
+	void PrewarmPool(PoolRuntime& poolRuntime, int32_t ownerGameObjectId);  // Play開始時にinitialCapacity分を先に実体化し、Play中の複製Hitchを無くす
 	void SetItemActive(int32_t gameObjectId, bool isActive);  // Template階層のScene、姿勢、Jolt Activeを同時に変更する
 	void ResetItemRuntimeState(int32_t gameObjectId);  // Template階層にあるHealthと死亡状態を再貸出用に戻す
 	void QueueSpawnAction(

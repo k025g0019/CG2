@@ -226,6 +226,8 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
 	<ClCompile Include="Source\Engine\Editor\EditorReplayManager.cpp" />
 	<ClCompile Include="Source\Engine\Effect\EffectAsset.cpp" />
 	<ClCompile Include="Source\Engine\Effect\EditorEffectManager.cpp" />
+	<ClCompile Include="Source\Engine\Effect\EffectDefinition.cpp" />
+	<ClCompile Include="Source\Engine\Effect\EditorVfxManager.cpp" />
 	<ClCompile Include="Source\Engine\Effect\EditorEffekseerManager.cpp" />
     <ClCompile Include="Source\Engine\Core\ApplicationWindow.cpp" />
     <ClCompile Include="Source\Engine\Physics\BoxCollision.cpp" />
@@ -468,6 +470,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
 	<ClCompile Include="Source\Engine\Renderer\EditorGpuCullingManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorOceanFftManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorGpuParticleManager.cpp" />
+	<ClCompile Include="Source\Engine\Renderer\EditorVfxRenderer.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorPostProcessQualityManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorTemporalRenderingManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorPlanarReflectionManager.cpp" />
@@ -590,6 +593,8 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
 	<ClInclude Include="Source\Engine\Editor\EditorReplayManager.h" />
 	<ClInclude Include="Source\Engine\Effect\EffectAsset.h" />
 	<ClInclude Include="Source\Engine\Effect\EditorEffectManager.h" />
+	<ClInclude Include="Source\Engine\Effect\EffectDefinition.h" />
+	<ClInclude Include="Source\Engine\Effect\EditorVfxManager.h" />
 	<ClInclude Include="Source\Engine\Effect\EditorEffekseerManager.h" />
     <ClInclude Include="Source\Engine\Core\ApplicationWindow.h" />
     <ClInclude Include="Source\Engine\Physics\BoxCollision.h" />
@@ -645,6 +650,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
 	<ClInclude Include="Source\Engine\Renderer\EditorGpuCullingManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorOceanFftManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorGpuParticleManager.h" />
+	<ClInclude Include="Source\Engine\Renderer\EditorVfxRenderer.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorPostProcessQualityManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorTemporalRenderingManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorPlanarReflectionManager.h" />
@@ -701,6 +707,13 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
     <ProjectReference Include="ThirdParty\DirectXTex\DirectXTex_Desktop_2022.vcxproj">
       <Project>{371b9fa9-4c90-4ac6-a123-aced756d6c77}</Project>
     </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Update="ThirdParty\**\*.cpp">
+      <EnablePREfast>false</EnablePREfast>
+      <RunCodeAnalysis>false</RunCodeAnalysis>
+      <DisableSpecificWarnings>5045;26812;26495;26451;6387;6262;6011;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

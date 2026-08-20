@@ -9,6 +9,8 @@
 #include "EditorScene.h"
 #include "EditorScriptApi.h"
 #include "Source/Engine/Effect/EditorEffectManager.h"
+#include "Source/Engine/Effect/EditorEffekseerManager.h"
+#include "EditorAudioManager.h"
 
 #include <array>
 #include <cstddef>
@@ -26,6 +28,7 @@ class EditorCameraEffectManager;
 class EditorActionSequenceManager;
 class EditorDamageManager;
 class EditorObjectPoolManager;
+class EditorVfxManager;
 class EditorRailBranchManager;
 class EditorSaveManager;
 class EditorTargetingManager;
@@ -61,6 +64,7 @@ public:
 		EditorInputManager* inputManager,
 		EditorAnimationManager* animationManager,
 		EditorEffectManager* effectManager,
+		EditorAudioManager* audioManager,
 		EditorAIManager* aiManager,
 		EditorPhysicsManager* physicsManager,
 		std::vector<std::string>* consoleMessages);  // Script 実行対象 Scene、入力、AI、物理、Console を受け取る
@@ -100,6 +104,8 @@ public:
 	bool ConsumeSceneLoadRequest(EditorSceneLoadRequest& sceneLoadRequest);  // 保留中の読込要求をRuntimeManagerへ1回だけ渡す。
 	bool ConsumeSceneUnloadRequest(std::string& scenePath);  // 保留中の破棄要求をRuntimeManagerへ1回だけ渡す。
 	void SetRailMovementManager(EditorRailMovementManager* railMovementManager);  // C++ Script の RailFollower API を実行系へ接続する。
+	void SetEffekseerManager(EditorEffekseerManager* effekseerManager);  // 位置指定Effekseer再生(PlayEffekseerAtPosition等)を実行系へ接続する。
+	void SetVfxManager(EditorVfxManager* vfxManager);  // .effectdefをWorld座標へ再生する新VFX経路を接続する。
 	void SetGameplayManagers(
 		EditorTargetingManager* targetingManager,
 		EditorDamageManager* damageManager,
@@ -193,6 +199,9 @@ private:
 	EditorInputManager* inputManager_ = nullptr;  // PlayerInput Action を読む入力 API
 	EditorAnimationManager* animationManager_ = nullptr;  // Animation の再生状態と現在時刻を読む API
 	EditorEffectManager* effectManager_ = nullptr;  // Effect の再生・停止・生存数 API
+	EditorEffekseerManager* effekseerManager_ = nullptr;  // GameObjectを介さない位置指定Effekseer再生API
+	EditorVfxManager* vfxManager_ = nullptr;  // EffectDefinition(.effectdef)の位置指定再生API
+	EditorAudioManager* audioManager_ = nullptr;  // AudioSource の再生・停止・Bus音量 API
 	EditorAIManager* aiManager_ = nullptr;  // AI センサー状態を読む AI API
 	EditorPhysicsManager* physicsManager_ = nullptr;  // AddForce / SetVelocity へ接続する物理 API
 	EditorRailMovementManager* railMovementManager_ = nullptr;  // RailFollower の停止・移動・問い合わせ API
@@ -341,6 +350,17 @@ private:
 	static bool ScriptPlayEffectBridge(int32_t gameObjectId);
 	static bool ScriptPlayEffectAtBridge(int32_t gameObjectId, const char* effectAssetPath, const EditorScriptVector3* localOffset);
 	static void ScriptStopEffectBridge(int32_t gameObjectId);
+	// GameObjectを介さず任意のWorld座標へEffekseerを再生するAPI(EffectManager::PlayEffekseer)。
+	static int32_t ScriptPlayEffekseerAtPositionBridge(const char* effectAssetPath, const EditorScriptVector3* position, const EditorScriptVector3* rotationEuler);
+	static bool ScriptSetEffekseerEffectPositionBridge(int32_t effekseerPlaybackHandle, const EditorScriptVector3* position);
+	static void ScriptStopEffekseerEffectAtPositionBridge(int32_t effekseerPlaybackHandle);
+	static bool ScriptPlayVfxAtPositionBridge(const char* effectId, const EditorScriptVector3* position);
+	static bool ScriptPlayAudioBridge(int32_t gameObjectId);
+	static void ScriptStopAudioBridge(int32_t gameObjectId);
+	static void ScriptSetAudioBusVolumeBridge(int32_t audioBus, float volume);
+	static float ScriptGetAudioBusVolumeBridge(int32_t audioBus);
+	static void ScriptSetAudioMasterVolumeBridge(float volume);
+	static float ScriptGetAudioMasterVolumeBridge();
 	static int32_t ScriptGetAliveParticleCountBridge(int32_t gameObjectId);
 	static bool ScriptGetAnimatorFloatBridge(int32_t gameObjectId, const char* parameterName, float* value);
 	static bool ScriptGetAnimatorIntBridge(int32_t gameObjectId, const char* parameterName, int32_t* value);

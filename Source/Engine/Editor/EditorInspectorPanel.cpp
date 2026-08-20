@@ -10,6 +10,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -523,6 +525,8 @@ namespace {
 		{"FeelKit", "FeelKit 触覚ソース", EditorComponentType::HapticSource},
 		{"ライト・環境", "ポストプロセス", EditorComponentType::PostProcess},
 		{"ライト・環境", "環境", EditorComponentType::Environment},
+		{"UI", "テキストエフェクト", EditorComponentType::TextEffect},
+		{"エフェクト", "シーン遷移", EditorComponentType::SceneTransition},
 	};
 
 	const char* GetComponentDisplayName(EditorComponentType type) {
@@ -1289,6 +1293,27 @@ namespace {
 		ImGui::TextDisabled("%s", title);
 	}
 
+	// Play中に物理側が書き込むRuntime診断値を、編集不可のまま数値で見せる。
+	void DrawReadOnlyFloatRow(const char* label, float value) {
+		char valueText[64];
+		std::snprintf(valueText, sizeof(valueText), "%.3f", static_cast<double>(value));
+		DrawReadOnlyFieldRow(label, valueText);
+	}
+
+	void DrawReadOnlyVector3Row(const char* label, const Vector3& value) {
+		char valueText[128];
+		std::snprintf(
+			valueText,
+			sizeof(valueText),
+			"X %.2f   Y %.2f   Z %.2f   |v| %.2f",
+			static_cast<double>(value.x),
+			static_cast<double>(value.y),
+			static_cast<double>(value.z),
+			static_cast<double>(std::sqrt(
+				value.x * value.x + value.y * value.y + value.z * value.z)));
+		DrawReadOnlyFieldRow(label, valueText);
+	}
+
 	void DrawCenteredButtonAndOpenPopup(const char* label, const char* popupId) {
 		// Inspector 下部の「コンポーネントを追加」を中央へ配置する
 		const float availableWidth = ImGui::GetContentRegionAvail().x;
@@ -1882,7 +1907,18 @@ namespace {
 			DrawFloatRow("半径", component.colliderRadius, 0.1f, 0.01f, 1000.0f);
 		}
 		else if (component.assetPath == "Sun") {
-			DrawTextRow("注", "Sun は GameObject の回転から方向を作ります。位置は使いません。");
+			DrawTextRow("注", "Sun は既定でGameObjectの回転から方向を作ります。位置は使いません。");
+
+			DrawSubHeader("太陽システム");
+			DrawCheckboxRow("方位角/高度を使用", component.sunUseAzimuthElevation);
+			DrawTextRow("説明", "ONの間、下の方位角・高度からsunDirectionを作り、Transform回転より優先します。");
+			DrawFloatRow("太陽方位角", component.sunAzimuthDegrees, 1.0f, -360.0f, 360.0f);
+			DrawFloatRow("太陽高度", component.sunElevationDegrees, 0.5f, -10.0f, 90.0f);
+
+			DrawCheckboxRow("色温度を使用", component.sunUseColorTemperature);
+			DrawTextRow("説明2", "ONの間、Kelvinから色を作り、上の色フィールドより優先します。");
+			DrawCheckboxRow("色温度を高度から自動推定", component.sunAutoTemperatureFromElevation);
+			DrawFloatRow("太陽色温度(K)", component.sunTemperatureKelvin, 25.0f, 1000.0f, 12000.0f);
 		}
 		else if (component.assetPath == "Spot") {
 			DrawFloatRow("距離", component.colliderRadius, 0.1f, 0.01f, 1000.0f);
@@ -2826,6 +2862,10 @@ namespace {
 			DrawStringInputRow("表示文字", component.buttonLabel);
 			DrawVector2Row("位置", component.buttonPosition, 0.5f, -10000.0f, 10000.0f);
 			DrawFloatRow("文字サイズ", component.buttonSize.y, 1.0f, 8.0f, 512.0f);
+			const char* fontItems[] = {"既定 (Yu Gothic)", "Meiryo", "MS ゴシック", "MS 明朝", "Yu Gothic Bold"};
+			component.textFontIndex = (std::clamp)(
+				component.textFontIndex, 0, static_cast<int32_t>(_countof(fontItems)) - 1);
+			DrawComboRow("フォント", component.textFontIndex, fontItems, static_cast<int32_t>(_countof(fontItems)));
 		}
 
 		if (component.type == EditorComponentType::Image ||
@@ -3429,9 +3469,84 @@ namespace {
 					component.railLocalForwardAxis,
 					forwardAxisItems,
 					static_cast<int32_t>(_countof(forwardAxisItems)));
-				DrawCheckboxRow("推力を水平にする", component.railShipHorizontalThrust);
-				DrawFloatRow("横ずれ補助率", component.railShipLateralAssist, 0.01f, 0.0f, 1.0f);
-				DrawTextRow("船らしさ", "横ずれ補助率0は推力と操舵のみ、1はRailへの横方向サーボを全適用します。");
+
+				DrawSubHeader("Mode 2 オートパイロット");
+				DrawTextRow("説明",
+					"RailはPD拘束の目標位置ではなく、航路・少し先の目標地点・目標速度だけを与えます。"
+					"実際の移動は船首方向のエンジン推力とYaw操舵で発生させます。カーブは横Forceではなく"
+					"Yaw操舵で船首が先に向き、その方向への推進力で曲がります。");
+				DrawFloatRow("推進速度ゲイン", component.railEngineSpeedGain, 0.1f, 0.0f, 50.0f);
+				DrawFloatRow("エンジン加速応答", component.railEngineAccelResponse, 0.1f, 0.0f, 100.0f);
+				DrawFloatRow("エンジン減速応答", component.railEngineDecelResponse, 0.1f, 0.0f, 100.0f);
+				DrawFloatRow("最大前進加速度", component.railEngineMaxAcceleration, 0.5f, 0.0f, 200.0f);
+				DrawFloatRow("操舵基本先読み距離(m)", component.railSteeringBaseLookAheadDistance, 0.5f, 0.0f, 200.0f);
+				DrawFloatRow("操舵先読み時間(秒)", component.railSteeringLookAheadTime, 0.05f, 0.0f, 5.0f);
+				DrawFloatRow("操舵Yaw強さ", component.railSteeringYawGain, 0.1f, 0.0f, 100.0f);
+				DrawFloatRow("操舵Yawダンピング", component.railSteeringYawDamping, 0.1f, 0.0f, 100.0f);
+				DrawFloatRow(
+					"最大Yaw角加速度", component.railSteeringMaxYawAngularAcceleration, 0.1f, 0.0f, 100.0f);
+				DrawFloatRow("横補助Dead Zone(m)", component.railLateralAssistDeadZone, 0.1f, 0.0f, 50.0f);
+				DrawFloatRow("横補助開始距離(m)", component.railLateralAssistSoftRadius, 0.1f, 0.0f, 50.0f);
+				DrawFloatRow("横補助緊急距離(m)", component.railLateralAssistEmergencyRadius, 0.1f, 0.0f, 100.0f);
+				DrawFloatRow("横補助最大倍率", component.railLateralAssistMaxMultiplier, 0.1f, 0.0f, 10.0f);
+				DrawTextRow("横補助の意味",
+					"Dead Zone以内は操舵のみで戻します(横Forceなし)。開始距離まで弱く、緊急距離まで"
+					"最大倍率まで強め、それ以上はクランプします。位置ばね/減衰(上の位置ばね・位置減衰)に"
+					"倍率として掛かります。");
+
+				DrawSubHeader("船体横滑り抑制 (Hull Lateral Grip)");
+				DrawTextRow("説明",
+					"上の横補助(Rail位置基準)とは完全に別物です。Rail位置は一切見ず、船体基準の"
+					"横方向速度(shipRightXZ成分)だけを、船体が水を横から受けて減衰する挙動として"
+					"再現します。船首が先に曲がり、速度ベクトルが遅れて追従する高速艇らしい旋回を"
+					"作るためのMode 2専用ゲームプレイ補助で、Buoyancy等の水力モデルは変更しません。"
+					"Center of Massへの通常AddForceのみで、余計なTorqueは発生させません。");
+				DrawCheckboxRow("船体横滑り抑制を使用", component.railHullLateralGripEnabled);
+				DrawFloatRow("横グリップ強さ", component.railHullLateralGripStrength, 0.1f, 0.0f, 50.0f);
+				DrawFloatRow(
+					"横グリップ最大加速度", component.railHullLateralGripMaxAcceleration, 0.5f, 0.0f, 200.0f);
+				DrawFloatRow("横グリップ開始速度(m/s)", component.railHullLateralGripMinSpeed, 0.1f, 0.0f, 50.0f);
+				DrawFloatRow("横グリップ最大速度(m/s)", component.railHullLateralGripFullSpeed, 0.1f, 0.0f, 50.0f);
+				DrawFloatRow(
+					"横滑りDead Zone速度(m/s)", component.railHullLateralGripDeadZoneSpeed, 0.05f, 0.0f, 10.0f);
+				DrawFloatRow(
+					"横滑り角補助開始角度(度)", component.railHullLateralGripSlipStartDegrees, 1.0f, 0.0f, 90.0f);
+				DrawFloatRow(
+					"横滑り角補助最大角度(度)", component.railHullLateralGripSlipFullDegrees, 1.0f, 0.0f, 90.0f);
+
+				DrawSubHeader("Mode 2 最終合成加速度上限");
+				DrawTextRow("説明",
+					"上のrailMaximumAcceleration(最大加速度、Mode 1由来)ではなく、Mode 2の"
+					"Engine+Hull Grip+Rail Assist合成後にはこちらを使います。各成分は既に個別に"
+					"Clamp済みのため、通常走行ではこの上限に到達しないくらい大きな値にしてください。");
+				DrawFloatRow(
+					"Mode2 最大合成加速度", component.railMode2MaxCombinedAcceleration, 1.0f, 0.0f, 500.0f);
+
+				DrawSubHeader("Mode 2 移動方式");
+				DrawTextRow("説明",
+					"0=Boat Autopilot(上のPure Pursuit・Engine・Hull Grip・Rail Assist等の"
+					"物理追従方式、既存)。1=Rail Ride(ディズニーのボートライドのように、"
+					"XZ位置・Yaw・進行速度をRailへ完全固定し、Y/Pitch/RollだけBuoyancy等の"
+					"物理演出として残すレールシューティング専用方式)。Boat Autopilotのコードは"
+					"削除せず両方式を切替可能な形で維持しています。PlayerShipはRail Rideを使用します。");
+				{
+					static const char* const kMode2MovementStyleItems[] = {"Boat Autopilot", "Rail Ride"};
+					DrawComboRow(
+						"Mode2移動方式",
+						component.railMode2MovementStyle,
+						kMode2MovementStyleItems,
+						static_cast<int32_t>(_countof(kMode2MovementStyleItems)));
+				}
+				DrawFloatRow(
+					"Rail RideのYawサンプル距離(m)", component.railRideYawSampleDistance, 0.1f, 0.1f, 20.0f);
+				DrawTextRow("サンプル距離",
+					"Rail RideのYawは、現在Rail Progressの前後をこの距離だけ中央差分サンプルして"
+					"接線方向を求めます。Rail終端(非ループ)では片側差分へ自動的にフォールバックします。");
+
+				DrawTextRow("下のRoll/Pitch/Yaw角度制限・回転ばね等について",
+					"Mode 2はこれらのSpline接線ベースの回転PD経路を使いません(上のオートパイロットの"
+					"操舵Yawのみで制御します)。Pitch/RollはBuoyancy・Safety Envelope・絶対角度制限に"
+					"委ねられます。以下はMode 1、または将来Mode 2で使う場合のために残しています。");
 				DrawFloatRow("最大ロール角度", component.railMaximumRollAngle, 1.0f, 0.0f, 90.0f);
 				DrawTextRow("角度制限", "0で制限なし。波で転覆しない角度を指定します。");
 				DrawFloatRow("ロール復元力", component.railRollRestorationStrength, 0.5f, 0.0f, 100.0f);
@@ -3450,6 +3565,76 @@ namespace {
 				DrawTextRow("復元力", "進行方向に戻す力の強さ。0で無効。");
 				DrawFloatRow("ヨーダンピング", component.railYawDamping, 0.5f, 0.0f, 100.0f);
 				DrawTextRow("ダンピング", "ヨー角速度への減衰。0で無効。");
+
+				DrawSubHeader("Yaw Safety Assist");
+				DrawTextRow("説明",
+					"Rail見出しからのYaw偏差が大きいほど、物理追従の目標前進速度を非線形に落とし、"
+					"Yaw復元強度を非線形に強めます。船が横向きのままRailだけ全速で押し続けることを防ぎます。"
+					"Rail進行そのもの(進行距離・指令速度)は変更しません。");
+				DrawCheckboxRow("Yaw Safety Assistを使用", component.railYawSafetyAssistEnabled);
+				DrawFloatRow("Stage1 開始角度(度)", component.railYawSafetyStage1Degrees, 1.0f, 0.0f, 180.0f);
+				DrawTextRow("Stage1", "この角度からYaw復元強化を開始します。速度はまだ落ちません。");
+				DrawFloatRow("Stage2 開始角度(度)", component.railYawSafetyStage2Degrees, 1.0f, 0.0f, 180.0f);
+				DrawTextRow("Stage2", "この角度から目標前進速度を落とし始めます。");
+				DrawFloatRow("Stage4 到達角度(度)", component.railYawSafetyStage4Degrees, 1.0f, 0.0f, 180.0f);
+				DrawTextRow("Stage4", "この角度で速度スケール最小・復元強化最大に達します(高速直進を禁止)。");
+				DrawFloatRow("最大復元倍率", component.railYawSafetyMaxRestorationScale, 0.1f, 1.0f, 10.0f);
+				DrawFloatRow("最小速度倍率", component.railYawSafetyMinSpeedScale, 0.01f, 0.0f, 1.0f);
+				DrawFloatRow("Forward Position Error 上限(m)", component.railMaxForwardRecoveryError, 0.5f, 0.0f, 500.0f);
+				DrawTextRow("上限の意味",
+					"Rail進行(s)が物理追従より先へ進んでも、位置補正力の元になるForward誤差の絶対値を"
+					"ここで頭打ちにします。横方向誤差には影響しません。");
+
+				DrawSubHeader("Roll/Pitch Safety Envelope");
+				DrawTextRow("説明",
+					"波による通常の揺れ(free角度以下)にはRailは一切介入せずBuoyancyへ任せます。"
+					"emergency角度へ近づくほど、Attitude Recovery Torqueと前進方向の推力/位置補正を"
+					"非線形(t^2)に強める/弱めます。railRotationInfluenceのマスクとは独立して働きます。");
+				DrawCheckboxRow("Attitude Safety Assistを使用", component.railAttitudeSafetyAssistEnabled);
+				DrawFloatRow("Roll Free角度(度)", component.railRollFreeDegrees, 1.0f, 0.0f, 90.0f);
+				DrawFloatRow("Roll Emergency角度(度)", component.railRollEmergencyDegrees, 1.0f, 0.0f, 180.0f);
+				DrawFloatRow("Pitch Free角度(度)", component.railPitchFreeDegrees, 1.0f, 0.0f, 90.0f);
+				DrawFloatRow("Pitch Emergency角度(度)", component.railPitchEmergencyDegrees, 1.0f, 0.0f, 180.0f);
+				DrawFloatRow("Attitude復元力", component.railAttitudeSafetyStrength, 0.5f, 0.0f, 200.0f);
+				DrawFloatRow("Attitudeダンピング", component.railAttitudeSafetyDamping, 0.5f, 0.0f, 200.0f);
+				DrawFloatRow("Attitude Torque上限", component.railAttitudeSafetyMaxTorque, 0.5f, 0.0f, 200.0f);
+				DrawFloatRow("危険時Forward最小倍率", component.railAttitudeSafetyMinForwardScale, 0.01f, 0.0f, 1.0f);
+
+				DrawSubHeader("Physical Rail Progress");
+				DrawTextRow("説明",
+					"Gameplay Rail Progress(敵出現等の進行)は基準速度で進み続けますが、Position PDが"
+					"追う目標位置はPhysical Rail Progressという別の距離から作ります。Safetyで物理速度を"
+					"落としてもGameplayだけが先へ逃げず、Position Errorが無制限に増大しません。"
+					"Safety解除後はここで設定した倍率の範囲でGameplayへ徐々に追いつきます。");
+				DrawFloatRow(
+					"Catchup倍率", component.railPhysicalCatchupSpeedMultiplier, 0.01f, 1.0f, 3.0f);
+
+				DrawSubHeader("Pitch/Roll 絶対角度制限 (Hard Clamp)");
+				DrawTextRow("説明",
+					"上のRoll/Pitch Safety Envelope(段階的な復元Torque)とも下の角度ソフト制限とも"
+					"完全に独立した第3の機能です。Pitch/RollはBuoyancy・波・着水・Planingで通常通り"
+					"物理的に動かしますが、毎Physics Step終了後(Jolt積分・最終姿勢確定後)に限界角度を"
+					"超えていないか確認し、超えていればその場でRigidbody回転を限界角度へ直接補正します"
+					"(この機能に限りTransform/Rigidbody回転の直接変更を行います)。"
+					"Yawは変更しません。abs(Pitch)・abs(Roll)は常に指定角度以内に収まります。");
+				DrawCheckboxRow("絶対角度制限(Hard Clamp)を使用", component.railAttitudeAngleLimitEnabled);
+				DrawFloatRow(
+					"Pitch最大角度(度)", component.railAttitudeAngleLimitMaxPitchDegrees, 1.0f, 0.0f, 90.0f);
+				DrawFloatRow(
+					"Roll最大角度(度)", component.railAttitudeAngleLimitMaxRollDegrees, 1.0f, 0.0f, 90.0f);
+
+				DrawSubHeader("Pitch/Roll 角度ソフト制限 (Torque)");
+				DrawTextRow("説明",
+					"上のHard Clampとは別に、Torqueによる押し戻し方式も独立して用意しています。"
+					"上で設定した限界角度を超えた分だけTorqueで押し戻します(角度そのものは書き換えません)。"
+					"既定OFF。Hard ClampとSoft Limitは同時に有効化できます。");
+				DrawCheckboxRow("角度ソフト制限を使用", component.railAttitudeAngleSoftLimitEnabled);
+				DrawFloatRow(
+					"押し戻し強さ", component.railAttitudeAngleSoftLimitStrength, 0.5f, 0.0f, 200.0f);
+				DrawFloatRow(
+					"押し戻しダンピング", component.railAttitudeAngleSoftLimitDamping, 0.5f, 0.0f, 200.0f);
+				DrawFloatRow(
+					"押し戻しTorque上限", component.railAttitudeAngleSoftLimitMaxTorque, 0.5f, 0.0f, 200.0f);
 			}
 		}
 
@@ -3459,6 +3644,93 @@ namespace {
 		DrawCheckboxRow("開始時に停止", component.railStartPaused);
 		DrawCheckboxRow("逆方向", component.railReverse);
 		DrawCheckboxRow("終端で停止", component.railStopAtEnd);
+
+		if (component.railMovementMode != 0) {
+			DrawSubHeader("Runtime 診断");
+			DrawTextRow("説明",
+				"物理追従が実際に加えた力です。浮力併用(位置追従軸Y=0、回転追従軸X/Z=0)なら "
+				"追従ForceのYと追従TorqueのX/Zが0になり、上下と傾きはBuoyancyへ委ねられています。");
+			DrawReadOnlyVector3Row("追従Force", component.railDebugFollowForce);
+			DrawReadOnlyVector3Row("追従Torque", component.railDebugFollowTorque);
+			DrawReadOnlyVector3Row("位置誤差", component.railDebugPositionError);
+			DrawReadOnlyFloatRow("Yaw誤差 rad", component.railDebugYawError);
+			DrawReadOnlyFloatRow("Rail指令速度 m/s", component.railDebugCurrentSpeed);
+			DrawReadOnlyFloatRow("実前進速度 m/s", component.railDebugActualForwardSpeed);
+			DrawReadOnlyFloatRow("Gameplay Rail Progress m", component.railDebugGameplayRailProgress);
+			DrawReadOnlyFloatRow("Physical Rail Progress m", component.railDebugPhysicalRailProgress);
+			DrawReadOnlyFloatRow("Physical Target Speed m/s", component.railDebugPhysicalTargetSpeed);
+			DrawReadOnlyFloatRow("Pitch制限中(1=制限)", component.railDebugPitchAngleLimited);
+			DrawReadOnlyFloatRow("Roll制限中(1=制限)", component.railDebugRollAngleLimited);
+			DrawReadOnlyFloatRow("YawSafety 速度倍率", component.railDebugYawSafetySpeedScale);
+			DrawReadOnlyFloatRow("YawSafety 復元倍率", component.railDebugYawSafetyRestorationScale);
+			DrawReadOnlyFloatRow("Forward Position Scale(合成)", component.railDebugForwardPositionScale);
+			DrawReadOnlyFloatRow("Forward Position Error(m)", component.railDebugForwardPositionError);
+			DrawReadOnlyFloatRow("Lateral Position Error(m)", component.railDebugLateralPositionError);
+			DrawReadOnlyFloatRow("Forward補正力 N", component.railDebugForwardCorrectionForce);
+			DrawReadOnlyFloatRow("Lateral補正力 N", component.railDebugLateralCorrectionForce);
+			DrawReadOnlyFloatRow("船体Pitch(度)", component.railDebugBoatPitchDegrees);
+			DrawReadOnlyFloatRow("船体Roll(度)", component.railDebugBoatRollDegrees);
+			DrawReadOnlyFloatRow("Pitch Safety Factor", component.railDebugPitchSafetyFactor);
+			DrawReadOnlyFloatRow("Roll Safety Factor", component.railDebugRollSafetyFactor);
+			DrawReadOnlyVector3Row("Attitude Recovery Torque", component.railDebugAttitudeRecoveryTorque);
+
+			if (component.railMovementMode == 2) {
+				DrawSubHeader("Mode 2 診断");
+				DrawReadOnlyFloatRow("Rail最近傍距離 m", component.railDebugClosestRailDistance);
+			DrawReadOnlyFloatRow("Rail最近傍距離変化量 m", component.railDebugClosestRailDistanceDelta);
+				DrawReadOnlyFloatRow("操舵先読み距離 m", component.railDebugSteeringLookAheadDistance);
+				DrawReadOnlyFloatRow("操舵目標Yaw誤差 度", component.railDebugSteeringYawErrorDegrees);
+				DrawReadOnlyFloatRow("エンジン加速度 m/s2", component.railDebugEngineAcceleration);
+				DrawReadOnlyFloatRow("横補助加速度 m/s2", component.railDebugLateralAssistAcceleration);
+				DrawReadOnlyFloatRow("横補助倍率", component.railDebugLateralAssistScale);
+				DrawReadOnlyFloatRow("Yaw角速度 rad/s", component.railDebugYawAngularVelocity);
+				DrawReadOnlyVector3Row("船体計算上Forward", component.railDebugShipForward);
+				DrawReadOnlyVector3Row("船体計算上Right", component.railDebugShipRight);
+				DrawReadOnlyFloatRow(
+					"船首-移動方向差 度", component.railDebugForwardVelocitySlipAngleDegrees);
+				DrawReadOnlyFloatRow("水平速度 m/s", component.railDebugHorizontalSpeed);
+				DrawReadOnlyFloatRow("船体横方向速度 m/s", component.railDebugLateralSpeed);
+				DrawReadOnlyFloatRow(
+					"船体横グリップ加速度 m/s2", component.railDebugHullLateralGripAcceleration);
+				DrawReadOnlyFloatRow("船体横グリップ速度倍率", component.railDebugHullLateralGripSpeedFactor);
+				DrawReadOnlyFloatRow("船体横グリップSlip倍率", component.railDebugHullLateralGripSlipFactor);
+				DrawReadOnlyFloatRow("船体横グリップ最終倍率", component.railDebugHullLateralGripScale);
+				DrawReadOnlyFloatRow("合成前加速度 m/s2", component.railDebugPreClampAcceleration);
+				DrawReadOnlyFloatRow("合成後加速度 m/s2", component.railDebugPostClampAcceleration);
+				DrawReadOnlyFloatRow("Mode2最終Clamp倍率", component.railDebugMode2ClampScale);
+
+				if (component.railMode2MovementStyle == 1) {
+					DrawSubHeader("Rail Ride 診断");
+					DrawTextRow("説明",
+						"Rail Ride成功条件: Rail位置誤差XZ≒0、Rail-Yaw誤差≒0、速度方向-Rail方向差≒0。"
+						"上のBoat Autopilot診断(Rail最近傍距離・操舵Yaw誤差・Hull Grip等)はRail Ride中は"
+						"未使用のため0またはNot Activeのままで問題ありません。");
+					DrawReadOnlyVector3Row("Rail固定位置", component.railDebugRailRidePosition);
+					DrawReadOnlyVector3Row("実PlayerShip位置", component.railDebugRailRideActualPosition);
+					DrawReadOnlyFloatRow("Rail位置誤差XZ m", component.railDebugRailRidePositionErrorXZ);
+					DrawReadOnlyVector3Row("Rail接線Forward", component.railDebugRailRideForward);
+					DrawReadOnlyFloatRow("Rail Target Yaw 度", component.railDebugRailRideTargetYawDegrees);
+					DrawReadOnlyFloatRow("PlayerShip最終Yaw 度", component.railDebugRailRideFinalYawDegrees);
+					DrawReadOnlyFloatRow("Rail-Yaw誤差 度", component.railDebugRailRideYawErrorDegrees);
+					DrawReadOnlyVector3Row("Rail Velocity XZ", component.railDebugRailRideVelocityXZ);
+					DrawReadOnlyVector3Row("Rigidbody Velocity XZ", component.railDebugRailRideActualVelocityXZ);
+					DrawReadOnlyFloatRow(
+						"速度方向-Rail方向差 度", component.railDebugRailRideVelocityDirectionErrorDegrees);
+					DrawReadOnlyFloatRow("Physics Y", component.railDebugRailRidePhysicsY);
+					DrawReadOnlyFloatRow("最終Y", component.railDebugRailRideFinalY);
+					DrawReadOnlyFloatRow("Physics Pitch 度", component.railDebugRailRidePhysicsPitchDegrees);
+					DrawReadOnlyFloatRow("最終Pitch 度", component.railDebugRailRideFinalPitchDegrees);
+					DrawReadOnlyFloatRow("Physics Roll 度", component.railDebugRailRidePhysicsRollDegrees);
+					DrawReadOnlyFloatRow("最終Roll 度", component.railDebugRailRideFinalRollDegrees);
+				}
+			}
+
+			DrawTextRow("追従軸の実効値",
+				"下2行が実際に適用されている追従軸です。浮力併用なら位置(1,0,1)・回転(0,1,0)に "
+				"なっているはずで、そうでなければSceneの保存値が想定と違っています。");
+			DrawReadOnlyVector3Row("適用中 位置追従軸", component.railDebugAppliedPositionInfluence);
+			DrawReadOnlyVector3Row("適用中 回転追従軸", component.railDebugAppliedRotationInfluence);
+		}
 	}
 
 	void DrawRailSpeedProfileComponent(EditorComponent& component) {
@@ -4880,7 +5152,7 @@ namespace {
 		EditorInspectorPanelContext& context,
 		const EditorGameObject& owner,
 		EditorComponent& component) {
-		DrawTextRow("説明", "船速と同じOcean Sampleから船尾Foamと船首Sprayの位置・発生量を駆動します。");
+		DrawTextRow("説明", "船速と同じOcean Sampleから航跡Effectと、描画・浮力で共有する局所波を駆動します。");
 		DrawGameObjectReferenceRow(context, owner, "Ocean", component.surfaceWakeOceanGameObjectId, "自動検索", true);
 		DrawGameObjectReferenceRow(context, owner, "左航跡Effect", component.surfaceWakeLeftEffectGameObjectId, "未設定", true);
 		DrawGameObjectReferenceRow(context, owner, "右航跡Effect", component.surfaceWakeRightEffectGameObjectId, "未設定", true);
@@ -4890,6 +5162,9 @@ namespace {
 		DrawFloatRow("航跡幅", component.surfaceWakeWidth, 0.05f, 0.01f, 1000.0f);
 		DrawFloatRow("Foam寿命", component.surfaceWakeLifetime, 0.05f, 0.01f, 120.0f);
 		DrawFloatRow("最大発生数/秒", component.surfaceWakeMaximumEmissionRate, 1.0f, 0.0f, 100000.0f);
+		DrawCheckboxRow("水面へ局所波を与える", component.surfaceWakeAffectOceanSurface);
+		DrawFloatRow("局所波の強度", component.surfaceWakeWaveAmplitudeScale, 0.01f, 0.0f, 2.0f);
+		DrawFloatRow("局所波の影響半径", component.surfaceWakeWaveRadiusScale, 0.1f, 0.5f, 20.0f);
 		DrawTextRow("Runtime速度", std::to_string(component.surfaceWakeCurrentSpeed).c_str());
 		DrawTextRow("Runtime強度", std::to_string(component.surfaceWakeCurrentIntensity).c_str());
 	}
@@ -5099,6 +5374,200 @@ namespace {
 		DrawVector3Row("World Up", component.horizonWorldUp, 0.01f, -1.0f, 1.0f);
 		DrawFloatRow("減衰", component.horizonDamping, 0.1f, 0.0f, 1000.0f);
 		DrawFloatRow("最大Roll deg", component.horizonMaximumRollDegrees, 0.1f, 0.0f, 180.0f);
+	}
+
+	// 常時演出の種類を切り替えた瞬間、その演出に合った値へParamA/B/Cをリセットする。
+	// 演出ごとに単位(px/秒/0-1など)が全く違うため、共通の初期値では大抵ちぐはぐになる。
+	void ResetContinuousTextEffectParamsForType(EditorComponent& component, int32_t type) {
+		switch (type) {
+		case 1:  // 点滅
+			component.textContinuousParamA = 0.3f;
+			component.textContinuousParamB = 0.0f;
+			component.textContinuousParamC = 0.0f;
+			break;
+		case 2:  // レインボー
+			component.textContinuousParamA = 0.6f;
+			component.textContinuousParamB = 0.15f;
+			component.textContinuousParamC = 0.0f;
+			break;
+		case 3:  // 波
+			component.textContinuousParamA = 8.0f;
+			component.textContinuousParamB = 0.5f;
+			component.textContinuousParamC = 4.0f;
+			break;
+		case 4:  // 発光
+		case 5:  // 輪郭の発光
+			component.textContinuousParamA = type == 4 ? 10.0f : 2.0f;
+			component.textContinuousParamB = 3.0f;
+			component.textContinuousParamC = 0.3f;
+			break;
+		case 6:  // 色収差
+			component.textContinuousParamA = 2.0f;
+			component.textContinuousParamB = 0.0f;
+			component.textContinuousParamC = 0.0f;
+			break;
+		case 7:  // 微振動
+			component.textContinuousParamA = 2.0f;
+			component.textContinuousParamB = 20.0f;
+			component.textContinuousParamC = 0.0f;
+			break;
+		case 8:  // 不規則点滅
+			component.textContinuousParamA = 0.4f;
+			component.textContinuousParamB = 6.0f;
+			component.textContinuousParamC = 0.0f;
+			break;
+		case 9:  // 脈動
+			component.textContinuousParamA = 1.05f;
+			component.textContinuousParamB = 3.0f;
+			component.textContinuousParamC = 0.0f;
+			break;
+		case 10:  // 残像
+			component.textContinuousParamA = 10.0f;
+			component.textContinuousParamB = 2.0f;
+			component.textContinuousParamC = 4.0f;
+			break;
+		case 11:  // 簡易グリッチ
+			component.textContinuousParamA = 6.0f;
+			component.textContinuousParamB = 1.5f;
+			component.textContinuousParamC = 0.8f;
+			break;
+		default:
+			break;
+		}
+	}
+
+	void DrawTextEffectComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& owner,
+		EditorComponent& component) {
+		(void)context;
+		(void)owner;
+		DrawTextRow(
+			"説明",
+			"同じObjectのText/TextMeshProUGUIへ演出をかけます。出現演出(1回だけ)と常時演出(ずっと動く)は"
+			"独立していて、両方同時に組み合わせられます。");
+
+		DrawTextRow("── 出現演出 ──", "Activeになった瞬間に1回だけ再生されます。");
+		const char* appearItems[] = {"なし", "フェードイン", "タイプライター", "スケールポップ"};
+		component.textAppearEffectType = (std::clamp)(
+			component.textAppearEffectType, 0, static_cast<int32_t>(_countof(appearItems)) - 1);
+		DrawComboRow("出現効果", component.textAppearEffectType, appearItems, static_cast<int32_t>(_countof(appearItems)));
+
+		if (component.textAppearEffectType != 0) {
+			DrawFloatRow("継続時間(秒)", component.textAppearDuration, 0.01f, 0.01f, 60.0f);
+			DrawFloatRow("開始遅延(秒)", component.textAppearDelay, 0.01f, 0.0f, 60.0f);
+
+			if (component.textAppearEffectType == 2) {
+				DrawFloatRow("文字/秒", component.textAppearParamA, 0.1f, 0.1f, 200.0f);
+			}
+			else if (component.textAppearEffectType == 3) {
+				DrawFloatRow("オーバーシュート倍率", component.textAppearParamA, 0.01f, 1.0f, 3.0f);
+			}
+		}
+
+		DrawTextRow("── 常時演出 ──", "表示され続ける間、ずっと動き続けます。出現演出と並行して再生されます。");
+		const char* continuousItems[] = {
+			"なし", "点滅", "レインボー", "波", "発光", "輪郭の発光", "色収差",
+			"微振動", "不規則点滅", "脈動", "残像", "簡易グリッチ"};
+		component.textContinuousEffectType = (std::clamp)(
+			component.textContinuousEffectType, 0, static_cast<int32_t>(_countof(continuousItems)) - 1);
+		const int32_t previousContinuousType = component.textContinuousEffectType;
+
+		if (DrawComboRow(
+			"常時効果", component.textContinuousEffectType, continuousItems,
+			static_cast<int32_t>(_countof(continuousItems))) &&
+			component.textContinuousEffectType != previousContinuousType) {
+			ResetContinuousTextEffectParamsForType(component, component.textContinuousEffectType);
+		}
+
+		if (component.textContinuousEffectType != 0) {
+			DrawFloatRow("開始遅延(秒)", component.textContinuousDelay, 0.01f, 0.0f, 60.0f);
+		}
+
+		switch (component.textContinuousEffectType) {
+		case 1:
+			DrawFloatRow("点滅間隔(秒)", component.textContinuousParamA, 0.01f, 0.02f, 5.0f);
+			break;
+		case 2:
+			DrawTextRow("説明", "文字の色が虹色に変化し続けます。");
+			DrawFloatRow("色相回転速度(周/秒)", component.textContinuousParamA, 0.01f, 0.01f, 10.0f);
+			DrawFloatRow("文字ごとの色ずれ", component.textContinuousParamB, 0.01f, 0.0f, 1.0f);
+			break;
+		case 3:
+			DrawTextRow("説明", "文字が先頭から順に位相をずらして上下し、波として伝わって見えます。");
+			DrawFloatRow("振幅(px)", component.textContinuousParamA, 0.1f, 0.0f, 200.0f);
+			DrawFloatRow("文字ごとの位相", component.textContinuousParamB, 0.01f, 0.0f, 3.0f);
+			DrawFloatRow("揺れる速さ", component.textContinuousParamC, 0.1f, 0.0f, 20.0f);
+			break;
+		case 4:
+			DrawTextRow("説明", "文字の周囲がずっと光ります。");
+			DrawFloatRow("Glow半径(px)", component.textContinuousParamA, 0.1f, 0.0f, 60.0f);
+			DrawFloatRow("脈動速度(0で静止)", component.textContinuousParamB, 0.05f, 0.0f, 20.0f);
+			DrawFloatRow("脈動の深さ", component.textContinuousParamC, 0.01f, 0.0f, 1.0f);
+			break;
+		case 5:
+			DrawTextRow("説明", "文字本体は普通のまま、輪郭だけ光ります。");
+			DrawFloatRow("輪郭太さ(px)", component.textContinuousParamA, 0.1f, 0.5f, 20.0f);
+			DrawFloatRow("脈動速度(0で静止)", component.textContinuousParamB, 0.05f, 0.0f, 20.0f);
+			DrawFloatRow("脈動の深さ", component.textContinuousParamC, 0.01f, 0.0f, 1.0f);
+			break;
+		case 6:
+			DrawTextRow("説明", "赤と青の文字コピーを左右にずらして表示します。");
+			DrawFloatRow("ズレ量(px)", component.textContinuousParamA, 0.1f, 0.0f, 20.0f);
+			DrawFloatRow("脈動速度(0で静止)", component.textContinuousParamB, 0.05f, 0.0f, 20.0f);
+			DrawFloatRow("脈動の深さ", component.textContinuousParamC, 0.01f, 0.0f, 1.0f);
+			break;
+		case 7:
+			DrawTextRow("説明", "細かく位置を揺らし続けます。WARNING等の危険表示向け。");
+			DrawFloatRow("振れ幅(px)", component.textContinuousParamA, 0.1f, 0.0f, 40.0f);
+			DrawFloatRow("速さ", component.textContinuousParamB, 0.1f, 0.1f, 60.0f);
+			break;
+		case 8:
+			DrawTextRow("説明", "不規則な蛍光灯のように明るさが揺れ続けます。");
+			DrawFloatRow("最低輝度(0-1)", component.textContinuousParamA, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("フリッカー速さ", component.textContinuousParamB, 0.1f, 0.1f, 30.0f);
+			break;
+		case 9:
+			DrawTextRow("説明", "文字サイズがゆっくり拡大縮小を繰り返します。");
+			DrawFloatRow("最大拡大率", component.textContinuousParamA, 0.01f, 1.0f, 2.0f);
+			DrawFloatRow("速さ", component.textContinuousParamB, 0.05f, 0.05f, 20.0f);
+			break;
+		case 10:
+			DrawTextRow("説明", "文字がわずかに動き、その軌跡に薄いコピーが残り続けます。");
+			DrawFloatRow("振れ幅(px)", component.textContinuousParamA, 0.1f, 0.0f, 100.0f);
+			DrawFloatRow("速さ", component.textContinuousParamB, 0.05f, 0.05f, 20.0f);
+			DrawFloatRow("残像の数", component.textContinuousParamC, 1.0f, 2.0f, 6.0f);
+			break;
+		case 11:
+			DrawTextRow("説明", "定期的に位置ズレ・RGB分離・一部欠けをランダムに繰り返します。");
+			DrawFloatRow("ズレ量(px)", component.textContinuousParamA, 0.1f, 0.0f, 40.0f);
+			DrawFloatRow("発生頻度(回/秒)", component.textContinuousParamB, 0.05f, 0.05f, 10.0f);
+			DrawFloatRow("強さ(0-1)", component.textContinuousParamC, 0.01f, 0.0f, 1.0f);
+			break;
+		default:
+			break;
+		}
+	}
+
+	void DrawSceneTransitionComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& owner,
+		EditorComponent& component) {
+		DrawTextRow("説明", "Scene切り替え時の色フェード・ワイプ・Camera移動を管理します。SceneButton等から遷移先として使えます。");
+		const char* typeItems[] = {"なし", "色フェード", "ワイプ", "Camera Dive"};
+		component.sceneTransitionType = (std::clamp)(component.sceneTransitionType, 0, static_cast<int32_t>(_countof(typeItems)) - 1);
+		DrawComboRow("種類", component.sceneTransitionType, typeItems, static_cast<int32_t>(_countof(typeItems)));
+		DrawStringInputRow("遷移先 Scene", component.sceneTransitionTargetScenePath);
+		DrawFloatRow("覆うまでの時間(秒)", component.sceneTransitionOutDuration, 0.01f, 0.01f, 30.0f);
+		DrawFloatRow("静止時間(秒)", component.sceneTransitionHoldSeconds, 0.01f, 0.0f, 30.0f);
+		DrawFloatRow("見せる時間(秒)", component.sceneTransitionInDuration, 0.01f, 0.01f, 30.0f);
+		DrawVector3Row("色", component.sceneTransitionColor, 0.01f, 0.0f, 1.0f);
+
+		if (component.sceneTransitionType == 3) {
+			DrawGameObjectReferenceRow(context, owner, "Dive基準Object", component.sceneTransitionCameraDiveSourceGameObjectId, "遷移開始時のCamera位置", false);
+			DrawVector3Row("Dive開始位置 Offset", component.sceneTransitionCameraDivePositionOffset, 0.1f, -100000.0f, 100000.0f);
+			DrawVector3Row("Dive開始角度 deg", component.sceneTransitionCameraDiveRotationDegrees, 0.1f, -360.0f, 360.0f);
+		}
 	}
 
 	void DrawFireLineCheckComponent(
@@ -5479,9 +5948,19 @@ namespace {
 			component.uiBindingSourceGameObjectId,
 			"このObject",
 			true);
-		const char* valueTypes[] = {"Health 現在値", "Health 比率", "RailFollower 進行率", "Active"};
-		component.uiBindingValueType = (std::clamp)(component.uiBindingValueType, 0, 3);
-		DrawComboRow("値", component.uiBindingValueType, valueTypes, 4);
+		const char* valueTypes[] = {
+			"Health 現在値",
+			"Health 比率",
+			"RailFollower 進行率",
+			"Active",
+			"Counter 現在値",
+			"WeaponLoadout 選択武器名"};
+		component.uiBindingValueType = (std::clamp)(component.uiBindingValueType, 0, 5);
+		DrawComboRow(
+			"値",
+			component.uiBindingValueType,
+			valueTypes,
+			static_cast<int32_t>(_countof(valueTypes)));
 		DrawStringInputRow("接頭文字", component.uiBindingPrefix);
 		DrawIntRow("小数桁", component.uiBindingPrecision);
 		component.uiBindingPrecision = (std::clamp)(component.uiBindingPrecision, 0, 6);
@@ -6333,6 +6812,25 @@ namespace {
 		DrawFloatRow("フィルムグレイン", component.compositeFilmGrain, 0.01f, 0.0f, 2.0f);
 		DrawFloatRow("色収差", component.compositeChromaticAberration, 0.01f, 0.0f, 2.0f);
 		DrawFloatRow("AO強度", component.compositeAmbientOcclusionStrength, 0.01f, 0.0f, 2.0f);
+		ImGui::Separator();
+		DrawTextRow(
+			"Final Composite診断",
+			"sceneColorを50%グレーへ強制し、LocalContrast/Bloomのどちらが元画像の"
+			"模様(泡・Sun反射など)を再注入しているか切り分けます。0=通常。");
+		const char* compositeDebugViewItems[] = {
+			"0 通常",
+			"1 基準のみ (LocalContrast/Bloomとも無効)",
+			"2 元画像再参照のみ (LocalContrastのみ有効)",
+			"3 ブルームのみ (Bloomのみ有効)",
+			"4 両方 (LocalContrast+Bloom)",
+		};
+		component.compositeDebugView = (std::clamp)(
+			component.compositeDebugView, 0, static_cast<int32_t>(_countof(compositeDebugViewItems)) - 1);
+		DrawComboRow(
+			"診断表示",
+			component.compositeDebugView,
+			compositeDebugViewItems,
+			static_cast<int32_t>(_countof(compositeDebugViewItems)));
 	}
 
 	void DrawEnvironmentComponent(EditorComponent& component) {
@@ -6359,6 +6857,14 @@ namespace {
 			DrawFloatRow("光吸収", component.volumetricCloudLightAbsorption, 0.01f, 0.0f, 8.0f);
 			DrawFloatRow("銀縁", component.volumetricCloudSilverLining, 0.01f, 0.0f, 4.0f);
 			DrawColor3Row("雲の色", component.volumetricCloudColor);
+			ImGui::TreePop();
+		}
+		if (ImGui::TreeNodeEx("熱気・遠景揺らぎ", ImGuiTreeNodeFlags_DefaultOpen)) {
+			DrawFloatRow("熱気の強さ", component.environmentHeatIntensity, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("地平線中心", component.environmentHeatHorizonCenter, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("地平線範囲", component.environmentHeatHorizonWidth, 0.01f, 0.01f, 1.0f);
+			DrawFloatRow("太陽方向の影響", component.environmentHeatSunInfluence, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("歪みスケール", component.environmentHeatDistortionScale, 0.01f, 0.01f, 4.0f);
 			ImGui::TreePop();
 		}
 	}
@@ -6617,6 +7123,133 @@ namespace {
 		DrawTextRow("水深色", "水深が吸収距離以下なら浅瀬色、深くなるほど深海色を強くします。");
 		DrawColor3Row("浅瀬色", component.oceanShallowColor);
 		DrawColor3Row("深海色", component.oceanDeepColor);
+
+		DrawTextRow("Water Lighting", "SUNの各項目が海面へどれだけ効くかを個別に調整します。0で完全に無効化します。");
+		DrawFloatRow("太陽Diffuse影響", component.oceanSunDiffuseInfluence, 0.01f, 0.0f, 3.0f);
+		DrawFloatRow("太陽Diffuse下限", component.oceanDiffuseFloor, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("太陽Specular影響", component.oceanSunSpecularInfluence, 0.01f, 0.0f, 3.0f);
+		DrawFloatRow("太陽Glitter影響", component.oceanSunGlitterInfluence, 0.01f, 0.0f, 3.0f);
+		DrawFloatRow("Sky Reflection影響", component.oceanSkyReflectionInfluence, 0.01f, 0.0f, 3.0f);
+		DrawFloatRow("Ambient影響", component.oceanAmbientInfluence, 0.01f, 0.0f, 3.0f);
+
+		DrawTextRow("Wave Shape Lighting", "大波Normalと曲率で、真昼でも波頭・斜面・谷を読みやすくします。");
+		DrawFloatRow("大波反射影響", component.oceanMacroReflectionInfluence, 0.01f, 0.0f, 2.0f);
+		DrawFloatRow("曲率感度", component.oceanCurvatureInfluence, 0.01f, 0.0f, 4.0f);
+		DrawFloatRow("谷の環境遮蔽", component.oceanTroughOcclusionStrength, 0.005f, 0.0f, 0.25f);
+		DrawFloatRow("波頭Haze", component.oceanCrestHazeStrength, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("波頭細波増幅", component.oceanCrestDetailBoost, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("斜面屈折影響", component.oceanSlopeRefractionInfluence, 0.01f, 0.0f, 2.0f);
+		DrawFloatRow("中波構造", component.oceanMediumWaveStrength, 0.01f, 0.0f, 3.0f);
+		DrawFloatRow("波形の色分離", component.oceanWaveColorSeparation, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("形状による粗さ差", component.oceanShapeRoughnessVariation, 0.01f, 0.0f, 0.5f);
+		DrawFloatRow("近距離Detail保持", component.oceanDetailFilterSharpness, 0.01f, 0.5f, 2.5f);
+		DrawFloatRow("浅角度形状保持", component.oceanGrazingShapeVisibility, 0.01f, 0.0f, 1.0f);
+
+		DrawTextRow(
+			"Ocean Debug View",
+			"海面の各成分を単体表示します。0=通常描画。シェーダは実行時コンパイルなのでリビルド不要です。");
+		const char* oceanDebugViewItems[] = {
+			"0 通常",
+			"1 太陽Diffuse",
+			"2 GGX Specular",
+			"3 Sun Glitter",
+			"4 Glitter反射整列",
+			"5 Glitter最終Mask",
+			"6 Medium Normal",
+			"7 Fine Normal",
+			"8 Normal差(x8)",
+			"9 傾き量",
+			"10 中波構造",
+			"11 Foam",
+			"12 Sky反射",
+			"13 屈折Scene",
+			"14 Caustics",
+			"15 水中実体被覆",
+			"16 FFT泡チャンネル",
+			"17 Fine Delta Slope",
+			"18 Fine Lobe Normal",
+			"19 Fine Micro Roughness",
+			"20 Fine Sun Specular",
+			"21 Fine Env Normal Delta",
+			"22 Fine Lobe OFF (比較用)",
+			"23 Medium Slope (17と比較)",
+			"24 Fine Env Final Delta",
+			"25 Env Normal 角度差",
+			"26 Fine GGX D",
+			"27 Fine NdotH",
+			"28 Fine Raw Lobe",
+			"29 Medium参照Lobe",
+			"30 ReflectDir 21",
+			"31 ReflectDir 24",
+			"32 ReflectDir差分",
+			"33 RawEnvSample 21",
+			"34 RawEnvSample 24",
+			"35 RawEnvSample差分",
+			"36 Compress後差分",
+			"37 Delta21-24差分",
+			"38 RGB Delta 21",
+			"39 RGB Delta 24",
+			"40 Delta21-24直接",
+			"41 定数:黒",
+			"42 定数:グレー",
+			"43 定数:赤",
+			"44 絶対量 x4",
+			"45 絶対量 x64",
+			"46 絶対量 x256",
+		};
+		static_assert(
+			static_cast<int32_t>(_countof(oceanDebugViewItems)) == kOceanDebugViewCount,
+			"Ocean Debug View の項目数が kOceanDebugViewCount と一致していません。");
+		component.oceanDebugView = (std::clamp)(
+			component.oceanDebugView,
+			0,
+			kOceanDebugViewCount - 1);
+		DrawComboRow(
+			"デバッグ表示",
+			component.oceanDebugView,
+			oceanDebugViewItems,
+			static_cast<int32_t>(_countof(oceanDebugViewItems)));
+
+		DrawTextRow(
+			"近景Geometry品質",
+			"画素変位は光学的な奥行きだけを補い、GPU細分化は実際のFFT水面形状を増やします。");
+		DrawFloatRow(
+			"近景Pixel変位",
+			component.oceanPerPixelDisplacementStrength,
+			0.01f,
+			0.0f,
+			0.5f);
+		DrawIntRow("Pixel変位反復数", component.oceanPerPixelDisplacementSteps);
+		component.oceanPerPixelDisplacementSteps = (std::clamp)(
+			component.oceanPerPixelDisplacementSteps,
+			1,
+			6);
+		DrawFloatRow(
+			"Pixel変位距離",
+			component.oceanPerPixelDisplacementDistance,
+			1.0f,
+			5.0f,
+			150.0f);
+		DrawCheckboxRow("GPU適応細分化", component.oceanGpuTessellationEnabled);
+		DrawFloatRow(
+			"細分化目標Pixel",
+			component.oceanTessellationTargetPixels,
+			1.0f,
+			4.0f,
+			64.0f);
+		DrawFloatRow(
+			"細分化最大係数",
+			component.oceanTessellationMaximumFactor,
+			1.0f,
+			1.0f,
+			8.0f);
+
+		DrawTextRow("Glitter", "太陽方向へ伸びる細かいキラキラ反射(sun glitter)を調整します。");
+		DrawFloatRow("グリッター強度", component.oceanGlitterIntensity, 0.01f, 0.0f, 8.0f);
+		DrawFloatRow("グリッター鋭さ", component.oceanGlitterSharpness, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("グリッター密度", component.oceanGlitterDensity, 0.01f, 0.0f, 4.0f);
+		DrawFloatRow("グリッター開始閾値", component.oceanGlitterThreshold, 0.01f, 0.0f, 0.99f);
+		DrawFloatRow("グリッター最大輝度", component.oceanGlitterMaxClamp, 0.1f, 0.1f, 64.0f);
 	}
 
 	void DrawBuoyancyComponent(
@@ -6678,6 +7311,35 @@ namespace {
 			DrawFloatRow("着水衝撃", component.buoyancySlammingStrength, 0.05f, 0.0f, 100.0f);
 			DrawFloatRow("波の横押し", component.buoyancyNormalInfluence, 0.01f, 0.0f, 1.0f);
 		}
+
+		DrawSubHeader("Runtime 診断");
+		DrawTextRow("説明",
+			"Play中に実際へ加えた各水力の大きさです。圧力の上向き成分と船体重量を比べると、"
+			"高速時にどれだけ動的揚力が出ているか(Planingが効いているか)が分かります。");
+		DrawReadOnlyFloatRow("船体重量 N", component.buoyancyDebugWeightForce);
+		DrawReadOnlyFloatRow("浮力 N", component.buoyancyDebugBuoyancyForce);
+		DrawReadOnlyFloatRow("圧力抗力 N", component.buoyancyDebugPressureDragForce);
+		DrawReadOnlyFloatRow("圧力の上向き成分 N", component.buoyancyDebugPressureUpwardForce);
+
+		if (component.buoyancyDebugWeightForce > 0.0001f) {
+			// 生成レジストリへ誤ったラベルで登録されないよう、比率は局所変数で作る。
+			const float upwardForceWeightRatio =
+				component.buoyancyDebugPressureUpwardForce / component.buoyancyDebugWeightForce;
+			DrawReadOnlyFloatRow("上向き成分 / 重量", upwardForceWeightRatio);
+		}
+
+		DrawReadOnlyFloatRow("摩擦抗力 N", component.buoyancyDebugSkinFrictionForce);
+		DrawReadOnlyFloatRow("付加質量力 N", component.buoyancyDebugAddedMassForce);
+		DrawReadOnlyFloatRow("着水衝撃 N", component.buoyancyDebugSlammingForce);
+		DrawReadOnlyFloatRow("造波抵抗 N", component.buoyancyDebugWaveMakingResistance);
+		DrawReadOnlyFloatRow("水没率", component.buoyancyDebugSubmergedRatio);
+		DrawReadOnlyFloatRow("濡れ面積 m2", component.buoyancyDebugWettedArea);
+		DrawReadOnlyFloatRow("Trim角 度", component.buoyancyDebugTrimAngleDegrees);
+		DrawReadOnlyFloatRow("前進相対速度 m/s", component.buoyancyDebugForwardSpeed);
+		DrawReadOnlyFloatRow("斜航角 度", component.buoyancyDebugSideslipAngleDegrees);
+		DrawReadOnlyVector3Row(
+			"付加質量Coriolis N·m",
+			component.buoyancyDebugAddedMassCoriolisTorque);
 	}
 
 	void DrawComponentBody(EditorInspectorPanelContext& context, EditorGameObject& gameObject, EditorComponent& component) {
@@ -7051,6 +7713,12 @@ namespace {
 			break;
 		case EditorComponentType::CameraHorizonStabilizer:
 			DrawCameraHorizonStabilizerComponent(context, gameObject, component);
+			break;
+		case EditorComponentType::TextEffect:
+			DrawTextEffectComponent(context, gameObject, component);
+			break;
+		case EditorComponentType::SceneTransition:
+			DrawSceneTransitionComponent(context, gameObject, component);
 			break;
 		case EditorComponentType::FireLineCheck:
 			DrawFireLineCheckComponent(context, gameObject, component);

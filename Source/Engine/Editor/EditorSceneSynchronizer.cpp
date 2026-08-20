@@ -168,28 +168,39 @@ namespace {
 	std::string BuildOceanMeshKey(
 		int32_t gridResolution,
 		float oceanSize,
-		float maxWaveHeight) {
+		float maxWaveHeight,
+		bool useGpuTessellation) {
 		const int32_t roundedSize = static_cast<int32_t>(std::round(oceanSize * 100.0f));
 		const int32_t roundedMaxWaveHeight =
 			static_cast<int32_t>(std::round(maxWaveHeight * 100.0f));
 		return "builtin://Ocean/" + std::to_string(gridResolution) + "/" +
-			std::to_string(roundedSize) + "/" + std::to_string(roundedMaxWaveHeight);
+			std::to_string(roundedSize) + "/" + std::to_string(roundedMaxWaveHeight) +
+			(useGpuTessellation ? "/Tessellated" : "/Standard");
 	}
 
-	ModelData BuildOceanModelData(int32_t gridResolution, float oceanSize, float maxWaveHeight) {
+	ModelData BuildOceanModelData(
+		int32_t gridResolution,
+		float oceanSize,
+		float maxWaveHeight,
+		bool useGpuTessellation) {
 		ModelData modelData{};
 		const int32_t safeResolution = NormalizeOceanGridResolution(gridResolution);
 		// 元FFT版の輪郭密度を保ちつつ、1024全面描画より軽い連続LODへ制限する。
 		constexpr int32_t kMaximumPhysicalResolution = 768;
-		const int32_t physicalResolution =
-			(std::min)(safeResolution, kMaximumPhysicalResolution);
+		// GPU細分化時に高密度Mesh全体をHull Shaderへ渡すと、同じFFT面を
+		// 過剰分割して負荷だけが増える。粗いPatchを画面密度に応じて細分化する。
+		constexpr int32_t kGpuTessellationPatchResolution = 128;
+		const int32_t physicalResolution = useGpuTessellation
+			? (std::min)(safeResolution, kGpuTessellationPatchResolution)
+			: (std::min)(safeResolution, kMaximumPhysicalResolution);
 		const float safeSize = (std::max)(oceanSize, 1.0f);
 		const float renderSize = safeSize * kOceanHorizonExpansion;
 		const float halfSize = renderSize * 0.5f;
-		const float nearDensityScale =
-			static_cast<float>(physicalResolution) /
-			static_cast<float>(safeResolution) /
-			kOceanHorizonExpansion;
+		const float nearDensityScale = useGpuTessellation
+			? 1.0f / kOceanHorizonExpansion
+			: static_cast<float>(physicalResolution) /
+				static_cast<float>(safeResolution) /
+				kOceanHorizonExpansion;
 		const Vector3 upwardNormal{0.0f, 1.0f, 0.0f};
 		const size_t vertexResolution = static_cast<size_t>(physicalResolution) + 1u;
 		modelData.vertices.reserve(vertexResolution * vertexResolution);
@@ -456,6 +467,52 @@ namespace {
 			(std::clamp)(oceanComponent->transmission, 0.0f, 1.0f);
 		sceneObject.ocean.shallowColor = oceanComponent->oceanShallowColor;
 		sceneObject.ocean.deepColor = oceanComponent->oceanDeepColor;
+		sceneObject.ocean.sunDiffuseInfluence = (std::max)(oceanComponent->oceanSunDiffuseInfluence, 0.0f);
+		sceneObject.ocean.sunSpecularInfluence = (std::max)(oceanComponent->oceanSunSpecularInfluence, 0.0f);
+		sceneObject.ocean.sunGlitterInfluence = (std::max)(oceanComponent->oceanSunGlitterInfluence, 0.0f);
+		sceneObject.ocean.skyReflectionInfluence = (std::max)(oceanComponent->oceanSkyReflectionInfluence, 0.0f);
+		sceneObject.ocean.ambientInfluence = (std::max)(oceanComponent->oceanAmbientInfluence, 0.0f);
+		sceneObject.ocean.diffuseFloor = (std::clamp)(oceanComponent->oceanDiffuseFloor, 0.0f, 1.0f);
+		sceneObject.ocean.glitterIntensity = (std::max)(oceanComponent->oceanGlitterIntensity, 0.0f);
+		sceneObject.ocean.glitterSharpness = (std::clamp)(oceanComponent->oceanGlitterSharpness, 0.0f, 1.0f);
+		sceneObject.ocean.glitterDensity = (std::max)(oceanComponent->oceanGlitterDensity, 0.01f);
+		sceneObject.ocean.glitterThreshold = (std::clamp)(oceanComponent->oceanGlitterThreshold, 0.0f, 1.0f);
+		sceneObject.ocean.glitterMaxClamp = (std::max)(oceanComponent->oceanGlitterMaxClamp, 0.1f);
+		sceneObject.ocean.macroReflectionInfluence =
+			(std::clamp)(oceanComponent->oceanMacroReflectionInfluence, 0.0f, 2.0f);
+		sceneObject.ocean.curvatureInfluence =
+			(std::clamp)(oceanComponent->oceanCurvatureInfluence, 0.0f, 4.0f);
+		sceneObject.ocean.troughOcclusionStrength =
+			(std::clamp)(oceanComponent->oceanTroughOcclusionStrength, 0.0f, 0.25f);
+		sceneObject.ocean.crestHazeStrength =
+			(std::clamp)(oceanComponent->oceanCrestHazeStrength, 0.0f, 1.0f);
+		sceneObject.ocean.crestDetailBoost =
+			(std::clamp)(oceanComponent->oceanCrestDetailBoost, 0.0f, 1.0f);
+		sceneObject.ocean.slopeRefractionInfluence =
+			(std::clamp)(oceanComponent->oceanSlopeRefractionInfluence, 0.0f, 2.0f);
+		sceneObject.ocean.mediumWaveStrength =
+			(std::clamp)(oceanComponent->oceanMediumWaveStrength, 0.0f, 3.0f);
+		sceneObject.ocean.waveColorSeparation =
+			(std::clamp)(oceanComponent->oceanWaveColorSeparation, 0.0f, 1.0f);
+		sceneObject.ocean.shapeRoughnessVariation =
+			(std::clamp)(oceanComponent->oceanShapeRoughnessVariation, 0.0f, 0.5f);
+		sceneObject.ocean.detailFilterSharpness =
+			(std::clamp)(oceanComponent->oceanDetailFilterSharpness, 0.5f, 2.5f);
+		sceneObject.ocean.grazingShapeVisibility =
+			(std::clamp)(oceanComponent->oceanGrazingShapeVisibility, 0.0f, 1.0f);
+		sceneObject.ocean.debugView =
+			(std::clamp)(oceanComponent->oceanDebugView, 0, kOceanDebugViewCount - 1);
+		sceneObject.ocean.perPixelDisplacementStrength =
+			(std::clamp)(oceanComponent->oceanPerPixelDisplacementStrength, 0.0f, 0.5f);
+		sceneObject.ocean.perPixelDisplacementSteps =
+			(std::clamp)(oceanComponent->oceanPerPixelDisplacementSteps, 1, 6);
+		sceneObject.ocean.perPixelDisplacementDistance =
+			(std::clamp)(oceanComponent->oceanPerPixelDisplacementDistance, 5.0f, 150.0f);
+		sceneObject.ocean.gpuTessellationEnabled = oceanComponent->oceanGpuTessellationEnabled;
+		sceneObject.ocean.tessellationTargetPixels =
+			(std::clamp)(oceanComponent->oceanTessellationTargetPixels, 4.0f, 64.0f);
+		sceneObject.ocean.tessellationMaximumFactor =
+			(std::clamp)(oceanComponent->oceanTessellationMaximumFactor, 1.0f, 8.0f);
 
 		if (!AreOceanSpectrumInputsEqual(previousOceanSettings, sceneObject.ocean)) {
 			const EditorOceanSpectrumSettings spectrumSettings =
@@ -506,7 +563,7 @@ namespace {
 		sceneObject.materialData->oceanEnabled = 1.0f;
 		sceneObject.materialData->oceanFoamStrength = sceneObject.ocean.foamStrength;
 		sceneObject.materialData->oceanRoughness = sceneObject.ocean.roughness;
-		sceneObject.materialData->oceanColorBlendScale = 1.0f;
+		sceneObject.materialData->oceanColorBlendScale = 1.15f;
 		sceneObject.materialData->oceanDeepColor = sceneObject.ocean.deepColor;
 		sceneObject.materialData->oceanDetailNormalStrength = sceneObject.ocean.detailNormalStrength;
 		sceneObject.materialData->oceanFoamThreshold = sceneObject.ocean.foamThreshold;
@@ -514,6 +571,36 @@ namespace {
 		sceneObject.materialData->oceanRefractionDistortion = sceneObject.ocean.refractionDistortion;
 		sceneObject.materialData->oceanWaterDepth = sceneObject.ocean.waterDepth;
 		sceneObject.materialData->oceanCrestSharpness = sceneObject.ocean.crestSharpness;
+		sceneObject.materialData->oceanSunDiffuseInfluence = sceneObject.ocean.sunDiffuseInfluence;
+		sceneObject.materialData->oceanSunSpecularInfluence = sceneObject.ocean.sunSpecularInfluence;
+		sceneObject.materialData->oceanSunGlitterInfluence = sceneObject.ocean.sunGlitterInfluence;
+		sceneObject.materialData->oceanSkyReflectionInfluence = sceneObject.ocean.skyReflectionInfluence;
+		sceneObject.materialData->oceanAmbientInfluence = sceneObject.ocean.ambientInfluence;
+		sceneObject.materialData->oceanDiffuseFloor = sceneObject.ocean.diffuseFloor;
+		sceneObject.materialData->oceanGlitterIntensity = sceneObject.ocean.glitterIntensity;
+		sceneObject.materialData->oceanGlitterSharpness = sceneObject.ocean.glitterSharpness;
+		sceneObject.materialData->oceanGlitterDensity = sceneObject.ocean.glitterDensity;
+		sceneObject.materialData->oceanGlitterThreshold = sceneObject.ocean.glitterThreshold;
+		sceneObject.materialData->oceanGlitterMaxClamp = sceneObject.ocean.glitterMaxClamp;
+		sceneObject.materialData->oceanMacroReflectionInfluence = sceneObject.ocean.macroReflectionInfluence;
+		sceneObject.materialData->oceanCurvatureInfluence = sceneObject.ocean.curvatureInfluence;
+		sceneObject.materialData->oceanTroughOcclusionStrength = sceneObject.ocean.troughOcclusionStrength;
+		sceneObject.materialData->oceanCrestHazeStrength = sceneObject.ocean.crestHazeStrength;
+		sceneObject.materialData->oceanCrestDetailBoost = sceneObject.ocean.crestDetailBoost;
+		sceneObject.materialData->oceanSlopeRefractionInfluence = sceneObject.ocean.slopeRefractionInfluence;
+		sceneObject.materialData->oceanMediumWaveStrength = sceneObject.ocean.mediumWaveStrength;
+		sceneObject.materialData->oceanWaveColorSeparation = sceneObject.ocean.waveColorSeparation;
+		sceneObject.materialData->oceanShapeRoughnessVariation = sceneObject.ocean.shapeRoughnessVariation;
+		sceneObject.materialData->oceanDetailFilterSharpness = sceneObject.ocean.detailFilterSharpness;
+		sceneObject.materialData->oceanGrazingShapeVisibility = sceneObject.ocean.grazingShapeVisibility;
+		sceneObject.materialData->oceanDebugView =
+			static_cast<float>(sceneObject.ocean.debugView);
+		sceneObject.materialData->oceanPerPixelDisplacementStrength =
+			sceneObject.ocean.perPixelDisplacementStrength;
+		sceneObject.materialData->oceanPerPixelDisplacementSteps =
+			static_cast<float>(sceneObject.ocean.perPixelDisplacementSteps);
+		sceneObject.materialData->oceanPerPixelDisplacementDistance =
+			sceneObject.ocean.perPixelDisplacementDistance;
 	}
 
 	void ApplyRendererMaterial(
@@ -998,7 +1085,8 @@ void EditorSceneSynchronizer::Update(
 				modelAssetPath = BuildOceanMeshKey(
 					sceneObject.ocean.gridResolution,
 					sceneObject.ocean.size,
-					sceneObject.ocean.maxWaveHeight);
+					sceneObject.ocean.maxWaveHeight,
+					sceneObject.ocean.gpuTessellationEnabled);
 				sceneObject.meshType = EditorModelMeshType::Plane;
 			}
 			else if (modelRenderer != nullptr && !modelRenderer->assetPath.empty()) {
@@ -1115,7 +1203,8 @@ void EditorSceneSynchronizer::Update(
 					const ModelData oceanModelData = BuildOceanModelData(
 						sceneObject.ocean.gridResolution,
 						sceneObject.ocean.size,
-						sceneObject.ocean.maxWaveHeight);
+						sceneObject.ocean.maxWaveHeight,
+						sceneObject.ocean.gpuTessellationEnabled);
 					sceneObjectManager_->SetCustomModelMesh(sceneObjectIndex, modelAssetPath, oceanModelData);
 				}
 			}

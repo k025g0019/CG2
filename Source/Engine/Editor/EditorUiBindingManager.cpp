@@ -2,6 +2,7 @@
 
 #include "EditorComponentUtility.h"
 #include "EditorRailMovementManager.h"
+#include "EditorWeaponLoadoutManager.h"
 
 #include <algorithm>
 #include <iomanip>
@@ -9,9 +10,11 @@
 
 void EditorUiBindingManager::Initialize(
 	EditorScene* editorScene,
-	EditorRailMovementManager* railMovementManager) {
+	EditorRailMovementManager* railMovementManager,
+	EditorWeaponLoadoutManager* weaponLoadoutManager) {
 	editorScene_ = editorScene;
 	railMovementManager_ = railMovementManager;
+	weaponLoadoutManager_ = weaponLoadoutManager;
 }
 
 void EditorUiBindingManager::Update() {
@@ -28,12 +31,6 @@ void EditorUiBindingManager::Update() {
 			continue;
 		}
 
-		float sourceValue = 0.0f;
-
-		if (!ReadValue(uiGameObject, *bindingComponent, sourceValue)) {
-			continue;
-		}
-
 		EditorComponent* textComponent = EditorComponentUtility::FindComponent(
 			uiGameObject,
 			EditorComponentType::TextMeshProUGUI);
@@ -42,6 +39,22 @@ void EditorUiBindingManager::Update() {
 			textComponent = EditorComponentUtility::FindComponent(
 				uiGameObject,
 				EditorComponentType::Text);
+		}
+
+		std::string sourceText;
+
+		if (ReadTextValue(uiGameObject, *bindingComponent, sourceText)) {
+			if (textComponent != nullptr && textComponent->isActive) {
+				textComponent->buttonLabel = bindingComponent->uiBindingPrefix + sourceText;
+			}
+
+			continue;
+		}
+
+		float sourceValue = 0.0f;
+
+		if (!ReadValue(uiGameObject, *bindingComponent, sourceValue)) {
+			continue;
 		}
 
 		if (textComponent != nullptr && textComponent->isActive) {
@@ -126,4 +139,18 @@ bool EditorUiBindingManager::ReadValue(
 	}
 
 	return false;
+}
+
+bool EditorUiBindingManager::ReadTextValue(
+	const EditorGameObject& ownerGameObject,
+	const EditorComponent& component,
+	std::string& value) const {
+	if (component.uiBindingValueType != 5 || weaponLoadoutManager_ == nullptr) {
+		return false;
+	}
+
+	const int32_t sourceGameObjectId = component.uiBindingSourceGameObjectId >= 0
+		? component.uiBindingSourceGameObjectId
+		: ownerGameObject.id;
+	return weaponLoadoutManager_->GetSelectedSlotName(sourceGameObjectId, value);
 }

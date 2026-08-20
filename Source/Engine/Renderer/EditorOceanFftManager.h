@@ -145,7 +145,7 @@ private:
 	Microsoft::WRL::ComPtr<ID3D12Resource> gradientZFieldResource_;
 	Microsoft::WRL::ComPtr<ID3D12Resource> temporaryFieldResource_;
 	Microsoft::WRL::ComPtr<ID3D12Resource> displacementOutputResource_;
-	Microsoft::WRL::ComPtr<ID3D12Resource> normalFoamOutputResource_;
+	std::array<Microsoft::WRL::ComPtr<ID3D12Resource>, 2u> normalFoamOutputResources_;
 	Microsoft::WRL::ComPtr<ID3D12Resource> surfaceSampleRequestResource_;
 	Microsoft::WRL::ComPtr<ID3D12Resource> surfaceSampleOutputResource_;
 	Microsoft::WRL::ComPtr<ID3D12Resource> surfaceSampleReadbackResource_;
@@ -164,6 +164,8 @@ private:
 	float spectrumHeightScale_ = 1.0f;
 	float lastExecutedOceanTime_ = -1.0f;  // 同じ時刻・同じ設定のEditor待機フレームでFFTを再実行しない。
 	uint32_t submittedSurfaceSampleCount_ = 0u;
+	uint32_t normalFoamReadIndex_ = 0u;
+	std::array<bool, 2u> normalFoamShaderReadable_{false, false};
 	bool isInitialized_ = false;
 	bool hasActiveSettings_ = false;
 	bool isInitialSpectrumUploadPending_ = false;

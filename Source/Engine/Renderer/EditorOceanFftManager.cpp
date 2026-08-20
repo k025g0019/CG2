@@ -11,6 +11,7 @@ namespace {
 	constexpr uint32_t kComputeRootConstantCount = 16u;
 	constexpr uint32_t kComputeUavCount = 8u;
 	constexpr uint32_t kComputeSurfaceSampleSrvRootIndex = 9u;
+	constexpr uint32_t kComputePreviousFoamSrvRootIndex = 10u;
 	constexpr uint32_t kComputeThreadGroupSize = 16u;
 	constexpr float kOceanGravity = 9.81f;
 
@@ -121,24 +122,35 @@ bool EditorOceanFftManager::Execute(
 		isInitialSpectrumUploadPending_ = false;
 	}
 
+	const uint32_t normalFoamWriteIndex = hasValidOutput_
+		? 1u - normalFoamReadIndex_
+		: normalFoamReadIndex_;
+	ID3D12Resource* normalFoamWriteResource =
+		normalFoamOutputResources_[normalFoamWriteIndex].Get();
+	ID3D12Resource* previousNormalFoamResource = hasValidOutput_
+		? normalFoamOutputResources_[normalFoamReadIndex_].Get()
+		: fallbackNormalFoamResource_.Get();
+
 	if (areOutputsShaderReadable_) {
-		std::array<D3D12_RESOURCE_BARRIER, 2u> outputBarriers{};
-
-		for (uint32_t outputIndex = 0u; outputIndex < outputBarriers.size(); outputIndex++) {
-			D3D12_RESOURCE_BARRIER& outputBarrier = outputBarriers[outputIndex];
-			outputBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-			outputBarrier.Transition.pResource = outputIndex == 0u
-				? displacementOutputResource_.Get()
-				: normalFoamOutputResource_.Get();
-			outputBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-			outputBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_GENERIC_READ;
-			outputBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-		}
-
-		commandList->ResourceBarrier(
-			static_cast<UINT>(outputBarriers.size()),
-			outputBarriers.data());
+		D3D12_RESOURCE_BARRIER displacementBarrier{};
+		displacementBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		displacementBarrier.Transition.pResource = displacementOutputResource_.Get();
+		displacementBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		displacementBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_GENERIC_READ;
+		displacementBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+		commandList->ResourceBarrier(1u, &displacementBarrier);
 		areOutputsShaderReadable_ = false;
+	}
+
+	if (normalFoamShaderReadable_[normalFoamWriteIndex]) {
+		D3D12_RESOURCE_BARRIER normalFoamWriteBarrier{};
+		normalFoamWriteBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		normalFoamWriteBarrier.Transition.pResource = normalFoamWriteResource;
+		normalFoamWriteBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		normalFoamWriteBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_GENERIC_READ;
+		normalFoamWriteBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+		commandList->ResourceBarrier(1u, &normalFoamWriteBarrier);
+		normalFoamShaderReadable_[normalFoamWriteIndex] = false;
 	}
 
 	OceanFftConstants constants{};
@@ -147,12 +159,22 @@ bool EditorOceanFftManager::Execute(
 	constants.waterDepth = (std::max)(oceanSettings.waterDepth, 0.1f);
 	constants.fftResolution = fftResolution_;
 	constants.domainLength = domainLength_;
-	constants.maxWaveHeight = (std::max)(oceanSettings.maxWaveHeight, 0.01f);
+	constants.maxWaveHeight = (std::max)(oceanSettings.maxWaveHeight, 0.0f);
 	constants.choppiness = oceanSettings.choppiness;
 	constants.foamThreshold = (std::clamp)(oceanSettings.foamThreshold, 0.0f, 1.0f);
 	constants.foamStrength = (std::max)(oceanSettings.foamStrength, 0.0f);
 	constants.crestSharpness = (std::clamp)(oceanSettings.crestSharpness, 0.0f, 1.0f);
 	constants.heightScale = spectrumHeightScale_;
+	constants.padding0 = hasValidOutput_
+		? (std::clamp)(effectiveOceanTime - lastExecutedOceanTime_, 0.0f, 0.1f)
+		: 0.0f;
+	const Vector2 foamAdvectionDirection = NormalizeDirection(
+		oceanSettings.primaryDirection,
+		Vector2{1.0f, 0.0f});
+	constants.padding1 = foamAdvectionDirection.x;
+	constants.padding2 = foamAdvectionDirection.y;
+	// 砕波の余韻だけを残し、周期FFT海面全体へ泡が蓄積しない寿命に制限する。
+	constants.padding3 = 1.75f;
 	constants.sampleCount = static_cast<uint32_t>((std::min)(
 		queuedSurfaceSampleRequests_.size(),
 		static_cast<size_t>(kMaximumSurfaceSampleCount)));
@@ -228,7 +250,7 @@ bool EditorOceanFftManager::Execute(
 		displacementOutputResource_->GetGPUVirtualAddress());
 	commandList->SetComputeRootUnorderedAccessView(
 		2u,
-		normalFoamOutputResource_->GetGPUVirtualAddress());
+		normalFoamWriteResource->GetGPUVirtualAddress());
 	commandList->SetComputeRootUnorderedAccessView(
 		3u,
 		heightFieldResource_->GetGPUVirtualAddress());
@@ -250,9 +272,12 @@ bool EditorOceanFftManager::Execute(
 	commandList->SetComputeRootShaderResourceView(
 		kComputeSurfaceSampleSrvRootIndex,
 		surfaceSampleRequestResource_->GetGPUVirtualAddress());
+	commandList->SetComputeRootShaderResourceView(
+		kComputePreviousFoamSrvRootIndex,
+		previousNormalFoamResource->GetGPUVirtualAddress());
 	commandList->Dispatch(computeGroupCount, computeGroupCount, 1u);
 	InsertUavBarrier(commandList, displacementOutputResource_.Get());
-	InsertUavBarrier(commandList, normalFoamOutputResource_.Get());
+	InsertUavBarrier(commandList, normalFoamWriteResource);
 	InsertUavBarrier(commandList, surfaceSampleOutputResource_.Get());
 
 	if (constants.sampleCount > 0u) {
@@ -290,7 +315,7 @@ bool EditorOceanFftManager::Execute(
 		outputBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		outputBarrier.Transition.pResource = outputIndex == 0u
 			? displacementOutputResource_.Get()
-			: normalFoamOutputResource_.Get();
+			: normalFoamWriteResource;
 		outputBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		outputBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 		outputBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_GENERIC_READ;
@@ -300,6 +325,8 @@ bool EditorOceanFftManager::Execute(
 		static_cast<UINT>(outputBarriers.size()),
 		outputBarriers.data());
 	areOutputsShaderReadable_ = true;
+	normalFoamShaderReadable_[normalFoamWriteIndex] = true;
+	normalFoamReadIndex_ = normalFoamWriteIndex;
 	hasValidOutput_ = true;
 	lastExecutedOceanTime_ = effectiveOceanTime;
 	return true;
@@ -315,7 +342,7 @@ void EditorOceanFftManager::BindGraphicsResources(
 		? displacementOutputResource_.Get()
 		: fallbackDisplacementResource_.Get();
 	ID3D12Resource* normalFoamResource = hasValidOutput_
-		? normalFoamOutputResource_.Get()
+		? normalFoamOutputResources_[normalFoamReadIndex_].Get()
 		: fallbackNormalFoamResource_.Get();
 
 	if (displacementResource == nullptr || normalFoamResource == nullptr) {
@@ -520,7 +547,9 @@ void EditorOceanFftManager::Finalize() {
 	surfaceSampleReadbackResource_.Reset();
 	surfaceSampleOutputResource_.Reset();
 	surfaceSampleRequestResource_.Reset();
-	normalFoamOutputResource_.Reset();
+	for (Microsoft::WRL::ComPtr<ID3D12Resource>& normalFoamResource : normalFoamOutputResources_) {
+		normalFoamResource.Reset();
+	}
 	displacementOutputResource_.Reset();
 	temporaryFieldResource_.Reset();
 	gradientZFieldResource_.Reset();
@@ -556,6 +585,8 @@ void EditorOceanFftManager::Finalize() {
 	areOutputsShaderReadable_ = false;
 	hasValidOutput_ = false;
 	hasPendingSurfaceSampleReadback_ = false;
+	normalFoamReadIndex_ = 0u;
+	normalFoamShaderReadable_ = {false, false};
 }
 
 bool EditorOceanFftManager::CreateRootSignatureAndPipelineStates(
@@ -563,7 +594,7 @@ bool EditorOceanFftManager::CreateRootSignatureAndPipelineStates(
 	IDxcBlob* fftRowShaderBlob,
 	IDxcBlob* transposeShaderBlob,
 	IDxcBlob* finalizeShaderBlob) {
-	std::array<D3D12_ROOT_PARAMETER, 2u + kComputeUavCount> rootParameters{};
+	std::array<D3D12_ROOT_PARAMETER, 3u + kComputeUavCount> rootParameters{};
 	rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
 	rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 	rootParameters[0].Constants.ShaderRegister = 0u;
@@ -584,6 +615,13 @@ bool EditorOceanFftManager::CreateRootSignatureAndPipelineStates(
 	sampleRequestRootParameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 	sampleRequestRootParameter.Descriptor.ShaderRegister = 0u;
 	sampleRequestRootParameter.Descriptor.RegisterSpace = 0u;
+
+	D3D12_ROOT_PARAMETER& previousFoamRootParameter =
+		rootParameters[2u + kComputeUavCount];
+	previousFoamRootParameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+	previousFoamRootParameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+	previousFoamRootParameter.Descriptor.ShaderRegister = 1u;
+	previousFoamRootParameter.Descriptor.RegisterSpace = 0u;
 
 	D3D12_ROOT_SIGNATURE_DESC rootSignatureDescription{};
 	rootSignatureDescription.NumParameters = static_cast<UINT>(rootParameters.size());
@@ -718,7 +756,9 @@ bool EditorOceanFftManager::CreateSurfaceSampleResources() {
 
 bool EditorOceanFftManager::CreateSimulationResources(
 	const EditorOceanRenderSettings& oceanSettings) {
-	normalFoamOutputResource_.Reset();
+	for (Microsoft::WRL::ComPtr<ID3D12Resource>& normalFoamResource : normalFoamOutputResources_) {
+		normalFoamResource.Reset();
+	}
 	displacementOutputResource_.Reset();
 	temporaryFieldResource_.Reset();
 	gradientZFieldResource_.Reset();
@@ -778,11 +818,17 @@ bool EditorOceanFftManager::CreateSimulationResources(
 		D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
 		displacementOutputResource_) ||
 		!CreateBuffer(
-		outputBufferSize,
-		D3D12_HEAP_TYPE_DEFAULT,
-		D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
-		D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-		normalFoamOutputResource_)) {
+			outputBufferSize,
+			D3D12_HEAP_TYPE_DEFAULT,
+			D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+			D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+			normalFoamOutputResources_[0]) ||
+		!CreateBuffer(
+			outputBufferSize,
+			D3D12_HEAP_TYPE_DEFAULT,
+			D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+			D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+			normalFoamOutputResources_[1])) {
 		return false;
 	}
 
@@ -813,6 +859,8 @@ bool EditorOceanFftManager::CreateSimulationResources(
 	submittedSurfaceSampleCount_ = 0u;
 	hasPendingSurfaceSampleReadback_ = false;
 	updateFrameCounter_ = 0u;
+	normalFoamReadIndex_ = 0u;
+	normalFoamShaderReadable_ = {false, false};
 	return true;
 }
 
@@ -861,16 +909,26 @@ void EditorOceanFftManager::BuildInitialSpectrum(
 	const Vector2 primaryDirection = NormalizeDirection(
 		oceanSettings.primaryDirection,
 		{1.0f, 0.0f});
+	const Vector2 secondaryDirection = NormalizeDirection(
+		oceanSettings.secondaryDirection,
+		{-primaryDirection.y, primaryDirection.x});
 	const float safeWindSpeed = (std::max)(oceanSettings.windSpeed, 0.1f);
-	const float windX = primaryDirection.x * safeWindSpeed;
-	const float windZ = primaryDirection.y * safeWindSpeed;
 	const float windLength = safeWindSpeed * safeWindSpeed / kOceanGravity;
 	constexpr float kPhillipsAmplitude = 0.078f;
-	constexpr float kDirectionalBaseWeight = 0.22f;
-	constexpr float kDirectionalAlignWeight = 0.90f;
 	constexpr float kOppositeWaveScale = 0.16f;
 	constexpr float kLongWaveDampingScale = 0.0045f;
 	constexpr float kShortWaveDampingScale = 0.0014f;
+	const float safeWaveLength = (std::max)(oceanSettings.waveLength, 0.1f);
+	const float safeRippleScale = (std::clamp)(oceanSettings.rippleScale, 0.05f, 0.8f);
+	const float primaryWaveNumber = 2.0f * std::numbers::pi_v<float> / safeWaveLength;
+	const float mediumWaveNumber = primaryWaveNumber / std::sqrt(safeRippleScale);
+	const float rippleWaveNumber = primaryWaveNumber / safeRippleScale;
+	const float directionSpread = (std::clamp)(oceanSettings.directionSpread, 0.0f, 1.0f);
+	const float directionalPower = 8.0f + (2.0f - 8.0f) * directionSpread;
+	const float directionalFloor = 0.04f + (0.28f - 0.04f) * directionSpread;
+	const float secondaryWaveScale = (std::max)(oceanSettings.secondaryWaveScale, 0.0f);
+	const float rippleStrength = (std::max)(oceanSettings.rippleStrength, 0.0f);
+	const float swellStrength = (std::max)(oceanSettings.swellStrength, 0.0f);
 	const float inverseSqrtTwo = 1.0f / std::sqrt(2.0f);
 	const int32_t halfResolution = static_cast<int32_t>(fftResolution_ / 2u);
 	const float waveNumberScale =
@@ -880,6 +938,16 @@ void EditorOceanFftManager::BuildInitialSpectrum(
 	std::mt19937 randomGenerator(randomSeed);
 	std::normal_distribution<float> gaussianDistribution(0.0f, 1.0f);
 	double spectrumEnergy = 0.0;
+	const auto calculateBandWeight = [](
+		float waveNumber,
+		float centerWaveNumber,
+		float logarithmicWidth) {
+		const float safeRatio = (std::max)(
+			waveNumber / (std::max)(centerWaveNumber, 0.000001f),
+			0.000001f);
+		const float logarithmicDistance = std::log(safeRatio) / logarithmicWidth;
+		return std::exp(-0.5f * logarithmicDistance * logarithmicDistance);
+	};
 
 	for (uint32_t zIndex = 0u; zIndex < fftResolution_; zIndex++) {
 		const int32_t signedZ = static_cast<int32_t>(zIndex) < halfResolution
@@ -902,16 +970,59 @@ void EditorOceanFftManager::BuildInitialSpectrum(
 			}
 
 			const float waveNumberLength = std::sqrt(waveNumberSquared);
-			const float directionDot =
-				(waveNumberX * windX + waveNumberZ * windZ) /
-				(waveNumberLength * safeWindSpeed);
-			float directionalWeight =
-				kDirectionalBaseWeight +
-				kDirectionalAlignWeight * std::fabs(directionDot) * std::fabs(directionDot);
-
-			if (directionDot < 0.0f) {
-				directionalWeight *= kOppositeWaveScale;
-			}
+			const float waveDirectionX = waveNumberX / waveNumberLength;
+			const float waveDirectionZ = waveNumberZ / waveNumberLength;
+			const float primaryDirectionDot =
+				waveDirectionX * primaryDirection.x + waveDirectionZ * primaryDirection.y;
+			const float secondaryDirectionDot =
+				waveDirectionX * secondaryDirection.x + waveDirectionZ * secondaryDirection.y;
+			const float primaryAlignment = std::pow(
+				std::fabs(primaryDirectionDot),
+				directionalPower) *
+				(primaryDirectionDot < 0.0f ? kOppositeWaveScale : 1.0f);
+			const float secondaryAlignment = std::pow(
+				std::fabs(secondaryDirectionDot),
+				(std::max)(directionalPower * 0.55f, 1.0f)) *
+				(secondaryDirectionDot < 0.0f ? kOppositeWaveScale : 1.0f);
+			const float swellBand = calculateBandWeight(
+				waveNumberLength,
+				primaryWaveNumber,
+				0.72f);
+			// Mediumの対数幅を広げすぎるとMacro(swell)帯へ食い込み、
+			// 「中波を足した」のではなく「大波を少し変形しただけ」になる。
+			// 実測: 幅0.85のとき Medium 1σ = 6.0〜32.9m で、Macro 1σ = 14.6〜61.6m と
+			// 14.6〜32.9m の広い範囲が重複していた。0.55へ絞ってスケールを分離する。
+			const float mediumBand = calculateBandWeight(
+				waveNumberLength,
+				mediumWaveNumber,
+				0.55f);
+			const float rippleBand = calculateBandWeight(
+				waveNumberLength,
+				rippleWaveNumber,
+				0.70f);
+			// Medium/Rippleの波数帯だけ、主風向に強く揃えない広い方向成分を追加する。
+			// 同じ形の波が規則的に並ぶのを避け、大波(swellBand)の向きは変えない。
+			const float broadDirectionalAlignment = std::pow(std::fabs(primaryDirectionDot), 2.0f);
+			const float directionalWeight = directionalFloor +
+				(1.0f - directionalFloor) * primaryAlignment +
+				secondaryWaveScale * mediumBand * secondaryAlignment +
+				0.32f * (mediumBand + rippleBand) * broadDirectionalAlignment;
+			// 一つのFFT場の中でも実波長帯としてエネルギーを分配する。
+			// 最後にRMSを正規化するため、総波高を増やさず形状の階層だけを作る。
+			// ここは Height と Displacement の両方の元になる初期スペクトルなので、
+			// 帯の配分を変えると Pixel Normal ではなく実際の変位が変わる。
+			//
+			// 第1項の定数(旧 0.58)は帯に関係なく生の Phillips スペクトルを通す項で、
+			// Phillips は 1/k^4 なので実質的に「長波(Macro)だけを持ち上げる」項になる。
+			// 実測: 中波係数を 1.10→6.00 と 5.5 倍にしても Medium 実波高は +36% しか
+			// 増えなかったのに対し、この定数を 0.58→0.20 へ下げると係数据え置きでも
+			// Medium/Macro 比が 17.0%→23.7% (Medium実高 0.483m→0.665m) へ改善した。
+			// Macro は 2.839m→2.802m (-1.3%) しか縮まないため、大波は維持される。
+			const float spectralBandWeight =
+				0.20f +
+				swellStrength * swellBand * 0.82f +
+				secondaryWaveScale * mediumBand * 1.80f +
+				rippleStrength * rippleBand * 3.20f;
 
 			const float longWaveDamping = windLength * kLongWaveDampingScale;
 			const float spectrumValue =
@@ -919,6 +1030,7 @@ void EditorOceanFftManager::BuildInitialSpectrum(
 				std::exp(-1.0f / (waveNumberSquared * windLength * windLength)) /
 				(waveNumberSquared * waveNumberSquared) *
 				directionalWeight *
+				spectralBandWeight *
 				std::exp(-waveNumberSquared * longWaveDamping * longWaveDamping) *
 				std::exp(
 					-waveNumberSquared * kShortWaveDampingScale *

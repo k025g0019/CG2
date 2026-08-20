@@ -24,6 +24,7 @@ using namespace EditorSharedState;
 namespace {
 	constexpr UINT kCurrentSkinMatrixRootParameter = 20u;
 	constexpr UINT kPreviousSkinMatrixRootParameter = 21u;
+	constexpr UINT kOceanTessellationTransformRootParameter = 25u;
 
 	void BindSceneObjectSkinningResources(
 		ID3D12GraphicsCommandList* commandList,
@@ -386,6 +387,65 @@ namespace {
 		light.shadowEnabled = -1.0f;  // Shader 側でライト列の終端として扱う。
 	}
 
+	// 色温度(Kelvin)からsRGB相当のRGB色へ変換する。Tanner Helland近似式を1.0基準へ正規化して使う。
+	// 5500K～6500K付近が白、それより低いと橙～赤、高いと青白くなる。
+	Vector3 KelvinToRgb(float temperatureKelvin) {
+		const float temperature = (std::clamp)(temperatureKelvin, 1000.0f, 40000.0f) / 100.0f;
+		float red;
+		float green;
+		float blue;
+
+		if (temperature <= 66.0f) {
+			red = 255.0f;
+			green = 99.4708025861f * std::log(temperature) - 161.1195681661f;
+
+			if (temperature <= 19.0f) {
+				blue = 0.0f;
+			} else {
+				blue = 138.5177312231f * std::log(temperature - 10.0f) - 305.0447927307f;
+			}
+		} else {
+			red = 329.698727446f * std::pow(temperature - 60.0f, -0.1332047592f);
+			green = 288.1221695283f * std::pow(temperature - 60.0f, -0.0755148492f);
+			blue = 255.0f;
+		}
+
+		return Vector3{
+			(std::clamp)(red, 0.0f, 255.0f) / 255.0f,
+			(std::clamp)(green, 0.0f, 255.0f) / 255.0f,
+			(std::clamp)(blue, 0.0f, 255.0f) / 255.0f};
+	}
+
+	// 太陽高度からKelvinを自動推定する。夕方(低高度)ほど暖色、昼(高高度)ほど白～青白い方向へ寄せる。
+	float EstimateSunKelvinFromElevation(float elevationDegrees) {
+		const float t = (std::clamp)(elevationDegrees, -5.0f, 90.0f);
+		const float lowElevationKelvin = 2000.0f;   // 地平線付近。かなり橙。
+		const float midElevationKelvin = 4500.0f;   // 中程度の高さ。やや暖色。
+		const float highElevationKelvin = 6500.0f;  // 高い昼。青白い。
+
+		if (t <= 10.0f) {
+			const float blend = (std::clamp)((t + 5.0f) / 15.0f, 0.0f, 1.0f);
+			return lowElevationKelvin + (midElevationKelvin - lowElevationKelvin) * blend;
+		}
+
+		const float blend = (std::clamp)((t - 10.0f) / 55.0f, 0.0f, 1.0f);
+		return midElevationKelvin + (highElevationKelvin - midElevationKelvin) * blend;
+	}
+
+	// 太陽方位角(度、0=+Z、90=+Xで時計回り)と高度(度、90=真上)から、
+	// Light.directionと同じ「光が進む向き」のワールド方向ベクトルを作る。
+	Vector3 BuildSunDirectionFromAzimuthElevation(float azimuthDegrees, float elevationDegrees) {
+		const float azimuthRadian = azimuthDegrees * (3.14159265f / 180.0f);
+		const float elevationRadian = elevationDegrees * (3.14159265f / 180.0f);
+		const float horizontalRadius = std::cos(elevationRadian);
+		const Vector3 towardSun{
+			horizontalRadius * std::sin(azimuthRadian),
+			std::sin(elevationRadian),
+			horizontalRadius * std::cos(azimuthRadian)};
+		// dl.directionは「光源からどちらへ進むか」なので、太陽が居る向きの反対を返す。
+		return Vector3{-towardSun.x, -towardSun.y, -towardSun.z};
+	}
+
 	int32_t CollectSceneLights(DirectionalLight* lightsOut) {
 		for (int32_t i = 0; i < kMaxShadowLights; i++) {
 			ClearDisabledSceneLight(lightsOut[i]);
@@ -465,6 +525,28 @@ namespace {
 
 			dl.direction = Normalize(forwardDirection);
 			dl.shadowEnabled = 1.0f;
+
+			// 太陽(Sun)は方位角/高度と色温度から、Directional Lightの上位概念として
+			// sunDirection / sunColor を作れるようにする。両方とも既定はOFFで、
+			// 既存Sceneの見た目(Transform回転とcolorフィールド)をそのまま維持する。
+			if (component.assetPath == "Sun") {
+				if (component.sunUseAzimuthElevation) {
+					dl.direction = BuildSunDirectionFromAzimuthElevation(
+						component.sunAzimuthDegrees,
+						component.sunElevationDegrees);
+				}
+
+				if (component.sunUseColorTemperature) {
+					const float elevationDegrees = component.sunUseAzimuthElevation
+						? component.sunElevationDegrees
+						: std::asin((std::clamp)(-dl.direction.y, -1.0f, 1.0f)) * (180.0f / 3.14159265f);
+					const float temperatureKelvin = component.sunAutoTemperatureFromElevation
+						? EstimateSunKelvinFromElevation(elevationDegrees)
+						: component.sunTemperatureKelvin;
+					const Vector3 temperatureColor = KelvinToRgb(temperatureKelvin);
+					dl.color = {temperatureColor.x, temperatureColor.y, temperatureColor.z, 1.0f};
+				}
+			}
 		}
 
 		return count;
@@ -881,6 +963,7 @@ namespace {
 		float compositeSsgiRadiusPixels = 18.0f;
 		std::string compositeColorLutAssetPath;
 		float compositeColorLutStrength = 1.0f;
+		int32_t compositeDebugView = 0;
 		bool cameraDofEnabled = false;
 		float cameraDofFocusDistance = 10.0f;
 		float cameraDofAperture = 0.1f;
@@ -889,6 +972,11 @@ namespace {
 		float cameraMotionBlurIntensity = 0.5f;
 		float cameraNearClip = 0.3f;
 		float cameraFarClip = 1000.0f;
+		float environmentHeatIntensity = 0.0f;
+		float environmentHeatHorizonCenter = 0.46f;
+		float environmentHeatHorizonWidth = 0.16f;
+		float environmentHeatSunInfluence = 0.55f;
+		float environmentHeatDistortionScale = 0.65f;
 	};
 
 	void InitializePostProcessModeDefaults(PostProcessSettings& settings) {
@@ -911,6 +999,17 @@ namespace {
 			if (!gameObject.isActive) {
 				continue;
 			}
+			const EditorComponent* environment =
+				EditorComponentUtility::FindComponent(gameObject, EditorComponentType::Environment);
+
+			if (environment != nullptr && environment->isActive) {
+				settings.environmentHeatIntensity = environment->environmentHeatIntensity;
+				settings.environmentHeatHorizonCenter = environment->environmentHeatHorizonCenter;
+				settings.environmentHeatHorizonWidth = environment->environmentHeatHorizonWidth;
+				settings.environmentHeatSunInfluence = environment->environmentHeatSunInfluence;
+				settings.environmentHeatDistortionScale = environment->environmentHeatDistortionScale;
+			}
+
 			const EditorComponent* pp =
 				EditorComponentUtility::FindComponent(gameObject, EditorComponentType::PostProcess);
 			if (pp == nullptr || !pp->isActive) {
@@ -982,6 +1081,7 @@ namespace {
 				settings.compositeSsgiRadiusPixels = pp->compositeSsgiRadiusPixels;
 				settings.compositeColorLutAssetPath = pp->compositeColorLutAssetPath;
 				settings.compositeColorLutStrength = pp->compositeColorLutStrength;
+				settings.compositeDebugView = pp->compositeDebugView;
 
 				if (isVolume) {
 					settings.bloomIntensity *= volumeWeight;
@@ -1074,6 +1174,8 @@ void EditorRenderManager::Draw() {
 	auto& dsvHandle = g_dsvHandle;
 	auto& depthStencilResource = g_depthStencilResource;
 	auto& depthSrvHandleGPU = g_depthSrvHandleGPU;
+	auto& opaqueDepthCopyResource = g_opaqueDepthCopyResource;
+	auto& opaqueDepthCopySrvHandleGPU = g_opaqueDepthCopySrvHandleGPU;
 
 	auto& rootSignature = g_rootSignature;
 	// rootSignature / graphicsPipelineState 邵�E�E�E�・�E�E�E� Shader 邵�E�E�E�・�E�E�E� RenderState 邵�E�E�E�・�E�E�E�陜暦�E�E�E��E�E�E�陞ｳ螟奁E�E��E��E�E�E�・�E�E�E�陞ｳ螢�E�E�E��E�E�E�繝ｻ
@@ -1086,6 +1188,7 @@ void EditorRenderManager::Draw() {
 	auto& alphaCutoutShadowPipelineState = g_alphaCutoutShadowPipelineState;
 	auto& alphaCutoutShadowCullNonePipelineState = g_alphaCutoutShadowCullNonePipelineState;
 	auto& waterSurfacePipelineState = g_waterSurfacePipelineState;
+	auto& waterTessellationPipelineState = g_waterTessellationPipelineState;
 	auto& refractiveSurfacePipelineState = g_refractiveSurfacePipelineState;
 	auto& refractiveSurfaceCullNonePipelineState = g_refractiveSurfaceCullNonePipelineState;
 	// shadowPipelineState 邵�E�E�E�・�E�E�E�郢晢�E�E�E��E�E�E�郢�E�E�E�・�E�E�E�郢晞メ・�E�E�E�荵溘○邵�E�E�E�・�E�E�E� DepthTexture 郢�E�E�E�蜑�E�E�E�E��E�E�E�諛奁E�E��E�玖氣繧臥舁EPSO邵�E�E�E�繝ｻ
@@ -1714,6 +1817,13 @@ void EditorRenderManager::Draw() {
 					sceneObject.surface.windDirection.y,
 					sceneObject.surface.windSpatialScale,
 					sceneObject.surface.hasHeightOrDensityMap ? 1.0f : 0.0f};
+				targetTransformationData->oceanRenderParams = sceneObject.ocean.isEnabled
+					? Vector4{
+						sceneObject.ocean.gpuTessellationEnabled ? 1.0f : 0.0f,
+						sceneObject.ocean.tessellationTargetPixels,
+						sceneObject.ocean.tessellationMaximumFactor,
+						targetViewportHeight}
+					: Vector4{};
 
 				if (sceneObject.surface.mode == 1) {
 					targetTransformationData->oceanParams4 = {
@@ -1800,8 +1910,9 @@ void EditorRenderManager::Draw() {
 		Vector3 worldPosition{};
 		float amplitude = 0.0f;
 		float radius = 0.0f;
+		int32_t oceanGameObjectId = -1;
 	};
-	std::array<OceanInteractionSource, 2u> oceanInteractionSources{};
+	std::array<OceanInteractionSource, 32u> oceanInteractionSources{};
 	uint32_t oceanInteractionCount = 0u;
 
 	for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
@@ -1815,6 +1926,7 @@ void EditorRenderManager::Draw() {
 
 		if (wakeComponent == nullptr ||
 			!wakeComponent->isActive ||
+			!wakeComponent->surfaceWakeAffectOceanSurface ||
 			wakeComponent->surfaceWakeCurrentIntensity <= 0.0001f) {
 			continue;
 		}
@@ -1836,8 +1948,11 @@ void EditorRenderManager::Draw() {
 		interactionSource.amplitude =
 			wakeComponent->surfaceWakeCurrentIntensity *
 			(std::max)(wakeComponent->surfaceWakeWidth, 0.1f) *
-			0.10f;
-		interactionSource.radius = (std::max)(wakeComponent->surfaceWakeWidth * 4.0f, 0.5f);
+			(std::max)(wakeComponent->surfaceWakeWaveAmplitudeScale, 0.0f);
+		interactionSource.radius = (std::max)(
+			wakeComponent->surfaceWakeWidth * wakeComponent->surfaceWakeWaveRadiusScale,
+			0.5f);
+		interactionSource.oceanGameObjectId = wakeComponent->surfaceWakeOceanGameObjectId;
 		oceanInteractionCount++;
 	}
 
@@ -1859,18 +1974,28 @@ void EditorRenderManager::Draw() {
 			: MakeIdentity4x4();
 		Vector4 interactionParameters[2] = {};
 
+		uint32_t selectedInteractionCount = 0u;
+
 		for (uint32_t interactionIndex = 0u;
-			interactionIndex < oceanInteractionCount;
+			interactionIndex < oceanInteractionCount &&
+			selectedInteractionCount < 2u;
 			interactionIndex++) {
 			const OceanInteractionSource& interactionSource = oceanInteractionSources[interactionIndex];
+
+			if (interactionSource.oceanGameObjectId >= 0 &&
+				interactionSource.oceanGameObjectId != sceneObject.gameObjectId) {
+				continue;
+			}
+
 			const Vector3 localInteractionPosition = Transform(
 				interactionSource.worldPosition,
 				inverseOceanWorld);
-			interactionParameters[interactionIndex] = {
+			interactionParameters[selectedInteractionCount] = {
 				localInteractionPosition.x,
 				localInteractionPosition.z,
 				interactionSource.amplitude,
 				interactionSource.radius};
+			selectedInteractionCount++;
 		}
 
 		if (sceneObject.transformationData != nullptr) {
@@ -2416,7 +2541,6 @@ void EditorRenderManager::Draw() {
 			bool useWeightedOit = false,
 			SceneObjectDrawFilter drawFilter = SceneObjectDrawFilter::All) {
 		const bool usesDepthAttachment =
-			drawFilter != SceneObjectDrawFilter::Water &&
 			drawFilter != SceneObjectDrawFilter::Refractive;
 
 		if (usesDepthAttachment) {
@@ -2615,14 +2739,22 @@ void EditorRenderManager::Draw() {
 				commandList->DrawIndexedInstanced(_countof(spriteIndices), 1, 0, 0, 0);
 			}
 			else {
+				const bool useOceanTessellation =
+					isOcean &&
+					sceneObject.ocean.gpuTessellationEnabled &&
+					waterTessellationPipelineState != nullptr;
 				size_t meshTypeIndex = static_cast<size_t>(sceneObject.meshType);
 				if (meshTypeIndex >= kEditorModelMeshTypeCount ||
 					primitiveVertexCounts[meshTypeIndex] == 0u) {
 					meshTypeIndex = static_cast<size_t>(EditorModelMeshType::Plane);
 				}
 
-				if (isOcean && waterSurfacePipelineState != nullptr) {
-					commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, nullptr);
+				if (useOceanTessellation) {
+					commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, &dsvHandle);
+					commandList->SetPipelineState(waterTessellationPipelineState.Get());
+				}
+				else if (isOcean && waterSurfacePipelineState != nullptr) {
+					commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, &dsvHandle);
 					commandList->SetPipelineState(waterSurfacePipelineState.Get());
 				}
 				else if (isDedicatedRefractivePass && sceneObject.cullMode == 2 &&
@@ -2671,6 +2803,14 @@ void EditorRenderManager::Draw() {
 				commandList->SetGraphicsRootConstantBufferView(
 					1,
 					transformationResource->GetGPUVirtualAddress());
+
+				if (useOceanTessellation) {
+					commandList->SetGraphicsRootConstantBufferView(
+						kOceanTessellationTransformRootParameter,
+						transformationResource->GetGPUVirtualAddress());
+					commandList->IASetPrimitiveTopology(
+						D3D_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
+				}
 				D3D12_GPU_DESCRIPTOR_HANDLE textureHandle =
 					sceneObject.customTextureSrvGpuHandle.ptr != 0u
 						? sceneObject.customTextureSrvGpuHandle
@@ -2698,6 +2838,10 @@ void EditorRenderManager::Draw() {
 						GetSceneObjectInstanceCount(sceneObject),
 						0,
 						0);
+				}
+
+				if (useOceanTessellation) {
+					commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 				}
 			}
 
@@ -2807,7 +2951,10 @@ void EditorRenderManager::Draw() {
 		const Matrix4x4& targetViewMatrix,
 		const Matrix4x4& targetProjectionMatrix,
 		const Vector3& targetCameraPosition,
-		const D3D12_CPU_DESCRIPTOR_HANDLE& targetRtvHandle) {
+		const D3D12_CPU_DESCRIPTOR_HANDLE& targetRtvHandle,
+		const Matrix4x4& targetInverseViewProjection,
+		const D3D12_VIEWPORT& targetSoftParticleViewport,
+		bool canUseSoftParticleDepth) {
 		if (!g_editorRuntimeManager.IsPlaying()) {
 			g_gpuParticleManager.RequestReset();
 			return;
@@ -2824,6 +2971,36 @@ void EditorRenderManager::Draw() {
 			targetViewMatrix,
 			targetProjectionMatrix,
 			targetCameraPosition);
+
+		// Stage1 VFX(Billboard / Flipbook / Ribbon / Ring)。EditorGpuParticleManagerとは独立したCPU管理・単純描画。
+		{
+			const Matrix4x4 vfxCameraMatrix = Inverse(targetViewMatrix);
+			const Vector3 vfxCameraRight{vfxCameraMatrix.matrix[0][0], vfxCameraMatrix.matrix[0][1], vfxCameraMatrix.matrix[0][2]};
+			const Vector3 vfxCameraUp{vfxCameraMatrix.matrix[1][0], vfxCameraMatrix.matrix[1][1], vfxCameraMatrix.matrix[1][2]};
+			const Vector3 vfxCameraForward{vfxCameraMatrix.matrix[2][0], vfxCameraMatrix.matrix[2][1], vfxCameraMatrix.matrix[2][2]};
+			static std::vector<EditorVfxRenderer::VfxBatch> vfxBatches;
+			g_editorRuntimeManager.GetVfxManager().BuildDrawBatches(
+				g_vfxRenderer,
+				targetCameraPosition,
+				vfxCameraRight,
+				vfxCameraUp,
+				vfxCameraForward,
+				vfxBatches);
+
+			// Soft Particle: Water Passが作るOpaque Depth Copyを再利用する(新規Depth資源は作らない)。
+			// Planar Reflection等、Depth CopyのCameraと一致しないPassではcanUseSoftParticleDepth=falseにして無効化する。
+			EditorVfxRenderer::SoftParticleViewContext softParticleViewContext{};
+			softParticleViewContext.isSceneDepthValid = canUseSoftParticleDepth;
+			softParticleViewContext.inverseViewProjection = targetInverseViewProjection;
+			const float inverseSoftParticleRenderWidth = 1.0f / static_cast<float>((std::max)(g_renderWidth, 1u));
+			const float inverseSoftParticleRenderHeight = 1.0f / static_cast<float>((std::max)(g_renderHeight, 1u));
+			softParticleViewContext.viewportUvOffsetX = targetSoftParticleViewport.TopLeftX * inverseSoftParticleRenderWidth;
+			softParticleViewContext.viewportUvOffsetY = targetSoftParticleViewport.TopLeftY * inverseSoftParticleRenderHeight;
+			softParticleViewContext.viewportUvScaleX = targetSoftParticleViewport.Width * inverseSoftParticleRenderWidth;
+			softParticleViewContext.viewportUvScaleY = targetSoftParticleViewport.Height * inverseSoftParticleRenderHeight;
+
+			g_vfxRenderer.Draw(commandList.Get(), targetViewProjectionMatrix, vfxBatches, softParticleViewContext);
+		}
 
 		commandList->SetGraphicsRootSignature(rootSignature.Get());
 		commandList->SetPipelineState(graphicsPipelineState.Get());
@@ -3026,7 +3203,10 @@ void EditorRenderManager::Draw() {
 				reflectionCamera.viewMatrix,
 				reflectionCamera.projectionMatrix,
 				reflectionCamera.position,
-				planarReflectionRtvHandle);
+				planarReflectionRtvHandle,
+				reflectionCamera.viewProjection,
+				viewport,
+				false);  // Planar ReflectionはOpaque Depth CopyのCameraと一致しないためSoft Particleを無効化する。
 			defaultDrawPso = graphicsPipelineState.Get();
 
 			updateSceneObjectMatrices(
@@ -3082,7 +3262,10 @@ void EditorRenderManager::Draw() {
 				reflectionCamera.viewMatrix,
 				reflectionCamera.projectionMatrix,
 				reflectionCamera.position,
-				planarReflectionRtvHandle);
+				planarReflectionRtvHandle,
+				reflectionCamera.viewProjection,
+				gameViewport,
+				false);  // Planar ReflectionはOpaque Depth CopyのCameraと一致しないためSoft Particleを無効化する。
 			defaultDrawPso = graphicsPipelineState.Get();
 
 			updateSceneObjectMatrices(
@@ -3244,15 +3427,18 @@ void EditorRenderManager::Draw() {
 		primaryOceanSceneObject != nullptr &&
 		waterSurfacePipelineState != nullptr &&
 		hdrCompositeRenderTarget != nullptr &&
-		depthStencilResource != nullptr;
+		depthStencilResource != nullptr &&
+		opaqueDepthCopyResource != nullptr;
 
 	if (shouldRenderWaterSurface) {
-		const auto bindWaterViewConstants = [&commandList](
+		const auto bindWaterViewConstants = [&commandList, &oceanElapsedTime, primaryOceanSceneObject](
 			const Matrix4x4& targetInverseViewProjection,
 			const Matrix4x4& targetViewMatrix,
 			const Matrix4x4& targetProjectionMatrix,
+			const Vector3& targetCameraPosition,
+			uint64_t targetSurfaceSampleKey,
 			const D3D12_VIEWPORT& targetViewport) {
-			std::array<float, 32u> waterViewConstants{};
+			std::array<float, 29u> waterViewConstants{};
 			std::memcpy(
 				waterViewConstants.data(),
 				&targetInverseViewProjection.matrix[0][0],
@@ -3273,10 +3459,26 @@ void EditorRenderManager::Draw() {
 			waterViewConstants[25] = targetViewMatrix.matrix[1][1];
 			waterViewConstants[26] = targetViewMatrix.matrix[2][1];
 			waterViewConstants[27] = targetProjectionMatrix.matrix[1][1];
-			waterViewConstants[28] = targetViewMatrix.matrix[0][2];
-			waterViewConstants[29] = targetViewMatrix.matrix[1][2];
-			waterViewConstants[30] = targetViewMatrix.matrix[2][2];
-			waterViewConstants[31] = targetProjectionMatrix.matrix[2][3];
+			// Scene/Game CameraごとにFFT水面を1回だけ取得し、描画すべき表裏を決める。
+			// 高さ0固定ではなく描画・浮力と同じOcean Queryを使うため、大波を横切っても反転が遅れない。
+			EditorOceanSurfaceSample cameraSurfaceSample{};
+			const bool hasCameraSurfaceSample = SampleEditorOceanSurface(
+				g_editorScene,
+				primaryOceanSceneObject->gameObjectId,
+				targetCameraPosition,
+				targetSurfaceSampleKey,
+				oceanElapsedTime,
+				cameraSurfaceSample);
+			const float fallbackSurfaceHeight =
+				primaryOceanSceneObject->worldMatrix.matrix[3][1];
+			const float cameraSurfaceDistance = hasCameraSurfaceSample
+				? Dot(
+					Subtract(targetCameraPosition, cameraSurfaceSample.position),
+					cameraSurfaceSample.normal)
+				: targetCameraPosition.y - fallbackSurfaceHeight;
+			const float cameraSurfaceSide = cameraSurfaceDistance >= 0.0f ? 1.0f : -1.0f;
+			waterViewConstants[28] =
+				std::abs(targetProjectionMatrix.matrix[2][3]) * cameraSurfaceSide;
 			commandList->SetGraphicsRoot32BitConstants(
 				24u,
 				static_cast<UINT>(waterViewConstants.size()),
@@ -3308,13 +3510,29 @@ void EditorRenderManager::Draw() {
 			static_cast<UINT>(opaqueCopyBarriers.size()),
 			opaqueCopyBarriers.data());
 
-		D3D12_RESOURCE_BARRIER waterDepthBarrier{};
-		waterDepthBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		waterDepthBarrier.Transition.pResource = depthStencilResource;
-		waterDepthBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-		waterDepthBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-		waterDepthBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		commandList->ResourceBarrier(1, &waterDepthBarrier);
+		std::array<D3D12_RESOURCE_BARRIER, 2u> opaqueDepthCopyBarriers{};
+		opaqueDepthCopyBarriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		opaqueDepthCopyBarriers[0].Transition.pResource = depthStencilResource;
+		opaqueDepthCopyBarriers[0].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		opaqueDepthCopyBarriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+		opaqueDepthCopyBarriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+		opaqueDepthCopyBarriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		opaqueDepthCopyBarriers[1].Transition.pResource = opaqueDepthCopyResource;
+		opaqueDepthCopyBarriers[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		opaqueDepthCopyBarriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		opaqueDepthCopyBarriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+		commandList->ResourceBarrier(
+			static_cast<UINT>(opaqueDepthCopyBarriers.size()),
+			opaqueDepthCopyBarriers.data());
+		commandList->CopyResource(opaqueDepthCopyResource, depthStencilResource);
+
+		opaqueDepthCopyBarriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+		opaqueDepthCopyBarriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+		opaqueDepthCopyBarriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+		opaqueDepthCopyBarriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		commandList->ResourceBarrier(
+			static_cast<UINT>(opaqueDepthCopyBarriers.size()),
+			opaqueDepthCopyBarriers.data());
 
 		commandList->SetGraphicsRootSignature(rootSignature.Get());
 		commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
@@ -3322,7 +3540,7 @@ void EditorRenderManager::Draw() {
 		commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);
 		commandList->SetGraphicsRootDescriptorTable(6, environmentSrvHandleGPU);
 		commandList->SetGraphicsRootDescriptorTable(22, hdrCompositeSrvHandleGPU);
-		commandList->SetGraphicsRootDescriptorTable(23, depthSrvHandleGPU);
+		commandList->SetGraphicsRootDescriptorTable(23, opaqueDepthCopySrvHandleGPU);
 
 		if (g_isSceneViewVisible) {
 			commandList->RSSetViewports(1, &viewport);
@@ -3331,6 +3549,8 @@ void EditorRenderManager::Draw() {
 				inverseViewProjectionMatrix,
 				viewMatrix,
 				sceneRenderProjectionMatrix,
+				cameraTransform.translate,
+				0x5343454e45574154ull,
 				viewport);
 			const int32_t firstReflectorId = scenePlanarView == nullptr
 				? -1
@@ -3352,6 +3572,8 @@ void EditorRenderManager::Draw() {
 				inverseGameViewProjectionMatrix,
 				g_gameViewMatrix,
 				gameRenderProjectionMatrix,
+				g_gameCameraPosition,
+				0x47414d4557415445ull,
 				gameViewport);
 			const int32_t firstReflectorId = gamePlanarView == nullptr
 				? -1
@@ -3366,9 +3588,6 @@ void EditorRenderManager::Draw() {
 				SceneObjectDrawFilter::Water);
 		}
 
-		waterDepthBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		waterDepthBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-		commandList->ResourceBarrier(1, &waterDepthBarrier);
 	}
 
 	//================================================================
@@ -3498,7 +3717,10 @@ void EditorRenderManager::Draw() {
 			viewMatrix,
 			sceneRenderProjectionMatrix,
 			cameraTransform.translate,
-			hdrRtvHandle);
+			hdrRtvHandle,
+			inverseViewProjectionMatrix,
+			viewport,
+			true);  // Water Passで作ったOpaque Depth Copyと同じCameraなのでSoft Particleを有効化できる。
 		drawReflectionMaskObjects(false, firstReflectorId);
 	}
 
@@ -3521,7 +3743,10 @@ void EditorRenderManager::Draw() {
 			g_gameViewMatrix,
 			gameRenderProjectionMatrix,
 			g_gameCameraPosition,
-			hdrRtvHandle);
+			hdrRtvHandle,
+			inverseGameViewProjectionMatrix,
+			gameViewport,
+			true);  // Water Passで作ったOpaque Depth Copyと同じCameraなのでSoft Particleを有効化できる。
 		drawReflectionMaskObjects(true, firstReflectorId);
 	}
 
@@ -3757,6 +3982,7 @@ void EditorRenderManager::Draw() {
 		commandList->SetDescriptorHeaps(1u, computeDescriptorHeaps);
 		if (shouldUpdateGpuParticles) {
 			EditorEffectManager& effectManager = g_editorRuntimeManager.GetEffectManager();
+			EditorVfxManager& vfxManagerForGpuSpawns = g_editorRuntimeManager.GetVfxManager();
 			static std::vector<EditorGpuParticleManager::CollisionProxy> collisionProxies;
 			CollectParticleCollisionProxies(collisionProxies);
 			const bool useGameCollisionCamera = g_isGameViewVisible;
@@ -3769,9 +3995,18 @@ void EditorRenderManager::Draw() {
 			const D3D12_VIEWPORT& collisionViewport = useGameCollisionCamera
 				? gameViewport
 				: viewport;
+			// Stage2: 新VFX(useGpuSimulation Billboard / MeshParticle)の発生要求もEditorEffectManager分と合成し、
+			// 同じEditorGpuParticleManager(既存GPU Compute Particle Pipeline)へまとめて渡す。
+			static std::vector<EditorEffectManager::GpuParticleSpawn> combinedGpuParticleSpawns;
+			combinedGpuParticleSpawns.clear();
+			const auto& effectManagerSpawns = effectManager.GetPendingGpuParticleSpawns();
+			const auto& vfxManagerSpawns = vfxManagerForGpuSpawns.GetPendingGpuParticleSpawns();
+			combinedGpuParticleSpawns.reserve(effectManagerSpawns.size() + vfxManagerSpawns.size());
+			combinedGpuParticleSpawns.insert(combinedGpuParticleSpawns.end(), effectManagerSpawns.begin(), effectManagerSpawns.end());
+			combinedGpuParticleSpawns.insert(combinedGpuParticleSpawns.end(), vfxManagerSpawns.begin(), vfxManagerSpawns.end());
 			g_gpuParticleManager.Update(
 				commandList.Get(),
-				effectManager.GetPendingGpuParticleSpawns(),
+				combinedGpuParticleSpawns,
 				effectManager.GetLastDeltaTime(),
 				depthSrvHandleGPU,
 				collisionViewProjection,
@@ -3781,6 +4016,7 @@ void EditorRenderManager::Draw() {
 				collisionViewport,
 				collisionProxies);
 			effectManager.ClearPendingGpuParticleSpawns();
+			vfxManagerForGpuSpawns.ClearPendingGpuParticleSpawns();
 		}
 
 		const Matrix4x4& depthInverseViewProjection = g_isSceneViewVisible
@@ -4339,7 +4575,7 @@ void EditorRenderManager::Draw() {
 			underwaterParams[21] = oceanSceneObject.ocean.deepColor.y;
 			underwaterParams[22] = oceanSceneObject.ocean.deepColor.z;
 			underwaterParams[23] =
-				0.35f + oceanSceneObject.ocean.detailNormalStrength * 1.25f;
+				oceanSceneObject.ocean.detailNormalStrength * 1.25f;
 			underwaterParams[24] = oceanSceneObject.ocean.shallowColor.x;
 			underwaterParams[25] = oceanSceneObject.ocean.shallowColor.y;
 			underwaterParams[26] = oceanSceneObject.ocean.shallowColor.z;
@@ -4673,7 +4909,36 @@ void EditorRenderManager::Draw() {
 			5u,
 			g_postProcessQualityManager.GetAutoExposureSrvHandle());
 		commandList->SetGraphicsRootDescriptorTable(6u, colorGradingLutSrvHandleGPU);
-		float finalCompositeParams[32] = {
+		commandList->SetGraphicsRootDescriptorTable(7u, depthSrvHandleGPU);
+
+		static const std::chrono::steady_clock::time_point heatStartTime =
+			std::chrono::steady_clock::now();
+		const float heatElapsedTime = std::chrono::duration<float>(
+			std::chrono::steady_clock::now() - heatStartTime).count();
+		Vector3 sunScreenPosition = {0.5f, ppSettings.environmentHeatHorizonCenter, 0.0f};
+
+		if (sunLightIndex >= 0) {
+			const Vector3 sunWorldDirection = Multiply(
+				-1.0f,
+				directionalLightData[sunLightIndex].direction);
+			const Vector3 sunWorldPosition = Add(
+				activeCameraPosition,
+				Multiply(10000.0f, sunWorldDirection));
+			const Matrix4x4& activeViewProjectionMatrix = g_isSceneViewVisible
+				? sceneViewProjectionMatrix
+				: gameViewProjectionMatrix;
+			const ClipSpacePoint sunClipPosition = TransformToClipSpace(
+				sunWorldPosition,
+				activeViewProjectionMatrix);
+
+			if (sunClipPosition.w > 0.0001f) {
+				const float inverseSunW = 1.0f / sunClipPosition.w;
+				sunScreenPosition.x = sunClipPosition.x * inverseSunW * 0.5f + 0.5f;
+				sunScreenPosition.y = 0.5f - sunClipPosition.y * inverseSunW * 0.5f;
+			}
+		}
+
+		float finalCompositeParams[40] = {
 			ppSettings.compositeExposure * ppSettings.finalBrightness,
 			ppSettings.compositeWhitePoint,
 			static_cast<float>(ppSettings.compositeToneMappingMode),
@@ -4685,10 +4950,12 @@ void EditorRenderManager::Draw() {
 			ppSettings.compositeFilmGrain,
 			ppSettings.compositeChromaticAberration,
 			ppSettings.compositeAmbientOcclusionStrength,
-			0.0f,
+			static_cast<float>(ppSettings.compositeDebugView),
 			ppSettings.glareColorByMode[bloomModeIndex].x,
 			ppSettings.glareColorByMode[bloomModeIndex].y,
 			ppSettings.glareColorByMode[bloomModeIndex].z,
+			// Ocean Debug専用の後段停止は通常描画の反射改善と無関係なため、
+			// FinalCompositeへは常に無効値を渡す。
 			0.0f,
 			isAutoExposureExecuted ? 1.0f : 0.0f,
 			ppSettings.compositeTemperature,
@@ -4705,9 +4972,17 @@ void EditorRenderManager::Draw() {
 			(std::clamp)(ppSettings.compositeColorLutStrength, 0.0f, 1.0f),
 			0.45f,
 			ppSettings.compositeLocalContrast,
-			ppSettings.compositeOutputDither
+			ppSettings.compositeOutputDither,
+			ppSettings.environmentHeatIntensity,
+			ppSettings.environmentHeatHorizonCenter,
+			ppSettings.environmentHeatHorizonWidth,
+			ppSettings.environmentHeatSunInfluence,
+			ppSettings.environmentHeatDistortionScale,
+			heatElapsedTime,
+			sunScreenPosition.x,
+			sunScreenPosition.y
 		};
-		commandList->SetGraphicsRoot32BitConstants(2u, 32u, finalCompositeParams, 0u);
+		commandList->SetGraphicsRoot32BitConstants(2u, 40u, finalCompositeParams, 0u);
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		commandList->DrawInstanced(3, 1, 0, 0);
 

@@ -18,6 +18,7 @@
 #include "EditorWeaponLoadoutManager.h"
 #include "EditorWaveSpawnerManager.h"
 #include "StringUtility.h"
+#include "Source/Engine/Effect/EditorVfxManager.h"
 
 #include <Windows.h>
 
@@ -247,6 +248,7 @@ void EditorScriptManager::Initialize(
 	EditorInputManager* inputManager,
 	EditorAnimationManager* animationManager,
 	EditorEffectManager* effectManager,
+	EditorAudioManager* audioManager,
 	EditorAIManager* aiManager,
 	EditorPhysicsManager* physicsManager,
 	std::vector<std::string>* consoleMessages) {
@@ -254,6 +256,7 @@ void EditorScriptManager::Initialize(
 	inputManager_ = inputManager;  // PlayerInput の Action 名を DLL Script から問い合わせる時に使う。
 	animationManager_ = animationManager;  // Animation の再生状態と現在時刻を DLL Script から読む時に使う。
 	effectManager_ = effectManager;  // ParticleSystem / VisualEffect を DLL Script から再生する時に使う。
+	audioManager_ = audioManager;  // AudioSource を DLL Script から任意のタイミングで鳴らす時に使う。
 	aiManager_ = aiManager;  // AI センサーや音声 / 顔検知の状態を DLL Script から読む時に使う。
 	physicsManager_ = physicsManager;  // DLL Script から Jolt の AddForce / SetVelocity を呼ぶための入口。
 	consoleMessages_ = consoleMessages;  // DLL ログや読込失敗を Console へ出す先。
@@ -283,6 +286,15 @@ void EditorScriptManager::Initialize(
 void EditorScriptManager::SetRailMovementManager(
 	EditorRailMovementManager* railMovementManager) {
 	railMovementManager_ = railMovementManager;
+}
+
+void EditorScriptManager::SetEffekseerManager(
+	EditorEffekseerManager* effekseerManager) {
+	effekseerManager_ = effekseerManager;
+}
+
+void EditorScriptManager::SetVfxManager(EditorVfxManager* vfxManager) {
+	vfxManager_ = vfxManager;
 }
 
 void EditorScriptManager::SetGameplayManagers(
@@ -1293,6 +1305,106 @@ void EditorScriptManager::ScriptStopEffectBridge(int32_t gameObjectId) {
 	if (gActiveScriptManager != nullptr && gActiveScriptManager->effectManager_ != nullptr) {
 		gActiveScriptManager->effectManager_->StopEffect(gameObjectId);
 	}
+}
+
+int32_t EditorScriptManager::ScriptPlayEffekseerAtPositionBridge(
+	const char* effectAssetPath,
+	const EditorScriptVector3* position,
+	const EditorScriptVector3* rotationEuler) {
+	if (gActiveScriptManager == nullptr ||
+		gActiveScriptManager->effekseerManager_ == nullptr ||
+		effectAssetPath == nullptr ||
+		position == nullptr) {
+		return -1;
+	}
+
+	const Vector3 resolvedRotation = rotationEuler != nullptr
+		? ToEditorVector3(*rotationEuler)
+		: Vector3{0.0f, 0.0f, 0.0f};
+	return gActiveScriptManager->effekseerManager_->PlayEffectAt(
+		effectAssetPath,
+		ToEditorVector3(*position),
+		resolvedRotation);
+}
+
+bool EditorScriptManager::ScriptSetEffekseerEffectPositionBridge(
+	int32_t effekseerPlaybackHandle,
+	const EditorScriptVector3* position) {
+	if (gActiveScriptManager == nullptr ||
+		gActiveScriptManager->effekseerManager_ == nullptr ||
+		position == nullptr) {
+		return false;
+	}
+
+	gActiveScriptManager->effekseerManager_->SetEffectPositionAt(effekseerPlaybackHandle, ToEditorVector3(*position));
+	return true;
+}
+
+void EditorScriptManager::ScriptStopEffekseerEffectAtPositionBridge(int32_t effekseerPlaybackHandle) {
+	if (gActiveScriptManager != nullptr && gActiveScriptManager->effekseerManager_ != nullptr) {
+		gActiveScriptManager->effekseerManager_->StopEffectAt(effekseerPlaybackHandle);
+	}
+}
+
+bool EditorScriptManager::ScriptPlayVfxAtPositionBridge(
+	const char* effectId,
+	const EditorScriptVector3* position) {
+	if (gActiveScriptManager == nullptr ||
+		gActiveScriptManager->vfxManager_ == nullptr ||
+		effectId == nullptr ||
+		position == nullptr) {
+		return false;
+	}
+
+	return gActiveScriptManager->vfxManager_->PlayEffect(
+		effectId,
+		ToEditorVector3(*position)).IsValid();
+}
+
+bool EditorScriptManager::ScriptPlayAudioBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->audioManager_ != nullptr &&
+		gActiveScriptManager->audioManager_->Play(gameObjectId);
+}
+
+void EditorScriptManager::ScriptStopAudioBridge(int32_t gameObjectId) {
+	if (gActiveScriptManager != nullptr && gActiveScriptManager->audioManager_ != nullptr) {
+		gActiveScriptManager->audioManager_->Stop(gameObjectId);
+	}
+}
+
+namespace {
+	// Script 側は 0=SFX / 1=BGM / 2=Ambience / 3=UI の整数で Bus を指定する。
+	// 範囲外を渡されても既定の SFX へ落として落ちないようにする。
+	EditorAudioBus ResolveScriptAudioBus(int32_t audioBus) {
+		const int32_t busCount = static_cast<int32_t>(EditorAudioBus::Count);
+		const int32_t clampedBus = (audioBus >= 0 && audioBus < busCount) ? audioBus : 0;
+		return static_cast<EditorAudioBus>(clampedBus);
+	}
+}
+
+void EditorScriptManager::ScriptSetAudioBusVolumeBridge(int32_t audioBus, float volume) {
+	if (gActiveScriptManager != nullptr && gActiveScriptManager->audioManager_ != nullptr) {
+		gActiveScriptManager->audioManager_->SetBusVolume(ResolveScriptAudioBus(audioBus), volume);
+	}
+}
+
+float EditorScriptManager::ScriptGetAudioBusVolumeBridge(int32_t audioBus) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->audioManager_ != nullptr
+		? gActiveScriptManager->audioManager_->GetBusVolume(ResolveScriptAudioBus(audioBus))
+		: 0.0f;
+}
+
+void EditorScriptManager::ScriptSetAudioMasterVolumeBridge(float volume) {
+	if (gActiveScriptManager != nullptr && gActiveScriptManager->audioManager_ != nullptr) {
+		gActiveScriptManager->audioManager_->SetMasterVolume(volume);
+	}
+}
+
+float EditorScriptManager::ScriptGetAudioMasterVolumeBridge() {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->audioManager_ != nullptr
+		? gActiveScriptManager->audioManager_->GetMasterVolume()
+		: 0.0f;
 }
 
 int32_t EditorScriptManager::ScriptGetAliveParticleCountBridge(int32_t gameObjectId) {
@@ -3396,6 +3508,12 @@ void EditorScriptManager::BuildRuntimeApi() {
 	runtimeApi_.PlayEffect = ScriptPlayEffectBridge;
 	runtimeApi_.PlayEffectAt = ScriptPlayEffectAtBridge;
 	runtimeApi_.StopEffect = ScriptStopEffectBridge;
+	runtimeApi_.PlayAudio = ScriptPlayAudioBridge;
+	runtimeApi_.StopAudio = ScriptStopAudioBridge;
+	runtimeApi_.SetAudioBusVolume = ScriptSetAudioBusVolumeBridge;
+	runtimeApi_.GetAudioBusVolume = ScriptGetAudioBusVolumeBridge;
+	runtimeApi_.SetAudioMasterVolume = ScriptSetAudioMasterVolumeBridge;
+	runtimeApi_.GetAudioMasterVolume = ScriptGetAudioMasterVolumeBridge;
 	runtimeApi_.GetAliveParticleCount = ScriptGetAliveParticleCountBridge;
 	runtimeApi_.GetAnimatorFloat = ScriptGetAnimatorFloatBridge;
 	runtimeApi_.GetAnimatorInt = ScriptGetAnimatorIntBridge;
@@ -3586,6 +3704,10 @@ void EditorScriptManager::BuildRuntimeApi() {
 	runtimeApi_.StartWaveSpawner = ScriptStartWaveSpawnerBridge;
 	runtimeApi_.IsWaveSpawnerComplete = ScriptIsWaveSpawnerCompleteBridge;
 	runtimeApi_.PhysicsRaycastIgnoringHierarchy = ScriptPhysicsRaycastIgnoringHierarchyBridge;
+	runtimeApi_.PlayEffekseerAtPosition = ScriptPlayEffekseerAtPositionBridge;
+	runtimeApi_.SetEffekseerEffectPosition = ScriptSetEffekseerEffectPositionBridge;
+	runtimeApi_.StopEffekseerEffectAtPosition = ScriptStopEffekseerEffectAtPositionBridge;
+	runtimeApi_.PlayVfxAtPosition = ScriptPlayVfxAtPositionBridge;
 }
 
 void EditorScriptManager::StartBindingsForModule(ScriptModule& scriptModule) {

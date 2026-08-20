@@ -37,6 +37,12 @@
 	<ClCompile Include="Source\Engine\Effect\EditorEffectManager.cpp">
 	  <Filter>ソース ファイル</Filter>
 	</ClCompile>
+	<ClCompile Include="Source\Engine\Effect\EffectDefinition.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Effect\EditorVfxManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
 	<ClCompile Include="Source\Engine\Effect\EditorEffekseerManager.cpp">
 	  <Filter>ソース ファイル</Filter>
 	</ClCompile>
@@ -97,6 +103,12 @@
 	  <Filter>ヘッダー ファイル</Filter>
 	</ClInclude>
 	<ClInclude Include="Source\Engine\Effect\EditorEffectManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Effect\EffectDefinition.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Effect\EditorVfxManager.h">
 	  <Filter>ヘッダー ファイル</Filter>
 	</ClInclude>
 	<ClInclude Include="Source\Engine\Effect\EditorEffekseerManager.h">
@@ -422,6 +434,9 @@
 	  <Filter>ソース ファイル</Filter>
 	</ClCompile>
 	<ClCompile Include="Source\Engine\Renderer\EditorGpuParticleManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Renderer\EditorVfxRenderer.cpp">
 	  <Filter>ソース ファイル</Filter>
 	</ClCompile>
 	<ClCompile Include="Source\Engine\Renderer\EditorPostProcessQualityManager.cpp">
@@ -1522,6 +1537,9 @@
 	  <Filter>ヘッダー ファイル</Filter>
 	</ClInclude>
 	<ClInclude Include="Source\Engine\Renderer\EditorGpuParticleManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Renderer\EditorVfxRenderer.h">
 	  <Filter>ヘッダー ファイル</Filter>
 	</ClInclude>
 	<ClInclude Include="Source\Engine\Renderer\EditorPostProcessQualityManager.h">

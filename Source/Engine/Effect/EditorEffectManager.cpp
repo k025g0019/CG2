@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <unordered_set>
 #include <utility>
 
 namespace {
@@ -94,10 +95,30 @@ void EditorEffectManager::Start() {
 	lastDeltaTime_ = 0.0f;
 	randomEngine_.seed(0x434732u);
 	isStarted_ = true;
+	std::unordered_set<int32_t> surfaceWakeControlledEffectIds;
+
+	if (editorScene_ != nullptr) {
+		for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
+			const EditorComponent* surfaceWake = EditorComponentUtility::FindComponent(
+				gameObject,
+				EditorComponentType::SurfaceWakeEmitter);
+
+			if (surfaceWake == nullptr || !surfaceWake->isActive) {
+				continue;
+			}
+
+			surfaceWakeControlledEffectIds.insert(surfaceWake->surfaceWakeLeftEffectGameObjectId);
+			surfaceWakeControlledEffectIds.insert(surfaceWake->surfaceWakeRightEffectGameObjectId);
+			surfaceWakeControlledEffectIds.insert(surfaceWake->surfaceWakeBowEffectGameObjectId);
+		}
+	}
 
 	for (const EmitterSnapshot& emitter : CollectEmitterSnapshots()) {
 		EmitterRuntime& runtime = emitterRuntimes_[emitter.key];
-		runtime.isPlaying = emitter.component.animationPlayOnAwake;
+		const bool isSurfaceWakeControlled =
+			surfaceWakeControlledEffectIds.contains(emitter.ownerGameObjectId);
+		runtime.isPlaying =
+			emitter.component.animationPlayOnAwake && !isSurfaceWakeControlled;
 
 		if (runtime.isPlaying && emitter.component.particleLooping && emitter.component.particlePrewarm) {
 			PrewarmEmitter(emitter);
@@ -278,7 +299,15 @@ std::vector<EditorEffectManager::EmitterSnapshot> EditorEffectManager::CollectEm
 			EmitterSnapshot emitter{};
 			emitter.key = MakeEmitterKey(gameObject.id, component.type);
 			emitter.ownerGameObjectId = gameObject.id;
-			emitter.ownerPosition = gameObject.translate;
+			Vector3 worldScale{};
+			Vector3 worldRotation{};
+			Vector3 worldPosition{};
+			editorScene_->GetWorldTransform(
+				gameObject.id,
+				worldScale,
+				worldRotation,
+				worldPosition);
+			emitter.ownerPosition = worldPosition;
 			emitter.component = component;
 
 			if (component.type == EditorComponentType::TrailRenderer) {

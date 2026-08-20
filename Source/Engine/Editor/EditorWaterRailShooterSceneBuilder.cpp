@@ -108,6 +108,58 @@ namespace {
 		return gameObjectId;
 	}
 
+	int32_t CreateWakeEffect(
+		EditorScene& editorScene,
+		const std::string& gameObjectName,
+		const Vector3& localPosition,
+		int32_t playerGameObjectId) {
+		const int32_t effectGameObjectId = CreateGameObject(
+			editorScene,
+			gameObjectName,
+			playerGameObjectId);
+		EditorGameObject* effectGameObject = editorScene.FindGameObject(effectGameObjectId);
+		EditorComponent* particleSystem = AddComponent(
+			editorScene,
+			effectGameObjectId,
+			EditorComponentType::ParticleSystem);
+
+		if (effectGameObject != nullptr) {
+			effectGameObject->translate = localPosition;
+		}
+
+		if (particleSystem != nullptr) {
+			particleSystem->animationPlayOnAwake = false;
+			particleSystem->color = {0.72f, 0.9f, 1.0f};
+			particleSystem->particleEndColor = {0.9f, 0.96f, 1.0f};
+			particleSystem->particleRate = 0.0f;
+			particleSystem->particleLifetime = 1.2f;
+			particleSystem->particleSpeed = 0.9f;
+			particleSystem->particleSize = 0.22f;
+			particleSystem->particleEndSize = 0.3f;
+			particleSystem->particleMaxCount = 256;
+			particleSystem->particleShape = 2;
+			particleSystem->particleSimulationSpace = 0;
+			particleSystem->particleDuration = 3600.0f;
+			particleSystem->particleLooping = true;
+			particleSystem->particleShapeRadius = 0.13f;
+			particleSystem->particleShapeAngle = 6.0f;
+			particleSystem->particleSpeedRandomness = 0.12f;
+			particleSystem->particleLifetimeRandomness = 0.12f;
+			particleSystem->particleSizeRandomness = 0.15f;
+			particleSystem->particleDirection = {0.0f, 0.15f, -1.0f};
+			particleSystem->particleStartAlpha = 0.5f;
+			particleSystem->particleEndAlpha = 0.0f;
+			particleSystem->particleEmissionStrength = 0.18f;
+			particleSystem->particleEndSpeedMultiplier = 0.25f;
+			particleSystem->particleNoiseStrength = 0.025f;
+			particleSystem->particleNoiseFrequency = 0.8f;
+			particleSystem->particleBillboardMode = 2;
+			particleSystem->particleBillboardStretch = 5.0f;
+		}
+
+		return effectGameObjectId;
+	}
+
 	EditorComponent* AddScript(EditorScene& editorScene, int32_t gameObjectId) {
 		EditorComponent* script = AddComponent(
 			editorScene,
@@ -193,7 +245,7 @@ namespace {
 
 		targetSelector->targetSelectorSearchLayer = -1;
 		targetSelector->targetSelectorMaximumDistance = maximumDistance;
-		targetSelector->targetSelectorMaximumAngle = 110.0f;
+		targetSelector->targetSelectorMaximumAngle = 180.0f;
 		targetSelector->targetSelectorReferenceGameObjectId = referenceGameObjectId;
 		targetSelector->targetSelectorOcclusionCheck = true;
 		targetSelector->targetSelectorOcclusionMode = 3;
@@ -218,6 +270,23 @@ namespace {
 			attackFilter->attackFilterIgnoreNeutral = true;
 			attackFilter->attackFilterArmingDistance = 2.0f;
 		}
+	}
+
+	void ConfigureImpactResponder(EditorScene& editorScene, int32_t ownerGameObjectId) {
+		EditorComponent* impactResponder = AddComponent(
+			editorScene,
+			ownerGameObjectId,
+			EditorComponentType::ImpactResponder);
+
+		if (impactResponder == nullptr) {
+			return;
+		}
+
+		impactResponder->impactResponseEntries = {
+			{"", "Water", "WaterImpact", -1, -1, -1, -1, ""},
+			{"", "Metal", "MetalImpact", -1, -1, -1, -1, ""},
+			{"", "", "MetalImpact", -1, -1, -1, -1, ""},
+		};
 	}
 
 	void ConfigureSimulationLod(
@@ -481,6 +550,7 @@ namespace {
 		}
 
 		ConfigureAttackFilter(editorScene, weaponGameObjectId);
+		ConfigureImpactResponder(editorScene, weaponGameObjectId);
 	}
 
 	int32_t CreateEnemyTemplate(
@@ -560,10 +630,10 @@ namespace {
 		}
 
 		if (railMovement != nullptr) {
-			// 敵も同じ航路に乗せ、プレイヤーよりやや遅い速度で並走/追い越される配置にする。
+			// 敵をプレイヤー前方へ維持できる速度にし、後方へ流れるWaveを防ぐ。
 			// レール開始位置は WaveSpawner の waveSpawnRailStartNormalized で上書きされる。
 			railMovement->railPathGameObjectId = playerRailGameObjectId;
-			railMovement->railSpeed = 26.0f;
+			railMovement->railSpeed = 34.0f;
 			railMovement->railAcceleration = 10.0f;
 			railMovement->railDeceleration = 12.0f;
 			railMovement->railStartNormalized = 0.0f;
@@ -678,7 +748,12 @@ namespace {
 			waveSpawner->waveFormationSpacing = spacing;
 			waveSpawner->waveFormationColumns = 4;
 			waveSpawner->waveCompletionMode = 1;
-			waveSpawner->waveSpawnRailStartNormalized = railStartNormalized;
+			// Trigger地点より前方へ生成し、Playerの背後へ出現しない余裕を確保する。
+			constexpr float enemySpawnLeadNormalized = 0.04f;
+			waveSpawner->waveSpawnRailStartNormalized = (std::clamp)(
+				railStartNormalized + enemySpawnLeadNormalized,
+				0.0f,
+				0.98f);
 			waveSpawner->waveActionTargetGameObjectId = stageControllerGameObjectId;
 		}
 
@@ -889,6 +964,11 @@ bool EditorWaterRailShooterSceneBuilder::Generate(std::string& resultMessage) {
 		environment->intensity = 1.1f;
 		environment->metallic = 0.32f;
 		environment->reflectionStrength = 1.0f;
+		environment->environmentHeatIntensity = 0.22f;
+		environment->environmentHeatHorizonCenter = 0.46f;
+		environment->environmentHeatHorizonWidth = 0.15f;
+		environment->environmentHeatSunInfluence = 0.55f;
+		environment->environmentHeatDistortionScale = 0.65f;
 	}
 
 	const int32_t oceanGameObjectId = CreateGameObject(
@@ -901,24 +981,25 @@ bool EditorWaterRailShooterSceneBuilder::Generate(std::string& resultMessage) {
 		EditorComponentType::Ocean);
 
 	if (ocean != nullptr) {
-		// FFTの解像度・計算領域・波高を別の意味として調整する。
-		// 解像度や波高を上限へ寄せても海らしさは増えず、周期の粗い平面に見えるため使用しない。
-		ocean->oceanGridResolution = 512;
-		ocean->oceanSize = 360.0f;
-		ocean->oceanWaveHeight = 1.55f;
-		ocean->oceanMaxWaveHeight = 5.2f;
-		ocean->oceanWaveLength = 30.0f;
-		ocean->oceanWaveSpeed = 1.2f;
+		// 保存済みSceneと同じ品質値に統一し、再生成時に海面密度や波高が変わらないようにする。
+		ocean->oceanGridResolution = 2048;
+		ocean->oceanSize = 240.0f;
+		ocean->oceanWaveHeight = 1.8f;
+		ocean->oceanMaxWaveHeight = 4.5f;
+		ocean->oceanWaveLength = 28.0f;
+		ocean->oceanWaveSpeed = 1.0f;
 		ocean->oceanTimeScale = 1.0f;
-		ocean->oceanChoppiness = 0.64f;
+		ocean->oceanChoppiness = 0.65f;
 		ocean->oceanWindSpeed = 16.0f;
 		ocean->oceanWaterDepth = 80.0f;
 		ocean->oceanDirectionSpread = 0.48f;
 		ocean->oceanSwellStrength = 0.72f;
 		ocean->oceanCrestSharpness = 0.34f;
-		ocean->oceanRoughness = 0.12f;
-		ocean->oceanReflectionStrength = 0.82f;
-		ocean->oceanDetailNormalStrength = 0.3f;
+		// 強風時でも面全体が鏡面化しない粗さと反射率を基準にする。
+		// SUNの明るさとは分離し、正面視では水色、浅い角度では空反射を残す。
+		ocean->oceanRoughness = 0.22f;
+		ocean->oceanReflectionStrength = 0.58f;
+		ocean->oceanDetailNormalStrength = 0.12f;
 		ocean->oceanAbsorptionDistance = 30.0f;
 		ocean->oceanRefractionDistortion = 0.032f;
 		// 深い色を明るくし、波の起伏が暗転で潰れないようにする。
@@ -926,6 +1007,34 @@ bool EditorWaterRailShooterSceneBuilder::Generate(std::string& resultMessage) {
 		ocean->oceanDeepColor = {0.012f, 0.14f, 0.26f};
 		ocean->oceanFoamStrength = 0.48f;
 		ocean->oceanFoamThreshold = 0.55f;
+		ocean->oceanSunSpecularInfluence = 0.55f;
+		ocean->oceanSunGlitterInfluence = 0.32f;
+		ocean->oceanSkyReflectionInfluence = 0.72f;
+		ocean->oceanDiffuseFloor = 0.12f;
+		ocean->oceanGlitterIntensity = 0.75f;
+		ocean->oceanGlitterSharpness = 0.76f;
+		ocean->oceanGlitterDensity = 1.25f;
+		ocean->oceanGlitterThreshold = 0.62f;
+		ocean->oceanGlitterMaxClamp = 3.5f;
+		// 大波の向きを環境反射へ残し、中波で広い斜面を分割する。
+		// 曲率色と谷遮蔽は弱く保ち、色の縞や黒い櫛状の強調を避ける。
+		ocean->oceanMacroReflectionInfluence = 1.0f;
+		ocean->oceanCurvatureInfluence = 1.0f;
+		ocean->oceanTroughOcclusionStrength = 0.25f;
+		ocean->oceanCrestHazeStrength = 0.16f;
+		ocean->oceanCrestDetailBoost = 0.18f;
+		ocean->oceanSlopeRefractionInfluence = 0.35f;
+		ocean->oceanMediumWaveStrength = 1.35f;
+		ocean->oceanWaveColorSeparation = 0.22f;
+		ocean->oceanShapeRoughnessVariation = 0.18f;
+		ocean->oceanDetailFilterSharpness = 1.55f;
+		ocean->oceanGrazingShapeVisibility = 0.35f;
+		ocean->oceanPerPixelDisplacementStrength = 0.0f;
+		ocean->oceanPerPixelDisplacementSteps = 5;
+		ocean->oceanPerPixelDisplacementDistance = 50.0f;
+		ocean->oceanGpuTessellationEnabled = true;
+		ocean->oceanTessellationTargetPixels = 8.0f;
+		ocean->oceanTessellationMaximumFactor = 8.0f;
 	}
 
 	const int32_t sunGameObjectId = CreateGameObject(
@@ -1056,7 +1165,7 @@ bool EditorWaterRailShooterSceneBuilder::Generate(std::string& resultMessage) {
 	const int32_t playerGameObjectId = CreateModel(
 		editorScene,
 		"PlayerShip",
-		"resources/model/Ship/Player.fbx",
+		"resources/model/Ship/senntai.fbx",
 		{0.0f, 1.4f, 0.0f},
 		{1.0f, 1.0f, 1.0f},
 		{0.58f, 0.66f, 0.72f},
@@ -1089,6 +1198,10 @@ bool EditorWaterRailShooterSceneBuilder::Generate(std::string& resultMessage) {
 		editorScene,
 		playerGameObjectId,
 		EditorComponentType::WeaponLoadout);
+	EditorComponent* surfaceWake = AddComponent(
+		editorScene,
+		playerGameObjectId,
+		EditorComponentType::SurfaceWakeEmitter);
 	AddScript(editorScene, playerGameObjectId);
 	AddComponent(editorScene, playerGameObjectId, EditorComponentType::Saveable);
 	AddDamageable(
@@ -1099,6 +1212,21 @@ bool EditorWaterRailShooterSceneBuilder::Generate(std::string& resultMessage) {
 		"OnPlayerDestroyed",
 		false);
 	AddTeamAndTarget(editorScene, playerGameObjectId, 0, 3.5f, {0.0f, 1.4f, 0.0f});
+	const int32_t leftWakeEffectGameObjectId = CreateWakeEffect(
+		editorScene,
+		"FX Wake Left",
+		{-1.35f, 0.0f, -4.2f},
+		playerGameObjectId);
+	const int32_t rightWakeEffectGameObjectId = CreateWakeEffect(
+		editorScene,
+		"FX Wake Right",
+		{1.35f, 0.0f, -4.2f},
+		playerGameObjectId);
+	const int32_t bowWakeEffectGameObjectId = CreateWakeEffect(
+		editorScene,
+		"FX Wake Bow",
+		{0.0f, 0.0f, 4.8f},
+		playerGameObjectId);
 
 	if (playerRigidBody != nullptr) {
 		playerRigidBody->automaticMassFromCollider = true;
@@ -1115,7 +1243,7 @@ bool EditorWaterRailShooterSceneBuilder::Generate(std::string& resultMessage) {
 	}
 
 	if (playerCollider != nullptr) {
-		playerCollider->assetPath = "resources/model/Ship/Player.fbx";
+		playerCollider->assetPath = "resources/model/Ship/senntai.fbx";
 		playerCollider->autoConvexMaximumHulls = 16;
 	}
 
@@ -1155,8 +1283,8 @@ bool EditorWaterRailShooterSceneBuilder::Generate(std::string& resultMessage) {
 		railMovement->railLocalForwardAxis = 0;
 		railMovement->railShipHorizontalThrust = true;
 		railMovement->railShipLateralAssist = 0.22f;
-		railMovement->railMovementRange = {8.0f, 2.0f};
-		railMovement->railOffsetMoveSpeed = 9.0f;
+		railMovement->railMovementRange = {24.0f, 3.0f};
+		railMovement->railOffsetMoveSpeed = 16.0f;
 		railMovement->railUsePlayerInput = true;
 		railMovement->railInputActionMapName = "Player";
 		railMovement->railInputActionName = "Move";
@@ -1189,6 +1317,21 @@ bool EditorWaterRailShooterSceneBuilder::Generate(std::string& resultMessage) {
 		loadout->weaponLoadoutSelectedSlotIndex = 0;
 		loadout->weaponLoadoutActionTargetGameObjectId = stageControllerGameObjectId;
 		loadout->weaponLoadoutChangedActionName = "OnLoadoutChanged";
+	}
+
+	if (surfaceWake != nullptr) {
+		surfaceWake->surfaceWakeOceanGameObjectId = oceanGameObjectId;
+		surfaceWake->surfaceWakeLeftEffectGameObjectId = leftWakeEffectGameObjectId;
+		surfaceWake->surfaceWakeRightEffectGameObjectId = rightWakeEffectGameObjectId;
+		surfaceWake->surfaceWakeBowEffectGameObjectId = bowWakeEffectGameObjectId;
+		surfaceWake->surfaceWakeMinimumSpeed = 1.0f;
+		surfaceWake->surfaceWakeMaximumSpeed = 30.0f;
+		surfaceWake->surfaceWakeWidth = 2.2f;
+		surfaceWake->surfaceWakeLifetime = 1.2f;
+		surfaceWake->surfaceWakeMaximumEmissionRate = 100.0f;
+		surfaceWake->surfaceWakeAffectOceanSurface = true;
+		surfaceWake->surfaceWakeWaveAmplitudeScale = 0.08f;
+		surfaceWake->surfaceWakeWaveRadiusScale = 4.5f;
 	}
 
 	const int32_t cameraGameObjectId = CreateGameObject(
@@ -1224,6 +1367,15 @@ bool EditorWaterRailShooterSceneBuilder::Generate(std::string& resultMessage) {
 
 	if (horizonStabilizer != nullptr) {
 		horizonStabilizer->connectedGameObjectId = playerGameObjectId;
+		horizonStabilizer->horizonSourceGameObjectId = playerGameObjectId;
+		horizonStabilizer->horizonLocalPositionOffset = {0.0f, 6.2f, -14.0f};
+		horizonStabilizer->horizonRotationOffsetDegrees = {5.729578f, 0.0f, 0.0f};
+		horizonStabilizer->horizonPitchInheritance = 0.18f;
+		horizonStabilizer->horizonYawInheritance = 1.0f;
+		horizonStabilizer->horizonRollInheritance = 0.08f;
+		horizonStabilizer->horizonDamping = 6.0f;
+		horizonStabilizer->horizonMaximumRollDegrees = 4.0f;
+		horizonStabilizer->horizonFollowPosition = true;
 	}
 
 	//================================================================
@@ -1344,6 +1496,7 @@ bool EditorWaterRailShooterSceneBuilder::Generate(std::string& resultMessage) {
 		weapon20GameObjectId,
 		EditorComponentType::HitscanWeapon);
 	ConfigureAttackFilter(editorScene, weapon20GameObjectId);
+	ConfigureImpactResponder(editorScene, weapon20GameObjectId);
 
 	if (weapon20 != nullptr) {
 		weapon20->hitscanAimGameObjectId = playerGameObjectId;
@@ -1364,6 +1517,7 @@ bool EditorWaterRailShooterSceneBuilder::Generate(std::string& resultMessage) {
 		weapon40GameObjectId,
 		EditorComponentType::HitscanWeapon);
 	ConfigureAttackFilter(editorScene, weapon40GameObjectId);
+	ConfigureImpactResponder(editorScene, weapon40GameObjectId);
 
 	if (weapon40 != nullptr) {
 		weapon40->hitscanAimGameObjectId = playerGameObjectId;
@@ -1881,25 +2035,25 @@ bool EditorWaterRailShooterSceneBuilder::Generate(std::string& resultMessage) {
 		{1.0f, 0.28f, 0.12f},
 		true,
 		canvasGameObjectId);
-	const int32_t bossHealthTextGameObjectId = CreateText(
+	const int32_t weaponNameTextGameObjectId = CreateText(
 		editorScene,
-		"HUD Boss HP",
-		"BOSS ",
+		"HUD Current Weapon",
+		"WEAPON: MAIN GUN",
 		{480.0f, 24.0f},
 		{320.0f, 34.0f},
-		{1.0f, 0.28f, 0.16f},
-		false,
+		{1.0f, 0.78f, 0.24f},
+		true,
 		canvasGameObjectId);
-	EditorComponent* bossHealthBinding = AddComponent(
+	EditorComponent* weaponNameBinding = AddComponent(
 		editorScene,
-		bossHealthTextGameObjectId,
+		weaponNameTextGameObjectId,
 		EditorComponentType::UIValueBinding);
 
-	if (bossHealthBinding != nullptr) {
-		bossHealthBinding->uiBindingSourceGameObjectId = bossGameObjectId;
-		bossHealthBinding->uiBindingValueType = 0;
-		bossHealthBinding->uiBindingPrefix = "BOSS ";
-		bossHealthBinding->uiBindingPrecision = 0;
+	if (weaponNameBinding != nullptr) {
+		weaponNameBinding->uiBindingSourceGameObjectId = playerGameObjectId;
+		weaponNameBinding->uiBindingValueType = 5;
+		weaponNameBinding->uiBindingPrefix = "WEAPON: ";
+		weaponNameBinding->uiBindingPrecision = 0;
 	}
 
 	const int32_t shopRootGameObjectId = CreateGameObject(editorScene, "SHOP UI", canvasGameObjectId);

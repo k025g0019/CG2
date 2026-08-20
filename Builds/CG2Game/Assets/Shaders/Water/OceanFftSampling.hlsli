@@ -1,6 +1,49 @@
 ﻿StructuredBuffer<float4> gOceanFftDisplacement : register(t14);
 StructuredBuffer<float4> gOceanFftNormalFoam : register(t15);
 
+//================================================================
+// 局所的な水面インタラクション
+//================================================================
+
+void ApplyOceanInteraction(
+    float4 interaction,
+    float oceanTime,
+    inout float4 localPosition,
+    inout float3 localNormal)
+{
+    const float interactionRadius = max(interaction.w, 0.0f);
+    const float interactionAmplitude = interaction.z;
+
+    if (interactionRadius <= 0.001f || abs(interactionAmplitude) <= 0.0001f)
+    {
+        return;
+    }
+
+    const float2 centerOffset = localPosition.xz - interaction.xy;
+    const float centerDistance = length(centerOffset);
+
+    if (centerDistance >= interactionRadius)
+    {
+        return;
+    }
+
+    const float2 radialDirection = centerOffset / max(centerDistance, 0.0001f);
+    const float normalizedDistance = centerDistance / interactionRadius;
+    const float envelope = (1.0f - normalizedDistance) * (1.0f - normalizedDistance);
+    const float envelopeDerivative = -2.0f * (1.0f - normalizedDistance) / interactionRadius;
+    const float waveNumber = 6.28318530718f / max(interactionRadius * 0.35f, 0.5f);
+    const float phase = centerDistance * waveNumber - oceanTime * 4.0f;
+    const float waveSin = sin(phase);
+    const float waveCos = cos(phase);
+    const float radialSlope = interactionAmplitude *
+        (waveNumber * waveCos * envelope + waveSin * envelopeDerivative);
+    localPosition.y += interactionAmplitude * waveSin * envelope;
+    localNormal = normalize(localNormal + float3(
+        -radialDirection.x * radialSlope,
+        0.0f,
+        -radialDirection.y * radialSlope));
+}
+
 uint2 WrapOceanFftIndex(int2 index, uint fftResolution)
 {
     const uint resolutionMask = fftResolution - 1u;
@@ -101,5 +144,5 @@ void ApplyOceanFftDisplacement(
         saturate(normalFoam.w),
         gTransformationMatrix.oceanParams0.y * gTransformationMatrix.oceanParams3.z,
         max(farDetailWeight, 0.35f),
-        saturate(displacement.w));
+        clamp(displacement.w, -1.0f, 1.0f));
 }

@@ -3,6 +3,7 @@
 #pragma warning(push, 0)
 #include <Windows.h>
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <chrono>
 #include <cmath>
@@ -51,6 +52,7 @@
 #include "EditorGpuCullingManager.h"
 #include "EditorOceanFftManager.h"
 #include "EditorGpuParticleManager.h"
+#include "EditorVfxRenderer.h"
 #include "EditorGBufferManager.h"
 #include "EditorPostProcessQualityManager.h"
 #include "EditorTemporalRenderingManager.h"
@@ -676,6 +678,7 @@ namespace EditorSharedState {
 	constexpr uint32_t kRuntimeOitAccumulationSrvDescriptorIndex = 120u;
 	constexpr uint32_t kRuntimeOitRevealageSrvDescriptorIndex = 121u;
 	constexpr uint32_t kRuntimeOitRevealageDuplicateSrvDescriptorIndex = 122u;
+	constexpr uint32_t kRuntimeOpaqueDepthCopySrvDescriptorIndex = 114u;
 	constexpr uint32_t kRuntimeRtvCount = 14; // swap2 + HDR/Bloom/Post/SSAO/Composite/Mask/Planar + OIT 2枚
 	inline HINSTANCE g_instanceHandle = nullptr; // g_instanceHandle �� Win32 Window �� DirectInput �������Ɏg���A�v�����́B
 	inline int g_exitCode = 0; // g_exitCode �� WinMain �֕Ԃ��I���R�[�h�B
@@ -744,6 +747,9 @@ namespace EditorSharedState {
 	inline ID3D12Resource* g_depthStencilResource = nullptr; // g_depthStencilResource �� 3D �`��̑O��֌W�𔻒肷�� Depth �o�b�t�@�B
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_depthSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_depthSrvHandleGPU{};
+	inline ID3D12Resource* g_opaqueDepthCopyResource = nullptr;
+	inline D3D12_CPU_DESCRIPTOR_HANDLE g_opaqueDepthCopySrvHandleCPU{};
+	inline D3D12_GPU_DESCRIPTOR_HANDLE g_opaqueDepthCopySrvHandleGPU{};
 	inline ID3D12Resource* g_shadowMapResource = nullptr; // ���s�������猩���[�x���������މe�p DepthTexture�B
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_shadowMapSrvCpuHandle{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_shadowMapSrvGpuHandle{};
@@ -848,6 +854,7 @@ namespace EditorSharedState {
 	inline ComPtr<ID3D12PipelineState> g_weightedOitPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_weightedOitCullNonePipelineState;
 	inline ComPtr<ID3D12PipelineState> g_waterSurfacePipelineState;  // Opaque Color / Depth を読む水面専用パス
+	inline ComPtr<ID3D12PipelineState> g_waterTessellationPipelineState;  // 画面Pixel密度からOceanをGPU細分化する専用パス
 	inline ComPtr<ID3D12PipelineState> g_refractiveSurfacePipelineState;
 	inline ComPtr<ID3D12PipelineState> g_refractiveSurfaceCullNonePipelineState;
 	inline ComPtr<ID3D12PipelineState> g_shadowPipelineState;
@@ -878,6 +885,7 @@ namespace EditorSharedState {
 	inline EditorGpuCullingManager g_gpuCullingManager;
 	inline EditorOceanFftManager g_oceanFftManager;
 	inline EditorGpuParticleManager g_gpuParticleManager;
+	inline EditorVfxRenderer g_vfxRenderer;  // Stage1 VFX(Billboard/Flipbook/Ribbon/Ring)専用の最小GPU描画担当。
 	inline EditorPostProcessQualityManager g_postProcessQualityManager;
 	inline EditorTemporalRenderingManager g_temporalRenderingManager;
 	// IBL uses existing root signature with added descriptor ranges
@@ -987,6 +995,13 @@ namespace EditorSharedState {
 	inline Transforms g_runtimeGameCameraOverrideTransform{};  // CameraBlendが計算したWorld姿勢。
 	inline Vector3 g_runtimeGameCameraPositionOffset{};  // CameraShakeが加えるWorld位置差分。
 	inline Vector3 g_runtimeGameCameraRotationOffset{};  // CameraShakeが加える回転差分rad。
+
+#ifdef USE_IMGUI
+	// Text/TextMeshProUGUIのtextFontIndexが選ぶFont候補。0番は既定Font(io.FontDefault)と同じものを指す。
+	// EditorPlatformManager.cpp の初期化でAddFontFromFileTTFした結果をここへ格納する。
+	inline constexpr int32_t kUiFontVariantCount = 5;
+	inline std::array<ImFont*, kUiFontVariantCount> g_uiFontVariants{};
+#endif
 
 	// g_spriteProjectionMatrix �� Sprite ����ʍ��W�ŕ\�����邽�߂̐��ˉe�s��B
 	inline Matrix4x4 g_spriteProjectionMatrix{};
@@ -1210,6 +1225,32 @@ namespace EditorSharedState {
 		return resource;
 	}
 
+	inline ID3D12Resource* CreateRuntimeOpaqueDepthCopyResource(uint32_t width, uint32_t height) {
+		D3D12_HEAP_PROPERTIES heapProperties{};
+		heapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+		D3D12_RESOURCE_DESC resourceDesc{};
+		resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		resourceDesc.Width = width;
+		resourceDesc.Height = height;
+		resourceDesc.DepthOrArraySize = 1;
+		resourceDesc.MipLevels = 1;
+		resourceDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+		resourceDesc.SampleDesc.Count = 1;
+		resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+		ID3D12Resource* resource = nullptr;
+		const HRESULT createResult = g_device->CreateCommittedResource(
+			&heapProperties,
+			D3D12_HEAP_FLAG_NONE,
+			&resourceDesc,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+			&g_depthClearValue,
+			IID_PPV_ARGS(&resource));
+		assert(SUCCEEDED(createResult));
+		return resource;
+	}
+
 	inline void WaitForGpu() {
 		g_fenceValue++; // g_fenceValue ��i�߂āA���̃t���[���ő҂� GPU �����ԍ������B
 		HRESULT signalResult = g_commandQueue->Signal(g_fence.Get(), g_fenceValue);
@@ -1266,6 +1307,11 @@ namespace EditorSharedState {
 			g_depthStencilResource = nullptr;
 		}
 
+		if (g_opaqueDepthCopyResource != nullptr) {
+			g_opaqueDepthCopyResource->Release();
+			g_opaqueDepthCopyResource = nullptr;
+		}
+
 		g_renderWidth = width; // g_renderWidth / Height �͐V������� back buffer �T�C�Y�B
 		g_renderHeight = height;
 
@@ -1289,6 +1335,7 @@ namespace EditorSharedState {
 		}
 
 		g_depthStencilResource = CreateRuntimeDepthStencilResource(g_renderWidth, g_renderHeight);
+		g_opaqueDepthCopyResource = CreateRuntimeOpaqueDepthCopyResource(g_renderWidth, g_renderHeight);
 		// DepthStencil ���V�����`��T�C�Y�ɍ��킹�čč쐬����B
 		g_device->CreateDepthStencilView(g_depthStencilResource, &g_dsvDesc, g_dsvHandle);
 
@@ -1301,6 +1348,19 @@ namespace EditorSharedState {
 			g_depthSrvHandleCPU = GetCPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeDepthSrvDescriptorIndex);
 			g_depthSrvHandleGPU = GetGPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeDepthSrvDescriptorIndex);
 			g_device->CreateShaderResourceView(g_depthStencilResource, &depthSrvDesc, g_depthSrvHandleCPU);
+
+			g_opaqueDepthCopySrvHandleCPU = GetCPUDescriptorHandle(
+				g_srvDescriptorHeap,
+				g_srvDescriptorSize,
+				kRuntimeOpaqueDepthCopySrvDescriptorIndex);
+			g_opaqueDepthCopySrvHandleGPU = GetGPUDescriptorHandle(
+				g_srvDescriptorHeap,
+				g_srvDescriptorSize,
+				kRuntimeOpaqueDepthCopySrvDescriptorIndex);
+			g_device->CreateShaderResourceView(
+				g_opaqueDepthCopyResource,
+				&depthSrvDesc,
+				g_opaqueDepthCopySrvHandleCPU);
 		}
 
 		// HDR RT �� Bloom RTs ���č쐬����

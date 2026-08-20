@@ -1,5 +1,6 @@
 ﻿#include "GameScene.h"
 
+#include "ApplicationWindow.h"
 #include "EditorSharedState.h"
 
 using namespace EditorSharedState;
@@ -19,6 +20,10 @@ void GameScene::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	g_isStandaloneGame = isStandaloneGame_;
 	g_gameBuildScenePaths = gameBuildSettings_.scenePaths;
+
+	if (isStandaloneGame_) {
+		SetStandaloneWindowTitle(gameBuildSettings_.productName);
+	}
 
 	//================================================================
 	// Win32 / DirectX / 入力デバイスの初期化

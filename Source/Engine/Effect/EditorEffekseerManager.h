@@ -47,6 +47,13 @@ public:
 	bool IsEffectPlaying(int32_t gameObjectId) const;  // 指定 GameObject の生存 Handle があれば true。
 	int32_t GetAliveEffectCount(int32_t gameObjectId) const;  // Inspector 表示用の生存 Handle 数。
 
+	// GameObject を介さず任意の World 座標へ .efk / .efkefc を再生する(爆発・着弾など使い捨て演出向け)。
+	// LoadEffect の Cache を再利用するため、同じ assetPath の連続呼び出しは再ロードしない。
+	// 戻り値は SetEffectPositionAt / StopEffectAt に渡す軽量な Slot ID (失敗時 -1)。EditorGameObject は生成しない。
+	int32_t PlayEffectAt(const std::string& assetPath, const Vector3& position, const Vector3& rotationEuler = {});
+	void SetEffectPositionAt(int32_t effectAtId, const Vector3& position);  // 発生後にWorld座標を追従させたい場合に呼ぶ。
+	void StopEffectAt(int32_t effectAtId);  // 指定Slotの再生を止め、Slotを解放する。
+
 private:
 	struct EffectInstance {
 		uint64_t componentKey = 0u;  // GameObject ID と Component 種類を合わせた識別子。
@@ -65,6 +72,15 @@ private:
 	Effekseer::ManagerRef manager_;  // Effect の読み込み、再生、更新、停止を管理する本体。
 	std::unordered_map<std::string, Effekseer::EffectRef> effectCache_;  // 同じ Effect Asset の二重読み込みを防ぐ。
 	std::unordered_map<uint64_t, EffectInstance> instances_;  // Component ごとの再生状態。
+
+	// GameObjectを介さないPlayEffectAt用の軽量Slot(Sceneへ登録しない使い捨て再生)。
+	struct AnonymousEffectInstance {
+		Effekseer::Handle handle = -1;  // Effekseer Managerが返した再生Handle。
+		Vector3 position{0.0f, 0.0f, 0.0f};  // 直近に設定したWorld座標。
+		Vector3 rotationEuler{0.0f, 0.0f, 0.0f};  // 再生開始時の回転(Euler角)。
+	};
+	std::unordered_map<int32_t, AnonymousEffectInstance> anonymousInstances_;  // PlayEffectAtが払い出したSlot一覧。
+	int32_t nextAnonymousInstanceId_ = 1;  // PlayEffectAtが返すSlot IDの発行カウンタ(0/-1は無効値として予約)。
 	float elapsedTime_ = 0.0f;  // Renderer の時間依存 Material へ渡す秒数。
 	bool isPlaying_ = false;  // Play 中だけ自動再生と更新を行う。
 	bool hasPreparedDrawFrame_ = false;  // Scene / Game の両方を描いても一時GPUメモリはフレーム単位で更新する。

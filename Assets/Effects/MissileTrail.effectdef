@@ -1,0 +1,27 @@
+{
+	"id": "MissileTrail",
+	"maxConcurrentInstances": 16,
+	"lod": [
+		{ "distance": 60.0, "spawnMultiplier": 1.0 },
+		{ "distance": 150.0, "spawnMultiplier": 0.5 },
+		{ "distance": 300.0, "spawnMultiplier": 0.0 }
+	],
+	"nodes": [
+		{
+			"name": "Trail",
+			"nodeType": "Ribbon",
+			"texture": "Assets/Effects/Textures/missile_trail.png",
+			"blendMode": "AlphaBlend",
+			"sortByDistance": true,
+			"ribbonWidth": 0.35,
+			"ribbonPointLifetime": 0.8,
+			"ribbonMaxPoints": 48,
+			"ribbonMinVertexDistance": 0.15,
+			"ribbonUvScrollSpeed": 0.5,
+			"colorStart": { "x": 0.85, "y": 0.9, "z": 1.0 },
+			"colorEnd": { "x": 0.6, "y": 0.6, "z": 0.6 },
+			"alphaStart": 0.85,
+			"alphaEnd": 0.0
+		}
+	]
+}

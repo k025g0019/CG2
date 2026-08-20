@@ -19,7 +19,10 @@ cl /nologo /utf-8 /std:c++20 /EHsc /MD /O2 /FS /LD ^
  /I "%PROJECT_ROOT%\Source\Engine\Core" /I "%PROJECT_ROOT%" ^
  /Fo:"%OBJECT_DIR%\WaterRailShooter0817_release.obj" ^
  "%SCRIPT_DIR%\WaterRailShooter0817.cpp" ^
- /link /OUT:"%OUTPUT_DIR%\WaterRailShooter0817.dll"
+ /link ^
+ /OUT:"%OUTPUT_DIR%\WaterRailShooter0817.dll" ^
+ /IMPLIB:"%OBJECT_DIR%\WaterRailShooter0817_release.lib" ^
+ /PDB:"%OBJECT_DIR%\WaterRailShooter0817_release.pdb"
 if errorlevel 1 goto :build_failed
 
 popd

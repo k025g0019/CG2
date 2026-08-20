@@ -15,6 +15,7 @@
     float4 oceanWaveData1[16];
     float4 surfaceParams0;
     float4 surfaceParams1;
+    float4 oceanRenderParams;
     float4 temporalParams;
     row_major float4x4 previousWVP;
 };
@@ -46,6 +47,10 @@ struct VertexShaderOutput
     float4 currentClipPosition : TEXCOORD3;
     float4 previousClipPosition : TEXCOORD4;
     float2 motionVectorScale : TEXCOORD5;
+    float4 oceanSamplingData : TEXCOORD6;
+    nointerpolation float3 oceanWorldAxisX : TEXCOORD7;
+    nointerpolation float3 oceanWorldAxisY : TEXCOORD8;
+    nointerpolation float3 oceanWorldAxisZ : TEXCOORD9;
 };
 
 float2 NormalizeOceanDirection(float2 direction, float2 fallbackDirection)
@@ -151,6 +156,9 @@ void ApplyOceanSpectrumDisplacement(
             localNormal,
             cameraRelativePosition,
             oceanData);
+        const float oceanTime = oceanElapsedTime * gTransformationMatrix.oceanParams3.z;
+        ApplyOceanInteraction(gTransformationMatrix.surfaceParams0, oceanTime, localPosition, localNormal);
+        ApplyOceanInteraction(gTransformationMatrix.surfaceParams1, oceanTime, localPosition, localNormal);
         return;
     }
 
@@ -161,13 +169,18 @@ void ApplyOceanSpectrumDisplacement(
     localPosition.xz += oceanResult.horizontalOffset;
     localPosition.y += oceanResult.height;
     localNormal = normalize(float3(-oceanResult.gradient.x, 1.0f, -oceanResult.gradient.y));
-    const float normalizedCrestHeight = saturate(
-        oceanResult.height / max(gTransformationMatrix.oceanParams0.w, 0.001f));
+    const float oceanTime = oceanElapsedTime * gTransformationMatrix.oceanParams3.z;
+    ApplyOceanInteraction(gTransformationMatrix.surfaceParams0, oceanTime, localPosition, localNormal);
+    ApplyOceanInteraction(gTransformationMatrix.surfaceParams1, oceanTime, localPosition, localNormal);
+    const float normalizedWaveHeight = clamp(
+        oceanResult.height / max(gTransformationMatrix.oceanParams0.w, 0.001f),
+        -1.0f,
+        1.0f);
     oceanData = float4(
         oceanResult.compression,
         oceanResult.time,
         oceanResult.detailWeight,
-        normalizedCrestHeight);
+        normalizedWaveHeight);
 }
 
 VertexShaderOutput main(VertexShaderInput input)
@@ -187,6 +200,9 @@ VertexShaderOutput main(VertexShaderInput input)
         input.boneWeights,
         localPosition,
         localNormal);
+    const float4 oceanFftMetadata = gTransformationMatrix.oceanWaveData1[15];
+    const float2 oceanBasePosition =
+        localPosition.xz + gTransformationMatrix.oceanParams5.zw;
     ApplyOceanSpectrumDisplacement(
         localPosition,
         localNormal,
@@ -197,24 +213,27 @@ VertexShaderOutput main(VertexShaderInput input)
         previousLocalNormal,
         gTransformationMatrix.temporalParams.y,
         previousOceanData);
-    ApplySurfaceVertexDeformation(
-        localPosition,
-        localNormal,
-        input.texcoord,
-        gTransformationMatrix.surfaceParams0,
-        gTransformationMatrix.surfaceParams1,
-        gTransformationMatrix.oceanParams4,
-        gTransformationMatrix.oceanParams5.zw,
-        input.instanceId);
-    ApplySurfaceVertexDeformation(
-        previousLocalPosition,
-        previousLocalNormal,
-        input.texcoord,
-        gTransformationMatrix.surfaceParams0,
-        gTransformationMatrix.surfaceParams1,
-        gTransformationMatrix.oceanParams4,
-        gTransformationMatrix.oceanParams5.zw,
-        input.instanceId);
+    if (gTransformationMatrix.oceanParams0.x < 0.5f)
+    {
+        ApplySurfaceVertexDeformation(
+            localPosition,
+            localNormal,
+            input.texcoord,
+            gTransformationMatrix.surfaceParams0,
+            gTransformationMatrix.surfaceParams1,
+            gTransformationMatrix.oceanParams4,
+            gTransformationMatrix.oceanParams5.zw,
+            input.instanceId);
+        ApplySurfaceVertexDeformation(
+            previousLocalPosition,
+            previousLocalNormal,
+            input.texcoord,
+            gTransformationMatrix.surfaceParams0,
+            gTransformationMatrix.surfaceParams1,
+            gTransformationMatrix.oceanParams4,
+            gTransformationMatrix.oceanParams5.zw,
+            input.instanceId);
+    }
 
     const float4 worldPosition = mul(localPosition, gTransformationMatrix.World);
     output.position = mul(localPosition, gTransformationMatrix.WVP);
@@ -224,5 +243,20 @@ VertexShaderOutput main(VertexShaderInput input)
     output.texcoord = input.texcoord;
     output.normal = normalize(mul(float4(localNormal, 0.0f), gTransformationMatrix.World).xyz);
     output.worldPosition = worldPosition.xyz;
+    output.oceanSamplingData = gTransformationMatrix.oceanParams0.x >= 1.5f
+        ? float4(
+            oceanBasePosition,
+            oceanFftMetadata.x,
+            oceanFftMetadata.z)
+        : float4(0.0f, 0.0f, 0.0f, 0.0f);
+    output.oceanWorldAxisX = mul(
+        float4(1.0f, 0.0f, 0.0f, 0.0f),
+        gTransformationMatrix.World).xyz;
+    output.oceanWorldAxisY = mul(
+        float4(0.0f, 1.0f, 0.0f, 0.0f),
+        gTransformationMatrix.World).xyz;
+    output.oceanWorldAxisZ = mul(
+        float4(0.0f, 0.0f, 1.0f, 0.0f),
+        gTransformationMatrix.World).xyz;
     return output;
 }

@@ -22,7 +22,14 @@ struct EditorRailRuntimeSample {
 
 struct EditorRailFollowerRuntimeState {
 	std::vector<EditorRailRuntimeSample> samples;  // 形状が変わるまで再利用するレールサンプル。
-	float traveledDistance = 0.0f;  // 現在のレール上距離。
+	float traveledDistance = 0.0f;  // Gameplay Rail Progress。敵出現・イベント等が参照する現在のレール上距離。
+	// Safetyで物理速度を落としても止まらず基準速度で進み続ける(スポーン・進行イベントを止めないため)。
+	// Mode 1: Position PD が実際に追う目標位置の距離。Yaw/Pitch/Roll Safetyで落とした物理速度分だけ
+	// traveledDistanceより遅れて進み、危険域を抜けるとrailPhysicalCatchupSpeedMultiplierの範囲で追いつく。
+	// Mode 2: 船体位置から求めたRail上の最近傍距離(FindClosestRailDistanceで毎フレーム直接上書き)。
+	float physicalTraveledDistance = 0.0f;
+	bool isPhysicalDistanceInitialized = false;  // physicalTraveledDistanceをtraveledDistanceへ同期済みなら true。
+	float currentEngineAcceleration = 0.0f;  // Mode 2オートパイロットのエンジン加速度。立ち上がり・立ち下がりの応答を持たせるため前フレーム値を保持する。
 	float totalDistance = 0.0f;  // キャッシュ済みレール全長。
 	float currentSpeed = 0.0f;  // 加減速を適用した現在速度。
 	float targetSpeedMultiplier = 1.0f;  // Speed ProfileとZoneを合成した現在倍率。
@@ -54,6 +61,7 @@ public:
 	void Start();  // Play 開始時に走行距離を初期化する。
 	void Update(float deltaTime);  // 子ウェイポイントから曲線を作り、追従対象を進める。
 	void FixedUpdate(float fixedDeltaTime);  // Dynamic Rigidbody の物理追従力を Jolt 更新直前に加える。
+	void PostFixedUpdate(float fixedDeltaTime);  // Jolt積分・最終姿勢確定後にPitch/Roll絶対角度制限のHard Clampを適用する。
 	void Draw();  // Rail の専用デバッグ描画はまだ行わない。
 	void Stop();  // Runtime の一時停止。Additive Scene 再構築に備えて走行状態は保持する。
 	void ResetSessionState();  // Play 開始・終了または通常 Scene 遷移で走行状態を破棄する。

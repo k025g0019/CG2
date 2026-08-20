@@ -5,6 +5,7 @@
 #include "EditorTargetingManager.h"
 
 #include <cstdint>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -13,6 +14,7 @@
 
 class EditorDamageManager;
 class EditorEffectManager;
+class EditorVfxManager;
 class EditorAudioManager;
 class EditorCameraEffectManager;
 class EditorInputManager;
@@ -39,8 +41,10 @@ public:
 		EditorObjectPoolManager* objectPoolManager,
 		EditorScriptManager* scriptManager,
 		EditorEffectManager* effectManager,
+		EditorVfxManager* vfxManager,
 		EditorAudioManager* audioManager,
-		EditorCameraEffectManager* cameraEffectManager);  // 武器が利用する独立Systemを接続する
+		EditorCameraEffectManager* cameraEffectManager,
+		std::vector<std::string>* consoleMessages);  // 武器が利用する独立Systemと判定Log出力先を接続する
 	void Start();  // Cooldownと飛翔中Projectileを初期化する
 	void Update(float deltaTime);  // Fire入力、Hitscan、Projectile移動を更新する
 	void Stop();  // 飛翔中ProjectileをPoolへ戻してRuntime状態を破棄する
@@ -59,6 +63,24 @@ public:
 		std::vector<ThreatInfo>& threats) const;  // 接近軌道にあるProjectileを到達予測順で返す
 	void ResetRuntimeState(int32_t gameObjectId);  // Pool再利用時に武器Cooldownを初期化する
 	int32_t GetActiveProjectileCount() const { return static_cast<int32_t>(activeProjectiles_.size()); }  // 飛翔中Projectile数。System向けLog Providerが参照する
+	uint64_t GetHitscanCollisionSequence() const { return hitscanCollisionSequence_; }
+	const std::string& GetLastHitscanCollisionResult() const { return lastHitscanCollisionResult_; }
+	int32_t GetLastHitscanRawHitGameObjectId() const { return lastHitscanRawHitGameObjectId_; }
+	int32_t GetLastHitscanDamageTargetGameObjectId() const { return lastHitscanDamageTargetGameObjectId_; }
+	float GetLastHitscanHitDistance() const { return lastHitscanHitDistance_; }
+	float GetLastHitscanAppliedDamage() const { return lastHitscanAppliedDamage_; }
+	float GetLastHitscanHealthBefore() const { return lastHitscanHealthBefore_; }
+	float GetLastHitscanHealthAfter() const { return lastHitscanHealthAfter_; }
+	uint64_t GetProjectileCollisionSequence() const { return projectileCollisionSequence_; }
+	const std::string& GetLastProjectileCollisionResult() const { return lastProjectileCollisionResult_; }
+	int32_t GetLastProjectileGameObjectId() const { return lastProjectileGameObjectId_; }
+	int32_t GetLastProjectileRawHitGameObjectId() const { return lastProjectileRawHitGameObjectId_; }
+	const std::string& GetLastProjectileRawHitGameObjectName() const { return lastProjectileRawHitGameObjectName_; }
+	int32_t GetLastProjectileDamageTargetGameObjectId() const { return lastProjectileDamageTargetGameObjectId_; }
+	float GetLastProjectileHitDistance() const { return lastProjectileHitDistance_; }
+	float GetLastProjectileAppliedDamage() const { return lastProjectileAppliedDamage_; }
+	float GetLastProjectileHealthBefore() const { return lastProjectileHealthBefore_; }
+	float GetLastProjectileHealthAfter() const { return lastProjectileHealthAfter_; }
 
 private:
 	struct ActiveProjectile {
@@ -134,9 +156,11 @@ private:
 	EditorDamageManager* damageManager_ = nullptr;  // 命中対象へDamageを送るManager
 	EditorObjectPoolManager* objectPoolManager_ = nullptr;  // Projectile表示Objectを貸し借りするManager
 	EditorScriptManager* scriptManager_ = nullptr;  // 発射・命中Action通知先
-	EditorEffectManager* effectManager_ = nullptr;  // Surface別Effectを命中位置へ再生する
+	EditorEffectManager* effectManager_ = nullptr;  // 旧GPU ParticleのVisualEffectを再生する(未使用アセット向けの汎用フォールバック)
+	EditorVfxManager* vfxManager_ = nullptr;  // .effectdefベースの新VFX。ImpactResponderのeffectAssetPathはこちらで解決する
 	EditorAudioManager* audioManager_ = nullptr;  // Surface別AudioSourceを再生する
 	EditorCameraEffectManager* cameraEffectManager_ = nullptr;  // RecoilとImpactのCamera Shakeを再生する
+	std::vector<std::string>* consoleMessages_ = nullptr;  // Consoleへ射撃判定Eventを表示する
 	std::unordered_map<int32_t, float> hitscanCooldowns_;  // HitscanWeapon所有者ごとの残り発射間隔
 	std::unordered_map<int32_t, float> projectileCooldowns_;  // ProjectileEmitter所有者ごとの残り発射間隔
 	std::vector<ActiveProjectile> activeProjectiles_;  // 飛翔中Projectileの連続判定状態
@@ -145,7 +169,45 @@ private:
 	std::unordered_map<int32_t, VisualRecoilRuntime> visualRecoilRuntimes_;  // Weapon所有者ごとの表示反動差分
 	uint32_t accuracyRandomState_ = 0x434732u;  // Playごとに再現可能なSpread乱数
 	uint32_t nextOceanQueryInstanceId_ = 1u;  // Projectile発射ごとに一意なFFT Surface Sample Key発行用
+	uint64_t hitscanCollisionSequence_ = 0u;  // 同じ結果が連続してもLog監視が変化を識別する番号
+	std::string lastHitscanCollisionResult_ = "NotFired";
+	int32_t lastHitscanRawHitGameObjectId_ = -1;
+	int32_t lastHitscanDamageTargetGameObjectId_ = -1;
+	float lastHitscanHitDistance_ = -1.0f;
+	float lastHitscanAppliedDamage_ = 0.0f;
+	float lastHitscanHealthBefore_ = -1.0f;
+	float lastHitscanHealthAfter_ = -1.0f;
+	uint64_t projectileCollisionSequence_ = 0u;  // Projectile命中ログの更新番号
+	std::string lastProjectileCollisionResult_ = "NotFired";
+	int32_t lastProjectileGameObjectId_ = -1;
+	int32_t lastProjectileRawHitGameObjectId_ = -1;
+	std::string lastProjectileRawHitGameObjectName_ = "-";
+	int32_t lastProjectileDamageTargetGameObjectId_ = -1;
+	float lastProjectileHitDistance_ = -1.0f;
+	float lastProjectileAppliedDamage_ = 0.0f;
+	float lastProjectileHealthBefore_ = -1.0f;
+	float lastProjectileHealthAfter_ = -1.0f;
+	int32_t collisionLogCount_ = 0;  // Play中の大量連射でConsoleを無制限に増やさない
 	bool isStarted_ = false;  // Play中だけ入力と飛翔を更新する
+
+	void RecordHitscanCollision(
+		const std::string& result,
+		int32_t weaponGameObjectId,
+		int32_t rawHitGameObjectId,
+		int32_t damageTargetGameObjectId,
+		float hitDistance,
+		float appliedDamage,
+		float healthBefore,
+		float healthAfter);  // Log監視用状態とConsole Eventを同時に更新する
+	void RecordProjectileCollision(
+		const std::string& result,
+		int32_t projectileGameObjectId,
+		int32_t rawHitGameObjectId,
+		int32_t damageTargetGameObjectId,
+		float hitDistance,
+		float appliedDamage,
+		float healthBefore,
+		float healthAfter);  // ProjectileのPhysics/Ocean命中とDamage結果をLog監視へ残す
 
 	bool ShouldFire(
 		const EditorGameObject& gameObject,

@@ -1,6 +1,7 @@
 ﻿#include "EditorWeaponManager.h"
 
 #include "Source/Engine/Effect/EditorEffectManager.h"
+#include "Source/Engine/Effect/EditorVfxManager.h"
 #include "EditorAudioManager.h"
 #include "EditorCameraEffectManager.h"
 #include "EditorComponentUtility.h"
@@ -15,10 +16,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
+#include <sstream>
 
 namespace {
 	constexpr float kWeaponEpsilon = 0.0001f;
 	constexpr float kProjectileAimDistance = 1000.0f;
+	constexpr float kHitscanCollisionRadius = 0.15f;
 	constexpr float kDegreesToRadians = 0.01745329251994329577f;
 
 	Vector3 AddVector3(const Vector3& firstValue, const Vector3& secondValue) {
@@ -93,8 +97,10 @@ void EditorWeaponManager::Initialize(
 	EditorObjectPoolManager* objectPoolManager,
 	EditorScriptManager* scriptManager,
 	EditorEffectManager* effectManager,
+	EditorVfxManager* vfxManager,
 	EditorAudioManager* audioManager,
-	EditorCameraEffectManager* cameraEffectManager) {
+	EditorCameraEffectManager* cameraEffectManager,
+	std::vector<std::string>* consoleMessages) {
 	editorScene_ = editorScene;
 	inputManager_ = inputManager;
 	targetingManager_ = targetingManager;
@@ -103,14 +109,35 @@ void EditorWeaponManager::Initialize(
 	objectPoolManager_ = objectPoolManager;
 	scriptManager_ = scriptManager;
 	effectManager_ = effectManager;
+	vfxManager_ = vfxManager;
 	audioManager_ = audioManager;
 	cameraEffectManager_ = cameraEffectManager;
+	consoleMessages_ = consoleMessages;
 	hitscanCooldowns_.clear();
 	projectileCooldowns_.clear();
 	activeProjectiles_.clear();
 	pendingShots_.clear();
 	pendingWeaponGroupShots_.clear();
 	visualRecoilRuntimes_.clear();
+	hitscanCollisionSequence_ = 0u;
+	lastHitscanCollisionResult_ = "NotFired";
+	lastHitscanRawHitGameObjectId_ = -1;
+	lastHitscanDamageTargetGameObjectId_ = -1;
+	lastHitscanHitDistance_ = -1.0f;
+	lastHitscanAppliedDamage_ = 0.0f;
+	lastHitscanHealthBefore_ = -1.0f;
+	lastHitscanHealthAfter_ = -1.0f;
+	projectileCollisionSequence_ = 0u;
+	lastProjectileCollisionResult_ = "NotFired";
+	lastProjectileGameObjectId_ = -1;
+	lastProjectileRawHitGameObjectId_ = -1;
+	lastProjectileRawHitGameObjectName_ = "-";
+	lastProjectileDamageTargetGameObjectId_ = -1;
+	lastProjectileHitDistance_ = -1.0f;
+	lastProjectileAppliedDamage_ = 0.0f;
+	lastProjectileHealthBefore_ = -1.0f;
+	lastProjectileHealthAfter_ = -1.0f;
+	collisionLogCount_ = 0;
 	isStarted_ = false;
 }
 
@@ -122,6 +149,25 @@ void EditorWeaponManager::Start() {
 	pendingWeaponGroupShots_.clear();
 	visualRecoilRuntimes_.clear();
 	accuracyRandomState_ = 0x434732u;
+	hitscanCollisionSequence_ = 0u;
+	lastHitscanCollisionResult_ = "NotFired";
+	lastHitscanRawHitGameObjectId_ = -1;
+	lastHitscanDamageTargetGameObjectId_ = -1;
+	lastHitscanHitDistance_ = -1.0f;
+	lastHitscanAppliedDamage_ = 0.0f;
+	lastHitscanHealthBefore_ = -1.0f;
+	lastHitscanHealthAfter_ = -1.0f;
+	projectileCollisionSequence_ = 0u;
+	lastProjectileCollisionResult_ = "NotFired";
+	lastProjectileGameObjectId_ = -1;
+	lastProjectileRawHitGameObjectId_ = -1;
+	lastProjectileRawHitGameObjectName_ = "-";
+	lastProjectileDamageTargetGameObjectId_ = -1;
+	lastProjectileHitDistance_ = -1.0f;
+	lastProjectileAppliedDamage_ = 0.0f;
+	lastProjectileHealthBefore_ = -1.0f;
+	lastProjectileHealthAfter_ = -1.0f;
+	collisionLogCount_ = 0;
 
 	if (editorScene_ != nullptr) {
 		for (EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
@@ -144,6 +190,92 @@ void EditorWeaponManager::Start() {
 		}
 	}
 	isStarted_ = true;
+}
+
+void EditorWeaponManager::RecordHitscanCollision(
+	const std::string& result,
+	int32_t weaponGameObjectId,
+	int32_t rawHitGameObjectId,
+	int32_t damageTargetGameObjectId,
+	float hitDistance,
+	float appliedDamage,
+	float healthBefore,
+	float healthAfter) {
+	++hitscanCollisionSequence_;
+	lastHitscanCollisionResult_ = result;
+	lastHitscanRawHitGameObjectId_ = rawHitGameObjectId;
+	lastHitscanDamageTargetGameObjectId_ = damageTargetGameObjectId;
+	lastHitscanHitDistance_ = hitDistance;
+	lastHitscanAppliedDamage_ = appliedDamage;
+	lastHitscanHealthBefore_ = healthBefore;
+	lastHitscanHealthAfter_ = healthAfter;
+
+	std::ostringstream messageStream;
+	messageStream << std::fixed << std::setprecision(3)
+		<< "[HitscanCollision] sequence=" << hitscanCollisionSequence_
+		<< " result=" << result
+		<< " weapon=" << weaponGameObjectId
+		<< " rawHit=" << rawHitGameObjectId
+		<< " target=" << damageTargetGameObjectId
+		<< " distance=" << hitDistance
+		<< " damage=" << appliedDamage
+		<< " health=" << healthBefore << "->" << healthAfter;
+	const std::string message = messageStream.str();
+	OutputDebugStringA((message + "\n").c_str());
+
+	constexpr int32_t kMaximumCollisionConsoleLogs = 300;
+
+	if (consoleMessages_ != nullptr && collisionLogCount_ < kMaximumCollisionConsoleLogs) {
+		consoleMessages_->push_back(message);
+		++collisionLogCount_;
+	}
+}
+
+void EditorWeaponManager::RecordProjectileCollision(
+	const std::string& result,
+	int32_t projectileGameObjectId,
+	int32_t rawHitGameObjectId,
+	int32_t damageTargetGameObjectId,
+	float hitDistance,
+	float appliedDamage,
+	float healthBefore,
+	float healthAfter) {
+	const EditorGameObject* rawHitGameObject =
+		editorScene_ != nullptr && rawHitGameObjectId >= 0
+		? editorScene_->FindGameObject(rawHitGameObjectId)
+		: nullptr;
+
+	++projectileCollisionSequence_;
+	lastProjectileCollisionResult_ = result;
+	lastProjectileGameObjectId_ = projectileGameObjectId;
+	lastProjectileRawHitGameObjectId_ = rawHitGameObjectId;
+	lastProjectileRawHitGameObjectName_ = rawHitGameObject != nullptr ? rawHitGameObject->name : "-";
+	lastProjectileDamageTargetGameObjectId_ = damageTargetGameObjectId;
+	lastProjectileHitDistance_ = hitDistance;
+	lastProjectileAppliedDamage_ = appliedDamage;
+	lastProjectileHealthBefore_ = healthBefore;
+	lastProjectileHealthAfter_ = healthAfter;
+
+	std::ostringstream messageStream;
+	messageStream << std::fixed << std::setprecision(3)
+		<< "[ProjectileCollision] sequence=" << projectileCollisionSequence_
+		<< " result=" << result
+		<< " projectile=" << projectileGameObjectId
+		<< " rawHit=" << rawHitGameObjectId
+		<< "(" << lastProjectileRawHitGameObjectName_ << ")"
+		<< " target=" << damageTargetGameObjectId
+		<< " distance=" << hitDistance
+		<< " damage=" << appliedDamage
+		<< " health=" << healthBefore << "->" << healthAfter;
+	const std::string message = messageStream.str();
+	OutputDebugStringA((message + "\n").c_str());
+
+	constexpr int32_t kMaximumCollisionConsoleLogs = 300;
+
+	if (consoleMessages_ != nullptr && collisionLogCount_ < kMaximumCollisionConsoleLogs) {
+		consoleMessages_->push_back(message);
+		++collisionLogCount_;
+	}
 }
 
 void EditorWeaponManager::Update(float deltaTime) {
@@ -696,6 +828,7 @@ bool EditorWeaponManager::ExecuteHitscanShot(int32_t weaponGameObjectId, float p
 
 	EditorTargetingManager::AimRay aimRay{};
 	if (!BuildAimRay(hitscan->hitscanAimGameObjectId, aimRay)) {
+		RecordHitscanCollision("AimRayUnavailable", weaponGameObjectId, -1, -1, -1.0f, 0.0f, -1.0f, -1.0f);
 		return false;
 	}
 
@@ -713,7 +846,7 @@ bool EditorWeaponManager::ExecuteHitscanShot(int32_t weaponGameObjectId, float p
 	EditorJoltPhysicsManager::PhysicsHit physicsHit{};
 	const bool hasPhysicsHit = CastAttackPhysics(
 		aimRay.origin,
-		0.0f,
+		kHitscanCollisionRadius,
 		aimRay.direction,
 		(std::max)(hitscan->hitscanRange, 0.01f),
 		ignoredGameObjectIds,
@@ -748,6 +881,7 @@ bool EditorWeaponManager::ExecuteHitscanShot(int32_t weaponGameObjectId, float p
 		hasHit ? static_cast<float>(hitGameObjectId) : -1.0f);
 
 	if (!hasHit) {
+		RecordHitscanCollision("Miss", weaponGameObjectId, -1, -1, -1.0f, 0.0f, -1.0f, -1.0f);
 		QueueAction(weaponGameObjectId, hitscan->hitscanActionTargetGameObjectId, hitscan->hitscanMissActionName, -1.0f);
 		return true;
 	}
@@ -755,6 +889,15 @@ bool EditorWeaponManager::ExecuteHitscanShot(int32_t weaponGameObjectId, float p
 	const int32_t damageTagId = EditorDamageManager::HashDamageTag(hitscan->hitscanDamageTag);
 
 	if (usesOceanHit) {
+		RecordHitscanCollision(
+			"OceanHit",
+			weaponGameObjectId,
+			oceanHit.oceanGameObjectId,
+			-1,
+			oceanHit.distance,
+			0.0f,
+			-1.0f,
+			-1.0f);
 		ExecuteImpactResponse(
 			weaponGameObjectId,
 			oceanHit.oceanGameObjectId,
@@ -769,6 +912,12 @@ bool EditorWeaponManager::ExecuteHitscanShot(int32_t weaponGameObjectId, float p
 		return true;
 	}
 
+	std::string collisionResult = "PhysicsHit:DamageManagerUnavailable";
+	int32_t damageTargetGameObjectId = -1;
+	float appliedDamage = 0.0f;
+	float healthBefore = -1.0f;
+	float healthAfter = -1.0f;
+
 	if (damageManager_ != nullptr) {
 		EditorScriptDamageContext damageContext{};
 		damageContext.targetGameObjectId = physicsHit.gameObjectId;
@@ -778,8 +927,31 @@ bool EditorWeaponManager::ExecuteHitscanShot(int32_t weaponGameObjectId, float p
 		damageContext.hitNormal = {physicsHit.normal.x, physicsHit.normal.y, physicsHit.normal.z};
 		damageContext.baseDamage = (std::max)(hitscan->hitscanDamage, 0.0f);
 		damageContext.userTag = damageTagId;
-		damageManager_->ApplyDamage(damageContext);
+		const bool isDamageApplied = damageManager_->ApplyDamage(damageContext);
+		damageTargetGameObjectId = damageContext.targetGameObjectId;
+		appliedDamage = damageContext.appliedDamage;
+		float maximumHealth = -1.0f;
+
+		if (damageManager_->GetHealth(damageTargetGameObjectId, healthAfter, maximumHealth)) {
+			healthBefore = isDamageApplied
+				? (std::min)(maximumHealth, healthAfter + appliedDamage)
+				: healthAfter;
+		}
+
+		collisionResult = isDamageApplied
+			? "DamageApplied"
+			: "DamageRejected:" + damageManager_->GetLastApplyResult();
 	}
+
+	RecordHitscanCollision(
+		collisionResult,
+		weaponGameObjectId,
+		physicsHit.gameObjectId,
+		damageTargetGameObjectId,
+		physicsHit.distance,
+		appliedDamage,
+		healthBefore,
+		healthAfter);
 
 	ExecuteImpactResponse(weaponGameObjectId, physicsHit.gameObjectId, physicsHit.point, physicsHit.normal, damageTagId);
 	QueueAction(weaponGameObjectId, hitscan->hitscanActionTargetGameObjectId, hitscan->hitscanHitActionName, static_cast<float>(physicsHit.gameObjectId));
@@ -990,6 +1162,14 @@ int32_t EditorWeaponManager::ExecuteProjectileShot(
 		spawnRotation);
 
 	if (projectileGameObjectId < 0) {
+		char debugBuffer[256];
+		snprintf(
+			debugBuffer,
+			sizeof(debugBuffer),
+			"[WeaponManager] Spawn failed (pool exhausted?) emitter=%d pool=%d\n",
+			emitterGameObjectId,
+			projectile->projectilePoolGameObjectId);
+		OutputDebugStringA(debugBuffer);
 		return -1;
 	}
 
@@ -1226,7 +1406,6 @@ void EditorWeaponManager::ExecuteImpactResponse(
 	const Vector3& hitPosition,
 	const Vector3& hitNormal,
 	int32_t damageTagId) {
-	(void)hitNormal;
 	const EditorGameObject* weapon = editorScene_->FindGameObject(weaponGameObjectId);
 	const EditorComponent* responder = weapon != nullptr
 		? EditorComponentUtility::FindComponent(*weapon, EditorComponentType::ImpactResponder)
@@ -1247,13 +1426,13 @@ void EditorWeaponManager::ExecuteImpactResponse(
 			continue;
 		}
 
-		const EditorGameObject* hitObject = editorScene_->FindGameObject(hitGameObjectId);
-		const Vector3 localOffset = hitObject != nullptr
-			? SubtractVector3(hitPosition, ResolveWorldPosition(*editorScene_, *hitObject))
-			: Vector3{};
-
-		if (effectManager_ != nullptr && !response.effectAssetPath.empty()) {
-			effectManager_->PlayEffectAt(hitGameObjectId, response.effectAssetPath, localOffset);
+		// .effectdefベースの新VFX(MetalImpact/WaterImpact/ExplosionLarge等)を命中位置(World)へ
+		// 直接再生する。命中Effectは対象を追従させず、その場に留まらせる想定
+		// (現実の着弾スパークも対象を追いかけない。追従が要るのはMissileTrail等の別経路)。
+		// 対象は高速で移動するRail船なので、ここで各Nodeのlifetimeを長く取ると「宙に浮いた
+		// まま船だけ離れていく」ように見える。既存の.effectdefは全Node 1秒未満で収める設計。
+		if (vfxManager_ != nullptr && !response.effectAssetPath.empty()) {
+			vfxManager_->PlayEffect(response.effectAssetPath, hitPosition, hitNormal);
 		}
 
 		if (audioManager_ != nullptr && response.audioSourceGameObjectId >= 0) {
@@ -1844,6 +2023,16 @@ void EditorWeaponManager::UpdateProjectiles(float deltaTime) {
 				(!hasHit || oceanHit.distance < physicsHit.distance);
 
 			if (usesOceanHit) {
+				RecordProjectileCollision(
+					"OceanHit",
+					activeProjectile.gameObjectId,
+					oceanHit.oceanGameObjectId,
+					-1,
+					oceanHit.distance,
+					0.0f,
+					-1.0f,
+					-1.0f);
+
 				ExecuteImpactResponse(
 					activeProjectile.ownerGameObjectId,
 					oceanHit.oceanGameObjectId,
@@ -1863,6 +2052,12 @@ void EditorWeaponManager::UpdateProjectiles(float deltaTime) {
 				shouldRelease = true;
 			}
 			else if (hasHit) {
+				std::string collisionResult = "PhysicsHit:DamageManagerUnavailable";
+				int32_t damageTargetGameObjectId = -1;
+				float appliedDamage = 0.0f;
+				float healthBefore = -1.0f;
+				float healthAfter = -1.0f;
+
 				if (damageManager_ != nullptr) {
 					EditorScriptDamageContext damageContext{};
 					damageContext.targetGameObjectId = physicsHit.gameObjectId;
@@ -1870,10 +2065,33 @@ void EditorWeaponManager::UpdateProjectiles(float deltaTime) {
 					damageContext.instigatorGameObjectId = activeProjectile.instigatorGameObjectId;
 					damageContext.hitPosition = {physicsHit.point.x, physicsHit.point.y, physicsHit.point.z};
 					damageContext.hitNormal = {physicsHit.normal.x, physicsHit.normal.y, physicsHit.normal.z};
-					damageContext.baseDamage = activeProjectile.damage;
+					damageContext.baseDamage = (std::max)(activeProjectile.damage, 0.0f);
 					damageContext.userTag = activeProjectile.damageTagId;
-					damageManager_->ApplyDamage(damageContext);
+					const bool isDamageApplied = damageManager_->ApplyDamage(damageContext);
+					damageTargetGameObjectId = damageContext.targetGameObjectId;
+					appliedDamage = damageContext.appliedDamage;
+					float maximumHealth = -1.0f;
+
+					if (damageManager_->GetHealth(damageTargetGameObjectId, healthAfter, maximumHealth)) {
+						healthBefore = isDamageApplied
+							? (std::min)(maximumHealth, healthAfter + appliedDamage)
+							: healthAfter;
+					}
+
+					collisionResult = isDamageApplied
+						? "DamageApplied"
+						: "DamageRejected:" + damageManager_->GetLastApplyResult();
 				}
+
+				RecordProjectileCollision(
+					collisionResult,
+					activeProjectile.gameObjectId,
+					physicsHit.gameObjectId,
+					damageTargetGameObjectId,
+					physicsHit.distance,
+					appliedDamage,
+					healthBefore,
+					healthAfter);
 
 				ExecuteImpactResponse(
 					activeProjectile.ownerGameObjectId,

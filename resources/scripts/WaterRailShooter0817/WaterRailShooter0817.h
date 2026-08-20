@@ -20,7 +20,6 @@ private:
 	// どちらのControllerかは初回Updateで一度だけ判定して保持する。
 	bool hasResolvedSceneRole_ = false;
 	bool isTitleController_ = false;
-	bool isShopController_ = false;
 	bool isResultController_ = false;
 
 	void OnPlayerFire(const EditorScriptInputActionContext& inputContext);
@@ -31,24 +30,13 @@ private:
 	void OnEnemyMoveCompleted(const EditorScriptInputActionContext& inputContext);
 	void OnSmallBoatDestroyed(const EditorScriptInputActionContext& inputContext);
 	void OnMissileBoatDestroyed(const EditorScriptInputActionContext& inputContext);
+	void OnGunBoatDestroyed(const EditorScriptInputActionContext& inputContext);
+	void OnHighSpeedBoatDestroyed(const EditorScriptInputActionContext& inputContext);
 	void OnBattleACompleted(const EditorScriptInputActionContext& inputContext);
 	void OnBattleBCompleted(const EditorScriptInputActionContext& inputContext);
-	void OnBuy40mm(const EditorScriptInputActionContext& inputContext);
-	void OnBuyRocket(const EditorScriptInputActionContext& inputContext);
-	void OnBuyMissile(const EditorScriptInputActionContext& inputContext);
-	void OnEquip20mm(const EditorScriptInputActionContext& inputContext);
-	void OnEquip40mm(const EditorScriptInputActionContext& inputContext);
-	void OnEquipRocket(const EditorScriptInputActionContext& inputContext);
-	void OnEquipMissile(const EditorScriptInputActionContext& inputContext);
-	void OnContinue(const EditorScriptInputActionContext& inputContext);
+	void OnMidRushCompleted(const EditorScriptInputActionContext& inputContext);
+	void OnMaxRushCompleted(const EditorScriptInputActionContext& inputContext);
 	void OnPlayerDestroyed(const EditorScriptInputActionContext& inputContext);
-	void OnBossMainGunDestroyed(const EditorScriptInputActionContext& inputContext);
-	void OnBossMissileDestroyed(const EditorScriptInputActionContext& inputContext);
-	void OnBossEngineDestroyed(const EditorScriptInputActionContext& inputContext);
-	void OnBossPhase1(const EditorScriptInputActionContext& inputContext);
-	void OnBossPhase2(const EditorScriptInputActionContext& inputContext);
-	void OnBossPhase3(const EditorScriptInputActionContext& inputContext);
-	void OnBossDestroyed(const EditorScriptInputActionContext& inputContext);
 	void OnResult(const EditorScriptInputActionContext& inputContext);
 	void OnRestart(const EditorScriptInputActionContext& inputContext);
 	void OnLoadoutChanged(const EditorScriptInputActionContext& inputContext);

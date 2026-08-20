@@ -107,10 +107,36 @@ struct Material {
 	float materialWaterlineWidth;  // 水際の濡れ遷移幅
 	float surfaceMaterialPadding1;  // HLSL cbuffer の 16byte 境界合わせ
 	float surfaceMaterialPadding2;  // HLSL cbuffer の 16byte 境界合わせ
+	// Ocean Sun Lighting / Glitter 設定。OceanSurface.PS.hlsl だけが読む拡張領域
+	float oceanSunDiffuseInfluence;  // 波面法線とSUN方向から出す明暗差の影響率
+	float oceanSunSpecularInfluence;  // SUNの鏡面ハイライトの影響率
+	float oceanSunGlitterInfluence;  // Sun Glitterの影響率
+	float oceanSkyReflectionInfluence;  // 空/画面反射の影響率
+	float oceanAmbientInfluence;  // Ambient / Sky Fillの影響率
+	float oceanDiffuseFloor;  // directional diffuseの最低値
+	float oceanGlitterIntensity;  // グリッター全体の強さ
+	float oceanGlitterSharpness;  // グリッター粒の鋭さ
+	float oceanGlitterDensity;  // グリッター粒の分散・密度
+	float oceanGlitterThreshold;  // グリッターが出始める反射整列の閾値
+	float oceanGlitterMaxClamp;  // グリッターの最大輝度クランプ
+	float oceanLightingExtensionPadding0;  // HLSL cbuffer の 16byte 境界合わせ
+	// Ocean 大波形状の光学表現。SUN強度とは独立して昼間の波形を読みやすくする
+	float oceanMacroReflectionInfluence;  // Sky Reflectionへ使うLarge/Medium Normalの混合率
+	float oceanCurvatureInfluence;  // 符号付き曲率から波頭と谷を抽出する感度
+	float oceanTroughOcclusionStrength;  // 谷のSky Ambientを弱める最大量
+	float oceanCrestHazeStrength;  // Foam直前の青白い波頭散乱
+	float oceanCrestDetailBoost;  // 波頭でFine Normalを増やす量
+	float oceanSlopeRefractionInfluence;  // 急斜面で屈折を強める量
+	float oceanMediumWaveStrength;  // Large Waveへ重ねるMedium Normalの強さ
+	float oceanWaveColorSeparation;  // 曲率による波頭と谷の水色色差
+	float oceanShapeRoughnessVariation;  // 波頭と谷の反射粗さの差
+	float oceanDetailFilterSharpness;  // 近距離でMedium/Fine Normalを保持する範囲
+	float oceanGrazingShapeVisibility;  // 浅い視線角でも曲率色を残す割合
+	float oceanShapeLightingPadding0;  // HLSL cbuffer の 16byte 境界合わせ
 };
 
 static_assert(offsetof(Material, uvTransform) == 96u, "Material と HLSL cbuffer の uvTransform 開始位置が一致していません。");
-static_assert(sizeof(Material) == 368u, "Material と HLSL cbuffer のサイズが一致していません。");
+static_assert(sizeof(Material) == 464u, "Material と HLSL cbuffer のサイズが一致していません。");
 
 constexpr int32_t kMaxEmissiveLights = 8;
 

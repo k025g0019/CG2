@@ -990,6 +990,14 @@ int32_t EditorWeaponManager::ExecuteProjectileShot(
 		spawnRotation);
 
 	if (projectileGameObjectId < 0) {
+		char debugBuffer[256];
+		snprintf(
+			debugBuffer,
+			sizeof(debugBuffer),
+			"[WeaponManager] Spawn failed (pool exhausted?) emitter=%d pool=%d\n",
+			emitterGameObjectId,
+			projectile->projectilePoolGameObjectId);
+		OutputDebugStringA(debugBuffer);
 		return -1;
 	}
 

@@ -702,6 +702,13 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
       <Project>{371b9fa9-4c90-4ac6-a123-aced756d6c77}</Project>
     </ProjectReference>
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Update="ThirdParty\**\*.cpp">
+      <EnablePREfast>false</EnablePREfast>
+      <RunCodeAnalysis>false</RunCodeAnalysis>
+      <DisableSpecificWarnings>5045;26812;26495;26451;6387;6262;6011;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

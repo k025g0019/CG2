@@ -33,6 +33,8 @@ private:
 	void OnMissileBoatDestroyed(const EditorScriptInputActionContext& inputContext);
 	void OnBattleACompleted(const EditorScriptInputActionContext& inputContext);
 	void OnBattleBCompleted(const EditorScriptInputActionContext& inputContext);
+	void OnMidRushCompleted(const EditorScriptInputActionContext& inputContext);
+	void OnMaxRushCompleted(const EditorScriptInputActionContext& inputContext);
 	void OnBuy40mm(const EditorScriptInputActionContext& inputContext);
 	void OnBuyRocket(const EditorScriptInputActionContext& inputContext);
 	void OnBuyMissile(const EditorScriptInputActionContext& inputContext);

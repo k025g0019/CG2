@@ -15,13 +15,37 @@ namespace {
 	constexpr int32_t kWeapon40mmPrice = 300;
 	constexpr int32_t kRocketPrice = 250;
 	constexpr int32_t kMissilePrice = 400;
-	constexpr float kBattleAProgress = 0.08f;
-	constexpr float kCheckpoint1Progress = 0.30f;
-	constexpr float kBattleBProgress = 0.37f;
+	constexpr float kCheckpoint1Progress = 0.50f;
 	constexpr float kStormProgress = 0.52f;
-	constexpr float kCheckpoint2Progress = 0.64f;
-	constexpr float kBossStartProgress = 0.73f;
-	constexpr float kBossStopProgress = 0.80f;
+	constexpr float kCheckpoint2Progress = 0.88f;
+	constexpr float kBossStartProgress = 0.97f;
+	constexpr float kBossStopProgress = 0.99f;
+
+	// Enemy encounter redesign: 22 rail-progress-gated events (E01..E22) replace the old
+	// Battle A / Battle B two-wave design. Each fires its EncounterController exactly once
+	// when the player's rail progress crosses the given fraction.
+	constexpr float kEvent01Progress = 0.03f;
+	constexpr float kEvent02Progress = 0.06f;
+	constexpr float kEvent03Progress = 0.10f;
+	constexpr float kEvent04Progress = 0.15f;
+	constexpr float kEvent05Progress = 0.20f;
+	constexpr float kEvent06Progress = 0.24f;
+	constexpr float kEvent07Progress = 0.28f;
+	constexpr float kEvent08Progress = 0.32f;
+	constexpr float kEvent09Progress = 0.36f;
+	constexpr float kEvent10Progress = 0.40f;
+	constexpr float kEvent11Progress = 0.44f;
+	constexpr float kEvent12Progress = 0.48f;
+	constexpr float kEvent13Progress = 0.53f;
+	constexpr float kEvent14Progress = 0.59f;
+	constexpr float kEvent15Progress = 0.62f;
+	constexpr float kEvent16Progress = 0.66f;
+	constexpr float kEvent17Progress = 0.71f;
+	constexpr float kEvent18Progress = 0.73f;
+	constexpr float kEvent19Progress = 0.77f;
+	constexpr float kEvent20Progress = 0.81f;
+	constexpr float kEvent21Progress = 0.86f;
+	constexpr float kEvent22Progress = 0.93f;
 	constexpr const char* kTitleScenePath = "Assets/Scenes/Title.scene";
 	constexpr const char* kGameplayScenePath = "Assets/Scenes/WaterRailShooter_0817.scene";
 	constexpr const char* kShopScenePath = "Assets/Scenes/Shop.scene";
@@ -99,6 +123,32 @@ namespace {
 		bool isBossMainGunDestroyed = false;
 		bool isBossMissileDestroyed = false;
 		bool isBossEngineDestroyed = false;
+		// Enemy encounter redesign: one-shot flags for E01..E22.
+		bool isEvent01Started = false;
+		bool isEvent02Started = false;
+		bool isEvent03Started = false;
+		bool isEvent04Started = false;
+		bool isEvent05Started = false;
+		bool isEvent06Started = false;
+		bool isEvent07Started = false;
+		bool isEvent08Started = false;
+		bool isEvent09Started = false;
+		bool isEvent10Started = false;
+		bool isEvent11Started = false;
+		bool isEvent12Started = false;
+		bool isEvent13Started = false;
+		bool isEvent14Started = false;
+		bool isEvent15Started = false;
+		bool isEvent16Started = false;
+		bool isEvent17Started = false;
+		bool isEvent18Started = false;
+		bool isEvent19Started = false;
+		bool isEvent20Started = false;
+		bool isEvent21Started = false;
+		bool isEvent22Started = false;
+		// E12 (MidRushEncounter) / E21 (MaxRushEncounter) completion flags gate Checkpoint 1 / 2.
+		bool isMidRushCompleted = false;
+		bool isMaxRushCompleted = false;
 		int32_t checkpointIndex = 0;
 		int32_t equippedWeaponSlot = kWeapon20mmSlot;
 		int32_t smallBoatDestroyedCount = 0;
@@ -591,6 +641,8 @@ WaterRailShooter0817::WaterRailShooter0817() {
 	BindAction("OnMissileBoatDestroyed", [this](const EditorScriptInputActionContext& context) { OnMissileBoatDestroyed(context); });
 	BindAction("OnBattleACompleted", [this](const EditorScriptInputActionContext& context) { OnBattleACompleted(context); });
 	BindAction("OnBattleBCompleted", [this](const EditorScriptInputActionContext& context) { OnBattleBCompleted(context); });
+	BindAction("OnMidRushCompleted", [this](const EditorScriptInputActionContext& context) { OnMidRushCompleted(context); });
+	BindAction("OnMaxRushCompleted", [this](const EditorScriptInputActionContext& context) { OnMaxRushCompleted(context); });
 	BindAction("OnBuy40mm", [this](const EditorScriptInputActionContext& context) { OnBuy40mm(context); });
 	BindAction("OnBuyRocket", [this](const EditorScriptInputActionContext& context) { OnBuyRocket(context); });
 	BindAction("OnBuyMissile", [this](const EditorScriptInputActionContext& context) { OnBuyMissile(context); });
@@ -779,16 +831,84 @@ void WaterRailShooter0817::Update(int32_t gameObjectId, float deltaTime) {
 		return;
 	}
 
-	if (!sharedGameState.isBattleAStarted && railProgress >= kBattleAProgress) {
-		sharedGameState.isBattleAStarted = true;
-		EncounterController{Find("Battle A Encounter")}.Start();
-		SetState("BattleA");
-		ObjectiveTracker{stageController}.Set("BattleA", ObjectiveState::Active, 0.0f);
-		Log("BATTLE A: START");
+	// Enemy encounter redesign: E01..E12 fire before Checkpoint 1.
+	if (!sharedGameState.isEvent01Started && railProgress >= kEvent01Progress) {
+		sharedGameState.isEvent01Started = true;
+		EncounterController{Find("E01 Encounter")}.Start();
+		Log("EVENT 01: START");
 	}
 
+	if (!sharedGameState.isEvent02Started && railProgress >= kEvent02Progress) {
+		sharedGameState.isEvent02Started = true;
+		EncounterController{Find("E02 Encounter")}.Start();
+		Log("EVENT 02: START");
+	}
+
+	if (!sharedGameState.isEvent03Started && railProgress >= kEvent03Progress) {
+		sharedGameState.isEvent03Started = true;
+		EncounterController{Find("E03 Encounter")}.Start();
+		Log("EVENT 03: START");
+	}
+
+	if (!sharedGameState.isEvent04Started && railProgress >= kEvent04Progress) {
+		sharedGameState.isEvent04Started = true;
+		EncounterController{Find("E04 Encounter")}.Start();
+		Log("EVENT 04: START");
+	}
+
+	if (!sharedGameState.isEvent05Started && railProgress >= kEvent05Progress) {
+		sharedGameState.isEvent05Started = true;
+		EncounterController{Find("E05 Encounter")}.Start();
+		Log("EVENT 05: START");
+	}
+
+	if (!sharedGameState.isEvent06Started && railProgress >= kEvent06Progress) {
+		sharedGameState.isEvent06Started = true;
+		EncounterController{Find("E06 Encounter")}.Start();
+		Log("EVENT 06: START");
+	}
+
+	if (!sharedGameState.isEvent07Started && railProgress >= kEvent07Progress) {
+		sharedGameState.isEvent07Started = true;
+		EncounterController{Find("E07 Encounter")}.Start();
+		Log("EVENT 07: START");
+	}
+
+	if (!sharedGameState.isEvent08Started && railProgress >= kEvent08Progress) {
+		sharedGameState.isEvent08Started = true;
+		EncounterController{Find("E08 Encounter")}.Start();
+		Log("EVENT 08: START");
+	}
+
+	if (!sharedGameState.isEvent09Started && railProgress >= kEvent09Progress) {
+		sharedGameState.isEvent09Started = true;
+		EncounterController{Find("E09 Encounter")}.Start();
+		Log("EVENT 09: START");
+	}
+
+	if (!sharedGameState.isEvent10Started && railProgress >= kEvent10Progress) {
+		sharedGameState.isEvent10Started = true;
+		EncounterController{Find("E10 Encounter")}.Start();
+		Log("EVENT 10: START");
+	}
+
+	if (!sharedGameState.isEvent11Started && railProgress >= kEvent11Progress) {
+		sharedGameState.isEvent11Started = true;
+		EncounterController{Find("E11 Encounter")}.Start();
+		Log("EVENT 11: START");
+	}
+
+	if (!sharedGameState.isEvent12Started && railProgress >= kEvent12Progress) {
+		sharedGameState.isEvent12Started = true;
+		SetState("BattleA");
+		ObjectiveTracker{stageController}.Set("BattleA", ObjectiveState::Active, 0.0f);
+		EncounterController{Find("E12 Encounter")}.Start();
+		Log("EVENT 12: START (MidRushEncounter)");
+	}
+
+	// Checkpoint 1 now waits for MidRushEncounter (E12) to be fully cleared.
 	if (!sharedGameState.isCheckpoint1Opened && railProgress >= kCheckpoint1Progress) {
-		if (!sharedGameState.isBattleACompleted) {
+		if (!sharedGameState.isMidRushCompleted) {
 			RailFollower{playerShip}.Pause();
 			return;
 		}
@@ -796,15 +916,6 @@ void WaterRailShooter0817::Update(int32_t gameObjectId, float deltaTime) {
 		sharedGameState.isCheckpoint1Opened = true;
 		OpenCheckpoint(1);
 		return;
-	}
-
-	if (sharedGameState.checkpointIndex >= 1 && !sharedGameState.isBattleBStarted &&
-		railProgress >= kBattleBProgress) {
-		sharedGameState.isBattleBStarted = true;
-		EncounterController{Find("Battle B Encounter")}.Start();
-		SetState("BattleB");
-		ObjectiveTracker{stageController}.Set("BattleB", ObjectiveState::Active, 0.0f);
-		Log("BATTLE B: START");
 	}
 
 	if (!sharedGameState.isStormStarted && railProgress >= kStormProgress) {
@@ -815,9 +926,67 @@ void WaterRailShooter0817::Update(int32_t gameObjectId, float deltaTime) {
 		Log("STORM SECTION");
 	}
 
+	// E13..E21 fire before Checkpoint 2.
+	if (sharedGameState.checkpointIndex >= 1 && !sharedGameState.isEvent13Started && railProgress >= kEvent13Progress) {
+		sharedGameState.isEvent13Started = true;
+		EncounterController{Find("E13 Encounter")}.Start();
+		Log("EVENT 13: START");
+	}
+
+	if (sharedGameState.checkpointIndex >= 1 && !sharedGameState.isEvent14Started && railProgress >= kEvent14Progress) {
+		sharedGameState.isEvent14Started = true;
+		EncounterController{Find("E14 Encounter")}.Start();
+		Log("EVENT 14: START");
+	}
+
+	if (sharedGameState.checkpointIndex >= 1 && !sharedGameState.isEvent15Started && railProgress >= kEvent15Progress) {
+		sharedGameState.isEvent15Started = true;
+		EncounterController{Find("E15 Encounter")}.Start();
+		Log("EVENT 15: START");
+	}
+
+	if (sharedGameState.checkpointIndex >= 1 && !sharedGameState.isEvent16Started && railProgress >= kEvent16Progress) {
+		sharedGameState.isEvent16Started = true;
+		EncounterController{Find("E16 Encounter")}.Start();
+		Log("EVENT 16: START");
+	}
+
+	if (sharedGameState.checkpointIndex >= 1 && !sharedGameState.isEvent17Started && railProgress >= kEvent17Progress) {
+		sharedGameState.isEvent17Started = true;
+		EncounterController{Find("E17 Encounter")}.Start();
+		Log("EVENT 17: START");
+	}
+
+	if (sharedGameState.checkpointIndex >= 1 && !sharedGameState.isEvent18Started && railProgress >= kEvent18Progress) {
+		sharedGameState.isEvent18Started = true;
+		EncounterController{Find("E18 Encounter")}.Start();
+		Log("EVENT 18: START");
+	}
+
+	if (sharedGameState.checkpointIndex >= 1 && !sharedGameState.isEvent19Started && railProgress >= kEvent19Progress) {
+		sharedGameState.isEvent19Started = true;
+		EncounterController{Find("E19 Encounter")}.Start();
+		Log("EVENT 19: START");
+	}
+
+	if (sharedGameState.checkpointIndex >= 1 && !sharedGameState.isEvent20Started && railProgress >= kEvent20Progress) {
+		sharedGameState.isEvent20Started = true;
+		EncounterController{Find("E20 Encounter")}.Start();
+		Log("EVENT 20: START");
+	}
+
+	if (sharedGameState.checkpointIndex >= 1 && !sharedGameState.isEvent21Started && railProgress >= kEvent21Progress) {
+		sharedGameState.isEvent21Started = true;
+		SetState("BattleB");
+		ObjectiveTracker{stageController}.Set("BattleB", ObjectiveState::Active, 0.0f);
+		EncounterController{Find("E21 Encounter")}.Start();
+		Log("EVENT 21: START (MaxRushEncounter)");
+	}
+
+	// Checkpoint 2 now waits for MaxRushEncounter (E21) to be fully cleared.
 	if (sharedGameState.checkpointIndex == 1 && !sharedGameState.isCheckpoint2Opened &&
 		railProgress >= kCheckpoint2Progress) {
-		if (!sharedGameState.isBattleBCompleted) {
+		if (!sharedGameState.isMaxRushCompleted) {
 			RailFollower{playerShip}.Pause();
 			return;
 		}
@@ -825,6 +994,13 @@ void WaterRailShooter0817::Update(int32_t gameObjectId, float deltaTime) {
 		sharedGameState.isCheckpoint2Opened = true;
 		OpenCheckpoint(2);
 		return;
+	}
+
+	// E22 (boss escort wave) fires after Checkpoint 2, before Boss activation.
+	if (sharedGameState.checkpointIndex >= 2 && !sharedGameState.isEvent22Started && railProgress >= kEvent22Progress) {
+		sharedGameState.isEvent22Started = true;
+		EncounterController{Find("E22 Encounter")}.Start();
+		Log("EVENT 22: START");
 	}
 
 	if (sharedGameState.checkpointIndex >= 2 && !sharedGameState.isBossStarted &&
@@ -872,6 +1048,7 @@ void WaterRailShooter0817::OnNextWeapon(const EditorScriptInputActionContext& in
 
 void WaterRailShooter0817::OnEnemyFire(const EditorScriptInputActionContext& inputContext) {
 	if (IsPerformed(inputContext) && !sharedGameState.isPlayerDestroyed && !sharedGameState.isMissionClear) {
+		Log("DEBUG_FIRE: OnEnemyFire received for gameObjectId=" + std::to_string(inputContext.gameObjectId));
 		Weapon{GameObject{inputContext.gameObjectId}}.FireProjectile();
 	}
 }
@@ -925,6 +1102,18 @@ void WaterRailShooter0817::OnBattleBCompleted(const EditorScriptInputActionConte
 	sharedGameState.isBattleBCompleted = true;
 	ObjectiveTracker{Find("StageController")}.Set("BattleB", ObjectiveState::Completed, 10.0f);
 	Log("BATTLE B: COMPLETE");
+}
+
+void WaterRailShooter0817::OnMidRushCompleted(const EditorScriptInputActionContext& inputContext) {
+	(void)inputContext;
+	sharedGameState.isMidRushCompleted = true;
+	Log("MID RUSH: COMPLETE");
+}
+
+void WaterRailShooter0817::OnMaxRushCompleted(const EditorScriptInputActionContext& inputContext) {
+	(void)inputContext;
+	sharedGameState.isMaxRushCompleted = true;
+	Log("MAX RUSH: COMPLETE");
 }
 
 //================================================================

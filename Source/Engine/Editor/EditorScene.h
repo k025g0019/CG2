@@ -1017,6 +1017,13 @@ struct EditorComponent {
 	float compositeSsgiRadiusPixels;  // SSGIが近傍を探索する画面半径
 	std::string compositeColorLutAssetPath;  // 32x32x32等を横へ並べた2D strip LUT画像
 	float compositeColorLutStrength;  // Identity色とLUT結果の補間量
+	// Sun (Directional Light) 拡張設定。Light コンポーネントの assetPath=="Sun" でのみ意味を持つ
+	float sunAzimuthDegrees;  // 太陽方位角(度)。0=+Z、90=+X として時計回り
+	float sunElevationDegrees;  // 太陽高度(度)。90で真上、0で水平線、負で地平線下
+	bool sunUseAzimuthElevation;  // trueならTransform回転より方位角/高度を優先してsunDirectionを作る
+	float sunTemperatureKelvin;  // 太陽の色温度(K)。KelvinToRGBでsunColorへ変換する
+	bool sunUseColorTemperature;  // trueならKelvinToRGB(sunTemperatureKelvin)でcolorを上書きする
+	bool sunAutoTemperatureFromElevation;  // trueなら太陽高度からKelvinを自動推定する(sunUseColorTemperatureと併用)
 	// Environment 設定
 	Vector3 skyLowerColor;  // 地平線 / 下側の空色
 	float environmentTextureRotation;  // 環境テクスチャの水平回転（ラジアン）
@@ -1032,6 +1039,11 @@ struct EditorComponent {
 	float volumetricCloudLightAbsorption;  // 雲内部でSun光を吸収する量
 	float volumetricCloudSilverLining;  // Sun方向の縁光強度
 	Vector3 volumetricCloudColor;  // 雲の散乱色
+	float environmentHeatIntensity;  // 遠景の熱気揺らぎ強度。0で無効
+	float environmentHeatHorizonCenter;  // 熱気を配置する画面上の地平線中心
+	float environmentHeatHorizonWidth;  // 地平線から上下へ広げる範囲
+	float environmentHeatSunInfluence;  // 太陽付近で熱気を強める割合
+	float environmentHeatDistortionScale;  // 低周波歪みの空間スケール
 	// Camera 設定
 	float cameraFieldOfView;  // 視野角（度）
 	float cameraNearClip;  // ニアクリップ距離
@@ -1095,6 +1107,30 @@ struct EditorComponent {
 	float oceanRefractionDistortion;  // 微細波による屈折方向の歪み
 	Vector3 oceanShallowColor;  // 光が届く浅い海面の色
 	Vector3 oceanDeepColor;  // 深い海面の色
+	// Ocean Sun Lighting / Glitter 設定。SUNが海面へ与える影響を項目別に調整する
+	float oceanSunDiffuseInfluence;  // 波面法線とSUN方向から出す明暗差(directional diffuse)の影響率
+	float oceanSunSpecularInfluence;  // SUNの鏡面ハイライト(Specular)の影響率
+	float oceanSunGlitterInfluence;  // Sun Glitter(キラキラ反射)の影響率
+	float oceanSkyReflectionInfluence;  // 空/画面反射(Sky Reflection)の影響率
+	float oceanAmbientInfluence;  // Ambient / Sky Fillの影響率
+	float oceanDiffuseFloor;  // directional diffuseの最低値。逆光でも真っ黒にしない下限
+	float oceanGlitterIntensity;  // グリッター全体の強さ
+	float oceanGlitterSharpness;  // グリッター粒の鋭さ(粗いほど大きな光斑、鋭いほど細かい点)
+	float oceanGlitterDensity;  // グリッター粒の分散・密度
+	float oceanGlitterThreshold;  // グリッターが出始める反射整列の閾値
+	float oceanGlitterMaxClamp;  // グリッターの最大輝度クランプ(白飛び対策)
+	// Ocean 大波形状の光学表現。強度を上げずに反射方向・曲率・谷遮蔽で形を見せる
+	float oceanMacroReflectionInfluence;  // Sky Reflectionへ使うLarge/Medium Normalの混合率
+	float oceanCurvatureInfluence;  // 符号付き曲率の感度
+	float oceanTroughOcclusionStrength;  // 谷のAmbient Occlusion強度
+	float oceanCrestHazeStrength;  // Foam直前の青白いcrest haze強度
+	float oceanCrestDetailBoost;  // 波頭のFine Normal増幅量
+	float oceanSlopeRefractionInfluence;  // 急斜面の屈折増幅量
+	float oceanMediumWaveStrength;  // Large Waveへ重ねるMedium Normalの強さ
+	float oceanWaveColorSeparation;  // 曲率による波頭と谷の水色色差
+	float oceanShapeRoughnessVariation;  // 波頭と谷の反射粗さの差
+	float oceanDetailFilterSharpness;  // 近距離でMedium/Fine Normalを保持する範囲
+	float oceanGrazingShapeVisibility;  // 浅い視線角でも曲率色を残す割合
 	// Buoyancy 設定
 	int32_t buoyancyOceanGameObjectId;  // 対象 Ocean。-1 は現在位置を覆う Ocean を自動検出
 	Vector3 buoyancyCenterOffset;  // 船体中心から浮力領域中心までのローカル差分
@@ -1112,6 +1148,22 @@ struct EditorComponent {
 	bool buoyancyAutomaticPhysicalProperties;  // trueなら水密度と実Shapeから浮力・抗力・減衰を決める
 	float buoyancyWaterDensity;  // 自動物理で使う流体密度 kg/m3。海水は約1025
 	float buoyancyTargetSubmersionRatio;  // 自動質量へ使う平衡時の目標水没体積率
+	// Buoyancy Runtime 診断値。ApplyBuoyancyForcesが毎FixedUpdateに書き込む読み取り専用の実測値。
+	// 各水力項の大きさを比較し、Rail追従力とのバランスやPlaning不足の原因を特定するために使う。
+	float buoyancyDebugBuoyancyForce;  // 静水圧浮力の大きさ N
+	float buoyancyDebugPressureDragForce;  // 全水没面の圧力抗力合計の大きさ N
+	float buoyancyDebugPressureUpwardForce;  // 圧力抗力の鉛直上向き成分 N。実効Planing揚力
+	float buoyancyDebugSkinFrictionForce;  // 全水没面のITTC摩擦抗力合計の大きさ N
+	float buoyancyDebugAddedMassForce;  // 付加質量による力の大きさ N
+	float buoyancyDebugSlammingForce;  // 着水衝撃の大きさ N
+	float buoyancyDebugWaveMakingResistance;  // Froude造波抵抗の大きさ N
+	float buoyancyDebugSubmergedRatio;  // 水没体積 / 全体積。0～1
+	float buoyancyDebugWettedArea;  // 水没面の合計面積 m2
+	float buoyancyDebugTrimAngleDegrees;  // 船首の上下角。正が船首上げ
+	float buoyancyDebugForwardSpeed;  // 水に対する前後方向の相対速度 m/s
+	float buoyancyDebugWeightForce;  // 質量×重力 N。上向き成分との比を取る基準値
+	Vector3 buoyancyDebugAddedMassCoriolisTorque;  // 並進対角付加質量由来のCoriolis Moment N·m
+	float buoyancyDebugSideslipAngleDegrees;  // 船首方向と水に対する進行方向の偏角。Coriolis符号の実証に使う
 	// Rail Movement 設定
 	int32_t railPathGameObjectId;  // 直下の子を制御点として使う親 GameObject ID
 	float railSpeed;  // レール上を1秒間に進む距離
@@ -1146,12 +1198,153 @@ struct EditorComponent {
 	float railMaximumYawAngle;  // レール移動時の最大ヨー角度（度）。0なら制限なし
 	float railYawRestorationStrength;  // ヨーを進行方向に戻す復元力の強さ
 	float railYawDamping;  // ヨー角速度へのダンピング
+	bool railYawSafetyAssistEnabled;  // trueならYaw偏差に応じた非線形の速度/復元スケールを適用する
+	float railYawSafetyStage1Degrees;  // この角度からYaw復元強化を開始する(度)
+	float railYawSafetyStage2Degrees;  // この角度から目標前進速度を落とし始める(度)
+	float railYawSafetyStage4Degrees;  // この角度で速度スケール最小・復元強化最大へ達する(度)
+	float railYawSafetyMaxRestorationScale;  // stage4でのYaw復元強度の倍率(1.0が無効化)
+	float railYawSafetyMinSpeedScale;  // stage4での目標前進速度の下限倍率(0〜1)
+	float railMaxForwardRecoveryError;  // 位置補正力へ使うForward Position Errorの絶対値上限(m)
+	// Roll/Pitch Safety Envelope: 波による通常の揺れ(free角度以下)には介入せず、
+	// emergency角度へ近づくほどAttitude Recovery TorqueとForward方向の推力/位置補正を
+	// 非線形に強める/弱める。railRotationInfluenceのマスクとは独立して加算的に働く。
+	bool railAttitudeSafetyAssistEnabled;  // trueならRoll/Pitch Safety Envelopeを適用する
+	float railRollFreeDegrees;  // この角度以下ではRoll方向のSafetyが一切介入しない(度)
+	float railRollEmergencyDegrees;  // この角度でRoll方向のSafetyが最大介入になる(度)
+	float railPitchFreeDegrees;  // この角度以下ではPitch方向のSafetyが一切介入しない(度)
+	float railPitchEmergencyDegrees;  // この角度でPitch方向のSafetyが最大介入になる(度)
+	float railAttitudeSafetyStrength;  // Attitude Recovery Torqueの角度ばね係数
+	float railAttitudeSafetyDamping;  // Attitude Recovery Torqueの角速度減衰係数
+	float railAttitudeSafetyMaxTorque;  // Attitude Recovery Torque(角加速度換算)の上限
+	float railAttitudeSafetyMinForwardScale;  // 危険度最大時にForward方向の推力/位置補正へ掛ける下限倍率
+	// Physical Rail Progress: Gameplay Rail Progress(traveledDistance)は敵出現等のため常に
+	// 基準速度で進み続けるが、Position PDが追う目標位置はこのCatchup倍率で別に管理する。
+	// Safety解除直後にbacklogを巨大なForceで瞬間的に埋めることを防ぐ。
+	float railPhysicalCatchupSpeedMultiplier;  // backlog解消時に基準速度へ掛けてよい最大倍率(1.0以上)
+	// Pitch/Roll絶対角度制限(Hard Clamp): railAttitudeSafetyAssist(段階的な復元Torque)とも
+	// 下の角度ソフト制限とも完全に独立した第3の系統。Jolt積分・最終姿勢確定後(PostFixedUpdate)で
+	// Rigidbody回転を直接補正する(この機能に限りTransform/Rigidbody回転の直接変更を許可)。
+	bool railAttitudeAngleLimitEnabled;  // trueならPitch/Rollを絶対角度でHard Clampする
+	float railAttitudeAngleLimitMaxPitchDegrees;  // Pitchがこの角度を超えないよう直接補正する(度)
+	float railAttitudeAngleLimitMaxRollDegrees;  // Rollがこの角度を超えないよう直接補正する(度)
+	// Pitch/Roll角度ソフト制限: 上のHard Clampとは別に、限界角度(Max Pitch/Roll Degreesを共有)を
+	// 超えた分だけTorqueで押し戻す方式。角度そのものは書き換えない。既定OFF、独立にON/OFF可能。
+	bool railAttitudeAngleSoftLimitEnabled;  // trueならTorqueによる押し戻し方式を有効にする
+	float railAttitudeAngleSoftLimitStrength;  // 超過角度(rad)あたりの押し戻し角加速度の強さ
+	float railAttitudeAngleSoftLimitDamping;  // 押し戻し中の角速度への減衰係数
+	float railAttitudeAngleSoftLimitMaxTorque;  // 押し戻し角加速度の上限
+	// Mode 2(船体推進)専用オートパイロット設定。Railは航路・少し先の目標地点・目標速度だけを与え、
+	// 実際の移動は船首方向のエンジン推力とYaw操舵で発生させる(Rail上のTarget PositionへPD拘束しない)。
+	// Mode 1(Spline位置追従PD)には一切影響しない。
+	float railEngineSpeedGain;  // 目標前進速度と船首方向速度の差から出す推進加速度のゲイン
+	float railEngineAccelResponse;  // エンジン加速度が目標へ立ち上がる速さ(m/s^2 の時間変化率)
+	float railEngineDecelResponse;  // エンジン加速度が目標(0付近)へ立ち下がる速さ
+	float railEngineMaxAcceleration;  // エンジンが出せる前進加速度の上限
+	float railSteeringBaseLookAheadDistance;  // 操舵目標点までの基本先読み距離(m)
+	float railSteeringLookAheadTime;  // 先読み距離へ速度を加味する秒数(距離 = 基本 + 速度*この値)
+	float railSteeringYawGain;  // 操舵Yaw誤差に掛けるYaw角加速度ゲイン
+	float railSteeringYawDamping;  // 操舵Yaw制御のYaw角速度への減衰係数
+	float railSteeringMaxYawAngularAcceleration;  // 操舵Yaw制御が出せる角加速度の上限
+	float railLateralAssistDeadZone;  // Rail中心からの横ずれがこの距離以内なら横補助Forceを出さない(m)
+	float railLateralAssistSoftRadius;  // この距離まで弱い横補助を線形に強める(m)
+	float railLateralAssistEmergencyRadius;  // この距離以上で最大倍率の横補助になる(m)
+	float railLateralAssistMaxMultiplier;  // 横補助Forceの最大倍率(positionSpring/Dampingに掛ける)
+	// 船体横滑り抑制(Hull Lateral Grip): Rail横補助(Rail位置基準)とは完全に別物。船体基準の
+	// 横方向速度(shipRightXZ成分)だけを、船体が水を横から受けて減衰する挙動として再現する。
+	// AddForceAtPositionは使わずCenter of Massへの通常AddForceのみ(余計なTorqueを発生させない)。
+	bool railHullLateralGripEnabled;  // trueなら船体横滑り抑制を有効にする
+	float railHullLateralGripStrength;  // 横グリップの基本強さ
+	float railHullLateralGripMaxAcceleration;  // 横グリップ加速度の上限(1フレームで横速度を消させない)
+	float railHullLateralGripMinSpeed;  // この前進速度未満ではグリップがほぼ働かない
+	float railHullLateralGripFullSpeed;  // この前進速度でグリップが最大倍率になる
+	float railHullLateralGripDeadZoneSpeed;  // この横方向速度未満ではグリップをほぼ0にする(自然な滑りを残す)
+	float railHullLateralGripSlipStartDegrees;  // この横滑り角からグリップが働き始める(度)
+	float railHullLateralGripSlipFullDegrees;  // この横滑り角でグリップが最大倍率になる(度)
+	// Mode 2専用の最終合成加速度上限。railMaximumAccelerationはMode 1由来でPlayerShipでは12m/s²
+	// しかなく、Mode 2でそのまま使うとEngine/Hull Gripが個別Clamp済みでも合成後にまとめて縮小
+	// されてしまう。Engine最大+Hull Grip最大程度の組み合わせではまず当たらない値にする。
+	float railMode2MaxCombinedAcceleration;
+	// Mode 2移動方式。0=Boat Autopilot(既存、Pure Pursuit+Engine+Hull Grip+Rail Assist)、
+	// 1=Rail Ride(レールシューティング専用。RailがXZ/Yaw/Progress/速度を完全所有し、
+	// Y/Pitch/RollだけBuoyancy等の物理結果を残す)。PlayerShipはRail Rideを使用する。
+	int32_t railMode2MovementStyle;
+	float railRideYawSampleDistance;  // Rail RideのYaw中央差分に使うサンプル距離(m)
 	EditorScriptVector2 railMovementRange;  // レール中心から左右・上下へ移動できる最大距離
 	EditorScriptVector2 railStartOffset;  // Play 開始時のレール右・上方向オフセット
 	float railOffsetMoveSpeed;  // Vector2 入力をレール内移動距離へ変換する毎秒速度
 	bool railUsePlayerInput;  // 同じ GameObject の PlayerInput Vector2 Action を自動で使うなら true
 	std::string railInputActionMapName;  // レール内移動へ使う Action Map 名
 	std::string railInputActionName;  // レール内移動へ使う Vector2 Action 名
+	// RailMovement Runtime 診断値。物理追従Modeで毎FixedUpdateに書き込む読み取り専用の実測値。
+	// Buoyancyの水力とRail追従力の比を確認するために使う(Log Monitorで記録できる)。
+	Vector3 railDebugFollowForce;  // Railが加えたWorld Force。Yが0なら鉛直はBuoyancyへ委ねられている
+	Vector3 railDebugFollowTorque;  // Railが加えたWorld Torque。X/Zが0ならPitch/RollはBuoyancy任せ
+	Vector3 railDebugPositionError;  // 追従軸マスク後のWorld位置誤差
+	float railDebugYawError;  // Rail進行方向に対するYaw誤差(ラジアン)
+	// 実行時に適用されている追従軸マスクそのもの。Sceneの保存値とInspector表示が
+	// 食い違っていないかを切り分けるために出す。
+	Vector3 railDebugAppliedPositionInfluence;
+	Vector3 railDebugAppliedRotationInfluence;
+	float railDebugCurrentSpeed;  // Railが指令している進行速度 m/s
+	float railDebugActualForwardSpeed;  // Rigidbodyの実際の前進速度 m/s
+	float railDebugYawSafetySpeedScale;  // Yaw Safety Assistが目標前進速度へ掛けている倍率(1.0で無効)
+	float railDebugYawSafetyRestorationScale;  // Yaw Safety AssistがYaw復元強度へ掛けている倍率
+	float railDebugForwardPositionScale;  // Yaw/Pitch/Roll危険度から合成したForward方向の総合スケール
+	float railDebugForwardPositionError;  // クランプ前のForward Position Error(m)
+	float railDebugLateralPositionError;  // Lateral Position Errorの大きさ(m)
+	float railDebugForwardCorrectionForce;  // Forward方向補正力(N)。速度項+位置項の合計
+	float railDebugLateralCorrectionForce;  // Lateral方向補正力の大きさ(N)
+	float railDebugBoatPitchDegrees;  // 船体の現在Pitch角(度)
+	float railDebugBoatRollDegrees;  // 船体の現在Roll角(度)
+	float railDebugPitchSafetyFactor;  // Pitch Safety Envelopeの介入度(0=無介入、1=最大介入)
+	float railDebugRollSafetyFactor;  // Roll Safety Envelopeの介入度(0=無介入、1=最大介入)
+	Vector3 railDebugAttitudeRecoveryTorque;  // Attitude Recovery TorqueとしてWorldへ加えたTorque
+	float railDebugGameplayRailProgress;  // Gameplay Rail Progress(traveledDistance)のレール上距離 m
+	float railDebugPhysicalRailProgress;  // Physical Rail Progressのレール上距離 m。Position PDが追う位置
+	float railDebugPhysicalTargetSpeed;  // Physical Rail Progressの今フレームの目標前進速度 m/s
+	float railDebugPitchAngleLimited;  // 今フレームPitch絶対角度制限が外向き角速度を止めたら1、それ以外0
+	float railDebugRollAngleLimited;  // 今フレームRoll絶対角度制限が外向き角速度を止めたら1、それ以外0
+	// Mode 2 オートパイロット診断値。
+	float railDebugClosestRailDistance;  // 船体位置から求めたRail上の最近傍距離 m
+	float railDebugClosestRailDistanceDelta;  // 前フレームからのRail最近傍距離の変化量 m(ジャンプ検出用)
+	float railDebugSteeringLookAheadDistance;  // 今フレームの操舵先読み距離 m
+	float railDebugSteeringYawErrorDegrees;  // 操舵目標方向と船首方向のYaw誤差(度)
+	float railDebugEngineAcceleration;  // 船首方向へ出しているエンジン加速度 m/s^2
+	float railDebugLateralAssistAcceleration;  // 横補助として出している加速度の大きさ m/s^2
+	float railDebugLateralAssistScale;  // 横補助の倍率(0=無介入)
+	float railDebugYawAngularVelocity;  // Rigidbodyの現在のYaw角速度 rad/s
+	// 船首軸診断用(一時): railLocalForwardAxisを反映した実際の計算上Forward/Right。
+	// 開始直後などRotationがほぼ0の場面でこれを見れば、コードがどちらを船首と扱っているか
+	// 画面の見た目と直接比較できる。
+	Vector3 railDebugShipForward;
+	Vector3 railDebugShipRight;
+	float railDebugForwardVelocitySlipAngleDegrees;  // 船首方向と水平速度方向の差(度)。制御には未使用。
+	float railDebugLateralSpeed;  // 船体基準の横方向速度 m/s(shipRightXZ成分)
+	float railDebugHullLateralGripAcceleration;  // 船体横滑り抑制として出している加速度の大きさ m/s^2
+	float railDebugHullLateralGripScale;  // 船体横滑り抑制の最終倍率(speedFactor*slipFactor*deadZoneFactor*strength相当、0=無介入)
+	float railDebugHullLateralGripSpeedFactor;  // 船体横滑り抑制の水平速度倍率(horizontalSpeed基準)
+	float railDebugHullLateralGripSlipFactor;  // 船体横滑り抑制のSlip角倍率
+	float railDebugHorizontalSpeed;  // 水平速度(XZ平面) m/s
+	float railDebugPreClampAcceleration;  // Mode 2合成前(Engine+HullGrip+RailAssist)の加速度の大きさ m/s^2
+	float railDebugPostClampAcceleration;  // Mode 2最終Clamp後の加速度の大きさ m/s^2
+	float railDebugMode2ClampScale;  // 最終Clampによる縮小率(1.0ならClamp未介入)
+	// Rail Ride診断値。
+	Vector3 railDebugRailRidePosition;  // Rail Progressから求めた固定先XZ(Yは0埋め)
+	Vector3 railDebugRailRideActualPosition;  // 適用直前の実PlayerShip位置
+	float railDebugRailRidePositionErrorXZ;  // 適用前のXZ位置誤差の大きさ m(適用後は原理的に0)
+	Vector3 railDebugRailRideForward;  // Yaw算出に使ったRail接線(中央差分、水平)
+	float railDebugRailRideTargetYawDegrees;  // Railから求めた目標Yaw(度)
+	float railDebugRailRideFinalYawDegrees;  // 実際に適用した最終Yaw(度)
+	float railDebugRailRideYawErrorDegrees;  // 適用前の実Yawとの誤差(度、適用後は原理的に0)
+	Vector3 railDebugRailRideVelocityXZ;  // Railの移動から求めて設定したXZ速度
+	Vector3 railDebugRailRideActualVelocityXZ;  // 適用直前のRigidbody XZ速度
+	float railDebugRailRideVelocityDirectionErrorDegrees;  // 適用前の速度方向とRail方向の差(度)
+	float railDebugRailRidePhysicsY;  // Buoyancy等で決まった適用前のY
+	float railDebugRailRideFinalY;  // 最終Y(Physics Yをそのまま保持)
+	float railDebugRailRidePhysicsPitchDegrees;  // Clamp前の物理Pitch(度)
+	float railDebugRailRideFinalPitchDegrees;  // 最終Pitch(度、Hard Clamp適用後)
+	float railDebugRailRidePhysicsRollDegrees;  // Clamp前の物理Roll(度)
+	float railDebugRailRideFinalRollDegrees;  // 最終Roll(度、Hard Clamp適用後)
 	// Aerodynamics 設定
 	float aerodynamicAirDensity;  // 流体密度 kg/m^3。標準大気は約 1.225
 	float aerodynamicDragCoefficient;  // 二次抗力 F=1/2*rho*Cd*A*v^2 の Cd

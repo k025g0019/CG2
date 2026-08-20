@@ -28,6 +28,13 @@ struct FinalCompositeConstants
     float gamutCompression;
     float localContrast;
     float outputDither;
+    float heatIntensity;
+    float heatHorizonCenter;
+    float heatHorizonWidth;
+    float heatSunInfluence;
+    float heatDistortionScale;
+    float heatTime;
+    float2 heatSunUv;
 };
 
 ConstantBuffer<FinalCompositeConstants> gFinalComposite : register(b0);
@@ -36,6 +43,7 @@ Texture2D<float4> gBloomTexture : register(t1);
 Texture2D<float> gAmbientOcclusionTexture : register(t2);
 Texture2D<float4> gAutoExposureTexture : register(t5);
 Texture2D<float4> gColorGradingLut : register(t6);
+Texture2D<float> gSceneDepth : register(t7);
 SamplerState gSampler : register(s0);
 
 struct PixelShaderInput
@@ -149,15 +157,57 @@ float ApplyOutputDither(float2 pixelPosition)
     return Hash12(pixelPosition) - Hash12(pixelPosition + float2(37.0f, 17.0f));
 }
 
+float2 ResolveAtmosphericHeatUv(float2 texcoord)
+{
+    const float heatIntensity = saturate(gFinalComposite.heatIntensity);
+
+    if (heatIntensity <= 0.0001f)
+    {
+        return texcoord;
+    }
+
+    // Scene Depthの遠景だけを歪ませ、近距離の海面・船・照準UIは保護する。
+    const float sceneDepth = gSceneDepth.SampleLevel(gSampler, texcoord, 0.0f);
+    const float farDistanceMask = smoothstep(0.985f, 0.9998f, sceneDepth);
+    const float horizonDistance = abs(texcoord.y - gFinalComposite.heatHorizonCenter);
+    const float horizonMask = 1.0f - smoothstep(
+        max(gFinalComposite.heatHorizonWidth * 0.28f, 0.005f),
+        max(gFinalComposite.heatHorizonWidth, 0.01f),
+        horizonDistance);
+    const float2 sunDelta = texcoord - gFinalComposite.heatSunUv;
+    const float sunMask = exp(-dot(sunDelta, sunDelta) * 10.0f);
+    const float heatMask = heatIntensity * farDistanceMask * horizonMask *
+        lerp(1.0f, 1.0f + sunMask, saturate(gFinalComposite.heatSunInfluence));
+
+    if (heatMask <= 0.0001f)
+    {
+        return texcoord;
+    }
+
+    // 低周波2層だけで連続した屈折を作る。RGB分離やぼかしは行わない。
+    const float heatScale = max(gFinalComposite.heatDistortionScale, 0.01f);
+    const float2 heatCoordinate = texcoord * float2(12.0f, 7.0f) / heatScale;
+    const float slowWave = sin(heatCoordinate.x + gFinalComposite.heatTime * 0.73f) *
+        cos(heatCoordinate.y * 0.71f - gFinalComposite.heatTime * 0.46f);
+    const float crossWave = sin(
+        heatCoordinate.x * 0.43f - heatCoordinate.y * 1.17f +
+        gFinalComposite.heatTime * 0.31f);
+    const float2 distortionDirection = float2(
+        slowWave * 0.62f + crossWave * 0.38f,
+        crossWave * 0.72f - slowWave * 0.28f);
+    return saturate(texcoord + distortionDirection * heatMask * 0.0018f);
+}
+
 float4 main(PixelShaderInput input) : SV_TARGET0
 {
-    const float2 centeredUv = input.texcoord - float2(0.5f, 0.5f);
+    const float2 sceneUv = ResolveAtmosphericHeatUv(input.texcoord);
+    const float2 centeredUv = sceneUv - float2(0.5f, 0.5f);
     const float2 aberrationOffset =
         centeredUv * max(gFinalComposite.chromaticAberration, 0.0f) * 0.006f;
 
-    const float redChannel = gSceneColor.Sample(gSampler, input.texcoord + aberrationOffset).r;
-    const float greenChannel = gSceneColor.Sample(gSampler, input.texcoord).g;
-    const float blueChannel = gSceneColor.Sample(gSampler, input.texcoord - aberrationOffset).b;
+    const float redChannel = gSceneColor.Sample(gSampler, sceneUv + aberrationOffset).r;
+    const float greenChannel = gSceneColor.Sample(gSampler, sceneUv).g;
+    const float blueChannel = gSceneColor.Sample(gSampler, sceneUv - aberrationOffset).b;
     const float3 sceneColor = float3(redChannel, greenChannel, blueChannel);
     const float3 bloomColor = gBloomTexture.Sample(gSampler, input.texcoord).rgb;
     const float ambientOcclusion = gAmbientOcclusionTexture.Sample(gSampler, input.texcoord).r;

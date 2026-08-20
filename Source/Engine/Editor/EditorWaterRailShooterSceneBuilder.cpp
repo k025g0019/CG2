@@ -193,7 +193,7 @@ namespace {
 
 		targetSelector->targetSelectorSearchLayer = -1;
 		targetSelector->targetSelectorMaximumDistance = maximumDistance;
-		targetSelector->targetSelectorMaximumAngle = 110.0f;
+		targetSelector->targetSelectorMaximumAngle = 180.0f;
 		targetSelector->targetSelectorReferenceGameObjectId = referenceGameObjectId;
 		targetSelector->targetSelectorOcclusionCheck = true;
 		targetSelector->targetSelectorOcclusionMode = 3;
@@ -889,6 +889,11 @@ bool EditorWaterRailShooterSceneBuilder::Generate(std::string& resultMessage) {
 		environment->intensity = 1.1f;
 		environment->metallic = 0.32f;
 		environment->reflectionStrength = 1.0f;
+		environment->environmentHeatIntensity = 0.22f;
+		environment->environmentHeatHorizonCenter = 0.46f;
+		environment->environmentHeatHorizonWidth = 0.15f;
+		environment->environmentHeatSunInfluence = 0.55f;
+		environment->environmentHeatDistortionScale = 0.65f;
 	}
 
 	const int32_t oceanGameObjectId = CreateGameObject(
@@ -916,8 +921,10 @@ bool EditorWaterRailShooterSceneBuilder::Generate(std::string& resultMessage) {
 		ocean->oceanDirectionSpread = 0.48f;
 		ocean->oceanSwellStrength = 0.72f;
 		ocean->oceanCrestSharpness = 0.34f;
-		ocean->oceanRoughness = 0.12f;
-		ocean->oceanReflectionStrength = 0.82f;
+		// 強風時でも面全体が鏡面化しない粗さと反射率を基準にする。
+		// SUNの明るさとは分離し、正面視では水色、浅い角度では空反射を残す。
+		ocean->oceanRoughness = 0.22f;
+		ocean->oceanReflectionStrength = 0.58f;
 		ocean->oceanDetailNormalStrength = 0.3f;
 		ocean->oceanAbsorptionDistance = 30.0f;
 		ocean->oceanRefractionDistortion = 0.032f;
@@ -926,6 +933,28 @@ bool EditorWaterRailShooterSceneBuilder::Generate(std::string& resultMessage) {
 		ocean->oceanDeepColor = {0.012f, 0.14f, 0.26f};
 		ocean->oceanFoamStrength = 0.48f;
 		ocean->oceanFoamThreshold = 0.55f;
+		ocean->oceanSunSpecularInfluence = 0.55f;
+		ocean->oceanSunGlitterInfluence = 0.32f;
+		ocean->oceanSkyReflectionInfluence = 0.72f;
+		ocean->oceanDiffuseFloor = 0.12f;
+		ocean->oceanGlitterIntensity = 0.75f;
+		ocean->oceanGlitterSharpness = 0.76f;
+		ocean->oceanGlitterDensity = 1.25f;
+		ocean->oceanGlitterThreshold = 0.62f;
+		ocean->oceanGlitterMaxClamp = 3.5f;
+		// 大波の向きを環境反射へ残し、中波で広い斜面を分割する。
+		// 曲率色と谷遮蔽は弱く保ち、色の縞や黒い櫛状の強調を避ける。
+		ocean->oceanMacroReflectionInfluence = 0.82f;
+		ocean->oceanCurvatureInfluence = 0.65f;
+		ocean->oceanTroughOcclusionStrength = 0.14f;
+		ocean->oceanCrestHazeStrength = 0.32f;
+		ocean->oceanCrestDetailBoost = 0.16f;
+		ocean->oceanSlopeRefractionInfluence = 0.28f;
+		ocean->oceanMediumWaveStrength = 1.25f;
+		ocean->oceanWaveColorSeparation = 0.10f;
+		ocean->oceanShapeRoughnessVariation = 0.24f;
+		ocean->oceanDetailFilterSharpness = 1.35f;
+		ocean->oceanGrazingShapeVisibility = 0.45f;
 	}
 
 	const int32_t sunGameObjectId = CreateGameObject(
@@ -1224,6 +1253,15 @@ bool EditorWaterRailShooterSceneBuilder::Generate(std::string& resultMessage) {
 
 	if (horizonStabilizer != nullptr) {
 		horizonStabilizer->connectedGameObjectId = playerGameObjectId;
+		horizonStabilizer->horizonSourceGameObjectId = playerGameObjectId;
+		horizonStabilizer->horizonLocalPositionOffset = {0.0f, 6.2f, -14.0f};
+		horizonStabilizer->horizonRotationOffsetDegrees = {5.729578f, 0.0f, 0.0f};
+		horizonStabilizer->horizonPitchInheritance = 0.18f;
+		horizonStabilizer->horizonYawInheritance = 1.0f;
+		horizonStabilizer->horizonRollInheritance = 0.08f;
+		horizonStabilizer->horizonDamping = 6.0f;
+		horizonStabilizer->horizonMaximumRollDegrees = 4.0f;
+		horizonStabilizer->horizonFollowPosition = true;
 	}
 
 	//================================================================

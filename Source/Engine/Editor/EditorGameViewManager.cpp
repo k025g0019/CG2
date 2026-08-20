@@ -70,6 +70,18 @@ namespace {
 		const EditorGameObject& cameraGameObject,
 		const EditorComponent& cameraComponent) {
 		Transforms gameCameraTransform = ResolveWorldTransform(cameraGameObject);
+		const EditorComponent* horizonStabilizer = EditorComponentUtility::FindComponent(
+			cameraGameObject,
+			EditorComponentType::CameraHorizonStabilizer);
+
+		// Constraint更新済みのWorld Transformを再度Camera Followで上書きしない。
+		// これにより船体Yawは追従しつつ、Pitch/Roll継承率をInspectorから調整できる。
+		if (horizonStabilizer != nullptr &&
+			horizonStabilizer->isActive &&
+			horizonStabilizer->horizonSourceGameObjectId >= 0) {
+			return gameCameraTransform;
+		}
+
 		if (cameraComponent.connectedGameObjectId < 0 ||
 			cameraComponent.connectedGameObjectId == cameraGameObject.id) {
 			return gameCameraTransform;

@@ -386,6 +386,65 @@ namespace {
 		light.shadowEnabled = -1.0f;  // Shader 側でライト列の終端として扱う。
 	}
 
+	// 色温度(Kelvin)からsRGB相当のRGB色へ変換する。Tanner Helland近似式を1.0基準へ正規化して使う。
+	// 5500K～6500K付近が白、それより低いと橙～赤、高いと青白くなる。
+	Vector3 KelvinToRgb(float temperatureKelvin) {
+		const float temperature = (std::clamp)(temperatureKelvin, 1000.0f, 40000.0f) / 100.0f;
+		float red;
+		float green;
+		float blue;
+
+		if (temperature <= 66.0f) {
+			red = 255.0f;
+			green = 99.4708025861f * std::log(temperature) - 161.1195681661f;
+
+			if (temperature <= 19.0f) {
+				blue = 0.0f;
+			} else {
+				blue = 138.5177312231f * std::log(temperature - 10.0f) - 305.0447927307f;
+			}
+		} else {
+			red = 329.698727446f * std::pow(temperature - 60.0f, -0.1332047592f);
+			green = 288.1221695283f * std::pow(temperature - 60.0f, -0.0755148492f);
+			blue = 255.0f;
+		}
+
+		return Vector3{
+			(std::clamp)(red, 0.0f, 255.0f) / 255.0f,
+			(std::clamp)(green, 0.0f, 255.0f) / 255.0f,
+			(std::clamp)(blue, 0.0f, 255.0f) / 255.0f};
+	}
+
+	// 太陽高度からKelvinを自動推定する。夕方(低高度)ほど暖色、昼(高高度)ほど白～青白い方向へ寄せる。
+	float EstimateSunKelvinFromElevation(float elevationDegrees) {
+		const float t = (std::clamp)(elevationDegrees, -5.0f, 90.0f);
+		const float lowElevationKelvin = 2000.0f;   // 地平線付近。かなり橙。
+		const float midElevationKelvin = 4500.0f;   // 中程度の高さ。やや暖色。
+		const float highElevationKelvin = 6500.0f;  // 高い昼。青白い。
+
+		if (t <= 10.0f) {
+			const float blend = (std::clamp)((t + 5.0f) / 15.0f, 0.0f, 1.0f);
+			return lowElevationKelvin + (midElevationKelvin - lowElevationKelvin) * blend;
+		}
+
+		const float blend = (std::clamp)((t - 10.0f) / 55.0f, 0.0f, 1.0f);
+		return midElevationKelvin + (highElevationKelvin - midElevationKelvin) * blend;
+	}
+
+	// 太陽方位角(度、0=+Z、90=+Xで時計回り)と高度(度、90=真上)から、
+	// Light.directionと同じ「光が進む向き」のワールド方向ベクトルを作る。
+	Vector3 BuildSunDirectionFromAzimuthElevation(float azimuthDegrees, float elevationDegrees) {
+		const float azimuthRadian = azimuthDegrees * (3.14159265f / 180.0f);
+		const float elevationRadian = elevationDegrees * (3.14159265f / 180.0f);
+		const float horizontalRadius = std::cos(elevationRadian);
+		const Vector3 towardSun{
+			horizontalRadius * std::sin(azimuthRadian),
+			std::sin(elevationRadian),
+			horizontalRadius * std::cos(azimuthRadian)};
+		// dl.directionは「光源からどちらへ進むか」なので、太陽が居る向きの反対を返す。
+		return Vector3{-towardSun.x, -towardSun.y, -towardSun.z};
+	}
+
 	int32_t CollectSceneLights(DirectionalLight* lightsOut) {
 		for (int32_t i = 0; i < kMaxShadowLights; i++) {
 			ClearDisabledSceneLight(lightsOut[i]);
@@ -465,6 +524,28 @@ namespace {
 
 			dl.direction = Normalize(forwardDirection);
 			dl.shadowEnabled = 1.0f;
+
+			// 太陽(Sun)は方位角/高度と色温度から、Directional Lightの上位概念として
+			// sunDirection / sunColor を作れるようにする。両方とも既定はOFFで、
+			// 既存Sceneの見た目(Transform回転とcolorフィールド)をそのまま維持する。
+			if (component.assetPath == "Sun") {
+				if (component.sunUseAzimuthElevation) {
+					dl.direction = BuildSunDirectionFromAzimuthElevation(
+						component.sunAzimuthDegrees,
+						component.sunElevationDegrees);
+				}
+
+				if (component.sunUseColorTemperature) {
+					const float elevationDegrees = component.sunUseAzimuthElevation
+						? component.sunElevationDegrees
+						: std::asin((std::clamp)(-dl.direction.y, -1.0f, 1.0f)) * (180.0f / 3.14159265f);
+					const float temperatureKelvin = component.sunAutoTemperatureFromElevation
+						? EstimateSunKelvinFromElevation(elevationDegrees)
+						: component.sunTemperatureKelvin;
+					const Vector3 temperatureColor = KelvinToRgb(temperatureKelvin);
+					dl.color = {temperatureColor.x, temperatureColor.y, temperatureColor.z, 1.0f};
+				}
+			}
 		}
 
 		return count;
@@ -889,6 +970,11 @@ namespace {
 		float cameraMotionBlurIntensity = 0.5f;
 		float cameraNearClip = 0.3f;
 		float cameraFarClip = 1000.0f;
+		float environmentHeatIntensity = 0.0f;
+		float environmentHeatHorizonCenter = 0.46f;
+		float environmentHeatHorizonWidth = 0.16f;
+		float environmentHeatSunInfluence = 0.55f;
+		float environmentHeatDistortionScale = 0.65f;
 	};
 
 	void InitializePostProcessModeDefaults(PostProcessSettings& settings) {
@@ -911,6 +997,17 @@ namespace {
 			if (!gameObject.isActive) {
 				continue;
 			}
+			const EditorComponent* environment =
+				EditorComponentUtility::FindComponent(gameObject, EditorComponentType::Environment);
+
+			if (environment != nullptr && environment->isActive) {
+				settings.environmentHeatIntensity = environment->environmentHeatIntensity;
+				settings.environmentHeatHorizonCenter = environment->environmentHeatHorizonCenter;
+				settings.environmentHeatHorizonWidth = environment->environmentHeatHorizonWidth;
+				settings.environmentHeatSunInfluence = environment->environmentHeatSunInfluence;
+				settings.environmentHeatDistortionScale = environment->environmentHeatDistortionScale;
+			}
+
 			const EditorComponent* pp =
 				EditorComponentUtility::FindComponent(gameObject, EditorComponentType::PostProcess);
 			if (pp == nullptr || !pp->isActive) {
@@ -3247,10 +3344,12 @@ void EditorRenderManager::Draw() {
 		depthStencilResource != nullptr;
 
 	if (shouldRenderWaterSurface) {
-		const auto bindWaterViewConstants = [&commandList](
+		const auto bindWaterViewConstants = [&commandList, &oceanElapsedTime, primaryOceanSceneObject](
 			const Matrix4x4& targetInverseViewProjection,
 			const Matrix4x4& targetViewMatrix,
 			const Matrix4x4& targetProjectionMatrix,
+			const Vector3& targetCameraPosition,
+			uint64_t targetSurfaceSampleKey,
 			const D3D12_VIEWPORT& targetViewport) {
 			std::array<float, 32u> waterViewConstants{};
 			std::memcpy(
@@ -3276,7 +3375,26 @@ void EditorRenderManager::Draw() {
 			waterViewConstants[28] = targetViewMatrix.matrix[0][2];
 			waterViewConstants[29] = targetViewMatrix.matrix[1][2];
 			waterViewConstants[30] = targetViewMatrix.matrix[2][2];
-			waterViewConstants[31] = targetProjectionMatrix.matrix[2][3];
+			// Scene/Game CameraごとにFFT水面を1回だけ取得し、描画すべき表裏を決める。
+			// 高さ0固定ではなく描画・浮力と同じOcean Queryを使うため、大波を横切っても反転が遅れない。
+			EditorOceanSurfaceSample cameraSurfaceSample{};
+			const bool hasCameraSurfaceSample = SampleEditorOceanSurface(
+				g_editorScene,
+				primaryOceanSceneObject->gameObjectId,
+				targetCameraPosition,
+				targetSurfaceSampleKey,
+				oceanElapsedTime,
+				cameraSurfaceSample);
+			const float fallbackSurfaceHeight =
+				primaryOceanSceneObject->worldMatrix.matrix[3][1];
+			const float cameraSurfaceDistance = hasCameraSurfaceSample
+				? Dot(
+					Subtract(targetCameraPosition, cameraSurfaceSample.position),
+					cameraSurfaceSample.normal)
+				: targetCameraPosition.y - fallbackSurfaceHeight;
+			const float cameraSurfaceSide = cameraSurfaceDistance >= 0.0f ? 1.0f : -1.0f;
+			waterViewConstants[31] =
+				std::abs(targetProjectionMatrix.matrix[2][3]) * cameraSurfaceSide;
 			commandList->SetGraphicsRoot32BitConstants(
 				24u,
 				static_cast<UINT>(waterViewConstants.size()),
@@ -3331,6 +3449,8 @@ void EditorRenderManager::Draw() {
 				inverseViewProjectionMatrix,
 				viewMatrix,
 				sceneRenderProjectionMatrix,
+				cameraTransform.translate,
+				0x5343454e45574154ull,
 				viewport);
 			const int32_t firstReflectorId = scenePlanarView == nullptr
 				? -1
@@ -3352,6 +3472,8 @@ void EditorRenderManager::Draw() {
 				inverseGameViewProjectionMatrix,
 				g_gameViewMatrix,
 				gameRenderProjectionMatrix,
+				g_gameCameraPosition,
+				0x47414d4557415445ull,
 				gameViewport);
 			const int32_t firstReflectorId = gamePlanarView == nullptr
 				? -1
@@ -4673,7 +4795,36 @@ void EditorRenderManager::Draw() {
 			5u,
 			g_postProcessQualityManager.GetAutoExposureSrvHandle());
 		commandList->SetGraphicsRootDescriptorTable(6u, colorGradingLutSrvHandleGPU);
-		float finalCompositeParams[32] = {
+		commandList->SetGraphicsRootDescriptorTable(7u, depthSrvHandleGPU);
+
+		static const std::chrono::steady_clock::time_point heatStartTime =
+			std::chrono::steady_clock::now();
+		const float heatElapsedTime = std::chrono::duration<float>(
+			std::chrono::steady_clock::now() - heatStartTime).count();
+		Vector3 sunScreenPosition = {0.5f, ppSettings.environmentHeatHorizonCenter, 0.0f};
+
+		if (sunLightIndex >= 0) {
+			const Vector3 sunWorldDirection = Multiply(
+				-1.0f,
+				directionalLightData[sunLightIndex].direction);
+			const Vector3 sunWorldPosition = Add(
+				activeCameraPosition,
+				Multiply(10000.0f, sunWorldDirection));
+			const Matrix4x4& activeViewProjectionMatrix = g_isSceneViewVisible
+				? sceneViewProjectionMatrix
+				: gameViewProjectionMatrix;
+			const ClipSpacePoint sunClipPosition = TransformToClipSpace(
+				sunWorldPosition,
+				activeViewProjectionMatrix);
+
+			if (sunClipPosition.w > 0.0001f) {
+				const float inverseSunW = 1.0f / sunClipPosition.w;
+				sunScreenPosition.x = sunClipPosition.x * inverseSunW * 0.5f + 0.5f;
+				sunScreenPosition.y = 0.5f - sunClipPosition.y * inverseSunW * 0.5f;
+			}
+		}
+
+		float finalCompositeParams[40] = {
 			ppSettings.compositeExposure * ppSettings.finalBrightness,
 			ppSettings.compositeWhitePoint,
 			static_cast<float>(ppSettings.compositeToneMappingMode),
@@ -4705,9 +4856,17 @@ void EditorRenderManager::Draw() {
 			(std::clamp)(ppSettings.compositeColorLutStrength, 0.0f, 1.0f),
 			0.45f,
 			ppSettings.compositeLocalContrast,
-			ppSettings.compositeOutputDither
+			ppSettings.compositeOutputDither,
+			ppSettings.environmentHeatIntensity,
+			ppSettings.environmentHeatHorizonCenter,
+			ppSettings.environmentHeatHorizonWidth,
+			ppSettings.environmentHeatSunInfluence,
+			ppSettings.environmentHeatDistortionScale,
+			heatElapsedTime,
+			sunScreenPosition.x,
+			sunScreenPosition.y
 		};
-		commandList->SetGraphicsRoot32BitConstants(2u, 32u, finalCompositeParams, 0u);
+		commandList->SetGraphicsRoot32BitConstants(2u, 40u, finalCompositeParams, 0u);
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		commandList->DrawInstanced(3, 1, 0, 0);
 

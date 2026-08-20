@@ -2478,7 +2478,13 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	postProcessDescriptorRange6[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
 	postProcessDescriptorRange6[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-	D3D12_ROOT_PARAMETER postProcessRootParameters[7] = {};
+	D3D12_DESCRIPTOR_RANGE postProcessDescriptorRange7[1] = {};
+	postProcessDescriptorRange7[0].BaseShaderRegister = 7u;
+	postProcessDescriptorRange7[0].NumDescriptors = 1u;
+	postProcessDescriptorRange7[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	postProcessDescriptorRange7[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_ROOT_PARAMETER postProcessRootParameters[8] = {};
 	postProcessRootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
 	postProcessRootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	postProcessRootParameters[0].DescriptorTable.pDescriptorRanges = postProcessDescriptorRange0;
@@ -2516,6 +2522,12 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	postProcessRootParameters[6].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	postProcessRootParameters[6].DescriptorTable.pDescriptorRanges = postProcessDescriptorRange6;
 	postProcessRootParameters[6].DescriptorTable.NumDescriptorRanges = _countof(postProcessDescriptorRange6);
+
+	// t7 は FinalComposite の遠景Heat Shimmerが近景を除外するためのScene Depth。
+	postProcessRootParameters[7].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	postProcessRootParameters[7].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	postProcessRootParameters[7].DescriptorTable.pDescriptorRanges = postProcessDescriptorRange7;
+	postProcessRootParameters[7].DescriptorTable.NumDescriptorRanges = _countof(postProcessDescriptorRange7);
 
 	D3D12_STATIC_SAMPLER_DESC postProcessSampler{};
 	postProcessSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;

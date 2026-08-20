@@ -291,7 +291,7 @@ float CalculateSunWrappedDiffuse(float normalDotLight)
 {
     // SUNは距離減衰を持たないため、完全なLambertのままだと正面が均一・背面が真っ黒になりやすい。
     // DirectLightの方向感は残しつつ、ゲーム用の軽い回り込みで側面と背面の落ち方を緩める。
-    const float sunWrap = 0.24f;
+    const float sunWrap = 0.14f;
     return saturate((normalDotLight + sunWrap) / (1.0f + sunWrap));
 }
 
@@ -315,7 +315,7 @@ float3 EvaluateSunHemisphereFill(
         max(light.intensity, 0.0f) *
         sideAndBack *
         (1.0f - metallic) *
-        0.18f;
+        0.08f;
 
     return albedo * hemisphereColor * fillStrength;
 }

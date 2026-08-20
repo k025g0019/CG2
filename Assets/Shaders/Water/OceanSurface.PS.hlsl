@@ -68,6 +68,31 @@ struct Material
     float surfaceMaterialPadding0;
     float surfaceMaterialPadding1;
     float surfaceMaterialPadding2;
+    // Ocean Sun Lighting / Glitter 調整項目（C++ 側 EditorCommonTypes.h の Material 拡張と対応）
+    float oceanSunDiffuseInfluence;
+    float oceanSunSpecularInfluence;
+    float oceanSunGlitterInfluence;
+    float oceanSkyReflectionInfluence;
+    float oceanAmbientInfluence;
+    float oceanDiffuseFloor;
+    float oceanGlitterIntensity;
+    float oceanGlitterSharpness;
+    float oceanGlitterDensity;
+    float oceanGlitterThreshold;
+    float oceanGlitterMaxClamp;
+    float oceanLightingExtensionPadding0;
+    float oceanMacroReflectionInfluence;
+    float oceanCurvatureInfluence;
+    float oceanTroughOcclusionStrength;
+    float oceanCrestHazeStrength;
+    float oceanCrestDetailBoost;
+    float oceanSlopeRefractionInfluence;
+    float oceanMediumWaveStrength;
+    float oceanWaveColorSeparation;
+    float oceanShapeRoughnessVariation;
+    float oceanDetailFilterSharpness;
+    float oceanGrazingShapeVisibility;
+    float oceanShapeLightingPadding0;
 };
 
 struct DirectionalLightData
@@ -162,6 +187,11 @@ SamplerState gSceneSampler : register(s1);
 
 static const float kOceanPi = 3.14159265359f;
 static const float kOceanEnvironmentMipCount = 8.0f;
+
+// Ocean Debug View: 0=Final(通常) / 1=Sun Diffuse / 2=Normal Specular /
+// 3=Glitter Reflection Alignment / 4=Glitter Continuous Mask / 5=Final Glitter Mask
+// 調査・確認用。用が済んだら必ず 0 に戻してからコミットすること。
+#define OCEAN_GLITTER_DEBUG_VIEW 0
 
 #define OCEAN_PRIMARY_LIGHT gDirectionalLight.lights[0]
 
@@ -275,7 +305,8 @@ float SampleOceanShadowProjection(
     float3 worldPosition,
     float normalDotLight,
     row_major float4x4 shadowViewProjection,
-    float4 atlasTransform)
+    float4 atlasTransform,
+    float filterRadius)
 {
     const float4 shadowPosition = mul(
         float4(worldPosition, 1.0f),
@@ -320,7 +351,7 @@ float SampleOceanShadowProjection(
         atlasUv,
         receiverDepth - receiverBias,
         texelSize,
-        1.35f,
+        filterRadius,
         tileMinimumUv,
         tileMaximumUv);
 }
@@ -334,6 +365,14 @@ float SampleOceanShadowAtlas(
     {
         return 1.0f;
     }
+
+    // 近距離まで固定半径のPCFを掛けると波面に投影された影が常にぼける。
+    // Tap数は変えず、遠距離だけ従来の半径へ戻す。
+    const float cameraDistance = length(worldPosition - light.cameraPosition);
+    const float shadowFilterRadius = lerp(
+        0.82f,
+        1.35f,
+        smoothstep(20.0f, 140.0f, cameraDistance));
 
     const bool usesCascadedShadow =
         light.lightType == 0 &&
@@ -350,10 +389,10 @@ float SampleOceanShadowAtlas(
             worldPosition,
             normalDotLight,
             light.shadowVP,
-            atlasTransform);
+            atlasTransform,
+            shadowFilterRadius);
     }
 
-    const float cameraDistance = length(worldPosition - light.cameraPosition);
     uint cascadeIndex = 0u;
     cascadeIndex += cameraDistance > light.shadowCascadeSplits.x ? 1u : 0u;
     cascadeIndex += cameraDistance > light.shadowCascadeSplits.y ? 1u : 0u;
@@ -364,7 +403,8 @@ float SampleOceanShadowAtlas(
         worldPosition,
         normalDotLight,
         light.shadowCascadeVP[cascadeIndex],
-        light.shadowCascadeAtlas[cascadeIndex]);
+        light.shadowCascadeAtlas[cascadeIndex],
+        shadowFilterRadius);
 
     if (cascadeIndex >= 3u)
     {
@@ -392,7 +432,8 @@ float SampleOceanShadowAtlas(
         worldPosition,
         normalDotLight,
         light.shadowCascadeVP[cascadeIndex + 1u],
-        light.shadowCascadeAtlas[cascadeIndex + 1u]);
+        light.shadowCascadeAtlas[cascadeIndex + 1u],
+        shadowFilterRadius);
     return lerp(currentShadow, nextShadow, cascadeBlend);
 }
 
@@ -458,7 +499,7 @@ bool ProjectOceanWorldPosition(
         dot(cameraRelativePosition, gWaterView.viewUp),
         dot(cameraRelativePosition, gWaterView.viewForward));
     const float clipW =
-        viewPosition.z * gWaterView.projectionWScale;
+        viewPosition.z * abs(gWaterView.projectionWScale);
 
     if (clipW <= 0.00001f)
     {
@@ -557,6 +598,14 @@ OceanSceneSample SampleOceanOpaqueScene(
     const float cameraDistance = length(
         input.worldPosition - OCEAN_PRIMARY_LIGHT.cameraPosition);
     const float oceanDomainLength = rcp(max(input.oceanSamplingData.w, 0.000001f));
+    const float depthAwareRefraction = lerp(
+        0.42f,
+        1.0f,
+        smoothstep(0.015f, 0.62f, normalizedDepth));
+    const float nearRefractionStability = lerp(
+        0.72f,
+        1.0f,
+        smoothstep(24.0f, 110.0f, cameraDistance));
     const float refractionDistanceFade = 1.0f - smoothstep(
         oceanDomainLength * 0.06f,
         oceanDomainLength * 0.34f,
@@ -564,7 +613,9 @@ OceanSceneSample SampleOceanOpaqueScene(
     const float2 refractionOffset = clamp(
         (projectedNormalUv - projectedSurfaceUv) *
             max(gMaterial.oceanRefractionDistortion, 0.0f) *
-            refractionDistanceFade,
+            refractionDistanceFade *
+            depthAwareRefraction *
+            nearRefractionStability,
         -gWaterView.viewportUvScale * 0.018f,
         gWaterView.viewportUvScale * 0.018f);
     const float2 refractedUv = ClampOceanScreenUv(screenUv + refractionOffset);
@@ -634,8 +685,35 @@ float3 CompressOceanHighlight(float3 color, float maximumLuminance)
     return max(color, 0.0f) * compression;
 }
 
+// ------------------------------------------------------------
+// Sun Irradiance Response
+// ------------------------------------------------------------
+// SUN強度をそのまま鏡面反射へ渡すと、強度を上げた時に反射だけが膜状に広がる。
+// 輝度1.0を基準に保った対数応答へ変換し、色相を維持したまま広い強度範囲を扱う。
+float3 EvaluateOceanSunIrradiance(float3 radiance)
+{
+    const float radianceLuminance = max(
+        dot(max(radiance, 0.0f), float3(0.2126f, 0.7152f, 0.0722f)),
+        0.0f);
+
+    if (radianceLuminance <= 0.0001f)
+    {
+        return float3(0.0f, 0.0f, 0.0f);
+    }
+
+    const float responsiveLuminance = log2(1.0f + radianceLuminance);
+    return max(radiance, 0.0f) * (responsiveLuminance / radianceLuminance);
+}
+
+// ------------------------------------------------------------
+// Sun Glitter
+// ------------------------------------------------------------
+// 水面に斑点模様が出ないよう、座標Hashやfloor()による点マスクは使わない。
+// 太陽方向と水面法線の関係だけで連続した反射帯を作る。
+
 float3 EvaluateOceanSunGlitter(
     float3 macroNormal,
+    float3 mediumNormal,
     float3 opticalNormal,
     float3 viewDirection,
     float3 lightDirection,
@@ -643,48 +721,83 @@ float3 EvaluateOceanSunGlitter(
     float roughness,
     float fresnelBase,
     float slope,
-    float shadowVisibility)
+    float shadowVisibility,
+    float glitterIntensity,
+    float glitterSharpness,
+    float glitterDensity,
+    float glitterThreshold,
+    float glitterMaxClamp,
+    out float debugReflectionAlignment,
+    out float debugContinuousMask,
+    out float debugFinalMask)
 {
-    const float3 reflectedSunDirection = normalize(reflect(
-        -lightDirection,
-        opticalNormal));
-    const float reflectionAlignment = saturate(dot(
-        reflectedSunDirection,
-        viewDirection));
-    const float roughnessWeight = saturate(
-        (roughness - 0.055f) / 0.32f);
-    const float coreExponent = lerp(
-        720.0f,
-        72.0f,
-        roughnessWeight);
-    const float glitterCore = pow(
-        max(reflectionAlignment, 0.0001f),
-        coreExponent);
-    const float glitterHalo = pow(
-        max(reflectionAlignment, 0.0001f),
-        coreExponent * 0.16f);
+    // (A) 反射整列条件: H = normalize(V + L), reflectionAlignment = saturate(dot(N, H))。
+    // ここでは座標Hashによる間引きは使わない。Hash点滅は水面に斑点模様として残るため、
+    // SUN反射は連続したSpecular帯として扱う。
+    const float3 halfDirection = normalize(viewDirection + lightDirection);
+    const float largeReflectionAlignment = saturate(dot(macroNormal, halfDirection));
+    const float mediumReflectionAlignment = saturate(dot(mediumNormal, halfDirection));
+    const float reflectionAlignment = saturate(dot(opticalNormal, halfDirection));
+
+    // Fine NormalがHalf Vectorへ向く微小面の割合をGGX分布で評価する。
+    // 座標Noiseではなく実際の法線方向で決まるため、Camera/SUN移動へ連続的に追従する。
+    const float glitterMicrofacetRoughness = clamp(
+        lerp(0.16f, 0.035f, saturate(glitterSharpness)) + roughness * 0.12f,
+        0.035f,
+        0.24f);
+    const float glitterDistribution = OceanDistributionGgx(
+        reflectionAlignment,
+        glitterMicrofacetRoughness);
+    const float glintCandidate = glitterDistribution /
+        (glitterDistribution + 8.0f);
+
+    // 閾値は滑らかに使う。離散的なstepやfloor座標を使うと斑点が発生する。
+    const float effectiveThreshold = lerp(0.02f, 0.72f, saturate(glitterThreshold));
+    const float glintMask = smoothstep(effectiveThreshold, 1.0f, glintCandidate);
+
+    // Large Normalで太陽反射の通り道を決め、Medium Normalで帯の内部を分割する。
+    // Fine Normalは最後のGlitterだけへ使い、大波の反射帯を細波で白い板へ変えない。
+    const float largePath = pow(largeReflectionAlignment, lerp(5.0f, 18.0f, saturate(roughness)));
+    const float mediumPartition = pow(mediumReflectionAlignment, lerp(10.0f, 34.0f, saturate(roughness)));
+    const float broadReflection = largePath * lerp(0.34f, 1.0f, mediumPartition);
+
     const float normalDotLight = saturate(dot(macroNormal, lightDirection));
     const float normalDotView = saturate(dot(opticalNormal, viewDirection));
     const float surfaceVisibility =
         smoothstep(0.015f, 0.18f, normalDotLight) *
         smoothstep(0.01f, 0.22f, normalDotView);
+    // Glitter Pathの帯を波の傾斜でわずかに強調する。
     const float glitterCoverage = lerp(
-        0.72f,
-        1.26f,
+        0.85f,
+        1.15f,
         saturate(slope));
+
+    // 広い反射帯は通常のGGX Sun Specularが担当する。
+    // broadReflection単体をGlitterへ混ぜると、Fine Normalが太陽へ向いていない面まで
+    // 半透明の銀色領域になり、カメラ距離で水たまり状に拡縮して見える。
+    const float finalGlitterMask = saturate(
+        glintMask * broadReflection *
+        surfaceVisibility *
+        lerp(0.65f, 1.0f, saturate(glitterDensity)));
+
+    debugReflectionAlignment = largeReflectionAlignment;
+    debugContinuousMask = saturate(glintMask * broadReflection);
+    debugFinalMask = saturate(finalGlitterMask);
+
     const float3 fresnel = OceanFresnelSchlick(
         normalDotView,
         fresnelBase);
     const float3 glitterRadiance =
         radiance *
         fresnel *
-        (glitterCore * 2.2f + glitterHalo * 0.34f) *
-        surfaceVisibility *
+        finalGlitterMask *
         glitterCoverage *
-        shadowVisibility;
+        shadowVisibility *
+        max(glitterIntensity, 0.0f);
 
     // HDR値はBloomへ渡すが、自動露出を破壊する単一画素ピークにはしない。
-    return CompressOceanHighlight(glitterRadiance, 7.5f);
+    // ここは「明るさの安全弁」。空間的な点マスクは使わない。
+    return CompressOceanHighlight(glitterRadiance, max(glitterMaxClamp, 0.1f));
 }
 
 OceanScreenReflection TraceOceanScreenReflection(
@@ -771,27 +884,41 @@ OceanScreenReflection TraceOceanScreenReflection(
             continue;
         }
 
+        // 近距離の低粗さ反射は中心Sampleを優先し、固定5Tapによる面全体の軟化を避ける。
+        // 遠距離と高粗さでは従来相当の平滑化へ連続的に戻す。
+        const float surfaceCameraDistance = length(
+            worldPosition - OCEAN_PRIMARY_LIGHT.cameraPosition);
+        const float distanceBlur = smoothstep(
+            24.0f,
+            140.0f,
+            surfaceCameraDistance);
         const float blurRadius =
-            roughness * roughness * 4.0f;
+            lerp(0.18f, 1.0f, distanceBlur) +
+            roughness * roughness * 3.0f;
+        const float sideSampleWeight = lerp(
+            0.055f,
+            0.15f,
+            saturate(roughness * 1.4f + distanceBlur * 0.45f));
+        const float centerSampleWeight = 1.0f - sideSampleWeight * 4.0f;
         const float2 blurOffset = texelSize * blurRadius;
         float3 reflectedColor =
-            gWaterSceneColor.SampleLevel(gSceneSampler, rayScreenUv, 0.0f).rgb * 0.40f;
+            gWaterSceneColor.SampleLevel(gSceneSampler, rayScreenUv, 0.0f).rgb * centerSampleWeight;
         reflectedColor += gWaterSceneColor.SampleLevel(
             gSceneSampler,
             ClampOceanScreenUv(rayScreenUv + float2(blurOffset.x, 0.0f)),
-            0.0f).rgb * 0.15f;
+            0.0f).rgb * sideSampleWeight;
         reflectedColor += gWaterSceneColor.SampleLevel(
             gSceneSampler,
             ClampOceanScreenUv(rayScreenUv - float2(blurOffset.x, 0.0f)),
-            0.0f).rgb * 0.15f;
+            0.0f).rgb * sideSampleWeight;
         reflectedColor += gWaterSceneColor.SampleLevel(
             gSceneSampler,
             ClampOceanScreenUv(rayScreenUv + float2(0.0f, blurOffset.y)),
-            0.0f).rgb * 0.15f;
+            0.0f).rgb * sideSampleWeight;
         reflectedColor += gWaterSceneColor.SampleLevel(
             gSceneSampler,
             ClampOceanScreenUv(rayScreenUv - float2(0.0f, blurOffset.y)),
-            0.0f).rgb * 0.15f;
+            0.0f).rgb * sideSampleWeight;
 
         const float2 viewportUv = GetOceanViewportUv(rayScreenUv);
         const float edgeDistance = min(
@@ -811,10 +938,23 @@ OceanScreenReflection TraceOceanScreenReflection(
 
 float4 main(PixelShaderInput input) : SV_TARGET0
 {
-    const float3 interpolatedMacroNormal =
-        gMaterial.doubleSided != 0 && !input.isFrontFace
-            ? -input.normal
-            : input.normal;
+    // OceanはDepthを書かない両面描画なので、急斜面では裏面三角形が表面へ
+    // 後描きされる。実際のFFT海面に対するカメラ側だけを残し、櫛状の暗部を防ぐ。
+    // projectionWScaleの絶対値は従来の投影係数、符号はCameraの水面側を表す。
+    // Root Signatureの64 DWORD上限を増やさず、Scene/Gameごとの判定を渡す。
+    const bool cameraIsAboveSurface = gWaterView.projectionWScale >= 0.0f;
+    const bool isVisibleCameraSide = cameraIsAboveSurface
+        ? input.isFrontFace
+        : !input.isFrontFace;
+    clip(isVisibleCameraSide ? 1.0f : -1.0f);
+
+    const bool isUnderwaterSurface = !cameraIsAboveSurface;
+    const float3 viewDirection = normalize(
+        OCEAN_PRIMARY_LIGHT.cameraPosition - input.worldPosition);
+
+    // 曲率と波頭判定は常にFFTの物理的な表向き法線から求める。
+    // 裏面だけ先に反転すると、同じ波が表裏で別の波頭として評価されて二重像になる。
+    const float3 interpolatedMacroNormal = input.normal;
     float3 resolvedFftNormal = interpolatedMacroNormal;
     float4 oceanData = input.oceanData;
     ResolveOceanPixelSurface(
@@ -828,32 +968,122 @@ float4 main(PixelShaderInput input) : SV_TARGET0
     // 大波の陰影は補間済みFFT法線、反射と屈折は画素FFT法線を使う。
     // 同じFFT場の帯域だけを分け、疑似ノイズによる水玉模様を発生させない。
     const OceanSurfaceFrame macroSurfaceFrame = EvaluateOceanSurfaceFrame(
-        interpolatedMacroNormal,
+        resolvedFftNormal,
         input.worldPosition,
         oceanData,
         0.0f,
         gMaterial.oceanCrestSharpness);
-    const float3 macroNormal = macroSurfaceFrame.macroNormal;
-    const float crestResponse =
+    float3 macroNormal = macroSurfaceFrame.macroNormal;
+    // 画面微分Curvatureを色・粗さ・反射の主Maskへ使うと、急斜面でQuad境界が
+    // 三角形状の暗部として露出する。連続なFFT波高と斜面から形状Maskを作る。
+    const float curvatureInfluence = saturate(gMaterial.oceanCurvatureInfluence);
+    const float stableSlopeMask = smoothstep(0.08f, 0.72f, macroSurfaceFrame.slope);
+    const float worldCrestCurvature = smoothstep(
+        0.012f,
+        0.11f,
+        macroSurfaceFrame.signedCurvature);
+    const float worldTroughCurvature = smoothstep(
+        0.012f,
+        0.11f,
+        -macroSurfaceFrame.signedCurvature);
+    const float curvatureRefinement = curvatureInfluence * 0.20f;
+    const float crestCurvatureMask =
         macroSurfaceFrame.crest *
-        saturate(macroSurfaceFrame.slope * 0.72f + macroSurfaceFrame.curvature * 0.38f);
-    const float3 opticalNormal = ResolveOceanLayeredOpticalNormal(
+        lerp(0.42f, 1.0f, stableSlopeMask) *
+        lerp(0.92f, lerp(0.96f, 1.08f, worldCrestCurvature), curvatureRefinement);
+    const float troughCurvatureMask =
+        macroSurfaceFrame.trough *
+        lerp(0.46f, 1.0f, stableSlopeMask) *
+        lerp(0.92f, lerp(0.96f, 1.08f, worldTroughCurvature), curvatureRefinement);
+    const float crestResponse = saturate(
+        macroSurfaceFrame.crest * lerp(0.46f, 1.0f, stableSlopeMask));
+    const float crestPreStage =
+        smoothstep(0.08f, 0.42f, crestResponse) *
+        (1.0f - smoothstep(0.54f, 0.76f, crestResponse));
+    const float crestThinStage =
+        smoothstep(0.34f, 0.70f, crestResponse) *
+        (1.0f - smoothstep(0.78f, 0.96f, crestResponse));
+    const float crestBreakingStage = smoothstep(
+        0.68f,
+        0.94f,
+        crestResponse);
+    const OceanNormalLayers normalLayers = ResolveOceanLayeredOpticalNormals(
         input.oceanSamplingData,
         input.oceanWorldAxisX,
         input.oceanWorldAxisY,
         input.oceanWorldAxisZ,
         resolvedFftNormal,
         gMaterial.oceanDetailNormalStrength,
-        crestResponse);
-    const float3 rippleRefractionOffset =
-        opticalNormal - normalize(resolvedFftNormal);
-    const float3 viewDirection = normalize(
+        gMaterial.oceanMediumWaveStrength,
+        gMaterial.oceanDetailFilterSharpness,
+        crestResponse,
+        gMaterial.oceanCrestDetailBoost);
+    float3 mediumNormal = normalLayers.mediumNormal;
+    float3 specularNormal = normalLayers.fineNormal;
+    const float cameraDistance = length(
         OCEAN_PRIMARY_LIGHT.cameraPosition - input.worldPosition);
-    const float normalDotView = saturate(dot(opticalNormal, viewDirection));
+    const float nearSurfaceDetail = 1.0f - smoothstep(
+        28.0f,
+        150.0f,
+        cameraDistance);
+
+    // Oceanは両面描画するため、光学法線だけを現在見ている面へ揃える。
+    // FFT法線を再Sampleした後に行わないと、裏面でも上向き法線の表面反射が残る。
+    if (dot(macroNormal, viewDirection) < 0.0f)
+    {
+        macroNormal = -macroNormal;
+    }
+
+    if (dot(mediumNormal, viewDirection) < 0.0f)
+    {
+        mediumNormal = -mediumNormal;
+    }
+
+    if (dot(specularNormal, viewDirection) < 0.0f)
+    {
+        specularNormal = -specularNormal;
+    }
+
+    const float reflectionNormalBlend = saturate(
+        max(gMaterial.oceanMacroReflectionInfluence, 0.0f) *
+        lerp(0.82f, 0.96f, nearSurfaceDetail));
+    const float3 reflectionNormal = normalize(lerp(
+        macroNormal,
+        mediumNormal,
+        reflectionNormalBlend));
+    const float troughOcclusionStrength = clamp(
+        gMaterial.oceanTroughOcclusionStrength,
+        0.0f,
+        0.25f);
+    const float skyEnclosure = saturate(
+        troughCurvatureMask *
+        lerp(0.42f, 1.0f, stableSlopeMask));
+    const float skyVisibility = 1.0f - skyEnclosure * troughOcclusionStrength;
+    const float3 oceanWorldUp = normalize(input.oceanWorldAxisY);
+    const float bentNormalWeight =
+        skyEnclosure *
+        saturate(troughOcclusionStrength / 0.25f) *
+        0.22f;
+    const float3 environmentReflectionNormal = normalize(lerp(
+        reflectionNormal,
+        normalize(reflectionNormal + oceanWorldUp * 0.34f),
+        bentNormalWeight));
+    // 屈折はFineとMediumの差だけを使う。Large Waveの傾斜は歪み量を増減するが、
+    // 形状そのものを二重に屈折へ加えない。
+    const float3 rippleRefractionOffset =
+        (specularNormal - mediumNormal) *
+        (1.0f + macroSurfaceFrame.slope *
+            max(gMaterial.oceanSlopeRefractionInfluence, 0.0f));
+    const float normalDotView = saturate(dot(mediumNormal, viewDirection));
+    const float specularNormalDotView = saturate(dot(specularNormal, viewDirection));
+    const float mediumStructure = smoothstep(
+        0.002f,
+        0.095f,
+        1.0f - saturate(dot(macroNormal, mediumNormal)));
     const OceanSceneSample sceneSample = SampleOceanOpaqueScene(
         input,
         rippleRefractionOffset);
-    const float foam = max(
+    const float surfaceFoam = max(
         EvaluateOceanFoam(
             input.worldPosition,
             oceanData,
@@ -862,6 +1092,8 @@ float4 main(PixelShaderInput input) : SV_TARGET0
             gMaterial.oceanFoamThreshold,
             gMaterial.oceanCrestSharpness),
         sceneSample.shoreFoam);
+    // 水中側から表面用Foamを描くと、波頭の裏に同じ輪郭がもう一枚現れる。
+    const float foam = isUnderwaterSurface ? 0.0f : surfaceFoam;
 
     const float normalizedHeight =
         clamp(oceanData.w, -1.0f, 1.0f) * 0.5f + 0.5f;
@@ -930,8 +1162,8 @@ float4 main(PixelShaderInput input) : SV_TARGET0
         normalDotView * 0.78f + shallowWeight * 0.42f);
     const float shallowCausticFocus = saturate(
         oceanData.x * 0.48f +
-        macroSurfaceFrame.curvature * 0.32f +
-        crestResponse * 0.20f);
+        crestResponse * 0.24f +
+        mediumStructure * 0.12f);
     const float shallowCaustic =
         sceneSample.shallowWater *
         shallowCausticFocus *
@@ -960,25 +1192,76 @@ float4 main(PixelShaderInput input) : SV_TARGET0
         deepColor,
         saturate(deepWaterLayer * 0.94f));
 
+    // 輝度だけでなく水色の深さでも波形を残す。高さ単独ではなく、
+    // 符号付き曲率と斜面を条件にするため等高線状の帯を作らない。
+    const float waveColorSeparation =
+        clamp(gMaterial.oceanWaveColorSeparation, 0.0f, 1.0f);
+    const float valleyColorMask = saturate(
+        troughCurvatureMask *
+        lerp(0.62f, 1.0f, macroSurfaceFrame.slope));
+    const float crestColorMask = saturate(
+        crestCurvatureMask *
+        lerp(0.48f, 0.86f, macroSurfaceFrame.slope)) *
+        (1.0f - saturate(foam));
+    const float3 valleyWaterColor = lerp(
+        deepColor,
+        environmentWaterTint,
+        0.10f) * float3(0.86f, 0.96f, 1.06f);
+    const float3 crestWaterColor = lerp(
+        shallowColor,
+        environmentWaterTint,
+        0.16f) * float3(0.92f, 1.03f, 1.04f);
+    refractedColor = lerp(
+        refractedColor,
+        valleyWaterColor,
+        valleyColorMask * waveColorSeparation * 0.16f);
+    refractedColor = lerp(
+        refractedColor,
+        crestWaterColor,
+        crestColorMask * waveColorSeparation * 0.075f);
+
     float3 directBodyLight = float3(0.0f, 0.0f, 0.0f);
-    float3 reliefBodyLight = float3(0.0f, 0.0f, 0.0f);
-    float3 sunVolumeLight = float3(0.0f, 0.0f, 0.0f);
     float3 directSpecular = float3(0.0f, 0.0f, 0.0f);
     float3 sunGlitter = float3(0.0f, 0.0f, 0.0f);
+    float3 crestTransmissionLight = float3(0.0f, 0.0f, 0.0f);
+    // 大波Normalと太陽方向だけから作るDirectional Diffuse。
+    // 波の高さそのものではなく、法線とライト方向の関係(NdotL)で明暗差を出す。
+    float3 sunDirectionalDiffuse = float3(0.0f, 0.0f, 0.0f);
+    const float shapeRoughnessVariation =
+        clamp(gMaterial.oceanShapeRoughnessVariation, 0.0f, 0.5f);
+    const float shapeRoughnessFactor =
+        1.0f +
+        troughCurvatureMask * shapeRoughnessVariation * 0.82f -
+        crestPreStage * shapeRoughnessVariation * 0.16f -
+        crestThinStage * shapeRoughnessVariation * 0.46f +
+        crestBreakingStage * shapeRoughnessVariation * 0.12f +
+        mediumStructure * shapeRoughnessVariation *
+            lerp(0.06f, -0.14f, nearSurfaceDetail) +
+        saturate(macroSurfaceFrame.slope) * shapeRoughnessVariation * 0.10f;
     const float baseRoughness = clamp(
-        gMaterial.oceanRoughness * lerp(1.0f, 0.91f, crestResponse),
+        gMaterial.oceanRoughness * shapeRoughnessFactor *
+            lerp(1.0f, 0.92f, nearSurfaceDetail),
         0.055f,
         1.0f);
-    const float normalVariance = max(
-        dot(ddx(opticalNormal), ddx(opticalNormal)),
-        dot(ddy(opticalNormal), ddy(opticalNormal)));
+    // Roughness AAも画面微分ではなく、MediumとFineの連続なNormal差を使う。
+    // これによりポリゴン境界の微分値が黒い三角形として反射へ出ない。
+    const float fineNormalVariance = saturate(
+        1.0f - dot(mediumNormal, specularNormal));
+    const float stableSpecularVariance = saturate(
+        fineNormalVariance * 1.35f +
+        macroSurfaceFrame.interpolationVariance * 0.55f +
+        mediumStructure * 0.035f);
     const float filteredRoughness = clamp(
-        sqrt(baseRoughness * baseRoughness + min(normalVariance * 0.22f, 0.30f)),
+        sqrt(baseRoughness * baseRoughness + stableSpecularVariance *
+            lerp(0.18f, 0.12f, nearSurfaceDetail)),
         0.075f,
         1.0f);
     const float waterIor = max(gMaterial.ior, 1.0001f);
     const float fresnelRoot = (waterIor - 1.0f) / (waterIor + 1.0f);
     const float fresnelBase = fresnelRoot * fresnelRoot;
+    float debugGlitterAlignment = 0.0f;
+    float debugGlitterContinuousMask = 0.0f;
+    float debugGlitterFinalMask = 0.0f;
 
     [unroll]
     for (int lightIndex = 0; lightIndex < 4; lightIndex++)
@@ -1012,58 +1295,72 @@ float4 main(PixelShaderInput input) : SV_TARGET0
             1.0f,
             shadowVisibility,
             0.72f);
+        float directionalSurfaceVisibility = softShadowVisibility;
+
         const float wrappedLight = saturate(normalDotLight * 0.72f + 0.28f);
         const float forwardScatter =
             pow(saturate(dot(-viewDirection, lightDirection)), 4.0f) *
             (0.18f + macroSurfaceFrame.slope * 0.22f);
-        directBodyLight += radiance *
-            (wrappedLight + forwardScatter) *
-            softShadowVisibility;
-
-        // 海の高低差はライト強度ではなく法線方向の変化で読ませる。
-        // SUNを強くして船を白飛びさせないため、Ocean専用に強度圧縮した陰影だけを足す。
-        const float radianceLuminance = max(
-            dot(radiance, float3(0.2126f, 0.7152f, 0.0722f)),
-            0.0001f);
-        const float3 normalizedRadianceColor = radiance / radianceLuminance;
-        const float reliefIntensity = 0.42f + 0.36f * saturate(radianceLuminance);
-        const float reliefWrap = saturate(normalDotLight * 0.92f + 0.08f);
-        const float troughOcclusion = smoothstep(
-            0.08f,
-            0.55f,
-            1.0f - macroNormal.y);
-        reliefBodyLight += normalizedRadianceColor *
-            reliefIntensity *
-            (reliefWrap * 0.86f + troughOcclusion * 0.32f) *
-            softShadowVisibility;
-
         if (light.lightType == 0)
         {
-            // SUNを船や通常モデルと同じ露出で受けると白飛びしやすい。
-            // ただし完全に分離すると海だけ暗く残るため、水中へ入る方向光だけを圧縮して戻す。
-            const float sunLift = saturate(log2(1.0f + radianceLuminance) * 0.34f);
-            const float directionalVolume = saturate(normalDotLight * 0.55f + 0.45f);
-            sunVolumeLight += normalizedRadianceColor *
-                sunLift *
-                directionalVolume *
-                (0.72f + macroSurfaceFrame.slope * 0.24f) *
+            // 波面DiffuseはSUNだけを対象にする。Point/Spotを混ぜると、SUN強度を変更しても
+            // 既存の局所ライト成分に埋もれて見た目がほとんど変化しなくなる。
+            const float sunNdotL = saturate(dot(macroNormal, lightDirection));
+            const float directionalDiffuseFactor = lerp(
+                saturate(gMaterial.oceanDiffuseFloor),
+                1.0f,
+                sunNdotL);
+            sunDirectionalDiffuse += radiance *
+                directionalDiffuseFactor *
+                directionalSurfaceVisibility;
+
+            // 波頭の薄い水だけに弱い透過散乱を出す。
+            // SUNが法線の裏側へ回った時だけ発生し、常時発光する波頭にはしない。
+            const float crestBackLighting = pow(
+                saturate(-normalDotLight),
+                0.72f);
+            crestTransmissionLight += EvaluateOceanSunIrradiance(radiance) *
+                crestBackLighting *
+                crestThinStage *
+                (0.10f + 0.08f * stableSlopeMask) *
+                directionalSurfaceVisibility;
+        }
+        else
+        {
+            // Point / Spotは距離減衰を含む局所的な水中散乱として扱う。
+            directBodyLight += radiance *
+                (wrappedLight + forwardScatter) *
                 softShadowVisibility;
         }
 
         const float3 halfDirection = normalize(viewDirection + lightDirection);
+        // SUNの広い鏡面はLarge+Mediumで評価する。FineはGlitterへ限定する。
+        const float3 directSpecularNormal = light.lightType == 0
+            ? mediumNormal
+            : specularNormal;
         const float normalDotLightOptical = saturate(dot(
-            opticalNormal,
+            directSpecularNormal,
             lightDirection));
-        const float normalDotHalf = saturate(dot(opticalNormal, halfDirection));
+        const float normalDotHalf = saturate(dot(directSpecularNormal, halfDirection));
+        const float directNormalDotView = saturate(dot(directSpecularNormal, viewDirection));
         const float viewDotHalf = saturate(dot(viewDirection, halfDirection));
+        const float largeSunPath = pow(
+            saturate(dot(macroNormal, halfDirection)),
+            8.0f);
+        const float mediumSunPartition = pow(
+            saturate(dot(mediumNormal, halfDirection)),
+            26.0f);
+        const float sunPathPartition = light.lightType == 0
+            ? largeSunPath * lerp(0.06f, 1.0f, mediumSunPartition)
+            : 1.0f;
 
-        if (normalDotLightOptical > 0.0f && normalDotView > 0.0f)
+        if (normalDotLightOptical > 0.0f && directNormalDotView > 0.0f)
         {
             const float distribution = OceanDistributionGgx(
                 normalDotHalf,
                 filteredRoughness);
             const float geometry = OceanGeometrySmithCorrelated(
-                normalDotView,
+                directNormalDotView,
                 normalDotLightOptical,
                 filteredRoughness);
             const float3 directFresnel = OceanFresnelSchlick(
@@ -1074,25 +1371,64 @@ float4 main(PixelShaderInput input) : SV_TARGET0
             const float finiteSpecularResponse =
                 rawSpecularResponse /
                 (1.0f + rawSpecularResponse / 9.0f);
-            directSpecular += radiance *
-                finiteSpecularResponse * directFresnel *
-                softShadowVisibility;
+            const float3 specularRadiance = light.lightType == 0
+                ? EvaluateOceanSunIrradiance(radiance)
+                : radiance;
+            directSpecular += specularRadiance *
+                finiteSpecularResponse * directFresnel * sunPathPartition *
+                (light.lightType == 0
+                    ? directionalSurfaceVisibility
+                    : softShadowVisibility);
         }
 
         if (light.lightType == 0)
         {
+            float lightDebugAlignment = 0.0f;
+            float lightDebugContinuousMask = 0.0f;
+            float lightDebugFinalMask = 0.0f;
             sunGlitter += EvaluateOceanSunGlitter(
                 macroNormal,
-                opticalNormal,
+                mediumNormal,
+                specularNormal,
                 viewDirection,
                 lightDirection,
-                radiance,
+                EvaluateOceanSunIrradiance(radiance),
                 filteredRoughness,
                 fresnelBase,
                 macroSurfaceFrame.slope,
-                softShadowVisibility);
+                directionalSurfaceVisibility,
+                gMaterial.oceanGlitterIntensity,
+                gMaterial.oceanGlitterSharpness,
+                gMaterial.oceanGlitterDensity,
+                gMaterial.oceanGlitterThreshold,
+                gMaterial.oceanGlitterMaxClamp,
+                lightDebugAlignment,
+                lightDebugContinuousMask,
+                lightDebugFinalMask);
+            debugGlitterAlignment = lightDebugAlignment;
+            debugGlitterContinuousMask = lightDebugContinuousMask;
+            debugGlitterFinalMask = lightDebugFinalMask;
         }
     }
+
+#if OCEAN_GLITTER_DEBUG_VIEW == 1
+    // Sun Diffuse単体(圧縮前)を白黒/色付きでそのまま表示する。
+    return float4(max(sunDirectionalDiffuse, 0.0f), 1.0f);
+#elif OCEAN_GLITTER_DEBUG_VIEW == 2
+    // Normal(GGX) Specular単体を表示する。Glitterの寄与は含まない。
+    return float4(CompressOceanHighlight(directSpecular, 1.0f), 1.0f);
+#elif OCEAN_GLITTER_DEBUG_VIEW == 3
+    // Glitter Reflection Alignment (H=normalize(V+L), saturate(dot(N,H)))。
+    // ここが太陽方向へ伸びる「帯」になっていれば正常。画面全体が白い場合は異常。
+    return float4(debugGlitterAlignment.xxx, 1.0f);
+#elif OCEAN_GLITTER_DEBUG_VIEW == 4
+    // 座標Hashを使わない連続Glitter Mask。ここに格子状・斑点状の点群が出たら異常。
+    return float4(debugGlitterContinuousMask.xxx, 1.0f);
+#elif OCEAN_GLITTER_DEBUG_VIEW == 5
+    // 最終Glitter Mask = reflectionAlignmentゲート × surfaceVisibility。
+    // 白黒表示した時に、連続した反射帯になっていることを確認する。
+    return float4(debugGlitterFinalMask.xxx, 1.0f);
+#endif
 
     const float skyBlend = saturate(macroNormal.y * 0.5f + 0.5f);
     const float3 skyIrradiance = lerp(
@@ -1102,37 +1438,60 @@ float4 main(PixelShaderInput input) : SV_TARGET0
         max(OCEAN_PRIMARY_LIGHT.ambientIntensity, 0.0f);
     const float3 compressedDirectBodyLight =
         directBodyLight / (1.0f + directBodyLight * 0.42f);
-    const float3 compressedReliefBodyLight =
-        reliefBodyLight / (1.0f + reliefBodyLight * 0.18f);
-    const float3 compressedSunVolumeLight =
-        sunVolumeLight / (1.0f + sunVolumeLight * 0.26f);
+    // SUNの本体光は鏡面反射とは別に評価する。対数応答は強度1.0を維持し、
+    // 強度を上げた時も早期飽和せず波面全体の明るさと斜面差へ反映する。
+    const float3 responsiveSunDirectionalDiffuse =
+        EvaluateOceanSunIrradiance(sunDirectionalDiffuse);
+    const float sunDiffuseInfluence = max(gMaterial.oceanSunDiffuseInfluence, 0.0f);
+    const float ambientInfluence = max(gMaterial.oceanAmbientInfluence, 0.0f);
+    // SUN由来の水面照明を体積色だけへ入れると、濃い水色に吸われて海だけ暗く見える。
+    // 同じSUN Diffuseを浅い水面色側にも少量だけ乗せ、光に反応しつつ白飛びは圧縮で抑える。
+    const float3 sunSurfaceLighting =
+        responsiveSunDirectionalDiffuse *
+        lerp(midWaterColor, shallowColor, 0.58f) *
+        (0.34f + 0.20f * saturate(macroSurfaceFrame.slope)) *
+        sunDiffuseInfluence;
     const float3 bodyLighting =
-        float3(0.30f, 0.30f, 0.30f) +
-        skyIrradiance * 0.34f +
-        compressedDirectBodyLight * 0.20f +
-        compressedReliefBodyLight * 0.34f +
-        compressedSunVolumeLight * 0.26f;
+        (float3(0.30f, 0.30f, 0.30f) + skyIrradiance * 0.34f) *
+            ambientInfluence * lerp(1.0f, skyVisibility, 0.42f) +
+        compressedDirectBodyLight * 0.34f +
+        responsiveSunDirectionalDiffuse * 0.42f * sunDiffuseInfluence;
     const float3 litVolume = refractedColor * bodyLighting;
 
     const float fresnel = fresnelBase +
         (1.0f - fresnelBase) * pow(1.0f - normalDotView, 5.0f);
-    const float3 reflectionDirection = reflect(-viewDirection, opticalNormal);
+    // Sky/EnvironmentはLarge+Medium Normalから反射方向を作る。
+    // Fine Normalを除外し、天頂・中間高度・水平線の空色変化で大波の向きを読ませる。
+    const float3 reflectionDirection = reflect(
+        -viewDirection,
+        environmentReflectionNormal);
     const float3 environmentReflection = SampleOceanEnvironment(
         reflectionDirection,
-        filteredRoughness) *
-        (0.30f + max(OCEAN_PRIMARY_LIGHT.reflectionIntensity, 0.0f) * 0.70f);
+        baseRoughness) *
+        (0.30f + max(OCEAN_PRIMARY_LIGHT.reflectionIntensity, 0.0f) * 0.70f) *
+        lerp(0.95f, lerp(1.04f, 1.08f, nearSurfaceDetail), mediumStructure);
     const float reflectionWeight = saturate(
         fresnel * max(gMaterial.reflectance, 0.0f));
-    const OceanScreenReflection screenReflection = TraceOceanScreenReflection(
-        input.worldPosition,
-        opticalNormal,
-        viewDirection,
-        filteredRoughness,
-        reflectionWeight);
+    OceanScreenReflection screenReflection;
+    screenReflection.color = environmentReflection;
+    screenReflection.confidence = 0.0f;
+
+    // SSRは水面上側の反射専用。裏面で走らせると表側のScene像を再取得してしまう。
+    if (!isUnderwaterSurface)
+    {
+        screenReflection = TraceOceanScreenReflection(
+            input.worldPosition,
+            reflectionNormal,
+            viewDirection,
+            baseRoughness,
+            reflectionWeight);
+    }
+
     const float3 resolvedReflection = lerp(
         environmentReflection,
         screenReflection.color,
-        screenReflection.confidence);
+        screenReflection.confidence) *
+        lerp(1.0f, skyVisibility, 0.88f);
     const float viewAngleTransparency = smoothstep(
         0.08f,
         0.72f,
@@ -1147,26 +1506,101 @@ float4 main(PixelShaderInput input) : SV_TARGET0
     const float gameReflectionWeight = saturate(
         reflectionWeight *
         lerp(1.20f, 0.88f, viewAngleTransparency));
-    const float3 surfaceTint = lerp(
+    const float transmissionEnergy = 1.0f - saturate(
+        gameReflectionWeight * 0.92f);
+    const float regularScatteringAmount =
+        0.012f +
+        mediumStructure * 0.010f +
+        saturate(macroSurfaceFrame.slope) * 0.006f;
+    const float preCrestScatteringAmount =
+        crestPreStage * (1.0f - crestThinStage) * 0.012f;
+    const float scatteringVisibility =
+        transmissionEnergy *
+        lerp(0.35f, 1.0f, viewAngleTransparency) *
+        lerp(0.82f, 1.0f, skyVisibility) *
+        (1.0f - saturate(foam));
+    const float3 regularScatteringColor =
+        lerp(deepColor, midWaterColor, 0.58f) * float3(0.72f, 0.96f, 1.02f) +
+        skyIrradiance * 0.025f;
+    float3 surfaceTint = lerp(
         shallowColor,
         midWaterColor,
         saturate(fogWaterLayer + deepWaterLayer * 0.65f));
+    // 浅い視線角では反射比率が上がり、透過色だけへ入れた曲率差が消えていた。
+    // Fresnelは変更せず、波頭/谷の水色差だけを弱く表面Tintにも引き継ぐ。
+    const float grazingShapeVisibility =
+        clamp(gMaterial.oceanGrazingShapeVisibility, 0.0f, 1.0f);
+    const float grazingShapeWeight = 1.0f - viewAngleTransparency;
+    surfaceTint = lerp(
+        surfaceTint,
+        valleyWaterColor,
+        valleyColorMask * waveColorSeparation * grazingShapeVisibility *
+            lerp(0.18f, 0.42f, grazingShapeWeight));
+    surfaceTint = lerp(
+        surfaceTint,
+        crestWaterColor,
+        crestColorMask * waveColorSeparation * grazingShapeVisibility *
+            lerp(0.10f, 0.24f, grazingShapeWeight));
     const float surfaceTintWeight =
         lerp(0.18f, 0.055f, viewAngleTransparency) *
         (1.0f - saturate(foam) * 0.45f);
+    const float skyReflectionInfluence = max(gMaterial.oceanSkyReflectionInfluence, 0.0f);
+    const float upperSurfaceVisibility = isUnderwaterSurface ? 0.0f : 1.0f;
+    const float underwaterBoundaryReflection = isUnderwaterSurface ? 0.10f : 1.0f;
     float3 finalColor =
-        litVolume * transmissionWeight +
-        surfaceTint * surfaceTintWeight +
-        resolvedReflection * gameReflectionWeight;
+        litVolume * transmissionWeight * transmissionEnergy +
+        surfaceTint * surfaceTintWeight * transmissionEnergy +
+        resolvedReflection * gameReflectionWeight * skyReflectionInfluence *
+            underwaterBoundaryReflection +
+        sunSurfaceLighting * lerp(0.48f, 1.0f, clearWaterLayer) *
+            lerp(0.22f, 1.0f, upperSurfaceVisibility) * transmissionEnergy +
+        crestTransmissionLight *
+            lerp(shallowColor, float3(0.40f, 0.82f, 0.86f), 0.46f) *
+            transmissionEnergy * upperSurfaceVisibility +
+        regularScatteringColor *
+            (regularScatteringAmount + preCrestScatteringAmount) *
+            scatteringVisibility * upperSurfaceVisibility;
+
+    // Foam直前の中間状態。曲率を伴う波頭と圧縮Foam直前だけを青白くし、
+    // 完全な白や高さだけの帯にはしない。
+    const float preFoamThreshold = max(gMaterial.oceanFoamThreshold - 0.16f, 0.0f);
+    const float preFoamCompression =
+        smoothstep(
+            preFoamThreshold,
+            min(gMaterial.oceanFoamThreshold + 0.02f, 1.0f),
+            saturate(oceanData.x)) *
+        (1.0f - smoothstep(
+            min(gMaterial.oceanFoamThreshold + 0.06f, 1.0f),
+            min(gMaterial.oceanFoamThreshold + 0.18f, 1.0f),
+            saturate(oceanData.x)));
+    const float crestHazeMask = saturate(max(
+        crestBreakingStage * crestCurvatureMask * 0.82f,
+        preFoamCompression * crestBreakingStage * 0.64f)) *
+        lerp(0.90f, lerp(1.10f, 1.18f, nearSurfaceDetail), mediumStructure) *
+        (1.0f - saturate(foam));
+    const float3 crestHazeColor = lerp(
+        shallowColor,
+        float3(0.62f, 0.82f, 0.88f),
+        0.34f);
+    finalColor += crestHazeColor *
+        crestHazeMask *
+        max(gMaterial.oceanCrestHazeStrength, 0.0f) *
+        (0.55f + skyIrradiance * 0.18f) *
+        upperSurfaceVisibility;
     const float clearWaterWeight = 1.0f - foam;
+    // Water Base/Transmission(litVolume) と Sky Reflection(resolvedReflection) はここまでで合成済み。
+    // Sun Specular と Sun Glitter は反射由来の加算項として別枠で足す。水深Tintそのものは白く塗らない。
     finalColor += CompressOceanHighlight(
         directSpecular,
-        9.0f) * clearWaterWeight;
-    finalColor += sunGlitter * clearWaterWeight;
+        9.0f) * clearWaterWeight * max(gMaterial.oceanSunSpecularInfluence, 0.0f) *
+        upperSurfaceVisibility;
+    finalColor += sunGlitter * clearWaterWeight *
+        max(gMaterial.oceanSunGlitterInfluence, 0.0f) *
+        upperSurfaceVisibility;
 
     const float3 foamColor =
         float3(0.82f, 0.93f, 0.97f) *
-        (0.55f + skyIrradiance * 0.25f + compressedReliefBodyLight * 0.16f);
+        (0.55f + skyIrradiance * 0.25f + compressedDirectBodyLight * 0.14f);
     finalColor = lerp(
         finalColor,
         foamColor,

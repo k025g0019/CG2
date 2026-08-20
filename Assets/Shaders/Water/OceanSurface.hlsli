@@ -9,7 +9,14 @@ struct OceanSurfaceFrame
     float crest;
     float trough;
     float curvature;
+    float signedCurvature;
     float interpolationVariance;
+};
+
+struct OceanNormalLayers
+{
+    float3 mediumNormal;
+    float3 fineNormal;
 };
 
 //============================================================
@@ -109,15 +116,44 @@ float2 ConvertOceanLocalNormalToSlope(float3 localNormal)
     return -localNormal.xz / safeVerticalNormal;
 }
 
-float3 ResolveOceanLayeredOpticalNormal(
+//============================================================
+// 階層Normal合成
+//============================================================
+
+float3 CombineOceanReorientedNormal(float3 baseNormal, float3 detailNormal)
+{
+    const float3 safeBaseNormal = normalize(baseNormal);
+    const float3 safeDetailNormal = normalize(detailNormal);
+    const float2 combinedHorizontal =
+        safeBaseNormal.xz * safeDetailNormal.y +
+        safeDetailNormal.xz * safeBaseNormal.y;
+    const float combinedVertical =
+        safeBaseNormal.y * safeDetailNormal.y -
+        dot(safeBaseNormal.xz, safeDetailNormal.xz);
+
+    // Largeの方向へDetailを接続するRNM相当の合成。
+    // 単純なNormal加算と異なり、急斜面でもLargeの接平面を基準に中波を保持する。
+    return normalize(float3(
+        combinedHorizontal.x,
+        max(combinedVertical, 0.08f),
+        combinedHorizontal.y));
+}
+
+OceanNormalLayers ResolveOceanLayeredOpticalNormals(
     float4 oceanSamplingData,
     float3 worldAxisX,
     float3 worldAxisY,
     float3 worldAxisZ,
     float3 resolvedFftWorldNormal,
     float detailNormalStrength,
-    float crestResponse)
+    float mediumWaveStrength,
+    float detailFilterSharpness,
+    float crestResponse,
+    float crestDetailBoost)
 {
+    OceanNormalLayers normalLayers;
+    normalLayers.mediumNormal = normalize(resolvedFftWorldNormal);
+    normalLayers.fineNormal = normalLayers.mediumNormal;
     const uint fftResolution = uint(oceanSamplingData.z + 0.5f);
     const float inverseDomainLength = oceanSamplingData.w;
     const float safeDetailStrength = max(detailNormalStrength, 0.0f);
@@ -126,7 +162,7 @@ float3 ResolveOceanLayeredOpticalNormal(
         inverseDomainLength <= 0.000001f ||
         safeDetailStrength <= 0.0001f)
     {
-        return normalize(resolvedFftWorldNormal);
+        return normalLayers;
     }
 
     const float3 axisX = normalize(worldAxisX);
@@ -143,20 +179,22 @@ float3 ResolveOceanLayeredOpticalNormal(
         length(ddx(oceanSamplingData.xy)),
         length(ddy(oceanSamplingData.xy)));
     const float footprintInCells = worldFootprint / fftCellSize;
+    const float filterSharpness = clamp(detailFilterSharpness, 0.5f, 2.5f);
 
-    // 高周波ほど早くフェードさせ、遠景で1画素未満になる帯域を残さない。
+    // 周波数別の画素占有率で帯域を落とす。従来はFineが0.18セルから減衰し、
+    // 近距離でも細部を失っていたため、視認可能な帯域を少し長く保持する。
     const float mediumFilter = 1.0f - smoothstep(
-        0.35f,
-        1.65f,
+        0.35f * filterSharpness,
+        1.65f * filterSharpness,
         footprintInCells * 2.15f);
     const float fineFilter = 1.0f - smoothstep(
-        0.18f,
-        1.10f,
+        0.18f * filterSharpness,
+        1.10f * filterSharpness,
         footprintInCells * 5.35f);
 
     if (mediumFilter <= 0.0001f)
     {
-        return normalize(resolvedFftWorldNormal);
+        return normalLayers;
     }
 
     // 同じFFT場を異なる向きと縮尺で読む。乱数法線を足さないため、
@@ -194,12 +232,16 @@ float3 ResolveOceanLayeredOpticalNormal(
             inverseDomainLength).xyz);
     }
 
+    // 谷では細波を少し抑え、曲率を伴う波頭ほど細かな乱れを増やす。
+    // Foamの白さとは独立し、Normalの帯域強度だけを変える。
     const float crestDetailScale = lerp(
-        0.86f,
-        1.14f,
+        0.88f,
+        1.0f + max(crestDetailBoost, 0.0f),
         saturate(crestResponse));
     const float resolvedDetailStrength =
         (1.0f - exp(-safeDetailStrength)) * crestDetailScale;
+    const float resolvedMediumStrength =
+        clamp(mediumWaveStrength, 0.0f, 3.0f);
     const float2 mediumSlope = RotateOceanDetailVector(
         ConvertOceanLocalNormalToSlope(mediumLocalNormal),
         mediumCosine,
@@ -208,18 +250,38 @@ float3 ResolveOceanLayeredOpticalNormal(
         ConvertOceanLocalNormalToSlope(fineLocalNormal),
         fineCosine,
         -fineSine);
-    const float2 combinedSlope =
-        ConvertOceanLocalNormalToSlope(resolvedLocalNormal) +
-        mediumSlope * (0.18f * resolvedDetailStrength * mediumFilter) +
-        fineSlope * (0.075f * resolvedDetailStrength * fineFilter);
-    const float3 layeredLocalNormal = normalize(float3(
-        -combinedSlope.x,
+    const float2 largeSlope = ConvertOceanLocalNormalToSlope(resolvedLocalNormal);
+    const float mediumNormalStrength =
+        0.18f * resolvedMediumStrength * resolvedDetailStrength * mediumFilter;
+    const float fineNormalStrength =
+        0.075f * resolvedDetailStrength * fineFilter;
+    const float3 largeLayeredLocalNormal = normalize(float3(
+        -largeSlope.x,
         1.0f,
-        -combinedSlope.y));
-    return normalize(
-        layeredLocalNormal.x * axisX +
-        layeredLocalNormal.y * axisY +
-        layeredLocalNormal.z * axisZ);
+        -largeSlope.y));
+    const float3 mediumDetailNormal = normalize(float3(
+        -mediumSlope.x * mediumNormalStrength,
+        1.0f,
+        -mediumSlope.y * mediumNormalStrength));
+    const float3 fineDetailNormal = normalize(float3(
+        -fineSlope.x * fineNormalStrength,
+        1.0f,
+        -fineSlope.y * fineNormalStrength));
+    const float3 mediumLayeredLocalNormal = CombineOceanReorientedNormal(
+        largeLayeredLocalNormal,
+        mediumDetailNormal);
+    const float3 fineLayeredLocalNormal = CombineOceanReorientedNormal(
+        mediumLayeredLocalNormal,
+        fineDetailNormal);
+    normalLayers.mediumNormal = normalize(
+        mediumLayeredLocalNormal.x * axisX +
+        mediumLayeredLocalNormal.y * axisY +
+        mediumLayeredLocalNormal.z * axisZ);
+    normalLayers.fineNormal = normalize(
+        fineLayeredLocalNormal.x * axisX +
+        fineLayeredLocalNormal.y * axisY +
+        fineLayeredLocalNormal.z * axisZ);
+    return normalLayers;
 }
 
 float3 BuildOceanDisplacedGeometryNormal(
@@ -272,9 +334,24 @@ OceanSurfaceFrame EvaluateOceanSurfaceFrame(
     // 別系統の疑似細波を重ねず、形状・陰影・反射で同じ波を参照する。
     surfaceFrame.shadingNormal = surfaceFrame.macroNormal;
 
-    // 曲率は泡の発生補助だけへ使い、Albedoを直接暗くする用途には使わない。
-    surfaceFrame.curvature = saturate(
-        (length(ddx(surfaceFrame.macroNormal)) + length(ddy(surfaceFrame.macroNormal))) * 1.5f);
+    // 画面微分からワールド長基準の符号付き曲率を作る。
+    // 正値は凸方向の波頭、負値は凹方向の谷。追加FFTサンプルは発生しない。
+    const float3 positionDerivativeX = ddx(worldPosition);
+    const float3 positionDerivativeY = ddy(worldPosition);
+    const float3 normalDerivativeX = ddx(surfaceFrame.macroNormal);
+    const float3 normalDerivativeY = ddy(surfaceFrame.macroNormal);
+    const float positionFootprintSquared =
+        dot(positionDerivativeX, positionDerivativeX) +
+        dot(positionDerivativeY, positionDerivativeY);
+    const float curvatureNumerator =
+        dot(normalDerivativeX, positionDerivativeX) +
+        dot(normalDerivativeY, positionDerivativeY);
+    surfaceFrame.signedCurvature = curvatureNumerator /
+        max(positionFootprintSquared, 0.0001f);
+
+    // 画面微分Curvatureは診断値として保持するが、急斜面で発散しない範囲へ制限する。
+    surfaceFrame.signedCurvature = clamp(surfaceFrame.signedCurvature, -0.18f, 0.18f);
+    surfaceFrame.curvature = saturate(abs(surfaceFrame.signedCurvature) * 3.0f);
     // 単位法線を頂点補間すると長さが縮む。その縮みを法線分散として鏡面AAへ使う。
     surfaceFrame.interpolationVariance = saturate(1.0f - interpolatedNormalLength);
     return surfaceFrame;
@@ -301,7 +378,7 @@ float EvaluateOceanFoam(
         saturate(oceanData.x));
     const float breakingFoam =
         surfaceFrame.crest *
-        saturate(surfaceFrame.slope * 0.65f + surfaceFrame.curvature * 0.55f);
+        smoothstep(0.08f, 0.72f, surfaceFrame.slope);
     const float foamCoverage = max(
         compressionFoam,
         breakingFoam * lerp(0.62f, 0.92f, saturate(crestSharpness)));

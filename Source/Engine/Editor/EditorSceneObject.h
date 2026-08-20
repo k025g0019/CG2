@@ -99,6 +99,28 @@ struct EditorOceanRenderSettings {
 	float transmission = 0.18f;  // 水面材質の透過・屈折量
 	Vector3 shallowColor{0.04f, 0.34f, 0.46f};  // 浅い部分の色
 	Vector3 deepColor{0.005f, 0.045f, 0.11f};  // 深い部分の色
+	float sunDiffuseInfluence = 1.0f;  // 波面法線とSUN方向から出す明暗差の影響率
+	float sunSpecularInfluence = 1.0f;  // SUNの鏡面ハイライトの影響率
+	float sunGlitterInfluence = 1.0f;  // Sun Glitterの影響率
+	float skyReflectionInfluence = 1.0f;  // 空/画面反射の影響率
+	float ambientInfluence = 1.0f;  // Ambient / Sky Fillの影響率
+	float diffuseFloor = 0.22f;  // directional diffuseの最低値
+	float glitterIntensity = 1.0f;  // グリッター全体の強さ
+	float glitterSharpness = 0.5f;  // グリッター粒の鋭さ
+	float glitterDensity = 1.0f;  // グリッター粒の分散・密度
+	float glitterThreshold = 0.0f;  // グリッターが出始める反射整列の閾値
+	float glitterMaxClamp = 7.5f;  // グリッターの最大輝度クランプ
+	float macroReflectionInfluence = 1.0f;  // Large/Medium NormalのSky Reflection反映率
+	float curvatureInfluence = 1.0f;  // 符号付き曲率の感度
+	float troughOcclusionStrength = 0.08f;  // 谷のAmbient Occlusion強度
+	float crestHazeStrength = 0.16f;  // Foam直前の青白い波頭散乱
+	float crestDetailBoost = 0.18f;  // 波頭のFine Normal増幅量
+	float slopeRefractionInfluence = 0.35f;  // 急斜面の屈折増幅量
+	float mediumWaveStrength = 1.35f;  // Large Waveへ重ねるMedium Normalの強さ
+	float waveColorSeparation = 0.22f;  // 曲率による波頭と谷の水色色差
+	float shapeRoughnessVariation = 0.18f;  // 波頭と谷の反射粗さの差
+	float detailFilterSharpness = 1.55f;  // 近距離のMedium/Fine Normalを早期に落とさない
+	float grazingShapeVisibility = 0.35f;  // 浅い視線角で曲率による色差を残す
 	std::array<Vector4, 16u> waveData0{};  // xy=方向、z=波数、w=振幅
 	std::array<Vector4, 16u> waveData1{};  // x=角周波数、y=位相、zw=予約
 };

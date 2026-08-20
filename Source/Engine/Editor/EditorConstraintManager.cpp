@@ -5,6 +5,7 @@
 namespace {
 	constexpr float kConstraintMinDistance = 0.0001f;
 	constexpr float kDegToRad = 3.14159265f / 180.0f;
+	constexpr float kRadToDeg = 180.0f / 3.14159265f;
 
 	float Clamp(float v, float min, float max) {
 		return (std::max)(min, (std::min)(v, max));
@@ -228,17 +229,35 @@ void EditorConstraintManager::SolveCameraHorizonStabilizer(
 	EditorGameObject& gameObject,
 	EditorComponent& component,
 	float deltaTime) {
+	// 旧SceneはCameraの接続先だけを設定し、Stabilizer Sourceが未設定だった。
+	// 現在のCameraローカルOffsetをそのまま移行し、見た目を飛ばさず有効化する。
+	if (component.horizonSourceGameObjectId < 0) {
+		EditorComponent* cameraComponent = EditorComponentUtility::FindComponent(
+			gameObject,
+			EditorComponentType::Camera);
+
+		if (cameraComponent != nullptr &&
+			cameraComponent->isActive &&
+			cameraComponent->connectedGameObjectId >= 0) {
+			component.horizonSourceGameObjectId = cameraComponent->connectedGameObjectId;
+			component.horizonLocalPositionOffset = gameObject.translate;
+			component.horizonRotationOffsetDegrees = {
+				gameObject.rotate.x * kRadToDeg,
+				gameObject.rotate.y * kRadToDeg,
+				gameObject.rotate.z * kRadToDeg};
+		}
+	}
+
 	EditorGameObject* source = FindTarget(component.horizonSourceGameObjectId);
 
 	if (source == nullptr || source->id == gameObject.id) {
 		return;
 	}
 
-	Vector3 sourceScale = source->scale;
-	Vector3 sourceRotation = source->rotate;
-	Vector3 sourcePosition = source->translate;
-	editorScene_->GetWorldTransform(source->id, sourceScale, sourceRotation, sourcePosition);
 	const Matrix4x4 sourceMatrix = editorScene_->GetWorldMatrix(source->id);
+	const Vector3 sourcePosition = Transform(
+		{0.0f, 0.0f, 0.0f},
+		sourceMatrix);
 	const Vector3 sourceForward = NormalizeSafe(
 		SubtractVector(Transform({0.0f, 0.0f, 1.0f}, sourceMatrix), sourcePosition),
 		{0.0f, 0.0f, 1.0f});
@@ -257,6 +276,17 @@ void EditorConstraintManager::SolveCameraHorizonStabilizer(
 	const float sourceRoll = std::atan2(
 		DotVector(upCross, sourceForward),
 		Clamp(DotVector(projectedWorldUp, sourceUp), -1.0f, 1.0f));
+	// World行列のEuler分解値は、同じ姿勢でもPitchが±PI側の等価表現へ切り替わる。
+	// Cameraへ継承するPitch/YawはForward方向から一意に作り、周期的な反転を防ぐ。
+	const float sourceHorizontalLength = std::sqrt(
+		sourceForward.x * sourceForward.x +
+		sourceForward.z * sourceForward.z);
+	const float sourcePitch = -std::atan2(
+		sourceForward.y,
+		(std::max)(sourceHorizontalLength, kConstraintMinDistance));
+	const float sourceYaw = std::atan2(
+		sourceForward.x,
+		sourceForward.z);
 	Vector3 cameraScale = gameObject.scale;
 	Vector3 cameraRotation = gameObject.rotate;
 	Vector3 cameraPosition = gameObject.translate;
@@ -273,8 +303,8 @@ void EditorConstraintManager::SolveCameraHorizonStabilizer(
 		component.horizonRotationOffsetDegrees.y * kDegToRad,
 		component.horizonRotationOffsetDegrees.z * kDegToRad};
 	const Vector3 targetRotation = {
-		sourceRotation.x * Clamp(component.horizonPitchInheritance, 0.0f, 1.0f) + rotationOffset.x,
-		sourceRotation.y * Clamp(component.horizonYawInheritance, 0.0f, 1.0f) + rotationOffset.y,
+		sourcePitch * Clamp(component.horizonPitchInheritance, 0.0f, 1.0f) + rotationOffset.x,
+		sourceYaw * Clamp(component.horizonYawInheritance, 0.0f, 1.0f) + rotationOffset.y,
 		Clamp(
 			sourceRoll * Clamp(component.horizonRollInheritance, 0.0f, 1.0f) + rotationOffset.z,
 			-maximumRoll,

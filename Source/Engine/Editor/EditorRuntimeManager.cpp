@@ -98,6 +98,9 @@ void EditorRuntimeManager::Initialize(EditorScene* editorScene, std::vector<std:
 	physicsManager_.SetPreFixedStepCallback([this](float fixedDeltaTime) {
 		railMovementManager_.FixedUpdate(fixedDeltaTime);
 	});
+	physicsManager_.SetPostFixedStepCallback([this](float fixedDeltaTime) {
+		railMovementManager_.PostFixedUpdate(fixedDeltaTime);
+	});
 	scriptManager_.SetRailMovementManager(&railMovementManager_);
 	scriptManager_.SetGameplayManagers(
 		&targetingManager_,

@@ -549,6 +549,12 @@ int32_t EditorPhysicsManager::Update(float deltaTime) {
 		ApplyBuoyancyForces(fixedTimeStep_);
 		// Jolt が重力、接触、押し戻し、速度更新を固定時間で担当する
 		joltPhysicsManager_.Update(fixedTimeStep_);
+		// この時点でJoltの積分・最終姿勢確定が完了している。Rail絶対角度制限のような
+		// 「最終結果に対するHard Clamp」はここでのみ正しく機能する(積分前だとBuoyancy等の
+		// Torqueがこの後さらに角度を動かしてしまう)。
+		if (postFixedStepCallback_) {
+			postFixedStepCallback_(fixedTimeStep_);
+		}
 		simulationElapsedTime_ += fixedTimeStep_;
 		const std::vector<EditorJoltPhysicsManager::PhysicsEvent>& stepEvents = joltPhysicsManager_.GetStepEvents();
 		frameEvents_.insert(frameEvents_.end(), stepEvents.begin(), stepEvents.end());
@@ -1009,6 +1015,10 @@ float EditorPhysicsManager::GetFixedTimeStep() const {
 
 void EditorPhysicsManager::SetPreFixedStepCallback(std::function<void(float)> callback) {
 	preFixedStepCallback_ = std::move(callback);
+}
+
+void EditorPhysicsManager::SetPostFixedStepCallback(std::function<void(float)> callback) {
+	postFixedStepCallback_ = std::move(callback);
 }
 
 void EditorPhysicsManager::RebuildPhysicsStepCache() {
@@ -3183,6 +3193,10 @@ void EditorPhysicsManager::ApplyBuoyancyForces(float fixedDeltaTime) {
 						relativeWaterVelocity,
 						buoyancyUp);
 					Vector3 addedMassForce{};
+					// 対角付加質量。Coriolis項でも同じ値を使うためループ外へ出す。
+					float surgeAddedMass = 0.0f;
+					float swayAddedMass = 0.0f;
+					float heaveAddedMass = 0.0f;
 
 					if (buoyancySettings.automaticPhysicalProperties &&
 						buoyancyState.hasPreviousRelativeWaterVelocity) {
@@ -3217,15 +3231,15 @@ void EditorPhysicsManager::ApplyBuoyancyForces(float fixedDeltaTime) {
 							const float axisAcceleration = Dot(
 								buoyancyState.filteredRelativeWaterAcceleration,
 								axis);
+							const float axisAddedMass = displacedFluidMass * addedMassCoefficient;
 							addedMassForce = Add(
 								addedMassForce,
-								Multiply(
-									-displacedFluidMass * addedMassCoefficient * axisAcceleration,
-									axis));
+								Multiply(-axisAddedMass * axisAcceleration, axis));
+							return axisAddedMass;
 						};
-						addAxisAddedMassForce(boatForward, forwardProjectedArea);
-						addAxisAddedMassForce(boatRight, lateralProjectedArea);
-						addAxisAddedMassForce(boatUp, verticalProjectedArea);
+						surgeAddedMass = addAxisAddedMassForce(boatForward, forwardProjectedArea);
+						swayAddedMass = addAxisAddedMassForce(boatRight, lateralProjectedArea);
+						heaveAddedMass = addAxisAddedMassForce(boatUp, verticalProjectedArea);
 						const float maximumAddedMassForce = safeMass * gravityMagnitude * 6.0f;
 						const float addedMassForceLength = Length(addedMassForce);
 
@@ -3324,6 +3338,48 @@ void EditorPhysicsManager::ApplyBuoyancyForces(float fixedDeltaTime) {
 					buoyancyState.previousAngularVelocity = rigidBodyComponent->angularVelocity;
 					buoyancyState.hasPreviousAngularVelocity =
 						buoyancySettings.automaticPhysicalProperties;
+
+					// Translational diagonal added-mass Coriolis coupling.
+					// Produces Munk-type yaw/pitch/roll moments for anisotropic added mass.
+					// This is not a complete 6-DOF added-mass Coriolis matrix.
+					//
+					// M_A*νdot + C_A(ν)*ν = τ の並進部分について、付加運動量を p_A = A*v とすると
+					// 左辺のCoriolis由来Momentは v × p_A。付加質量を上で -m_A*a の外力として
+					// 右辺へ移しているので、加えるTorqueは符号を反転した -(v × p_A) になる。
+					//
+					// 成分式(Mx/My/Mz)を書くと軸対応を誤りやすいため、既存の正規直交船体基底を
+					// 使ったWorld空間の1本のベクトル式で求める。
+					Vector3 addedMassCoriolisTorque{};
+
+					if (buoyancySettings.automaticPhysicalProperties) {
+						const float surgeSpeed = Dot(relativeWaterVelocity, boatForward);
+						const float swaySpeed = Dot(relativeWaterVelocity, boatRight);
+						const float heaveSpeed = Dot(relativeWaterVelocity, boatUp);
+						const Vector3 bodyRelativeVelocity = Add(
+							Multiply(surgeSpeed, boatForward),
+							Add(
+								Multiply(swaySpeed, boatRight),
+								Multiply(heaveSpeed, boatUp)));
+						const Vector3 addedMomentum = Add(
+							Multiply(surgeAddedMass * surgeSpeed, boatForward),
+							Add(
+								Multiply(swayAddedMass * swaySpeed, boatRight),
+								Multiply(heaveAddedMass * heaveSpeed, boatUp)));
+						addedMassCoriolisTorque = Multiply(
+							-1.0f,
+							Cross(bodyRelativeVelocity, addedMomentum));
+						// 付加慣性Torqueと同じ基準で頭打ちにする。
+						const float maximumCoriolisTorque =
+							safeMass * shapeRadius * gravityMagnitude * 4.0f;
+						const float coriolisTorqueLength = Length(addedMassCoriolisTorque);
+
+						if (coriolisTorqueLength > maximumCoriolisTorque &&
+							coriolisTorqueLength > 0.0001f) {
+							addedMassCoriolisTorque = Multiply(
+								maximumCoriolisTorque / coriolisTorqueLength,
+								addedMassCoriolisTorque);
+						}
+					}
 
 					// 水面を少し上げた2回目の実Shape切断から dV/dh を求める。
 					// これは自由水面における水線面積となり、上下動の復元剛性と臨界減衰を決める。
@@ -3453,6 +3509,11 @@ void EditorPhysicsManager::ApplyBuoyancyForces(float fixedDeltaTime) {
 					const float verticalSpeed = Dot(relativeWaterVelocity, boatUp);
 					Vector3 hydrodynamicDragForce{};
 					Vector3 hydrodynamicDragTorque{};
+					// Phase2計測用に圧力と摩擦を分けて集計する。合力は従来どおり
+					// hydrodynamicDragForce へ入れるので、物理挙動は変わらない。
+					Vector3 diagnosticPressureForce{};
+					Vector3 diagnosticSkinFrictionForce{};
+					float diagnosticWettedArea = 0.0f;
 					Vector3 weightedHydrostaticApplicationPoint{};
 					float hydrostaticApplicationWeight = 0.0f;
 					const bool hasSurfaceTriangles =
@@ -3550,7 +3611,9 @@ void EditorPhysicsManager::ApplyBuoyancyForces(float fixedDeltaTime) {
 							const float tangentialSpeed = Length(tangentialVelocity);
 
 							// 相対運動がない水没面は抗力も摩擦も0なので、高価な係数計算を省く。
+							// 力は0でも濡れ面ではあるため、濡れ面積の集計だけは行う。
 							if (enteringNormalSpeed <= 0.0001f && tangentialSpeed <= 0.0001f) {
+								diagnosticWettedArea += submergedPanel.area;
 								submergedPanelCount++;
 								continue;
 							}
@@ -3617,6 +3680,11 @@ void EditorPhysicsManager::ApplyBuoyancyForces(float fixedDeltaTime) {
 							hydrodynamicDragTorque = Add(
 								hydrodynamicDragTorque,
 								Cross(centerToPanel, panelForce));
+							diagnosticPressureForce = Add(diagnosticPressureForce, pressureForce);
+							diagnosticSkinFrictionForce = Add(
+								diagnosticSkinFrictionForce,
+								skinFrictionForce);
+							diagnosticWettedArea += submergedPanel.area;
 							submergedPanelCount++;
 						}
 
@@ -3818,6 +3886,40 @@ void EditorPhysicsManager::ApplyBuoyancyForces(float fixedDeltaTime) {
 							boatForward);
 					}
 
+					// Runtime診断値を書き出す。Planing不足の原因が係数・濡れ面・圧力方向の
+					// どれかを切り分けるため、圧力抗力の鉛直上向き成分を船体重量と並べて残す。
+					if (physicsObject.buoyancy != nullptr) {
+						EditorComponent& buoyancyDiagnostics = *physicsObject.buoyancy;
+						buoyancyDiagnostics.buoyancyDebugBuoyancyForce = Length(hydrostaticForce);
+						buoyancyDiagnostics.buoyancyDebugPressureDragForce =
+							Length(diagnosticPressureForce);
+						buoyancyDiagnostics.buoyancyDebugPressureUpwardForce = Dot(
+							diagnosticPressureForce,
+							buoyancyUp);
+						buoyancyDiagnostics.buoyancyDebugSkinFrictionForce =
+							Length(diagnosticSkinFrictionForce);
+						buoyancyDiagnostics.buoyancyDebugAddedMassForce = Length(addedMassForce);
+						buoyancyDiagnostics.buoyancyDebugSlammingForce = Length(slammingForce);
+						buoyancyDiagnostics.buoyancyDebugWaveMakingResistance =
+							Length(waveMakingResistanceForce);
+						buoyancyDiagnostics.buoyancyDebugSubmergedRatio = submergedRatio;
+						buoyancyDiagnostics.buoyancyDebugWettedArea = diagnosticWettedArea;
+						buoyancyDiagnostics.buoyancyDebugForwardSpeed = forwardSpeed;
+						buoyancyDiagnostics.buoyancyDebugWeightForce = safeMass * gravityMagnitude;
+						buoyancyDiagnostics.buoyancyDebugAddedMassCoriolisTorque =
+							addedMassCoriolisTorque;
+						// 船首方向と水に対する進行方向の偏角。Coriolis Momentが偏角を増やす
+						// (不安定化する)向きに働いているかを実測で確かめるために出す。
+						buoyancyDiagnostics.buoyancyDebugSideslipAngleDegrees = std::atan2(
+							Dot(relativeWaterVelocity, boatRight),
+							Dot(relativeWaterVelocity, boatForward)) * 180.0f /
+							3.14159265358979323846f;
+						// 船首の上下角。boatForwardの鉛直成分から求め、正を船首上げとする。
+						buoyancyDiagnostics.buoyancyDebugTrimAngleDegrees =
+							std::asin((std::clamp)(Dot(boatForward, buoyancyUp), -1.0f, 1.0f)) *
+							180.0f / 3.14159265358979323846f;
+					}
+
 					const bool usesSurfacePanels = submergedPanelCount > 0;
 					const Vector3 centerAppliedDragForce = usesSurfacePanels
 						? Vector3{}
@@ -3841,7 +3943,7 @@ void EditorPhysicsManager::ApplyBuoyancyForces(float fixedDeltaTime) {
 						gameObject.id,
 						Add(
 							rotationalRadiationDampingTorque,
-							rotationalAddedInertiaTorque));
+							Add(rotationalAddedInertiaTorque, addedMassCoriolisTorque)));
 
 					if (usesSurfacePanels) {
 						AddForce(gameObject.id, hydrodynamicDragForce);

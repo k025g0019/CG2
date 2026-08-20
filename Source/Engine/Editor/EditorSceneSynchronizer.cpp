@@ -456,6 +456,39 @@ namespace {
 			(std::clamp)(oceanComponent->transmission, 0.0f, 1.0f);
 		sceneObject.ocean.shallowColor = oceanComponent->oceanShallowColor;
 		sceneObject.ocean.deepColor = oceanComponent->oceanDeepColor;
+		sceneObject.ocean.sunDiffuseInfluence = (std::max)(oceanComponent->oceanSunDiffuseInfluence, 0.0f);
+		sceneObject.ocean.sunSpecularInfluence = (std::max)(oceanComponent->oceanSunSpecularInfluence, 0.0f);
+		sceneObject.ocean.sunGlitterInfluence = (std::max)(oceanComponent->oceanSunGlitterInfluence, 0.0f);
+		sceneObject.ocean.skyReflectionInfluence = (std::max)(oceanComponent->oceanSkyReflectionInfluence, 0.0f);
+		sceneObject.ocean.ambientInfluence = (std::max)(oceanComponent->oceanAmbientInfluence, 0.0f);
+		sceneObject.ocean.diffuseFloor = (std::clamp)(oceanComponent->oceanDiffuseFloor, 0.0f, 1.0f);
+		sceneObject.ocean.glitterIntensity = (std::max)(oceanComponent->oceanGlitterIntensity, 0.0f);
+		sceneObject.ocean.glitterSharpness = (std::clamp)(oceanComponent->oceanGlitterSharpness, 0.0f, 1.0f);
+		sceneObject.ocean.glitterDensity = (std::max)(oceanComponent->oceanGlitterDensity, 0.01f);
+		sceneObject.ocean.glitterThreshold = (std::clamp)(oceanComponent->oceanGlitterThreshold, 0.0f, 1.0f);
+		sceneObject.ocean.glitterMaxClamp = (std::max)(oceanComponent->oceanGlitterMaxClamp, 0.1f);
+		sceneObject.ocean.macroReflectionInfluence =
+			(std::clamp)(oceanComponent->oceanMacroReflectionInfluence, 0.0f, 2.0f);
+		sceneObject.ocean.curvatureInfluence =
+			(std::clamp)(oceanComponent->oceanCurvatureInfluence, 0.0f, 4.0f);
+		sceneObject.ocean.troughOcclusionStrength =
+			(std::clamp)(oceanComponent->oceanTroughOcclusionStrength, 0.0f, 0.25f);
+		sceneObject.ocean.crestHazeStrength =
+			(std::clamp)(oceanComponent->oceanCrestHazeStrength, 0.0f, 1.0f);
+		sceneObject.ocean.crestDetailBoost =
+			(std::clamp)(oceanComponent->oceanCrestDetailBoost, 0.0f, 1.0f);
+		sceneObject.ocean.slopeRefractionInfluence =
+			(std::clamp)(oceanComponent->oceanSlopeRefractionInfluence, 0.0f, 2.0f);
+		sceneObject.ocean.mediumWaveStrength =
+			(std::clamp)(oceanComponent->oceanMediumWaveStrength, 0.0f, 3.0f);
+		sceneObject.ocean.waveColorSeparation =
+			(std::clamp)(oceanComponent->oceanWaveColorSeparation, 0.0f, 1.0f);
+		sceneObject.ocean.shapeRoughnessVariation =
+			(std::clamp)(oceanComponent->oceanShapeRoughnessVariation, 0.0f, 0.5f);
+		sceneObject.ocean.detailFilterSharpness =
+			(std::clamp)(oceanComponent->oceanDetailFilterSharpness, 0.5f, 2.5f);
+		sceneObject.ocean.grazingShapeVisibility =
+			(std::clamp)(oceanComponent->oceanGrazingShapeVisibility, 0.0f, 1.0f);
 
 		if (!AreOceanSpectrumInputsEqual(previousOceanSettings, sceneObject.ocean)) {
 			const EditorOceanSpectrumSettings spectrumSettings =
@@ -514,6 +547,28 @@ namespace {
 		sceneObject.materialData->oceanRefractionDistortion = sceneObject.ocean.refractionDistortion;
 		sceneObject.materialData->oceanWaterDepth = sceneObject.ocean.waterDepth;
 		sceneObject.materialData->oceanCrestSharpness = sceneObject.ocean.crestSharpness;
+		sceneObject.materialData->oceanSunDiffuseInfluence = sceneObject.ocean.sunDiffuseInfluence;
+		sceneObject.materialData->oceanSunSpecularInfluence = sceneObject.ocean.sunSpecularInfluence;
+		sceneObject.materialData->oceanSunGlitterInfluence = sceneObject.ocean.sunGlitterInfluence;
+		sceneObject.materialData->oceanSkyReflectionInfluence = sceneObject.ocean.skyReflectionInfluence;
+		sceneObject.materialData->oceanAmbientInfluence = sceneObject.ocean.ambientInfluence;
+		sceneObject.materialData->oceanDiffuseFloor = sceneObject.ocean.diffuseFloor;
+		sceneObject.materialData->oceanGlitterIntensity = sceneObject.ocean.glitterIntensity;
+		sceneObject.materialData->oceanGlitterSharpness = sceneObject.ocean.glitterSharpness;
+		sceneObject.materialData->oceanGlitterDensity = sceneObject.ocean.glitterDensity;
+		sceneObject.materialData->oceanGlitterThreshold = sceneObject.ocean.glitterThreshold;
+		sceneObject.materialData->oceanGlitterMaxClamp = sceneObject.ocean.glitterMaxClamp;
+		sceneObject.materialData->oceanMacroReflectionInfluence = sceneObject.ocean.macroReflectionInfluence;
+		sceneObject.materialData->oceanCurvatureInfluence = sceneObject.ocean.curvatureInfluence;
+		sceneObject.materialData->oceanTroughOcclusionStrength = sceneObject.ocean.troughOcclusionStrength;
+		sceneObject.materialData->oceanCrestHazeStrength = sceneObject.ocean.crestHazeStrength;
+		sceneObject.materialData->oceanCrestDetailBoost = sceneObject.ocean.crestDetailBoost;
+		sceneObject.materialData->oceanSlopeRefractionInfluence = sceneObject.ocean.slopeRefractionInfluence;
+		sceneObject.materialData->oceanMediumWaveStrength = sceneObject.ocean.mediumWaveStrength;
+		sceneObject.materialData->oceanWaveColorSeparation = sceneObject.ocean.waveColorSeparation;
+		sceneObject.materialData->oceanShapeRoughnessVariation = sceneObject.ocean.shapeRoughnessVariation;
+		sceneObject.materialData->oceanDetailFilterSharpness = sceneObject.ocean.detailFilterSharpness;
+		sceneObject.materialData->oceanGrazingShapeVisibility = sceneObject.ocean.grazingShapeVisibility;
 	}
 
 	void ApplyRendererMaterial(

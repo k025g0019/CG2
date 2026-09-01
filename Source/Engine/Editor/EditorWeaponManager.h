@@ -81,6 +81,22 @@ public:
 	float GetLastProjectileAppliedDamage() const { return lastProjectileAppliedDamage_; }
 	float GetLastProjectileHealthBefore() const { return lastProjectileHealthBefore_; }
 	float GetLastProjectileHealthAfter() const { return lastProjectileHealthAfter_; }
+	// 弾自身の座標/半径と、命中判定の基準点に最も近いHealth所持GameObject(敵/Player)の
+	// 実座標・実Colliderサイズ。ConsoleではなくRuntimeLog監視項目として見る前提の値。
+	const std::string& GetLastProjectileCastOrigin() const { return lastProjectileCastOrigin_; }
+	float GetLastProjectileRadius() const { return lastProjectileRadius_; }
+	const std::string& GetLastProjectileNearestCandidateName() const { return lastProjectileNearestCandidateName_; }
+	float GetLastProjectileNearestCandidateDistance() const { return lastProjectileNearestCandidateDistance_; }
+	const std::string& GetLastProjectileNearestCandidateWorldPosition() const { return lastProjectileNearestCandidateWorldPosition_; }
+	const std::string& GetLastProjectileNearestCandidateColliderCenter() const { return lastProjectileNearestCandidateColliderCenter_; }
+	const std::string& GetLastProjectileNearestCandidateColliderSize() const { return lastProjectileNearestCandidateColliderSize_; }
+	// Jolt World上の実Body座標 / World登録状態(true,false,NoBody)。
+	const std::string& GetLastProjectileNearestCandidateBodyPosition() const { return lastProjectileNearestCandidateBodyPosition_; }
+	const std::string& GetLastProjectileNearestCandidateBodyInWorld() const { return lastProjectileNearestCandidateBodyInWorld_; }
+	// 最近傍候補がこの弾のAttackCollisionFilter無視リストに含まれていたか(true=最初から
+	// 判定対象外だった)。含まれていないのにMissが続くなら、無視リストではなく
+	// 幾何(Shape/Cast)側の問題だと確定できる。
+	bool GetLastProjectileNearestCandidateWasIgnored() const { return lastProjectileNearestCandidateWasIgnored_; }
 
 private:
 	struct ActiveProjectile {
@@ -187,6 +203,16 @@ private:
 	float lastProjectileAppliedDamage_ = 0.0f;
 	float lastProjectileHealthBefore_ = -1.0f;
 	float lastProjectileHealthAfter_ = -1.0f;
+	std::string lastProjectileCastOrigin_ = "-";
+	float lastProjectileRadius_ = -1.0f;
+	std::string lastProjectileNearestCandidateName_ = "-";
+	float lastProjectileNearestCandidateDistance_ = -1.0f;
+	std::string lastProjectileNearestCandidateWorldPosition_ = "-";
+	std::string lastProjectileNearestCandidateColliderCenter_ = "-";
+	std::string lastProjectileNearestCandidateColliderSize_ = "-";
+	std::string lastProjectileNearestCandidateBodyPosition_ = "-";
+	std::string lastProjectileNearestCandidateBodyInWorld_ = "-";
+	bool lastProjectileNearestCandidateWasIgnored_ = false;
 	int32_t collisionLogCount_ = 0;  // Play中の大量連射でConsoleを無制限に増やさない
 	bool isStarted_ = false;  // Play中だけ入力と飛翔を更新する
 
@@ -207,7 +233,13 @@ private:
 		float hitDistance,
 		float appliedDamage,
 		float healthBefore,
-		float healthAfter);  // ProjectileのPhysics/Ocean命中とDamage結果をLog監視へ残す
+		float healthAfter,
+		const Vector3& castOrigin,
+		float castRadius,
+		const std::vector<int32_t>& ignoredGameObjectIds);  // ProjectileのPhysics/Ocean命中とDamage結果をLog監視へ残す。
+		// castOrigin/castRadius基準で最も近いHealth所持GameObjectの実座標・実Colliderサイズも
+		// 併せてRuntimeLog監視項目(GetLastProjectileNearestCandidate*)へ保存する。Consoleには
+		// 短い結果行だけ出し、詳細はRuntimeLog側で見る前提(Consoleは他Logで流れて追えないため)。
 
 	bool ShouldFire(
 		const EditorGameObject& gameObject,

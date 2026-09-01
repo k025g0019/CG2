@@ -219,6 +219,16 @@ int32_t EditorObjectPoolManager::CreatePoolItem(PoolRuntime& poolRuntime, int32_
 
 	if (duplicatedGameObject != nullptr) {
 		duplicatedGameObject->name = templateName + "_Pool_" + std::to_string(itemIndex);
+
+		// Templateは待機位置(地下)にあるため距離LOD等で非Activeにされていることがあり、
+		// その状態を複製すると複製個体も非Activeで生まれる。
+		// 非Activeのまま物理登録すると「非Activeで登録スキップ」となってBodyが作られず、
+		// 見た目は動くのにRay/ShapeCastへ一切引っかからない個体が量産される
+		// (実測: Pool個体は全てNoBodyで、弾がすり抜けていた)。
+		// 登録が確実に通るよう、ここでActiveへ揃えてから物理/Scriptを登録する。
+		// 直後のSetItemActive(false)がこのActive状態を「本来の状態」として記録するので、
+		// 貸出時のSetItemActive(true)でも正しくActiveへ戻る。
+		duplicatedGameObject->isActive = true;
 	}
 
 	// 物理Bodyを作ってから待機へ戻す。Script Bindingは非Activeのまま登録し、初回貸出時にStartする。
@@ -294,6 +304,22 @@ int32_t EditorObjectPoolManager::Spawn(
 	spawnVersions_[itemGameObjectId]++;
 	ResetItemRuntimeState(itemGameObjectId);
 	SetItemActive(itemGameObjectId, true);
+
+	// 貸出直後、ItemがActiveになった状態で物理Bodyの登録を必ず試す。
+	// 複製直後(CreatePoolItem)の登録は、その時点のActive状態やManagerの初期化順に
+	// 左右されて失敗し得る。実測でPool複製個体だけBodyが存在せず(NoBody)、
+	// 敵が物理世界に居ないため弾が一切当たらない状態になっていた。
+	// RegisterRuntimeGameObjectはBody登録済みなら即trueを返すので、ここでの再呼び出しは安全。
+	if (physicsManager_ != nullptr) {
+		physicsManager_->RegisterRuntimeHierarchy(itemGameObjectId);
+		// Bodyを作り直した場合に備え、貸出姿勢をJolt側へも反映しておく。
+		Vector3 worldScale{};
+		Vector3 worldRotation{};
+		Vector3 worldPosition{};
+		editorScene_->GetWorldTransform(itemGameObjectId, worldScale, worldRotation, worldPosition);
+		(void)worldScale;
+		physicsManager_->SetGameObjectTransform(itemGameObjectId, worldPosition, worldRotation);
+	}
 
 	return itemGameObjectId;
 }

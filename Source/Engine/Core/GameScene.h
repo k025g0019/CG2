@@ -21,6 +21,7 @@
 #include "EditorGameplayToolsWindowManager.h"
 #include "EditorSceneLifecycleManager.h"
 #include "EditorSceneViewManager.h"
+#include "EditorTeamCollaborationManager.h"
 
 #pragma warning(push)
 #pragma warning(disable : 4820)
@@ -53,6 +54,7 @@ private:
 	EditorGameplayToolsWindowManager gameplayToolsWindowManager_;  // 汎用Spline、Event Timeline、State Graphを扱うManager。
 	EditorDiagnosticsWindowManager diagnosticsWindowManager_;  // Runtime ProfilerとScene静的検査を扱うManager。
 	EditorLogMonitorWindowManager logMonitorWindowManager_;  // GameObject/Component/System横断の汎用ログ・監視選択UIを扱うManager。
+	EditorTeamCollaborationManager teamCollaborationManager_;  // 3人共同制作のRevision、変更ログ、TCP同期を扱うManager。
 	EditorRenderManager renderManager_;  // SceneObject / Sprite / ImGui を GPU に描画する Manager。
 	EditorGameBuildSettings gameBuildSettings_;  // Standalone Player の起動 Scene と遷移可能 Scene を保持する。
 	bool isStandaloneGame_ = false;  // Editor UI を描かず GameView だけを表示する起動なら true。

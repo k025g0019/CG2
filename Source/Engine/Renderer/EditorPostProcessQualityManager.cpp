@@ -1,5 +1,7 @@
 ﻿#include "EditorPostProcessQualityManager.h"
 
+#include "Source/Engine/Editor/EditorProfilerManager.h"
+
 #include <algorithm>
 #include <cstring>
 
@@ -510,6 +512,7 @@ bool EditorPostProcessQualityManager::ExecuteAutoExposure(
 		kHistogramConstantCount,
 		histogramConstants.data(),
 		0u);
+	RecordEditorProfilerDispatch();
 	commandList->Dispatch(
 		(kHistogramSampleWidth + 7u) / 8u,
 		(kHistogramSampleHeight + 7u) / 8u,
@@ -1078,6 +1081,7 @@ bool EditorPostProcessQualityManager::DrawPass(
 		source2SrvHandle.ptr == 0u ? source1SrvHandle : source2SrvHandle);
 	commandList->SetGraphicsRoot32BitConstants(3u, kRootConstantCount, constants.data(), 0u);
 	commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	RecordEditorProfilerDrawCall();
 	commandList->DrawInstanced(3u, 1u, 0u, 0u);
 
 	transitionBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;

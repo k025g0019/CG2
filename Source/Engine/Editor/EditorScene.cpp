@@ -2,6 +2,7 @@
 
 #include "EditorAssetUtility.h"
 #include "EditorComponentUtility.h"
+#include "EditorTeamUuid.h"
 #include "Vector&Matrix.h"
 
 #include <algorithm>
@@ -367,6 +368,8 @@ namespace {
 		"SceneStreaming",
 		"TextEffect",
 		"SceneTransition",
+		"WireConnectable",
+		"WireRenderer",
 	};
 	constexpr int32_t kEditorComponentTypeCount =
 		static_cast<int32_t>(sizeof(kEditorComponentTypeNames) / sizeof(kEditorComponentTypeNames[0]));
@@ -549,6 +552,7 @@ namespace {
 		RemapGameObjectReference(component.prefabSpawnerActionTargetGameObjectId, remappedIds);
 		RemapGameObjectReference(component.cameraBlendSourceGameObjectId, remappedIds);
 		RemapGameObjectReference(component.cameraBlendTargetGameObjectId, remappedIds);
+		RemapGameObjectReference(component.cameraInputTargetGameObjectId, remappedIds);
 		RemapGameObjectReference(component.railBranchFollowerGameObjectId, remappedIds);
 		RemapGameObjectReference(component.railBranchTargetPathGameObjectId, remappedIds);
 		RemapGameObjectReference(component.railBranchActionTargetGameObjectId, remappedIds);
@@ -564,6 +568,7 @@ namespace {
 		RemapGameObjectReference(component.simulationLodReferenceGameObjectId, remappedIds);
 		RemapGameObjectReference(component.railEventMarkerActionTargetGameObjectId, remappedIds);
 		RemapGameObjectReference(component.sceneStreamingReferenceGameObjectId, remappedIds);
+		RemapGameObjectReference(component.wireConnectablePhysicsBodyGameObjectId, remappedIds);
 	}
 
 	int32_t ToInt(const std::string& text) {
@@ -629,6 +634,7 @@ EditorComponentType ComponentTypeFromIndex(int32_t componentIndex) {
 //============================================================
 
 EditorScene::EditorScene() : nextGameObjectId_(1) {
+	sceneUuid_ = CreateEditorTeamUuid();
 	ResetPhysicsSettings(physicsSettings_);
 }
 
@@ -637,6 +643,7 @@ void EditorScene::InitializeDefaultScene() {
 	undoStack_.clear();
 	redoStack_.clear();
 	nextGameObjectId_ = 1;
+	sceneUuid_ = CreateEditorTeamUuid();
 	ResetPhysicsSettings(physicsSettings_);
 
 	//============================================================
@@ -691,6 +698,7 @@ void EditorScene::InitializeDefaultScene() {
 int32_t EditorScene::CreateGameObject(const std::string& name) {
 	// 新規 GameObject の基本値
 	EditorGameObject gameObject{};
+	gameObject.uuid = CreateEditorTeamUuid();
 	gameObject.id = nextGameObjectId_;
 	gameObject.parentId = kInvalidGameObjectId;
 	gameObject.isActive = true;
@@ -748,6 +756,11 @@ int32_t EditorScene::DuplicateGameObject(int32_t gameObjectId) {
 
 	for (const EditorGameObject& sourceObject : sourceSubtree) {
 		EditorGameObject duplicatedGameObject = sourceObject;
+		duplicatedGameObject.uuid = CreateEditorTeamUuid();
+
+		for (EditorComponent& component : duplicatedGameObject.components) {
+			component.uuid = CreateEditorTeamUuid();
+		}
 		duplicatedGameObject.id = duplicatedIds[sourceObject.id];
 		duplicatedGameObject.parentId = sourceObject.id == gameObjectId
 			? kInvalidGameObjectId
@@ -1046,6 +1059,7 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 		reinterpret_cast<const char*>(kSceneUtf8Bom),
 		static_cast<std::streamsize>(sizeof(kSceneUtf8Bom)));
 
+	file << "SceneUuid|" << sceneUuid_ << "\n";
 	file << "PhysicsSettings|"
 	     << physicsSettings_.gravity.x << "|"
 	     << physicsSettings_.gravity.y << "|"
@@ -1084,6 +1098,9 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 		     << gameObject.scale.y << "|"
 		     << gameObject.scale.z << "|"
 		     << gameObject.isActive << "\n";
+		file << "GameObjectUuid|"
+		     << gameObject.id << "|"
+		     << gameObject.uuid << "\n";
 
 		if (!gameObject.prefabSourcePath.empty() || !gameObject.prefabVariantBasePath.empty()) {
 			file << "PrefabLink|"
@@ -1094,6 +1111,11 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 		}
 
 		for (const EditorComponent& component : gameObject.components) {
+			file << "ComponentUuid|"
+			     << gameObject.id << "|"
+			     << static_cast<int32_t>(component.type) << "|"
+			     << component.uuid << "\n";
+
 			// Component 行には Component 種類と各 Component 共通の設定値を保存する
 			file << "Component|"
 			     << gameObject.id << "|"
@@ -1942,6 +1964,31 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 				     << "|" << component.cameraFollowPositionSpace
 				     << "|" << component.cameraFollowRotationMode
 				     << "\n";
+
+				file << "CameraInputExtension"
+				     << "|" << gameObject.id
+				     << "|" << static_cast<int32_t>(component.type)
+				     << "|" << (component.cameraInputEnabled ? 1 : 0)
+				     << "|" << component.cameraInputStyle
+				     << "|" << component.cameraInputActivation
+				     << "|" << (component.cameraInputMovementEnabled ? 1 : 0)
+				     << "|" << component.cameraInputMoveSpeed
+				     << "|" << component.cameraInputFastMultiplier
+				     << "|" << component.cameraInputLookSensitivity
+				     << "|" << (component.cameraInputInvertY ? 1 : 0)
+				     << "|" << component.cameraInputMinimumPitchDegrees
+				     << "|" << component.cameraInputMaximumPitchDegrees
+				     << "|" << component.cameraInputTargetGameObjectId
+				     << "|" << component.cameraInputPivotOffset.x
+				     << "|" << component.cameraInputPivotOffset.y
+				     << "|" << component.cameraInputPivotOffset.z
+				     << "|" << component.cameraInputOrbitDistance
+				     << "|" << component.cameraInputMinimumDistance
+				     << "|" << component.cameraInputMaximumDistance
+				     << "|" << component.cameraInputZoomSpeed
+				     << "|" << (component.cameraInputLockCursor ? 1 : 0)
+				     << "|" << (component.cameraInputHideCursor ? 1 : 0)
+				     << "\n";
 			}
 
 			// 最終合成の追加機能は独立行へ保存し、既存Sceneの巨大なComponent列をずらさない。
@@ -2768,6 +2815,55 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 				     << "\n";
 			}
 
+			if (component.type == EditorComponentType::WireConnectable) {
+				file << "WireConnectableExtension|" << gameObject.id
+				     << "|" << (component.wireConnectableAllowSelection ? 1 : 0)
+				     << "|" << component.wireConnectableMaximumConnections
+				     << "|" << component.wireConnectableStrength
+				     << "|" << component.wireConnectableCategory
+				     << "|" << (component.wireConnectableUseHitPoint ? 1 : 0)
+				     << "|" << component.wireConnectableLocalAnchor.x
+				     << "|" << component.wireConnectableLocalAnchor.y
+				     << "|" << component.wireConnectableLocalAnchor.z
+				     << "|" << component.wireConnectablePhysicsBodyGameObjectId
+				     << "|" << component.wireConnectableNormalColor.x
+				     << "|" << component.wireConnectableNormalColor.y
+				     << "|" << component.wireConnectableNormalColor.z
+				     << "|" << component.wireConnectableTargetedColor.x
+				     << "|" << component.wireConnectableTargetedColor.y
+				     << "|" << component.wireConnectableTargetedColor.z
+				     << "|" << component.wireConnectableSelectedColor.x
+				     << "|" << component.wireConnectableSelectedColor.y
+				     << "|" << component.wireConnectableSelectedColor.z
+				     << "|" << component.wireConnectableConnectedColor.x
+				     << "|" << component.wireConnectableConnectedColor.y
+				     << "|" << component.wireConnectableConnectedColor.z
+				     << "|" << component.wireConnectableEmissionStrength
+				     << "\n";
+			}
+
+			if (component.type == EditorComponentType::WireRenderer) {
+				file << "WireRendererExtension|" << gameObject.id
+				     << "|" << component.wireRendererWidth
+				     << "|" << component.wireRendererColor.x
+				     << "|" << component.wireRendererColor.y
+				     << "|" << component.wireRendererColor.z
+				     << "|" << component.wireRendererTensionColor.x
+				     << "|" << component.wireRendererTensionColor.y
+				     << "|" << component.wireRendererTensionColor.z
+				     << "|" << component.wireRendererBrokenColor.x
+				     << "|" << component.wireRendererBrokenColor.y
+				     << "|" << component.wireRendererBrokenColor.z
+				     << "|" << component.wireRendererAlpha
+				     << "|" << component.wireRendererSlackSag
+				     << "|" << component.wireRendererSegmentCount
+				     << "|" << (component.wireRendererVisible ? 1 : 0)
+				     << "|" << component.wireRendererWorldRadius
+				     << "|" << component.wireRendererRadialSegments
+				     << "|" << component.wireRendererEmissionStrength
+				     << "\n";
+			}
+
 			if (component.type == EditorComponentType::AreaDamage) {
 				file << "AreaDamageFilterExtension|" << gameObject.id
 				     << "|" << component.areaDamageOcclusionMode
@@ -3297,6 +3393,8 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 	}
 
 	std::vector<EditorGameObject> loadedGameObjects;  // 読み込み途中の Scene。成功したら gameObjects_ へ置き換える
+	std::unordered_map<std::uint64_t, std::string> pendingComponentUuids;
+	std::string loadedSceneUuid = CreateEditorTeamUuid();
 	EditorPhysicsSettings loadedPhysicsSettings = physicsSettings_;  // 古い Scene に設定行がない場合は現在の既定値を使う
 	bool hasSceneData = false;  // 空 Scene 保存も許可するため、GameObject が 0 件でも有効な Scene 行を読んだかを記録する
 	std::string line;
@@ -3316,7 +3414,12 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 			continue;
 		}
 
-		if (elements[0] == "PhysicsSettings" && elements.size() >= 9) {
+		if (elements[0] == "SceneUuid" && elements.size() >= 2) {
+			if (IsEditorTeamUuidValid(elements[1])) {
+				loadedSceneUuid = elements[1];
+			}
+		}
+		else if (elements[0] == "PhysicsSettings" && elements.size() >= 9) {
 			hasSceneData = true;  // 物理設定だけの空 Scene でも、正しい Scene ファイルとして扱う
 			loadedPhysicsSettings.gravity = {ToFloat(elements[1]), ToFloat(elements[2]), ToFloat(elements[3])};
 			loadedPhysicsSettings.fixedTimeStep = ToFloat(elements[4]);
@@ -3359,6 +3462,23 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 			gameObject.scale = {ToFloat(elements[10]), ToFloat(elements[11]), ToFloat(elements[12])};
 			loadedGameObjects.push_back(gameObject);
 		}
+		else if (elements[0] == "GameObjectUuid" && elements.size() >= 3) {
+			const int32_t ownerId = ToInt(elements[1]);
+
+			for (EditorGameObject& gameObject : loadedGameObjects) {
+				if (gameObject.id == ownerId) {
+					gameObject.uuid = elements[2];
+					break;
+				}
+			}
+		}
+		else if (elements[0] == "ComponentUuid" && elements.size() >= 4) {
+			const std::uint64_t ownerId = static_cast<std::uint64_t>(
+				static_cast<std::uint32_t>(ToInt(elements[1])));
+			const std::uint64_t componentType = static_cast<std::uint64_t>(
+				static_cast<std::uint32_t>(ToInt(elements[2])));
+			pendingComponentUuids[(ownerId << 32u) | componentType] = elements[3];
+		}
 		else if (elements[0] == "PrefabLink" && elements.size() >= 4) {
 			const int32_t ownerId = ToInt(elements[1]);
 
@@ -3386,6 +3506,16 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 				}
 
 				EditorComponent component = CreateComponent(ComponentTypeFromIndex(ToInt(elements[2])));  // 保存されていた ComponentType で初期値を作り、保存値で上書きする
+				const std::uint64_t componentUuidKey =
+					(static_cast<std::uint64_t>(static_cast<std::uint32_t>(ownerId)) << 32u) |
+					static_cast<std::uint64_t>(static_cast<std::uint32_t>(ToInt(elements[2])));
+				const auto componentUuidIterator = pendingComponentUuids.find(componentUuidKey);
+
+				if (componentUuidIterator != pendingComponentUuids.end()) {
+					component.uuid = componentUuidIterator->second;
+					pendingComponentUuids.erase(componentUuidIterator);
+				}
+
 				component.scriptProperties.clear();  // 後続の ScriptProperty 行から保存値を復元する。
 				component.inputEventBindings.clear();  // 後続の InputEventBinding 行を重複させない。
 				component.isActive = ToInt(elements[3]) != 0;
@@ -4519,6 +4649,51 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 
 					component.cameraFollowPositionSpace = (std::clamp)(ToInt(elements[3]), 0, 1);
 					component.cameraFollowRotationMode = (std::clamp)(ToInt(elements[4]), 0, 2);
+					break;
+				}
+
+				break;
+			}
+		}
+		else if (elements[0] == "CameraInputExtension" && elements.size() >= 23u) {
+			const int32_t ownerId = ToInt(elements[1]);
+			const EditorComponentType componentType = ComponentTypeFromIndex(ToInt(elements[2]));
+
+			for (EditorGameObject& gameObject : loadedGameObjects) {
+				if (gameObject.id != ownerId) {
+					continue;
+				}
+
+				for (EditorComponent& component : gameObject.components) {
+					if (component.type != componentType ||
+						(component.type != EditorComponentType::Camera &&
+						 component.type != EditorComponentType::CinemachineCamera)) {
+						continue;
+					}
+
+					component.cameraInputEnabled = ToInt(elements[3]) != 0;
+					component.cameraInputStyle = (std::clamp)(ToInt(elements[4]), 0, 1);
+					component.cameraInputActivation = (std::clamp)(ToInt(elements[5]), 0, 1);
+					component.cameraInputMovementEnabled = ToInt(elements[6]) != 0;
+					component.cameraInputMoveSpeed = (std::max)(ToFloat(elements[7]), 0.0f);
+					component.cameraInputFastMultiplier = (std::max)(ToFloat(elements[8]), 1.0f);
+					component.cameraInputLookSensitivity = (std::max)(ToFloat(elements[9]), 0.0f);
+					component.cameraInputInvertY = ToInt(elements[10]) != 0;
+					component.cameraInputMinimumPitchDegrees = ToFloat(elements[11]);
+					component.cameraInputMaximumPitchDegrees = ToFloat(elements[12]);
+					component.cameraInputTargetGameObjectId = ToInt(elements[13]);
+					component.cameraInputPivotOffset = {
+						ToFloat(elements[14]),
+						ToFloat(elements[15]),
+						ToFloat(elements[16])};
+					component.cameraInputOrbitDistance = (std::max)(ToFloat(elements[17]), 0.01f);
+					component.cameraInputMinimumDistance = (std::max)(ToFloat(elements[18]), 0.01f);
+					component.cameraInputMaximumDistance = (std::max)(
+						ToFloat(elements[19]),
+						component.cameraInputMinimumDistance);
+					component.cameraInputZoomSpeed = (std::max)(ToFloat(elements[20]), 0.0f);
+					component.cameraInputLockCursor = ToInt(elements[21]) != 0;
+					component.cameraInputHideCursor = ToInt(elements[22]) != 0;
 					break;
 				}
 
@@ -5765,6 +5940,52 @@ if (elements.size() >= 13u) {
 				}
 			}
 		}
+		else if (elements[0] == "WireConnectableExtension" && elements.size() >= 10u) {
+			const int32_t ownerId = ToInt(elements[1]);
+			for (EditorGameObject& object : loadedGameObjects) if (object.id == ownerId) {
+				for (EditorComponent& component : object.components) if (component.type == EditorComponentType::WireConnectable) {
+					component.wireConnectableAllowSelection = ToInt(elements[2]) != 0;
+					component.wireConnectableMaximumConnections = ToInt(elements[3]);
+					component.wireConnectableStrength = ToFloat(elements[4]);
+					component.wireConnectableCategory = ToInt(elements[5]);
+					component.wireConnectableUseHitPoint = ToInt(elements[6]) != 0;
+					component.wireConnectableLocalAnchor = {
+						ToFloat(elements[7]),
+						ToFloat(elements[8]),
+						ToFloat(elements[9])};
+
+					if (elements.size() >= 24u) {
+						component.wireConnectablePhysicsBodyGameObjectId = ToInt(elements[10]);
+						component.wireConnectableNormalColor = {ToFloat(elements[11]), ToFloat(elements[12]), ToFloat(elements[13])};
+						component.wireConnectableTargetedColor = {ToFloat(elements[14]), ToFloat(elements[15]), ToFloat(elements[16])};
+						component.wireConnectableSelectedColor = {ToFloat(elements[17]), ToFloat(elements[18]), ToFloat(elements[19])};
+						component.wireConnectableConnectedColor = {ToFloat(elements[20]), ToFloat(elements[21]), ToFloat(elements[22])};
+						component.wireConnectableEmissionStrength = ToFloat(elements[23]);
+					}
+				}
+			}
+		}
+		else if (elements[0] == "WireRendererExtension" && elements.size() >= 16u) {
+			const int32_t ownerId = ToInt(elements[1]);
+			for (EditorGameObject& object : loadedGameObjects) if (object.id == ownerId) {
+				for (EditorComponent& component : object.components) if (component.type == EditorComponentType::WireRenderer) {
+					component.wireRendererWidth = ToFloat(elements[2]);
+					component.wireRendererColor = {ToFloat(elements[3]), ToFloat(elements[4]), ToFloat(elements[5])};
+					component.wireRendererTensionColor = {ToFloat(elements[6]), ToFloat(elements[7]), ToFloat(elements[8])};
+					component.wireRendererBrokenColor = {ToFloat(elements[9]), ToFloat(elements[10]), ToFloat(elements[11])};
+					component.wireRendererAlpha = ToFloat(elements[12]);
+					component.wireRendererSlackSag = ToFloat(elements[13]);
+					component.wireRendererSegmentCount = ToInt(elements[14]);
+					component.wireRendererVisible = ToInt(elements[15]) != 0;
+
+					if (elements.size() >= 19u) {
+						component.wireRendererWorldRadius = ToFloat(elements[16]);
+						component.wireRendererRadialSegments = ToInt(elements[17]);
+						component.wireRendererEmissionStrength = ToFloat(elements[18]);
+					}
+				}
+			}
+		}
 		else if (elements[0] == "AreaDamageFilterExtension" && elements.size() >= 9u) {
 			const int32_t ownerId = ToInt(elements[1]);
 			for (EditorGameObject& object : loadedGameObjects) if (object.id == ownerId) {
@@ -6518,6 +6739,8 @@ if (elements.size() >= 13u) {
 	}
 
 	gameObjects_ = loadedGameObjects;  // 読み込み成功後だけ現在 Scene を差し替える
+	sceneUuid_ = std::move(loadedSceneUuid);
+	EnsurePersistentUuids();
 	physicsSettings_ = loadedPhysicsSettings;
 	physicsSettings_.fixedTimeStep = (std::clamp)(physicsSettings_.fixedTimeStep, 0.001f, 0.1f);
 	physicsSettings_.collisionStepCount = (std::clamp)(physicsSettings_.collisionStepCount, 1, 8);
@@ -6566,6 +6789,12 @@ bool EditorScene::SavePrefabVariant(
 	}
 
 	EditorScene prefabScene;
+	EditorScene existingPrefabScene;
+
+	if (existingPrefabScene.LoadScene(filePath)) {
+		prefabScene.sceneUuid_ = existingPrefabScene.sceneUuid_;
+	}
+
 	prefabScene.gameObjects_.clear();
 	prefabScene.physicsSettings_ = physicsSettings_;
 
@@ -6742,6 +6971,164 @@ bool EditorScene::MergeScene(
 	return true;
 }
 
+bool EditorScene::ApplyCollaborationChange(
+	const EditorScene& sourceScene,
+	const std::string& operation,
+	const std::string& objectUuid,
+	const std::string& componentUuid,
+	const std::string& property) {
+	const auto findGameObjectByUuid = [](
+		const std::vector<EditorGameObject>& gameObjects,
+		const std::string& uuid) -> const EditorGameObject* {
+		for (const EditorGameObject& gameObject : gameObjects) {
+			if (gameObject.uuid == uuid) {
+				return &gameObject;
+			}
+		}
+		return nullptr;
+	};
+	const auto findMutableGameObjectByUuid = [](
+		std::vector<EditorGameObject>& gameObjects,
+		const std::string& uuid) -> EditorGameObject* {
+		for (EditorGameObject& gameObject : gameObjects) {
+			if (gameObject.uuid == uuid) {
+				return &gameObject;
+			}
+		}
+
+		return nullptr;
+	};
+	const EditorGameObject* sourceGameObject =
+		findGameObjectByUuid(sourceScene.gameObjects_, objectUuid);
+	EditorGameObject* targetGameObject =
+		findMutableGameObjectByUuid(gameObjects_, objectUuid);
+	std::unordered_map<int32_t, int32_t> remappedIds;
+
+	for (const EditorGameObject& sourceObject : sourceScene.gameObjects_) {
+		const EditorGameObject* matchingObject =
+			findGameObjectByUuid(gameObjects_, sourceObject.uuid);
+
+		if (matchingObject != nullptr) {
+			remappedIds[sourceObject.id] = matchingObject->id;
+		}
+		else {
+			remappedIds[sourceObject.id] = kInvalidGameObjectId;
+		}
+	}
+
+	if (operation == "CreateObject" && sourceGameObject != nullptr && targetGameObject == nullptr) {
+		EditorGameObject addedGameObject = *sourceGameObject;
+		addedGameObject.id = nextGameObjectId_;
+		const int32_t addedGameObjectId = addedGameObject.id;
+		nextGameObjectId_++;
+		remappedIds[sourceGameObject->id] = addedGameObject.id;
+		RemapGameObjectReference(addedGameObject.parentId, remappedIds);
+		addedGameObject.children.clear();
+
+		for (EditorComponent& component : addedGameObject.components) {
+			RemapComponentGameObjectReferences(component, remappedIds);
+		}
+
+		gameObjects_.push_back(std::move(addedGameObject));
+
+		// 子が先に同期された場合は、親の生成時にUUID対応を使って階層を完成させる。
+		for (const EditorGameObject& sourceChild : sourceScene.gameObjects_) {
+			if (sourceChild.parentId != sourceGameObject->id) {
+				continue;
+			}
+
+			EditorGameObject* targetChild =
+				findMutableGameObjectByUuid(gameObjects_, sourceChild.uuid);
+
+			if (targetChild != nullptr && targetChild->parentId == kInvalidGameObjectId) {
+				targetChild->parentId = addedGameObjectId;
+			}
+		}
+
+		RebuildChildren();
+		return true;
+	}
+
+	if (operation == "DeleteObject" && targetGameObject != nullptr) {
+		return DeleteGameObject(targetGameObject->id);
+	}
+
+	if (sourceGameObject == nullptr || targetGameObject == nullptr) {
+		return false;
+	}
+
+	if (operation == "RenameObject") {
+		targetGameObject->name = sourceGameObject->name;
+		return true;
+	}
+
+	if (operation == "SetParent") {
+		int32_t targetParentId = kInvalidGameObjectId;
+		const auto parentIterator = remappedIds.find(sourceGameObject->parentId);
+
+		if (parentIterator != remappedIds.end()) {
+			targetParentId = parentIterator->second;
+		}
+
+		return SetParent(targetGameObject->id, targetParentId);
+	}
+
+	if (operation == "SetProperty" && property == "Transform") {
+		targetGameObject->translate = sourceGameObject->translate;
+		targetGameObject->rotate = sourceGameObject->rotate;
+		targetGameObject->scale = sourceGameObject->scale;
+		return true;
+	}
+
+	if (operation == "SetProperty" && property == "Active") {
+		targetGameObject->isActive = sourceGameObject->isActive;
+		return true;
+	}
+
+	const auto sourceComponentIterator = std::find_if(
+		sourceGameObject->components.begin(),
+		sourceGameObject->components.end(),
+		[&componentUuid](const EditorComponent& component) {
+			return component.uuid == componentUuid;
+		});
+	const auto targetComponentIterator = std::find_if(
+		targetGameObject->components.begin(),
+		targetGameObject->components.end(),
+		[&componentUuid](const EditorComponent& component) {
+			return component.uuid == componentUuid;
+		});
+
+	if (operation == "RemoveComponent") {
+		if (targetComponentIterator == targetGameObject->components.end()) {
+			return false;
+		}
+
+		targetGameObject->components.erase(targetComponentIterator);
+		return true;
+	}
+
+	if (sourceComponentIterator == sourceGameObject->components.end()) {
+		return false;
+	}
+
+	EditorComponent sourceComponent = *sourceComponentIterator;
+	RemapComponentGameObjectReferences(sourceComponent, remappedIds);
+
+	if (operation == "AddComponent" &&
+		targetComponentIterator == targetGameObject->components.end()) {
+		targetGameObject->components.push_back(std::move(sourceComponent));
+		return true;
+	}
+
+	if (operation == "SetProperty" && property == "ComponentData" &&
+		targetComponentIterator != targetGameObject->components.end()) {
+		*targetComponentIterator = std::move(sourceComponent);
+		return true;
+	}
+
+	return false;
+}
+
 //============================================================
 // Undo / Redo
 //============================================================
@@ -6809,12 +7196,37 @@ const EditorPhysicsSettings& EditorScene::GetPhysicsSettings() const {
 	return physicsSettings_;
 }
 
+const std::string& EditorScene::GetUuid() const {
+	return sceneUuid_;
+}
+
 std::vector<EditorGameObject>& EditorScene::GetGameObjects() {
 	return gameObjects_;
 }
 
 const std::vector<EditorGameObject>& EditorScene::GetGameObjects() const {
 	return gameObjects_;
+}
+
+void EditorScene::EnsurePersistentUuids() {
+	std::unordered_set<std::string> usedUuids;
+	usedUuids.reserve(gameObjects_.size() * 4u);
+
+	for (EditorGameObject& gameObject : gameObjects_) {
+		if (!IsEditorTeamUuidValid(gameObject.uuid) ||
+			!usedUuids.insert(gameObject.uuid).second) {
+			gameObject.uuid = CreateEditorTeamUuid();
+			usedUuids.insert(gameObject.uuid);
+		}
+
+		for (EditorComponent& component : gameObject.components) {
+			if (!IsEditorTeamUuidValid(component.uuid) ||
+				!usedUuids.insert(component.uuid).second) {
+				component.uuid = CreateEditorTeamUuid();
+				usedUuids.insert(component.uuid);
+			}
+		}
+	}
 }
 
 //============================================================
@@ -6824,6 +7236,7 @@ const std::vector<EditorGameObject>& EditorScene::GetGameObjects() const {
 EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 	// 全 Component が持つ共通初期値
 	EditorComponent component{};
+	component.uuid = CreateEditorTeamUuid();
 	component.type = type;
 	component.isActive = true;
 	component.assetPath = "";
@@ -7620,6 +8033,24 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.cameraMotionBlurEnabled = false;
 		component.cameraMotionBlurIntensity = 0.5f;
 		component.cameraExposure = 0.0f;
+		component.cameraInputEnabled = false;
+		component.cameraInputStyle = 0;
+		component.cameraInputActivation = 0;
+		component.cameraInputMovementEnabled = true;
+		component.cameraInputMoveSpeed = 5.0f;
+		component.cameraInputFastMultiplier = 3.0f;
+		component.cameraInputLookSensitivity = 0.003f;
+		component.cameraInputInvertY = false;
+		component.cameraInputMinimumPitchDegrees = -85.0f;
+		component.cameraInputMaximumPitchDegrees = 85.0f;
+		component.cameraInputTargetGameObjectId = -1;
+		component.cameraInputPivotOffset = {0.0f, 1.0f, 0.0f};
+		component.cameraInputOrbitDistance = 6.0f;
+		component.cameraInputMinimumDistance = 1.0f;
+		component.cameraInputMaximumDistance = 30.0f;
+		component.cameraInputZoomSpeed = 1.0f;
+		component.cameraInputLockCursor = true;
+		component.cameraInputHideCursor = true;
 	}
 
 	if (type == EditorComponentType::Ocean) {
@@ -8507,6 +8938,29 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 	component.sceneTransitionCameraDiveRotationDegrees = {90.0f, 0.0f, 0.0f};
 	component.sceneTransitionRuntimeState = 0;
 	component.sceneTransitionRuntimeElapsed = 0.0f;
+	component.wireConnectableAllowSelection = true;
+	component.wireConnectableMaximumConnections = 0;
+	component.wireConnectableStrength = 0.0f;
+	component.wireConnectableCategory = 0;
+	component.wireConnectableUseHitPoint = false;
+	component.wireConnectableLocalAnchor = {0.0f, 0.0f, 0.0f};
+	component.wireConnectablePhysicsBodyGameObjectId = -1;
+	component.wireConnectableNormalColor = {0.15f, 0.85f, 1.0f};
+	component.wireConnectableTargetedColor = {1.0f, 0.85f, 0.1f};
+	component.wireConnectableSelectedColor = {0.2f, 1.0f, 0.35f};
+	component.wireConnectableConnectedColor = {0.75f, 0.25f, 1.0f};
+	component.wireConnectableEmissionStrength = 2.0f;
+	component.wireRendererWidth = 4.0f;
+	component.wireRendererWorldRadius = 0.035f;
+	component.wireRendererRadialSegments = 6;
+	component.wireRendererEmissionStrength = 1.5f;
+	component.wireRendererColor = {0.15f, 0.85f, 1.0f};
+	component.wireRendererTensionColor = {1.0f, 0.35f, 0.1f};
+	component.wireRendererBrokenColor = {1.0f, 0.1f, 0.1f};
+	component.wireRendererAlpha = 1.0f;
+	component.wireRendererSlackSag = 0.25f;
+	component.wireRendererSegmentCount = 12;
+	component.wireRendererVisible = true;
 
 	return component;
 }

@@ -2,7 +2,9 @@
 
 #include "EditorLogMonitorWindowManager.h"
 
+#include "EditorInspectorPanel.h"
 #include "EditorLogMonitorManager.h"
+#include "EditorLogSystemProviders.h"
 #include "EditorSharedState.h"
 
 #include <algorithm>
@@ -87,12 +89,12 @@ void EditorLogMonitorWindowManager::Draw() {
 	ImGui::Separator();
 
 	if (ImGui::BeginTabBar("LogMonitorTabs")) {
-		if (ImGui::BeginTabItem("GameObject / Component")) {
+		if (ImGui::BeginTabItem("オブジェクト / コンポーネント")) {
 			DrawTargetTab();
 			ImGui::EndTabItem();
 		}
 
-		if (ImGui::BeginTabItem("System")) {
+		if (ImGui::BeginTabItem("システム")) {
 			DrawSystemTab();
 			ImGui::EndTabItem();
 		}
@@ -325,7 +327,7 @@ void EditorLogMonitorWindowManager::DrawSelectedGameObjectFields() {
 	}
 
 	ImGui::Separator();
-	ImGui::TextUnformatted("Component");
+	ImGui::TextUnformatted("コンポーネント");
 
 	const std::vector<LogComponentFieldDescriptor>& registry = logMonitor.GetComponentFieldRegistry();
 
@@ -343,9 +345,12 @@ void EditorLogMonitorWindowManager::DrawSelectedGameObjectFields() {
 			continue;
 		}
 
+		// Inspector と同じ日本語名で表示し、既定は閉じておく(項目数が多く一覧性が落ちるため)。
 		if (ImGui::TreeNodeEx(
-				(ToString(componentType) + "##LogMonitorComponent" + std::to_string(gameObjectId)).c_str(),
-				ImGuiTreeNodeFlags_DefaultOpen)) {
+				(std::string(GetEditorComponentDisplayName(componentType)) +
+					"##LogMonitorComponent" + std::to_string(gameObjectId) +
+					"_" + std::to_string(static_cast<int32_t>(componentType))).c_str(),
+				ImGuiTreeNodeFlags_SpanAvailWidth)) {
 			for (const LogComponentFieldDescriptor& descriptor : registry) {
 				if (descriptor.componentType != componentType) {
 					continue;
@@ -408,14 +413,27 @@ void EditorLogMonitorWindowManager::DrawSystemTab() {
 	EditorLogMonitorManager& logMonitor = g_editorRuntimeManager.GetLogMonitorManager();
 	const std::vector<std::pair<std::string, std::string>> fields = logMonitor.GetAvailableSystemFields();
 
+	// カテゴリごとに折りたたむ。既定は閉じた状態(DefaultOpenを付けない)。
 	std::string currentCategory;
+	bool isCategoryOpen = false;
+
 	for (const std::pair<std::string, std::string>& field : fields) {
 		const std::string& category = field.first;
 		const std::string& name = field.second;
 
 		if (category != currentCategory) {
-			ImGui::SeparatorText(category.c_str());
+			if (!currentCategory.empty() && isCategoryOpen) {
+				ImGui::TreePop();
+			}
+
 			currentCategory = category;
+			isCategoryOpen = ImGui::TreeNodeEx(
+				(std::string(GetLogSystemCategoryDisplayName(category)) + "##LogMonitorSystemCategory" + category).c_str(),
+				ImGuiTreeNodeFlags_SpanAvailWidth);
+		}
+
+		if (!isCategoryOpen) {
+			continue;
 		}
 
 		std::vector<LogWatchEntry>& entries = logMonitor.GetEntries();
@@ -431,7 +449,9 @@ void EditorLogMonitorWindowManager::DrawSystemTab() {
 		}
 
 		bool isWatched = existingIndex >= 0;
-		if (ImGui::Checkbox((name + "##SysField" + category).c_str(), &isWatched)) {
+		if (ImGui::Checkbox(
+				(std::string(GetLogSystemFieldDisplayName(category, name)) + "##SysField" + category + name).c_str(),
+				&isWatched)) {
 			if (isWatched) {
 				LogWatchEntry newEntry;
 				newEntry.targetKind = LogWatchTargetKind::SystemField;
@@ -444,6 +464,10 @@ void EditorLogMonitorWindowManager::DrawSystemTab() {
 			}
 		}
 	}
+
+	if (!currentCategory.empty() && isCategoryOpen) {
+		ImGui::TreePop();
+	}
 #endif
 }
 
@@ -453,7 +477,7 @@ void EditorLogMonitorWindowManager::DrawWatchListTab() {
 	std::vector<LogWatchEntry>& entries = logMonitor.GetEntries();
 
 	if (entries.empty()) {
-		ImGui::TextDisabled("監視中の対象はありません。GameObject / Component / System タブから追加してください。");
+		ImGui::TextDisabled("監視中の対象はありません。「オブジェクト / コンポーネント」または「システム」タブから追加してください。");
 		return;
 	}
 
@@ -479,14 +503,23 @@ void EditorLogMonitorWindowManager::DrawWatchListTab() {
 			ImGui::Checkbox("##Enabled", &entry.enabled);
 			ImGui::TableSetColumnIndex(1);
 			ImGui::TextUnformatted(
-				entry.targetKind == LogWatchTargetKind::GameObjectField ? "GameObject" :
-				entry.targetKind == LogWatchTargetKind::ComponentField ? "Component" : "System");
+				entry.targetKind == LogWatchTargetKind::GameObjectField ? "オブジェクト" :
+				entry.targetKind == LogWatchTargetKind::ComponentField ? "コンポーネント" : "システム");
 			ImGui::TableSetColumnIndex(2);
-			ImGui::TextUnformatted(entry.category.c_str());
+
+			// カテゴリと項目名も、追加時のタブと同じ日本語表記で並べる(内部キーは英語のまま)。
+			if (entry.targetKind == LogWatchTargetKind::SystemField) {
+				ImGui::TextUnformatted(GetLogSystemCategoryDisplayName(entry.category));
+			}
+			else {
+				ImGui::TextUnformatted(entry.category.c_str());
+			}
+
 			ImGui::TableSetColumnIndex(3);
 
 			if (entry.targetKind == LogWatchTargetKind::SystemField) {
-				ImGui::TextUnformatted(entry.systemFieldName.c_str());
+				ImGui::TextUnformatted(
+					GetLogSystemFieldDisplayName(entry.category, entry.systemFieldName));
 			}
 			else {
 				const EditorGameObject* gameObject = g_editorScene.FindGameObject(entry.gameObjectId);

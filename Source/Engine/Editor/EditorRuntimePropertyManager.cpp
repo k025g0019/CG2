@@ -4,6 +4,7 @@
 #include "EditorDamageManager.h"
 #include "EditorAudioManager.h"
 #include "EditorInputManager.h"
+#include "EditorLogFieldRegistry.generated.h"
 #include "EditorOceanSystem.h"
 #include "EditorScriptManager.h"
 #include "EditorTargetingManager.h"
@@ -15,6 +16,7 @@
 #include <cmath>
 #include <fstream>
 #include <sstream>
+#include <unordered_map>
 
 namespace {
 	struct ComponentNameEntry {
@@ -50,6 +52,50 @@ namespace {
 		{"GameplayData", EditorComponentType::GameplayData},
 		{"WeaponAccuracy", EditorComponentType::WeaponAccuracy},
 		{"TimeScale", EditorComponentType::TimeScale}};
+
+	//============================================================
+	// Script公開Component Field
+	//============================================================
+
+	const LogComponentFieldDescriptor* FindPublishedComponentField(
+		const EditorComponent& component,
+		const std::string& propertyName) {
+		using ComponentFieldLookup =
+			std::array<std::unordered_map<std::string, const LogComponentFieldDescriptor*>,
+				static_cast<size_t>(EditorComponentType::Count)>;
+
+		static const ComponentFieldLookup fieldLookup = []() {
+			ComponentFieldLookup result{};
+			const std::vector<LogComponentFieldDescriptor>& fieldRegistry =
+				GetLogComponentFieldRegistry();
+
+			for (const LogComponentFieldDescriptor& fieldDescriptor : fieldRegistry) {
+				const int32_t componentTypeIndex =
+					static_cast<int32_t>(fieldDescriptor.componentType);
+
+				if (componentTypeIndex >= 0 &&
+					componentTypeIndex < static_cast<int32_t>(EditorComponentType::Count)) {
+					result[static_cast<size_t>(componentTypeIndex)].emplace(
+						fieldDescriptor.fieldKey,
+						&fieldDescriptor);
+				}
+			}
+
+			return result;
+		}();
+
+		const int32_t componentTypeIndex = static_cast<int32_t>(component.type);
+
+		if (componentTypeIndex < 0 ||
+			componentTypeIndex >= static_cast<int32_t>(EditorComponentType::Count)) {
+			return nullptr;
+		}
+
+		const std::unordered_map<std::string, const LogComponentFieldDescriptor*>& componentFields =
+			fieldLookup[static_cast<size_t>(componentTypeIndex)];
+		const auto fieldIterator = componentFields.find(propertyName);
+		return fieldIterator != componentFields.end() ? fieldIterator->second : nullptr;
+	}
 
 	EditorScriptActionPayload MakeGameObjectPayload(int32_t gameObjectId) {
 		EditorScriptActionPayload payload{};
@@ -2431,7 +2477,17 @@ bool EditorRuntimePropertyManager::SetFloat(
 	else if (componentName == "WeaponAccuracy" && propertyName == "CurrentSpread") component->weaponAccuracyCurrentSpread = (std::max)(value, 0.0f);
 	else if (componentName == "TimeScale" && propertyName == "Scale") component->timeScaleValue = (std::clamp)(value, 0.0f, 4.0f);
 	else if (componentName == "TimeScale" && propertyName == "Duration") component->timeScaleDuration = (std::max)(value, 0.001f);
-	else return false;
+	else {
+		const LogComponentFieldDescriptor* fieldDescriptor =
+			FindPublishedComponentField(*component, propertyName);
+
+		if (fieldDescriptor == nullptr || fieldDescriptor->kind != LogFieldValueKind::Float ||
+			fieldDescriptor->floatMember == nullptr) {
+			return false;
+		}
+
+		component->*(fieldDescriptor->floatMember) = value;
+	}
 
 	return true;
 }
@@ -2495,7 +2551,17 @@ bool EditorRuntimePropertyManager::GetFloat(
 	else if (componentName == "WeaponAccuracy" && propertyName == "CurrentSpread") value = component->weaponAccuracyCurrentSpread;
 	else if (componentName == "TimeScale" && propertyName == "Scale") value = component->timeScaleValue;
 	else if (componentName == "TimeScale" && propertyName == "Duration") value = component->timeScaleDuration;
-	else return false;
+	else {
+		const LogComponentFieldDescriptor* fieldDescriptor =
+			FindPublishedComponentField(*component, propertyName);
+
+		if (fieldDescriptor == nullptr || fieldDescriptor->kind != LogFieldValueKind::Float ||
+			fieldDescriptor->floatMember == nullptr) {
+			return false;
+		}
+
+		value = component->*(fieldDescriptor->floatMember);
+	}
 
 	return true;
 }
@@ -2572,7 +2638,22 @@ bool EditorRuntimePropertyManager::SetInt(
 		return true;
 	}
 
-	return false;
+	if (component == nullptr) {
+		return false;
+	}
+
+	const LogComponentFieldDescriptor* fieldDescriptor =
+		FindPublishedComponentField(*component, propertyName);
+	const bool isIntegerField = fieldDescriptor != nullptr &&
+		(fieldDescriptor->kind == LogFieldValueKind::Int ||
+			fieldDescriptor->kind == LogFieldValueKind::GameObjectReference);
+
+	if (!isIntegerField || fieldDescriptor->intMember == nullptr) {
+		return false;
+	}
+
+	component->*(fieldDescriptor->intMember) = value;
+	return true;
 }
 
 bool EditorRuntimePropertyManager::GetInt(
@@ -2645,7 +2726,22 @@ bool EditorRuntimePropertyManager::GetInt(
 		return true;
 	}
 
-	return false;
+	if (component == nullptr) {
+		return false;
+	}
+
+	const LogComponentFieldDescriptor* fieldDescriptor =
+		FindPublishedComponentField(*component, propertyName);
+	const bool isIntegerField = fieldDescriptor != nullptr &&
+		(fieldDescriptor->kind == LogFieldValueKind::Int ||
+			fieldDescriptor->kind == LogFieldValueKind::GameObjectReference);
+
+	if (!isIntegerField || fieldDescriptor->intMember == nullptr) {
+		return false;
+	}
+
+	value = component->*(fieldDescriptor->intMember);
+	return true;
 }
 
 bool EditorRuntimePropertyManager::SetBool(
@@ -2676,7 +2772,17 @@ bool EditorRuntimePropertyManager::SetBool(
 	else if (componentName == "RailMovement" && propertyName == "ShipHorizontalThrust") component->railShipHorizontalThrust = value;
 	else if (componentName == "Team" && propertyName == "Targetable") component->teamTargetable = value;
 	else if (componentName == "TargetSelector" && propertyName == "IncludeNeutral") component->targetSelectorIncludeNeutral = value;
-	else return false;
+	else {
+		const LogComponentFieldDescriptor* fieldDescriptor =
+			FindPublishedComponentField(*component, propertyName);
+
+		if (fieldDescriptor == nullptr || fieldDescriptor->kind != LogFieldValueKind::Bool ||
+			fieldDescriptor->boolMember == nullptr) {
+			return false;
+		}
+
+		component->*(fieldDescriptor->boolMember) = value;
+	}
 	return true;
 }
 
@@ -2705,7 +2811,17 @@ bool EditorRuntimePropertyManager::GetBool(
 	else if (componentName == "RailMovement" && propertyName == "ShipHorizontalThrust") value = component->railShipHorizontalThrust;
 	else if (componentName == "Team" && propertyName == "Targetable") value = component->teamTargetable;
 	else if (componentName == "TargetSelector" && propertyName == "IncludeNeutral") value = component->targetSelectorIncludeNeutral;
-	else return false;
+	else {
+		const LogComponentFieldDescriptor* fieldDescriptor =
+			FindPublishedComponentField(*component, propertyName);
+
+		if (fieldDescriptor == nullptr || fieldDescriptor->kind != LogFieldValueKind::Bool ||
+			fieldDescriptor->boolMember == nullptr) {
+			return false;
+		}
+
+		value = component->*(fieldDescriptor->boolMember);
+	}
 	return true;
 }
 
@@ -2793,7 +2909,17 @@ bool EditorRuntimePropertyManager::SetVector3(
 	if (componentName == "MovementModifier" && propertyName == "PositionOffset") component->movementModifierLocalPositionOffset = value;
 	else if (componentName == "MovementModifier" && propertyName == "RotationOffset") component->movementModifierLocalRotationOffset = value;
 	else if (componentName == "TargetPoint" && propertyName == "AimOffset") component->targetPointAimOffset = value;
-	else return false;
+	else {
+		const LogComponentFieldDescriptor* fieldDescriptor =
+			FindPublishedComponentField(*component, propertyName);
+
+		if (fieldDescriptor == nullptr || fieldDescriptor->kind != LogFieldValueKind::Vector3 ||
+			fieldDescriptor->vector3Member == nullptr) {
+			return false;
+		}
+
+		component->*(fieldDescriptor->vector3Member) = value;
+	}
 	return true;
 }
 
@@ -2817,7 +2943,17 @@ bool EditorRuntimePropertyManager::GetVector3(
 	if (componentName == "MovementModifier" && propertyName == "PositionOffset") value = component->movementModifierLocalPositionOffset;
 	else if (componentName == "MovementModifier" && propertyName == "RotationOffset") value = component->movementModifierLocalRotationOffset;
 	else if (componentName == "TargetPoint" && propertyName == "AimOffset") value = component->targetPointAimOffset;
-	else return false;
+	else {
+		const LogComponentFieldDescriptor* fieldDescriptor =
+			FindPublishedComponentField(*component, propertyName);
+
+		if (fieldDescriptor == nullptr || fieldDescriptor->kind != LogFieldValueKind::Vector3 ||
+			fieldDescriptor->vector3Member == nullptr) {
+			return false;
+		}
+
+		value = component->*(fieldDescriptor->vector3Member);
+	}
 	return true;
 }
 
@@ -2987,6 +3123,23 @@ bool EditorRuntimePropertyManager::EvaluateConditionComponent(
 EditorComponent* EditorRuntimePropertyManager::FindComponent(
 	int32_t gameObjectId,
 	const std::string& componentName) const {
+	EditorGameObject* gameObject = editorScene_ != nullptr
+		? editorScene_->FindGameObject(gameObjectId)
+		: nullptr;
+
+	if (gameObject == nullptr) {
+		return nullptr;
+	}
+
+	// Inspectorへ存在する全Componentを型名から解決する。
+	// これにより新しいComponent追加時もScript用の手動登録を要求しない。
+	for (EditorComponent& component : gameObject->components) {
+		if (ToString(component.type) == componentName) {
+			return &component;
+		}
+	}
+
+	// 旧Runtime Property名に別名が残っている場合だけ互換表を使う。
 	for (const ComponentNameEntry& entry : kRuntimeComponentNames) {
 		if (componentName == entry.name) return FindTypedComponent(gameObjectId, entry.type);
 	}

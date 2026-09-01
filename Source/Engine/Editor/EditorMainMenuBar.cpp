@@ -1734,6 +1734,7 @@ void EditorMainMenuBar::Draw(
 		ImGui::MenuItem("State Graph", nullptr, &g_isStateGraphWindowVisible);
 		ImGui::MenuItem("診断・Profiler", nullptr, &g_isDiagnosticsWindowVisible);
 		ImGui::MenuItem("ログ監視", nullptr, &g_isLogMonitorWindowVisible);
+		ImGui::MenuItem("共同制作", nullptr, &g_isTeamCollaborationWindowVisible);
 
 		if (ImGui::MenuItem("描画負荷テスト Scene を作成")) {
 			shouldOpenRenderStressPopup = true;

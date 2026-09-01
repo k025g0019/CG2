@@ -28,6 +28,15 @@
 	<ClCompile Include="Source\Engine\Editor\EditorProfilerManager.cpp">
 	  <Filter>ソース ファイル</Filter>
 	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorProfilerAllocationTracker.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorTeamUuid.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorTeamCollaborationManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
 	<ClCompile Include="Source\Engine\Editor\EditorReplayManager.cpp">
 	  <Filter>ソース ファイル</Filter>
 	</ClCompile>
@@ -94,6 +103,15 @@
 	  <Filter>ヘッダー ファイル</Filter>
 	</ClInclude>
 	<ClInclude Include="Source\Engine\Editor\EditorProfilerManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorProfilerAllocationTracker.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorTeamUuid.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorTeamCollaborationManager.h">
 	  <Filter>ヘッダー ファイル</Filter>
 	</ClInclude>
 	<ClInclude Include="Source\Engine\Editor\EditorReplayManager.h">

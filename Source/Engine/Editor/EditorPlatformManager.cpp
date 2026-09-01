@@ -4,6 +4,7 @@
 #include <onnxruntime_cxx_api.h>
 #include <xaudio2.h>
 #include <xaudio2fx.h>
+#include "EditorProfilerManager.h"
 #include "EditorSharedState.h"
 using namespace EditorSharedState;
 
@@ -840,7 +841,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	D3D12_QUERY_HEAP_DESC renderTimestampQueryHeapDesc{};
 	renderTimestampQueryHeapDesc.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
-	renderTimestampQueryHeapDesc.Count = 2u;
+	renderTimestampQueryHeapDesc.Count = kEditorProfilerTimestampQueryCapacity;
 	ComPtr<ID3D12QueryHeap> renderTimestampQueryHeap;
 	hr = device->CreateQueryHeap(
 		&renderTimestampQueryHeapDesc,
@@ -856,7 +857,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	renderTimestampReadbackHeapProperties.Type = D3D12_HEAP_TYPE_READBACK;
 	D3D12_RESOURCE_DESC renderTimestampReadbackDesc{};
 	renderTimestampReadbackDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-	renderTimestampReadbackDesc.Width = sizeof(std::uint64_t) * 2u;
+	renderTimestampReadbackDesc.Width =
+		sizeof(std::uint64_t) * static_cast<std::uint64_t>(kEditorProfilerTimestampQueryCapacity);
 	renderTimestampReadbackDesc.Height = 1u;
 	renderTimestampReadbackDesc.DepthOrArraySize = 1u;
 	renderTimestampReadbackDesc.MipLevels = 1u;

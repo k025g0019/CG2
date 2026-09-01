@@ -219,38 +219,147 @@ void EditorDiagnosticsWindowManager::ValidateScene() {
 void EditorDiagnosticsWindowManager::DrawProfiler() {
 #ifdef USE_IMGUI
 	EditorProfilerManager& profilerManager = g_editorRuntimeManager.GetProfilerManager();
-	const std::vector<EditorProfilerSample> samples = profilerManager.GetSortedSamples();
+	std::vector<EditorProfilerSample> samples = profilerManager.GetSortedSamples();
+	const bool isProfilerEnabled = profilerManager.IsEnabled();
+	const bool isPlaying = g_editorRuntimeManager.IsPlaying();
+	float measurementDurationSeconds = profilerManager.GetMeasurementDurationSeconds();
+	static bool showCallHierarchy = true;
 
 	ImGui::Text("GPU Frame: %.2f ms", g_renderProfile.gpuFrameMilliseconds);
 	ImGui::SameLine();
 	ImGui::Text("Objects: %u  Instances: %u", g_renderProfile.sceneObjectCount, g_renderProfile.instanceCount);
 
-	if (ImGui::Button("Peakと平均をリセット")) {
-		profilerManager.Reset();
+	//================================================================
+	// 手動計測
+	//================================================================
+
+	if (isProfilerEnabled) {
+		const float elapsedSeconds = profilerManager.GetElapsedMeasurementSeconds();
+		const float progressRatio = (std::min)(
+			elapsedSeconds / (std::max)(measurementDurationSeconds, 0.001f),
+			1.0f);
+		ImGui::Text("計測中: %.2f / %.2f 秒", elapsedSeconds, measurementDurationSeconds);
+		ImGui::ProgressBar(progressRatio, ImVec2(-1.0f, 0.0f));
+
+		if (ImGui::Button("計測を停止")) {
+			profilerManager.SetEnabled(false);
+		}
+	}
+	else {
+		ImGui::SetNextItemWidth(140.0f);
+
+		if (ImGui::InputFloat("計測時間（秒）", &measurementDurationSeconds, 0.5f, 1.0f, "%.1f")) {
+			profilerManager.SetMeasurementDurationSeconds(measurementDurationSeconds);
+		}
+
+		if (!isPlaying) {
+			ImGui::BeginDisabled();
+		}
+
+		if (ImGui::Button("負荷イベント計測を開始")) {
+			profilerManager.SetEnabled(true);
+		}
+
+		if (!isPlaying) {
+			ImGui::EndDisabled();
+			ImGui::SameLine();
+			ImGui::TextDisabled("Play中に計測できます");
+		}
+
+		if (!samples.empty()) {
+			ImGui::SameLine();
+
+			if (ImGui::Button("結果を消去")) {
+				profilerManager.Reset();
+			}
+		}
 	}
 
 	ImGui::Separator();
+	ImGui::TextDisabled("Engineと有効なNative Script DLLを同じ期間で集計し、合計時間順に表示します。");
+	ImGui::Checkbox("呼出階層で表示", &showCallHierarchy);
+
+	if (showCallHierarchy) {
+		std::sort(
+			samples.begin(),
+			samples.end(),
+			[](const EditorProfilerSample& firstSample, const EditorProfilerSample& secondSample) {
+				if (firstSample.threadId != secondSample.threadId) {
+					return firstSample.threadId < secondSample.threadId;
+				}
+
+				if (firstSample.gameObjectId != secondSample.gameObjectId) {
+					return firstSample.gameObjectId < secondSample.gameObjectId;
+				}
+
+				return firstSample.callPath < secondSample.callPath;
+			});
+	}
 
 	if (ImGui::BeginTable(
 			"ProfilerSamples",
-			4,
-			ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
-		ImGui::TableSetupColumn("処理");
-		ImGui::TableSetupColumn("Latest ms");
-		ImGui::TableSetupColumn("Average ms");
-		ImGui::TableSetupColumn("Peak ms");
+			12,
+			ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+				ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX)) {
+		ImGui::TableSetupColumn("イベント名");
+		ImGui::TableSetupColumn("処理元");
+		ImGui::TableSetupColumn("GameObject");
+		ImGui::TableSetupColumn("Thread");
+		ImGui::TableSetupColumn("呼出回数");
+		ImGui::TableSetupColumn("合計 ms");
+		ImGui::TableSetupColumn("Self ms");
+		ImGui::TableSetupColumn("最大 ms");
+		ImGui::TableSetupColumn("DrawCall");
+		ImGui::TableSetupColumn("Dispatch");
+		ImGui::TableSetupColumn("Alloc回数");
+		ImGui::TableSetupColumn("Alloc KB");
 		ImGui::TableHeadersRow();
 
 		for (const EditorProfilerSample& sample : samples) {
 			ImGui::TableNextRow();
 			ImGui::TableSetColumnIndex(0);
+			const float indentationWidth = showCallHierarchy
+				? static_cast<float>(sample.callDepth) * 14.0f
+				: 0.0f;
+			ImGui::Indent(indentationWidth);
 			ImGui::TextUnformatted(sample.name.c_str());
+			ImGui::Unindent(indentationWidth);
+
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip("%s", sample.callPath.c_str());
+			}
+
 			ImGui::TableSetColumnIndex(1);
-			ImGui::Text("%.3f", sample.latestMilliseconds);
+			ImGui::TextUnformatted(sample.source.c_str());
 			ImGui::TableSetColumnIndex(2);
-			ImGui::Text("%.3f", sample.averageMilliseconds);
+			if (sample.gameObjectId >= 0) {
+				const EditorGameObject* gameObject = g_editorScene.FindGameObject(sample.gameObjectId);
+				ImGui::Text(
+					"%s (%d)",
+					gameObject != nullptr ? gameObject->name.c_str() : "削除済み",
+					sample.gameObjectId);
+			}
+			else {
+				ImGui::TextUnformatted("-");
+			}
 			ImGui::TableSetColumnIndex(3);
+			ImGui::TextUnformatted(sample.threadName.c_str());
+			ImGui::TableSetColumnIndex(4);
+			ImGui::Text("%llu", static_cast<unsigned long long>(sample.sampleCount));
+			ImGui::TableSetColumnIndex(5);
+			ImGui::Text("%.3f", sample.totalMilliseconds);
+			ImGui::TableSetColumnIndex(6);
+			ImGui::Text("%.3f", sample.selfMilliseconds);
+			ImGui::TableSetColumnIndex(7);
 			ImGui::Text("%.3f", sample.peakMilliseconds);
+			ImGui::TableSetColumnIndex(8);
+			ImGui::Text("%llu", static_cast<unsigned long long>(sample.drawCallCount));
+			ImGui::TableSetColumnIndex(9);
+			ImGui::Text("%llu", static_cast<unsigned long long>(sample.dispatchCount));
+			ImGui::TableSetColumnIndex(10);
+			ImGui::Text("%llu", static_cast<unsigned long long>(sample.allocationCount));
+			ImGui::TableSetColumnIndex(11);
+			ImGui::Text("%.2f", static_cast<double>(sample.allocatedBytes) / 1024.0);
 		}
 
 		ImGui::EndTable();

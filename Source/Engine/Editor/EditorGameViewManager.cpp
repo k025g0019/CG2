@@ -890,7 +890,10 @@ namespace {
 		return TargetMarkerVisibility::Visible;
 	}
 
-	bool TryProjectGameWorldPosition(const Vector3& worldPosition, ImVec2& screenPosition) {
+	bool TryProjectGameWorldPosition(
+		const Vector3& worldPosition,
+		ImVec2& screenPosition,
+		float* clipDepth = nullptr) {
 		const Matrix4x4 viewProjectionMatrix = Multiply(g_gameViewMatrix, g_gameProjectionMatrix);
 		const float clipX = worldPosition.x * viewProjectionMatrix.matrix[0][0] +
 			worldPosition.y * viewProjectionMatrix.matrix[1][0] +
@@ -904,6 +907,10 @@ namespace {
 
 		if (clipW <= 0.0001f) {
 			return false;
+		}
+
+		if (clipDepth != nullptr) {
+			*clipDepth = clipW;
 		}
 
 		const float normalizedX = clipX / clipW;
@@ -985,6 +992,177 @@ namespace {
 						lineColor,
 						16,
 						(std::max)(trajectoryRenderer->trajectoryThickness, 1.0f));
+				}
+			}
+		}
+
+		drawList->PopClipRect();
+	}
+
+	void DrawGameRuntimeWires(ImDrawList* drawList) {
+		if (!g_editorRuntimeManager.IsPlaying()) {
+			return;
+		}
+
+		drawList->PushClipRect(
+			ImVec2(g_editorGameX, g_editorGameY),
+			ImVec2(g_editorGameX + g_editorGameWidth, g_editorGameY + g_editorGameHeight),
+			true);
+
+		const auto& runtimeWires = g_editorRuntimeManager.GetPhysicsManager().GetRuntimeWires();
+
+		for (const auto& [wireHandle, wireState] : runtimeWires) {
+			(void)wireHandle;
+			const EditorGameObject* rendererObject = g_editorScene.FindGameObject(
+				wireState.desc.rendererSettingsGameObjectId >= 0
+					? wireState.desc.rendererSettingsGameObjectId
+					: wireState.desc.ownerGameObjectId);
+			const EditorComponent* renderer = rendererObject != nullptr
+				? FindActiveComponent(*rendererObject, EditorComponentType::WireRenderer)
+				: nullptr;
+
+			if (renderer != nullptr && !renderer->wireRendererVisible) {
+				continue;
+			}
+
+			const float fallbackLineWidth = renderer != nullptr
+				? (std::max)(renderer->wireRendererWidth, 0.1f)
+				: 4.0f;
+			const float worldRadius = renderer != nullptr
+				? (std::max)(renderer->wireRendererWorldRadius, 0.001f)
+				: 0.035f;
+			const float emissionStrength = renderer != nullptr
+				? (std::max)(renderer->wireRendererEmissionStrength, 0.0f)
+				: 1.5f;
+			const float lineAlpha = renderer != nullptr
+				? (std::clamp)(renderer->wireRendererAlpha, 0.0f, 1.0f)
+				: 1.0f;
+			const Vector3 normalColor = renderer != nullptr
+				? renderer->wireRendererColor
+				: Vector3{0.15f, 0.85f, 1.0f};
+			const Vector3 tensionColor = renderer != nullptr
+				? renderer->wireRendererTensionColor
+				: Vector3{1.0f, 0.35f, 0.1f};
+			const Vector3 brokenColor = renderer != nullptr
+				? renderer->wireRendererBrokenColor
+				: Vector3{1.0f, 0.1f, 0.1f};
+			const float tensionDenominator = wireState.desc.breakingTension > 0.0f
+				? wireState.desc.breakingTension
+				: wireState.desc.maximumTension;
+			const float tensionRatio = tensionDenominator > 0.0f
+				? (std::clamp)(wireState.currentTension / tensionDenominator, 0.0f, 1.0f)
+				: 0.0f;
+			const Vector3 lineColor = wireState.isBroken
+				? brokenColor
+				: Vector3{
+					normalColor.x + (tensionColor.x - normalColor.x) * tensionRatio,
+					normalColor.y + (tensionColor.y - normalColor.y) * tensionRatio,
+					normalColor.z + (tensionColor.z - normalColor.z) * tensionRatio};
+			const ImU32 packedColor = ImGui::ColorConvertFloat4ToU32(ImVec4(
+				(std::clamp)(lineColor.x, 0.0f, 1.0f),
+				(std::clamp)(lineColor.y, 0.0f, 1.0f),
+				(std::clamp)(lineColor.z, 0.0f, 1.0f),
+				lineAlpha));
+			const ImU32 outlineColor = ImGui::ColorConvertFloat4ToU32(ImVec4(
+				lineColor.x * 0.12f,
+				lineColor.y * 0.12f,
+				lineColor.z * 0.12f,
+				lineAlpha));
+			const ImU32 glowColor = ImGui::ColorConvertFloat4ToU32(ImVec4(
+				(std::clamp)(lineColor.x * emissionStrength, 0.0f, 1.0f),
+				(std::clamp)(lineColor.y * emissionStrength, 0.0f, 1.0f),
+				(std::clamp)(lineColor.z * emissionStrength, 0.0f, 1.0f),
+				lineAlpha * (std::min)(emissionStrength * 0.12f, 0.35f)));
+			const ImU32 highlightColor = ImGui::ColorConvertFloat4ToU32(ImVec4(
+				(std::min)(lineColor.x + 0.45f, 1.0f),
+				(std::min)(lineColor.y + 0.45f, 1.0f),
+				(std::min)(lineColor.z + 0.45f, 1.0f),
+				lineAlpha * 0.75f));
+			const int32_t segmentCount = renderer != nullptr
+				? (std::clamp)(renderer->wireRendererSegmentCount, 2, 64)
+				: 12;
+			const float sagMultiplier = renderer != nullptr
+				? (std::max)(renderer->wireRendererSlackSag, 0.0f)
+				: 0.25f;
+			const float slackLength = (std::max)(
+				wireState.desc.maximumLength - wireState.currentLength,
+				0.0f);
+
+			for (int32_t segmentIndex = 1; segmentIndex <= segmentCount; segmentIndex++) {
+				const float previousRatio = static_cast<float>(segmentIndex - 1) /
+					static_cast<float>(segmentCount);
+				const float currentRatio = static_cast<float>(segmentIndex) /
+					static_cast<float>(segmentCount);
+				const auto evaluateWirePoint = [&](float ratio) {
+					Vector3 point{
+						wireState.firstWorldAnchor.x +
+							(wireState.secondWorldAnchor.x - wireState.firstWorldAnchor.x) * ratio,
+						wireState.firstWorldAnchor.y +
+							(wireState.secondWorldAnchor.y - wireState.firstWorldAnchor.y) * ratio,
+						wireState.firstWorldAnchor.z +
+							(wireState.secondWorldAnchor.z - wireState.firstWorldAnchor.z) * ratio};
+					point.y -= 4.0f * ratio * (1.0f - ratio) * slackLength * sagMultiplier;
+					return point;
+				};
+				const Vector3 previousWorldPoint = evaluateWirePoint(previousRatio);
+				const Vector3 currentWorldPoint = evaluateWirePoint(currentRatio);
+				const Vector3 midpoint = Multiply(0.5f, AddVector3(previousWorldPoint, currentWorldPoint));
+				const Vector3 cameraWorldPosition = Transform(
+					{0.0f, 0.0f, 0.0f},
+					Inverse(g_gameViewMatrix));
+				const Vector3 cameraToMidpoint = Subtract(midpoint, cameraWorldPosition);
+				const float midpointDistance = Length(cameraToMidpoint);
+				bool isOccluded = false;
+
+				if (midpointDistance > 0.001f) {
+					EditorJoltPhysicsManager::PhysicsHit occlusionHit{};
+					const Vector3 occlusionDirection = Multiply(1.0f / midpointDistance, cameraToMidpoint);
+
+					if (g_editorRuntimeManager.GetPhysicsManager().Raycast(
+						cameraWorldPosition,
+						occlusionDirection,
+						midpointDistance,
+						occlusionHit)) {
+						isOccluded = occlusionHit.distance + worldRadius < midpointDistance;
+					}
+				}
+
+				ImVec2 lineStart{};
+				ImVec2 lineEnd{};
+				float startClipDepth = 1.0f;
+				float endClipDepth = 1.0f;
+
+				if (!isOccluded &&
+					TryProjectGameWorldPosition(previousWorldPoint, lineStart, &startClipDepth) &&
+					TryProjectGameWorldPosition(currentWorldPoint, lineEnd, &endClipDepth)) {
+					const float averageClipDepth = (std::max)(
+						(startClipDepth + endClipDepth) * 0.5f,
+						0.001f);
+					const float projectedDiameter =
+						worldRadius * 2.0f * g_gameProjectionMatrix.matrix[1][1] *
+						g_editorGameHeight * 0.5f / averageClipDepth;
+					const float lineWidth = (std::max)(projectedDiameter, fallbackLineWidth);
+					const float lineDeltaX = lineEnd.x - lineStart.x;
+					const float lineDeltaY = lineEnd.y - lineStart.y;
+					const float lineLength = std::sqrt(
+						lineDeltaX * lineDeltaX + lineDeltaY * lineDeltaY);
+					const ImVec2 highlightOffset = lineLength > 0.001f
+						? ImVec2{
+							-lineDeltaY / lineLength * lineWidth * 0.16f,
+							lineDeltaX / lineLength * lineWidth * 0.16f}
+						: ImVec2{};
+
+					if (emissionStrength > 0.0f) {
+						drawList->AddLine(lineStart, lineEnd, glowColor, lineWidth + 5.0f);
+					}
+
+					drawList->AddLine(lineStart, lineEnd, outlineColor, lineWidth + 2.0f);
+					drawList->AddLine(lineStart, lineEnd, packedColor, lineWidth);
+					drawList->AddLine(
+						ImVec2{lineStart.x + highlightOffset.x, lineStart.y + highlightOffset.y},
+						ImVec2{lineEnd.x + highlightOffset.x, lineEnd.y + highlightOffset.y},
+						highlightColor,
+						(std::max)(lineWidth * 0.22f, 0.75f));
 				}
 			}
 		}
@@ -1528,6 +1706,7 @@ void EditorGameViewManager::Draw() {
 		UpdateGameCameraMatrices();
 		ImGui::Dummy(ImVec2(g_editorGameWidth, g_editorGameHeight));
 		DrawGameTrajectoryPreviews(ImGui::GetWindowDrawList());
+		DrawGameRuntimeWires(ImGui::GetWindowDrawList());
 		DrawGameViewUiControls(
 			gameContentPosition,
 			g_editorGameWidth,
@@ -1632,6 +1811,7 @@ void EditorGameViewManager::Draw() {
 		IM_COL32(210, 245, 210, 255),
 		gameFpsText);
 	DrawGameTrajectoryPreviews(gameDrawList);
+	DrawGameRuntimeWires(gameDrawList);
 
 	ImGui::Dummy(ImVec2(g_editorGameWidth, g_editorGameHeight));  // ウィンドウの内容領域を GameView の描画領域として確保する。
 	DrawGameViewUiControls(gameContentPosition, g_editorGameWidth, g_editorGameHeight);

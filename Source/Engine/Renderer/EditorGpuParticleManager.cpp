@@ -5,6 +5,7 @@
 #pragma warning(pop)
 
 #include "EditorAssetUtility.h"
+#include "Source/Engine/Editor/EditorProfilerManager.h"
 
 #include <algorithm>
 #include <array>
@@ -171,6 +172,7 @@ void EditorGpuParticleManager::Update(
 		commandList->SetComputeRootUnorderedAccessView(1, particleBuffer_->GetGPUVirtualAddress());
 		commandList->SetComputeRootUnorderedAccessView(2, aliveListBuffer_->GetGPUVirtualAddress());
 		commandList->SetComputeRootUnorderedAccessView(3, deadListBuffer_->GetGPUVirtualAddress());
+		RecordEditorProfilerDispatch();
 		commandList->Dispatch(1u, 1u, 1u);
 
 		// Counterを消したClearが完了してから、UpdateでAlive/Deadを再構築する。
@@ -201,6 +203,7 @@ void EditorGpuParticleManager::Update(
 		commandList->SetComputeRootUnorderedAccessView(3, deadListBuffer_->GetGPUVirtualAddress());
 		commandList->SetComputeRootDescriptorTable(5, sceneDepthSrvHandle);
 		commandList->SetComputeRootShaderResourceView(6, collisionProxyBuffer_->GetGPUVirtualAddress());
+		RecordEditorProfilerDispatch();
 		commandList->Dispatch((kMaxParticleCount + 63u) / 64u, 1u, 1u);
 
 		std::array<D3D12_RESOURCE_BARRIER, 3u> updateBarriers{};
@@ -271,6 +274,7 @@ void EditorGpuParticleManager::Draw(
 	commandList->SetGraphicsRootShaderResourceView(2, aliveListBuffer_->GetGPUVirtualAddress());
 	commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	commandList->IASetVertexBuffers(0, 0, nullptr);
+	RecordEditorProfilerDrawCall();
 	commandList->DrawInstanced(6u, kMaxParticleCount, 0u, 0u);
 
 	// FBX / OBJ は同じ Particle Buffer を使い、Mesh ごとに GPU インスタンシングする。
@@ -285,6 +289,7 @@ void EditorGpuParticleManager::Draw(
 		drawConstants.renderGroup = modelMesh.renderGroup;
 		commandList->SetGraphicsRoot32BitConstants(0, 28u, &drawConstants, 0u);
 		commandList->IASetVertexBuffers(0, 1u, &modelMesh.vertexBufferView);
+		RecordEditorProfilerDrawCall();
 		commandList->DrawInstanced(modelMesh.vertexCount, kMaxParticleCount, 0u, 0u);
 	}
 
@@ -566,6 +571,7 @@ void EditorGpuParticleManager::UploadInitialClear(ID3D12GraphicsCommandList* com
 	commandList->SetComputeRootUnorderedAccessView(1, particleBuffer_->GetGPUVirtualAddress());
 	commandList->SetComputeRootUnorderedAccessView(2, aliveListBuffer_->GetGPUVirtualAddress());
 	commandList->SetComputeRootUnorderedAccessView(3, deadListBuffer_->GetGPUVirtualAddress());
+	RecordEditorProfilerDispatch();
 	commandList->Dispatch((kMaxParticleCount + 63u) / 64u, 1u, 1u);
 
 	std::array<D3D12_RESOURCE_BARRIER, 3u> clearBarriers{};
@@ -609,6 +615,7 @@ void EditorGpuParticleManager::UploadSpawns(
 	commandList->SetComputeRootUnorderedAccessView(2, aliveListBuffer_->GetGPUVirtualAddress());
 	commandList->SetComputeRootUnorderedAccessView(3, deadListBuffer_->GetGPUVirtualAddress());
 	commandList->SetComputeRootShaderResourceView(4, particleUploadBuffer_->GetGPUVirtualAddress());
+	RecordEditorProfilerDispatch();
 	commandList->Dispatch((uploadCount + 63u) / 64u, 1u, 1u);
 
 	std::array<D3D12_RESOURCE_BARRIER, 3u> spawnBarriers{};

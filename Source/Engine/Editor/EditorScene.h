@@ -570,6 +570,10 @@ enum class EditorComponentType {
 	TextEffect,
 	// Scene切り替え時の汎用演出(色フェード・ワイプ・Camera移動)を管理する
 	SceneTransition,
+	// Runtime Wireの接続候補、接続数、強度を明示する
+	WireConnectable,
+	// Runtime Wireの太さ、色、たるみなどの表示設定を提供する
+	WireRenderer,
 	// Component 種類数。範囲チェックに使う
 	Count,
 };
@@ -756,6 +760,7 @@ struct EditorInputEventBinding {
 constexpr int32_t kOceanDebugViewCount = 47;
 
 struct EditorComponent {
+	std::string uuid;  // 共同制作で Component を名前や配列位置に依存せず識別する永続 UUID
 	EditorComponentType type;  // Component の種類
 	bool isActive;  // Inspector の有効チェック
 	std::string assetPath;  // Model / Sprite / Audio などの Asset パス
@@ -1639,6 +1644,25 @@ std::string waveStartedActionName;  // 条件成立時に通知する任意Scrip
 	int32_t cameraPriority;  // Game Viewで複数Cameraが有効な場合に大きい値を優先する
 	int32_t cameraFollowPositionSpace;  // 0=World固定Offset、1=追従対象のLocal Offset
 	int32_t cameraFollowRotationMode;  // 0=Camera角度固定、1=対象回転を継承、2=対象を見る
+	// Cameraの標準マウス操作。無効時はScriptまたは他Camera ComponentがTransformを制御する
+	bool cameraInputEnabled;
+	int32_t cameraInputStyle;  // 0=FreeLook、1=Orbit
+	int32_t cameraInputActivation;  // 0=右ボタン中、1=常時
+	bool cameraInputMovementEnabled;
+	float cameraInputMoveSpeed;
+	float cameraInputFastMultiplier;
+	float cameraInputLookSensitivity;
+	bool cameraInputInvertY;
+	float cameraInputMinimumPitchDegrees;
+	float cameraInputMaximumPitchDegrees;
+	int32_t cameraInputTargetGameObjectId;  // Orbit中心。-1ならCamera接続先
+	Vector3 cameraInputPivotOffset;
+	float cameraInputOrbitDistance;
+	float cameraInputMinimumDistance;
+	float cameraInputMaximumDistance;
+	float cameraInputZoomSpeed;
+	bool cameraInputLockCursor;
+	bool cameraInputHideCursor;
 	// ScreenAim 設定
 	int32_t screenAimInputGameObjectId;  // PlayerInputを読むGameObject。-1なら所有者
 	int32_t screenAimReticleGameObjectId;  // RectTransformを動かす照準UI。-1ならUI連動なし
@@ -2375,9 +2399,35 @@ std::string waveStartedActionName;  // 条件成立時に通知する任意Scrip
 	Vector3 sceneTransitionCameraDiveRotationDegrees;  // 落下開始時のCamera角度(絶対Euler度)
 	int32_t sceneTransitionRuntimeState;  // 0=Idle,1=CoveringOut,2=Holding,3=RevealingIn
 	float sceneTransitionRuntimeElapsed;
+	// WireConnectable 設定
+	bool wireConnectableAllowSelection;  // falseならRaycastに当たってもWire選択候補から除外する
+	int32_t wireConnectableMaximumConnections;  // 0以下なら接続本数を制限しない
+	float wireConnectableStrength;  // このTargetを含むWireの破断張力。0以下ならWire側設定を使う
+	int32_t wireConnectableCategory;  // ゲーム側が敵、地形、物体等を分類する任意値
+	bool wireConnectableUseHitPoint;  // trueならRay命中点、falseなら固定Anchorを使う
+	Vector3 wireConnectableLocalAnchor;  // 固定Anchorを使う場合のローカル座標
+	int32_t wireConnectablePhysicsBodyGameObjectId;  // 力を伝えるRigidbody。-1なら自身、子Hookでは親物体を指定する
+	Vector3 wireConnectableNormalColor;  // 通常時のHook表示色
+	Vector3 wireConnectableTargetedColor;  // 照準中のHook表示色
+	Vector3 wireConnectableSelectedColor;  // 1点目として選択中のHook表示色
+	Vector3 wireConnectableConnectedColor;  // Wire接続中のHook表示色
+	float wireConnectableEmissionStrength;  // Hookの視認性を上げる発光倍率
+	// WireRenderer 設定
+	float wireRendererWidth;  // 互換用の画面線幅px
+	float wireRendererWorldRadius;  // 3D Wireの半径m
+	int32_t wireRendererRadialSegments;  // 3D Wire断面の分割数
+	float wireRendererEmissionStrength;  // Wireの発光倍率
+	Vector3 wireRendererColor;  // 通常色
+	Vector3 wireRendererTensionColor;  // 高張力時の色
+	Vector3 wireRendererBrokenColor;  // 破断時の色
+	float wireRendererAlpha;
+	float wireRendererSlackSag;  // たるみ時の下方向カーブ量m
+	int32_t wireRendererSegmentCount;
+	bool wireRendererVisible;
 };
 
 struct EditorGameObject {
+	std::string uuid;  // 共同制作で名前変更やローカル ID 再割当後も同じ対象を識別する永続 UUID
 	int32_t id;  // Scene 内で一意な ID
 	int32_t parentId;  // 親 GameObject の ID。親なしは -1
 	bool isActive;  // false なら更新や物理の対象外
@@ -2436,6 +2486,12 @@ public:
 	bool ApplyPrefabInstance(int32_t gameObjectId);  // Instanceの現在階層を生成元Prefabへ反映する
 	int32_t RevertPrefabInstance(int32_t gameObjectId);  // Instanceを生成元Prefabの内容へ戻して新しいRoot IDを返す
 	bool MergeScene(const EditorScene& sourceScene, std::vector<int32_t>& addedGameObjectIds);  // Additive Scene用にIDと内部参照を再割当して追加する
+	bool ApplyCollaborationChange(
+		const EditorScene& sourceScene,
+		const std::string& operation,
+		const std::string& objectUuid,
+		const std::string& componentUuid,
+		const std::string& property);  // UUIDを基準に共同制作の1変更だけを現在Sceneへ統合する
 	void PushUndo();  // 現在の Scene 状態を Undo スタックへ積む
 	bool Undo();  // 1 つ前の Scene 状態へ戻す
 	bool Redo();  // Undo した Scene 状態をやり直す
@@ -2462,11 +2518,14 @@ public:
 	bool SetWorldMatrix(int32_t gameObjectId, const Matrix4x4& worldMatrix);  // ギズモや物理のワールド行列を現在の親空間へ戻して保存する
 	EditorPhysicsSettings& GetPhysicsSettings();  // Scene 全体の物理設定を編集用に返す
 	const EditorPhysicsSettings& GetPhysicsSettings() const;  // Scene 全体の物理設定を読み取り専用で返す
+	const std::string& GetUuid() const;  // 共同制作でScene名変更後も同一Sceneを識別するUUIDを返す
 	std::vector<EditorGameObject>& GetGameObjects();
 	const std::vector<EditorGameObject>& GetGameObjects() const;
+	void EnsurePersistentUuids();  // 旧Scene読込やPrefab複製後に不足・重複 UUID を安全に補う
 
 private:
 	int32_t nextGameObjectId_;
+	std::string sceneUuid_;
 	EditorPhysicsSettings physicsSettings_;
 	std::vector<EditorGameObject> gameObjects_;
 	mutable std::unordered_map<int32_t, int32_t> gameObjectIndexById_;  // ID検索を全件線形走査せず O(1) で行う索引。

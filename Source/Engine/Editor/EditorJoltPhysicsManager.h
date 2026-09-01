@@ -41,6 +41,32 @@ public:
 		float areaScale = 1.0f;  // 面数縮約時に元の表面積を保つ重み
 	};
 
+	enum class RuntimeJointType : int32_t {
+		Fixed = 0,
+		Hinge = 1,
+		Spring = 2,
+		Configurable = 3,
+		Character = 4
+	};
+
+	struct RuntimeJointSettings {
+		Vector3 ownerAnchor = {0.0f, 0.0f, 0.0f};
+		Vector3 connectedAnchor = {0.0f, 0.0f, 0.0f};
+		Vector3 axis = {1.0f, 0.0f, 0.0f};
+		float minDistance = 0.0f;
+		float maxDistance = 1.0f;
+		float minAngle = -3.1415926f;
+		float maxAngle = 3.1415926f;
+		float frequency = 5.0f;
+		float damping = 0.7f;
+		bool freezePositionX = false;
+		bool freezePositionY = false;
+		bool freezePositionZ = false;
+		bool freezeRotationX = false;
+		bool freezeRotationY = false;
+		bool freezeRotationZ = false;
+	};
+
 	enum class PhysicsEventType {
 		CollisionEnter,  // 押し返しを伴う接触の開始
 		CollisionStay,  // 押し返しを伴う接触の継続
@@ -57,6 +83,9 @@ public:
 		Vector3 normal = {0.0f, 1.0f, 0.0f};  // self から見た接触法線
 		Vector3 relativeVelocity = {0.0f, 0.0f, 0.0f};  // other - self の相対速度
 		float separation = 0.0f;  // 貫通深さ。Exit では 0
+		float contactImpulse = 0.0f;  // 接触法線方向の推定Impulse N*s
+		float selfMass = 0.0f;  // Dynamic Bodyの質量kg。Static/Triggerは0
+		float otherMass = 0.0f;  // 接触相手のDynamic Body質量kg。Static/Triggerは0
 		bool isTrigger = false;  // Trigger 接触なら true
 	};
 
@@ -82,6 +111,9 @@ public:
 	bool OverlapSphere(const Vector3& center, float radius, std::vector<int32_t>& hitGameObjectIds) const;  // 球の範囲に重なった GameObject を列挙する
 	bool OverlapBox(const Vector3& center, const Vector3& size, std::vector<int32_t>& hitGameObjectIds) const;  // 箱の範囲に重なった GameObject を列挙する
 	bool GetBodyMass(int32_t gameObjectId, float& bodyMass) const;  // Joltへ反映済みの実質量を返す
+	// Jolt World上のBody実座標と、現在Worldへ追加済みかを返す(命中しない原因の切り分け用)。
+	// GameObjectのTransformとBodyの座標がズレていれば、Castが当たらないのは当然になる。
+	bool GetBodyDiagnostics(int32_t gameObjectId, Vector3& bodyPosition, bool& isAddedToWorld) const;
 	bool GetSubmergedVolume(int32_t gameObjectId, const Vector3& surfacePosition, const Vector3& surfaceNormal, SubmergedVolumeInfo& volumeInfo) const;  // 実 Physics Shape を水面 Plane で切り、体積と浮心を返す
 	bool GetHydrodynamicSurfaceTriangles(int32_t gameObjectId, std::vector<HydrodynamicSurfaceTriangle>& surfaceTriangles) const;  // 実Shape表面を面積分布保持パネルとしてWorld空間で返す
 	bool AddForce(int32_t gameObjectId, const Vector3& force);  // Dynamic Rigidbody に継続力を加える
@@ -90,6 +122,12 @@ public:
 	bool AddTorque(int32_t gameObjectId, const Vector3& torque);  // Dynamic Rigidbody に回転力を加える
 	bool SetVelocity(int32_t gameObjectId, const Vector3& velocity);  // Rigidbody の速度を直接設定する
 	bool SetAngularVelocity(int32_t gameObjectId, const Vector3& angularVelocity);  // Rigidbody の角速度を直接設定する
+	uint64_t CreateSpringJoint(int32_t ownerGameObjectId, int32_t connectedGameObjectId, const Vector3& ownerAnchor, const Vector3& connectedAnchor, float minDistance, float maxDistance, float frequency, float damping);  // 実行中の2 Body間へSpringJointを生成しHandleを返す
+	bool DestroyJoint(uint64_t jointHandle);  // Handleで指定したRuntime Jointだけを破棄する
+	bool SetSpringJointSettings(uint64_t jointHandle, const Vector3& ownerAnchor, const Vector3& connectedAnchor, float minDistance, float maxDistance, float frequency, float damping);  // Handleを維持したままRuntime SpringJointを再設定する
+	bool IsJointValid(uint64_t jointHandle) const;  // Runtime Joint Handleが現在有効か返す
+	uint64_t CreateJoint(RuntimeJointType jointType, int32_t ownerGameObjectId, int32_t connectedGameObjectId, const RuntimeJointSettings& jointSettings);  // 任意の対応Jointを実行中に生成する
+	bool SetJointSettings(uint64_t jointHandle, const RuntimeJointSettings& jointSettings);  // Joint種別を維持して設定を更新する
 	const std::vector<PhysicsEvent>& GetStepEvents() const;  // 直近の固定ステップで発生した接触イベント一覧
 	void ClearStepEvents();  // 次の固定ステップ前に接触イベントを空にする
 

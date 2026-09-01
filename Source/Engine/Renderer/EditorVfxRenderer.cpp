@@ -1,7 +1,8 @@
-#include "EditorVfxRenderer.h"
+﻿#include "EditorVfxRenderer.h"
 
 #include "Source/Engine/Core/EditorSharedState.h"
 #include "Source/Engine/Core/StringUtility.h"
+#include "Source/Engine/Editor/EditorProfilerManager.h"
 
 #include <algorithm>
 #include <array>
@@ -462,6 +463,7 @@ void EditorVfxRenderer::Draw(
 			(std::max)(batch.softParticleFadeDistance, 0.001f)};
 		commandList->SetGraphicsRoot32BitConstants(4, static_cast<UINT>(softParticleConstants.size()), softParticleConstants.data(), 0u);
 
+		RecordEditorProfilerDrawCall();
 		commandList->DrawInstanced(batch.vertexCount, 1u, batch.firstVertex, 0u);
 	}
 }

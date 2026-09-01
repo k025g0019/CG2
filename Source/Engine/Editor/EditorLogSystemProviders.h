@@ -28,6 +28,11 @@ struct LogSystemFieldContext {
 // 選択可能なSystem Fieldの一覧を {category, name} で返す(UI表示用)。
 std::vector<std::pair<std::string, std::string>> ListLogSystemFields(const LogSystemFieldContext& context);
 
+// UI表示用の日本語名。Logファイルの列と保存済みPresetの互換を壊さないため、
+// 内部キー(category/name)は英語のまま変更せず、表示だけを日本語へ差し替える。
+const char* GetLogSystemCategoryDisplayName(const std::string& category);
+const char* GetLogSystemFieldDisplayName(const std::string& category, const std::string& name);
+
 // 指定したcategory/nameの現在値を文字列化して返す。対象が見つからなければfalse。
 bool ResolveLogSystemFieldValue(
 	const LogSystemFieldContext& context,

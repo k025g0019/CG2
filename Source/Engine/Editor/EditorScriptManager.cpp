@@ -9,6 +9,7 @@
 #include "EditorDamageManager.h"
 #include "EditorObjectPoolManager.h"
 #include "EditorOceanSystem.h"
+#include "EditorProfilerManager.h"
 #include "EditorRailBranchManager.h"
 #include "EditorRuntimePropertyManager.h"
 #include "EditorSaveManager.h"
@@ -33,6 +34,36 @@ namespace {
 	EditorScriptManager* gActiveScriptManager = nullptr;  // DLL API の関数ポインタから現在の ScriptManager を逆参照する。
 	constexpr int32_t kHotReloadCheckFrameInterval = 30;  // Play 中の DLL 更新確認を 30 フレーム間隔へ抑える。
 	constexpr int32_t kFieldSynchronizationFrameInterval = 5;  // Inspector 公開変数の DLL 往復は最大 6 フレームに 1 回へ抑える。
+
+	bool TryResolveComponentType(const char* componentTypeName, EditorComponentType& componentType) {
+		if (componentTypeName == nullptr || componentTypeName[0] == '\0') {
+			return false;
+		}
+
+		for (int32_t componentIndex = 0;
+			componentIndex < static_cast<int32_t>(EditorComponentType::Count);
+			componentIndex++) {
+			const EditorComponentType candidateType = ComponentTypeFromIndex(componentIndex);
+
+			if (ToString(candidateType) == componentTypeName) {
+				componentType = candidateType;
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	bool IsColliderComponentType(EditorComponentType componentType) {
+		return componentType == EditorComponentType::BoxCollider ||
+			componentType == EditorComponentType::SphereCollider ||
+			componentType == EditorComponentType::CapsuleCollider ||
+			componentType == EditorComponentType::MeshCollider ||
+			componentType == EditorComponentType::TerrainCollider ||
+			componentType == EditorComponentType::WheelCollider ||
+			componentType == EditorComponentType::AutoConvexCollision ||
+			componentType == EditorComponentType::CharacterController;
+	}
 
 	void CombineHash(size_t& currentHash, size_t valueHash) {
 		currentHash ^= valueHash + 0x9E3779B9U + (currentHash << 6U) + (currentHash >> 2U);
@@ -102,6 +133,50 @@ namespace {
 		editorVector.y = value.y;
 		editorVector.z = value.z;
 		return editorVector;
+	}
+
+	EditorScriptWireState ToScriptWireState(
+		const EditorPhysicsManager::RuntimeWireState& wireState) {
+		EditorScriptWireState scriptState{};
+		scriptState.handle = wireState.handle;
+		scriptState.firstGameObjectId = wireState.desc.firstGameObjectId;
+		scriptState.secondGameObjectId = wireState.desc.secondGameObjectId;
+		scriptState.ownerGameObjectId = wireState.desc.ownerGameObjectId;
+		scriptState.isActive = wireState.isActive;
+		scriptState.isBroken = wireState.isBroken;
+		scriptState.firstWorldAnchor = ToScriptVector3(wireState.firstWorldAnchor);
+		scriptState.secondWorldAnchor = ToScriptVector3(wireState.secondWorldAnchor);
+		scriptState.maximumLength = wireState.desc.maximumLength;
+		scriptState.minimumLength = wireState.desc.minimumLength;
+		scriptState.currentLength = wireState.currentLength;
+		scriptState.currentTension = wireState.currentTension;
+		return scriptState;
+	}
+
+	EditorJoltPhysicsManager::RuntimeJointType ToRuntimeJointType(EditorScriptJointType jointType) {
+		return static_cast<EditorJoltPhysicsManager::RuntimeJointType>(
+			static_cast<int32_t>(jointType));
+	}
+
+	EditorJoltPhysicsManager::RuntimeJointSettings ToRuntimeJointSettings(
+		const EditorScriptJointDesc& jointDesc) {
+		EditorJoltPhysicsManager::RuntimeJointSettings jointSettings{};
+		jointSettings.ownerAnchor = ToEditorVector3(jointDesc.ownerAnchor);
+		jointSettings.connectedAnchor = ToEditorVector3(jointDesc.connectedAnchor);
+		jointSettings.axis = ToEditorVector3(jointDesc.axis);
+		jointSettings.minDistance = jointDesc.minDistance;
+		jointSettings.maxDistance = jointDesc.maxDistance;
+		jointSettings.minAngle = jointDesc.minAngle;
+		jointSettings.maxAngle = jointDesc.maxAngle;
+		jointSettings.frequency = jointDesc.frequency;
+		jointSettings.damping = jointDesc.damping;
+		jointSettings.freezePositionX = jointDesc.freezePositionX;
+		jointSettings.freezePositionY = jointDesc.freezePositionY;
+		jointSettings.freezePositionZ = jointDesc.freezePositionZ;
+		jointSettings.freezeRotationX = jointDesc.freezeRotationX;
+		jointSettings.freezeRotationY = jointDesc.freezeRotationY;
+		jointSettings.freezeRotationZ = jointDesc.freezeRotationZ;
+		return jointSettings;
 	}
 
 	EditorScriptOceanSegmentHit ToScriptOceanSegmentHit(const EditorOceanSegmentHit& sourceHit) {
@@ -276,6 +351,8 @@ void EditorScriptManager::Initialize(
 	requestedSceneUnloadPath_.clear();
 	currentKeyState_.fill(0);
 	previousKeyState_.fill(0);
+	EditorSharedState::ApplyRuntimeCursorLock(false);
+	EditorSharedState::ApplyRuntimeCursorVisibility(true);
 	hotReloadCheckFrameTimer_ = 0;
 	fieldSynchronizationFrameTimer_ = 0;
 	reloadGeneration_ = 0;
@@ -295,6 +372,10 @@ void EditorScriptManager::SetEffekseerManager(
 
 void EditorScriptManager::SetVfxManager(EditorVfxManager* vfxManager) {
 	vfxManager_ = vfxManager;
+}
+
+void EditorScriptManager::SetProfilerManager(EditorProfilerManager* profilerManager) {
+	profilerManager_ = profilerManager;
 }
 
 void EditorScriptManager::SetGameplayManagers(
@@ -563,9 +644,19 @@ void EditorScriptManager::Update(const uint8_t* keyState, float deltaTime) {
 
 		if (UsesInstanceApi(*scriptModule) && scriptBinding.instance != nullptr &&
 			scriptModule->updateInstanceFunction != nullptr) {
+			EditorProfilerManager::Scope profilerScope(
+				profilerManager_,
+				"Update",
+				scriptBinding.dllPath,
+				scriptBinding.gameObjectId);
 			scriptModule->updateInstanceFunction(scriptBinding.instance, scriptDeltaTime);
 		}
 		else if (!UsesInstanceApi(*scriptModule) && scriptModule->updateFunction != nullptr) {
+			EditorProfilerManager::Scope profilerScope(
+				profilerManager_,
+				"Update",
+				scriptBinding.dllPath,
+				scriptBinding.gameObjectId);
 			scriptModule->updateFunction(scriptBinding.gameObjectId, scriptDeltaTime);
 		}
 
@@ -579,6 +670,12 @@ void EditorScriptManager::Update(const uint8_t* keyState, float deltaTime) {
 			}
 		}
 	}
+
+	// Script callback中にBinding配列を拡張すると反復中の参照が無効になるため、ここでまとめて反映する。
+	for (const int32_t rootGameObjectId : pendingRuntimeHierarchyRegistrations_) {
+		RegisterRuntimeHierarchy(rootGameObjectId);
+	}
+	pendingRuntimeHierarchyRegistrations_.clear();
 }
 
 void EditorScriptManager::FixedUpdate(float fixedDeltaTime) {
@@ -618,13 +715,25 @@ void EditorScriptManager::FixedUpdate(float fixedDeltaTime) {
 
 			if (UsesInstanceApi(*scriptModule) && scriptBinding.instance != nullptr &&
 				scriptModule->physicsEventInstanceFunction != nullptr) {
+				EditorProfilerManager::Scope profilerScope(
+					profilerManager_,
+					"PhysicsEvent",
+					scriptBinding.dllPath,
+					scriptBinding.gameObjectId);
 				scriptModule->physicsEventInstanceFunction(scriptBinding.instance, &scriptPhysicsEvent);
 			}
 			else if (!UsesInstanceApi(*scriptModule) && scriptModule->physicsEventFunction != nullptr) {
+				EditorProfilerManager::Scope profilerScope(
+					profilerManager_,
+					"PhysicsEvent",
+					scriptBinding.dllPath,
+					scriptBinding.gameObjectId);
 				scriptModule->physicsEventFunction(gameObjectId, &scriptPhysicsEvent);
 			}
 		}
 	}
+
+	DispatchWireEvents();
 
 	for (const ScriptBinding& scriptBinding : scriptBindings_) {
 		ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
@@ -636,9 +745,19 @@ void EditorScriptManager::FixedUpdate(float fixedDeltaTime) {
 
 		if (UsesInstanceApi(*scriptModule) && scriptBinding.instance != nullptr &&
 			scriptModule->fixedUpdateInstanceFunction != nullptr) {
+			EditorProfilerManager::Scope profilerScope(
+				profilerManager_,
+				"FixedUpdate",
+				scriptBinding.dllPath,
+				scriptBinding.gameObjectId);
 			scriptModule->fixedUpdateInstanceFunction(scriptBinding.instance, fixedDeltaTime);
 		}
 		else if (!UsesInstanceApi(*scriptModule) && scriptModule->fixedUpdateFunction != nullptr) {
+			EditorProfilerManager::Scope profilerScope(
+				profilerManager_,
+				"FixedUpdate",
+				scriptBinding.dllPath,
+				scriptBinding.gameObjectId);
 			scriptModule->fixedUpdateFunction(scriptBinding.gameObjectId, fixedDeltaTime);
 		}
 	}
@@ -646,6 +765,97 @@ void EditorScriptManager::FixedUpdate(float fixedDeltaTime) {
 
 void EditorScriptManager::SetPhysicsEvents(const std::vector<EditorJoltPhysicsManager::PhysicsEvent>& physicsEvents) {
 	physicsEvents_ = physicsEvents;  // Jolt の接触イベントを Script 実行前に受け取り、FixedUpdate から参照できるようにする。
+}
+
+void EditorScriptManager::SetWireEvents(
+	const std::vector<EditorPhysicsManager::RuntimeWireEvent>& wireEvents) {
+	wireEvents_ = wireEvents;
+}
+
+void EditorScriptManager::DispatchWireEvents() {
+	for (const EditorPhysicsManager::RuntimeWireEvent& wireEvent : wireEvents_) {
+		EditorScriptWireEvent scriptWireEvent{};
+		scriptWireEvent.handle = wireEvent.handle;
+		scriptWireEvent.firstGameObjectId = wireEvent.firstGameObjectId;
+		scriptWireEvent.secondGameObjectId = wireEvent.secondGameObjectId;
+		scriptWireEvent.ownerGameObjectId = wireEvent.ownerGameObjectId;
+		scriptWireEvent.tension = wireEvent.tension;
+
+		switch (wireEvent.type) {
+		case EditorPhysicsManager::RuntimeWireEventType::Connected:
+			scriptWireEvent.type = EditorScriptWireEventTypeConnected;
+			break;
+		case EditorPhysicsManager::RuntimeWireEventType::TensionChanged:
+			scriptWireEvent.type = EditorScriptWireEventTypeTensionChanged;
+			break;
+		case EditorPhysicsManager::RuntimeWireEventType::Broken:
+			scriptWireEvent.type = EditorScriptWireEventTypeBroken;
+			break;
+		case EditorPhysicsManager::RuntimeWireEventType::TargetLost:
+			scriptWireEvent.type = EditorScriptWireEventTypeTargetLost;
+			break;
+		case EditorPhysicsManager::RuntimeWireEventType::Destroyed:
+			scriptWireEvent.type = EditorScriptWireEventTypeDestroyed;
+			break;
+		default:
+			continue;
+		}
+
+		const int32_t notificationGameObjectIds[3] = {
+			wireEvent.firstGameObjectId,
+			wireEvent.secondGameObjectId,
+			wireEvent.ownerGameObjectId};
+
+		for (int32_t notificationIndex = 0; notificationIndex < 3; notificationIndex++) {
+			const int32_t gameObjectId = notificationGameObjectIds[notificationIndex];
+			const bool isDuplicate =
+				(notificationIndex >= 1 && gameObjectId == notificationGameObjectIds[0]) ||
+				(notificationIndex >= 2 && gameObjectId == notificationGameObjectIds[1]);
+
+			if (gameObjectId < 0 || isDuplicate) {
+				continue;
+			}
+
+			const auto bindingIndicesIterator =
+				scriptBindingIndicesByGameObjectId_.find(gameObjectId);
+
+			if (bindingIndicesIterator == scriptBindingIndicesByGameObjectId_.end()) {
+				continue;
+			}
+
+			for (const size_t bindingIndex : bindingIndicesIterator->second) {
+				if (bindingIndex >= scriptBindings_.size()) {
+					continue;
+				}
+
+				const ScriptBinding& scriptBinding = scriptBindings_[bindingIndex];
+
+				if (!scriptBinding.hasStarted || !IsScriptBindingActive(scriptBinding)) {
+					continue;
+				}
+
+				ScriptModule* scriptModule = FindModule(scriptBinding.dllPath);
+
+				if (scriptModule == nullptr || !scriptModule->isLoaded) {
+					continue;
+				}
+
+				if (UsesInstanceApi(*scriptModule) && scriptBinding.instance != nullptr &&
+					scriptModule->wireEventInstanceFunction != nullptr) {
+					scriptModule->wireEventInstanceFunction(
+						scriptBinding.instance,
+						&scriptWireEvent);
+				}
+				else if (!UsesInstanceApi(*scriptModule) &&
+					scriptModule->wireEventFunction != nullptr) {
+					scriptModule->wireEventFunction(gameObjectId, &scriptWireEvent);
+				}
+			}
+		}
+	}
+
+	// 1描画フレームで固定更新が複数回進んでも同じWireイベントを再送しない。
+	wireEvents_.clear();
 }
 
 void EditorScriptManager::DispatchAnimationEvent(
@@ -686,9 +896,19 @@ void EditorScriptManager::DispatchAnimationEvent(
 
 		if (UsesInstanceApi(*scriptModule) && scriptBinding.instance != nullptr &&
 			scriptModule->animationEventInstanceFunction != nullptr) {
+			EditorProfilerManager::Scope profilerScope(
+				profilerManager_,
+				"AnimationEvent",
+				scriptBinding.dllPath,
+				scriptBinding.gameObjectId);
 			scriptModule->animationEventInstanceFunction(scriptBinding.instance, &scriptAnimationEvent);
 		}
 		else if (!UsesInstanceApi(*scriptModule) && scriptModule->animationEventFunction != nullptr) {
+			EditorProfilerManager::Scope profilerScope(
+				profilerManager_,
+				"AnimationEvent",
+				scriptBinding.dllPath,
+				scriptBinding.gameObjectId);
 			scriptModule->animationEventFunction(gameObjectId, &scriptAnimationEvent);
 		}
 	}
@@ -705,6 +925,8 @@ void EditorScriptManager::Stop() {
 	lastDeltaTime_ = 0.0f;
 	lastFixedDeltaTime_ = 0.0f;
 	physicsEvents_.clear();
+	wireEvents_.clear();
+	pendingRuntimeHierarchyRegistrations_.clear();
 	UnloadAllModules();
 	scriptBindings_.clear();
 	scriptBindingIndicesByGameObjectId_.clear();
@@ -715,6 +937,8 @@ void EditorScriptManager::Stop() {
 	requestedSceneUnloadPath_.clear();
 	currentKeyState_.fill(0);
 	previousKeyState_.fill(0);
+	EditorSharedState::ApplyRuntimeCursorLock(false);
+	EditorSharedState::ApplyRuntimeCursorVisibility(true);
 	hotReloadCheckFrameTimer_ = 0;
 	fieldSynchronizationFrameTimer_ = 0;
 }
@@ -1046,6 +1270,49 @@ EditorScriptVector2 EditorScriptManager::ScriptGetMousePositionBridge() {
 	return gActiveScriptManager->GetMousePositionInternal();
 }
 
+EditorScriptVector2 EditorScriptManager::ScriptGetMouseDeltaBridge() {
+	if (gActiveScriptManager == nullptr) {
+		return EditorScriptVector2{};
+	}
+
+	return gActiveScriptManager->GetMouseDeltaInternal();
+}
+
+bool EditorScriptManager::ScriptIsMouseButtonDownBridge(int32_t mouseButton) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->IsMouseButtonDownInternal(mouseButton);
+}
+
+bool EditorScriptManager::ScriptWasMouseButtonPressedBridge(int32_t mouseButton) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->WasMouseButtonPressedInternal(mouseButton);
+}
+
+bool EditorScriptManager::ScriptWasMouseButtonReleasedBridge(int32_t mouseButton) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->WasMouseButtonReleasedInternal(mouseButton);
+}
+
+void EditorScriptManager::ScriptSetCursorLockedBridge(bool isLocked) {
+	if (gActiveScriptManager != nullptr) {
+		gActiveScriptManager->SetCursorLockedInternal(isLocked);
+	}
+}
+
+bool EditorScriptManager::ScriptIsCursorLockedBridge() {
+	return EditorSharedState::g_runtimeCursorLocked;
+}
+
+void EditorScriptManager::ScriptSetCursorVisibleBridge(bool isVisible) {
+	if (gActiveScriptManager != nullptr) {
+		gActiveScriptManager->SetCursorVisibleInternal(isVisible);
+	}
+}
+
+bool EditorScriptManager::ScriptIsCursorVisibleBridge() {
+	return EditorSharedState::g_runtimeCursorVisible;
+}
+
 EditorScriptTransform EditorScriptManager::ScriptGetTransformBridge(int32_t gameObjectId) {
 	EditorScriptTransform transform{};
 	if (gActiveScriptManager == nullptr) {
@@ -1146,6 +1413,60 @@ int32_t EditorScriptManager::ScriptAddExplosionImpulseBridge(
 		radius,
 		impulseStrength,
 		upwardModifier);
+}
+
+EditorScriptJointHandle EditorScriptManager::ScriptCreateSpringJointBridge(
+	int32_t ownerGameObjectId,
+	int32_t connectedGameObjectId,
+	const EditorScriptSpringJointDesc* springJointDesc) {
+	if (gActiveScriptManager == nullptr || springJointDesc == nullptr) {
+		return kInvalidEditorScriptJointHandle;
+	}
+
+	return gActiveScriptManager->CreateSpringJointInternal(
+		ownerGameObjectId,
+		connectedGameObjectId,
+		*springJointDesc);
+}
+
+bool EditorScriptManager::ScriptDestroyJointBridge(EditorScriptJointHandle jointHandle) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->DestroyJointInternal(jointHandle);
+}
+
+bool EditorScriptManager::ScriptSetSpringJointSettingsBridge(
+	EditorScriptJointHandle jointHandle,
+	const EditorScriptSpringJointDesc* springJointDesc) {
+	return gActiveScriptManager != nullptr && springJointDesc != nullptr &&
+		gActiveScriptManager->SetSpringJointSettingsInternal(jointHandle, *springJointDesc);
+}
+
+bool EditorScriptManager::ScriptIsJointValidBridge(EditorScriptJointHandle jointHandle) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->IsJointValidInternal(jointHandle);
+}
+
+EditorScriptJointHandle EditorScriptManager::ScriptCreateJointBridge(
+	EditorScriptJointType jointType,
+	int32_t ownerGameObjectId,
+	int32_t connectedGameObjectId,
+	const EditorScriptJointDesc* jointDesc) {
+	if (gActiveScriptManager == nullptr || jointDesc == nullptr) {
+		return kInvalidEditorScriptJointHandle;
+	}
+
+	return gActiveScriptManager->CreateJointInternal(
+		jointType,
+		ownerGameObjectId,
+		connectedGameObjectId,
+		*jointDesc);
+}
+
+bool EditorScriptManager::ScriptSetJointSettingsBridge(
+	EditorScriptJointHandle jointHandle,
+	const EditorScriptJointDesc* jointDesc) {
+	return gActiveScriptManager != nullptr && jointDesc != nullptr &&
+		gActiveScriptManager->SetJointSettingsInternal(jointHandle, *jointDesc);
 }
 
 bool EditorScriptManager::ScriptAttachRopeBridge(
@@ -1344,6 +1665,66 @@ void EditorScriptManager::ScriptStopEffekseerEffectAtPositionBridge(int32_t effe
 	if (gActiveScriptManager != nullptr && gActiveScriptManager->effekseerManager_ != nullptr) {
 		gActiveScriptManager->effekseerManager_->StopEffectAt(effekseerPlaybackHandle);
 	}
+}
+
+EditorScriptWireHandle EditorScriptManager::ScriptCreateWireBridge(
+	const EditorScriptWireDesc* wireDesc) {
+	return gActiveScriptManager != nullptr && wireDesc != nullptr
+		? gActiveScriptManager->CreateWireInternal(*wireDesc)
+		: kInvalidEditorScriptWireHandle;
+}
+
+bool EditorScriptManager::ScriptDestroyWireBridge(EditorScriptWireHandle wireHandle) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->DestroyWireInternal(wireHandle);
+}
+
+bool EditorScriptManager::ScriptSetWireLengthByHandleBridge(
+	EditorScriptWireHandle wireHandle,
+	float maximumLength) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->SetWireLengthByHandleInternal(wireHandle, maximumLength);
+}
+
+bool EditorScriptManager::ScriptSetWireShrinkSpeedBridge(
+	EditorScriptWireHandle wireHandle,
+	float shrinkSpeed) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->SetWireShrinkSpeedInternal(wireHandle, shrinkSpeed);
+}
+
+bool EditorScriptManager::ScriptRepairWireBridge(EditorScriptWireHandle wireHandle) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->RepairWireInternal(wireHandle);
+}
+
+bool EditorScriptManager::ScriptGetWireStateByHandleBridge(
+	EditorScriptWireHandle wireHandle,
+	EditorScriptWireState* wireState) {
+	return gActiveScriptManager != nullptr && wireState != nullptr &&
+		gActiveScriptManager->GetWireStateByHandleInternal(wireHandle, *wireState);
+}
+
+int32_t EditorScriptManager::ScriptGetWireCountForGameObjectBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr
+		? gActiveScriptManager->GetWireCountForGameObjectInternal(gameObjectId)
+		: 0;
+}
+
+bool EditorScriptManager::ScriptGetWireForGameObjectBridge(
+	int32_t gameObjectId,
+	int32_t wireIndex,
+	EditorScriptWireState* wireState) {
+	return gActiveScriptManager != nullptr && wireState != nullptr &&
+		gActiveScriptManager->GetWireForGameObjectInternal(
+			gameObjectId,
+			wireIndex,
+			*wireState);
+}
+
+bool EditorScriptManager::ScriptCanConnectWireBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->CanConnectWireInternal(gameObjectId);
 }
 
 bool EditorScriptManager::ScriptPlayVfxAtPositionBridge(
@@ -3708,6 +4089,212 @@ void EditorScriptManager::BuildRuntimeApi() {
 	runtimeApi_.SetEffekseerEffectPosition = ScriptSetEffekseerEffectPositionBridge;
 	runtimeApi_.StopEffekseerEffectAtPosition = ScriptStopEffekseerEffectAtPositionBridge;
 	runtimeApi_.PlayVfxAtPosition = ScriptPlayVfxAtPositionBridge;
+	runtimeApi_.CreateSpringJoint = ScriptCreateSpringJointBridge;
+	runtimeApi_.DestroyJoint = ScriptDestroyJointBridge;
+	runtimeApi_.SetSpringJointSettings = ScriptSetSpringJointSettingsBridge;
+	runtimeApi_.IsJointValid = ScriptIsJointValidBridge;
+	runtimeApi_.CreateJoint = ScriptCreateJointBridge;
+	runtimeApi_.SetJointSettings = ScriptSetJointSettingsBridge;
+	runtimeApi_.GetMouseDelta = ScriptGetMouseDeltaBridge;
+	runtimeApi_.IsMouseButtonDown = ScriptIsMouseButtonDownBridge;
+	runtimeApi_.WasMouseButtonPressed = ScriptWasMouseButtonPressedBridge;
+	runtimeApi_.WasMouseButtonReleased = ScriptWasMouseButtonReleasedBridge;
+	runtimeApi_.SetCursorLocked = ScriptSetCursorLockedBridge;
+	runtimeApi_.IsCursorLocked = ScriptIsCursorLockedBridge;
+	runtimeApi_.SetCursorVisible = ScriptSetCursorVisibleBridge;
+	runtimeApi_.IsCursorVisible = ScriptIsCursorVisibleBridge;
+	runtimeApi_.CreateWire = ScriptCreateWireBridge;
+	runtimeApi_.DestroyWire = ScriptDestroyWireBridge;
+	runtimeApi_.SetWireLengthByHandle = ScriptSetWireLengthByHandleBridge;
+	runtimeApi_.SetWireShrinkSpeed = ScriptSetWireShrinkSpeedBridge;
+	runtimeApi_.RepairWire = ScriptRepairWireBridge;
+	runtimeApi_.GetWireStateByHandle = ScriptGetWireStateByHandleBridge;
+	runtimeApi_.GetWireCountForGameObject = ScriptGetWireCountForGameObjectBridge;
+	runtimeApi_.GetWireForGameObject = ScriptGetWireForGameObjectBridge;
+	runtimeApi_.CanConnectWire = ScriptCanConnectWireBridge;
+	runtimeApi_.AddComponent = ScriptAddComponentBridge;
+	runtimeApi_.RemoveComponent = ScriptRemoveComponentBridge;
+	runtimeApi_.FindGameObjectsWithComponent = ScriptFindGameObjectsWithComponentBridge;
+	runtimeApi_.InstantiateGameObject = ScriptInstantiateGameObjectBridge;
+	runtimeApi_.DestroyGameObject = ScriptDestroyGameObjectBridge;
+	runtimeApi_.WorldToLocalPoint = ScriptWorldToLocalPointBridge;
+	runtimeApi_.LocalToWorldPoint = ScriptLocalToWorldPointBridge;
+	runtimeApi_.WorldToLocalDirection = ScriptWorldToLocalDirectionBridge;
+	runtimeApi_.LocalToWorldDirection = ScriptLocalToWorldDirectionBridge;
+	runtimeApi_.PhysicsRaycastFiltered = ScriptPhysicsRaycastFilteredBridge;
+	runtimeApi_.SetRendererColor = ScriptSetRendererColorBridge;
+	runtimeApi_.SetRendererEmission = ScriptSetRendererEmissionBridge;
+	runtimeApi_.SetHookVisualState = ScriptSetHookVisualStateBridge;
+	runtimeApi_.CreateGameObject = ScriptCreateGameObjectBridge;
+	runtimeApi_.GetParentGameObject = ScriptGetParentGameObjectBridge;
+	runtimeApi_.SetParentGameObject = ScriptSetParentGameObjectBridge;
+	runtimeApi_.GetChildGameObjectCount = ScriptGetChildGameObjectCountBridge;
+	runtimeApi_.GetChildGameObject = ScriptGetChildGameObjectBridge;
+	runtimeApi_.ReloadPrimaryScene = ScriptReloadPrimarySceneBridge;
+}
+
+bool EditorScriptManager::ScriptAddComponentBridge(
+	int32_t gameObjectId,
+	const char* componentTypeName) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->AddComponentInternal(gameObjectId, componentTypeName);
+}
+
+bool EditorScriptManager::ScriptRemoveComponentBridge(
+	int32_t gameObjectId,
+	const char* componentTypeName) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->RemoveComponentInternal(gameObjectId, componentTypeName);
+}
+
+int32_t EditorScriptManager::ScriptFindGameObjectsWithComponentBridge(
+	const char* componentTypeName,
+	int32_t* gameObjectIds,
+	int32_t capacity) {
+	return gActiveScriptManager != nullptr
+		? gActiveScriptManager->FindGameObjectsWithComponentInternal(
+			componentTypeName,
+			gameObjectIds,
+			capacity)
+		: 0;
+}
+
+int32_t EditorScriptManager::ScriptInstantiateGameObjectBridge(
+	int32_t sourceGameObjectId,
+	const EditorScriptVector3* position,
+	const EditorScriptVector3* rotation) {
+	if (gActiveScriptManager == nullptr || position == nullptr || rotation == nullptr) {
+		return -1;
+	}
+
+	return gActiveScriptManager->InstantiateGameObjectInternal(
+		sourceGameObjectId,
+		*position,
+		*rotation);
+}
+
+bool EditorScriptManager::ScriptDestroyGameObjectBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->DestroyGameObjectInternal(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptSetRendererColorBridge(
+	int32_t gameObjectId,
+	const EditorScriptVector3* color) {
+	return gActiveScriptManager != nullptr && color != nullptr &&
+		gActiveScriptManager->SetRendererColorInternal(gameObjectId, *color);
+}
+
+bool EditorScriptManager::ScriptSetRendererEmissionBridge(
+	int32_t gameObjectId,
+	const EditorScriptVector3* color,
+	float strength) {
+	return gActiveScriptManager != nullptr && color != nullptr &&
+		gActiveScriptManager->SetRendererEmissionInternal(gameObjectId, *color, strength);
+}
+
+bool EditorScriptManager::ScriptSetHookVisualStateBridge(
+	int32_t gameObjectId,
+	int32_t visualState) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->SetHookVisualStateInternal(gameObjectId, visualState);
+}
+
+int32_t EditorScriptManager::ScriptCreateGameObjectBridge(const char* name) {
+	return gActiveScriptManager != nullptr
+		? gActiveScriptManager->CreateGameObjectInternal(name)
+		: -1;
+}
+
+int32_t EditorScriptManager::ScriptGetParentGameObjectBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr
+		? gActiveScriptManager->GetParentGameObjectInternal(gameObjectId)
+		: -1;
+}
+
+bool EditorScriptManager::ScriptSetParentGameObjectBridge(
+	int32_t childGameObjectId,
+	int32_t parentGameObjectId,
+	bool preserveWorldTransform) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->SetParentGameObjectInternal(
+			childGameObjectId,
+			parentGameObjectId,
+			preserveWorldTransform);
+}
+
+int32_t EditorScriptManager::ScriptGetChildGameObjectCountBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr
+		? gActiveScriptManager->GetChildGameObjectCountInternal(gameObjectId)
+		: 0;
+}
+
+int32_t EditorScriptManager::ScriptGetChildGameObjectBridge(
+	int32_t gameObjectId,
+	int32_t childIndex) {
+	return gActiveScriptManager != nullptr
+		? gActiveScriptManager->GetChildGameObjectInternal(gameObjectId, childIndex)
+		: -1;
+}
+
+bool EditorScriptManager::ScriptReloadPrimarySceneBridge() {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->ReloadPrimarySceneInternal();
+}
+
+bool EditorScriptManager::ScriptWorldToLocalPointBridge(
+	int32_t gameObjectId,
+	const EditorScriptVector3* worldPoint,
+	EditorScriptVector3* localPoint) {
+	return gActiveScriptManager != nullptr && worldPoint != nullptr && localPoint != nullptr &&
+		gActiveScriptManager->WorldToLocalPointInternal(gameObjectId, *worldPoint, *localPoint);
+}
+
+bool EditorScriptManager::ScriptLocalToWorldPointBridge(
+	int32_t gameObjectId,
+	const EditorScriptVector3* localPoint,
+	EditorScriptVector3* worldPoint) {
+	return gActiveScriptManager != nullptr && localPoint != nullptr && worldPoint != nullptr &&
+		gActiveScriptManager->LocalToWorldPointInternal(gameObjectId, *localPoint, *worldPoint);
+}
+
+bool EditorScriptManager::ScriptWorldToLocalDirectionBridge(
+	int32_t gameObjectId,
+	const EditorScriptVector3* worldDirection,
+	EditorScriptVector3* localDirection) {
+	return gActiveScriptManager != nullptr && worldDirection != nullptr && localDirection != nullptr &&
+		gActiveScriptManager->WorldToLocalDirectionInternal(
+			gameObjectId,
+			*worldDirection,
+			*localDirection);
+}
+
+bool EditorScriptManager::ScriptLocalToWorldDirectionBridge(
+	int32_t gameObjectId,
+	const EditorScriptVector3* localDirection,
+	EditorScriptVector3* worldDirection) {
+	return gActiveScriptManager != nullptr && localDirection != nullptr && worldDirection != nullptr &&
+		gActiveScriptManager->LocalToWorldDirectionInternal(
+			gameObjectId,
+			*localDirection,
+			*worldDirection);
+}
+
+bool EditorScriptManager::ScriptPhysicsRaycastFilteredBridge(
+	const EditorScriptRay* ray,
+	float distance,
+	uint32_t physicsLayerMask,
+	bool includeTriggers,
+	const char* requiredComponentTypeName,
+	EditorScriptPhysicsHit* hit) {
+	return gActiveScriptManager != nullptr && ray != nullptr && hit != nullptr &&
+		gActiveScriptManager->PhysicsRaycastFilteredInternal(
+			*ray,
+			distance,
+			physicsLayerMask,
+			includeTriggers,
+			requiredComponentTypeName,
+			*hit);
 }
 
 void EditorScriptManager::StartBindingsForModule(ScriptModule& scriptModule) {
@@ -3731,6 +4318,11 @@ void EditorScriptManager::StartBindingIfNeeded(
 	}
 
 	if (UsesInstanceApi(scriptModule) && scriptBinding.instance == nullptr) {
+		EditorProfilerManager::Scope profilerScope(
+			profilerManager_,
+			"CreateInstance",
+			scriptBinding.dllPath,
+			scriptBinding.gameObjectId);
 		scriptBinding.instance = scriptModule.createInstanceFunction(scriptBinding.gameObjectId);
 
 		if (scriptBinding.instance == nullptr) {
@@ -3764,9 +4356,19 @@ void EditorScriptManager::StartBindingIfNeeded(
 
 	if (UsesInstanceApi(scriptModule) && scriptBinding.instance != nullptr &&
 		scriptModule.startInstanceFunction != nullptr) {
+		EditorProfilerManager::Scope profilerScope(
+			profilerManager_,
+			"Start",
+			scriptBinding.dllPath,
+			scriptBinding.gameObjectId);
 		scriptModule.startInstanceFunction(scriptBinding.instance);
 	}
 	else if (!UsesInstanceApi(scriptModule) && scriptModule.startFunction != nullptr) {
+		EditorProfilerManager::Scope profilerScope(
+			profilerManager_,
+			"Start",
+			scriptBinding.dllPath,
+			scriptBinding.gameObjectId);
 		scriptModule.startFunction(scriptBinding.gameObjectId);
 	}
 
@@ -3787,13 +4389,28 @@ void EditorScriptManager::StopBindingsForModule(ScriptModule& scriptModule) {
 
 		if (UsesInstanceApi(scriptModule) && scriptBinding.instance != nullptr &&
 			scriptModule.stopInstanceFunction != nullptr) {
+			EditorProfilerManager::Scope profilerScope(
+				profilerManager_,
+				"Stop",
+				scriptBinding.dllPath,
+				scriptBinding.gameObjectId);
 			scriptModule.stopInstanceFunction(scriptBinding.instance);
 		}
 		else if (!UsesInstanceApi(scriptModule) && scriptModule.stopFunction != nullptr) {
+			EditorProfilerManager::Scope profilerScope(
+				profilerManager_,
+				"Stop",
+				scriptBinding.dllPath,
+				scriptBinding.gameObjectId);
 			scriptModule.stopFunction(scriptBinding.gameObjectId);
 		}
 
 		if (UsesInstanceApi(scriptModule) && scriptBinding.instance != nullptr) {
+			EditorProfilerManager::Scope profilerScope(
+				profilerManager_,
+				"DestroyInstance",
+				scriptBinding.dllPath,
+				scriptBinding.gameObjectId);
 			scriptModule.destroyInstanceFunction(scriptBinding.instance);
 			scriptBinding.instance = nullptr;
 		}
@@ -3819,13 +4436,34 @@ bool EditorScriptManager::InvokeBindingAction(
 	}
 
 	if (UsesInstanceApi(scriptModule)) {
-		return scriptBinding.instance != nullptr &&
-			scriptModule.invokeActionInstanceFunction != nullptr &&
-			scriptModule.invokeActionInstanceFunction(scriptBinding.instance, functionName, &inputContext);
+		if (scriptBinding.instance == nullptr || scriptModule.invokeActionInstanceFunction == nullptr) {
+			return false;
+		}
+
+		EditorProfilerManager::Scope profilerScope(
+			profilerManager_,
+			functionName,
+			scriptBinding.dllPath,
+			scriptBinding.gameObjectId);
+		return scriptModule.invokeActionInstanceFunction(
+			scriptBinding.instance,
+			functionName,
+			&inputContext);
 	}
 
-	return scriptModule.invokeActionFunction != nullptr &&
-		scriptModule.invokeActionFunction(scriptBinding.gameObjectId, functionName, &inputContext);
+	if (scriptModule.invokeActionFunction == nullptr) {
+		return false;
+	}
+
+	EditorProfilerManager::Scope profilerScope(
+		profilerManager_,
+		functionName,
+		scriptBinding.dllPath,
+		scriptBinding.gameObjectId);
+	return scriptModule.invokeActionFunction(
+		scriptBinding.gameObjectId,
+		functionName,
+		&inputContext);
 }
 
 void EditorScriptManager::DispatchQueuedUiEvents() {
@@ -4374,6 +5012,8 @@ bool EditorScriptManager::LoadModule(const std::string& dllPath) {
 		reinterpret_cast<EditorScriptFixedUpdateFn>(GetProcAddress(moduleHandle, "EditorScript_FixedUpdate"));
 	scriptModule.physicsEventFunction =
 		reinterpret_cast<EditorScriptPhysicsEventFn>(GetProcAddress(moduleHandle, "EditorScript_OnPhysicsEvent"));
+	scriptModule.wireEventFunction =
+		reinterpret_cast<EditorScriptWireEventFn>(GetProcAddress(moduleHandle, "EditorScript_OnWireEvent"));
 	scriptModule.animationEventFunction =
 		reinterpret_cast<EditorScriptAnimationEventFn>(GetProcAddress(moduleHandle, "EditorScript_OnAnimationEvent"));
 	scriptModule.stopFunction =
@@ -4404,6 +5044,8 @@ bool EditorScriptManager::LoadModule(const std::string& dllPath) {
 		reinterpret_cast<EditorScriptFixedUpdateInstanceFn>(GetProcAddress(moduleHandle, "EditorScript_FixedUpdateInstance"));
 	scriptModule.physicsEventInstanceFunction =
 		reinterpret_cast<EditorScriptPhysicsEventInstanceFn>(GetProcAddress(moduleHandle, "EditorScript_OnPhysicsEventInstance"));
+	scriptModule.wireEventInstanceFunction =
+		reinterpret_cast<EditorScriptWireEventInstanceFn>(GetProcAddress(moduleHandle, "EditorScript_OnWireEventInstance"));
 	scriptModule.animationEventInstanceFunction =
 		reinterpret_cast<EditorScriptAnimationEventInstanceFn>(GetProcAddress(moduleHandle, "EditorScript_OnAnimationEventInstance"));
 	scriptModule.stopInstanceFunction =
@@ -4460,6 +5102,7 @@ void EditorScriptManager::UnloadModule(ScriptModule& scriptModule) {
 	scriptModule.updateFunction = nullptr;
 	scriptModule.fixedUpdateFunction = nullptr;
 	scriptModule.physicsEventFunction = nullptr;
+	scriptModule.wireEventFunction = nullptr;
 	scriptModule.animationEventFunction = nullptr;
 	scriptModule.stopFunction = nullptr;
 	scriptModule.getFieldCountFunction = nullptr;
@@ -4475,6 +5118,7 @@ void EditorScriptManager::UnloadModule(ScriptModule& scriptModule) {
 	scriptModule.updateInstanceFunction = nullptr;
 	scriptModule.fixedUpdateInstanceFunction = nullptr;
 	scriptModule.physicsEventInstanceFunction = nullptr;
+	scriptModule.wireEventInstanceFunction = nullptr;
 	scriptModule.animationEventInstanceFunction = nullptr;
 	scriptModule.stopInstanceFunction = nullptr;
 	scriptModule.getFieldValueInstanceFunction = nullptr;
@@ -4522,6 +5166,9 @@ EditorScriptPhysicsEvent EditorScriptManager::ConvertPhysicsEvent(
 	scriptPhysicsEvent.normal = ToScriptVector3(physicsEvent.collision.normal);
 	scriptPhysicsEvent.relativeVelocity = ToScriptVector3(physicsEvent.collision.relativeVelocity);
 	scriptPhysicsEvent.separation = physicsEvent.collision.separation;
+	scriptPhysicsEvent.contactImpulse = physicsEvent.collision.contactImpulse;
+	scriptPhysicsEvent.selfMass = physicsEvent.collision.selfMass;
+	scriptPhysicsEvent.otherMass = physicsEvent.collision.otherMass;
 	scriptPhysicsEvent.isTrigger = physicsEvent.collision.isTrigger;
 
 	switch (physicsEvent.type) {
@@ -4624,6 +5271,48 @@ EditorScriptVector2 EditorScriptManager::GetMousePositionInternal() const {
 	mousePosition.x = static_cast<float>(cursorPoint.x);
 	mousePosition.y = static_cast<float>(cursorPoint.y);
 	return mousePosition;
+}
+
+EditorScriptVector2 EditorScriptManager::GetMouseDeltaInternal() const {
+	return {
+		static_cast<float>(EditorSharedState::g_mouseState.lX),
+		static_cast<float>(EditorSharedState::g_mouseState.lY)};
+}
+
+bool EditorScriptManager::IsMouseButtonDownInternal(int32_t mouseButton) const {
+	if (mouseButton < 0 || mouseButton >= 4) {
+		return false;
+	}
+
+	return (EditorSharedState::g_mouseState.rgbButtons[mouseButton] & 0x80u) != 0u;
+}
+
+bool EditorScriptManager::WasMouseButtonPressedInternal(int32_t mouseButton) const {
+	if (mouseButton < 0 || mouseButton >= 4) {
+		return false;
+	}
+
+	const bool isPressed = (EditorSharedState::g_mouseState.rgbButtons[mouseButton] & 0x80u) != 0u;
+	const bool wasPressed = (EditorSharedState::g_preMouseState.rgbButtons[mouseButton] & 0x80u) != 0u;
+	return isPressed && !wasPressed;
+}
+
+bool EditorScriptManager::WasMouseButtonReleasedInternal(int32_t mouseButton) const {
+	if (mouseButton < 0 || mouseButton >= 4) {
+		return false;
+	}
+
+	const bool isPressed = (EditorSharedState::g_mouseState.rgbButtons[mouseButton] & 0x80u) != 0u;
+	const bool wasPressed = (EditorSharedState::g_preMouseState.rgbButtons[mouseButton] & 0x80u) != 0u;
+	return !isPressed && wasPressed;
+}
+
+void EditorScriptManager::SetCursorLockedInternal(bool isLocked) {
+	EditorSharedState::ApplyRuntimeCursorLock(isLocked);
+}
+
+void EditorScriptManager::SetCursorVisibleInternal(bool isVisible) {
+	EditorSharedState::ApplyRuntimeCursorVisibility(isVisible);
 }
 
 EditorScriptTransform EditorScriptManager::GetTransformInternal(int32_t gameObjectId) const {
@@ -4811,6 +5500,76 @@ bool EditorScriptManager::AttachRopeInternal(
 		maximumLength);
 }
 
+EditorScriptJointHandle EditorScriptManager::CreateSpringJointInternal(
+	int32_t ownerGameObjectId,
+	int32_t connectedGameObjectId,
+	const EditorScriptSpringJointDesc& springJointDesc) {
+	if (physicsManager_ == nullptr) {
+		return kInvalidEditorScriptJointHandle;
+	}
+
+	return physicsManager_->CreateSpringJoint(
+		ownerGameObjectId,
+		connectedGameObjectId,
+		ToEditorVector3(springJointDesc.ownerAnchor),
+		ToEditorVector3(springJointDesc.connectedAnchor),
+		springJointDesc.minDistance,
+		springJointDesc.maxDistance,
+		springJointDesc.frequency,
+		springJointDesc.damping);
+}
+
+bool EditorScriptManager::DestroyJointInternal(EditorScriptJointHandle jointHandle) {
+	return physicsManager_ != nullptr && physicsManager_->DestroyJoint(jointHandle);
+}
+
+bool EditorScriptManager::SetSpringJointSettingsInternal(
+	EditorScriptJointHandle jointHandle,
+	const EditorScriptSpringJointDesc& springJointDesc) {
+	return physicsManager_ != nullptr && physicsManager_->SetSpringJointSettings(
+		jointHandle,
+		ToEditorVector3(springJointDesc.ownerAnchor),
+		ToEditorVector3(springJointDesc.connectedAnchor),
+		springJointDesc.minDistance,
+		springJointDesc.maxDistance,
+		springJointDesc.frequency,
+		springJointDesc.damping);
+}
+
+bool EditorScriptManager::IsJointValidInternal(EditorScriptJointHandle jointHandle) const {
+	return physicsManager_ != nullptr && physicsManager_->IsJointValid(jointHandle);
+}
+
+EditorScriptJointHandle EditorScriptManager::CreateJointInternal(
+	EditorScriptJointType jointType,
+	int32_t ownerGameObjectId,
+	int32_t connectedGameObjectId,
+	const EditorScriptJointDesc& jointDesc) {
+	if (physicsManager_ == nullptr) {
+		return kInvalidEditorScriptJointHandle;
+	}
+
+	const int32_t jointTypeValue = static_cast<int32_t>(jointType);
+	if (jointTypeValue < static_cast<int32_t>(EditorScriptJointType::Fixed) ||
+		jointTypeValue > static_cast<int32_t>(EditorScriptJointType::Character)) {
+		return kInvalidEditorScriptJointHandle;
+	}
+
+	return physicsManager_->CreateJoint(
+		ToRuntimeJointType(jointType),
+		ownerGameObjectId,
+		connectedGameObjectId,
+		ToRuntimeJointSettings(jointDesc));
+}
+
+bool EditorScriptManager::SetJointSettingsInternal(
+	EditorScriptJointHandle jointHandle,
+	const EditorScriptJointDesc& jointDesc) {
+	return physicsManager_ != nullptr && physicsManager_->SetJointSettings(
+		jointHandle,
+		ToRuntimeJointSettings(jointDesc));
+}
+
 bool EditorScriptManager::DetachRopeInternal(int32_t ownerGameObjectId) {
 	return physicsManager_ != nullptr && physicsManager_->DetachRope(ownerGameObjectId);
 }
@@ -4840,6 +5599,98 @@ EditorScriptRopeState EditorScriptManager::GetRopeStateInternal(int32_t ownerGam
 		ropeState.currentLength,
 		ropeState.currentTension);
 	return ropeState;
+}
+
+EditorScriptWireHandle EditorScriptManager::CreateWireInternal(
+	const EditorScriptWireDesc& wireDesc) {
+	if (physicsManager_ == nullptr) {
+		return kInvalidEditorScriptWireHandle;
+	}
+
+	EditorPhysicsManager::RuntimeWireDesc runtimeDesc{};
+	runtimeDesc.firstGameObjectId = wireDesc.firstGameObjectId;
+	runtimeDesc.secondGameObjectId = wireDesc.secondGameObjectId;
+	runtimeDesc.ownerGameObjectId = wireDesc.ownerGameObjectId;
+	runtimeDesc.rendererSettingsGameObjectId = wireDesc.rendererSettingsGameObjectId;
+	runtimeDesc.firstLocalAnchor = ToEditorVector3(wireDesc.firstLocalAnchor);
+	runtimeDesc.secondLocalAnchor = ToEditorVector3(wireDesc.secondLocalAnchor);
+	runtimeDesc.maximumLength = wireDesc.maximumLength;
+	runtimeDesc.minimumLength = wireDesc.minimumLength;
+	runtimeDesc.stiffness = wireDesc.stiffness;
+	runtimeDesc.damping = wireDesc.damping;
+	runtimeDesc.maximumTension = wireDesc.maximumTension;
+	runtimeDesc.breakingTension = wireDesc.breakingTension;
+	runtimeDesc.shrinkSpeed = wireDesc.shrinkSpeed;
+	runtimeDesc.applyReaction = wireDesc.applyReaction;
+	runtimeDesc.requireConnectable = wireDesc.requireConnectable;
+	return physicsManager_->CreateWire(runtimeDesc);
+}
+
+bool EditorScriptManager::DestroyWireInternal(EditorScriptWireHandle wireHandle) {
+	return physicsManager_ != nullptr && physicsManager_->DestroyWire(wireHandle);
+}
+
+bool EditorScriptManager::SetWireLengthByHandleInternal(
+	EditorScriptWireHandle wireHandle,
+	float maximumLength) {
+	return physicsManager_ != nullptr &&
+		physicsManager_->SetWireLength(wireHandle, maximumLength);
+}
+
+bool EditorScriptManager::SetWireShrinkSpeedInternal(
+	EditorScriptWireHandle wireHandle,
+	float shrinkSpeed) {
+	return physicsManager_ != nullptr &&
+		physicsManager_->SetWireShrinkSpeed(wireHandle, shrinkSpeed);
+}
+
+bool EditorScriptManager::RepairWireInternal(EditorScriptWireHandle wireHandle) {
+	return physicsManager_ != nullptr && physicsManager_->RepairWire(wireHandle);
+}
+
+bool EditorScriptManager::GetWireStateByHandleInternal(
+	EditorScriptWireHandle wireHandle,
+	EditorScriptWireState& wireState) const {
+	if (physicsManager_ == nullptr) {
+		return false;
+	}
+
+	EditorPhysicsManager::RuntimeWireState runtimeState{};
+
+	if (!physicsManager_->GetWireState(wireHandle, runtimeState)) {
+		return false;
+	}
+
+	wireState = ToScriptWireState(runtimeState);
+	return true;
+}
+
+int32_t EditorScriptManager::GetWireCountForGameObjectInternal(int32_t gameObjectId) const {
+	return physicsManager_ != nullptr
+		? physicsManager_->GetWireCountForGameObject(gameObjectId)
+		: 0;
+}
+
+bool EditorScriptManager::GetWireForGameObjectInternal(
+	int32_t gameObjectId,
+	int32_t wireIndex,
+	EditorScriptWireState& wireState) const {
+	if (physicsManager_ == nullptr) {
+		return false;
+	}
+
+	EditorPhysicsManager::RuntimeWireState runtimeState{};
+
+	if (!physicsManager_->GetWireForGameObject(gameObjectId, wireIndex, runtimeState)) {
+		return false;
+	}
+
+	wireState = ToScriptWireState(runtimeState);
+	return true;
+}
+
+bool EditorScriptManager::CanConnectWireInternal(int32_t gameObjectId) const {
+	return physicsManager_ != nullptr && physicsManager_->CanConnectWire(gameObjectId);
 }
 
 EditorScriptAiSensorState EditorScriptManager::GetAiSensorStateInternal(int32_t gameObjectId, int32_t sensorKind) const {
@@ -5264,6 +6115,432 @@ bool EditorScriptManager::HasComponentInternal(
 		if (ToString(component.type) == componentTypeName) {
 			return true;
 		}
+	}
+
+	return false;
+}
+
+bool EditorScriptManager::AddComponentInternal(
+	int32_t gameObjectId,
+	const char* componentTypeName) {
+	if (editorScene_ == nullptr) {
+		return false;
+	}
+
+	EditorComponentType componentType = EditorComponentType::Transform;
+
+	if (!TryResolveComponentType(componentTypeName, componentType) ||
+		!editorScene_->AddComponent(gameObjectId, componentType)) {
+		return false;
+	}
+
+	if (physicsManager_ != nullptr &&
+		(componentType == EditorComponentType::RigidBody ||
+		 IsColliderComponentType(componentType))) {
+		physicsManager_->RegisterRuntimeHierarchy(gameObjectId);
+	}
+
+	return true;
+}
+
+bool EditorScriptManager::RemoveComponentInternal(
+	int32_t gameObjectId,
+	const char* componentTypeName) {
+	if (editorScene_ == nullptr) {
+		return false;
+	}
+
+	EditorComponentType componentType = EditorComponentType::Transform;
+
+	if (!TryResolveComponentType(componentTypeName, componentType)) {
+		return false;
+	}
+
+	// Jolt Bodyが参照中のComponentを消す前にBroadPhaseから外し、削除後の不正参照を防ぐ。
+	if (physicsManager_ != nullptr &&
+		(componentType == EditorComponentType::RigidBody ||
+		 IsColliderComponentType(componentType))) {
+		physicsManager_->SetGameObjectSimulationActive(gameObjectId, false);
+	}
+
+	return editorScene_->RemoveComponent(gameObjectId, componentType);
+}
+
+int32_t EditorScriptManager::FindGameObjectsWithComponentInternal(
+	const char* componentTypeName,
+	int32_t* gameObjectIds,
+	int32_t capacity) const {
+	if (editorScene_ == nullptr || componentTypeName == nullptr ||
+		componentTypeName[0] == '\0') {
+		return 0;
+	}
+
+	int32_t foundCount = 0;
+
+	for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
+		if (!gameObject.isActive || !HasComponentInternal(gameObject.id, componentTypeName)) {
+			continue;
+		}
+
+		if (gameObjectIds != nullptr && foundCount < capacity) {
+			gameObjectIds[foundCount] = gameObject.id;
+		}
+
+		foundCount++;
+	}
+
+	return foundCount;
+}
+
+int32_t EditorScriptManager::InstantiateGameObjectInternal(
+	int32_t sourceGameObjectId,
+	const EditorScriptVector3& position,
+	const EditorScriptVector3& rotation) {
+	if (editorScene_ == nullptr || editorScene_->FindGameObject(sourceGameObjectId) == nullptr) {
+		return -1;
+	}
+
+	const int32_t instanceGameObjectId = editorScene_->DuplicateGameObject(sourceGameObjectId);
+	EditorGameObject* instanceGameObject = editorScene_->FindGameObject(instanceGameObjectId);
+
+	if (instanceGameObject == nullptr) {
+		return -1;
+	}
+
+	instanceGameObject->parentId = -1;
+	instanceGameObject->translate = ToEditorVector3(position);
+	instanceGameObject->rotate = ToEditorVector3(rotation);
+	instanceGameObject->isActive = true;
+
+	if (physicsManager_ != nullptr) {
+		physicsManager_->RegisterRuntimeHierarchy(instanceGameObjectId);
+	}
+
+	pendingRuntimeHierarchyRegistrations_.push_back(instanceGameObjectId);
+	return instanceGameObjectId;
+}
+
+bool EditorScriptManager::DestroyGameObjectInternal(int32_t gameObjectId) {
+	if (editorScene_ == nullptr || editorScene_->FindGameObject(gameObjectId) == nullptr) {
+		return false;
+	}
+
+	// 実行中は参照を保持するManagerがあるため即時eraseせず、階層を非Active化する。
+	std::vector<int32_t> pendingGameObjectIds{gameObjectId};
+
+	while (!pendingGameObjectIds.empty()) {
+		const int32_t currentGameObjectId = pendingGameObjectIds.back();
+		pendingGameObjectIds.pop_back();
+		EditorGameObject* currentGameObject = editorScene_->FindGameObject(currentGameObjectId);
+
+		if (currentGameObject == nullptr) {
+			continue;
+		}
+
+		currentGameObject->isActive = false;
+
+		if (physicsManager_ != nullptr) {
+			physicsManager_->SetGameObjectSimulationActive(currentGameObjectId, false);
+		}
+
+		for (const int32_t childGameObjectId : currentGameObject->children) {
+			pendingGameObjectIds.push_back(childGameObjectId);
+		}
+	}
+
+	return true;
+}
+
+bool EditorScriptManager::SetRendererColorInternal(
+	int32_t gameObjectId,
+	const EditorScriptVector3& color) {
+	if (editorScene_ == nullptr) {
+		return false;
+	}
+
+	EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+
+	if (gameObject == nullptr) {
+		return false;
+	}
+
+	EditorComponent* renderer = EditorComponentUtility::FindComponent(
+		*gameObject,
+		EditorComponentType::ModelRenderer);
+
+	if (renderer == nullptr) {
+		renderer = EditorComponentUtility::FindComponent(
+			*gameObject,
+			EditorComponentType::SkinnedMeshRenderer);
+	}
+
+	if (renderer == nullptr) {
+		return false;
+	}
+
+	renderer->color = {
+		(std::clamp)(color.x, 0.0f, 1.0f),
+		(std::clamp)(color.y, 0.0f, 1.0f),
+		(std::clamp)(color.z, 0.0f, 1.0f)};
+	return true;
+}
+
+bool EditorScriptManager::SetRendererEmissionInternal(
+	int32_t gameObjectId,
+	const EditorScriptVector3& color,
+	float strength) {
+	if (editorScene_ == nullptr) {
+		return false;
+	}
+
+	EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+
+	if (gameObject == nullptr) {
+		return false;
+	}
+
+	EditorComponent* renderer = EditorComponentUtility::FindComponent(
+		*gameObject,
+		EditorComponentType::ModelRenderer);
+
+	if (renderer == nullptr) {
+		renderer = EditorComponentUtility::FindComponent(
+			*gameObject,
+			EditorComponentType::SkinnedMeshRenderer);
+	}
+
+	if (renderer == nullptr) {
+		return false;
+	}
+
+	renderer->emissionColor = {
+		(std::clamp)(color.x, 0.0f, 1.0f),
+		(std::clamp)(color.y, 0.0f, 1.0f),
+		(std::clamp)(color.z, 0.0f, 1.0f)};
+	renderer->emissionStrength = (std::max)(strength, 0.0f);
+	return true;
+}
+
+bool EditorScriptManager::SetHookVisualStateInternal(
+	int32_t gameObjectId,
+	int32_t visualState) {
+	if (editorScene_ == nullptr) {
+		return false;
+	}
+
+	EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+
+	if (gameObject == nullptr) {
+		return false;
+	}
+
+	const EditorComponent* hook = EditorComponentUtility::FindComponent(
+		*gameObject,
+		EditorComponentType::WireConnectable);
+
+	if (hook == nullptr) {
+		return false;
+	}
+
+	const Vector3* visualColor = &hook->wireConnectableNormalColor;
+
+	if (visualState == 1) {
+		visualColor = &hook->wireConnectableTargetedColor;
+	}
+	else if (visualState == 2) {
+		visualColor = &hook->wireConnectableSelectedColor;
+	}
+	else if (visualState == 3) {
+		visualColor = &hook->wireConnectableConnectedColor;
+	}
+
+	const EditorScriptVector3 scriptColor = ToScriptVector3(*visualColor);
+	const bool colorChanged = SetRendererColorInternal(gameObjectId, scriptColor);
+	const bool emissionChanged = SetRendererEmissionInternal(
+		gameObjectId,
+		scriptColor,
+		hook->wireConnectableEmissionStrength);
+	return colorChanged || emissionChanged;
+}
+
+int32_t EditorScriptManager::CreateGameObjectInternal(const char* name) {
+	if (editorScene_ == nullptr) {
+		return -1;
+	}
+
+	const std::string resolvedName = name != nullptr && name[0] != '\0'
+		? name
+		: "GameObject";
+	return editorScene_->CreateGameObject(resolvedName);
+}
+
+int32_t EditorScriptManager::GetParentGameObjectInternal(int32_t gameObjectId) const {
+	if (editorScene_ == nullptr) {
+		return -1;
+	}
+
+	const EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+	return gameObject != nullptr ? gameObject->parentId : -1;
+}
+
+bool EditorScriptManager::SetParentGameObjectInternal(
+	int32_t childGameObjectId,
+	int32_t parentGameObjectId,
+	bool preserveWorldTransform) {
+	return editorScene_ != nullptr && editorScene_->SetParent(
+		childGameObjectId,
+		parentGameObjectId,
+		preserveWorldTransform);
+}
+
+int32_t EditorScriptManager::GetChildGameObjectCountInternal(int32_t gameObjectId) const {
+	if (editorScene_ == nullptr) {
+		return 0;
+	}
+
+	const EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+	return gameObject != nullptr ? static_cast<int32_t>(gameObject->children.size()) : 0;
+}
+
+int32_t EditorScriptManager::GetChildGameObjectInternal(
+	int32_t gameObjectId,
+	int32_t childIndex) const {
+	if (editorScene_ == nullptr || childIndex < 0) {
+		return -1;
+	}
+
+	const EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+
+	if (gameObject == nullptr || childIndex >= static_cast<int32_t>(gameObject->children.size())) {
+		return -1;
+	}
+
+	return gameObject->children[static_cast<size_t>(childIndex)];
+}
+
+bool EditorScriptManager::ReloadPrimarySceneInternal() {
+	return !loadedScenePaths_.empty() && RequestSceneLoadInternal(loadedScenePaths_.front());
+}
+
+bool EditorScriptManager::WorldToLocalPointInternal(
+	int32_t gameObjectId,
+	const EditorScriptVector3& worldPoint,
+	EditorScriptVector3& localPoint) const {
+	if (editorScene_ == nullptr || editorScene_->FindGameObject(gameObjectId) == nullptr) {
+		return false;
+	}
+
+	localPoint = ToScriptVector3(Transform(
+		ToEditorVector3(worldPoint),
+		Inverse(editorScene_->GetWorldMatrix(gameObjectId))));
+	return true;
+}
+
+bool EditorScriptManager::LocalToWorldPointInternal(
+	int32_t gameObjectId,
+	const EditorScriptVector3& localPoint,
+	EditorScriptVector3& worldPoint) const {
+	if (editorScene_ == nullptr || editorScene_->FindGameObject(gameObjectId) == nullptr) {
+		return false;
+	}
+
+	worldPoint = ToScriptVector3(Transform(
+		ToEditorVector3(localPoint),
+		editorScene_->GetWorldMatrix(gameObjectId)));
+	return true;
+}
+
+bool EditorScriptManager::WorldToLocalDirectionInternal(
+	int32_t gameObjectId,
+	const EditorScriptVector3& worldDirection,
+	EditorScriptVector3& localDirection) const {
+	if (editorScene_ == nullptr || editorScene_->FindGameObject(gameObjectId) == nullptr) {
+		return false;
+	}
+
+	const Matrix4x4 inverseWorldMatrix = Inverse(editorScene_->GetWorldMatrix(gameObjectId));
+	const Vector3 localOrigin = Transform({0.0f, 0.0f, 0.0f}, inverseWorldMatrix);
+	const Vector3 localEnd = Transform(ToEditorVector3(worldDirection), inverseWorldMatrix);
+	localDirection = ToScriptVector3(Subtract(localEnd, localOrigin));
+	return true;
+}
+
+bool EditorScriptManager::LocalToWorldDirectionInternal(
+	int32_t gameObjectId,
+	const EditorScriptVector3& localDirection,
+	EditorScriptVector3& worldDirection) const {
+	if (editorScene_ == nullptr || editorScene_->FindGameObject(gameObjectId) == nullptr) {
+		return false;
+	}
+
+	const Matrix4x4 worldMatrix = editorScene_->GetWorldMatrix(gameObjectId);
+	const Vector3 worldOrigin = Transform({0.0f, 0.0f, 0.0f}, worldMatrix);
+	const Vector3 worldEnd = Transform(ToEditorVector3(localDirection), worldMatrix);
+	worldDirection = ToScriptVector3(Subtract(worldEnd, worldOrigin));
+	return true;
+}
+
+bool EditorScriptManager::PhysicsRaycastFilteredInternal(
+	const EditorScriptRay& ray,
+	float distance,
+	uint32_t physicsLayerMask,
+	bool includeTriggers,
+	const char* requiredComponentTypeName,
+	EditorScriptPhysicsHit& hit) const {
+	if (editorScene_ == nullptr || physicsManager_ == nullptr ||
+		distance < 0.0f || physicsLayerMask == 0U) {
+		return false;
+	}
+
+	constexpr int32_t kMaximumSkippedHits = 128;
+	std::vector<int32_t> ignoredGameObjectIds;
+	ignoredGameObjectIds.reserve(kMaximumSkippedHits);
+
+	for (int32_t skippedHitCount = 0;
+		skippedHitCount < kMaximumSkippedHits;
+		skippedHitCount++) {
+		EditorJoltPhysicsManager::PhysicsHit physicsHit{};
+
+		if (!physicsManager_->RaycastIgnoringGameObjects(
+			ToEditorVector3(ray.origin),
+			ToEditorVector3(ray.direction),
+			distance,
+			ignoredGameObjectIds,
+			physicsHit)) {
+			return false;
+		}
+
+		const EditorGameObject* hitGameObject =
+			editorScene_->FindGameObject(physicsHit.gameObjectId);
+		bool passesLayer = false;
+
+		if (hitGameObject != nullptr) {
+			for (const EditorComponent& component : hitGameObject->components) {
+				if (!component.isActive || !IsColliderComponentType(component.type)) {
+					continue;
+				}
+
+				const int32_t layerIndex = (std::clamp)(component.physicsLayer, 0, 31);
+				passesLayer = (physicsLayerMask & (1U << static_cast<uint32_t>(layerIndex))) != 0U;
+				break;
+			}
+		}
+
+		const bool passesTrigger = includeTriggers || !physicsHit.isTrigger;
+		const bool passesComponent = requiredComponentTypeName == nullptr ||
+			requiredComponentTypeName[0] == '\0' ||
+			HasComponentInternal(physicsHit.gameObjectId, requiredComponentTypeName);
+
+		if (passesLayer && passesTrigger && passesComponent) {
+			hit.gameObjectId = physicsHit.gameObjectId;
+			hit.point = ToScriptVector3(physicsHit.point);
+			hit.normal = ToScriptVector3(physicsHit.normal);
+			hit.distance = physicsHit.distance;
+			hit.isTrigger = physicsHit.isTrigger;
+			return true;
+		}
+
+		ignoredGameObjectIds.push_back(physicsHit.gameObjectId);
 	}
 
 	return false;

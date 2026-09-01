@@ -223,6 +223,9 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
 	<ClCompile Include="Source\Engine\Editor\EditorLogMonitorWindowManager.cpp" />
 	<ClCompile Include="Source\Engine\Editor\EditorLogSystemProviders.cpp" />
 	<ClCompile Include="Source\Engine\Editor\EditorProfilerManager.cpp" />
+	<ClCompile Include="Source\Engine\Editor\EditorProfilerAllocationTracker.cpp" />
+	<ClCompile Include="Source\Engine\Editor\EditorTeamUuid.cpp" />
+	<ClCompile Include="Source\Engine\Editor\EditorTeamCollaborationManager.cpp" />
 	<ClCompile Include="Source\Engine\Editor\EditorReplayManager.cpp" />
 	<ClCompile Include="Source\Engine\Effect\EffectAsset.cpp" />
 	<ClCompile Include="Source\Engine\Effect\EditorEffectManager.cpp" />
@@ -590,6 +593,9 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
 	<ClInclude Include="Source\Engine\Editor\EditorLogMonitorWindowManager.h" />
 	<ClInclude Include="Source\Engine\Editor\EditorLogSystemProviders.h" />
 	<ClInclude Include="Source\Engine\Editor\EditorProfilerManager.h" />
+	<ClInclude Include="Source\Engine\Editor\EditorProfilerAllocationTracker.h" />
+	<ClInclude Include="Source\Engine\Editor\EditorTeamUuid.h" />
+	<ClInclude Include="Source\Engine\Editor\EditorTeamCollaborationManager.h" />
 	<ClInclude Include="Source\Engine\Editor\EditorReplayManager.h" />
 	<ClInclude Include="Source\Engine\Effect\EffectAsset.h" />
 	<ClInclude Include="Source\Engine\Effect\EditorEffectManager.h" />

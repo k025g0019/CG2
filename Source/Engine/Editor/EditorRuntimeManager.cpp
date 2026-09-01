@@ -17,6 +17,7 @@ void EditorRuntimeManager::Initialize(EditorScene* editorScene, std::vector<std:
 	vfxManager_.Initialize(editorScene_, consoleMessages_);
 	aiManager_.Initialize(editorScene_, &physicsManager_, consoleMessages_);
 	scriptManager_.Initialize(editorScene_, &inputManager_, &animationManager_, &effectManager_, &audioManager_, &aiManager_, &physicsManager_, consoleMessages_);
+	scriptManager_.SetProfilerManager(&profilerManager_);
 	inputManager_.Initialize(editorScene_, consoleMessages_);
 	animationManager_.Initialize(editorScene_, &effectManager_, &scriptManager_, consoleMessages_);
 	audioManager_.Initialize(editorScene_, &physicsManager_);
@@ -144,6 +145,8 @@ void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 		return;
 	}
 
+	profilerManager_.UpdateMeasurement();
+
 	if (sceneTransitionState_.active) {
 		// 演出中はSceneが切り替わる可能性があるため、他のGameplay系Updateを止めて専念する。
 		UpdateSceneTransition(deltaTime);
@@ -220,28 +223,28 @@ void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 		return;
 	}
 
-	profileUpdate("Movement and Rail", [this, deltaTime]() {
-		localMoveManager_.Update(deltaTime);
-		railMovementManager_.Update(deltaTime);
-		railBranchManager_.Update();
-		rollingMoveManager_.Update(deltaTime);
+	profileUpdate("Movement and Rail", [this, deltaTime, &profileUpdate]() {
+		profileUpdate("LocalMove.Update", [this, deltaTime]() { localMoveManager_.Update(deltaTime); });
+		profileUpdate("RailMovement.Update", [this, deltaTime]() { railMovementManager_.Update(deltaTime); });
+		profileUpdate("RailBranch.Update", [this]() { railBranchManager_.Update(); });
+		profileUpdate("RollingMove.Update", [this, deltaTime]() { rollingMoveManager_.Update(deltaTime); });
 	});
-	profileUpdate("Sequence and Wave", [this, deltaTime]() {
-		actionSequenceManager_.Update(deltaTime);
-		waveSpawnerManager_.Update(deltaTime);
-		objectPoolManager_.Update(deltaTime);
-		gameplayEventManager_.Update(deltaTime);
+	profileUpdate("Sequence and Wave", [this, deltaTime, &profileUpdate]() {
+		profileUpdate("ActionSequence.Update", [this, deltaTime]() { actionSequenceManager_.Update(deltaTime); });
+		profileUpdate("WaveSpawner.Update", [this, deltaTime]() { waveSpawnerManager_.Update(deltaTime); });
+		profileUpdate("ObjectPool.Update", [this, deltaTime]() { objectPoolManager_.Update(deltaTime); });
+		profileUpdate("GameplayEvent.Update", [this, deltaTime]() { gameplayEventManager_.Update(deltaTime); });
 	});
-	profileUpdate("Weapon", [this, deltaTime]() {
-		weaponManager_.Update(deltaTime);
-		weaponLoadoutManager_.Update(deltaTime);
+	profileUpdate("Weapon", [this, deltaTime, &profileUpdate]() {
+		profileUpdate("Weapon.Update", [this, deltaTime]() { weaponManager_.Update(deltaTime); });
+		profileUpdate("WeaponLoadout.Update", [this, deltaTime]() { weaponLoadoutManager_.Update(deltaTime); });
 	});
 	profileUpdate("Runtime Property", [this, deltaTime]() {
 		runtimePropertyManager_.Update(deltaTime);
 	});
-	profileUpdate("AI and Navigation", [this, deltaTime]() {
-		aiManager_.Update(deltaTime);
-		navigationManager_.Update(deltaTime);
+	profileUpdate("AI and Navigation", [this, deltaTime, &profileUpdate]() {
+		profileUpdate("AI.Update", [this, deltaTime]() { aiManager_.Update(deltaTime); });
+		profileUpdate("Navigation.Update", [this, deltaTime]() { navigationManager_.Update(deltaTime); });
 	});
 
 	if (processSceneRequests()) {
@@ -256,41 +259,46 @@ void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 	});
 	float fixedTimeStep = physicsManager_.GetFixedTimeStep();  // 物理と同じ固定時間を Script 側へ渡す
 	scriptManager_.SetPhysicsEvents(physicsManager_.GetFrameEvents());  // このフレームで発生した接触イベントを FixedUpdate から参照できるようにする
+	scriptManager_.SetWireEvents(physicsManager_.GetFrameWireEvents());  // 同じ固定更新で確定したWireイベントも通知する
 
-	if (fixedStepCount >= 4) {
-		scriptManager_.FixedUpdate(fixedTimeStep);  // 1 フレーム内の最大固定更新回数は 4 回に制限しているため、ここで 4 回目を処理する
-	}
+	profileUpdate("C++ Script FixedUpdate", [this, fixedStepCount, fixedTimeStep]() {
+		if (fixedStepCount >= 4) {
+			scriptManager_.FixedUpdate(fixedTimeStep);  // 1 フレーム内の最大固定更新回数は 4 回に制限しているため、ここで 4 回目を処理する
+		}
 
-	if (fixedStepCount >= 3) {
-		scriptManager_.FixedUpdate(fixedTimeStep);  // 3 回以上進んだ場合も、物理後の Script 固定更新を同じ回数だけ呼ぶ
-	}
+		if (fixedStepCount >= 3) {
+			scriptManager_.FixedUpdate(fixedTimeStep);  // 3 回以上進んだ場合も、物理後の Script 固定更新を同じ回数だけ呼ぶ
+		}
 
-	if (fixedStepCount >= 2) {
-		scriptManager_.FixedUpdate(fixedTimeStep);  // 2 回分の固定更新が必要だったフレームを取りこぼさない
-	}
+		if (fixedStepCount >= 2) {
+			scriptManager_.FixedUpdate(fixedTimeStep);  // 2 回分の固定更新が必要だったフレームを取りこぼさない
+		}
 
-	if (fixedStepCount >= 1) {
-		scriptManager_.FixedUpdate(fixedTimeStep);  // 物理結果の後に FixedUpdate を呼び、OnCollision 相当の判定に使える順へそろえる
-	}
+		if (fixedStepCount >= 1) {
+			scriptManager_.FixedUpdate(fixedTimeStep);  // 物理結果の後に FixedUpdate を呼び、OnCollision 相当の判定に使える順へそろえる
+		}
+	});
 
 	// Physics で確定した速度と Transform を Animator が読み、その Event から同じフレームの Effect を発生させる。
-	profileUpdate("Animation and Constraint", [this, deltaTime]() {
-		animationManager_.Update(deltaTime);
-		constraintManager_.Update(deltaTime);
+	profileUpdate("Animation and Constraint", [this, deltaTime, &profileUpdate]() {
+		profileUpdate("Animation.Update", [this, deltaTime]() { animationManager_.Update(deltaTime); });
+		profileUpdate("Constraint.Update", [this, deltaTime]() { constraintManager_.Update(deltaTime); });
 	});
-	profileUpdate("Effect", [this, deltaTime]() {
-		effectManager_.Update(deltaTime);
-		effekseerManager_.Update(deltaTime);
-		vfxManager_.Update(deltaTime);
+	profileUpdate("Effect", [this, deltaTime, &profileUpdate]() {
+		profileUpdate("Effect.Update", [this, deltaTime]() { effectManager_.Update(deltaTime); });
+		profileUpdate("Effekseer.Update", [this, deltaTime]() { effekseerManager_.Update(deltaTime); });
+		profileUpdate("Vfx.Update", [this, deltaTime]() { vfxManager_.Update(deltaTime); });
 	});
-	profileUpdate("Audio and Haptics", [this, deltaTime]() {
-		audioManager_.Update(deltaTime);
-		UpdateHapticSources(deltaTime);
+	profileUpdate("Audio and Haptics", [this, deltaTime, &profileUpdate]() {
+		profileUpdate("Audio.Update", [this, deltaTime]() { audioManager_.Update(deltaTime); });
+		profileUpdate("Haptics.Update", [this, deltaTime]() { UpdateHapticSources(deltaTime); });
 	});
-	profileUpdate("UI and Camera", [this, deltaTime, keyState]() {
-		freeTransformManager_.Update(deltaTime, keyState);
-		uiBindingManager_.Update();
-		cameraEffectManager_.Update(deltaTime);
+	profileUpdate("UI and Camera", [this, deltaTime, keyState, &profileUpdate]() {
+		profileUpdate("FreeTransform.Update", [this, deltaTime, keyState]() { freeTransformManager_.Update(deltaTime, keyState); });
+		profileUpdate("UiBinding.Update", [this]() { uiBindingManager_.Update(); });
+		profileUpdate("CameraEffect.Update", [this, deltaTime, keyState]() {
+			cameraEffectManager_.Update(deltaTime, keyState);
+		});
 	});
 	profileUpdate("Log Monitor", [this, deltaTime]() {
 		logMonitorManager_.Update(deltaTime);
@@ -707,7 +715,10 @@ bool EditorRuntimeManager::RequestSceneLoadAsync(
 	try {
 		pendingSceneLoadFuture_ = std::async(
 			std::launch::async,
-			[normalizedScenePath]() {
+			[normalizedScenePath, profilerManager = &profilerManager_]() {
+				EditorProfilerManager::Scope profilerScope(
+					*profilerManager,
+					"Scene Load Worker");
 				AsyncSceneLoadResult result{};
 				result.wasLoaded = result.loadedScene.LoadScene(normalizedScenePath);
 				return result;

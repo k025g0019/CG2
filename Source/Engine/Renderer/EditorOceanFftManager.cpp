@@ -1,5 +1,7 @@
 ﻿#include "EditorOceanFftManager.h"
 
+#include "Source/Engine/Editor/EditorProfilerManager.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -231,6 +233,7 @@ bool EditorOceanFftManager::Execute(
 
 	const uint32_t computeGroupCount =
 		(fftResolution_ + kComputeThreadGroupSize - 1u) / kComputeThreadGroupSize;
+	RecordEditorProfilerDispatch();
 	commandList->Dispatch(computeGroupCount, computeGroupCount, 1u);
 	InsertUavBarrier(commandList, heightFieldResource_.Get());
 	InsertUavBarrier(commandList, displacementXFieldResource_.Get());
@@ -275,6 +278,7 @@ bool EditorOceanFftManager::Execute(
 	commandList->SetComputeRootShaderResourceView(
 		kComputePreviousFoamSrvRootIndex,
 		previousNormalFoamResource->GetGPUVirtualAddress());
+	RecordEditorProfilerDispatch();
 	commandList->Dispatch(computeGroupCount, computeGroupCount, 1u);
 	InsertUavBarrier(commandList, displacementOutputResource_.Get());
 	InsertUavBarrier(commandList, normalFoamWriteResource);
@@ -1106,6 +1110,7 @@ void EditorOceanFftManager::ExecuteFft2D(
 	commandList->SetComputeRootUnorderedAccessView(
 		2u,
 		temporaryFieldResource_->GetGPUVirtualAddress());
+	RecordEditorProfilerDispatch();
 	commandList->Dispatch(fftResolution_, 1u, 1u);
 	InsertUavBarrier(commandList, temporaryFieldResource_.Get());
 
@@ -1114,6 +1119,7 @@ void EditorOceanFftManager::ExecuteFft2D(
 		1u,
 		temporaryFieldResource_->GetGPUVirtualAddress());
 	commandList->SetComputeRootUnorderedAccessView(2u, fieldResource->GetGPUVirtualAddress());
+	RecordEditorProfilerDispatch();
 	commandList->Dispatch(transposeGroupCount, transposeGroupCount, 1u);
 	InsertUavBarrier(commandList, fieldResource);
 
@@ -1122,6 +1128,7 @@ void EditorOceanFftManager::ExecuteFft2D(
 	commandList->SetComputeRootUnorderedAccessView(
 		2u,
 		temporaryFieldResource_->GetGPUVirtualAddress());
+	RecordEditorProfilerDispatch();
 	commandList->Dispatch(fftResolution_, 1u, 1u);
 	InsertUavBarrier(commandList, temporaryFieldResource_.Get());
 
@@ -1130,6 +1137,7 @@ void EditorOceanFftManager::ExecuteFft2D(
 		1u,
 		temporaryFieldResource_->GetGPUVirtualAddress());
 	commandList->SetComputeRootUnorderedAccessView(2u, fieldResource->GetGPUVirtualAddress());
+	RecordEditorProfilerDispatch();
 	commandList->Dispatch(transposeGroupCount, transposeGroupCount, 1u);
 	InsertUavBarrier(commandList, fieldResource);
 }

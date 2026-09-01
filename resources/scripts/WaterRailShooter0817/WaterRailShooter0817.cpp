@@ -3,9 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <memory>
 #include <string>
-#include <unordered_map>
 
 namespace {
 	constexpr int32_t kWeapon20mmSlot = 0;
@@ -70,8 +68,6 @@ namespace {
 		constexpr int32_t kRetreat = 6;
 	}
 
-	const EditorScriptRuntimeApi* runtimeApi = nullptr;
-	std::unordered_map<int32_t, std::unique_ptr<WaterRailShooter0817>> scriptStates;
 
 	struct SharedGameState {
 		bool isInitialized = false;
@@ -130,6 +126,10 @@ namespace {
 
 	constexpr float kExplosionEffectActiveSeconds = 0.5f;
 
+	// Find()は本体をこのファイルの後方(228行付近)で定義しているため、それより前にある
+	// PlayEnemyDestroyedEffect/StopEnemyDestroyedEffectから呼べるよう前方宣言する。
+	GameObject Find(const char* gameObjectName);
+
 	// Scene上に実在するParticleSystem Component(FX Explosion Small/Large、EFFECTS配下)を
 	// 撃破位置へ移動してから一定時間だけ有効化する。外部.effectdefファイルへの文字列参照は
 	// 使わない(Inspectorから見える・触れる通常のComponentのみで完結させる)。
@@ -155,8 +155,8 @@ namespace {
 		// SetActive(true)だけではParticleは1つも出ない。EffectManagerはEmitterごとに
 		// isPlayingを持ち、Play開始時のPlayOnAwake判定かPlayEffect()でしかtrueにならないため、
 		// ここで明示的に再生を開始する(これが無いと「重いのに何も見えない」状態になる)。
-		if (runtimeApi != nullptr && runtimeApi->PlayEffect != nullptr) {
-			runtimeApi->PlayEffect(explosionEffect.GetInstanceId());
+		if (EditorNativeScriptRuntime::GetRuntimeApi() != nullptr && EditorNativeScriptRuntime::GetRuntimeApi()->PlayEffect != nullptr) {
+			EditorNativeScriptRuntime::GetRuntimeApi()->PlayEffect(explosionEffect.GetInstanceId());
 		}
 
 		(isLargeExplosion
@@ -175,8 +175,8 @@ namespace {
 
 		// Emitterの発生だけ止める。既に出ているParticleはGPU側で寿命分だけ残って消えるため、
 		// 爆発が途中でぶつ切りにならない。
-		if (runtimeApi != nullptr && runtimeApi->StopEffect != nullptr) {
-			runtimeApi->StopEffect(explosionEffect.GetInstanceId());
+		if (EditorNativeScriptRuntime::GetRuntimeApi() != nullptr && EditorNativeScriptRuntime::GetRuntimeApi()->StopEffect != nullptr) {
+			EditorNativeScriptRuntime::GetRuntimeApi()->StopEffect(explosionEffect.GetInstanceId());
 		}
 
 		explosionEffect.SetActive(false);
@@ -200,28 +200,14 @@ namespace {
 		}
 	}
 
-	WaterRailShooter0817& GetState(int32_t gameObjectId) {
-		std::unique_ptr<WaterRailShooter0817>& scriptState = scriptStates[gameObjectId];
-
-		if (scriptState == nullptr) {
-			scriptState = std::make_unique<WaterRailShooter0817>();
-		}
-
-		return *scriptState;
-	}
-
-	WaterRailShooter0817& GetMetadataState() {
-		static WaterRailShooter0817 metadataState;
-		return metadataState;
-	}
 
 	bool IsPerformed(const EditorScriptInputActionContext& inputContext) {
 		return inputContext.phase == EditorScriptInputPhasePerformed;
 	}
 
 	void Log(const std::string& message) {
-		if (runtimeApi != nullptr && runtimeApi->Log != nullptr) {
-			runtimeApi->Log(message.c_str());
+		if (EditorNativeScriptRuntime::GetRuntimeApi() != nullptr && EditorNativeScriptRuntime::GetRuntimeApi()->Log != nullptr) {
+			EditorNativeScriptRuntime::GetRuntimeApi()->Log(message.c_str());
 		}
 	}
 
@@ -991,91 +977,4 @@ void WaterRailShooter0817::OnLoadoutChanged(const EditorScriptInputActionContext
 
 void WaterRailShooter0817::OnObjectiveChanged(const EditorScriptInputActionContext& inputContext) {
 	(void)inputContext;
-}
-
-//================================================================
-// Editor DLL ABI
-//================================================================
-
-extern "C" __declspec(dllexport) bool EditorScript_Load(
-	uint32_t apiVersion,
-	const EditorScriptRuntimeApi* api) {
-	if (apiVersion != kEditorScriptApiVersion || api == nullptr) {
-		return false;
-	}
-
-	runtimeApi = api;
-	EditorNativeScriptRuntime::SetRuntimeApi(api);
-	return true;
-}
-
-extern "C" __declspec(dllexport) void EditorScript_Unload() {
-	scriptStates.clear();
-	sharedGameState = {};
-	runtimeApi = nullptr;
-	EditorNativeScriptRuntime::SetRuntimeApi(nullptr);
-}
-
-extern "C" __declspec(dllexport) void EditorScript_Start(int32_t gameObjectId) {
-	GetState(gameObjectId).Start(gameObjectId);
-}
-
-extern "C" __declspec(dllexport) void EditorScript_Update(int32_t gameObjectId, float deltaTime) {
-	GetState(gameObjectId).Update(gameObjectId, deltaTime);
-}
-
-extern "C" __declspec(dllexport) void EditorScript_FixedUpdate(int32_t gameObjectId, float fixedDeltaTime) {
-	GetState(gameObjectId).FixedUpdate(gameObjectId, fixedDeltaTime);
-}
-
-extern "C" __declspec(dllexport) void EditorScript_OnPhysicsEvent(
-	int32_t gameObjectId,
-	const EditorScriptPhysicsEvent* physicsEvent) {
-	if (physicsEvent != nullptr) {
-		GetState(gameObjectId).DispatchPhysicsEvent(*physicsEvent);
-	}
-}
-
-extern "C" __declspec(dllexport) void EditorScript_Stop(int32_t gameObjectId) {
-	const auto scriptStateIterator = scriptStates.find(gameObjectId);
-
-	if (scriptStateIterator != scriptStates.end()) {
-		scriptStateIterator->second->Stop(gameObjectId);
-		scriptStates.erase(scriptStateIterator);
-	}
-}
-
-extern "C" __declspec(dllexport) int32_t EditorScript_GetFieldCount() {
-	return GetMetadataState().GetFieldCount();
-}
-
-extern "C" __declspec(dllexport) bool EditorScript_GetFieldDescriptor(
-	int32_t fieldIndex,
-	EditorScriptFieldDescriptor* fieldDescriptor) {
-	return fieldDescriptor != nullptr &&
-		GetMetadataState().GetFieldDescriptor(fieldIndex, *fieldDescriptor);
-}
-
-extern "C" __declspec(dllexport) bool EditorScript_GetFieldValue(
-	int32_t gameObjectId,
-	const char* fieldName,
-	EditorScriptFieldValue* fieldValue) {
-	return fieldValue != nullptr &&
-		GetState(gameObjectId).GetFieldValue(fieldName, *fieldValue);
-}
-
-extern "C" __declspec(dllexport) bool EditorScript_SetFieldValue(
-	int32_t gameObjectId,
-	const char* fieldName,
-	const EditorScriptFieldValue* fieldValue) {
-	return fieldValue != nullptr &&
-		GetState(gameObjectId).SetFieldValue(fieldName, *fieldValue);
-}
-
-extern "C" __declspec(dllexport) bool EditorScript_InvokeAction(
-	int32_t gameObjectId,
-	const char* functionName,
-	const EditorScriptInputActionContext* inputContext) {
-	return inputContext != nullptr &&
-		GetState(gameObjectId).InvokeAction(functionName, *inputContext);
 }

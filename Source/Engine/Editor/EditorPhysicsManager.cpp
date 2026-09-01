@@ -451,6 +451,7 @@ void EditorPhysicsManager::Initialize(EditorScene* editorScene, std::vector<std:
 
 void EditorPhysicsManager::BeginDebugFrame() {
 	frameDebugCasts_.clear();
+	frameWireEvents_.clear();
 }
 
 void EditorPhysicsManager::StartSimulation() {
@@ -469,6 +470,9 @@ void EditorPhysicsManager::StartSimulation() {
 	vortexFieldObjects_.clear();
 	pressureFieldObjects_.clear();
 	electromagneticFieldObjects_.clear();
+	runtimeWires_.clear();
+	frameWireEvents_.clear();
+	nextWireHandle_ = 1ULL;
 
 	if (editorScene_ != nullptr) {
 		for (EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
@@ -535,6 +539,7 @@ int32_t EditorPhysicsManager::Update(float deltaTime) {
 		ApplyElectromagneticForces();
 		ApplySpringForces();
 		ApplyRopeForces();
+		ApplyRuntimeWireForces(fixedTimeStep_);
 		ApplyTorsionSpringTorques();
 		ApplyThrusterForces();
 		ApplyPulleyForces();
@@ -594,6 +599,7 @@ void EditorPhysicsManager::StopSimulation() {
 	vortexFieldObjects_.clear();
 	pressureFieldObjects_.clear();
 	electromagneticFieldObjects_.clear();
+	ClearRuntimeWires();
 	joltPhysicsManager_.Stop();
 }
 
@@ -743,6 +749,13 @@ bool EditorPhysicsManager::AddForce(int32_t gameObjectId, const Vector3& force) 
 	return joltPhysicsManager_.AddForce(gameObjectId, force);
 }
 
+bool EditorPhysicsManager::GetBodyDiagnostics(
+	int32_t gameObjectId,
+	Vector3& bodyPosition,
+	bool& isAddedToWorld) const {
+	return joltPhysicsManager_.GetBodyDiagnostics(gameObjectId, bodyPosition, isAddedToWorld);
+}
+
 bool EditorPhysicsManager::GetBodyMass(int32_t gameObjectId, float& bodyMass) const {
 	return joltPhysicsManager_.GetBodyMass(gameObjectId, bodyMass);
 }
@@ -822,6 +835,70 @@ int32_t EditorPhysicsManager::AddExplosionImpulse(
 	}
 
 	return affectedBodyCount;
+}
+
+uint64_t EditorPhysicsManager::CreateSpringJoint(
+	int32_t ownerGameObjectId,
+	int32_t connectedGameObjectId,
+	const Vector3& ownerAnchor,
+	const Vector3& connectedAnchor,
+	float minDistance,
+	float maxDistance,
+	float frequency,
+	float damping) {
+	return joltPhysicsManager_.CreateSpringJoint(
+		ownerGameObjectId,
+		connectedGameObjectId,
+		ownerAnchor,
+		connectedAnchor,
+		minDistance,
+		maxDistance,
+		frequency,
+		damping);
+}
+
+bool EditorPhysicsManager::DestroyJoint(uint64_t jointHandle) {
+	return joltPhysicsManager_.DestroyJoint(jointHandle);
+}
+
+bool EditorPhysicsManager::SetSpringJointSettings(
+	uint64_t jointHandle,
+	const Vector3& ownerAnchor,
+	const Vector3& connectedAnchor,
+	float minDistance,
+	float maxDistance,
+	float frequency,
+	float damping) {
+	return joltPhysicsManager_.SetSpringJointSettings(
+		jointHandle,
+		ownerAnchor,
+		connectedAnchor,
+		minDistance,
+		maxDistance,
+		frequency,
+		damping);
+}
+
+bool EditorPhysicsManager::IsJointValid(uint64_t jointHandle) const {
+	return joltPhysicsManager_.IsJointValid(jointHandle);
+}
+
+uint64_t EditorPhysicsManager::CreateJoint(
+	EditorJoltPhysicsManager::RuntimeJointType jointType,
+	int32_t ownerGameObjectId,
+	int32_t connectedGameObjectId,
+	const EditorJoltPhysicsManager::RuntimeJointSettings& jointSettings) {
+	return joltPhysicsManager_.CreateJoint(
+		jointType,
+		ownerGameObjectId,
+		connectedGameObjectId,
+		jointSettings);
+}
+
+bool EditorPhysicsManager::SetJointSettings(
+	uint64_t jointHandle,
+	const EditorJoltPhysicsManager::RuntimeJointSettings& jointSettings) {
+	return joltPhysicsManager_.SetJointSettings(jointHandle, jointSettings);
 }
 
 bool EditorPhysicsManager::AttachRope(
@@ -965,6 +1042,395 @@ bool EditorPhysicsManager::GetRopeState(
 	currentLength = ropeComponent->ropeCurrentLength;
 	currentTension = ropeComponent->ropeCurrentTension;
 	return true;
+}
+
+EditorPhysicsManager::WireHandle EditorPhysicsManager::CreateWire(
+	const RuntimeWireDesc& wireDesc) {
+	if (editorScene_ == nullptr ||
+		wireDesc.firstGameObjectId < 0 ||
+		wireDesc.secondGameObjectId < 0 ||
+		wireDesc.firstGameObjectId == wireDesc.secondGameObjectId ||
+		wireDesc.maximumLength < 0.0f) {
+		return kInvalidWireHandle;
+	}
+
+	const EditorGameObject* firstGameObject =
+		editorScene_->FindGameObject(wireDesc.firstGameObjectId);
+	const EditorGameObject* secondGameObject =
+		editorScene_->FindGameObject(wireDesc.secondGameObjectId);
+
+	if (firstGameObject == nullptr || secondGameObject == nullptr ||
+		!firstGameObject->isActive || !secondGameObject->isActive) {
+		return kInvalidWireHandle;
+	}
+
+	if (wireDesc.requireConnectable &&
+		(!CanConnectWire(wireDesc.firstGameObjectId) ||
+		 !CanConnectWire(wireDesc.secondGameObjectId))) {
+		return kInvalidWireHandle;
+	}
+
+	RuntimeWireState wireState{};
+	wireState.handle = nextWireHandle_++;
+	wireState.desc = wireDesc;
+	wireState.desc.minimumLength = (std::max)(wireDesc.minimumLength, 0.0f);
+	wireState.desc.maximumLength = (std::max)(
+		wireDesc.maximumLength,
+		wireState.desc.minimumLength);
+	wireState.desc.stiffness = (std::max)(wireDesc.stiffness, 0.0f);
+	wireState.desc.damping = (std::max)(wireDesc.damping, 0.0f);
+	wireState.desc.maximumTension = (std::max)(wireDesc.maximumTension, 0.0f);
+	wireState.desc.breakingTension = (std::max)(wireDesc.breakingTension, 0.0f);
+	wireState.desc.shrinkSpeed = (std::max)(wireDesc.shrinkSpeed, 0.0f);
+
+	const EditorComponent* firstConnectable = EditorComponentUtility::FindComponent(
+		*firstGameObject,
+		EditorComponentType::WireConnectable);
+	const EditorComponent* secondConnectable = EditorComponentUtility::FindComponent(
+		*secondGameObject,
+		EditorComponentType::WireConnectable);
+
+	const auto applyConnectionStrength = [&wireState](const EditorComponent* connectable) {
+		if (connectable == nullptr || connectable->wireConnectableStrength <= 0.0f) {
+			return;
+		}
+
+		if (wireState.desc.breakingTension <= 0.0f) {
+			wireState.desc.breakingTension = connectable->wireConnectableStrength;
+		}
+		else {
+			wireState.desc.breakingTension = (std::min)(
+				wireState.desc.breakingTension,
+				connectable->wireConnectableStrength);
+		}
+	};
+
+	applyConnectionStrength(firstConnectable);
+	applyConnectionStrength(secondConnectable);
+
+	wireState.firstWorldAnchor = Transform(
+		wireState.desc.firstLocalAnchor,
+		editorScene_->GetWorldMatrix(wireState.desc.firstGameObjectId));
+	wireState.secondWorldAnchor = Transform(
+		wireState.desc.secondLocalAnchor,
+		editorScene_->GetWorldMatrix(wireState.desc.secondGameObjectId));
+	wireState.currentLength = Length(Subtract(
+		wireState.secondWorldAnchor,
+		wireState.firstWorldAnchor));
+
+	const WireHandle wireHandle = wireState.handle;
+	runtimeWires_[wireHandle] = wireState;
+	PushWireEvent(RuntimeWireEventType::Connected, runtimeWires_[wireHandle]);
+	return wireHandle;
+}
+
+bool EditorPhysicsManager::DestroyWire(WireHandle wireHandle) {
+	auto wireIterator = runtimeWires_.find(wireHandle);
+
+	if (wireIterator == runtimeWires_.end()) {
+		return false;
+	}
+
+	PushWireEvent(RuntimeWireEventType::Destroyed, wireIterator->second);
+	runtimeWires_.erase(wireIterator);
+	return true;
+}
+
+bool EditorPhysicsManager::SetWireLength(WireHandle wireHandle, float maximumLength) {
+	auto wireIterator = runtimeWires_.find(wireHandle);
+
+	if (wireIterator == runtimeWires_.end() || maximumLength < 0.0f) {
+		return false;
+	}
+
+	wireIterator->second.desc.maximumLength = (std::max)(
+		maximumLength,
+		wireIterator->second.desc.minimumLength);
+	return true;
+}
+
+bool EditorPhysicsManager::SetWireShrinkSpeed(WireHandle wireHandle, float shrinkSpeed) {
+	auto wireIterator = runtimeWires_.find(wireHandle);
+
+	if (wireIterator == runtimeWires_.end() || shrinkSpeed < 0.0f) {
+		return false;
+	}
+
+	wireIterator->second.desc.shrinkSpeed = shrinkSpeed;
+	return true;
+}
+
+bool EditorPhysicsManager::RepairWire(WireHandle wireHandle) {
+	auto wireIterator = runtimeWires_.find(wireHandle);
+
+	if (wireIterator == runtimeWires_.end()) {
+		return false;
+	}
+
+	wireIterator->second.isActive = true;
+	wireIterator->second.isBroken = false;
+	wireIterator->second.currentTension = 0.0f;
+	return true;
+}
+
+bool EditorPhysicsManager::GetWireState(
+	WireHandle wireHandle,
+	RuntimeWireState& wireState) const {
+	const auto wireIterator = runtimeWires_.find(wireHandle);
+
+	if (wireIterator == runtimeWires_.end()) {
+		return false;
+	}
+
+	wireState = wireIterator->second;
+	return true;
+}
+
+int32_t EditorPhysicsManager::GetWireCountForGameObject(int32_t gameObjectId) const {
+	int32_t wireCount = 0;
+
+	for (const auto& [wireHandle, wireState] : runtimeWires_) {
+		(void)wireHandle;
+
+		if (wireState.isActive && !wireState.isBroken &&
+			(wireState.desc.firstGameObjectId == gameObjectId ||
+			 wireState.desc.secondGameObjectId == gameObjectId)) {
+			wireCount++;
+		}
+	}
+
+	return wireCount;
+}
+
+bool EditorPhysicsManager::GetWireForGameObject(
+	int32_t gameObjectId,
+	int32_t wireIndex,
+	RuntimeWireState& wireState) const {
+	if (wireIndex < 0) {
+		return false;
+	}
+
+	int32_t currentIndex = 0;
+
+	for (const auto& [wireHandle, currentWireState] : runtimeWires_) {
+		(void)wireHandle;
+
+		if (!currentWireState.isActive || currentWireState.isBroken ||
+			(currentWireState.desc.firstGameObjectId != gameObjectId &&
+			 currentWireState.desc.secondGameObjectId != gameObjectId)) {
+			continue;
+		}
+
+		if (currentIndex == wireIndex) {
+			wireState = currentWireState;
+			return true;
+		}
+
+		currentIndex++;
+	}
+
+	return false;
+}
+
+bool EditorPhysicsManager::CanConnectWire(int32_t gameObjectId) const {
+	if (editorScene_ == nullptr) {
+		return false;
+	}
+
+	const EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+
+	if (gameObject == nullptr || !gameObject->isActive) {
+		return false;
+	}
+
+	const EditorComponent* connectable = EditorComponentUtility::FindComponent(
+		*gameObject,
+		EditorComponentType::WireConnectable);
+
+	if (connectable == nullptr || !connectable->isActive ||
+		!connectable->wireConnectableAllowSelection) {
+		return false;
+	}
+
+	return connectable->wireConnectableMaximumConnections <= 0 ||
+		GetWireCountForGameObject(gameObjectId) < connectable->wireConnectableMaximumConnections;
+}
+
+const std::unordered_map<EditorPhysicsManager::WireHandle, EditorPhysicsManager::RuntimeWireState>&
+EditorPhysicsManager::GetRuntimeWires() const {
+	return runtimeWires_;
+}
+
+const std::vector<EditorPhysicsManager::RuntimeWireEvent>&
+EditorPhysicsManager::GetFrameWireEvents() const {
+	return frameWireEvents_;
+}
+
+void EditorPhysicsManager::ClearRuntimeWires() {
+	runtimeWires_.clear();
+	frameWireEvents_.clear();
+	nextWireHandle_ = 1ULL;
+}
+
+void EditorPhysicsManager::PushWireEvent(
+	RuntimeWireEventType eventType,
+	const RuntimeWireState& wireState) {
+	RuntimeWireEvent wireEvent{};
+	wireEvent.type = eventType;
+	wireEvent.handle = wireState.handle;
+	wireEvent.firstGameObjectId = wireState.desc.firstGameObjectId;
+	wireEvent.secondGameObjectId = wireState.desc.secondGameObjectId;
+	wireEvent.ownerGameObjectId = wireState.desc.ownerGameObjectId;
+	wireEvent.tension = wireState.currentTension;
+	frameWireEvents_.push_back(wireEvent);
+}
+
+void EditorPhysicsManager::ApplyRuntimeWireForces(float fixedDeltaTime) {
+	if (editorScene_ == nullptr) {
+		return;
+	}
+
+	for (auto& [wireHandle, wireState] : runtimeWires_) {
+		(void)wireHandle;
+
+		if (!wireState.isActive || wireState.isBroken) {
+			continue;
+		}
+
+		EditorGameObject* firstGameObject =
+			editorScene_->FindGameObject(wireState.desc.firstGameObjectId);
+		EditorGameObject* secondGameObject =
+			editorScene_->FindGameObject(wireState.desc.secondGameObjectId);
+
+		if (firstGameObject == nullptr || secondGameObject == nullptr ||
+			!firstGameObject->isActive || !secondGameObject->isActive) {
+			wireState.isActive = false;
+			wireState.currentTension = 0.0f;
+			PushWireEvent(RuntimeWireEventType::TargetLost, wireState);
+			continue;
+		}
+
+		wireState.firstWorldAnchor = Transform(
+			wireState.desc.firstLocalAnchor,
+			editorScene_->GetWorldMatrix(firstGameObject->id));
+		wireState.secondWorldAnchor = Transform(
+			wireState.desc.secondLocalAnchor,
+			editorScene_->GetWorldMatrix(secondGameObject->id));
+
+		// Hookは選択判定と表示を担当し、物理Forceは指定された親Rigidbodyへ渡す。
+		// 未指定時は従来どおりHook自身を物理Bodyとして扱う。
+		auto resolvePhysicsBody = [this](EditorGameObject& hookGameObject) -> EditorGameObject* {
+			const EditorComponent* hookComponent = EditorComponentUtility::FindComponent(
+				hookGameObject,
+				EditorComponentType::WireConnectable);
+			const int32_t physicsBodyGameObjectId =
+				hookComponent != nullptr && hookComponent->wireConnectablePhysicsBodyGameObjectId >= 0
+				? hookComponent->wireConnectablePhysicsBodyGameObjectId
+				: hookGameObject.id;
+			return editorScene_->FindGameObject(physicsBodyGameObjectId);
+		};
+
+		EditorGameObject* firstPhysicsBody = resolvePhysicsBody(*firstGameObject);
+		EditorGameObject* secondPhysicsBody = resolvePhysicsBody(*secondGameObject);
+
+		if (wireState.desc.shrinkSpeed > 0.0f) {
+			wireState.desc.maximumLength = (std::max)(
+				wireState.desc.minimumLength,
+				wireState.desc.maximumLength -
+					wireState.desc.shrinkSpeed * (std::max)(fixedDeltaTime, 0.0f));
+		}
+
+		const Vector3 firstToSecond = Subtract(
+			wireState.secondWorldAnchor,
+			wireState.firstWorldAnchor);
+		wireState.currentLength = Length(firstToSecond);
+		const float previousTension = wireState.currentTension;
+		wireState.currentTension = 0.0f;
+
+		if (wireState.currentLength <= wireState.desc.maximumLength ||
+			wireState.currentLength <= kMinimumPhysicsVectorLength) {
+			continue;
+		}
+
+		const Vector3 wireDirection = Multiply(
+			1.0f / wireState.currentLength,
+			firstToSecond);
+		const EditorComponent* firstRigidBody = firstPhysicsBody != nullptr
+			? EditorComponentUtility::FindComponent(*firstPhysicsBody, EditorComponentType::RigidBody)
+			: nullptr;
+		const EditorComponent* secondRigidBody = secondPhysicsBody != nullptr
+			? EditorComponentUtility::FindComponent(*secondPhysicsBody, EditorComponentType::RigidBody)
+			: nullptr;
+		const bool canMoveFirst = firstRigidBody != nullptr && firstRigidBody->isActive &&
+			!firstRigidBody->isKinematic;
+		const bool canMoveSecond = secondRigidBody != nullptr && secondRigidBody->isActive &&
+			!secondRigidBody->isKinematic;
+
+		Vector3 firstPointVelocity{0.0f, 0.0f, 0.0f};
+		Vector3 secondPointVelocity{0.0f, 0.0f, 0.0f};
+
+		if (firstPhysicsBody != nullptr && firstRigidBody != nullptr && firstRigidBody->isActive) {
+			firstPointVelocity = CalculatePointVelocity(
+				*editorScene_,
+				*firstPhysicsBody,
+				*firstRigidBody,
+				wireState.firstWorldAnchor);
+		}
+
+		if (secondPhysicsBody != nullptr && secondRigidBody != nullptr && secondRigidBody->isActive) {
+			secondPointVelocity = CalculatePointVelocity(
+				*editorScene_,
+				*secondPhysicsBody,
+				*secondRigidBody,
+				wireState.secondWorldAnchor);
+		}
+
+		const float separationSpeed = Dot(
+			Subtract(secondPointVelocity, firstPointVelocity),
+			wireDirection);
+		const float stretchLength =
+			wireState.currentLength - wireState.desc.maximumLength;
+		float tension = (std::max)(
+			wireState.desc.stiffness * stretchLength +
+				wireState.desc.damping * separationSpeed,
+			0.0f);
+
+		if (wireState.desc.breakingTension > 0.0f &&
+			tension >= wireState.desc.breakingTension) {
+			wireState.currentTension = tension;
+			wireState.isBroken = true;
+			PushWireEvent(RuntimeWireEventType::Broken, wireState);
+			continue;
+		}
+
+		if (wireState.desc.maximumTension > 0.0f) {
+			tension = (std::min)(tension, wireState.desc.maximumTension);
+		}
+
+		wireState.currentTension = tension;
+		const Vector3 wireForce = Multiply(tension, wireDirection);
+
+		if (canMoveFirst && firstPhysicsBody != nullptr) {
+			AddForceAtPosition(
+				firstPhysicsBody->id,
+				wireForce,
+				wireState.firstWorldAnchor);
+		}
+
+		if (wireState.desc.applyReaction && canMoveSecond && secondPhysicsBody != nullptr) {
+			AddForceAtPosition(
+				secondPhysicsBody->id,
+				Multiply(-1.0f, wireForce),
+				wireState.secondWorldAnchor);
+		}
+
+		const float tensionChange = std::fabs(tension - previousTension);
+		const float notificationThreshold = (std::max)(1.0f, previousTension * 0.05f);
+
+		if (tensionChange >= notificationThreshold) {
+			PushWireEvent(RuntimeWireEventType::TensionChanged, wireState);
+		}
+	}
 }
 
 const std::vector<EditorJoltPhysicsManager::PhysicsEvent>& EditorPhysicsManager::GetFrameEvents() const {

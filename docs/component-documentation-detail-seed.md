@@ -53,14 +53,14 @@
 
 - 目的: C++ DLL Script を GameObject に追加する。
 - 使う場面: 使用者が C++ で独自処理を書く時。
-- 必要条件: C++ ファイル、Build、DLL Path、API Version 一致。
+- 必要条件: ユーザー `.h` / `.cpp`、自動生成 `.Generated.cpp`、Build、DLL Path、API Version 一致。
 - 主な設定: Class 名、DLL Path、Build ボタン、Script 有効状態。
-- Play 時: `Load`、`Start`、`Update`、`FixedUpdate`、`OnPhysicsEvent`、`Stop` が呼ばれる。
-- C++ Script: `EditorScriptRuntimeApi` 全体。
-- Script作成時Template: ProjectでC++ Script Assetを作成する時、用途別Templateを選べる。TemplateはEngine Componentではなく、使用者が編集する初期コードである。
+- Play 時: 使用者が実装した`Start()`、`Update(float)`、`FixedUpdate(float)`、Collision / Trigger、`Stop()`が呼ばれる。未実装処理はno-opになる。
+- C++ Script: `Script`、`GetGameObject()`、`GetComponent<T>()`と高水準Wrapperを使用する。
+- Script作成時Template: ProjectでC++ Script Assetを作成すると、ユーザー用`.h` / `.cpp`とEngine管理の`.Generated.cpp`を生成する。使用者はGenerated側のDLL ABIを編集しない。
 - Template選択UI: Category、日本語表示名、説明、推奨Componentを表示する。推奨Componentは自動追加ではなく、使用者がScene構成として確認するための情報である。
 - 代表Template: Empty、PlayerController、RailPlayer、EnemyController、TurretController、HomingController、BossController、StageController、LoadoutController、PhysicsController、HealthDamageController、SpawnPoolController、CameraEffectsController、AnimationEffectController、AudioController、UiController、ActionEventController、SaveCheckpointController、OceanBuoyancyController、NavigationAiController、RuntimePropertyController。
-- Action候補: 新しいTemplateは登録済みAction名をDLL Exportで公開し、TimelineEvent、WaveSpawner、ThresholdStateなどのInspector候補に表示できる。
+- Action候補: Constructorの`BindAction`だけをユーザーが記述し、Generated側が登録済みAction名をInspector候補として公開する。
 - 注意: Debug / Release、x64、古い DLL のロック、依存 DLL をトラブルシューティングに入れる。
 
 ### MonoBehaviour
@@ -171,6 +171,20 @@
 - 性能上の注意: 自動平面反射はSceneを追加描画する。FFT解像度だけでなく反射Captureあり/なしのGPU時間を比較し、不要なOceanは反射強度を0にする。物理・Gameplay QueryのCPU有限水深スペクトルはOcean設定変更時だけ16波を再生成し、同じ設定の多数Sampleではキャッシュを共有する。
 - 制限: Ocean は通常の MeshRenderer ではない。通常半透明 OIT、鏡用Planar Reflection Probe、Terrain と同じ設定として扱わない。
 - 確認手順: Light を斜めから当て、近景の波頭、遠景の連続性、浅瀬色、反射、カメラが水面下へ移動した時の Underwater / Caustics を別々に確認する。
+- **Ocean Debug View（デバッグ表示、`oceanDebugView`）:** 海面シェーダの各成分を単体表示する診断コンボ。値は0～46の47段階（`kOceanDebugViewCount`個）で、コンポーネント経由でMaterial Dataの`oceanDebugView`へそのまま渡り、シェーダは実行時コンパイルのためリビルド不要で即座に切り替わる。用途別に大まかに以下のグループへ分かれる。
+
+  | 範囲 | 内容 |
+  | --- | --- |
+  | 0 | 通常描画 |
+  | 1～5 | 太陽反射系（太陽Diffuse、GGX Specular、Sun Glitter、Glitter反射整列、Glitter最終Mask） |
+  | 6～11 | 法線・波構造・泡（Medium/Fine Normal、Normal差x8、傾き量、中波構造、Foam） |
+  | 12～16 | 反射・屈折・水中（Sky反射、屈折Scene、Caustics、水中実体被覆、FFT泡チャンネル） |
+  | 17～40 | Fine Micro Specular診断パイプライン（Fine Delta Slope、Lobe Normal、Micro Roughness、Sun Specular、Env Normal Delta、各比較用OFF版・Medium参照・ReflectDir・RawEnvSample・Compress後差分など、新旧アルゴリズムの中間値を1つずつ切り分けて確認するための連番） |
+  | 41～43 | 定数出力（黒・グレー・赤の固定色。パイプライン自体が正しく動作しているかの基準確認用） |
+  | 44～46 | 絶対量表示（x4／x64／x256倍率。微小な差分をゲインで持ち上げて視認する） |
+
+  Final Compositeの`診断表示`（`compositeDebugView`、PostProcess節参照）とは名前が似ているが完全に別系統であり、相互に連動・自動切替はしない。Ocean Debug Viewは海面シェーダ内部の中間値を直接可視化する開発者向け診断であり、通常のゲーム進行やLocalContrast/Bloomの調整には使わない。確認後は必ず0（通常）へ戻す。
+  根拠: `EditorInspectorPanel.cpp`（`oceanDebugViewItems`、`kOceanDebugViewCount`の`static_assert`）、`EditorSceneSynchronizer.cpp`（`sceneObject.ocean.debugView`→`materialData->oceanDebugView`への転送）、`EditorScene.h`/`EditorScene.cpp`（`oceanDebugView`のScene保存・Clamp）。
 
 ### Foliage
 
@@ -281,6 +295,18 @@
   6. Tone Mapping、White Point、Saturation、Contrast を調整する。
   7. Temperature / Tint と Lift / Gamma / Gain は最後に微調整する。
 - 注意: Bloom の強さと最終合成側の Bloom 量を同時に上げると二重に強くなる。SSR は ReflectionProbe の方式や材質 Reflection と役割が異なる。
+- **診断表示（compositeDebugView、Final Composite診断）:** LocalContrastとBloomのどちらが元画像の模様（泡、Sun反射など）を最終合成へ再注入しているかを切り分けるための専用デバッグモード。sceneColorを50%グレーへ強制した上で、選択した効果だけを重ねて表示する。値は0～4の5段階で、Inspectorのコンボ「診断表示」から選ぶ。
+
+  | 値 | 表示内容 |
+  | --- | --- |
+  | 0 | 通常描画（デバッグ無効） |
+  | 1 | 基準のみ（LocalContrast/Bloomとも無効化した50%グレー） |
+  | 2 | 元画像再参照のみ（LocalContrastだけ有効） |
+  | 3 | ブルームのみ（Bloomだけ有効） |
+  | 4 | 両方（LocalContrast+Bloom同時） |
+
+  1と2/3を見比べることで、意図しない模様の再現が「LocalContrastの元画像再参照」由来か「Bloom」由来かを画面上で直接切り分けられる。Ocean側の`Ocean Debug View`（Oceanコンポーネント参照）とは完全に独立した別系統の診断機能であり、互いに連動・自動切替はしない。値はScene保存対象（保存フォーマットのelements[10]相当）。デバッグ用途のためPlay終了後や確認後は必ず0へ戻す。
+  根拠: `EditorInspectorPanel.cpp`（`compositeDebugViewItems`、`DrawFinalCompositeComponent`相当の描画箇所）、`EditorRenderManager.cpp`（`compositeDebugView`をシェーダパラメータへ渡す箇所）、`EditorScene.h`（フィールド定義コメント）。
 
 ### Environment
 
@@ -308,6 +334,8 @@
 - 使う場面: 床、壁、箱、単純な障害物。
 - 主な設定: Center、Size、Is Trigger、Physics Material、Layer。
 - 注意: 見た目 Mesh と Collider Size が一致するか確認する。
+- **重要な注意（MeshCollider/AutoConvexCollisionとの非対称性）:** `RefreshRuntimeMeshColliderBounds()`（`EditorJoltPhysicsManager.cpp`）はモデル差し替えやScale変更に合わせてColliderの`Center`/`Size`を自動で再計算するが、これは`MeshCollider`、`AutoConvexCollision`、`TerrainCollider`のみが対象であり、**`BoxCollider`は対象外**である。つまりBoxColliderの`Center`/`Size`はInspectorで手入力した数値のまま固定され、後からモデル（FBX/OBJ）やGameObjectのScaleを変えても自動追従しない。ブリッジ追加などでモデル形状を変更した後にBoxColliderを使い続けると、見た目と当たり判定がずれて「近くにいるのに当たらない／当たらないはずの場所で当たる」原因になる。モデル形状を変えたら、AutoConvexCollisionを一時的に追加して自動検出された`Center`/`Size`の値を確認し、その数値をBoxColliderへ手動で転記するのが確実。
+  根拠: `EditorJoltPhysicsManager.cpp` `RefreshRuntimeMeshColliderBounds()`（BoxColliderの分岐が存在しないことを確認）。
 
 ### SphereCollider
 
@@ -330,6 +358,8 @@
 - 必要条件: MeshFilter、Collision Mesh。
 - 主な設定: Mesh、Convex、Center、Scale、Layer。
 - 注意: 動的 MeshCollider、BVH、Convex Hull、軽量化の対応状態を明記する。
+- **動的MeshCollider（Convex+Rigidbody）の既知の潜在リスク:** `Convex`かつRigidbody付きでDynamicとして使う場合、内部的には`CreateMeshBody`→`CreateDynamicMeshBody`が呼ばれ、AutoConvexCollisionが使う共通ヘルパー`CreateConvexHullShape()`（凸包半径を`min(0.05, 最大範囲*0.1)`で確保する修正済み版）を経由せず、`JPH::ConvexHullShapeSettings(hullPoints, 0.0f)`を直接、凸包半径0のまま呼んでいる。半径0はGJK/EPAの投機的接触マージンが無くなることを意味し、AutoConvexCollisionで実際に「Boxでは当たっていたのにAuto Convexに変えた途端に一切当たらなくなる」不具合を起こした原因と同じ条件である。したがって動的MeshColliderをConvexで使う構成でも、同種の当たり判定漏れが理論上起こり得る（本セッションでは未再現・未修正）。命中しない場合はAutoConvexCollisionへの置き換えを試すか、`CreateDynamicMeshBody`にも同じ非ゼロ半径を適用する修正を検討する。
+  根拠: `EditorJoltPhysicsManager.cpp` `CreateMeshBody()`→`CreateDynamicMeshBody()`（`JPH::ConvexHullShapeSettings(hullPoints, 0.0f)`固定）、対比: `CreateConvexHullShape()`（`convexRadius`修正済み、`AutoConvexCollision`の実体生成経路）。
 
 ### AutoConvexCollision
 
@@ -348,6 +378,8 @@
 - 失敗時: 一部の区間HullまたはCompound生成に失敗した場合はモデル全体の単一ConvexHullへ戻し、それも失敗した場合だけBox近似へ戻す。欠けた区間だけを使って物理形状を作らない。
 - MeshColliderとの違い: MeshColliderは静的Bodyで三角形形状を保つ。Auto ConvexはDynamic Rigidbodyで使える複数凸Shapeへ近似し、長い船体、車体、岩などの全体を1個の大きな凸包で埋める量を減らす。
 - 制限: 最長軸の区間分割であり、VHACDのような任意方向の凹部解析ではない。同じ断面内の穴や深い凹みは各区間の凸包で埋まるため、必要なら判定専用の簡略MeshをCollider Assetへ設定する。
+- **既知の不具合と修正: 凸包半径0による命中漏れ。** `CreateConvexHullShape()`（区間Hull・単一Hullフォールバック共通の生成ヘルパー）は元々`JPH::ConvexHullShapeSettings(hullPoints, 0.0f)`と凸包半径0で生成していた。BoxColliderでは命中していた対象をAutoConvexCollisionへ切り替えた途端に一切命中しなくなる不具合の実際の原因の一つがこれで、半径0はJoltのGJK/EPA投機的接触マージンを消し去り、`ShapeCast`の開始点が既にShape内部にある高速Projectile等の判定を取りこぼしやすくする。修正として`convexRadius = min(0.05, 最長範囲*0.1)`（Jolt既定の`cDefaultConvexRadius`相当、極端に小さいShapeでは半径が本体より大きくならないよう上限を掛ける）を全Hull生成へ適用済み。この修正は`AutoConvexCollision`が使う経路にのみ入っており、MeshColliderのDynamic Convex経路（`CreateDynamicMeshBody`、「MeshCollider」節参照）には未適用。
+  根拠: `EditorJoltPhysicsManager.cpp` `CreateConvexHullShape()`（`convexRadius`計算とコメント）。
 
 ### Buoyancy
 
@@ -492,6 +524,25 @@
 - C++ Script: `RopeConstraint::Attach`、`AttachToWorld`、`Detach`、`SetLength`、`Repair`、`GetState`を使う。入力キーはComponentへ固定せず、InputまたはInput Actionからこれらを呼ぶ。
 - ゲーム用途: Eで掴む・離す、ウインチで巻き取る、破断後に修復する、AIがフックを射出する、Timeline Eventから係留を解除する処理を同じAPIで作れる。
 - 注意: AttachはSceneに存在するRopeConstraintの設定を切り替える。Play中にComponentそのものを新規生成するAPIではない。
+
+### HookPoint（互換名: WireConnectable）
+
+- 目的: Hook同士だけをWire接続できるよう、選択点と物理Bodyを分離する。
+- 追加場所: `コンポーネントを追加 > 3D物理 > フックポイント`。
+- 必要条件: Hookの見た目を持つRendererと選択用Collider。子Hookでは`力を伝えるRigidbody`へ親物体を指定する。
+- 設定: 選択可能、最大接続本数、破断強度、カテゴリ、固定ローカルAnchor、親Rigidbody、通常・照準中・選択中・接続中の色、発光倍率。
+- 選択: `Physics::FindBestHook`へ選択距離と選択角度を渡す。壁に隠れたHookは候補にしない。
+- 状態表示: `HookPoint::SetVisualState`へ`Normal`、`Targeted`、`Selected`、`Connected`を渡す。
+- 注意: 敵やBOX本体へ自動追加しない。接続させたい場所に専用Hook GameObjectを配置する。
+
+### WireRenderer
+
+- 目的: 実行時に生成した複数WireをGame Viewへ表示する。
+- 追加場所: `コンポーネントを追加 > 描画・レンダリング > ワイヤーレンダラー`。
+- 設定: 3D半径、互換線幅、通常色、高張力色、破断色、発光、不透明度、たるみ量、分割数、表示。
+- 状態表現: 張力比に応じて通常色から高張力色へ補間し、破断時は破断色を使う。ワールド半径を投影して距離に応じた太さにし、暗い外周とハイライトで丸みを表す。
+- 遮蔽: Wire区間ごとにCameraからPhysics Raycastし、壁や床の裏側を描画しない。
+- 自動追加: Player Scriptから`GetOrAddComponent<WireRenderer>()`を呼べる。未追加時もEngine既定の水色Wireを描画する。
 
 ### Suspension
 
@@ -691,7 +742,7 @@
 - 目的: 使用者入力を受ける UI。
 - 必要条件: Canvas、EventSystem、Input Module。
 - 主な設定: OnClick、Value、Min、Max、Options、Text、Navigation。
-- C++ Script: `EditorScript_InvokeAction` または UI Event 関数名。
+- C++ Script: `BindAction`で受信し、送信は`GameObject::InvokeAction`を使う。
 - 注意: 実際に C++ 関数が呼ばれるか必ず確認する。
 
 ### SceneButton
@@ -744,7 +795,7 @@
 - 目的: Action Map、Binding、Player ごとの入力を扱う。
 - 必要条件: Input Action Asset、Project Settings、C++ Script。
 - 主な設定: Actions、Default Map、Behavior、Move / Jump / Fire Event。
-- C++ Script: `GetActionVector2`、`IsActionPressed`、`WasActionJustPressed`、`EditorScript_InvokeAction`。
+- C++ Script: `BindAction`、`EditorScriptInputActionContext`、`GameObject::InvokeAction`。
 - 注意: キー直書き版と Action 版を分けて説明する。
 
 ### TimelineEvent
@@ -880,6 +931,13 @@
 - C++ Script: `ObjectPool::Spawn`、`ObjectPool::Release`、`Spawner::Spawn`で直接操作できる。
 - 物理Template: Play中の遅延生成と容量超過拡張に対応する。通常は同時出現数を遅延生成容量へ設定し、無制限な拡張による高水位メモリ増加を避ける。
 - Prefab Assetとの関係: Project上の`.prefab`保存・生成機能とは別で、Runtime PoolはScene内Templateを使う。
+- 初回貸出ヒッチ対策（Prewarm）: `CreatePoolItem()`/`PrewarmPool()`/`PrewarmAllPools()`によって、Play開始直後に遅延生成容量ぶんのItemをまとめて複製・登録できる。これを使わず初回`Spawn()`任せにすると、初撃破・初出現の瞬間に`DuplicateGameObject`とPhysics/Script登録が同一Frameへ集中し、体感できるヒッチ（コマ落ち）が発生する。敵Waveなど大量出現する構成ではPlay開始時に必ずPrewarmしておく。
+- **既知の不具合と修正（重要）: Template非ActiveのままComplicateするとPool個体にBodyが生成されない。** `CreatePoolItem()`は`DuplicateGameObject`でTemplateを複製するが、複製処理は複製元Templateの**現在の`isActive`状態をそのままコピーする**。Templateを地下や画面外など待機用の位置に置く構成では、SimulationLOD等の距離ベース処理がTemplateを非Active（またはPhysics停止）扱いにすることがあり、その瞬間に複製が走ると複製されたPool個体（`_Pool_N`という名前が付く）も`isActive=false`で生成される。`EditorJoltPhysicsManager::RegisterRuntimeGameObject()`は`gameObject.isActive==false`のとき登録処理そのものを早期returnしてスキップするため、そのPool個体には**Physics Bodyが最初から一切作られない**。後から`SetItemActive(true)`で見た目上Activeへ戻して貸し出しても、`SetItemActive`が呼ぶ`SetGameObjectSimulationActive`は「既存Bodyの追加/除去」しかできず、存在しないBodyを新規作成する処理ではないため、そのPool個体は永久にRay/ShapeCastへ反応しない（弾がすり抜ける）。この状態は`SetActive`をいくら繰り返しても直らない——一度Body登録に失敗した個体は、Pool内に留まる限り物理的に「透明」のままになる。
+  - 症状: Templateそのもの（Pool内の0番目、`_Pool_`接尾辞のない個体）にだけ攻撃が命中し、複製された他のPool個体には何度撃っても命中しない。
+  - 確認手順: `EditorJoltPhysicsManager::GetBodyDiagnostics()`または診断用RuntimeLogの`PhysicsBodyFailureCount`/`LastPhysicsBodyFailure`システム項目で「非Activeで登録スキップ」ログが出ていないか確認する。
+  - 修正: `CreatePoolItem()`内で複製直後に`duplicatedGameObject->isActive = true;`を強制し、Physics/Script登録より前に必ずActive状態を確定させる。直後に呼ばれる`SetItemActive(false)`（待機状態へ戻す処理）がこのActive状態を「本来の初期状態」として記録するため、後続の`SetItemActive(true)`（貸出時）でも正しくActiveへ戻る。
+  - 根拠: `EditorObjectPoolManager.cpp` `CreatePoolItem()`、`EditorJoltPhysicsManager.cpp` `RegisterRuntimeGameObject()` / `AddGameObjectBody()`。関連: 「SimulationLOD」節の「ObjectPoolのTemplateと組み合わせる際の注意」。
+- 診断のコツ: この種の「一部の個体だけ当たらない」不具合は、Console表示だけでは大量のログに埋もれて発見できない。ログ監視Windowで`Physics`カテゴリの`PhysicsBodyFailureCount`/`LastPhysicsBodyFailure`、および武器側の`LastProjectileNearestCandidateName`等をWatchへ登録し、命中しない個体名（`_Pool_N`）とBody有無を突き合わせて特定する。
 
 ### カメラブレンド / カメラシェイク
 
@@ -2047,7 +2105,7 @@ Colliderが属するGameplay SurfaceをUTF-8文字列Tagで表す。初期値は
 
 ### 新規7 Componentの保存・受入条件
 
-各Componentは専用Extension行で保存する。Component配列内に可変Entryを持つWeaponFirePatternとImpactResponderもHierarchyへ展開せず復元する。追加時点の基準はComponent 246件、Runtime API Entry 172件であり、現行基準はComponent 268件、Runtime API Entry 211件である。
+各Componentは専用Extension行で保存する。Component配列内に可変Entryを持つWeaponFirePatternとImpactResponderもHierarchyへ展開せず復元する。この章の追加開始時点はComponent 246件、Runtime API Entry 172件であり、この章の完了時点ではComponent 268件、Runtime API Entry 211件だった。
 
 ## 照準・Mission・Encounter・Difficulty Component
 
@@ -2313,7 +2371,7 @@ Rail追加値は既存`RailMovementExtension`の任意末尾列へ保存する�
 
 検証では、+Z/-Z/+X/-X Modelの推力方向、Forward/Reverse、Pause、Loop、Offset入力、MovementModifier、親Transform、Buoyancy、Scene再読込を個別に確認する。Cameraは親付きTarget、Target非Active、回転継承、Look At、複数Camera Priority、CameraHorizonStabilizerとの責務競合を確認する。
 
-既存Componentの設定追加だけであるため、Component 268件、Runtime API Entry 211件を維持する。
+この変更の記録時点では既存Componentの設定追加だけであり、Component 268件、Runtime API Entry 211件を維持していた。
 
 ## ParticleSystem / VisualEffect Billboard描画仕様
 
@@ -2351,7 +2409,7 @@ FBX / OBJ Render Assetが空でない場合は`ParticleModel.VS.hlsl`を使い�
 | Shader Compile | Billboard VS、Model VS、Clear / Spawn / Update CSがDXCでCompile成功する。 |
 | Save / Load | ParticleSystemとVisualEffectを同一Ownerへ置いても各値が混線しない。 |
 
-この機能は既存2 Componentの拡張であり、現行の機械照合基準はComponent 268件、Runtime API Entry 211件である。
+この機能の追加時点では既存2 Componentの拡張であり、その時点の機械照合基準はComponent 268件、Runtime API Entry 211件だった。
 
 ## 攻撃判定・砲塔・艦砲運用・Camera安定化Component詳細
 
@@ -2370,6 +2428,9 @@ FBX / OBJ Render Assetが空でない場合は`ParticleModel.VS.hlsl`を使い�
 | Ignore Objects[] | 空 | 明示GameObjectと、そのBodyを除外する可変配列。Hierarchyへ補助Objectを作らない。 |
 
 FilterはWeaponまたはその親階層から検索する。Projectile生成時に必要な除外ID、Team規則、Arming Distanceを飛翔中データへ複製するため、発射後にFilterを変更しても既に飛んでいる弾の規則は変わらない。Physics HitとOcean Hitを比較する前にPhysics Castへ適用し、Ocean判定自体は除外しない。
+
+**危険な落とし穴（Instigator=-1の階層解決）:** `BuildAttackIgnoredGameObjects()`はInstigatorが-1のとき、「このFilter Componentを持つGameObject自身」（＝Weaponが子GameObjectとして持っている場合はそのWeapon）を発射者として解決する。親であるPlayerShip側までは自動的に遡らない。さらに「Instigator階層を無視」はこの解決済みInstigatorから**下方向**（`IsInHierarchy`で子孫を辿る方向）だけを除外し、Instigatorの**祖先**は一切除外しない。したがって、武器がPlayerの子GameObjectとして配置され、かつInstigatorが-1のままだと、除外対象は「Weapon自身とその子」だけになり、Weaponの親であるPlayerShip自身は除外対象に含まれず、自弾が発射元のPlayerへ命中し得る。回避策は、Weapon側のInstigatorへ明示的にPlayerShipなど「本来無視したい階層のルートGameObject」を設定すること。子搭載Weapon構成では既定値(-1)に任せず必ず明示設定を確認する。
+根拠: `EditorWeaponManager.cpp` `BuildAttackIgnoredGameObjects()`。
 
 ### TurretAim（表示名: 砲塔照準）
 
@@ -2452,7 +2513,7 @@ SourceのForwardへWorld Upを射影してRollを求め、軸継承率と最大R
 | Horizon | 船体Rollを0/一部/全部継承し、Position FollowとMaximum Rollが独立する。 |
 | Save/Load | 全GameObject参照、可変配列、文字列、数値、FlagがScene再読込後に一致する。 |
 
-現行の機械照合基準はComponent 268件、Runtime API Entry 211件である。
+この章の追加時点の機械照合基準はComponent 268件、Runtime API Entry 211件だった。
 
 ## 距離最適化・レールイベントComponent詳細
 
@@ -2496,6 +2557,8 @@ NearまたはMediumへ戻ると、Play開始時に保存したGameObject Active�
 
 同じ親子範囲へ複数のDistanceActivation / SimulationLOD Controllerを重ねると、親と子が別基準でActiveを要求できる。基本は編隊Root、建物Root、Effect Rootなど制御単位ごとに1つ置き、子に別Controllerを置く場合は`子階層も対象=false`で責務範囲を分ける。
 
+**ObjectPoolのTemplateと組み合わせる際の注意:** ObjectPoolのTemplate GameObjectを画面外・地下などの待機位置に置く構成では、参照点からの距離が`Far`/`Culled`を超えてSimulationLODが自動的にPhysicsやGameObject自体を停止させることがある。`FarでPhysics停止`はBodyのSimulation ON/OFFだけを切り替えるため単体では実害がないが、`ObjectPool::CreatePoolItem()`がTemplateを複製するタイミングでTemplate自身の`isActive`がfalseになっていると、複製されたPool個体も`isActive=false`のまま生成される。`EditorJoltPhysicsManager::RegisterRuntimeGameObject()`は`isActive=false`のGameObjectに対してPhysics Bodyを一切作らずスキップするため、後から`SetItemActive(true)`で見た目上Activeへ戻しても、そもそもBodyが存在しないため`SetGameObjectSimulationActive`は何もできず、Ray/ShapeCastへ永久に反応しない個体が生まれる（詳細は「オブジェクトプール / プレハブ生成」節、根拠: `EditorObjectPoolManager.cpp` `CreatePoolItem()`、`EditorJoltPhysicsManager.cpp` `RegisterRuntimeGameObject()`）。回避策として、Template配置位置はSimulationLODのFar/Culled距離より内側にするか、Templateに専用のSimulationLODを付けず常時Active維持する。現行実装では`CreatePoolItem()`が複製直後に`duplicatedGameObject->isActive = true`へ強制することでこの問題自体を回避しているため、通常利用では意識しなくてよい。
+
 ### RailEventMarker（表示名: レールイベントマーカー）
 
 **目的:** RailMovementの0～1進行率がMarkerを横切ったFrameにActionを1回Queueし、Marker IDをString Payloadとして渡す。敵生成、BGM、会話、Boss開始などの意味は持たず、受信C++ ScriptまたはAction接続がゲーム規則を実行する。
@@ -2529,7 +2592,7 @@ MarkerはComponent内部の可変配列であり、Markerごとの子GameObject�
 | Action Payload | 受信Scriptが`EditorScriptActionPayloadTypeString`とMarker IDを取得できる。 |
 | Stop | 最適化で変更したObject、Component、Physics状態とMarker Runtime Flagが編集状態へ戻る。 |
 
-この章追加後の現行機械照合基準はComponent 277件、Runtime API Entry 216件、C++ Script Template 26件である。
+この章の追加時点の機械照合基準はComponent 277件、Runtime API Entry 216件、C++ Script Template 26件だった。
 
 ## 弾道・被弾履歴・Pause・航跡・軌道表示Component
 
@@ -2622,7 +2685,7 @@ Scene ViewはScene Camera、Game ViewとStandaloneはGame CameraのViewProjectio
 | Trajectory | Scene/Game Flag、色、Alpha、太さ、点数、着弾円が独立して効く。 |
 | Save/Load | 全編集値と参照が一致し、Runtime配列と状態を保存値として再利用しない。 |
 
-現行の機械照合基準はComponent 268件、Runtime API Entry 211件である。
+この章の追加時点の機械照合基準はComponent 268件、Runtime API Entry 211件だった。
 
 ## FFT海面ゲーム判定Component詳細
 
@@ -2681,7 +2744,7 @@ WaterSurfaceStateは`WaterSurfaceStateExtension`、OceanProbeSetは`OceanProbeSe
 | 欠落参照 | Ocean、Action先、Effectが未設定でもCrashせずfalse/Invalidを返す。 |
 | 共通波面 | 描画・浮力・Segment Cast・State・Probeが同じOcean Sample経路を使う。 |
 
-現行の機械照合基準はComponent 268件、Runtime API Entry 211件である。
+この章の追加時点の機械照合基準はComponent 268件、Runtime API Entry 211件だった。
 
 ## 艦艇射撃の速度・遮蔽・安全検査・状態効果Component詳細
 
@@ -2788,11 +2851,11 @@ Projectile/Area/Ballistic追加値はそれぞれ`ProjectileVelocityAimExtension
 | Status | Refresh/Stack/Ignore、最大Stack、Tickなし/あり、Remove/Clear/Resetが正しい。 |
 | Save/Load | 全編集値と可変配列が一致し、Runtime値は初期化される。 |
 
-現行の機械照合基準はComponent 268件、Runtime API Entry 211件である。
+この章の追加時点の機械照合基準はComponent 268件、Runtime API Entry 211件だった。
 
 ## 現行追加基準
 
-後続実装として`DistanceActivation`、`SimulationLOD`、`RailEventMarker`を追加済みである。現行の機械照合基準はComponent 277件、Runtime API Entry 216件、C++ Script Template 26件である。設定、保存、Runtime、受入条件は「距離最適化・レールイベントComponent詳細」を参照する。
+後続実装として`DistanceActivation`、`SimulationLOD`、`RailEventMarker`を追加済みである。この追記時点の機械照合基準はComponent 277件、Runtime API Entry 216件、C++ Script Template 26件だった。設定、保存、Runtime、受入条件は「距離最適化・レールイベントComponent詳細」を参照する。
 
 ## SimulationLOD更新間引き・Wave遅延実体化の追加仕様
 
@@ -2832,4 +2895,5028 @@ ObjectPool生成へ`1Frame最大生成数`を追加する。既定値8、範囲1
 
 開始条件`外部開始`はC++の`WaveSpawner::Start()`で開始する。未開始または前回個体が全撃破・全返却済みならtrue。生成中または追跡個体が残っているWaveへ再度Startした場合はfalseを返し、既存のSpawn Recordを消さない。
 
-`WaveSpawnerExtension`末尾へ1Frame最大生成数、`SimulationLodExtension`では距離3値の直後へScript更新秒2値を保存する。旧Wave行は既定8、旧SimulationLOD行は既定間隔へFallbackする。現行の機械照合基準はComponent 277件、Runtime API Entry 218件、C++ Script Template 26件である。
+`WaveSpawnerExtension`末尾へ1Frame最大生成数、`SimulationLodExtension`では距離3値の直後へScript更新秒2値を保存する。旧Wave行は既定8、旧SimulationLOD行は既定間隔へFallbackする。この追記時点の機械照合基準はComponent 277件、Runtime API Entry 218件、C++ Script Template 26件だった。
+
+## 全Component 値リファレンス（現行コード照合版）
+
+### この章の位置づけ
+
+この章より前の各章は「そのComponentで何ができるか」「どう組むか」を用途別に説明している。この章はそれとは役割が違い、**現在のコードに実在するComponent全件と、その全Inspector値を機械的に洗い出した一次資料**である。
+
+上の章に説明があるComponentでも、Inspector項目を1行も落とさずに列挙しているのはこの章だけである。用途を知りたいときは上の章、値の意味・範囲・既定値を確かめたいときはこの章を見る。
+
+抽出元は次の3ファイルであり、README や過去の記述ではなく現在のソースを正とする。
+
+| 情報 | 抽出元 |
+| --- | --- |
+| Component種類と内部名 | `Source/Engine/Editor/EditorScene.h` の `enum class EditorComponentType` |
+| 表示名とカテゴリ | `Source/Engine/Editor/EditorInspectorPanel.cpp` の `kComponentAddEntries` |
+| Inspector行・型・範囲 | `Source/Engine/Editor/EditorInspectorPanel.cpp` の各 `Draw???Component` |
+| 既定値 | `Source/Engine/Editor/EditorScene.cpp` の `EditorScene::CreateComponent` |
+
+### Component総数と内訳（現行）
+
+| 区分 | 件数 | 内容 |
+| --- | --- | --- |
+| `EditorComponentType` の総数 | **280** | `Count` を除いた列挙子の数。 |
+| 「コンポーネントを追加」から選べる | **276** | `kComponentAddEntries` の重複を除いた種類数。 |
+| 追加メニューに出ない互換スロット | **4** | `LegacyRailShooterEnemy` / `LegacyRailShooterShip` / `LegacyRailShooterEnemyMotion` / `LegacyRailShooterStage`。旧Sceneの読み込み専用で、Engine Runtimeは実行しない。 |
+| 追加メニューの行数 | 282 | 同じ型を2カテゴリへ出している行が6件あるため、種類数より6多い。 |
+
+追加メニューに2回出る6件は `AudioListener`、`Canvas`、`LineRenderer`、`TerrainCollider`、`TilemapCollider2D`、`TrailRenderer` である。どちらのカテゴリから追加しても同じ `EditorComponentType` が付き、Inspectorも保存形式も同一になる。「2つある」ように見えても別Componentではない。
+
+以前この文書が基準にしていた「Component 277件」は `SceneStreaming`、`TextEffect`、`SceneTransition` の追加前の値である。**現行の機械照合基準は Component 280件（うち追加可能276件）、Runtime API Entry 229件、C++ Script Template 26件**である。
+
+### 表の読み方
+
+各Componentの表は次の6列を持つ。
+
+| 列 | 意味 | 注意 |
+| --- | --- | --- |
+| Inspector表示 | Inspectorの左側へ実際に出る日本語ラベル。 | ここに無いラベルは、そのComponentのInspectorには存在しない。 |
+| 内部Field | `EditorComponent` のメンバー名。 | Scene保存、Runtime Property、Log Monitorはこの名前を使う。 |
+| 型 | 編集ウィジェットの型。 | `int32(選択)` はCombo。`GameObject参照 (int32 ID)` は Hierarchy から割り当てる欄で、値としてはGameObject IDを持つ。 |
+| ドラッグ量 | ドラッグ1目盛りで変化する量。 | 精度の目安であり、直接入力すればこの刻みに縛られない。 |
+| 範囲・選択肢 | Clamp範囲、またはCombo選択肢を `0=...` 形式で全部並べたもの。 | 「制限なし」は下限と上限に同じ値を渡していてClampが効かない行である。極端な値を入れられるので、使用者側で常識的な値を守る。 |
+| 既定値 | `CreateComponent` が設定する初期値。 | `—` は `CreateComponent` で明示初期化していない行で、`EditorComponent` の既定初期化子か、Runtime表示専用の値である。 |
+
+読むときに必ず区別すること。
+
+1. **編集値とRuntime表示値は違う。** 「実行中体力」「Runtime」「Blocking距離」のような行は読み取り専用の状態表示で、Sceneには保存されない。表に出ていない `DrawTextRow` の行がそれにあたる。
+2. **同じ描画関数を共有するComponentがある。** 見出しの「同じ描画関数を共有」に他の型名が並ぶ場合、表の内容はその全型で共通である。ただし共通で出ていても、そのComponentのRuntimeが読まない値は意味を持たない。たとえば `BoxCollider` と `BoxCollider2D` は同じ表を出すが、2D側はScene保存までで実処理へ接続していない。
+3. **表に出る＝Play中に効く、ではない。** 実装状態の判定はこの章の表ではなく、上の各章の実装状態表と「未実装を未実装と書くルール」に従う。この章はあくまで「Inspectorで編集でき、Sceneへ保存される値の全件」である。
+4. **角度の単位はラベルで見分ける。** ラベルに `deg` または「度」が付く行は度、付かない回転系のFieldは内部でラジアン保存の場合がある。Jointの `jointMinLimit` / `jointMaxLimit` はラジアン保存である。
+5. **可変長配列を持つComponentは、要素側の項目が別枠になる。** `[要素].xxx` と書かれた行は、Inspectorの「◯◯を追加」で増やした要素1件ごとの設定である。既定値は要素を新規追加したときの値であり、Component自体の既定ではない。
+
+### C++ Scriptから既存Componentの値を操作する
+
+`GameObject::GetComponent("内部型名")` で汎用 `Component` Wrapperを取得できる。ComponentをScriptから追加する機能ではなく、SceneまたはPrefabへ既に付いているComponentの有無、有効状態、公開Fieldを操作する入口である。
+
+```cpp
+const GameObject owner{gameObjectId};
+const Component springForce = owner.GetComponent("SpringForce");
+
+if (springForce.IsValid()) {
+	springForce.SetFloat("springForceStiffness", 40.0f);
+	springForce.SetBool("springForceApplyReaction", true);
+}
+```
+
+現行の自動生成台帳では、280種類中257種類の1,474 Fieldを扱える。内訳はFloat 791、Bool 235、GameObject参照182、Vector3 180、Int 86である。Field名はこの文書の「内部Field」と同じC++メンバー名を使う。ただし、可変長配列、文字列、Asset参照、未登録Vector2、複合構造体の要素は汎用経路の対象外である。
+
+```cpp
+void PlayerScript::OnCollisionEnter(
+	const EditorScriptPhysicsEvent& physicsEvent) {
+
+	const GameObject player{physicsEvent.selfGameObjectId};
+	const GameObject collidedObject{physicsEvent.otherGameObjectId};
+	const Component springForce = player.GetComponent("SpringForce");
+
+	if (!springForce.IsValid()) {
+		return;
+	}
+
+	springForce.SetGameObject(
+		"springForceTargetGameObjectId",
+		collidedObject);
+}
+```
+
+Set系がtrueを返すのはFieldへ書き込めたことまでである。毎更新で値を読むComponentは次の更新から反映されるが、Jolt Joint、Collider Shape、GPU/Asset資源のようにPlay開始時にRuntime資源を構築するSubsystemは、別途再登録・再構築が必要になる場合がある。操作関数、対応外型、全Field台帳、失敗条件は `cpp-script-documentation-detail-seed.md` の「Component 汎用Propertyアクセス完全リファレンス」を参照する。
+
+### 追加された3 Componentの詳細
+
+`SceneStreaming`、`TextEffect`、`SceneTransition` は前回の基準（277件）より後に追加されたため、上の章に用途説明が無い。ここで個別に補う。
+
+#### SceneStreaming（表示名: Scene Streaming ／ カテゴリ: 最適化）
+
+**目的。** 基準Objectがこのコンポーネントを持つGameObjectへ近づいたらAdditive Sceneを非同期で読み込み、離れたら破棄する。広いステージを1つの `.scene` へ全部置かず、区画ごとに分割して常時のObject数を減らすために使う。
+
+**追加手順。** 区画の代表位置になるGameObject（区画の中心へ置いた空Object等）をHierarchyに作り、そこへ「最適化 > Scene Streaming」を追加する。`Scene Path` へ読み込ませたい `.scene` の相対パスを入力し、`距離基準` へプレイヤー機やCameraを割り当てる。
+
+**Inspector項目。**
+
+| 項目 | 内部Field | 意味と使い方 |
+| --- | --- | --- |
+| Scene Path | `sceneStreamingScenePath` | Additiveで読み込む `.scene` のパス。空文字列の間このComponentは何もしない。 |
+| 距離基準 | `sceneStreamingReferenceGameObjectId` | 距離を測る相手。未設定（-1）なら、Scene内でPriorityが最も高い有効Cameraの位置を使う。 |
+| 読込距離 | `sceneStreamingLoadDistance` | 既定500。基準Objectとの距離がこれ以下になったフレームで非同期読込を要求する。 |
+| 解除距離 | `sceneStreamingUnloadDistance` | 既定650。この距離を超えたら破棄する。**Inspectorが毎フレーム「読込距離」以上へ引き上げるため、読込距離より小さい値は保持できない。** 読込と解除が同じ距離だと境界で読込と破棄を往復するので、必ず解除距離を広めに取る。 |
+| 遠距離でSceneを破棄 | `sceneStreamingUnloadWhenFar` | 既定true。falseにすると一度読んだSceneを離れても破棄しない。行って戻る導線で再読込のヒッチを避けたいときに使う。 |
+| Runtime | `sceneStreamingRuntimeLoaded` / `sceneStreamingRuntimePending` | 読み取り専用表示。`処理中` / `Loaded` / `Unloaded` を出す。Scene保存しない。 |
+
+**距離の測り方。** 基準Objectと、**このComponentを持つGameObjectのWorld位置**との3D距離である。Component側のY座標も距離へ入るので、区画代表Objectを地形の高い位置へ置くと、水平距離の感覚より早く境界に達する。
+
+**Runtimeの動作。**
+
+1. `EditorRuntimeManager::UpdateAutomaticSceneStreaming()` が毎フレーム、Scene内の全SceneStreamingを先頭から走査する。
+2. `isActive` がfalse、または `Scene Path` が空の行は飛ばす。
+3. 未読込かつ読込距離以内なら `RequestSceneLoadAsync(path, true)`（Additive）を出し、**そのフレームはそこで走査を打ち切る**。1フレームに開始する読込は最大1件で、同時に複数区画へ入っても順番に処理される。
+4. 読込済みかつ解除距離超過かつ「遠距離でSceneを破棄」がtrueなら破棄する。ただし**そのSceneが現在の主Sceneと同じパスなら破棄しない**。
+5. 別のScene読込が進行中（`isSceneLoading_`）の間は、この処理自体を実行しない。
+
+**保存。** Sceneへは `SceneStreamingExtension` 行として、Scene Path・距離基準ID・読込距離・解除距離・遠距離破棄フラグの5値を保存する。Runtimeの `Loaded` / `処理中` は保存しない。読み込み時は解除距離を読込距離以上へ補正する。
+
+**C++連携。** 専用Wrapperは無い。読込状態を知りたい場合は `SceneManager::IsLoaded(scenePath)`、`SceneManager::IsLoading()`、`SceneManager::GetLoadProgress()` を使う。Scriptから明示的に読ませたい区画は、SceneStreamingではなく `SceneManager::LoadAsync(path, true)` を直接呼ぶ。
+
+**失敗時の確認順。** ① `Scene Path` の綴りと相対パス、② ComponentとGameObjectの両方が有効か、③ `距離基準` が未設定のときScene内にPriority付きの有効Cameraがあるか、④ 別Sceneの読込が進行中でないか、⑤ 読込距離が実際の距離に対して小さすぎないか。
+
+#### TextEffect（表示名: テキストエフェクト ／ カテゴリ: UI）
+
+**目的。** 同じGameObject上の `Text` または `TextMeshProUGUI` の描画へ演出をかける。文字列そのものは変えず、Alpha・位置・色・表示文字数・スケールだけを毎フレーム加工する。
+
+**責務外。** 文字列の差し替え、レイアウト、フォント選択はこのComponentの担当ではない。文字列はTextまたはUIValueBinding、フォントはText側の `textFontIndex` が持つ。
+
+**追加手順。** Canvas配下のTextまたはTextMeshProUGUIを持つGameObjectを選び、「UI > テキストエフェクト」を追加する。Textが同じObjectに無い場合、このComponentは何も描画しない。
+
+**2系統は独立している。** 「出現演出」はActiveになった瞬間から1回だけ、「常時演出」は表示され続ける間ずっと動く。両方同時に設定でき、同じフレームで重ねて適用される。
+
+**出現演出。**
+
+| 出現効果 | 値 | 効果 | 追加パラメーター |
+| --- | --- | --- | --- |
+| なし | 0 | 何もしない。 | — |
+| フェードイン | 1 | Alphaを0から1へ上げる。 | なし |
+| タイプライター | 2 | 表示文字数を先頭から増やす。 | `文字/秒`（`textAppearParamA`、既定12、範囲0.1〜200） |
+| スケールポップ | 3 | 拡大しながら出す。 | `オーバーシュート倍率`（`textAppearParamA`、範囲1.0〜3.0） |
+
+`継続時間(秒)`（`textAppearDuration`、既定0.6）と `開始遅延(秒)`（`textAppearDelay`、既定0）は3種共通である。遅延中は演出開始前の状態で待つ。
+
+`textAppearParamA` は「文字/秒」と「オーバーシュート倍率」で共用されるため、**タイプライターからスケールポップへ切り替えると、既定12が範囲1.0〜3.0へ丸められる**。切り替え後は必ず値を見直す。
+
+**常時演出。** `textContinuousEffectType` は0〜11で、種類ごとに `textContinuousParamA/B/C` の意味が変わる。Comboで種類を変更すると、その種類向けの推奨値が自動で入る（`ResetContinuousTextEffectParamsForType`）。
+
+| 値 | 種類 | ParamA | ParamB | ParamC | 切替時の自動値 |
+| --- | --- | --- | --- | --- | --- |
+| 0 | なし | — | — | — | — |
+| 1 | 点滅 | 点滅間隔(秒) 0.02〜5 | — | — | 0.3 / 0 / 0 |
+| 2 | レインボー | 色相回転速度(周/秒) 0.01〜10 | 文字ごとの色ずれ 0〜1 | — | 0.6 / 0.15 / 0 |
+| 3 | 波 | 振幅(px) 0〜200 | 文字ごとの位相 0〜3 | 揺れる速さ 0〜20 | 8 / 0.5 / 4 |
+| 4 | 発光 | Glow半径(px) 0〜60 | 脈動速度 0〜20（0で静止） | 脈動の深さ 0〜1 | 10 / 3 / 0.3 |
+| 5 | 輪郭の発光 | 輪郭太さ(px) 0.5〜20 | 脈動速度 0〜20 | 脈動の深さ 0〜1 | 2 / 3 / 0.3 |
+| 6 | 色収差 | ズレ量(px) 0〜20 | 脈動速度 0〜20 | 脈動の深さ 0〜1 | 2 / 0 / 0 |
+| 7 | 微振動 | 振れ幅(px) 0〜40 | 速さ 0.1〜60 | — | 2 / 20 / 0 |
+| 8 | 不規則点滅 | 最低輝度(0-1) | フリッカー速さ 0.1〜30 | — | 0.4 / 6 / 0 |
+| 9 | 脈動 | 最大拡大率 1〜2 | 速さ 0.05〜20 | — | 1.05 / 3 / 0 |
+| 10 | 残像 | 振れ幅(px) 0〜100 | 速さ 0.05〜20 | 残像の数 2〜6 | 10 / 2 / 4 |
+| 11 | 簡易グリッチ | ズレ量(px) 0〜40 | 発生頻度(回/秒) 0.05〜10 | 強さ(0-1) | 6 / 1.5 / 0.8 |
+
+`開始遅延(秒)`（`textContinuousDelay`、既定0）は種類を選んだときだけ表示され、この秒数を過ぎてから常時演出の時間が進む。
+
+**Runtimeの動作。** GameViewのText描画中に処理する。Componentが有効で、かつ出現・常時のどちらかが「なし」以外のときだけ `textEffectRuntimeElapsed` を `DeltaTime` で進める。両方「なし」に戻すかComponentを無効にすると経過時間は0へ戻り、次に有効化したとき出現演出が最初から再生される。**「非表示から表示」ではなく「Component無効から有効」または「効果なしから効果あり」が再生の起点である。**
+
+**保存。** `TextEffectExtension` 行へ出現4値と常時5値を保存する。`textEffectRuntimeElapsed` と `textEffectRuntimeWasActive` はRuntime専用で保存しない。フォント番号は同じObjectのText側が `TextFontExtension` として別に保存する。
+
+**C++連携。** 専用Wrapperは無い。演出の切り替えは `RuntimeProperty::SetInt` / `SetFloat` に `"TextEffect"` と内部Field名を渡すか、Componentごと `GameObject::SetComponentActive("TextEffect", bool)` で入切する。出現演出をやり直したいときは、いったんfalseにして次フレームtrueへ戻す。
+
+#### SceneTransition（表示名: シーン遷移 ／ カテゴリ: エフェクト）
+
+**目的。** Scene切り替えの前後へ、画面を覆う演出を挟む。覆い切ったタイミングで実際のScene差し替えを行うため、読み込みのちらつきを隠せる。
+
+**追加手順。** 遷移を管理するGameObject（Scene常駐のManager Object等）へ「エフェクト > シーン遷移」を追加し、`種類` と `遷移先 Scene` を設定する。`SceneButton` などから同じパスへの遷移が要求されると、この設定が自動で使われる。
+
+**Inspector項目。**
+
+| 項目 | 内部Field | 意味と使い方 |
+| --- | --- | --- |
+| 種類 | `sceneTransitionType` | 0=なし / 1=色フェード / 2=ワイプ / 3=Camera Dive。**0のままだと遷移演出は一切起動しない。** |
+| 遷移先 Scene | `sceneTransitionTargetScenePath` | この演出が担当する遷移先。空文字列だと起動しない。 |
+| 覆うまでの時間(秒) | `sceneTransitionOutDuration` | 既定0.8。Overlay Alphaを0から1へ上げる時間。Runtimeは最低0.001秒へ補正する。 |
+| 静止時間(秒) | `sceneTransitionHoldSeconds` | 既定0.2。覆い切った状態で止める時間。**実際のScene差し替えはこの区間の直前、覆い終わった瞬間に行う。** |
+| 見せる時間(秒) | `sceneTransitionInDuration` | 既定0.8。Overlay Alphaを1から0へ下げる時間。 |
+| 色 | `sceneTransitionColor` | 既定 `{1,1,1}`（白）。0〜1のRGB。黒フェードにするなら `{0,0,0}`。 |
+| Dive基準Object | `sceneTransitionCameraDiveSourceGameObjectId` | 種類がCamera Diveのときだけ表示。未設定なら遷移開始時の最優先Cameraの位置を着地点にする。 |
+| Dive開始位置 Offset | `sceneTransitionCameraDivePositionOffset` | 既定 `{0, 60, 0}`。着地点からの相対Offsetで、ここからCameraが降りてくる。 |
+| Dive開始角度 deg | `sceneTransitionCameraDiveRotationDegrees` | 既定 `{90, 0, 0}`（真下向き）。**絶対Euler角の度数**であり、着地姿勢への加算ではない。 |
+
+**Runtimeの動作（3フェーズ）。**
+
+| Phase | 内容 | 終了条件 |
+| --- | --- | --- |
+| 0 CoveringOut | Overlay Alphaを0から1へ。 | `覆うまでの時間` 経過。ここで `LoadSceneForPlay` を実行しSceneを差し替える。 |
+| 1 Holding | Alpha 1のまま静止。Camera Diveなら開始姿勢を上書き設定する。 | `静止時間` 経過。 |
+| 2 RevealingIn | Alphaを1から0へ。Camera Diveなら開始姿勢から着地姿勢へ補間する。 | `見せる時間` 経過で演出終了。 |
+
+**多重起動しない。** 演出が動いている間に別のSceneTransitionを起動しても `false` を返して無視する。先に始まった演出が優先される。Play中でないとき（`isPlaying_` がfalse）も起動しない。
+
+**遷移先の自動一致。** `SceneButton` などがScene読込を要求すると、`TryStartSceneTransitionForRequest` がScene内の有効なSceneTransitionを走査し、`遷移先 Scene` を正規化パスで比較して一致した最初の1件を起動する。**Scene遷移ごとに演出を変えたい場合は、遷移先パスの異なるSceneTransitionを複数置く。**
+
+**Camera Diveの注意。** 着地姿勢の取得に失敗した場合（Cameraが1つも見つからない場合）、Diveは自動で無効化され、Overlayだけの演出になる。`Dive基準Object` を指定したときは、その位置だけを着地点として使い、回転は最優先Cameraのものを使う。
+
+**保存。** `SceneTransitionExtension` 行へ、種類・遷移先パス・3つの秒数・色3値・Dive基準ID・Dive Offset 3値・Dive角度3値の15値を保存する。`sceneTransitionRuntimeState` と `sceneTransitionRuntimeElapsed` はRuntime専用で保存しない。
+
+**C++連携。** 専用Wrapperは無い。Scriptから起こす場合は `SceneManager::Load(scenePath)` を呼べば、同じパスを持つSceneTransitionが自動で拾う。`SceneManager::LoadAsync` は非同期読込の経路であり、この演出とは別系統である。
+
+### 全280 Component Inspector値表
+
+以下、`EditorComponentType` の宣言順に全280件を並べる。この順番はScene保存の型番号の並びと同じである。
+
+#### Transform
+
+表示名「トランスフォーム」／カテゴリ「基本」／Inspector描画 `（専用描画なし）`
+
+Inspector編集行なし。
+
+#### ModelRenderer
+
+表示名「メッシュレンダラー」／カテゴリ「描画・レンダリング」／Inspector描画 `DrawRendererComponent`／同じ描画関数を共有: SkinnedMeshRenderer, SpriteRenderer, BillboardRenderer, ParticleSystemRenderer, TilemapRenderer
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| マテリアル数 | materialCount | int32 | 1 | — | — |
+| 描画方式 | alphaMode | int32(選択) | — | 0=不透明 / 1=アルファマスク / 2=半透明 | `0` |
+| Lighting方式 | lightingMode | int32(選択) | — | 0=Lightingなし / 1=Lambert / 2=Half Lambert / 3=PBR | `3` |
+| 両面描画 | doubleSided | bool | — | true / false | `false` |
+| 強さ | intensity | float | 0.01 | 0.0 〜 10.0 | `1.0` |
+| メタリック | metallic | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 粗さ | roughness | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 屈折率 | ior | float | 0.01 | 1.0 〜 3.0 | `1.0` |
+| アルファ | alpha | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| アルファ境界 | alphaCutoff | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 反射 | reflectionStrength | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 放射 | emissionStrength | float | 0.01 | 0.0 〜 50.0 | `0.0` |
+| FBX内画像を自動使用 | useImportedMaterialTextures | bool | — | true / false | `false` |
+| UV繰り返し | uvTiling | Vector2 | 0.01 | -100.0 〜 100.0 | `{1.0, 1.0}` |
+| UVオフセット | uvOffset | Vector2 | 0.01 | -100.0 〜 100.0 | `{0.0, 0.0}` |
+| 法線強度 | normalScale | float | 0.01 | -2.0 〜 2.0 | `1.0` |
+| AO強度 | ambientOcclusionStrength | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| 高さ強度 | heightScale | float | 0.001 | -0.2 〜 0.2 | `0.02` |
+| クリアコート | clearCoat | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| コート粗さ | clearCoatRoughness | float | 0.01 | 0.0 〜 1.0 | `0.1` |
+| 透過 | transmission | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 表面下散乱 | subsurface | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 材質の厚み | materialThickness | float | 0.001 | 0.001 〜 10.0 | `0.1` |
+| 異方性 | anisotropy | float | 0.01 | -1.0 〜 1.0 | `0.0` |
+| 異方性回転 | anisotropyRotation | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 濡れ | materialWetness | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 水際の高さ | materialWaterlineHeight | float | 0.01 | -10000.0 〜 10000.0 | `0.0` |
+| 水際の幅 | materialWaterlineWidth | float | 0.01 | 0.001 〜 1000.0 | `0.25` |
+| 鏡面色 | specularTint | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| シーン | sheen | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| シーン色 | sheenTint | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 頂点数 | vertexCount | int32 | 1 | — | — |
+| アニメーションクリップ数 | animationClipCount | int32 | 1 | — | — |
+
+#### SpriteRenderer
+
+表示名「スプライトレンダラー」／カテゴリ「描画・レンダリング」／Inspector描画 `DrawRendererComponent`／同じ描画関数を共有: ModelRenderer, SkinnedMeshRenderer, BillboardRenderer, ParticleSystemRenderer, TilemapRenderer
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| マテリアル数 | materialCount | int32 | 1 | — | — |
+| 描画方式 | alphaMode | int32(選択) | — | 0=不透明 / 1=アルファマスク / 2=半透明 | `0` |
+| Lighting方式 | lightingMode | int32(選択) | — | 0=Lightingなし / 1=Lambert / 2=Half Lambert / 3=PBR | `3` |
+| 両面描画 | doubleSided | bool | — | true / false | `false` |
+| 強さ | intensity | float | 0.01 | 0.0 〜 10.0 | `1.0` |
+| メタリック | metallic | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 粗さ | roughness | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 屈折率 | ior | float | 0.01 | 1.0 〜 3.0 | `1.0` |
+| アルファ | alpha | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| アルファ境界 | alphaCutoff | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 反射 | reflectionStrength | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 放射 | emissionStrength | float | 0.01 | 0.0 〜 50.0 | `0.0` |
+| FBX内画像を自動使用 | useImportedMaterialTextures | bool | — | true / false | `false` |
+| UV繰り返し | uvTiling | Vector2 | 0.01 | -100.0 〜 100.0 | `{1.0, 1.0}` |
+| UVオフセット | uvOffset | Vector2 | 0.01 | -100.0 〜 100.0 | `{0.0, 0.0}` |
+| 法線強度 | normalScale | float | 0.01 | -2.0 〜 2.0 | `1.0` |
+| AO強度 | ambientOcclusionStrength | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| 高さ強度 | heightScale | float | 0.001 | -0.2 〜 0.2 | `0.02` |
+| クリアコート | clearCoat | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| コート粗さ | clearCoatRoughness | float | 0.01 | 0.0 〜 1.0 | `0.1` |
+| 透過 | transmission | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 表面下散乱 | subsurface | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 材質の厚み | materialThickness | float | 0.001 | 0.001 〜 10.0 | `0.1` |
+| 異方性 | anisotropy | float | 0.01 | -1.0 〜 1.0 | `0.0` |
+| 異方性回転 | anisotropyRotation | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 濡れ | materialWetness | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 水際の高さ | materialWaterlineHeight | float | 0.01 | -10000.0 〜 10000.0 | `0.0` |
+| 水際の幅 | materialWaterlineWidth | float | 0.01 | 0.001 〜 1000.0 | `0.25` |
+| 鏡面色 | specularTint | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| シーン | sheen | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| シーン色 | sheenTint | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 頂点数 | vertexCount | int32 | 1 | — | — |
+| アニメーションクリップ数 | animationClipCount | int32 | 1 | — | — |
+
+#### Light
+
+表示名「ライト」／カテゴリ「ライト・環境」／Inspector描画 `DrawLightComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 種類 | lightTypeIndex | int32(選択) | — | 0=Point / 1=Sun / 2=Spot / 3=Area | — |
+| 強さ | intensity | float | 1.0 | 0.0 〜 100000.0 | `1.0` |
+| 半径 | colliderRadius | float | 0.1 | 0.01 〜 1000.0 | `0.5` |
+| 方位角/高度を使用 | sunUseAzimuthElevation | bool | — | true / false | `false` |
+| 太陽方位角 | sunAzimuthDegrees | float | 1.0 | -360.0 〜 360.0 | `45.0` |
+| 太陽高度 | sunElevationDegrees | float | 0.5 | -10.0 〜 90.0 | `55.0` |
+| 色温度を使用 | sunUseColorTemperature | bool | — | true / false | `false` |
+| 色温度を高度から自動推定 | sunAutoTemperatureFromElevation | bool | — | true / false | `false` |
+| 太陽色温度(K) | sunTemperatureKelvin | float | 25.0 | 1000.0 〜 12000.0 | `5500.0` |
+| 距離 | colliderRadius | float | 0.1 | 0.01 〜 1000.0 | `0.5` |
+| 内側角度 | colliderSize.x | float | 0.1 | 1.0 〜 89.0 | `1.0` |
+| 外側角度 | colliderSize.y | float | 0.1 | 1.0 〜 89.0 | `1.0` |
+| 広がり | colliderSize.z | float | 0.1 | 0.01 〜 100.0 | `1.0` |
+
+#### Camera
+
+表示名「カメラ」／カテゴリ「カメラ」／Inspector描画 `DrawCameraComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 優先度 | cameraPriority | int32 | 1 | — | `0` |
+| 投影 | cameraProjectionMode | int32(選択) | — | 0=Perspective / 1=Orthographic | `0` |
+| 視野角 | cameraFieldOfView | float | 1.0 | 1.0 〜 179.0 | `60.0` |
+| ニアクリップ | cameraNearClip | float | 0.01 | 0.01 〜 100.0 | `0.3` |
+| ファークリップ | cameraFarClip | float | 1.0 | 0.1 〜 10000.0 | `1000.0` |
+| 露出補正 (EV) | cameraExposure | float | 0.1 | -10.0 〜 10.0 | `0.0` |
+| 被写界深度 | cameraDofEnabled | bool | — | true / false | `false` |
+| フォーカス距離 | cameraDofFocusDistance | float | 0.1 | 0.1 〜 1000.0 | `10.0` |
+| 絞り | cameraDofAperture | float | 0.01 | 0.0 〜 1.0 | `0.1` |
+| 焦点距離 (mm) | cameraDofFocalLength | float | 1.0 | 1.0 〜 300.0 | `50.0` |
+| モーションブラー | cameraMotionBlurEnabled | bool | — | true / false | `false` |
+| ブラー強度 | cameraMotionBlurIntensity | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+
+#### AudioSource
+
+表示名「オーディオソース」／カテゴリ「オーディオ」／Inspector描画 `（専用描画なし）`
+
+Inspector編集行なし。
+
+#### RigidBody
+
+表示名「リジッドボディ」／カテゴリ「3D物理」／Inspector描画 `DrawRigidBodyComponent`／同じ描画関数を共有: RigidBody2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Colliderから質量を計算 | automaticMassFromCollider | bool | — | true / false | `false` |
+| 実質密度 kg/m3 | bodyDensity | float | 1.0 | 0.01 〜 1000000.0 | `500.0` |
+| 質量 | mass | float | 0.01 | 0.01 〜 1000000.0 | `1.0` |
+| 線形減衰 | drag | float | 0.01 | 0.0 〜 20.0 | `0.0` |
+| 角度減衰 | angularDrag | float | 0.01 | 0.0 〜 20.0 | `0.05` |
+| 慣性倍率 | inertiaMultiplier | float | 0.01 | 0.01 〜 1000.0 | `1.0` |
+| 重心オフセット | centerOfMassOffset | Vector3 | 0.01 | -10000.0 〜 10000.0 | `{0.0, 0.0, 0.0}` |
+| ジャイロ効果 | applyGyroscopicForce | bool | — | true / false | `false` |
+| 重力を使用 | useGravity | bool | — | true / false | `true` |
+| キネマティックにする | isKinematic | bool | — | true / false | `false` |
+| 補間 | interpolationMode | int32(選択) | — | 0=補間なし / 1=補間 / 2=外挿 | `0` |
+| 衝突判定 | collisionDetectionMode | int32(選択) | — | 0=離散 / 1=連続 | `0` |
+| 速度 | velocity | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| 角速度 | angularVelocity | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+
+#### BoxCollider
+
+表示名「箱の当たり判定」／カテゴリ「3D物理」／Inspector描画 `DrawBoxColliderComponent`／同じ描画関数を共有: BoxCollider2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 中心 | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| サイズ | colliderSize | Vector3 | 0.01 | 0.01 〜 100.0 | `{1.0, 1.0, 1.0}` |
+
+#### SphereCollider
+
+表示名「球の当たり判定」／カテゴリ「3D物理」／Inspector描画 `DrawSphereColliderComponent`／同じ描画関数を共有: CircleCollider2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 中心 | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| 半径 | colliderRadius | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+
+#### Input
+
+表示名「入力」／カテゴリ「入力・イベント」／Inspector描画 `DrawInputComponent`
+
+Inspector編集行なし。
+
+#### Animation
+
+表示名「アニメーション」／カテゴリ「アニメーション」／Inspector描画 `DrawAnimationComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Animation Clip パス | assetPath | string | — | 文字列 | `""` |
+| 速度 | animationSpeed | float | 0.1 | 0.0 〜 10.0 | `1.0` |
+| ループ | animationLoop | bool | — | true / false | `true` |
+| 自動再生 | animationPlayOnAwake | bool | — | true / false | `true` |
+| 種類 | animationType | int32(選択) | — | 0=FBX / Property Clip / 1=Float / 2=Rotate / 3=Pulse / 4=Bob | `0` |
+| 振幅 | animationAmplitude | float | 0.01 | 0.0 〜 10.0 | `1.0` |
+| プロパティ数 | trackCount | int32 | 1 | — | — |
+| イベント数 | eventCount | int32 | 1 | — | — |
+| クリップ数 | clipCount | int32 | 1 | — | — |
+| 再生クリップ | animationClipIndex | int32(選択) | — | clipNames.data() | `0` |
+| Transform キー数 | keyframeCount | int32 | 1 | — | — |
+
+#### Animator
+
+表示名「アニメーター」／カテゴリ「アニメーション」／Inspector描画 `DrawAnimatorComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Graph アセット | assetPath | string | — | 文字列 | `""` |
+| 再生速度 | animationSpeed | float | 0.05 | 0.0 〜 10.0 | `1.0` |
+| Root Motion を適用 | animatorApplyRootMotion | bool | — | true / false | `false` |
+| 移動速度を自動取得 | animatorAutoVelocity | bool | — | true / false | `true` |
+| 既定遷移秒 | animatorTransitionDuration | float | 0.01 | 0.0 〜 5.0 | `0.15` |
+| MoveX 左右 | animatorMoveX | float | 0.01 | -1.0 〜 1.0 | `0.0` |
+| MoveY 前後 | animatorMoveY | float | 0.01 | -1.0 〜 1.0 | `0.0` |
+| Speed | animatorSpeedParameter | float | 0.01 | 0.0 〜 100.0 | `0.0` |
+| 停止 Clip | animatorIdleClipIndex | int32 | 1 | — | `0` |
+| 前 Clip | animatorForwardClipIndex | int32 | 1 | — | `0` |
+| 後 Clip | animatorBackwardClipIndex | int32 | 1 | — | `0` |
+| 左 Clip | animatorLeftClipIndex | int32 | 1 | — | `0` |
+| 右 Clip | animatorRightClipIndex | int32 | 1 | — | `0` |
+| parameterName.c_str() | parameter.floatValue | float | 0.01 | -10000.0 〜 10000.0 | — |
+| parameterName.c_str() | parameter.intValue | int32 | 1 | — | — |
+| parameterName.c_str() | parameter.boolValue | bool | — | true / false | — |
+| parameterName.c_str() | parameter.vector2Value | Vector2 | 0.01 | -10000.0 〜 10000.0 | — |
+| parameterName.c_str() | parameter.vector3Value | Vector3 | 0.01 | -10000.0 〜 10000.0 | — |
+
+#### AudioListener
+
+表示名「オーディオリスナー」／カテゴリ「カメラ」／Inspector描画 `DrawAudioListenerComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Master | masterVolume | float | 0.01 | 0.0 〜 1.0 | — |
+| SFX | sfxVolume | float | 0.01 | 0.0 〜 1.0 | — |
+| BGM | bgmVolume | float | 0.01 | 0.0 〜 1.0 | — |
+| Ambience | ambienceVolume | float | 0.01 | 0.0 〜 1.0 | — |
+| UI | uiVolume | float | 0.01 | 0.0 〜 1.0 | — |
+
+#### ParentConstraint
+
+表示名「親制約」／カテゴリ「アニメーション」／Inspector描画 `DrawParentConstraintComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| ターゲット ID | connectedGameObjectId | int32 | 1 | — | `-1` |
+| 重み | constraintWeight | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| 位置オフセット | constraintPositionOffset | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+
+#### PositionConstraint
+
+表示名「位置制約」／カテゴリ「アニメーション」／Inspector描画 `DrawPositionConstraintComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| ターゲット ID | connectedGameObjectId | int32 | 1 | — | `-1` |
+| 重み | constraintWeight | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| オフセット | constraintPositionOffset | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+
+#### RotationConstraint
+
+表示名「回転制約」／カテゴリ「アニメーション」／Inspector描画 `DrawRotationConstraintComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| ターゲット ID | connectedGameObjectId | int32 | 1 | — | `-1` |
+| 重み | constraintWeight | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### ScaleConstraint
+
+表示名「スケール制約」／カテゴリ「アニメーション」／Inspector描画 `DrawScaleConstraintComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| ターゲット ID | connectedGameObjectId | int32 | 1 | — | `-1` |
+| 重み | constraintWeight | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| X 軸フリーズ | constraintFreezeAxisX | bool | — | true / false | `false` |
+| Y 軸フリーズ | constraintFreezeAxisY | bool | — | true / false | `false` |
+| Z 軸フリーズ | constraintFreezeAxisZ | bool | — | true / false | `false` |
+
+#### EventSystem
+
+表示名「イベントシステム」／カテゴリ「入力・イベント」／Inspector描画 `DrawEventSystemComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+
+#### MeshFilter
+
+表示名「メッシュフィルター」／カテゴリ「描画・レンダリング」／Inspector描画 `（専用描画なし）`
+
+Inspector編集行なし。
+
+#### CapsuleCollider
+
+表示名「カプセル当たり判定」／カテゴリ「3D物理」／Inspector描画 `DrawCapsuleColliderComponent`／同じ描画関数を共有: CharacterController, CapsuleCollider2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 中心 | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| 半径 | colliderRadius | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 高さ | colliderSize.y | float | 0.01 | 0.01 〜 100.0 | `1.0` |
+
+#### MeshCollider
+
+表示名「メッシュ当たり判定」／カテゴリ「3D物理」／Inspector描画 `DrawMeshColliderComponent`／同じ描画関数を共有: TerrainCollider, PolygonCollider2D, EdgeCollider2D, CompositeCollider2D, TilemapCollider2D, CustomCollider2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 中心 | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| サイズ | colliderSize | Vector3 | 0.01 | 0.01 〜 100.0 | `{1.0, 1.0, 1.0}` |
+| 頂点数 | vertexCount | int32 | 1 | — | — |
+| 三角形数 | triangleCount | int32 | 1 | — | — |
+
+#### CharacterController
+
+表示名「キャラクターコントローラー」／カテゴリ「3D物理」／Inspector描画 `DrawCapsuleColliderComponent`／同じ描画関数を共有: CapsuleCollider, CapsuleCollider2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 中心 | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| 半径 | colliderRadius | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 高さ | colliderSize.y | float | 0.01 | 0.01 〜 100.0 | `1.0` |
+
+#### NavigationAgent
+
+表示名「NavMesh エージェント」／カテゴリ「ナビゲーション」／Inspector描画 `DrawNavMeshAgentComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 目的地 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 半径 | navAgentRadius | float | 0.01 | 0.1 〜 10.0 | `0.5` |
+| 高さ | navAgentHeight | float | 0.01 | 0.1 〜 10.0 | `2.0` |
+| 最大速度 | navMaxSpeed | float | 0.1 | 0.1 〜 50.0 | `3.5` |
+| 最大加速度 | navMaxAcceleration | float | 0.1 | 0.1 〜 100.0 | `8.0` |
+| 停止距離 | navStoppingDistance | float | 0.1 | 0.0 〜 10.0 | `0.5` |
+| 自動再経路 | navAutoRepath | bool | — | true / false | `true` |
+
+#### PlayableDirector
+
+表示名「プレイアブルディレクター」／カテゴリ「アニメーション」／Inspector描画 `DrawPlayableDirectorComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 自動再生 | animationPlayOnAwake | bool | — | true / false | `true` |
+| 速度 | animationSpeed | float | 0.1 | 0.0 〜 10.0 | `1.0` |
+| ループ | animationLoop | bool | — | true / false | `true` |
+
+#### Script
+
+表示名「ゲームオブジェクト + スクリプト」／カテゴリ「基本」／Inspector描画 `DrawNativeScriptComponent`／同じ描画関数を共有: MonoBehaviour
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| propertyLabel | scriptProperty.boolValue | bool | — | true / false | — |
+| propertyLabel | scriptProperty.intValue | int32 | 1 | — | — |
+| propertyLabel | scriptProperty.floatValue | float | step | minValue 〜 maxValue | — |
+| propertyLabel | scriptProperty.vector2Value | Vector2 | step | minValue 〜 maxValue | — |
+| propertyLabel | scriptProperty.vector3Value | Vector3 | step | minValue 〜 maxValue | — |
+| propertyLabel | scriptProperty.stringValue | string | — | 文字列 | — |
+
+#### HapticSource
+
+表示名「FeelKit 触覚ソース」／カテゴリ「FeelKit」／Inspector描画 `DrawHapticSourceComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| サウンド | assetPath | string | — | 文字列 | `""` |
+| 自動再生 | audioPlayOnAwake | bool | — | true / false | `true` |
+| 強さ | hapticStrength | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| 持続時間(ms) | hapticDurationMs | int32 | 1 | — | `120` |
+| ループ | hapticLoop | bool | — | true / false | `false` |
+
+#### Canvas
+
+表示名「キャンバス」／カテゴリ「基本」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Image, Text, RectTransform, CanvasScaler, GraphicRaycaster, RawImage, TextMeshProUGUI, Scrollbar, Dropdown, TMPDropdown, InputField, TMPInputField, ScrollRect, Mask, RectMask2D, HorizontalLayoutGroup, VerticalLayoutGroup, GridLayoutGroup, ContentSizeFitter, AspectRatioFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### Image
+
+表示名「イメージ」／カテゴリ「UI」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Canvas, Text, RectTransform, CanvasScaler, GraphicRaycaster, RawImage, TextMeshProUGUI, Scrollbar, Dropdown, TMPDropdown, InputField, TMPInputField, ScrollRect, Mask, RectMask2D, HorizontalLayoutGroup, VerticalLayoutGroup, GridLayoutGroup, ContentSizeFitter, AspectRatioFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### Text
+
+表示名「テキスト」／カテゴリ「UI」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Canvas, Image, RectTransform, CanvasScaler, GraphicRaycaster, RawImage, TextMeshProUGUI, Scrollbar, Dropdown, TMPDropdown, InputField, TMPInputField, ScrollRect, Mask, RectMask2D, HorizontalLayoutGroup, VerticalLayoutGroup, GridLayoutGroup, ContentSizeFitter, AspectRatioFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### RectTransform
+
+表示名「レクトトランスフォーム」／カテゴリ「基本」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Canvas, Image, Text, CanvasScaler, GraphicRaycaster, RawImage, TextMeshProUGUI, Scrollbar, Dropdown, TMPDropdown, InputField, TMPInputField, ScrollRect, Mask, RectMask2D, HorizontalLayoutGroup, VerticalLayoutGroup, GridLayoutGroup, ContentSizeFitter, AspectRatioFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### MonoBehaviour
+
+表示名「モノビヘイビア」／カテゴリ「基本」／Inspector描画 `DrawNativeScriptComponent`／同じ描画関数を共有: Script
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| propertyLabel | scriptProperty.boolValue | bool | — | true / false | — |
+| propertyLabel | scriptProperty.intValue | int32 | 1 | — | — |
+| propertyLabel | scriptProperty.floatValue | float | step | minValue 〜 maxValue | — |
+| propertyLabel | scriptProperty.vector2Value | Vector2 | step | minValue 〜 maxValue | — |
+| propertyLabel | scriptProperty.vector3Value | Vector3 | step | minValue 〜 maxValue | — |
+| propertyLabel | scriptProperty.stringValue | string | — | 文字列 | — |
+
+#### SkinnedMeshRenderer
+
+表示名「スキンメッシュレンダラー」／カテゴリ「描画・レンダリング」／Inspector描画 `DrawRendererComponent`／同じ描画関数を共有: ModelRenderer, SpriteRenderer, BillboardRenderer, ParticleSystemRenderer, TilemapRenderer
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| マテリアル数 | materialCount | int32 | 1 | — | — |
+| 描画方式 | alphaMode | int32(選択) | — | 0=不透明 / 1=アルファマスク / 2=半透明 | `0` |
+| Lighting方式 | lightingMode | int32(選択) | — | 0=Lightingなし / 1=Lambert / 2=Half Lambert / 3=PBR | `3` |
+| 両面描画 | doubleSided | bool | — | true / false | `false` |
+| 強さ | intensity | float | 0.01 | 0.0 〜 10.0 | `1.0` |
+| メタリック | metallic | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 粗さ | roughness | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 屈折率 | ior | float | 0.01 | 1.0 〜 3.0 | `1.0` |
+| アルファ | alpha | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| アルファ境界 | alphaCutoff | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 反射 | reflectionStrength | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 放射 | emissionStrength | float | 0.01 | 0.0 〜 50.0 | `0.0` |
+| FBX内画像を自動使用 | useImportedMaterialTextures | bool | — | true / false | `false` |
+| UV繰り返し | uvTiling | Vector2 | 0.01 | -100.0 〜 100.0 | `{1.0, 1.0}` |
+| UVオフセット | uvOffset | Vector2 | 0.01 | -100.0 〜 100.0 | `{0.0, 0.0}` |
+| 法線強度 | normalScale | float | 0.01 | -2.0 〜 2.0 | `1.0` |
+| AO強度 | ambientOcclusionStrength | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| 高さ強度 | heightScale | float | 0.001 | -0.2 〜 0.2 | `0.02` |
+| クリアコート | clearCoat | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| コート粗さ | clearCoatRoughness | float | 0.01 | 0.0 〜 1.0 | `0.1` |
+| 透過 | transmission | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 表面下散乱 | subsurface | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 材質の厚み | materialThickness | float | 0.001 | 0.001 〜 10.0 | `0.1` |
+| 異方性 | anisotropy | float | 0.01 | -1.0 〜 1.0 | `0.0` |
+| 異方性回転 | anisotropyRotation | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 濡れ | materialWetness | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 水際の高さ | materialWaterlineHeight | float | 0.01 | -10000.0 〜 10000.0 | `0.0` |
+| 水際の幅 | materialWaterlineWidth | float | 0.01 | 0.001 〜 1000.0 | `0.25` |
+| 鏡面色 | specularTint | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| シーン | sheen | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| シーン色 | sheenTint | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 頂点数 | vertexCount | int32 | 1 | — | — |
+| アニメーションクリップ数 | animationClipCount | int32 | 1 | — | — |
+
+#### LineRenderer
+
+表示名「ラインレンダラー」／カテゴリ「描画・レンダリング」／Inspector描画 `DrawLineRendererComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 表示サイズ | colliderSize | Vector3 | 0.01 | 0.01 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+
+#### TrailRenderer
+
+表示名「トレイルレンダラー」／カテゴリ「描画・レンダリング」／Inspector描画 `DrawTrailRendererComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 太さ | particleSize | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 終端の太さ | particleEndSize | float | 0.01 | 0.0 〜 100.0 | `0.0` |
+| 残る秒数 | particleLifetime | float | 0.01 | 0.01 〜 60.0 | `2.0` |
+| 毎秒の分割数 | particleRate | float | 1.0 | 1.0 〜 1000.0 | `10.0` |
+| 終端透明度 | particleEndAlpha | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+
+#### BillboardRenderer
+
+表示名「ビルボードレンダラー」／カテゴリ「描画・レンダリング」／Inspector描画 `DrawRendererComponent`／同じ描画関数を共有: ModelRenderer, SkinnedMeshRenderer, SpriteRenderer, ParticleSystemRenderer, TilemapRenderer
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| マテリアル数 | materialCount | int32 | 1 | — | — |
+| 描画方式 | alphaMode | int32(選択) | — | 0=不透明 / 1=アルファマスク / 2=半透明 | `0` |
+| Lighting方式 | lightingMode | int32(選択) | — | 0=Lightingなし / 1=Lambert / 2=Half Lambert / 3=PBR | `3` |
+| 両面描画 | doubleSided | bool | — | true / false | `false` |
+| 強さ | intensity | float | 0.01 | 0.0 〜 10.0 | `1.0` |
+| メタリック | metallic | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 粗さ | roughness | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 屈折率 | ior | float | 0.01 | 1.0 〜 3.0 | `1.0` |
+| アルファ | alpha | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| アルファ境界 | alphaCutoff | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 反射 | reflectionStrength | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 放射 | emissionStrength | float | 0.01 | 0.0 〜 50.0 | `0.0` |
+| FBX内画像を自動使用 | useImportedMaterialTextures | bool | — | true / false | `false` |
+| UV繰り返し | uvTiling | Vector2 | 0.01 | -100.0 〜 100.0 | `{1.0, 1.0}` |
+| UVオフセット | uvOffset | Vector2 | 0.01 | -100.0 〜 100.0 | `{0.0, 0.0}` |
+| 法線強度 | normalScale | float | 0.01 | -2.0 〜 2.0 | `1.0` |
+| AO強度 | ambientOcclusionStrength | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| 高さ強度 | heightScale | float | 0.001 | -0.2 〜 0.2 | `0.02` |
+| クリアコート | clearCoat | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| コート粗さ | clearCoatRoughness | float | 0.01 | 0.0 〜 1.0 | `0.1` |
+| 透過 | transmission | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 表面下散乱 | subsurface | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 材質の厚み | materialThickness | float | 0.001 | 0.001 〜 10.0 | `0.1` |
+| 異方性 | anisotropy | float | 0.01 | -1.0 〜 1.0 | `0.0` |
+| 異方性回転 | anisotropyRotation | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 濡れ | materialWetness | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 水際の高さ | materialWaterlineHeight | float | 0.01 | -10000.0 〜 10000.0 | `0.0` |
+| 水際の幅 | materialWaterlineWidth | float | 0.01 | 0.001 〜 1000.0 | `0.25` |
+| 鏡面色 | specularTint | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| シーン | sheen | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| シーン色 | sheenTint | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 頂点数 | vertexCount | int32 | 1 | — | — |
+| アニメーションクリップ数 | animationClipCount | int32 | 1 | — | — |
+
+#### CanvasRenderer
+
+表示名「キャンバスレンダラー」／カテゴリ「描画・レンダリング」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: Canvas, Image, Text, RectTransform, CanvasScaler, GraphicRaycaster, RawImage, TextMeshProUGUI, Scrollbar, Dropdown, TMPDropdown, InputField, TMPInputField, ScrollRect, Mask, RectMask2D, HorizontalLayoutGroup, VerticalLayoutGroup, GridLayoutGroup, ContentSizeFitter, AspectRatioFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### ParticleSystemRenderer
+
+表示名「パーティクルシステムレンダラー」／カテゴリ「描画・レンダリング」／Inspector描画 `DrawRendererComponent`／同じ描画関数を共有: ModelRenderer, SkinnedMeshRenderer, SpriteRenderer, BillboardRenderer, TilemapRenderer
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| マテリアル数 | materialCount | int32 | 1 | — | — |
+| 描画方式 | alphaMode | int32(選択) | — | 0=不透明 / 1=アルファマスク / 2=半透明 | `0` |
+| Lighting方式 | lightingMode | int32(選択) | — | 0=Lightingなし / 1=Lambert / 2=Half Lambert / 3=PBR | `3` |
+| 両面描画 | doubleSided | bool | — | true / false | `false` |
+| 強さ | intensity | float | 0.01 | 0.0 〜 10.0 | `1.0` |
+| メタリック | metallic | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 粗さ | roughness | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 屈折率 | ior | float | 0.01 | 1.0 〜 3.0 | `1.0` |
+| アルファ | alpha | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| アルファ境界 | alphaCutoff | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 反射 | reflectionStrength | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 放射 | emissionStrength | float | 0.01 | 0.0 〜 50.0 | `0.0` |
+| FBX内画像を自動使用 | useImportedMaterialTextures | bool | — | true / false | `false` |
+| UV繰り返し | uvTiling | Vector2 | 0.01 | -100.0 〜 100.0 | `{1.0, 1.0}` |
+| UVオフセット | uvOffset | Vector2 | 0.01 | -100.0 〜 100.0 | `{0.0, 0.0}` |
+| 法線強度 | normalScale | float | 0.01 | -2.0 〜 2.0 | `1.0` |
+| AO強度 | ambientOcclusionStrength | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| 高さ強度 | heightScale | float | 0.001 | -0.2 〜 0.2 | `0.02` |
+| クリアコート | clearCoat | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| コート粗さ | clearCoatRoughness | float | 0.01 | 0.0 〜 1.0 | `0.1` |
+| 透過 | transmission | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 表面下散乱 | subsurface | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 材質の厚み | materialThickness | float | 0.001 | 0.001 〜 10.0 | `0.1` |
+| 異方性 | anisotropy | float | 0.01 | -1.0 〜 1.0 | `0.0` |
+| 異方性回転 | anisotropyRotation | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 濡れ | materialWetness | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 水際の高さ | materialWaterlineHeight | float | 0.01 | -10000.0 〜 10000.0 | `0.0` |
+| 水際の幅 | materialWaterlineWidth | float | 0.01 | 0.001 〜 1000.0 | `0.25` |
+| 鏡面色 | specularTint | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| シーン | sheen | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| シーン色 | sheenTint | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 頂点数 | vertexCount | int32 | 1 | — | — |
+| アニメーションクリップ数 | animationClipCount | int32 | 1 | — | — |
+
+#### FlareLayer
+
+表示名「フレアレイヤー」／カテゴリ「カメラ」／Inspector描画 `DrawFlareLayerComponent`
+
+Inspector編集行なし。
+
+#### CinemachineCamera
+
+表示名「Cinemachine カメラ」／カテゴリ「カメラ」／Inspector描画 `（専用描画なし）`
+
+Inspector編集行なし。
+
+#### ReflectionProbe
+
+表示名「リフレクションプローブ」／カテゴリ「ライト・環境」／Inspector描画 `DrawReflectionProbeComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 種類 | reflectionModeIndex | int32(選択) | — | 0=スクリーンスペース反射 / 1=キューブマップ反射 / 2=平面反射 | — |
+| 反射像の強さ | intensity | float | 0.01 | 0.0 〜 4.0 | `1.0` |
+| 反射の粗さ | roughness | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 中心 | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| サイズ | colliderSize | Vector3 | 0.01 | 0.01 〜 1000.0 | `{1.0, 1.0, 1.0}` |
+
+#### LightProbeGroup
+
+表示名「ライトプローブグループ」／カテゴリ「ライト・環境」／Inspector描画 `DrawLightProbeGroupComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 反射寄与 | intensity | float | 0.01 | 0.0 〜 4.0 | `1.0` |
+| ぼかし | roughness | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+
+#### LightProbeProxyVolume
+
+表示名「ライトプローブプロキシボリューム」／カテゴリ「ライト・環境」／Inspector描画 `DrawLightProbeProxyVolumeComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| サイズ | colliderSize | Vector3 | 0.01 | 0.01 〜 1000.0 | `{1.0, 1.0, 1.0}` |
+| 反射寄与 | intensity | float | 0.01 | 0.0 〜 4.0 | `1.0` |
+| ぼかし | roughness | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+
+#### Volume
+
+表示名「ボリューム」／カテゴリ「ライト・環境」／Inspector描画 `DrawVolumeComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 重み | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### TerrainCollider
+
+表示名「地形の当たり判定」／カテゴリ「3D物理」／Inspector描画 `DrawMeshColliderComponent`／同じ描画関数を共有: MeshCollider, PolygonCollider2D, EdgeCollider2D, CompositeCollider2D, TilemapCollider2D, CustomCollider2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 中心 | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| サイズ | colliderSize | Vector3 | 0.01 | 0.01 〜 100.0 | `{1.0, 1.0, 1.0}` |
+| 頂点数 | vertexCount | int32 | 1 | — | — |
+| 三角形数 | triangleCount | int32 | 1 | — | — |
+
+#### WheelCollider
+
+表示名「車輪の当たり判定」／カテゴリ「3D物理」／Inspector描画 `（専用描画なし）`
+
+Inspector編集行なし。
+
+#### ConstantForce
+
+表示名「コンスタントフォース」／カテゴリ「3D物理」／Inspector描画 `DrawConstantForceComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 力 | velocity | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+
+#### HingeJoint
+
+表示名「ヒンジジョイント」／カテゴリ「3D物理」／Inspector描画 `DrawJointComponent`／同じ描画関数を共有: FixedJoint, SpringJoint, ConfigurableJoint, CharacterJoint, DistanceJoint2D, HingeJoint2D, SpringJoint2D, FixedJoint2D, SliderJoint2D, WheelJoint2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| アンカー | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| 回転軸 | jointAxis | Vector3 | 0.01 | 制限なし | `{0.0, 1.0, 0.0}` |
+| 最小距離 | jointMinDistance | float | 0.01 | 0.0 〜 100.0 | `0.0` |
+| 最大距離 | jointMaxDistance | float | 0.01 | 0.0 〜 100.0 | `1.0` |
+| 最小移動 | jointMinDistance | float | 0.01 | -100.0 〜 100.0 | `0.0` |
+| 最大移動 | jointMaxDistance | float | 0.01 | -100.0 〜 100.0 | `1.0` |
+| ばね周波数 | jointSpringFrequency | float | 0.01 | 0.0 〜 60.0 | `0.0` |
+| ばね減衰 | jointSpringDamping | float | 0.01 | 0.0 〜 10.0 | `0.5` |
+
+#### FixedJoint
+
+表示名「固定ジョイント」／カテゴリ「3D物理」／Inspector描画 `DrawJointComponent`／同じ描画関数を共有: HingeJoint, SpringJoint, ConfigurableJoint, CharacterJoint, DistanceJoint2D, HingeJoint2D, SpringJoint2D, FixedJoint2D, SliderJoint2D, WheelJoint2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| アンカー | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| 回転軸 | jointAxis | Vector3 | 0.01 | 制限なし | `{0.0, 1.0, 0.0}` |
+| 最小距離 | jointMinDistance | float | 0.01 | 0.0 〜 100.0 | `0.0` |
+| 最大距離 | jointMaxDistance | float | 0.01 | 0.0 〜 100.0 | `1.0` |
+| 最小移動 | jointMinDistance | float | 0.01 | -100.0 〜 100.0 | `0.0` |
+| 最大移動 | jointMaxDistance | float | 0.01 | -100.0 〜 100.0 | `1.0` |
+| ばね周波数 | jointSpringFrequency | float | 0.01 | 0.0 〜 60.0 | `0.0` |
+| ばね減衰 | jointSpringDamping | float | 0.01 | 0.0 〜 10.0 | `0.5` |
+
+#### SpringJoint
+
+表示名「スプリングジョイント」／カテゴリ「3D物理」／Inspector描画 `DrawJointComponent`／同じ描画関数を共有: HingeJoint, FixedJoint, ConfigurableJoint, CharacterJoint, DistanceJoint2D, HingeJoint2D, SpringJoint2D, FixedJoint2D, SliderJoint2D, WheelJoint2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| アンカー | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| 回転軸 | jointAxis | Vector3 | 0.01 | 制限なし | `{0.0, 1.0, 0.0}` |
+| 最小距離 | jointMinDistance | float | 0.01 | 0.0 〜 100.0 | `0.0` |
+| 最大距離 | jointMaxDistance | float | 0.01 | 0.0 〜 100.0 | `1.0` |
+| 最小移動 | jointMinDistance | float | 0.01 | -100.0 〜 100.0 | `0.0` |
+| 最大移動 | jointMaxDistance | float | 0.01 | -100.0 〜 100.0 | `1.0` |
+| ばね周波数 | jointSpringFrequency | float | 0.01 | 0.0 〜 60.0 | `0.0` |
+| ばね減衰 | jointSpringDamping | float | 0.01 | 0.0 〜 10.0 | `0.5` |
+
+#### ConfigurableJoint
+
+表示名「コンフィギュラブルジョイント」／カテゴリ「3D物理」／Inspector描画 `DrawJointComponent`／同じ描画関数を共有: HingeJoint, FixedJoint, SpringJoint, CharacterJoint, DistanceJoint2D, HingeJoint2D, SpringJoint2D, FixedJoint2D, SliderJoint2D, WheelJoint2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| アンカー | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| 回転軸 | jointAxis | Vector3 | 0.01 | 制限なし | `{0.0, 1.0, 0.0}` |
+| 最小距離 | jointMinDistance | float | 0.01 | 0.0 〜 100.0 | `0.0` |
+| 最大距離 | jointMaxDistance | float | 0.01 | 0.0 〜 100.0 | `1.0` |
+| 最小移動 | jointMinDistance | float | 0.01 | -100.0 〜 100.0 | `0.0` |
+| 最大移動 | jointMaxDistance | float | 0.01 | -100.0 〜 100.0 | `1.0` |
+| ばね周波数 | jointSpringFrequency | float | 0.01 | 0.0 〜 60.0 | `0.0` |
+| ばね減衰 | jointSpringDamping | float | 0.01 | 0.0 〜 10.0 | `0.5` |
+
+#### CharacterJoint
+
+表示名「キャラクタージョイント」／カテゴリ「3D物理」／Inspector描画 `DrawJointComponent`／同じ描画関数を共有: HingeJoint, FixedJoint, SpringJoint, ConfigurableJoint, DistanceJoint2D, HingeJoint2D, SpringJoint2D, FixedJoint2D, SliderJoint2D, WheelJoint2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| アンカー | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| 回転軸 | jointAxis | Vector3 | 0.01 | 制限なし | `{0.0, 1.0, 0.0}` |
+| 最小距離 | jointMinDistance | float | 0.01 | 0.0 〜 100.0 | `0.0` |
+| 最大距離 | jointMaxDistance | float | 0.01 | 0.0 〜 100.0 | `1.0` |
+| 最小移動 | jointMinDistance | float | 0.01 | -100.0 〜 100.0 | `0.0` |
+| 最大移動 | jointMaxDistance | float | 0.01 | -100.0 〜 100.0 | `1.0` |
+| ばね周波数 | jointSpringFrequency | float | 0.01 | 0.0 〜 60.0 | `0.0` |
+| ばね減衰 | jointSpringDamping | float | 0.01 | 0.0 〜 10.0 | `0.5` |
+
+#### RigidBody2D
+
+表示名「リジッドボディ 2D」／カテゴリ「2D物理」／Inspector描画 `DrawRigidBodyComponent`／同じ描画関数を共有: RigidBody
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Colliderから質量を計算 | automaticMassFromCollider | bool | — | true / false | `false` |
+| 実質密度 kg/m3 | bodyDensity | float | 1.0 | 0.01 〜 1000000.0 | `500.0` |
+| 質量 | mass | float | 0.01 | 0.01 〜 1000000.0 | `1.0` |
+| 線形減衰 | drag | float | 0.01 | 0.0 〜 20.0 | `0.0` |
+| 角度減衰 | angularDrag | float | 0.01 | 0.0 〜 20.0 | `0.05` |
+| 慣性倍率 | inertiaMultiplier | float | 0.01 | 0.01 〜 1000.0 | `1.0` |
+| 重心オフセット | centerOfMassOffset | Vector3 | 0.01 | -10000.0 〜 10000.0 | `{0.0, 0.0, 0.0}` |
+| ジャイロ効果 | applyGyroscopicForce | bool | — | true / false | `false` |
+| 重力を使用 | useGravity | bool | — | true / false | `true` |
+| キネマティックにする | isKinematic | bool | — | true / false | `false` |
+| 補間 | interpolationMode | int32(選択) | — | 0=補間なし / 1=補間 / 2=外挿 | `0` |
+| 衝突判定 | collisionDetectionMode | int32(選択) | — | 0=離散 / 1=連続 | `0` |
+| 速度 | velocity | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| 角速度 | angularVelocity | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+
+#### BoxCollider2D
+
+表示名「四角の当たり判定 2D」／カテゴリ「2D物理」／Inspector描画 `DrawBoxColliderComponent`／同じ描画関数を共有: BoxCollider
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 中心 | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| サイズ | colliderSize | Vector3 | 0.01 | 0.01 〜 100.0 | `{1.0, 1.0, 1.0}` |
+
+#### CircleCollider2D
+
+表示名「円の当たり判定 2D」／カテゴリ「2D物理」／Inspector描画 `DrawSphereColliderComponent`／同じ描画関数を共有: SphereCollider
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 中心 | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| 半径 | colliderRadius | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+
+#### CapsuleCollider2D
+
+表示名「カプセル当たり判定 2D」／カテゴリ「2D物理」／Inspector描画 `DrawCapsuleColliderComponent`／同じ描画関数を共有: CapsuleCollider, CharacterController
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 中心 | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| 半径 | colliderRadius | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 高さ | colliderSize.y | float | 0.01 | 0.01 〜 100.0 | `1.0` |
+
+#### PolygonCollider2D
+
+表示名「多角形の当たり判定 2D」／カテゴリ「2D物理」／Inspector描画 `DrawMeshColliderComponent`／同じ描画関数を共有: MeshCollider, TerrainCollider, EdgeCollider2D, CompositeCollider2D, TilemapCollider2D, CustomCollider2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 中心 | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| サイズ | colliderSize | Vector3 | 0.01 | 0.01 〜 100.0 | `{1.0, 1.0, 1.0}` |
+| 頂点数 | vertexCount | int32 | 1 | — | — |
+| 三角形数 | triangleCount | int32 | 1 | — | — |
+
+#### EdgeCollider2D
+
+表示名「線の当たり判定 2D」／カテゴリ「2D物理」／Inspector描画 `DrawMeshColliderComponent`／同じ描画関数を共有: MeshCollider, TerrainCollider, PolygonCollider2D, CompositeCollider2D, TilemapCollider2D, CustomCollider2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 中心 | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| サイズ | colliderSize | Vector3 | 0.01 | 0.01 〜 100.0 | `{1.0, 1.0, 1.0}` |
+| 頂点数 | vertexCount | int32 | 1 | — | — |
+| 三角形数 | triangleCount | int32 | 1 | — | — |
+
+#### CompositeCollider2D
+
+表示名「複合当たり判定 2D」／カテゴリ「2D物理」／Inspector描画 `DrawMeshColliderComponent`／同じ描画関数を共有: MeshCollider, TerrainCollider, PolygonCollider2D, EdgeCollider2D, TilemapCollider2D, CustomCollider2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 中心 | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| サイズ | colliderSize | Vector3 | 0.01 | 0.01 〜 100.0 | `{1.0, 1.0, 1.0}` |
+| 頂点数 | vertexCount | int32 | 1 | — | — |
+| 三角形数 | triangleCount | int32 | 1 | — | — |
+
+#### TilemapCollider2D
+
+表示名「タイルマップ当たり判定 2D」／カテゴリ「2D物理」／Inspector描画 `DrawMeshColliderComponent`／同じ描画関数を共有: MeshCollider, TerrainCollider, PolygonCollider2D, EdgeCollider2D, CompositeCollider2D, CustomCollider2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 中心 | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| サイズ | colliderSize | Vector3 | 0.01 | 0.01 〜 100.0 | `{1.0, 1.0, 1.0}` |
+| 頂点数 | vertexCount | int32 | 1 | — | — |
+| 三角形数 | triangleCount | int32 | 1 | — | — |
+
+#### CustomCollider2D
+
+表示名「カスタム当たり判定 2D」／カテゴリ「2D物理」／Inspector描画 `DrawMeshColliderComponent`／同じ描画関数を共有: MeshCollider, TerrainCollider, PolygonCollider2D, EdgeCollider2D, CompositeCollider2D, TilemapCollider2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 中心 | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| サイズ | colliderSize | Vector3 | 0.01 | 0.01 〜 100.0 | `{1.0, 1.0, 1.0}` |
+| 頂点数 | vertexCount | int32 | 1 | — | — |
+| 三角形数 | triangleCount | int32 | 1 | — | — |
+
+#### DistanceJoint2D
+
+表示名「ディスタンスジョイント 2D」／カテゴリ「2D物理」／Inspector描画 `DrawJointComponent`／同じ描画関数を共有: HingeJoint, FixedJoint, SpringJoint, ConfigurableJoint, CharacterJoint, HingeJoint2D, SpringJoint2D, FixedJoint2D, SliderJoint2D, WheelJoint2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| アンカー | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| 回転軸 | jointAxis | Vector3 | 0.01 | 制限なし | `{0.0, 1.0, 0.0}` |
+| 最小距離 | jointMinDistance | float | 0.01 | 0.0 〜 100.0 | `0.0` |
+| 最大距離 | jointMaxDistance | float | 0.01 | 0.0 〜 100.0 | `1.0` |
+| 最小移動 | jointMinDistance | float | 0.01 | -100.0 〜 100.0 | `0.0` |
+| 最大移動 | jointMaxDistance | float | 0.01 | -100.0 〜 100.0 | `1.0` |
+| ばね周波数 | jointSpringFrequency | float | 0.01 | 0.0 〜 60.0 | `0.0` |
+| ばね減衰 | jointSpringDamping | float | 0.01 | 0.0 〜 10.0 | `0.5` |
+
+#### HingeJoint2D
+
+表示名「ヒンジジョイント 2D」／カテゴリ「2D物理」／Inspector描画 `DrawJointComponent`／同じ描画関数を共有: HingeJoint, FixedJoint, SpringJoint, ConfigurableJoint, CharacterJoint, DistanceJoint2D, SpringJoint2D, FixedJoint2D, SliderJoint2D, WheelJoint2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| アンカー | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| 回転軸 | jointAxis | Vector3 | 0.01 | 制限なし | `{0.0, 1.0, 0.0}` |
+| 最小距離 | jointMinDistance | float | 0.01 | 0.0 〜 100.0 | `0.0` |
+| 最大距離 | jointMaxDistance | float | 0.01 | 0.0 〜 100.0 | `1.0` |
+| 最小移動 | jointMinDistance | float | 0.01 | -100.0 〜 100.0 | `0.0` |
+| 最大移動 | jointMaxDistance | float | 0.01 | -100.0 〜 100.0 | `1.0` |
+| ばね周波数 | jointSpringFrequency | float | 0.01 | 0.0 〜 60.0 | `0.0` |
+| ばね減衰 | jointSpringDamping | float | 0.01 | 0.0 〜 10.0 | `0.5` |
+
+#### SpringJoint2D
+
+表示名「スプリングジョイント 2D」／カテゴリ「2D物理」／Inspector描画 `DrawJointComponent`／同じ描画関数を共有: HingeJoint, FixedJoint, SpringJoint, ConfigurableJoint, CharacterJoint, DistanceJoint2D, HingeJoint2D, FixedJoint2D, SliderJoint2D, WheelJoint2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| アンカー | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| 回転軸 | jointAxis | Vector3 | 0.01 | 制限なし | `{0.0, 1.0, 0.0}` |
+| 最小距離 | jointMinDistance | float | 0.01 | 0.0 〜 100.0 | `0.0` |
+| 最大距離 | jointMaxDistance | float | 0.01 | 0.0 〜 100.0 | `1.0` |
+| 最小移動 | jointMinDistance | float | 0.01 | -100.0 〜 100.0 | `0.0` |
+| 最大移動 | jointMaxDistance | float | 0.01 | -100.0 〜 100.0 | `1.0` |
+| ばね周波数 | jointSpringFrequency | float | 0.01 | 0.0 〜 60.0 | `0.0` |
+| ばね減衰 | jointSpringDamping | float | 0.01 | 0.0 〜 10.0 | `0.5` |
+
+#### FixedJoint2D
+
+表示名「固定ジョイント 2D」／カテゴリ「2D物理」／Inspector描画 `DrawJointComponent`／同じ描画関数を共有: HingeJoint, FixedJoint, SpringJoint, ConfigurableJoint, CharacterJoint, DistanceJoint2D, HingeJoint2D, SpringJoint2D, SliderJoint2D, WheelJoint2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| アンカー | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| 回転軸 | jointAxis | Vector3 | 0.01 | 制限なし | `{0.0, 1.0, 0.0}` |
+| 最小距離 | jointMinDistance | float | 0.01 | 0.0 〜 100.0 | `0.0` |
+| 最大距離 | jointMaxDistance | float | 0.01 | 0.0 〜 100.0 | `1.0` |
+| 最小移動 | jointMinDistance | float | 0.01 | -100.0 〜 100.0 | `0.0` |
+| 最大移動 | jointMaxDistance | float | 0.01 | -100.0 〜 100.0 | `1.0` |
+| ばね周波数 | jointSpringFrequency | float | 0.01 | 0.0 〜 60.0 | `0.0` |
+| ばね減衰 | jointSpringDamping | float | 0.01 | 0.0 〜 10.0 | `0.5` |
+
+#### SliderJoint2D
+
+表示名「スライダージョイント 2D」／カテゴリ「2D物理」／Inspector描画 `DrawJointComponent`／同じ描画関数を共有: HingeJoint, FixedJoint, SpringJoint, ConfigurableJoint, CharacterJoint, DistanceJoint2D, HingeJoint2D, SpringJoint2D, FixedJoint2D, WheelJoint2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| アンカー | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| 回転軸 | jointAxis | Vector3 | 0.01 | 制限なし | `{0.0, 1.0, 0.0}` |
+| 最小距離 | jointMinDistance | float | 0.01 | 0.0 〜 100.0 | `0.0` |
+| 最大距離 | jointMaxDistance | float | 0.01 | 0.0 〜 100.0 | `1.0` |
+| 最小移動 | jointMinDistance | float | 0.01 | -100.0 〜 100.0 | `0.0` |
+| 最大移動 | jointMaxDistance | float | 0.01 | -100.0 〜 100.0 | `1.0` |
+| ばね周波数 | jointSpringFrequency | float | 0.01 | 0.0 〜 60.0 | `0.0` |
+| ばね減衰 | jointSpringDamping | float | 0.01 | 0.0 〜 10.0 | `0.5` |
+
+#### WheelJoint2D
+
+表示名「ホイールジョイント 2D」／カテゴリ「2D物理」／Inspector描画 `DrawJointComponent`／同じ描画関数を共有: HingeJoint, FixedJoint, SpringJoint, ConfigurableJoint, CharacterJoint, DistanceJoint2D, HingeJoint2D, SpringJoint2D, FixedJoint2D, SliderJoint2D
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| アンカー | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| 回転軸 | jointAxis | Vector3 | 0.01 | 制限なし | `{0.0, 1.0, 0.0}` |
+| 最小距離 | jointMinDistance | float | 0.01 | 0.0 〜 100.0 | `0.0` |
+| 最大距離 | jointMaxDistance | float | 0.01 | 0.0 〜 100.0 | `1.0` |
+| 最小移動 | jointMinDistance | float | 0.01 | -100.0 〜 100.0 | `0.0` |
+| 最大移動 | jointMaxDistance | float | 0.01 | -100.0 〜 100.0 | `1.0` |
+| ばね周波数 | jointSpringFrequency | float | 0.01 | 0.0 〜 60.0 | `0.0` |
+| ばね減衰 | jointSpringDamping | float | 0.01 | 0.0 〜 10.0 | `0.5` |
+
+#### PlatformEffector2D
+
+表示名「プラットフォームエフェクター 2D」／カテゴリ「2D物理」／Inspector描画 `DrawPlatformEffector2DComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 片面 | isTrigger | bool | — | true / false | `false` |
+
+#### SurfaceEffector2D
+
+表示名「サーフェスエフェクター 2D」／カテゴリ「2D物理」／Inspector描画 `DrawSurfaceEffector2DComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 力 | intensity | float | 0.1 | 0.0 〜 100.0 | `1.0` |
+
+#### AreaEffector2D
+
+表示名「エリアエフェクター 2D」／カテゴリ「2D物理」／Inspector描画 `DrawAreaEffector2DComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 力 | intensity | float | 0.1 | 0.0 〜 100.0 | `1.0` |
+| 方向 | velocity | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+
+#### PointEffector2D
+
+表示名「ポイントエフェクター 2D」／カテゴリ「2D物理」／Inspector描画 `DrawPointEffector2DComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 力 | intensity | float | 0.1 | 0.0 〜 100.0 | `1.0` |
+
+#### BuoyancyEffector2D
+
+表示名「浮力エフェクター 2D」／カテゴリ「2D物理」／Inspector描画 `DrawBuoyancyEffector2DComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 浮力 | intensity | float | 0.01 | 0.0 〜 10.0 | `1.0` |
+
+#### AvatarMask
+
+表示名「アバターマスク」／カテゴリ「アニメーション」／Inspector描画 `DrawAvatarMaskComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Mask アセット | assetPath | string | — | 文字列 | `""` |
+
+#### AimConstraint
+
+表示名「エイム制約」／カテゴリ「アニメーション」／Inspector描画 `DrawAimConstraintComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| ターゲット ID | connectedGameObjectId | int32 | 1 | — | `-1` |
+| 重み | constraintWeight | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| ターゲット方向軸 | constraintAimAxis | int32 | 1 | — | `2` |
+
+#### LookAtConstraint
+
+表示名「ルックアット制約」／カテゴリ「アニメーション」／Inspector描画 `DrawLookAtConstraintComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| ターゲット ID | connectedGameObjectId | int32 | 1 | — | `-1` |
+| 重み | constraintWeight | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| 上方向軸 | constraintUpAxis | int32 | 1 | — | `1` |
+| ロール角 | constraintRoll | float | 0.1 | -180.0 〜 180.0 | `0.0` |
+
+#### AudioReverbZone
+
+表示名「オーディオリバーブゾーン」／カテゴリ「オーディオ」／Inspector描画 `DrawAudioFilterComponent`／同じ描画関数を共有: AudioLowPassFilter, AudioHighPassFilter, AudioEchoFilter, AudioDistortionFilter, AudioReverbFilter, AudioChorusFilter
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 効果量 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### AudioLowPassFilter
+
+表示名「オーディオローパスフィルター」／カテゴリ「オーディオ」／Inspector描画 `DrawAudioFilterComponent`／同じ描画関数を共有: AudioReverbZone, AudioHighPassFilter, AudioEchoFilter, AudioDistortionFilter, AudioReverbFilter, AudioChorusFilter
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 効果量 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### AudioHighPassFilter
+
+表示名「オーディオハイパスフィルター」／カテゴリ「オーディオ」／Inspector描画 `DrawAudioFilterComponent`／同じ描画関数を共有: AudioReverbZone, AudioLowPassFilter, AudioEchoFilter, AudioDistortionFilter, AudioReverbFilter, AudioChorusFilter
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 効果量 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### AudioEchoFilter
+
+表示名「オーディオエコーフィルター」／カテゴリ「オーディオ」／Inspector描画 `DrawAudioFilterComponent`／同じ描画関数を共有: AudioReverbZone, AudioLowPassFilter, AudioHighPassFilter, AudioDistortionFilter, AudioReverbFilter, AudioChorusFilter
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 効果量 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### AudioDistortionFilter
+
+表示名「オーディオディストーションフィルター」／カテゴリ「オーディオ」／Inspector描画 `DrawAudioFilterComponent`／同じ描画関数を共有: AudioReverbZone, AudioLowPassFilter, AudioHighPassFilter, AudioEchoFilter, AudioReverbFilter, AudioChorusFilter
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 効果量 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### AudioReverbFilter
+
+表示名「オーディオリバーブフィルター」／カテゴリ「オーディオ」／Inspector描画 `DrawAudioFilterComponent`／同じ描画関数を共有: AudioReverbZone, AudioLowPassFilter, AudioHighPassFilter, AudioEchoFilter, AudioDistortionFilter, AudioChorusFilter
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 効果量 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### AudioChorusFilter
+
+表示名「オーディオコーラスフィルター」／カテゴリ「オーディオ」／Inspector描画 `DrawAudioFilterComponent`／同じ描画関数を共有: AudioReverbZone, AudioLowPassFilter, AudioHighPassFilter, AudioEchoFilter, AudioDistortionFilter, AudioReverbFilter
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 効果量 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### CanvasScaler
+
+表示名「キャンバススケーラー」／カテゴリ「UI」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Canvas, Image, Text, RectTransform, GraphicRaycaster, RawImage, TextMeshProUGUI, Scrollbar, Dropdown, TMPDropdown, InputField, TMPInputField, ScrollRect, Mask, RectMask2D, HorizontalLayoutGroup, VerticalLayoutGroup, GridLayoutGroup, ContentSizeFitter, AspectRatioFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### GraphicRaycaster
+
+表示名「グラフィックレイキャスター」／カテゴリ「UI」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Canvas, Image, Text, RectTransform, CanvasScaler, RawImage, TextMeshProUGUI, Scrollbar, Dropdown, TMPDropdown, InputField, TMPInputField, ScrollRect, Mask, RectMask2D, HorizontalLayoutGroup, VerticalLayoutGroup, GridLayoutGroup, ContentSizeFitter, AspectRatioFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### RawImage
+
+表示名「Raw イメージ」／カテゴリ「UI」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Canvas, Image, Text, RectTransform, CanvasScaler, GraphicRaycaster, TextMeshProUGUI, Scrollbar, Dropdown, TMPDropdown, InputField, TMPInputField, ScrollRect, Mask, RectMask2D, HorizontalLayoutGroup, VerticalLayoutGroup, GridLayoutGroup, ContentSizeFitter, AspectRatioFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### TextMeshProUGUI
+
+表示名「TextMeshPro UGUI」／カテゴリ「UI」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Canvas, Image, Text, RectTransform, CanvasScaler, GraphicRaycaster, RawImage, Scrollbar, Dropdown, TMPDropdown, InputField, TMPInputField, ScrollRect, Mask, RectMask2D, HorizontalLayoutGroup, VerticalLayoutGroup, GridLayoutGroup, ContentSizeFitter, AspectRatioFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### Button
+
+表示名「ボタン」／カテゴリ「UI」／Inspector描画 `DrawButtonComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| クリック関数 | buttonOnClickFunction | string | — | 文字列 | `"OnClick"` |
+
+#### Toggle
+
+表示名「トグル」／カテゴリ「UI」／Inspector描画 `DrawToggleComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 現在値 | toggleValue | bool | — | true / false | `false` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 変更関数 | toggleOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+
+#### Slider
+
+表示名「スライダー」／カテゴリ「UI」／Inspector描画 `DrawSliderComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 最小値 | sliderMinValue | float | 0.01 | -100000.0 〜 100000.0 | `0.0` |
+| 最大値 | sliderMaxValue | float | 0.01 | -100000.0 〜 100000.0 | `1.0` |
+| 現在値 | sliderValue | float | 0.01 | sliderMinValue 〜 sliderMaxValue | `0.5` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+
+#### Scrollbar
+
+表示名「スクロールバー」／カテゴリ「UI」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Canvas, Image, Text, RectTransform, CanvasScaler, GraphicRaycaster, RawImage, TextMeshProUGUI, Dropdown, TMPDropdown, InputField, TMPInputField, ScrollRect, Mask, RectMask2D, HorizontalLayoutGroup, VerticalLayoutGroup, GridLayoutGroup, ContentSizeFitter, AspectRatioFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### Dropdown
+
+表示名「ドロップダウン」／カテゴリ「UI」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Canvas, Image, Text, RectTransform, CanvasScaler, GraphicRaycaster, RawImage, TextMeshProUGUI, Scrollbar, TMPDropdown, InputField, TMPInputField, ScrollRect, Mask, RectMask2D, HorizontalLayoutGroup, VerticalLayoutGroup, GridLayoutGroup, ContentSizeFitter, AspectRatioFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### TMPDropdown
+
+表示名「TMP ドロップダウン」／カテゴリ「UI」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Canvas, Image, Text, RectTransform, CanvasScaler, GraphicRaycaster, RawImage, TextMeshProUGUI, Scrollbar, Dropdown, InputField, TMPInputField, ScrollRect, Mask, RectMask2D, HorizontalLayoutGroup, VerticalLayoutGroup, GridLayoutGroup, ContentSizeFitter, AspectRatioFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### InputField
+
+表示名「入力フィールド」／カテゴリ「UI」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Canvas, Image, Text, RectTransform, CanvasScaler, GraphicRaycaster, RawImage, TextMeshProUGUI, Scrollbar, Dropdown, TMPDropdown, TMPInputField, ScrollRect, Mask, RectMask2D, HorizontalLayoutGroup, VerticalLayoutGroup, GridLayoutGroup, ContentSizeFitter, AspectRatioFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### TMPInputField
+
+表示名「TMP 入力フィールド」／カテゴリ「UI」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Canvas, Image, Text, RectTransform, CanvasScaler, GraphicRaycaster, RawImage, TextMeshProUGUI, Scrollbar, Dropdown, TMPDropdown, InputField, ScrollRect, Mask, RectMask2D, HorizontalLayoutGroup, VerticalLayoutGroup, GridLayoutGroup, ContentSizeFitter, AspectRatioFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### ScrollRect
+
+表示名「スクロールレクト」／カテゴリ「UI」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Canvas, Image, Text, RectTransform, CanvasScaler, GraphicRaycaster, RawImage, TextMeshProUGUI, Scrollbar, Dropdown, TMPDropdown, InputField, TMPInputField, Mask, RectMask2D, HorizontalLayoutGroup, VerticalLayoutGroup, GridLayoutGroup, ContentSizeFitter, AspectRatioFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### Mask
+
+表示名「マスク」／カテゴリ「UI」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Canvas, Image, Text, RectTransform, CanvasScaler, GraphicRaycaster, RawImage, TextMeshProUGUI, Scrollbar, Dropdown, TMPDropdown, InputField, TMPInputField, ScrollRect, RectMask2D, HorizontalLayoutGroup, VerticalLayoutGroup, GridLayoutGroup, ContentSizeFitter, AspectRatioFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### RectMask2D
+
+表示名「レクトマスク 2D」／カテゴリ「UI」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Canvas, Image, Text, RectTransform, CanvasScaler, GraphicRaycaster, RawImage, TextMeshProUGUI, Scrollbar, Dropdown, TMPDropdown, InputField, TMPInputField, ScrollRect, Mask, HorizontalLayoutGroup, VerticalLayoutGroup, GridLayoutGroup, ContentSizeFitter, AspectRatioFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### HorizontalLayoutGroup
+
+表示名「水平レイアウトグループ」／カテゴリ「UI」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Canvas, Image, Text, RectTransform, CanvasScaler, GraphicRaycaster, RawImage, TextMeshProUGUI, Scrollbar, Dropdown, TMPDropdown, InputField, TMPInputField, ScrollRect, Mask, RectMask2D, VerticalLayoutGroup, GridLayoutGroup, ContentSizeFitter, AspectRatioFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### VerticalLayoutGroup
+
+表示名「垂直レイアウトグループ」／カテゴリ「UI」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Canvas, Image, Text, RectTransform, CanvasScaler, GraphicRaycaster, RawImage, TextMeshProUGUI, Scrollbar, Dropdown, TMPDropdown, InputField, TMPInputField, ScrollRect, Mask, RectMask2D, HorizontalLayoutGroup, GridLayoutGroup, ContentSizeFitter, AspectRatioFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### GridLayoutGroup
+
+表示名「グリッドレイアウトグループ」／カテゴリ「UI」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Canvas, Image, Text, RectTransform, CanvasScaler, GraphicRaycaster, RawImage, TextMeshProUGUI, Scrollbar, Dropdown, TMPDropdown, InputField, TMPInputField, ScrollRect, Mask, RectMask2D, HorizontalLayoutGroup, VerticalLayoutGroup, ContentSizeFitter, AspectRatioFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### ContentSizeFitter
+
+表示名「コンテンツサイズフィッター」／カテゴリ「UI」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Canvas, Image, Text, RectTransform, CanvasScaler, GraphicRaycaster, RawImage, TextMeshProUGUI, Scrollbar, Dropdown, TMPDropdown, InputField, TMPInputField, ScrollRect, Mask, RectMask2D, HorizontalLayoutGroup, VerticalLayoutGroup, GridLayoutGroup, AspectRatioFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### AspectRatioFitter
+
+表示名「アスペクト比フィッター」／カテゴリ「UI」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Canvas, Image, Text, RectTransform, CanvasScaler, GraphicRaycaster, RawImage, TextMeshProUGUI, Scrollbar, Dropdown, TMPDropdown, InputField, TMPInputField, ScrollRect, Mask, RectMask2D, HorizontalLayoutGroup, VerticalLayoutGroup, GridLayoutGroup, ContentSizeFitter, LayoutElement
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### LayoutElement
+
+表示名「レイアウトエレメント」／カテゴリ「UI」／Inspector描画 `DrawUIComponent`／同じ描画関数を共有: CanvasRenderer, Canvas, Image, Text, RectTransform, CanvasScaler, GraphicRaycaster, RawImage, TextMeshProUGUI, Scrollbar, Dropdown, TMPDropdown, InputField, TMPInputField, ScrollRect, Mask, RectMask2D, HorizontalLayoutGroup, VerticalLayoutGroup, GridLayoutGroup, ContentSizeFitter, AspectRatioFitter
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 描画順 | physicsLayer | int32 | 1 | — | `0` |
+| アンカー位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 基準解像度 | buttonSize | Vector2 | 1.0 | 1.0 〜 16384.0 | `{160.0, 48.0}` |
+| 幅高さの比重 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 入力を受け取る | buttonInteractable | bool | — | true / false | `true` |
+| 優先度 | physicsLayer | int32 | 1 | — | `0` |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 文字サイズ | buttonSize.y | float | 1.0 | 8.0 〜 512.0 | `48.0` |
+| フォント | textFontIndex | int32(選択) | — | 0=既定 (Yu Gothic) / 1=Meiryo / 2=MS ゴシック / 3=MS 明朝 / 4=Yu Gothic Bold | `0` |
+| 画像 | assetPath | string | — | 文字列 | `""` |
+| 表示名 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 値 | sliderValue | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 変更関数 | sliderOnValueChangedFunction | string | — | 文字列 | `"OnValueChanged"` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 選択肢 (\|区切り) | assetPath | string | — | 文字列 | `""` |
+| 選択番号 | inputBehavior | int32 | 1 | — | `0` |
+| 入力文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| プレースホルダー | assetPath | string | — | 文字列 | `""` |
+| 表示位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 表示サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 横スクロール | uvOffset.x | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 縦スクロール | uvOffset.y | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 切り抜き位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| 切り抜きサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 開始位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| セルサイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 間隔 | sliderValue | float | 0.5 | 0.0 〜 1024.0 | `0.5` |
+| 列数 | inputBehavior | int32 | 1 | — | `0` |
+| 横を内容へ合わせる | freezePositionX | bool | — | true / false | `false` |
+| 縦を内容へ合わせる | freezePositionY | bool | — | true / false | `false` |
+| アスペクト比 | sliderValue | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+| 優先サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 透明度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### StandaloneInputModule
+
+表示名「スタンドアロン入力モジュール」／カテゴリ「入力・イベント」／Inspector描画 `DrawStandaloneInputModuleComponent`
+
+Inspector編集行なし。
+
+#### InputSystemUIInputModule
+
+表示名「Input System UI 入力モジュール」／カテゴリ「入力・イベント」／Inspector描画 `DrawInputSystemUIInputModuleComponent`
+
+Inspector編集行なし。
+
+#### PlayerInput
+
+表示名「プレイヤー入力」／カテゴリ「入力・イベント」／Inspector描画 `DrawPlayerInputComponent`
+
+Inspector編集行なし。
+
+#### PlayerInputManager
+
+表示名「プレイヤー入力マネージャー」／カテゴリ「入力・イベント」／Inspector描画 `DrawPlayerInputManagerComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 共有 Actions | assetPath | string | — | 文字列 | `""` |
+| 最大 Player 数 | particleMaxCount | int32 | 1 | — | `256` |
+
+#### TouchInputModule
+
+表示名「タッチ入力モジュール」／カテゴリ「入力・イベント」／Inspector描画 `DrawTouchInputModuleComponent`
+
+Inspector編集行なし。
+
+#### NavMeshObstacle
+
+表示名「NavMesh 障害物」／カテゴリ「ナビゲーション」／Inspector描画 `DrawNavMeshObstacleComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 半径 | colliderRadius | float | 0.01 | 0.1 〜 10.0 | `0.5` |
+| 高さ | colliderSize.y | float | 0.01 | 0.1 〜 10.0 | `1.0` |
+| 移動中も NavMesh を更新 | navCarve | bool | — | true / false | `true` |
+
+#### NavMeshSurface
+
+表示名「NavMesh サーフェス」／カテゴリ「ナビゲーション」／Inspector描画 `DrawNavMeshSurfaceComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Agent 半径 | navAgentRadius | float | 0.01 | 0.1 〜 10.0 | `0.5` |
+| Agent 高さ | navAgentHeight | float | 0.01 | 0.1 〜 10.0 | `2.0` |
+| 最大傾斜角度 | navMaxSlope | float | 1.0 | 0.0 〜 90.0 | `45.0` |
+| 最大段差 | navMaxClimb | float | 0.01 | 0.0 〜 10.0 | `0.5` |
+| レイヤーマスク | physicsLayer | int32 | 1 | — | `0` |
+
+#### NavMeshModifier
+
+表示名「NavMesh モディファイア」／カテゴリ「ナビゲーション」／Inspector描画 `DrawNavMeshModifierComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Area を上書き | navAreaOverride | bool | — | true / false | `false` |
+| Area | navArea | int32 | 1 | — | `0` |
+| ビルドから除外 | navIgnoreFromBuild | bool | — | true / false | `false` |
+
+#### NavMeshModifierVolume
+
+表示名「NavMesh モディファイアボリューム」／カテゴリ「ナビゲーション」／Inspector描画 `DrawNavMeshModifierVolumeComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 中心 | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| サイズ | colliderSize | Vector3 | 0.01 | 0.01 〜 100.0 | `{1.0, 1.0, 1.0}` |
+| Area | navArea | int32 | 1 | — | `0` |
+
+#### NavMeshLink
+
+表示名「NavMesh リンク」／カテゴリ「ナビゲーション」／Inspector描画 `DrawNavMeshLinkComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 双方向 | navBidirectional | bool | — | true / false | `true` |
+| コスト倍率 | navCostModifier | float | 0.01 | 0.0 〜 100.0 | `1.0` |
+| 幅 | colliderRadius | float | 0.01 | 0.1 〜 10.0 | `0.5` |
+
+#### AIBehaviorTree
+
+表示名「行動ツリー」／カテゴリ「AI」／Inspector描画 `DrawAiAgentComponent`／同じ描画関数を共有: AIStateMachine, AIGoapPlanner, AIHtnPlanner, AIPathfindingAgent, AIRecastCrowdAgent, AISteeringAgent, AISeekSteering, AIFleeSteering, AIArriveSteering, AIPursuitSteering, AIWanderSteering, AIObstacleAvoidanceSteering, AIFlockSteering
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 対象 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| 最大速度 | navMaxSpeed | float | 0.1 | 0.0 〜 100.0 | `3.5` |
+| 最大加速度 | navMaxAcceleration | float | 0.1 | 0.0 〜 200.0 | `8.0` |
+| 停止距離 | navStoppingDistance | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 回避半径 | navAgentRadius | float | 0.01 | 0.0 〜 20.0 | `0.5` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+
+#### AIBehaviorBlackboard
+
+表示名「共有データ（Blackboard）」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorSelector, AIBehaviorSequence, AIBehaviorTask, AIBehaviorDecorator, AIState, AIStateTransition, AIGoapGoal, AIGoapAction, AIGoapWorldState, AIHtnDomain, AIHtnTask, AIHtnMethod, AIMicroPatherGrid, AIRecastNavMeshBuilder, AIPathRequest, AIDynamicObstacle, AIOpenCvCamera, AIOpenCvObjectDetector, AIOpenCvColorTracker, AIWhisperSpeechRecognizer, AIVoiceCommand
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### AIBehaviorSelector
+
+表示名「条件分岐（Selector）」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorBlackboard, AIBehaviorSequence, AIBehaviorTask, AIBehaviorDecorator, AIState, AIStateTransition, AIGoapGoal, AIGoapAction, AIGoapWorldState, AIHtnDomain, AIHtnTask, AIHtnMethod, AIMicroPatherGrid, AIRecastNavMeshBuilder, AIPathRequest, AIDynamicObstacle, AIOpenCvCamera, AIOpenCvObjectDetector, AIOpenCvColorTracker, AIWhisperSpeechRecognizer, AIVoiceCommand
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### AIBehaviorSequence
+
+表示名「順番実行（Sequence）」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorBlackboard, AIBehaviorSelector, AIBehaviorTask, AIBehaviorDecorator, AIState, AIStateTransition, AIGoapGoal, AIGoapAction, AIGoapWorldState, AIHtnDomain, AIHtnTask, AIHtnMethod, AIMicroPatherGrid, AIRecastNavMeshBuilder, AIPathRequest, AIDynamicObstacle, AIOpenCvCamera, AIOpenCvObjectDetector, AIOpenCvColorTracker, AIWhisperSpeechRecognizer, AIVoiceCommand
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### AIBehaviorTask
+
+表示名「実行処理（Task）」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorBlackboard, AIBehaviorSelector, AIBehaviorSequence, AIBehaviorDecorator, AIState, AIStateTransition, AIGoapGoal, AIGoapAction, AIGoapWorldState, AIHtnDomain, AIHtnTask, AIHtnMethod, AIMicroPatherGrid, AIRecastNavMeshBuilder, AIPathRequest, AIDynamicObstacle, AIOpenCvCamera, AIOpenCvObjectDetector, AIOpenCvColorTracker, AIWhisperSpeechRecognizer, AIVoiceCommand
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### AIBehaviorDecorator
+
+表示名「条件装飾（Decorator）」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorBlackboard, AIBehaviorSelector, AIBehaviorSequence, AIBehaviorTask, AIState, AIStateTransition, AIGoapGoal, AIGoapAction, AIGoapWorldState, AIHtnDomain, AIHtnTask, AIHtnMethod, AIMicroPatherGrid, AIRecastNavMeshBuilder, AIPathRequest, AIDynamicObstacle, AIOpenCvCamera, AIOpenCvObjectDetector, AIOpenCvColorTracker, AIWhisperSpeechRecognizer, AIVoiceCommand
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### AIStateMachine
+
+表示名「状態制御」／カテゴリ「AI」／Inspector描画 `DrawAiAgentComponent`／同じ描画関数を共有: AIBehaviorTree, AIGoapPlanner, AIHtnPlanner, AIPathfindingAgent, AIRecastCrowdAgent, AISteeringAgent, AISeekSteering, AIFleeSteering, AIArriveSteering, AIPursuitSteering, AIWanderSteering, AIObstacleAvoidanceSteering, AIFlockSteering
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 対象 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| 最大速度 | navMaxSpeed | float | 0.1 | 0.0 〜 100.0 | `3.5` |
+| 最大加速度 | navMaxAcceleration | float | 0.1 | 0.0 〜 200.0 | `8.0` |
+| 停止距離 | navStoppingDistance | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 回避半径 | navAgentRadius | float | 0.01 | 0.0 〜 20.0 | `0.5` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+
+#### AIState
+
+表示名「状態」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorBlackboard, AIBehaviorSelector, AIBehaviorSequence, AIBehaviorTask, AIBehaviorDecorator, AIStateTransition, AIGoapGoal, AIGoapAction, AIGoapWorldState, AIHtnDomain, AIHtnTask, AIHtnMethod, AIMicroPatherGrid, AIRecastNavMeshBuilder, AIPathRequest, AIDynamicObstacle, AIOpenCvCamera, AIOpenCvObjectDetector, AIOpenCvColorTracker, AIWhisperSpeechRecognizer, AIVoiceCommand
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### AIStateTransition
+
+表示名「状態遷移」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorBlackboard, AIBehaviorSelector, AIBehaviorSequence, AIBehaviorTask, AIBehaviorDecorator, AIState, AIGoapGoal, AIGoapAction, AIGoapWorldState, AIHtnDomain, AIHtnTask, AIHtnMethod, AIMicroPatherGrid, AIRecastNavMeshBuilder, AIPathRequest, AIDynamicObstacle, AIOpenCvCamera, AIOpenCvObjectDetector, AIOpenCvColorTracker, AIWhisperSpeechRecognizer, AIVoiceCommand
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### AIGoapPlanner
+
+表示名「目標計画」／カテゴリ「AI」／Inspector描画 `DrawAiAgentComponent`／同じ描画関数を共有: AIBehaviorTree, AIStateMachine, AIHtnPlanner, AIPathfindingAgent, AIRecastCrowdAgent, AISteeringAgent, AISeekSteering, AIFleeSteering, AIArriveSteering, AIPursuitSteering, AIWanderSteering, AIObstacleAvoidanceSteering, AIFlockSteering
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 対象 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| 最大速度 | navMaxSpeed | float | 0.1 | 0.0 〜 100.0 | `3.5` |
+| 最大加速度 | navMaxAcceleration | float | 0.1 | 0.0 〜 200.0 | `8.0` |
+| 停止距離 | navStoppingDistance | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 回避半径 | navAgentRadius | float | 0.01 | 0.0 〜 20.0 | `0.5` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+
+#### AIGoapGoal
+
+表示名「目標条件」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorBlackboard, AIBehaviorSelector, AIBehaviorSequence, AIBehaviorTask, AIBehaviorDecorator, AIState, AIStateTransition, AIGoapAction, AIGoapWorldState, AIHtnDomain, AIHtnTask, AIHtnMethod, AIMicroPatherGrid, AIRecastNavMeshBuilder, AIPathRequest, AIDynamicObstacle, AIOpenCvCamera, AIOpenCvObjectDetector, AIOpenCvColorTracker, AIWhisperSpeechRecognizer, AIVoiceCommand
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### AIGoapAction
+
+表示名「計画行動」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorBlackboard, AIBehaviorSelector, AIBehaviorSequence, AIBehaviorTask, AIBehaviorDecorator, AIState, AIStateTransition, AIGoapGoal, AIGoapWorldState, AIHtnDomain, AIHtnTask, AIHtnMethod, AIMicroPatherGrid, AIRecastNavMeshBuilder, AIPathRequest, AIDynamicObstacle, AIOpenCvCamera, AIOpenCvObjectDetector, AIOpenCvColorTracker, AIWhisperSpeechRecognizer, AIVoiceCommand
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### AIGoapWorldState
+
+表示名「世界状態」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorBlackboard, AIBehaviorSelector, AIBehaviorSequence, AIBehaviorTask, AIBehaviorDecorator, AIState, AIStateTransition, AIGoapGoal, AIGoapAction, AIHtnDomain, AIHtnTask, AIHtnMethod, AIMicroPatherGrid, AIRecastNavMeshBuilder, AIPathRequest, AIDynamicObstacle, AIOpenCvCamera, AIOpenCvObjectDetector, AIOpenCvColorTracker, AIWhisperSpeechRecognizer, AIVoiceCommand
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### AIHtnPlanner
+
+表示名「タスク計画」／カテゴリ「AI」／Inspector描画 `DrawAiAgentComponent`／同じ描画関数を共有: AIBehaviorTree, AIStateMachine, AIGoapPlanner, AIPathfindingAgent, AIRecastCrowdAgent, AISteeringAgent, AISeekSteering, AIFleeSteering, AIArriveSteering, AIPursuitSteering, AIWanderSteering, AIObstacleAvoidanceSteering, AIFlockSteering
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 対象 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| 最大速度 | navMaxSpeed | float | 0.1 | 0.0 〜 100.0 | `3.5` |
+| 最大加速度 | navMaxAcceleration | float | 0.1 | 0.0 〜 200.0 | `8.0` |
+| 停止距離 | navStoppingDistance | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 回避半径 | navAgentRadius | float | 0.01 | 0.0 〜 20.0 | `0.5` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+
+#### AIHtnDomain
+
+表示名「タスク領域」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorBlackboard, AIBehaviorSelector, AIBehaviorSequence, AIBehaviorTask, AIBehaviorDecorator, AIState, AIStateTransition, AIGoapGoal, AIGoapAction, AIGoapWorldState, AIHtnTask, AIHtnMethod, AIMicroPatherGrid, AIRecastNavMeshBuilder, AIPathRequest, AIDynamicObstacle, AIOpenCvCamera, AIOpenCvObjectDetector, AIOpenCvColorTracker, AIWhisperSpeechRecognizer, AIVoiceCommand
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### AIHtnTask
+
+表示名「タスク」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorBlackboard, AIBehaviorSelector, AIBehaviorSequence, AIBehaviorTask, AIBehaviorDecorator, AIState, AIStateTransition, AIGoapGoal, AIGoapAction, AIGoapWorldState, AIHtnDomain, AIHtnMethod, AIMicroPatherGrid, AIRecastNavMeshBuilder, AIPathRequest, AIDynamicObstacle, AIOpenCvCamera, AIOpenCvObjectDetector, AIOpenCvColorTracker, AIWhisperSpeechRecognizer, AIVoiceCommand
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### AIHtnMethod
+
+表示名「タスク分解」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorBlackboard, AIBehaviorSelector, AIBehaviorSequence, AIBehaviorTask, AIBehaviorDecorator, AIState, AIStateTransition, AIGoapGoal, AIGoapAction, AIGoapWorldState, AIHtnDomain, AIHtnTask, AIMicroPatherGrid, AIRecastNavMeshBuilder, AIPathRequest, AIDynamicObstacle, AIOpenCvCamera, AIOpenCvObjectDetector, AIOpenCvColorTracker, AIWhisperSpeechRecognizer, AIVoiceCommand
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### AIPathfindingAgent
+
+表示名「経路探索エージェント」／カテゴリ「AI」／Inspector描画 `DrawAiAgentComponent`／同じ描画関数を共有: AIBehaviorTree, AIStateMachine, AIGoapPlanner, AIHtnPlanner, AIRecastCrowdAgent, AISteeringAgent, AISeekSteering, AIFleeSteering, AIArriveSteering, AIPursuitSteering, AIWanderSteering, AIObstacleAvoidanceSteering, AIFlockSteering
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 対象 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| 最大速度 | navMaxSpeed | float | 0.1 | 0.0 〜 100.0 | `3.5` |
+| 最大加速度 | navMaxAcceleration | float | 0.1 | 0.0 〜 200.0 | `8.0` |
+| 停止距離 | navStoppingDistance | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 回避半径 | navAgentRadius | float | 0.01 | 0.0 〜 20.0 | `0.5` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+
+#### AIMicroPatherGrid
+
+表示名「グリッド経路」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorBlackboard, AIBehaviorSelector, AIBehaviorSequence, AIBehaviorTask, AIBehaviorDecorator, AIState, AIStateTransition, AIGoapGoal, AIGoapAction, AIGoapWorldState, AIHtnDomain, AIHtnTask, AIHtnMethod, AIRecastNavMeshBuilder, AIPathRequest, AIDynamicObstacle, AIOpenCvCamera, AIOpenCvObjectDetector, AIOpenCvColorTracker, AIWhisperSpeechRecognizer, AIVoiceCommand
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### AIRecastNavMeshBuilder
+
+表示名「ナビメッシュ生成」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorBlackboard, AIBehaviorSelector, AIBehaviorSequence, AIBehaviorTask, AIBehaviorDecorator, AIState, AIStateTransition, AIGoapGoal, AIGoapAction, AIGoapWorldState, AIHtnDomain, AIHtnTask, AIHtnMethod, AIMicroPatherGrid, AIPathRequest, AIDynamicObstacle, AIOpenCvCamera, AIOpenCvObjectDetector, AIOpenCvColorTracker, AIWhisperSpeechRecognizer, AIVoiceCommand
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### AIRecastCrowdAgent
+
+表示名「群衆エージェント」／カテゴリ「AI」／Inspector描画 `DrawAiAgentComponent`／同じ描画関数を共有: AIBehaviorTree, AIStateMachine, AIGoapPlanner, AIHtnPlanner, AIPathfindingAgent, AISteeringAgent, AISeekSteering, AIFleeSteering, AIArriveSteering, AIPursuitSteering, AIWanderSteering, AIObstacleAvoidanceSteering, AIFlockSteering
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 対象 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| 最大速度 | navMaxSpeed | float | 0.1 | 0.0 〜 100.0 | `3.5` |
+| 最大加速度 | navMaxAcceleration | float | 0.1 | 0.0 〜 200.0 | `8.0` |
+| 停止距離 | navStoppingDistance | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 回避半径 | navAgentRadius | float | 0.01 | 0.0 〜 20.0 | `0.5` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+
+#### AIPathRequest
+
+表示名「経路要求」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorBlackboard, AIBehaviorSelector, AIBehaviorSequence, AIBehaviorTask, AIBehaviorDecorator, AIState, AIStateTransition, AIGoapGoal, AIGoapAction, AIGoapWorldState, AIHtnDomain, AIHtnTask, AIHtnMethod, AIMicroPatherGrid, AIRecastNavMeshBuilder, AIDynamicObstacle, AIOpenCvCamera, AIOpenCvObjectDetector, AIOpenCvColorTracker, AIWhisperSpeechRecognizer, AIVoiceCommand
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### AIDynamicObstacle
+
+表示名「動的障害物」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorBlackboard, AIBehaviorSelector, AIBehaviorSequence, AIBehaviorTask, AIBehaviorDecorator, AIState, AIStateTransition, AIGoapGoal, AIGoapAction, AIGoapWorldState, AIHtnDomain, AIHtnTask, AIHtnMethod, AIMicroPatherGrid, AIRecastNavMeshBuilder, AIPathRequest, AIOpenCvCamera, AIOpenCvObjectDetector, AIOpenCvColorTracker, AIWhisperSpeechRecognizer, AIVoiceCommand
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### AISteeringAgent
+
+表示名「操舵エージェント」／カテゴリ「AI」／Inspector描画 `DrawAiAgentComponent`／同じ描画関数を共有: AIBehaviorTree, AIStateMachine, AIGoapPlanner, AIHtnPlanner, AIPathfindingAgent, AIRecastCrowdAgent, AISeekSteering, AIFleeSteering, AIArriveSteering, AIPursuitSteering, AIWanderSteering, AIObstacleAvoidanceSteering, AIFlockSteering
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 対象 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| 最大速度 | navMaxSpeed | float | 0.1 | 0.0 〜 100.0 | `3.5` |
+| 最大加速度 | navMaxAcceleration | float | 0.1 | 0.0 〜 200.0 | `8.0` |
+| 停止距離 | navStoppingDistance | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 回避半径 | navAgentRadius | float | 0.01 | 0.0 〜 20.0 | `0.5` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+
+#### AISeekSteering
+
+表示名「接近操舵」／カテゴリ「AI」／Inspector描画 `DrawAiAgentComponent`／同じ描画関数を共有: AIBehaviorTree, AIStateMachine, AIGoapPlanner, AIHtnPlanner, AIPathfindingAgent, AIRecastCrowdAgent, AISteeringAgent, AIFleeSteering, AIArriveSteering, AIPursuitSteering, AIWanderSteering, AIObstacleAvoidanceSteering, AIFlockSteering
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 対象 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| 最大速度 | navMaxSpeed | float | 0.1 | 0.0 〜 100.0 | `3.5` |
+| 最大加速度 | navMaxAcceleration | float | 0.1 | 0.0 〜 200.0 | `8.0` |
+| 停止距離 | navStoppingDistance | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 回避半径 | navAgentRadius | float | 0.01 | 0.0 〜 20.0 | `0.5` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+
+#### AIFleeSteering
+
+表示名「逃走操舵」／カテゴリ「AI」／Inspector描画 `DrawAiAgentComponent`／同じ描画関数を共有: AIBehaviorTree, AIStateMachine, AIGoapPlanner, AIHtnPlanner, AIPathfindingAgent, AIRecastCrowdAgent, AISteeringAgent, AISeekSteering, AIArriveSteering, AIPursuitSteering, AIWanderSteering, AIObstacleAvoidanceSteering, AIFlockSteering
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 対象 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| 最大速度 | navMaxSpeed | float | 0.1 | 0.0 〜 100.0 | `3.5` |
+| 最大加速度 | navMaxAcceleration | float | 0.1 | 0.0 〜 200.0 | `8.0` |
+| 停止距離 | navStoppingDistance | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 回避半径 | navAgentRadius | float | 0.01 | 0.0 〜 20.0 | `0.5` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+
+#### AIArriveSteering
+
+表示名「到着操舵」／カテゴリ「AI」／Inspector描画 `DrawAiAgentComponent`／同じ描画関数を共有: AIBehaviorTree, AIStateMachine, AIGoapPlanner, AIHtnPlanner, AIPathfindingAgent, AIRecastCrowdAgent, AISteeringAgent, AISeekSteering, AIFleeSteering, AIPursuitSteering, AIWanderSteering, AIObstacleAvoidanceSteering, AIFlockSteering
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 対象 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| 最大速度 | navMaxSpeed | float | 0.1 | 0.0 〜 100.0 | `3.5` |
+| 最大加速度 | navMaxAcceleration | float | 0.1 | 0.0 〜 200.0 | `8.0` |
+| 停止距離 | navStoppingDistance | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 回避半径 | navAgentRadius | float | 0.01 | 0.0 〜 20.0 | `0.5` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+
+#### AIPursuitSteering
+
+表示名「追跡操舵」／カテゴリ「AI」／Inspector描画 `DrawAiAgentComponent`／同じ描画関数を共有: AIBehaviorTree, AIStateMachine, AIGoapPlanner, AIHtnPlanner, AIPathfindingAgent, AIRecastCrowdAgent, AISteeringAgent, AISeekSteering, AIFleeSteering, AIArriveSteering, AIWanderSteering, AIObstacleAvoidanceSteering, AIFlockSteering
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 対象 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| 最大速度 | navMaxSpeed | float | 0.1 | 0.0 〜 100.0 | `3.5` |
+| 最大加速度 | navMaxAcceleration | float | 0.1 | 0.0 〜 200.0 | `8.0` |
+| 停止距離 | navStoppingDistance | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 回避半径 | navAgentRadius | float | 0.01 | 0.0 〜 20.0 | `0.5` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+
+#### AIWanderSteering
+
+表示名「徘徊操舵」／カテゴリ「AI」／Inspector描画 `DrawAiAgentComponent`／同じ描画関数を共有: AIBehaviorTree, AIStateMachine, AIGoapPlanner, AIHtnPlanner, AIPathfindingAgent, AIRecastCrowdAgent, AISteeringAgent, AISeekSteering, AIFleeSteering, AIArriveSteering, AIPursuitSteering, AIObstacleAvoidanceSteering, AIFlockSteering
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 対象 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| 最大速度 | navMaxSpeed | float | 0.1 | 0.0 〜 100.0 | `3.5` |
+| 最大加速度 | navMaxAcceleration | float | 0.1 | 0.0 〜 200.0 | `8.0` |
+| 停止距離 | navStoppingDistance | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 回避半径 | navAgentRadius | float | 0.01 | 0.0 〜 20.0 | `0.5` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+
+#### AIObstacleAvoidanceSteering
+
+表示名「障害物回避操舵」／カテゴリ「AI」／Inspector描画 `DrawAiAgentComponent`／同じ描画関数を共有: AIBehaviorTree, AIStateMachine, AIGoapPlanner, AIHtnPlanner, AIPathfindingAgent, AIRecastCrowdAgent, AISteeringAgent, AISeekSteering, AIFleeSteering, AIArriveSteering, AIPursuitSteering, AIWanderSteering, AIFlockSteering
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 対象 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| 最大速度 | navMaxSpeed | float | 0.1 | 0.0 〜 100.0 | `3.5` |
+| 最大加速度 | navMaxAcceleration | float | 0.1 | 0.0 〜 200.0 | `8.0` |
+| 停止距離 | navStoppingDistance | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 回避半径 | navAgentRadius | float | 0.01 | 0.0 〜 20.0 | `0.5` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+
+#### AIFlockSteering
+
+表示名「群れ操舵」／カテゴリ「AI」／Inspector描画 `DrawAiAgentComponent`／同じ描画関数を共有: AIBehaviorTree, AIStateMachine, AIGoapPlanner, AIHtnPlanner, AIPathfindingAgent, AIRecastCrowdAgent, AISteeringAgent, AISeekSteering, AIFleeSteering, AIArriveSteering, AIPursuitSteering, AIWanderSteering, AIObstacleAvoidanceSteering
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 対象 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| 最大速度 | navMaxSpeed | float | 0.1 | 0.0 〜 100.0 | `3.5` |
+| 最大加速度 | navMaxAcceleration | float | 0.1 | 0.0 〜 200.0 | `8.0` |
+| 停止距離 | navStoppingDistance | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 回避半径 | navAgentRadius | float | 0.01 | 0.0 〜 20.0 | `0.5` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+
+#### AIVisionSensor
+
+表示名「視界センサー」／カテゴリ「AI」／Inspector描画 `DrawAiVisionSensorComponent`／同じ描画関数を共有: AIMotionSensor
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 対象 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 視界距離 | colliderRadius | float | 0.1 | 0.0 〜 1000.0 | `0.5` |
+| 視野角 | colliderSize.x | float | 1.0 | 0.0 〜 360.0 | `1.0` |
+
+#### AIOpenCvCamera
+
+表示名「画像入力カメラ」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorBlackboard, AIBehaviorSelector, AIBehaviorSequence, AIBehaviorTask, AIBehaviorDecorator, AIState, AIStateTransition, AIGoapGoal, AIGoapAction, AIGoapWorldState, AIHtnDomain, AIHtnTask, AIHtnMethod, AIMicroPatherGrid, AIRecastNavMeshBuilder, AIPathRequest, AIDynamicObstacle, AIOpenCvObjectDetector, AIOpenCvColorTracker, AIWhisperSpeechRecognizer, AIVoiceCommand
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### AIOpenCvObjectDetector
+
+表示名「画像物体検出」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorBlackboard, AIBehaviorSelector, AIBehaviorSequence, AIBehaviorTask, AIBehaviorDecorator, AIState, AIStateTransition, AIGoapGoal, AIGoapAction, AIGoapWorldState, AIHtnDomain, AIHtnTask, AIHtnMethod, AIMicroPatherGrid, AIRecastNavMeshBuilder, AIPathRequest, AIDynamicObstacle, AIOpenCvCamera, AIOpenCvColorTracker, AIWhisperSpeechRecognizer, AIVoiceCommand
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### AIOpenCvColorTracker
+
+表示名「画像色追跡」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorBlackboard, AIBehaviorSelector, AIBehaviorSequence, AIBehaviorTask, AIBehaviorDecorator, AIState, AIStateTransition, AIGoapGoal, AIGoapAction, AIGoapWorldState, AIHtnDomain, AIHtnTask, AIHtnMethod, AIMicroPatherGrid, AIRecastNavMeshBuilder, AIPathRequest, AIDynamicObstacle, AIOpenCvCamera, AIOpenCvObjectDetector, AIWhisperSpeechRecognizer, AIVoiceCommand
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### AIMotionSensor
+
+表示名「動きセンサー」／カテゴリ「AI」／Inspector描画 `DrawAiVisionSensorComponent`／同じ描画関数を共有: AIVisionSensor
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 対象 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 視界距離 | colliderRadius | float | 0.1 | 0.0 〜 1000.0 | `0.5` |
+| 視野角 | colliderSize.x | float | 1.0 | 0.0 〜 360.0 | `1.0` |
+
+#### AIWhisperSpeechRecognizer
+
+表示名「Whisper 音声認識」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorBlackboard, AIBehaviorSelector, AIBehaviorSequence, AIBehaviorTask, AIBehaviorDecorator, AIState, AIStateTransition, AIGoapGoal, AIGoapAction, AIGoapWorldState, AIHtnDomain, AIHtnTask, AIHtnMethod, AIMicroPatherGrid, AIRecastNavMeshBuilder, AIPathRequest, AIDynamicObstacle, AIOpenCvCamera, AIOpenCvObjectDetector, AIOpenCvColorTracker, AIVoiceCommand
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### AIVoiceCommand
+
+表示名「音声コマンド」／カテゴリ「AI」／Inspector描画 `DrawAiDataComponent`／同じ描画関数を共有: AIBehaviorBlackboard, AIBehaviorSelector, AIBehaviorSequence, AIBehaviorTask, AIBehaviorDecorator, AIState, AIStateTransition, AIGoapGoal, AIGoapAction, AIGoapWorldState, AIHtnDomain, AIHtnTask, AIHtnMethod, AIMicroPatherGrid, AIRecastNavMeshBuilder, AIPathRequest, AIDynamicObstacle, AIOpenCvCamera, AIOpenCvObjectDetector, AIOpenCvColorTracker, AIWhisperSpeechRecognizer
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | connectedGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| AI アセットパス | assetPath | string | — | 文字列 | `""` |
+| 動作 | inputBehavior | int32(選択) | — | 0=追跡 / 1=逃走 / 2=巡回 / 3=待機 | `0` |
+| セルサイズ | colliderRadius | float | 0.01 | 0.1 〜 100.0 | `0.5` |
+| グリッド数 | colliderSize | Vector3 | 1.0 | 15.0 〜 161.0 | `{1.0, 1.0, 1.0}` |
+| 停止距離 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 生成範囲 | colliderSize | Vector3 | 0.1 | 0.1 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最大傾斜 | navMaxSlope | float | 1.0 | 0.0 〜 89.0 | `45.0` |
+| 段差 | navMaxClimb | float | 0.01 | 0.0 〜 100.0 | `0.5` |
+| 判定半径 | colliderRadius | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+| 判定サイズ | colliderSize | Vector3 | 0.01 | 制限なし | `{1.0, 1.0, 1.0}` |
+
+#### ParticleSystem
+
+表示名「パーティクルシステム」／カテゴリ「エフェクト」／Inspector描画 `DrawParticleSystemComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Effect Asset | assetPath | string | — | 文字列 | `""` |
+| 自動再生 | animationPlayOnAwake | bool | — | true / false | `true` |
+| ループ | particleLooping | bool | — | true / false | `true` |
+| 再生時間 | particleDuration | float | 0.1 | 0.01 〜 3600.0 | `5.0` |
+| 開始遅延 | particleStartDelay | float | 0.1 | 0.0 〜 3600.0 | `0.0` |
+| プリウォーム | particlePrewarm | bool | — | true / false | `false` |
+| 寿命 | particleLifetime | float | 0.1 | 0.01 〜 60.0 | `2.0` |
+| 寿命のばらつき | particleLifetimeRandomness | float | 0.01 | 0.0 〜 1.0 | `0.1` |
+| 最大数 | particleMaxCount | int32 | 1 | — | `256` |
+| 1秒当たり | particleRate | float | 1.0 | 0.0 〜 10000.0 | `10.0` |
+| 開始バースト | particleBurstCount | int32 | 1 | — | `0` |
+| 形状 | particleShape | int32(選択) | — | 0=点 / 1=球 / 2=コーン / 3=ボックス | `0` |
+| シミュレーション空間 | particleSimulationSpace | int32(選択) | — | 0=ワールド / 1=ローカル | `0` |
+| 半径 | particleShapeRadius | float | 0.01 | 0.0 〜 1000.0 | `1.0` |
+| コーン角度 | particleShapeAngle | float | 1.0 | 0.0 〜 89.0 | `25.0` |
+| ボックス範囲 | particleBoxSize | Vector3 | 0.01 | 0.0 〜 1000.0 | `{1.0, 1.0, 1.0}` |
+| 放出方向 | particleDirection | Vector3 | 0.01 | -1.0 〜 1.0 | `{0.0, 1.0, 0.0}` |
+| 運動方式 | particleMotionType | int32(選択) | — | 0=直線 / 1=軌道 / 2=渦 / 3=波 / 4=吸引 / 5=雲 / 6=爆発 / 水しぶき / 7=Projectile Trail / 8=Ocean Spray / Mist | `0` |
+| 初速度 | particleSpeed | float | 0.1 | 0.0 〜 1000.0 | `5.0` |
+| 速度のばらつき | particleSpeedRandomness | float | 0.01 | 0.0 〜 1.0 | `0.2` |
+| 重力 | particleGravity | float | 0.1 | -100.0 〜 100.0 | `0.0` |
+| 空気抵抗 | particleDrag | float | 0.01 | 0.0 〜 100.0 | `0.0` |
+| 終了速度倍率 | particleEndSpeedMultiplier | float | 0.01 | 0.0 〜 10.0 | `1.0` |
+| 回転速度 | particleRotationSpeed | float | 1.0 | -3600.0 〜 3600.0 | `0.0` |
+| 乱流の強さ | particleNoiseStrength | float | 0.01 | 0.0 〜 1000.0 | `0.0` |
+| 乱流の周波数 | particleNoiseFrequency | float | 0.01 | 0.0 〜 100.0 | `1.0` |
+| 運動中心 | particleMotionCenter | Vector3 | 0.01 | -10000.0 〜 10000.0 | `{0.0, 0.0, 0.0}` |
+| 角速度 | particleAngularSpeed | float | 1.0 | -3600.0 〜 3600.0 | `45.0` |
+| 半径方向加速度 | particleRadialAcceleration | float | 0.1 | -1000.0 〜 1000.0 | `0.0` |
+| 波の振幅 | particleWaveAmplitude | float | 0.1 | 0.0 〜 1000.0 | `0.0` |
+| 波の周波数 | particleWaveFrequency | float | 0.01 | 0.0 〜 100.0 | `1.0` |
+| 吸引力 | particleAttractorStrength | float | 0.1 | 0.0 〜 1000.0 | `0.0` |
+| 衝突 | particleCollision | bool | — | true / false | `false` |
+| 衝突方式 | collisionDetectionMode | int32(選択) | — | 0=Depth (画面内エフェクト) / 1=Physics SDF (物理オブジェクト) | `0` |
+| 反発 | particleCollisionBounce | float | 0.01 | 0.0 〜 1.0 | `0.35` |
+| 摩擦 | particleCollisionFriction | float | 0.01 | 0.0 〜 1.0 | `0.2` |
+| 開始サイズ | particleSize | float | 0.01 | 0.001 〜 100.0 | `0.5` |
+| 終了サイズ | particleEndSize | float | 0.01 | 0.0 〜 100.0 | `0.0` |
+| サイズのばらつき | particleSizeRandomness | float | 0.01 | 0.0 〜 1.0 | `0.1` |
+| 開始アルファ | particleStartAlpha | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| 終了アルファ | particleEndAlpha | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 放射強度 | particleEmissionStrength | float | 0.05 | 0.0 〜 1000.0 | `1.0` |
+| 板の向き | particleBillboardMode | int32(選択) | — | 0=カメラ正対 / 1=Y軸固定 / 2=速度方向 / 3=World XY固定 | `0` |
+| 速度方向の長さ | particleBillboardStretch | float | 0.05 | 0.01 〜 100.0 | `1.0` |
+| FBX / OBJ | particleRenderAssetPath | string | — | 文字列 | — |
+
+#### VisualEffect
+
+表示名「ビジュアルエフェクト」／カテゴリ「エフェクト」／Inspector描画 `DrawVisualEffectComponent`
+
+Inspector編集行なし。
+
+#### LensFlare
+
+表示名「レンズフレア」／カテゴリ「エフェクト」／Inspector描画 `DrawLensFlareComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| テクスチャ | assetPath | string | — | 文字列 | `""` |
+| 明るさ | intensity | float | 0.01 | 0.0 〜 10.0 | `1.0` |
+| 透明度 | alpha | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### Projector
+
+表示名「プロジェクター」／カテゴリ「エフェクト」／Inspector描画 `DrawProjectorComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| テクスチャ | assetPath | string | — | 文字列 | `""` |
+| 視野角 | intensity | float | 1.0 | 1.0 〜 180.0 | `1.0` |
+| 投影サイズ | colliderSize | Vector3 | 0.01 | 0.01 〜 1000.0 | `{1.0, 1.0, 1.0}` |
+| 透明度 | alpha | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### DecalProjector
+
+表示名「デカールプロジェクター」／カテゴリ「エフェクト」／Inspector描画 `DrawDecalProjectorComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| テクスチャ | assetPath | string | — | 文字列 | `""` |
+| サイズ | colliderSize | Vector3 | 0.01 | 0.01 〜 100.0 | `{1.0, 1.0, 1.0}` |
+| 透明度 | alpha | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+
+#### Terrain
+
+表示名「テレイン」／カテゴリ「地形・タイルマップ」／Inspector描画 `DrawTerrainComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Height Map | assetPath | string | — | 文字列 | `""` |
+| サイズ X / 高さ / Z | colliderSize | Vector3 | 1.0 | 0.01 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 最高LOD解像度 | oceanGridResolution | int32 | 1 | — | `2048` |
+
+#### Tilemap
+
+表示名「タイルマップ」／カテゴリ「地形・タイルマップ」／Inspector描画 `DrawTilemapComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| タイル画像 | assetPath | string | — | 文字列 | `""` |
+| サイズ | colliderSize | Vector3 | 1.0 | 1.0 〜 1000.0 | `{1.0, 1.0, 1.0}` |
+
+#### TilemapRenderer
+
+表示名「タイルマップレンダラー」／カテゴリ「地形・タイルマップ」／Inspector描画 `DrawRendererComponent`／同じ描画関数を共有: ModelRenderer, SkinnedMeshRenderer, SpriteRenderer, BillboardRenderer, ParticleSystemRenderer
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| マテリアル数 | materialCount | int32 | 1 | — | — |
+| 描画方式 | alphaMode | int32(選択) | — | 0=不透明 / 1=アルファマスク / 2=半透明 | `0` |
+| Lighting方式 | lightingMode | int32(選択) | — | 0=Lightingなし / 1=Lambert / 2=Half Lambert / 3=PBR | `3` |
+| 両面描画 | doubleSided | bool | — | true / false | `false` |
+| 強さ | intensity | float | 0.01 | 0.0 〜 10.0 | `1.0` |
+| メタリック | metallic | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 粗さ | roughness | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 屈折率 | ior | float | 0.01 | 1.0 〜 3.0 | `1.0` |
+| アルファ | alpha | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| アルファ境界 | alphaCutoff | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 反射 | reflectionStrength | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 放射 | emissionStrength | float | 0.01 | 0.0 〜 50.0 | `0.0` |
+| FBX内画像を自動使用 | useImportedMaterialTextures | bool | — | true / false | `false` |
+| UV繰り返し | uvTiling | Vector2 | 0.01 | -100.0 〜 100.0 | `{1.0, 1.0}` |
+| UVオフセット | uvOffset | Vector2 | 0.01 | -100.0 〜 100.0 | `{0.0, 0.0}` |
+| 法線強度 | normalScale | float | 0.01 | -2.0 〜 2.0 | `1.0` |
+| AO強度 | ambientOcclusionStrength | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| 高さ強度 | heightScale | float | 0.001 | -0.2 〜 0.2 | `0.02` |
+| クリアコート | clearCoat | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| コート粗さ | clearCoatRoughness | float | 0.01 | 0.0 〜 1.0 | `0.1` |
+| 透過 | transmission | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 表面下散乱 | subsurface | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 材質の厚み | materialThickness | float | 0.001 | 0.001 〜 10.0 | `0.1` |
+| 異方性 | anisotropy | float | 0.01 | -1.0 〜 1.0 | `0.0` |
+| 異方性回転 | anisotropyRotation | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 濡れ | materialWetness | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 水際の高さ | materialWaterlineHeight | float | 0.01 | -10000.0 〜 10000.0 | `0.0` |
+| 水際の幅 | materialWaterlineWidth | float | 0.01 | 0.001 〜 1000.0 | `0.25` |
+| 鏡面色 | specularTint | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| シーン | sheen | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| シーン色 | sheenTint | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 頂点数 | vertexCount | int32 | 1 | — | — |
+| アニメーションクリップ数 | animationClipCount | int32 | 1 | — | — |
+
+#### Grid
+
+表示名「グリッド」／カテゴリ「地形・タイルマップ」／Inspector描画 `DrawGridComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| セルサイズ | colliderSize | Vector3 | 0.01 | 0.01 〜 100.0 | `{1.0, 1.0, 1.0}` |
+
+#### LocalMove
+
+表示名「ローカル移動」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawLocalMoveComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| ローカル方向 | velocity | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| 速度 | inputMoveSpeed | float | 0.01 | 0.0 〜 100.0 | `3.0` |
+
+#### RollingMove
+
+表示名「ローリング移動」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawRollingMoveComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 進行方向 | velocity | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| トルク | rollingTorque | float | 0.1 | 0.0 〜 10000.0 | `50.0` |
+| 馬力 | rollingHorsepower | float | 0.1 | 0.0 〜 1000.0 | `5.0` |
+| 半径 | colliderRadius | float | 0.01 | 0.01 〜 100.0 | `0.5` |
+
+#### PostProcess
+
+表示名「ポストプロセス」／カテゴリ「ライト・環境」／Inspector描画 `DrawPostProcessComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| アンチエイリアス | aaMode | int32(選択) | — | 0=None / 1=FXAA / 2=SMAA / 3=Temporal | `2` |
+| SMAA しきい値 | smaaThreshold | float | 0.001 | 0.001 〜 0.5 | `0.10` |
+| SMAA 角丸め | smaaCornerRounding | float | 1.0 | 0.0 〜 100.0 | `25.0` |
+| Temporal シャープ | temporalSharpness | float | 0.01 | 0.0 〜 1.0 | `0.08` |
+| Temporal 履歴ブレンド | temporalBlendRatio | float | 0.01 | 0.0 〜 0.98 | `0.90` |
+| SSR | ssrEnabled | bool | — | true / false | `false` |
+| 明部しきい値 | bloomThreshold | float | 0.01 | 0.0 〜 10.0 | `1.0` |
+| しきい値遷移 | bloomSoftKnee | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 強さ | glareIntensityByMode | float | 0.01 | 0.0 〜 10.0 | — |
+| にじみ | glareSizeByMode | float | 0.01 | 0.0 〜 1.0 | — |
+| sizeLabel | glareSizeByMode | float | 0.01 | 0.1 〜 8.0 | — |
+| 減衰 | glareFadeByMode | float | 0.01 | 0.0 〜 1.0 | — |
+| 角度 | glareAngleByMode | float | 1.0 | -180.0 〜 180.0 | — |
+| 色ずれ | glareColorModulationByMode | float | 0.01 | 0.0 〜 1.0 | — |
+| 光条数 | glareStreakCountByMode | int32 | 1 | — | — |
+| 光源位置 X | glareCenterByMode | float | 0.01 | 0.0 〜 1.0 | — |
+| 光源位置 Y | glareCenterByMode | float | 0.01 | 0.0 〜 1.0 | — |
+| 強さ | filterStrengthByMode | float | 0.01 | 0.0 〜 2.0 | — |
+| 最終明るさ | finalBrightness | float | 0.01 | 0.0 〜 4.0 | `1.0` |
+| トーンマップ | compositeToneMappingMode | int32(選択) | — | 0=Reinhard / 1=Filmic / 2=Timothy / 3=Uncharted2 / 4=ACES | `4` |
+| 露出 | compositeExposure | float | 0.01 | 0.0 〜 8.0 | `1.0` |
+| 自動露出 | compositeAutoExposureEnabled | bool | — | true / false | `true` |
+| 自動露出 下限 | compositeMinimumExposure | float | 0.01 | 0.01 〜 8.0 | `0.80` |
+| 自動露出 上限 | compositeMaximumExposure | float | 0.01 | 0.01 〜 16.0 | `1.25` |
+| 露出追従速度 | compositeExposureAdaptationSpeed | float | 0.05 | 0.0 〜 10.0 | `2.0` |
+| 基準輝度 | compositeTargetLuminance | float | 0.01 | 0.01 〜 1.0 | `0.18` |
+| ホワイトポイント | compositeWhitePoint | float | 0.1 | 0.1 〜 20.0 | `3.0` |
+| 彩度 | compositeSaturation | float | 0.01 | 0.0 〜 4.0 | `1.02` |
+| コントラスト | compositeContrast | float | 0.01 | 0.0 〜 4.0 | `1.04` |
+| 色温度 | compositeTemperature | float | 0.01 | -1.0 〜 1.0 | `0.0` |
+| Tint | compositeTint | float | 0.01 | -1.0 〜 1.0 | `0.0` |
+| Lift | compositeLift | Vector3 | 0.005 | -1.0 〜 1.0 | `{0.0, 0.0, 0.0}` |
+| Gamma | compositeGamma | float | 0.01 | 0.1 〜 4.0 | `1.0` |
+| Gain | compositeGain | Vector3 | 0.01 | 0.0 〜 4.0 | `{1.0, 1.0, 1.0}` |
+| 局所コントラスト | compositeLocalContrast | float | 0.01 | 0.0 〜 1.0 | `0.14` |
+| 出力ディザリング | compositeOutputDither | float | 0.05 | 0.0 〜 2.0 | `0.65` |
+| SSGI | compositeSsgiEnabled | bool | — | true / false | `false` |
+| SSGI強度 | compositeSsgiIntensity | float | 0.01 | 0.0 〜 4.0 | `0.30` |
+| SSGI半径 | compositeSsgiRadiusPixels | float | 1.0 | 1.0 〜 128.0 | `14.0` |
+| カラーLUT画像 | compositeColorLutAssetPath | string | — | 文字列 | — |
+| カラーLUT強度 | compositeColorLutStrength | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| ビネット | compositeVignetteStrength | float | 0.01 | 0.0 〜 2.0 | `0.0` |
+| ビネット半径 | compositeVignetteRadius | float | 0.01 | 0.0 〜 1.0 | `0.97` |
+| フィルムグレイン | compositeFilmGrain | float | 0.01 | 0.0 〜 2.0 | `0.015` |
+| 色収差 | compositeChromaticAberration | float | 0.01 | 0.0 〜 2.0 | `0.01` |
+| AO強度 | compositeAmbientOcclusionStrength | float | 0.01 | 0.0 〜 2.0 | `0.55` |
+| 診断表示 | compositeDebugView | int32(選択) | — | 0=0 通常 / 1=1 基準のみ (LocalContrast/Bloomとも無効) / 2=2 元画像再参照のみ (LocalContrastのみ有効) / 3=3 ブルームのみ (Bloomのみ有効) / 4=4 両方 (LocalContrast+Bloom) | `0` |
+
+#### Environment
+
+表示名「環境」／カテゴリ「ライト・環境」／Inspector描画 `DrawEnvironmentComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 環境画像 | assetPath | string | — | 文字列 | `""` |
+| 環境画像を使用 | environmentTextureEnabled | bool | — | true / false | `false` |
+| 露出 | intensity | float | 0.01 | 0.0 〜 8.0 | `1.0` |
+| 地平線のぼかし | roughness | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 反射への寄与 | reflectionStrength | float | 0.01 | 0.0 〜 4.0 | `0.0` |
+| 環境光 | metallic | float | 0.01 | 0.0 〜 4.0 | `0.0` |
+| 放射の強さ | emissionStrength | float | 0.01 | 0.0 〜 10.0 | `0.0` |
+| 環境テクスチャ回転 | environmentTextureRotation | float | 0.01 | 0.0 〜 6.2832 | `0.0` |
+| MIPバイアス | environmentTextureMipBias | float | 0.01 | 0.0 〜 4.0 | `0.0` |
+| 体積雲を使用 | volumetricCloudEnabled | bool | — | true / false | `false` |
+| 雲量 | volumetricCloudCoverage | float | 0.01 | 0.0 〜 1.0 | `0.52` |
+| 密度 | volumetricCloudDensity | float | 0.01 | 0.0 〜 4.0 | `1.15` |
+| スケール | volumetricCloudScale | float | 0.0001 | 0.0001 〜 1.0 | `0.0018` |
+| 移動速度 | volumetricCloudSpeed | float | 0.01 | -1000.0 〜 1000.0 | `8.0` |
+| 高度 | volumetricCloudHeight | float | 1.0 | -10000.0 〜 100000.0 | `900.0` |
+| 厚さ | volumetricCloudThickness | float | 1.0 | 1.0 〜 100000.0 | `650.0` |
+| 光吸収 | volumetricCloudLightAbsorption | float | 0.01 | 0.0 〜 8.0 | `1.25` |
+| 銀縁 | volumetricCloudSilverLining | float | 0.01 | 0.0 〜 4.0 | `0.75` |
+| 熱気の強さ | environmentHeatIntensity | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 地平線中心 | environmentHeatHorizonCenter | float | 0.01 | 0.0 〜 1.0 | `0.46` |
+| 地平線範囲 | environmentHeatHorizonWidth | float | 0.01 | 0.01 〜 1.0 | `0.16` |
+| 太陽方向の影響 | environmentHeatSunInfluence | float | 0.01 | 0.0 〜 1.0 | `0.55` |
+| 歪みスケール | environmentHeatDistortionScale | float | 0.01 | 0.01 〜 4.0 | `0.65` |
+
+#### FreeTransform
+
+表示名「自由移動/回転」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawFreeTransformComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 移動入力 | velocity | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| 移動速度 | freeMoveSpeed | float | 0.1 | 0.0 〜 100.0 | `5.0` |
+| 回転入力(deg/s) | freeRotationInput | Vector3 | 1.0 | 制限なし | `{0.0, 0.0, 0.0}` |
+| 回転速度 | freeRotateSpeed | float | 1.0 | 0.0 〜 360.0 | `90.0` |
+| 移動 X | moveX | bool | — | true / false | — |
+| 移動 Y | moveY | bool | — | true / false | — |
+| 移動 Z | moveZ | bool | — | true / false | — |
+| 回転 X | rotX | bool | — | true / false | — |
+| 回転 Y | rotY | bool | — | true / false | — |
+| 回転 Z | rotZ | bool | — | true / false | — |
+| ローカル空間 | freeUseLocalSpace | bool | — | true / false | `true` |
+
+#### AutoConvexCollision
+
+表示名「Auto Convex Collision」／カテゴリ「3D物理」／Inspector描画 `DrawAutoConvexCollisionComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 中心 | colliderCenter | Vector3 | 0.01 | 制限なし | `{0.0, 0.0, 0.0}` |
+| サイズ | colliderSize | Vector3 | 0.01 | 0.01 〜 100.0 | `{1.0, 1.0, 1.0}` |
+| 最大凸包数 | autoConvexMaximumHulls | int32 | 1 | — | `8` |
+| 入力頂点数 | sourceVertexCount | int32 | 1 | — | — |
+
+#### Ocean
+
+表示名「Ocean」／カテゴリ「描画・レンダリング」／Inspector描画 `DrawOceanComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| グリッド解像度 | oceanGridResolution | int32 | 1 | — | `2048` |
+| 海面サイズ | oceanSize | float | 1.0 | 1.0 〜 20000.0 | `240.0` |
+| 波の高さ | oceanWaveHeight | float | 0.05 | 0.0 〜 2000.0 | `1.8` |
+| 最大波高 | oceanMaxWaveHeight | float | 0.05 | 0.0 〜 4000.0 | `4.5` |
+| 波長 | oceanWaveLength | float | 0.1 | 0.1 〜 10000.0 | `28.0` |
+| 波の速度 | oceanWaveSpeed | float | 0.01 | -10.0 〜 10.0 | `1.0` |
+| 時間倍率 | oceanTimeScale | float | 0.01 | 0.0 〜 4.0 | `1.0` |
+| Choppiness | oceanChoppiness | float | 0.01 | -4.0 〜 4.0 | `0.65` |
+| 主波方向 XZ | oceanPrimaryDirection | Vector2 | 0.01 | -100.0 〜 100.0 | `{1.0, 0.28}` |
+| 副波方向 XZ | oceanSecondaryDirection | Vector2 | 0.01 | -100.0 〜 100.0 | `{-0.45, 1.0}` |
+| 副波の強さ | oceanSecondaryWaveScale | float | 0.01 | 0.0 〜 2.0 | `0.45` |
+| 細波の波長比 | oceanRippleScale | float | 0.005 | 0.02 〜 1.0 | `0.22` |
+| 細波の強さ | oceanRippleStrength | float | 0.005 | 0.0 〜 1.0 | `0.12` |
+| 風速 | oceanWindSpeed | float | 0.1 | 0.1 〜 80.0 | `14.0` |
+| 水深 | oceanWaterDepth | float | 0.5 | 0.1 〜 5000.0 | `80.0` |
+| 方向分散 | oceanDirectionSpread | float | 0.01 | 0.0 〜 3.14159 | `0.35` |
+| うねりの強さ | oceanSwellStrength | float | 0.01 | 0.0 〜 2.0 | `0.65` |
+| スペクトルシード | oceanSpectrumSeed | float | 1.0 | 0.0 〜 65535.0 | `7.0` |
+| 波頭の尖り | oceanCrestSharpness | float | 0.01 | 0.0 〜 1.0 | `0.65` |
+| 泡の強さ | oceanFoamStrength | float | 0.01 | 0.0 〜 4.0 | `1.0` |
+| 泡の閾値 | oceanFoamThreshold | float | 0.01 | 0.0 〜 1.0 | `0.58` |
+| 粗さ | oceanRoughness | float | 0.01 | 0.035 〜 1.0 | `0.12` |
+| 反射 | oceanReflectionStrength | float | 0.01 | 0.0 〜 2.0 | `0.85` |
+| 屈折 | transmission | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 微細法線 | oceanDetailNormalStrength | float | 0.01 | 0.0 〜 2.0 | `0.45` |
+| 吸収距離 | oceanAbsorptionDistance | float | 0.1 | 0.1 〜 500.0 | `18.0` |
+| 屈折の歪み | oceanRefractionDistortion | float | 0.005 | 0.0 〜 1.0 | `0.08` |
+| 太陽Diffuse影響 | oceanSunDiffuseInfluence | float | 0.01 | 0.0 〜 3.0 | `1.0` |
+| 太陽Diffuse下限 | oceanDiffuseFloor | float | 0.01 | 0.0 〜 1.0 | `0.22` |
+| 太陽Specular影響 | oceanSunSpecularInfluence | float | 0.01 | 0.0 〜 3.0 | `1.0` |
+| 太陽Glitter影響 | oceanSunGlitterInfluence | float | 0.01 | 0.0 〜 3.0 | `1.0` |
+| Sky Reflection影響 | oceanSkyReflectionInfluence | float | 0.01 | 0.0 〜 3.0 | `1.0` |
+| Ambient影響 | oceanAmbientInfluence | float | 0.01 | 0.0 〜 3.0 | `1.0` |
+| 大波反射影響 | oceanMacroReflectionInfluence | float | 0.01 | 0.0 〜 2.0 | `1.0` |
+| 曲率感度 | oceanCurvatureInfluence | float | 0.01 | 0.0 〜 4.0 | `1.0` |
+| 谷の環境遮蔽 | oceanTroughOcclusionStrength | float | 0.005 | 0.0 〜 0.25 | `0.08` |
+| 波頭Haze | oceanCrestHazeStrength | float | 0.01 | 0.0 〜 1.0 | `0.16` |
+| 波頭細波増幅 | oceanCrestDetailBoost | float | 0.01 | 0.0 〜 1.0 | `0.18` |
+| 斜面屈折影響 | oceanSlopeRefractionInfluence | float | 0.01 | 0.0 〜 2.0 | `0.35` |
+| 中波構造 | oceanMediumWaveStrength | float | 0.01 | 0.0 〜 3.0 | `1.35` |
+| 波形の色分離 | oceanWaveColorSeparation | float | 0.01 | 0.0 〜 1.0 | `0.22` |
+| 形状による粗さ差 | oceanShapeRoughnessVariation | float | 0.01 | 0.0 〜 0.5 | `0.18` |
+| 近距離Detail保持 | oceanDetailFilterSharpness | float | 0.01 | 0.5 〜 2.5 | `1.55` |
+| 浅角度形状保持 | oceanGrazingShapeVisibility | float | 0.01 | 0.0 〜 1.0 | `0.35` |
+| デバッグ表示 | oceanDebugView | int32(選択) | — | 0=0 通常 / 1=1 太陽Diffuse / 2=2 GGX Specular / 3=3 Sun Glitter / 4=4 Glitter反射整列 / 5=5 Glitter最終Mask / 6=6 Medium Normal / 7=7 Fine Normal / 8=8 Normal差(x8) / 9=9 傾き量 / 10=10 中波構造 / 11=11 Foam / 12=12 Sky反射 / 13=13 屈折Scene / 14=14 Caustics / 15=15 水中実体被覆 / 16=16 FFT泡チャンネル / 17=17 Fine Delta Slope / 18=18 Fine Lobe Normal / 19=19 Fine Micro Roughness / 20=20 Fine Sun Specular / 21=21 Fine Env Normal Delta / 22=22 Fine Lobe OFF (比較用) / 23=23 Medium Slope (17と比較) / 24=24 Fine Env Final Delta / 25=25 Env Normal 角度差 / 26=26 Fine GGX D / 27=27 Fine NdotH / 28=28 Fine Raw Lobe / 29=29 Medium参照Lobe / 30=30 ReflectDir 21 / 31=31 ReflectDir 24 / 32=32 ReflectDir差分 / 33=33 RawEnvSample 21 / 34=34 RawEnvSample 24 / 35=35 RawEnvSample差分 / 36=36 Compress後差分 / 37=37 Delta21-24差分 / 38=38 RGB Delta 21 / 39=39 RGB Delta 24 / 40=40 Delta21-24直接 / 41=41 定数:黒 / 42=42 定数:グレー / 43=43 定数:赤 / 44=44 絶対量 x4 / 45=45 絶対量 x64 / 46=46 絶対量 x256 | `0` |
+| 近景Pixel変位 | oceanPerPixelDisplacementStrength | float | 0.01 | 0.0 〜 0.5 | `0.0` |
+| Pixel変位反復数 | oceanPerPixelDisplacementSteps | int32 | 1 | — | `4` |
+| Pixel変位距離 | oceanPerPixelDisplacementDistance | float | 1.0 | 5.0 〜 150.0 | `45.0` |
+| GPU適応細分化 | oceanGpuTessellationEnabled | bool | — | true / false | `false` |
+| 細分化目標Pixel | oceanTessellationTargetPixels | float | 1.0 | 4.0 〜 64.0 | `12.0` |
+| 細分化最大係数 | oceanTessellationMaximumFactor | float | 1.0 | 1.0 〜 8.0 | `4.0` |
+| グリッター強度 | oceanGlitterIntensity | float | 0.01 | 0.0 〜 8.0 | `1.0` |
+| グリッター鋭さ | oceanGlitterSharpness | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| グリッター密度 | oceanGlitterDensity | float | 0.01 | 0.0 〜 4.0 | `1.0` |
+| グリッター開始閾値 | oceanGlitterThreshold | float | 0.01 | 0.0 〜 0.99 | `0.0` |
+| グリッター最大輝度 | oceanGlitterMaxClamp | float | 0.1 | 0.1 〜 64.0 | `7.5` |
+
+#### Buoyancy
+
+表示名「Buoyancy」／カテゴリ「物理」／Inspector描画 `DrawBuoyancyComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 対象 Ocean | buoyancyOceanGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 自動検出 | `-1` |
+| 自動物理を使用 | buoyancyAutomaticPhysicalProperties | bool | — | true / false | `false` |
+| 水密度 kg/m3 | buoyancyWaterDensity | float | 1.0 | 0.0 〜 1000000.0 | `1025.0` |
+| 目標水没率 | buoyancyTargetSubmersionRatio | float | 0.01 | 0.01 〜 0.99 | `0.55` |
+| 浮力中心 | buoyancyCenterOffset | Vector3 | 0.01 | -1000.0 〜 1000.0 | `{0.0, 0.0, 0.0}` |
+| 船体サイズ | buoyancyHullSize | Vector3 | 0.05 | 0.05 〜 10000.0 | `{3.0, 1.2, 6.0}` |
+| 浮力 | buoyancyStrength | float | 0.1 | 0.0 〜 1000.0 | `18.0` |
+| 上下減衰 | buoyancyDamping | float | 0.05 | 0.0 〜 100.0 | `5.0` |
+| 前後の水抵抗 | buoyancyWaterDrag | float | 0.05 | 0.0 〜 100.0 | `1.4` |
+| 横方向の水抵抗 | buoyancyLateralDrag | float | 0.05 | 0.0 〜 100.0 | `4.0` |
+| 上下の水抵抗 | buoyancyVerticalDrag | float | 0.05 | 0.0 〜 100.0 | `2.5` |
+| 回転抵抗 | buoyancyAngularDrag | float | 0.05 | 0.0 〜 100.0 | `1.8` |
+| 着水衝撃 | buoyancySlammingStrength | float | 0.05 | 0.0 〜 100.0 | `2.0` |
+| 波の横押し | buoyancyNormalInfluence | float | 0.01 | 0.0 〜 1.0 | `0.2` |
+
+#### RailMovement
+
+表示名「レール移動」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawRailMovementComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Rail Path | railPathGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 速度 | railSpeed | float | 0.1 | -1000.0 〜 1000.0 | `8.0` |
+| 加速度 | railAcceleration | float | 0.1 | 0.0 〜 10000.0 | `0.0` |
+| 減速度 | railDeceleration | float | 0.1 | 0.0 〜 10000.0 | `0.0` |
+| 開始位置 | railStartNormalized | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 向きの先読み | railLookAheadDistance | float | 0.05 | 0.01 〜 1000.0 | `1.0` |
+| 左右・上下の範囲 | railMovementRange | Vector2 | 0.1 | 0.0 〜 10000.0 | `{5.0, 3.0}` |
+| 開始オフセット | railStartOffset | Vector2 | 0.1 | -10000.0 〜 10000.0 | `{0.0, 0.0}` |
+| 移動速度 | railOffsetMoveSpeed | float | 0.1 | 0.0 〜 10000.0 | `8.0` |
+| PlayerInputを使用 | railUsePlayerInput | bool | — | true / false | `false` |
+| Action Map | railInputActionMapName | string | — | 文字列 | `"Player"` |
+| Vector2 Action | railInputActionName | string | — | 文字列 | `"Move"` |
+| 移動方式 | railMovementMode | int32(選択) | — | 0=Transform 追従 / 1=Dynamic Rigidbody 物理サーボ / 2=Dynamic Rigidbody 船体推進 | `0` |
+| 位置追従軸 | railPositionInfluence | Vector3 | 0.01 | 0.0 〜 1.0 | `{1.0, 1.0, 1.0}` |
+| 位置ばね | railPositionSpring | float | 0.1 | 0.0 〜 1000.0 | `8.0` |
+| 位置減衰 | railPositionDamping | float | 0.1 | 0.0 〜 1000.0 | `5.0` |
+| 最大加速度 | railMaximumAcceleration | float | 0.1 | 0.0 〜 10000.0 | `30.0` |
+| 回転追従軸 | railRotationInfluence | Vector3 | 0.01 | 0.0 〜 1.0 | `{1.0, 1.0, 1.0}` |
+| 回転ばね | railRotationSpring | float | 0.1 | 0.0 〜 1000.0 | `8.0` |
+| 回転減衰 | railRotationDamping | float | 0.1 | 0.0 〜 1000.0 | `4.0` |
+| 最大角加速度 | railMaximumAngularAcceleration | float | 0.1 | 0.0 〜 10000.0 | `12.0` |
+| 船首ローカル軸 | railLocalForwardAxis | int32(選択) | — | 0=+Z / 1=-Z / 2=+X / 3=-X | `0` |
+| 推進速度ゲイン | railEngineSpeedGain | float | 0.1 | 0.0 〜 50.0 | `3.0` |
+| エンジン加速応答 | railEngineAccelResponse | float | 0.1 | 0.0 〜 100.0 | `8.0` |
+| エンジン減速応答 | railEngineDecelResponse | float | 0.1 | 0.0 〜 100.0 | `4.0` |
+| 最大前進加速度 | railEngineMaxAcceleration | float | 0.5 | 0.0 〜 200.0 | `14.0` |
+| 操舵基本先読み距離(m) | railSteeringBaseLookAheadDistance | float | 0.5 | 0.0 〜 200.0 | `8.0` |
+| 操舵先読み時間(秒) | railSteeringLookAheadTime | float | 0.05 | 0.0 〜 5.0 | `0.4` |
+| 操舵Yaw強さ | railSteeringYawGain | float | 0.1 | 0.0 〜 100.0 | `6.0` |
+| 操舵Yawダンピング | railSteeringYawDamping | float | 0.1 | 0.0 〜 100.0 | `4.0` |
+| 最大Yaw角加速度 | railSteeringMaxYawAngularAcceleration | float | 0.1 | 0.0 〜 100.0 | `8.0` |
+| 横補助Dead Zone(m) | railLateralAssistDeadZone | float | 0.1 | 0.0 〜 50.0 | `1.0` |
+| 横補助開始距離(m) | railLateralAssistSoftRadius | float | 0.1 | 0.0 〜 50.0 | `3.0` |
+| 横補助緊急距離(m) | railLateralAssistEmergencyRadius | float | 0.1 | 0.0 〜 100.0 | `6.0` |
+| 横補助最大倍率 | railLateralAssistMaxMultiplier | float | 0.1 | 0.0 〜 10.0 | `1.0` |
+| 船体横滑り抑制を使用 | railHullLateralGripEnabled | bool | — | true / false | `true` |
+| 横グリップ強さ | railHullLateralGripStrength | float | 0.1 | 0.0 〜 50.0 | `2.0` |
+| 横グリップ最大加速度 | railHullLateralGripMaxAcceleration | float | 0.5 | 0.0 〜 200.0 | `20.0` |
+| 横グリップ開始速度(m/s) | railHullLateralGripMinSpeed | float | 0.1 | 0.0 〜 50.0 | `3.0` |
+| 横グリップ最大速度(m/s) | railHullLateralGripFullSpeed | float | 0.1 | 0.0 〜 50.0 | `15.0` |
+| 横滑りDead Zone速度(m/s) | railHullLateralGripDeadZoneSpeed | float | 0.05 | 0.0 〜 10.0 | `0.5` |
+| 横滑り角補助開始角度(度) | railHullLateralGripSlipStartDegrees | float | 1.0 | 0.0 〜 90.0 | `5.0` |
+| 横滑り角補助最大角度(度) | railHullLateralGripSlipFullDegrees | float | 1.0 | 0.0 〜 90.0 | `30.0` |
+| Mode2 最大合成加速度 | railMode2MaxCombinedAcceleration | float | 1.0 | 0.0 〜 500.0 | `60.0` |
+| Mode2移動方式 | railMode2MovementStyle | int32(選択) | — | 0=Boat Autopilot / 1=Rail Ride | `0` |
+| Rail RideのYawサンプル距離(m) | railRideYawSampleDistance | float | 0.1 | 0.1 〜 20.0 | `2.0` |
+| 最大ロール角度 | railMaximumRollAngle | float | 1.0 | 0.0 〜 90.0 | `15.0` |
+| ロール復元力 | railRollRestorationStrength | float | 0.5 | 0.0 〜 100.0 | `10.0` |
+| ロールダンピング | railRollDamping | float | 0.5 | 0.0 〜 100.0 | `5.0` |
+| 最大ピッチ角度 | railMaximumPitchAngle | float | 1.0 | 0.0 〜 90.0 | `10.0` |
+| ピッチ復元力 | railPitchRestorationStrength | float | 0.5 | 0.0 〜 100.0 | `10.0` |
+| ピッチダンピング | railPitchDamping | float | 0.5 | 0.0 〜 100.0 | `5.0` |
+| 最大ヨー角度 | railMaximumYawAngle | float | 1.0 | 0.0 〜 180.0 | `0.0` |
+| ヨー復元力 | railYawRestorationStrength | float | 0.5 | 0.0 〜 100.0 | `10.0` |
+| ヨーダンピング | railYawDamping | float | 0.5 | 0.0 〜 100.0 | `5.0` |
+| Yaw Safety Assistを使用 | railYawSafetyAssistEnabled | bool | — | true / false | `true` |
+| Stage1 開始角度(度) | railYawSafetyStage1Degrees | float | 1.0 | 0.0 〜 180.0 | `10.0` |
+| Stage2 開始角度(度) | railYawSafetyStage2Degrees | float | 1.0 | 0.0 〜 180.0 | `20.0` |
+| Stage4 到達角度(度) | railYawSafetyStage4Degrees | float | 1.0 | 0.0 〜 180.0 | `45.0` |
+| 最大復元倍率 | railYawSafetyMaxRestorationScale | float | 0.1 | 1.0 〜 10.0 | `3.0` |
+| 最小速度倍率 | railYawSafetyMinSpeedScale | float | 0.01 | 0.0 〜 1.0 | `0.15` |
+| Forward Position Error 上限(m) | railMaxForwardRecoveryError | float | 0.5 | 0.0 〜 500.0 | `20.0` |
+| Attitude Safety Assistを使用 | railAttitudeSafetyAssistEnabled | bool | — | true / false | `false` |
+| Roll Free角度(度) | railRollFreeDegrees | float | 1.0 | 0.0 〜 90.0 | `15.0` |
+| Roll Emergency角度(度) | railRollEmergencyDegrees | float | 1.0 | 0.0 〜 180.0 | `45.0` |
+| Pitch Free角度(度) | railPitchFreeDegrees | float | 1.0 | 0.0 〜 90.0 | `12.0` |
+| Pitch Emergency角度(度) | railPitchEmergencyDegrees | float | 1.0 | 0.0 〜 180.0 | `40.0` |
+| Attitude復元力 | railAttitudeSafetyStrength | float | 0.5 | 0.0 〜 200.0 | `10.0` |
+| Attitudeダンピング | railAttitudeSafetyDamping | float | 0.5 | 0.0 〜 200.0 | `5.0` |
+| Attitude Torque上限 | railAttitudeSafetyMaxTorque | float | 0.5 | 0.0 〜 200.0 | `8.0` |
+| 危険時Forward最小倍率 | railAttitudeSafetyMinForwardScale | float | 0.01 | 0.0 〜 1.0 | `0.1` |
+| Catchup倍率 | railPhysicalCatchupSpeedMultiplier | float | 0.01 | 1.0 〜 3.0 | `1.15` |
+| 絶対角度制限(Hard Clamp)を使用 | railAttitudeAngleLimitEnabled | bool | — | true / false | `true` |
+| Pitch最大角度(度) | railAttitudeAngleLimitMaxPitchDegrees | float | 1.0 | 0.0 〜 90.0 | `15.0` |
+| Roll最大角度(度) | railAttitudeAngleLimitMaxRollDegrees | float | 1.0 | 0.0 〜 90.0 | `15.0` |
+| 角度ソフト制限を使用 | railAttitudeAngleSoftLimitEnabled | bool | — | true / false | `false` |
+| 押し戻し強さ | railAttitudeAngleSoftLimitStrength | float | 0.5 | 0.0 〜 200.0 | `15.0` |
+| 押し戻しダンピング | railAttitudeAngleSoftLimitDamping | float | 0.5 | 0.0 〜 200.0 | `6.0` |
+| 押し戻しTorque上限 | railAttitudeAngleSoftLimitMaxTorque | float | 0.5 | 0.0 〜 200.0 | `20.0` |
+| ループ | railLoop | bool | — | true / false | `false` |
+| 進行方向へ回転 | railOrientToPath | bool | — | true / false | `true` |
+| 滑らかな曲線 | railUseSmoothCurve | bool | — | true / false | `true` |
+| 開始時に停止 | railStartPaused | bool | — | true / false | `false` |
+| 逆方向 | railReverse | bool | — | true / false | `false` |
+| 終端で停止 | railStopAtEnd | bool | — | true / false | `true` |
+
+#### Health
+
+表示名「体力」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawHealthComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 最大体力 | healthMaximum | float | 1.0 | 0.0 〜 1000000.0 | `100.0` |
+
+#### LegacyRailShooterEnemy
+
+表示名「—」／カテゴリ「追加不可」／Inspector描画 `（専用描画なし）`
+
+Inspector編集行なし。
+
+#### LegacyRailShooterShip
+
+表示名「—」／カテゴリ「追加不可」／Inspector描画 `（専用描画なし）`
+
+Inspector編集行なし。
+
+#### LegacyRailShooterEnemyMotion
+
+表示名「—」／カテゴリ「追加不可」／Inspector描画 `（専用描画なし）`
+
+Inspector編集行なし。
+
+#### LegacyRailShooterStage
+
+表示名「—」／カテゴリ「追加不可」／Inspector描画 `（専用描画なし）`
+
+Inspector編集行なし。
+
+#### SceneButton
+
+表示名「Scene ボタン」／カテゴリ「UI」／Inspector描画 `DrawSceneButtonComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 表示文字 | buttonLabel | string | — | 文字列 | `"Button"` |
+| 位置 | buttonPosition | Vector2 | 0.5 | -10000.0 〜 10000.0 | `{20.0, 20.0}` |
+| サイズ | buttonSize | Vector2 | 0.5 | 1.0 〜 4096.0 | `{160.0, 48.0}` |
+| 操作可能 | buttonInteractable | bool | — | true / false | `true` |
+| 遷移先 Scene | sceneButtonScenePath | string | — | 文字列 | — |
+
+#### Foliage
+
+表示名「フォリッジ」／カテゴリ「地形・タイルマップ」／Inspector描画 `DrawFoliageComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Density Map | assetPath | string | — | 文字列 | `""` |
+| 配置範囲 | colliderSize | Vector3 | 1.0 | 1.0 〜 10000.0 | `{1.0, 1.0, 1.0}` |
+| 密度 | intensity | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| 最大Instance数 | particleMaxCount | int32 | 1 | — | `256` |
+| LOD距離 | colliderRadius | float | 1.0 | 1.0 〜 10000.0 | `0.5` |
+| 風向き | oceanPrimaryDirection | Vector2 | 0.01 | -1.0 〜 1.0 | `{1.0, 0.28}` |
+| 揺れ幅 | oceanWaveHeight | float | 0.01 | 0.0 〜 5.0 | `1.8` |
+| 風速 | oceanWindSpeed | float | 0.1 | 0.0 〜 100.0 | `14.0` |
+| 空間周波数 | oceanWaveLength | float | 0.01 | 0.01 〜 100.0 | `28.0` |
+| 時間倍率 | oceanTimeScale | float | 0.01 | 0.0 〜 10.0 | `1.0` |
+
+#### WaveSpawner
+
+表示名「ウェーブ生成」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawWaveSpawnerComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 生成元 | waveSpawnSourceMode | int32(選択) | — | 0=ObjectPool 生成 / 1=事前配置した子（互換） | `0` |
+| ObjectPool | wavePoolGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 生成基準位置 | waveSpawnPointGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 生成数(総数) | waveSpawnCount | int32 | 1 | — | `5` |
+| 同時存在目標数(0=一括生成) | waveTargetAliveCount | int32 | 1 | — | `0` |
+| 補充SpawnPointSet | waveSpawnPointSetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 編隊配置のまま | `-1` |
+| 1Frame最大生成数 | waveSpawnMaximumPerFrame | int32 | 1 | — | `8` |
+| 編隊 | waveFormationPattern | int32(選択) | — | 0=同一点 / 1=横列 / 2=V字 / 3=円 / 4=グリッド | `1` |
+| 編隊間隔 | waveFormationSpacing | float | 0.1 | 0.0 〜 100000.0 | `4.0` |
+| レール開始進行率 | waveSpawnRailStartNormalized | float | 0.01 | -1.0 〜 1.0 | `-1.0` |
+| グリッド列数 | waveFormationColumns | int32 | 1 | — | `4` |
+| 開始時に子を待機 | waveDeactivateChildrenOnStart | bool | — | true / false | `true` |
+| 開始条件 | waveTriggerMode | int32(選択) | — | 0=進行率 / 1=外部命令のみ | `0` |
+| 進行率 Source | waveTriggerSourceGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 開始進行率 | waveTriggerValue | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 距離 Source | waveTriggerSourceGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 開始距離 | waveTriggerValue | float | 1.0 | 0.0 〜 1000000.0 | `0.0` |
+| 生成間隔 | waveSpawnInterval | float | 0.01 | 0.0 〜 3600.0 | `0.0` |
+| 完了条件 | waveCompletionMode | int32(選択) | — | 0=全生成 / 1=全撃破・全返却 | `1` |
+| Action 対象 | waveActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 開始 Action | waveStartedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnWaveStarted"` |
+| 各生成 Action | waveSpawnedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnWaveSpawned"` |
+| 完了条件 Action | waveCompletedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnWaveCompleted"` |
+| 全撃破 Action | waveAllDefeatedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnWaveAllDefeated"` |
+
+#### TimelineEvent
+
+表示名「タイムラインイベント」／カテゴリ「入力・イベント」／Inspector描画 `DrawTimelineEventComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 時間 Source | timelineSourceMode | int32(選択) | — | 0=ObjectPool 生成 / 1=事前配置した子（互換） | `0` |
+| 進行率 Source | timelineSourceGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 発火進行率 | timelineTriggerValue | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 発火秒 | timelineTriggerValue | float | 0.05 | 0.0 〜 86400.0 | `0.0` |
+| Action 対象 | timelineTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| Action 名 | timelineActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnTimelineEvent"` |
+| 一度だけ | timelineTriggerOnce | bool | — | true / false | `true` |
+
+#### ThresholdState
+
+表示名「しきい値状態」／カテゴリ「入力・イベント」／Inspector描画 `DrawThresholdStateComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 値 Source | thresholdSourceMode | int32(選択) | — | 0=ObjectPool 生成 / 1=事前配置した子（互換） | `0` |
+| Source Object | thresholdSourceGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| Action 対象 | thresholdTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| State 2 境界 | thresholdSecondValue | float | 0.01 | 0.0 〜 1.0 | `0.66` |
+| State 3 境界 | thresholdThirdValue | float | 0.01 | 0.0 〜 1.0 | `0.33` |
+| State 1 Action | thresholdFirstActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnState1"` |
+| State 2 Action | thresholdSecondActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnState2"` |
+| State 3 Action | thresholdThirdActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnState3"` |
+
+#### UIValueBinding
+
+表示名「値バインディング」／カテゴリ「UI」／Inspector描画 `DrawUiValueBindingComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Source Object | uiBindingSourceGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 値 | uiBindingValueType | int32(選択) | — | 0=Float / 1=Vector3 | `1` |
+| 接頭文字 | uiBindingPrefix | string | — | 文字列 | — |
+| 小数桁 | uiBindingPrecision | int32 | 1 | — | `0` |
+| 表示倍率 | uiBindingScale | float | 0.1 | -1000000.0 〜 1000000.0 | `100.0` |
+
+#### Aerodynamics
+
+表示名「空気力学」／カテゴリ「3D物理」／Inspector描画 `DrawAerodynamicsComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 空気密度 kg/m3 | aerodynamicAirDensity | float | 0.001 | 0.0 〜 1000.0 | `1.225` |
+| 抗力係数 Cd | aerodynamicDragCoefficient | float | 0.01 | 0.0 〜 10.0 | `0.47` |
+| 代表面積 m2 | aerodynamicReferenceArea | float | 0.01 | 0.0001 〜 100000.0 | `1.0` |
+| 基礎風速 m/s | aerodynamicAmbientWindVelocity | Vector3 | 0.05 | -10000.0 〜 10000.0 | `{0.0, 0.0, 0.0}` |
+| 基礎揚力係数 | aerodynamicBaseLiftCoefficient | float | 0.01 | -10.0 〜 10.0 | `0.0` |
+| 揚力傾斜 /rad | aerodynamicLiftSlope | float | 0.01 | -20.0 〜 20.0 | `0.0` |
+| 翼面積 m2 | aerodynamicLiftArea | float | 0.01 | 0.0 〜 100000.0 | `1.0` |
+| ゼロ揚力迎角 deg | aerodynamicZeroLiftAngleDegrees | float | 0.1 | -89.0 〜 89.0 | `0.0` |
+| 失速迎角 deg | aerodynamicStallAngleDegrees | float | 0.1 | 1.0 〜 89.0 | `20.0` |
+| 横力係数 | aerodynamicSideForceCoefficient | float | 0.01 | 0.0 〜 20.0 | `0.0` |
+| 側面積 m2 | aerodynamicSideArea | float | 0.01 | 0.0 〜 100000.0 | `1.0` |
+| 回転抗力係数 | aerodynamicAngularDragCoefficient | float | 0.01 | 0.0 〜 20.0 | `0.05` |
+| Magnus 係数 | aerodynamicMagnusCoefficient | float | 0.01 | -20.0 〜 20.0 | `0.0` |
+| 圧力中心 | aerodynamicCenterOfPressure | Vector3 | 0.01 | -10000.0 〜 10000.0 | `{0.0, 0.0, 0.0}` |
+| 合力上限 N | aerodynamicMaximumForce | float | 10.0 | 0.0 〜 1000000000.0 | `100000.0` |
+
+#### WindZone
+
+表示名「風ゾーン」／カテゴリ「3D物理」／Inspector描画 `DrawWindZoneComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 種類 | windZoneMode | int32(選択) | — | 0=方向風 / 1=放射風 | `0` |
+| 風向 | windZoneDirection | Vector3 | 0.01 | -1.0 〜 1.0 | `{1.0, 0.0, 0.0}` |
+| 風速 m/s | windZoneSpeed | float | 0.1 | -10000.0 〜 10000.0 | `10.0` |
+| 影響半径 m | windZoneRadius | float | 0.1 | 0.0 〜 1000000.0 | `0.0` |
+| 乱流速度 m/s | windZoneTurbulenceStrength | float | 0.05 | 0.0 〜 10000.0 | `0.0` |
+| 乱流周波数 | windZoneTurbulenceFrequency | float | 0.05 | 0.0 〜 1000.0 | `1.0` |
+
+#### GravityField
+
+表示名「重力場」／カテゴリ「3D物理」／Inspector描画 `DrawGravityFieldComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 種類 | gravityFieldMode | int32(選択) | — | 0=Newton 逆二乗 / 1=定加速度 | `0` |
+| 引力源質量 kg | gravityFieldSourceMass | float | 1000000.0 | 0.0 〜 1.0e20 | `1.0e11` |
+| 加速度 m/s2 | gravityFieldAcceleration | float | 0.01 | -1000000.0 〜 1000000.0 | `9.80665` |
+| 最小計算距離 m | gravityFieldMinimumDistance | float | 0.01 | 0.001 〜 1000000.0 | `1.0` |
+| 影響半径 m | gravityFieldInfluenceRadius | float | 0.1 | 0.0 〜 1000000000.0 | `0.0` |
+| 加速度上限 m/s2 | gravityFieldMaximumAcceleration | float | 0.1 | 0.0 〜 1000000000.0 | `100.0` |
+
+#### RotatingFrame
+
+表示名「回転座標系」／カテゴリ「3D物理」／Inspector描画 `DrawRotatingFrameComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 角速度 rad/s | rotatingFrameAngularVelocity | Vector3 | 0.01 | -10000.0 〜 10000.0 | `{0.0, 1.0, 0.0}` |
+| 角加速度 rad/s2 | rotatingFrameAngularAcceleration | Vector3 | 0.01 | -10000.0 〜 10000.0 | `{0.0, 0.0, 0.0}` |
+| 中心の速度 m/s | rotatingFrameLinearVelocity | Vector3 | 0.05 | -10000.0 〜 10000.0 | `{0.0, 0.0, 0.0}` |
+| 影響半径 m | rotatingFrameRadius | float | 0.1 | 0.0 〜 1000000000.0 | `0.0` |
+| 加速度上限 m/s2 | rotatingFrameMaximumAcceleration | float | 0.1 | 0.0 〜 1000000000.0 | `100.0` |
+
+#### FluidVolume
+
+表示名「流体ボリューム」／カテゴリ「3D物理」／Inspector描画 `DrawFluidVolumeComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| サイズ m | fluidVolumeSize | Vector3 | 0.1 | 0.01 〜 1000000.0 | `{10.0, 5.0, 10.0}` |
+| 密度 kg/m3 | fluidDensity | float | 0.1 | 0.0 〜 1000000.0 | `1000.0` |
+| 流速 m/s | fluidFlowVelocity | Vector3 | 0.05 | -100000.0 〜 100000.0 | `{0.0, 0.0, 0.0}` |
+| 粘性 Pa*s | fluidDynamicViscosity | float | 0.001 | 0.0 〜 1000000.0 | `0.001` |
+| 二次抗力係数 | fluidDragCoefficient | float | 0.01 | 0.0 〜 100.0 | `1.0` |
+| 角粘性 | fluidAngularViscosity | float | 0.01 | 0.0 〜 1000000.0 | `1.0` |
+| 合力上限 N | fluidMaximumForce | float | 10.0 | 0.0 〜 1000000000.0 | `1000000.0` |
+
+#### SpringForce
+
+表示名「ばね力」／カテゴリ「3D物理」／Inspector描画 `DrawSpringForceComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | springForceTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は World固定点 | `-1` |
+| 所有者Anchor | springForceLocalAnchor | Vector3 | 0.01 | -100000.0 〜 100000.0 | `{0.0, 0.0, 0.0}` |
+| 接続先Anchor | springForceTargetLocalAnchor | Vector3 | 0.01 | -100000.0 〜 100000.0 | `{0.0, 0.0, 0.0}` |
+| World固定点 | springForceWorldAnchor | Vector3 | 0.01 | -1000000.0 〜 1000000.0 | `{0.0, 0.0, 0.0}` |
+| 自然長 m | springForceRestLength | float | 0.01 | 0.0 〜 1000000.0 | `1.0` |
+| ばね定数 N/m | springForceStiffness | float | 0.1 | 0.0 〜 1000000000.0 | `50.0` |
+| 減衰 Ns/m | springForceDamping | float | 0.1 | 0.0 〜 1000000000.0 | `5.0` |
+| Force上限 N | springForceMaximumForce | float | 10.0 | 0.0 〜 1000000000.0 | `100000.0` |
+| 接続先へ反作用 | springForceApplyReaction | bool | — | true / false | `true` |
+
+#### ElectromagneticBody
+
+表示名「電磁気ボディ」／カテゴリ「3D物理」／Inspector描画 `DrawElectromagneticBodyComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 磁気Moment A*m2 | electromagneticMagneticMoment | Vector3 | 0.01 | -1.0e12 〜 1.0e12 | `{0.0, 0.0, 0.0}` |
+| Force上限 N | electromagneticMaximumForce | float | 10.0 | 0.0 〜 1000000000.0 | `100000.0` |
+| Torque上限 N*m | electromagneticMaximumTorque | float | 10.0 | 0.0 〜 1000000000.0 | `100000.0` |
+
+#### ElectromagneticField
+
+表示名「電磁場」／カテゴリ「3D物理」／Inspector描画 `DrawElectromagneticFieldComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 種類 | electromagneticFieldMode | int32(選択) | — | 0=一様場 / 1=点電荷 | `0` |
+| 電場 E N/C | electromagneticElectricField | Vector3 | 0.1 | -1.0e12 〜 1.0e12 | `{0.0, 0.0, 0.0}` |
+| 最小計算距離 m | electromagneticMinimumDistance | float | 0.01 | 0.001 〜 1000000.0 | `0.1` |
+| 磁束密度 B T | electromagneticMagneticField | Vector3 | 0.01 | -1.0e12 〜 1.0e12 | `{0.0, 0.0, 0.0}` |
+| 影響半径 m | electromagneticInfluenceRadius | float | 0.1 | 0.0 〜 1000000000.0 | `0.0` |
+
+#### ScreenAim
+
+表示名「画面照準」／カテゴリ「入力・イベント」／Inspector描画 `DrawScreenAimComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 入力方式 | screenAimInputMode | int32(選択) | — | 0=Game Viewマウス / 1=Vector2 Action | `0` |
+| 入力Object | screenAimInputGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| Action Map | screenAimActionMapName | string | — | 文字列 | `"Player"` |
+| 移動Action | screenAimActionName | string | — | 文字列 | `"Aim"` |
+| 移動速度 | screenAimSpeed | float | 0.01 | 0.0 〜 100.0 | `0.75` |
+| Y軸反転 | screenAimInvertY | bool | — | true / false | `false` |
+| 照準UI | screenAimReticleGameObjectId | GameObject参照 (int32 ID) | — | 未設定は UIなし | `-1` |
+| 初期画面位置 | screenAimNormalizedPosition | Vector2 | 0.01 | 0.0 〜 1.0 | `{0.5, 0.5}` |
+| 画面内に制限 | screenAimClamp | bool | — | true / false | `true` |
+
+#### HitscanWeapon
+
+表示名「レイ射撃」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawHitscanWeaponComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 画面照準 | hitscanAimGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 画面中央 | `-1` |
+| 入力Object | hitscanInputGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| Action Map | hitscanActionMapName | string | — | 文字列 | `"Player"` |
+| 発射Action | hitscanFireActionName | string | — | 文字列 | `"Fire"` |
+| 射程 | hitscanRange | float | 1.0 | 0.01 〜 1000000.0 | `1000.0` |
+| ダメージ | hitscanDamage | float | 1.0 | 0.0 〜 1000000.0 | `10.0` |
+| Damage Tag | hitscanDamageTag | string | — | 文字列 | `"Bullet"` |
+| 発射間隔 | hitscanInterval | float | 0.01 | 0.0 〜 3600.0 | `0.15` |
+| 押下中に連射 | hitscanAutomatic | bool | — | true / false | `false` |
+| FFT水面へ命中 | hitscanOceanCollision | bool | — | true / false | `true` |
+| Action対象 | hitscanActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 発射Action通知 | hitscanFiredActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnWeaponFired"` |
+| 命中Action通知 | hitscanHitActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnWeaponHit"` |
+| 非命中Action通知 | hitscanMissActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnWeaponMiss"` |
+
+#### ProjectileEmitter
+
+表示名「弾発射」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawProjectileEmitterComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 照準Source | projectileAimMode | int32(選択) | — | 0=画面照準 / 1=Transform前方 / 2=Target / 3=弾道予測 / 4=可変速度 | `0` |
+| 照準/Selector | projectileAimGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 画面中央/このObject | `-1` |
+| 弾道予測/可変速度Target | projectileBallisticPredictionGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 入力Object | projectileInputGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 弾ObjectPool | projectilePoolGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 発射位置 | projectileSpawnPointGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| Action Map | projectileActionMapName | string | — | 文字列 | `"Player"` |
+| 発射Action | projectileFireActionName | string | — | 文字列 | `"Fire"` |
+| 速度 | projectileSpeed | float | 1.0 | 0.0 〜 1000000.0 | `40.0` |
+| ダメージ | projectileDamage | float | 1.0 | 0.0 〜 1000000.0 | `10.0` |
+| Damage Tag | projectileDamageTag | string | — | 文字列 | `"Projectile"` |
+| 判定半径 | projectileRadius | float | 0.01 | 0.0 〜 10000.0 | `0.15` |
+| 発射位置の安全距離 | projectileSpawnClearance | float | 0.05 | 0.0 〜 10000.0 | `0.05` |
+| 寿命 | projectileLifetime | float | 0.05 | 0.01 〜 3600.0 | `5.0` |
+| 発射間隔 | projectileInterval | float | 0.01 | 0.0 〜 3600.0 | `0.25` |
+| 押下中に連射 | projectileAutomatic | bool | — | true / false | `false` |
+| FFT水面へ命中 | projectileOceanCollision | bool | — | true / false | `true` |
+| 発射元速度を継承 | projectileInheritSourceVelocity | bool | — | true / false | `true` |
+| 速度Source | projectileSourceVelocityGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 親Rigidbodyを検索 | projectileUseParentRigidBody | bool | — | true / false | `true` |
+| 並進速度継承 | projectileLinearVelocityInheritance | float | 0.01 | -10.0 〜 10.0 | `1.0` |
+| 角速度継承 | projectileAngularVelocityInheritance | float | 0.01 | -10.0 〜 10.0 | `1.0` |
+| 可変速度: 時間の決め方 | projectileVariableSpeedTimeMode | int32(選択) | — | 0=距離に応じる / 1=固定時間 | `0` |
+| 可変速度: 最短飛行時間(距離依存時) | projectileVariableSpeedMinimumFlightTime | float | 0.01 | 0.01 〜 3600.0 | `0.2` |
+| 可変速度: 最長飛行時間(距離依存時) | projectileVariableSpeedMaximumFlightTime | float | 0.01 | 0.01 〜 3600.0 | `1.2` |
+| 可変速度: 距離÷この値=飛行時間(距離依存時) | projectileVariableSpeedDistanceFactor | float | 1.0 | 1.0 〜 100000.0 | `300.0` |
+| 可変速度: 固定飛行時間 | projectileVariableSpeedFixedFlightTime | float | 0.01 | 0.01 〜 3600.0 | `1.5` |
+| 可変速度: 弾道方式 | projectileVariableSpeedTrajectoryMode | int32(選択) | — | 0=物理(初速+重力) / 1=俯角固定の直線 / 2=位置補間(物理無視) | `0` |
+| 可変速度: 俯角(度) | projectileVariableSpeedDepressionAngleDegrees | float | 0.1 | -89.0 〜 89.0 | `15.0` |
+| 可変速度: 弧の高さ | projectileVariableSpeedArcHeight | float | 0.1 | -10000.0 〜 10000.0 | `5.0` |
+| 曳光弾ストレッチ表示 | projectileTracerStretchEnabled | bool | — | true / false | `false` |
+| 曳光弾: 長さ倍率 | projectileTracerLengthScale | float | 0.01 | 0.0 〜 100.0 | `1.0` |
+| 曳光弾: 最小長さ | projectileTracerMinimumLength | float | 0.1 | 0.0 〜 10000.0 | `2.0` |
+| 曳光弾: 太さ | projectileTracerThickness | float | 0.01 | 0.001 〜 100.0 | `0.15` |
+| Hitscanで即ダメージ解決(この弾は演出専用) | projectileHitscanResolution | bool | — | true / false | `false` |
+| Action対象 | projectileActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 発射Action通知 | projectileFiredActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnProjectileFired"` |
+| 命中Action通知 | projectileHitActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnProjectileHit"` |
+
+#### DamageReceiver
+
+表示名「ダメージ受信」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawDamageReceiverComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| ダメージ倍率 | damageMultiplier | float | 0.01 | 0.0 〜 10000.0 | `1.0` |
+| 無敵時間 | damageInvulnerabilitySeconds | float | 0.01 | 0.0 〜 3600.0 | `0.0` |
+| 死亡時に無効化 | damageDeactivateOnDeath | bool | — | true / false | `true` |
+| Action対象 | damageActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 被弾Action | damagedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnDamaged"` |
+| 死亡Action | deathActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnDeath"` |
+
+#### ObjectPool
+
+表示名「オブジェクトプール」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawObjectPoolComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Template | objectPoolTemplateGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 遅延生成容量 | objectPoolInitialSize | int32 | 1 | — | `16` |
+| 容量不足時に拡張 | objectPoolAllowExpand | bool | — | true / false | `false` |
+
+#### PrefabSpawner
+
+表示名「プレハブ生成」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawPrefabSpawnerComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| ObjectPool | prefabSpawnerPoolGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 生成位置 | prefabSpawnerPointGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 生成方式 | prefabSpawnerMode | int32(選択) | — | 0=外部命令のみ / 1=Play開始時 / 2=一定間隔 | `0` |
+| 生成間隔 | prefabSpawnerInterval | float | 0.01 | 0.01 〜 3600.0 | `1.0` |
+| Action対象 | prefabSpawnerActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 生成Action | prefabSpawnerSpawnedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnSpawned"` |
+
+#### CameraBlend
+
+表示名「カメラブレンド」／カテゴリ「カメラ」／Inspector描画 `DrawCameraBlendComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 開始Camera | cameraBlendSourceGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 現在Camera | `-1` |
+| 終了Camera | cameraBlendTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 時間 | cameraBlendDuration | float | 0.05 | 0.0 〜 3600.0 | `1.0` |
+| 補間 | cameraBlendEasing | int32(選択) | — | 0=Linear / 1=SmoothStep | `1` |
+| Play開始時に再生 | cameraBlendPlayOnStart | bool | — | true / false | `false` |
+
+#### CameraShake
+
+表示名「カメラシェイク」／カテゴリ「カメラ」／Inspector描画 `DrawCameraShakeComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 位置振幅 | cameraShakePositionAmplitude | Vector3 | 0.01 | 0.0 〜 10000.0 | `{0.1, 0.1, 0.1}` |
+| 回転振幅 | cameraShakeRotationAmplitude | Vector3 | 0.001 | 0.0 〜 6.2832 | `{0.01, 0.01, 0.01}` |
+| 周波数 | cameraShakeFrequency | float | 0.1 | 0.0 〜 1000.0 | `12.0` |
+| 時間 | cameraShakeDuration | float | 0.05 | 0.0 〜 3600.0 | `0.35` |
+| Priority | cameraShakePriority | int32 | 1 | — | `0` |
+| Play開始時に再生 | cameraShakePlayOnStart | bool | — | true / false | `false` |
+
+#### RailBranch
+
+表示名「レール分岐」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawRailBranchComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| RailFollower | railBranchFollowerGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 切替先Rail Path | railBranchTargetPathGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 切替条件 | railBranchTriggerMode | int32(選択) | — | 0=進行率 / 1=外部命令のみ | `0` |
+| 切替進行率 | railBranchTriggerNormalized | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 進行率を維持 | railBranchPreserveProgress | bool | — | true / false | `false` |
+| 一度だけ | railBranchTriggerOnce | bool | — | true / false | `true` |
+| Action対象 | railBranchActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 切替Action | railBranchActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnRailBranched"` |
+
+#### ActionSequence
+
+表示名「アクションシーケンス」／カテゴリ「入力・イベント」／Inspector描画 `DrawActionSequenceComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Play開始時に再生 | actionSequencePlayOnStart | bool | — | true / false | `false` |
+| ループ | actionSequenceLoop | bool | — | true / false | `false` |
+
+#### ActionSequenceStep
+
+表示名「シーケンスステップ」／カテゴリ「入力・イベント」／Inspector描画 `DrawActionSequenceStepComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Step種類 | actionSequenceStepType | int32(選択) | — | 0=Script Action / 1=待機 / 2=Active変更 / 3=Scene読込 / 4=条件分岐 / 5=Signal待機 | `0` |
+| 並列Group (-1=順次) | actionSequenceParallelGroup | int32 | 1 | — | `-1` |
+| Action対象 | actionSequenceTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 親Sequence | `-1` |
+| Action | actionSequenceActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnSequenceAction"` |
+| 待機秒 | actionSequenceWaitSeconds | float | 0.01 | 0.0 〜 86400.0 | `1.0` |
+| 対象 | actionSequenceTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 親Sequence | `-1` |
+| Active | actionSequenceActiveValue | bool | — | true / false | `true` |
+| Scene Asset | actionSequenceScenePath | string | — | 文字列 | `""` |
+| Additive読込 | actionSequenceSceneAdditive | bool | — | true / false | `false` |
+| 条件対象 | actionSequenceTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 親Sequence | `-1` |
+| 条件値 | actionSequenceConditionMode | int32(選択) | — | 0=Active / 1=体力比率 / 2=Rail進行率 | `0` |
+| 比較 | actionSequenceCompareMode | int32(選択) | — | 0=>= / 1=<= / 2=> / 3=< | `0` |
+| 比較値 | actionSequenceCompareValue | float | 0.01 | -1000000.0 〜 1000000.0 | `1.0` |
+| true移動先Index | actionSequenceTrueStepIndex | int32 | 1 | — | `-1` |
+| false移動先Index | actionSequenceFalseStepIndex | int32 | 1 | — | `-1` |
+| Signal名 | actionSequenceActionName | string | — | 文字列 | `"OnSequenceAction"` |
+
+#### Saveable
+
+表示名「保存対象」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawSaveableComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 保存Key (空=Object名) | saveableKey | string | — | 文字列 | `""` |
+| Transform | saveableTransform | bool | — | true / false | `true` |
+| Active | saveableActive | bool | — | true / false | `true` |
+| Health | saveableHealth | bool | — | true / false | `true` |
+| Rigidbody | saveableRigidbody | bool | — | true / false | `true` |
+| C++ Script公開値 | saveableScriptProperties | bool | — | true / false | `true` |
+
+#### Checkpoint
+
+表示名「チェックポイント」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawCheckpointComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Slot名 | checkpointSlotName | string | — | 文字列 | `"autosave"` |
+| Play開始時に保存 | checkpointSaveOnStart | bool | — | true / false | `false` |
+| Play開始時に読込 | checkpointLoadOnStart | bool | — | true / false | `false` |
+| 完了Action対象 | checkpointActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 保存完了Action | checkpointSavedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnCheckpointSaved"` |
+| 読込完了Action | checkpointLoadedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnCheckpointLoaded"` |
+
+#### RopeConstraint
+
+表示名「ロープ拘束」／カテゴリ「3D物理」／Inspector描画 `DrawRopeConstraintComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接続先 | ropeTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は World固定点 | `-1` |
+| 所有者Anchor | ropeLocalAnchor | Vector3 | 0.01 | -100000.0 〜 100000.0 | `{0.0, 0.0, 0.0}` |
+| 接続先Anchor | ropeTargetLocalAnchor | Vector3 | 0.01 | -100000.0 〜 100000.0 | `{0.0, 0.0, 0.0}` |
+| World固定点 | ropeWorldAnchor | Vector3 | 0.01 | -1000000.0 〜 1000000.0 | `{0.0, 0.0, 0.0}` |
+| 最大長 m | ropeMaximumLength | float | 0.01 | 0.0 〜 1000000.0 | `5.0` |
+| 張力係数 N/m | ropeStiffness | float | 1.0 | 0.0 〜 1000000000.0 | `2000.0` |
+| 減衰 Ns/m | ropeDamping | float | 0.1 | 0.0 〜 1000000000.0 | `80.0` |
+| 張力上限 N | ropeMaximumTension | float | 10.0 | 0.0 〜 1000000000.0 | `100000.0` |
+| 破断張力 N | ropeBreakingTension | float | 10.0 | 0.0 〜 1000000000.0 | `0.0` |
+| 接続先へ反作用 | ropeApplyReaction | bool | — | true / false | `true` |
+
+#### TorsionSpring
+
+表示名「ねじりばね」／カテゴリ「3D物理」／Inspector描画 `DrawTorsionSpringComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 基準Object | torsionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は World回転 | `-1` |
+| ばね定数 N*m/rad | torsionStiffness | float | 0.1 | 0.0 〜 1000000000.0 | `50.0` |
+| 減衰 N*m*s/rad | torsionDamping | float | 0.1 | 0.0 〜 1000000000.0 | `8.0` |
+| Torque上限 N*m | torsionMaximumTorque | float | 10.0 | 0.0 〜 1000000000.0 | `100000.0` |
+| 接続先へ反作用 | torsionApplyReaction | bool | — | true / false | `true` |
+
+#### WeaponLoadout
+
+表示名「武器ロードアウト」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawWeaponLoadoutComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 選択Slot | weaponLoadoutSelectedSlotIndex | int32 | 1 | — | `0` |
+| Action対象 | weaponLoadoutActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 装備変更Action | weaponLoadoutChangedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnWeaponChanged"` |
+| Reload完了Action | weaponLoadoutReloadedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnWeaponReloaded"` |
+
+#### WeaponLoadoutSlot
+
+表示名「武器スロット」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawWeaponLoadoutSlotComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Slot名 | weaponSlotName | string | — | 文字列 | `"Weapon"` |
+| Weapon Object | weaponSlotWeaponGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| Visual Object | weaponSlotVisualGameObjectId | GameObject参照 (int32 ID) | — | 未設定は なし | `-1` |
+| 現在弾数 | weaponSlotCurrentAmmo | int32 | 1 | — | `30` |
+| 予備弾 (-1=無限) | weaponSlotReserveAmmo | int32 | 1 | — | `90` |
+| 最大弾数 | weaponSlotMaximumAmmo | int32 | 1 | — | `30` |
+| Reload秒 | weaponSlotReloadSeconds | float | 0.01 | 0.0 〜 3600.0 | `1.5` |
+| 空で自動Reload | weaponSlotAutoReload | bool | — | true / false | `true` |
+
+#### TargetSelector
+
+表示名「ターゲット選択」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawTargetSelectorComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 検索Layer (-1=全て) | targetSelectorSearchLayer | int32 | 1 | — | `-1` |
+| 最大距離 | targetSelectorMaximumDistance | float | 0.1 | 0.0 〜 1000000.0 | `100.0` |
+| 最大角度 | targetSelectorMaximumAngle | float | 0.1 | 0.0 〜 180.0 | `45.0` |
+| 基準Object | targetSelectorReferenceGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 遮蔽判定 | targetSelectorOcclusionCheck | bool | — | true / false | `true` |
+| 遮蔽方式 | targetSelectorOcclusionMode | int32(選択) | — | 0=なし / 1=Physics / 2=Ocean / 3=Physics + Ocean | `3` |
+| Ocean Clearance | targetSelectorOceanClearance | float | 0.01 | -1000.0 〜 1000.0 | `0.0` |
+| 最大候補数 | targetSelectorMaximumTargets | int32 | 1 | — | `16` |
+| 選択方式 | targetSelectorSelectionMode | int32(選択) | — | 0=最短距離 / 1=照準中心 / 2=低HP / 3=優先値 | `1` |
+| Team Filter | targetSelectorTeamFilter | int32(選択) | — | 0=Target可能な全て / 1=別Team / 2=同じTeam / 3=指定Team | `0` |
+| 指定Team ID | targetSelectorSpecificTeamId | int32 | 1 | — | `0` |
+| Neutralを含む | targetSelectorIncludeNeutral | bool | — | true / false | `true` |
+| 現在Target ID | targetSelectorCurrentTargetGameObjectId | int32 | 1 | — | `-1` |
+| Action対象 | targetSelectorActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 取得Action | targetSelectorFoundActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnTargetFound"` |
+| 喪失Action | targetSelectorLostActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnTargetLost"` |
+| 変更Action | targetSelectorChangedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnTargetChanged"` |
+
+#### TargetSteering
+
+表示名「ターゲット追従」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawTargetSteeringComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 明示Target | targetSteeringTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は Selectorを使用 | `-1` |
+| TargetSelector | targetSteeringSelectorGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 旋回速度 deg/s | targetSteeringTurnSpeed | float | 1.0 | 0.0 〜 100000.0 | `180.0` |
+| 加速度 | targetSteeringAcceleration | float | 0.1 | 0.0 〜 100000.0 | `20.0` |
+| 最大速度 | targetSteeringMaximumSpeed | float | 0.1 | 0.0 〜 100000.0 | `40.0` |
+| 開始Delay | targetSteeringStartDelay | float | 0.01 | 0.0 〜 3600.0 | `0.0` |
+| 予測秒 | targetSteeringPredictionSeconds | float | 0.01 | 0.0 〜 60.0 | `0.0` |
+| 移動方式 | targetSteeringMode | int32(選択) | — | 0=Transform / 1=Rigidbody Force | `0` |
+| 移動Mode | targetSteeringMoveMode | int32(選択) | — | 0=Direct (直進追尾) / 1=ArcApproach (旋回接近) / 2=Parallel (並走) / 3=Chase (後方追跡) / 4=KeepDistance (距離維持) / 5=PlayerRelativeMove (相対移動) / 6=Retreat (離脱) | `0` |
+| 横Offset (右+/左-) | targetSteeringSideOffset | float | 0.1 | -100000.0 〜 100000.0 | `25.0` |
+| 前後Offset | targetSteeringForwardOffset | float | 0.1 | -100000.0 〜 100000.0 | `0.0` |
+| 高さOffset | targetSteeringVerticalOffset | float | 0.1 | -100000.0 〜 100000.0 | `0.0` |
+| 目標距離 | targetSteeringTargetDistance | float | 0.1 | 0.0 〜 100000.0 | `120.0` |
+| 距離Margin | targetSteeringDistanceMargin | float | 0.1 | 0.0 〜 100000.0 | `15.0` |
+| 開始Offset | targetSteeringStartOffset | Vector3 | 0.1 | -100000.0 〜 100000.0 | `{80.0, 0.0, 50.0}` |
+| 終了Offset | targetSteeringEndOffset | Vector3 | 0.1 | -100000.0 〜 100000.0 | `{-80.0, 0.0, 20.0}` |
+| 相対位置追従速度 (0=最大速度) | targetSteeringPositionLerpSpeed | float | 0.1 | 0.0 〜 100000.0 | `0.0` |
+| 継続秒 (0=無期限) | targetSteeringDuration | float | 0.01 | 0.0 〜 3600.0 | `0.0` |
+| 完了後のMode | nextMoveModeIndex | int32(選択) | — | 0=維持 / 1=Direct (直進追尾) / 2=ArcApproach (旋回接近) / 3=Parallel (並走) / 4=Chase (後方追跡) / 5=KeepDistance (距離維持) / 6=PlayerRelativeMove (相対移動) / 7=Retreat (離脱) | — |
+| 完了Action対象 | targetSteeringActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 完了Action | targetSteeringCompletedActionName | string(Action名) | — | 対象ScriptのAction候補 | `""` |
+
+#### MovementModifier
+
+表示名「移動補正」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawMovementModifierComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 位置Offset | movementModifierLocalPositionOffset | Vector3 | 0.01 | -100000.0 〜 100000.0 | `{0.0, 0.0, 0.0}` |
+| 回転Offset deg | movementModifierLocalRotationOffset | Vector3 | 0.1 | -36000.0 〜 36000.0 | `{0.0, 0.0, 0.0}` |
+| 位置X | allowsX | bool | — | true / false | — |
+| 位置Y | allowsY | bool | — | true / false | — |
+| 位置Z | allowsZ | bool | — | true / false | — |
+| 入力範囲 | movementModifierInputRange | Vector2 | 0.1 | 0.0 〜 100000.0 | `{0.0, 0.0}` |
+| 入力追従速度 | movementModifierInputSpeed | float | 0.1 | 0.0 〜 100000.0 | `8.0` |
+| PlayerInput | movementModifierInputGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| Action Map | movementModifierActionMapName | string | — | 文字列 | `"Player"` |
+| Vector2 Action | movementModifierActionName | string | — | 文字列 | `"Move"` |
+
+#### PropertyTween
+
+表示名「プロパティ補間」／カテゴリ「入力・イベント」／Inspector描画 `DrawPropertyTweenComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 対象 | propertyTweenTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| Component | propertyTweenComponentName | string | — | 文字列 | `"Ocean"` |
+| Property | propertyTweenPropertyName | string | — | 文字列 | `"WaveHeight"` |
+| 値型 | propertyTweenValueType | int32(選択) | — | 0=Float / 1=Vector3 | `0` |
+| 開始値 | propertyTweenStartValue | Vector3 | 0.01 | -1000000.0 〜 1000000.0 | `{1.0, 0.0, 0.0}` |
+| 終了値 | propertyTweenEndValue | Vector3 | 0.01 | -1000000.0 〜 1000000.0 | `{4.0, 0.0, 0.0}` |
+| 時間 | propertyTweenDuration | float | 0.01 | 0.001 〜 86400.0 | `1.0` |
+| Curve | propertyTweenCurve | int32(選択) | — | 0=Linear / 1=SmoothStep / 2=Ease In / 3=Ease Out | `1` |
+| Play開始時に再生 | propertyTweenPlayOnStart | bool | — | true / false | `false` |
+| ループ | propertyTweenLoop | bool | — | true / false | `false` |
+| 完了Action対象 | propertyTweenActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 完了Action | propertyTweenCompletedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnTweenCompleted"` |
+
+#### ActionRelay
+
+表示名「アクション中継」／カテゴリ「入力・イベント」／Inspector描画 `DrawActionRelayComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Play開始時にRelay | actionRelayOnStart | bool | — | true / false | `false` |
+
+#### ActionRelayTarget
+
+表示名「中継先」／カテゴリ「入力・イベント」／Inspector描画 `DrawActionRelayTargetComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 有効 | actionRelayTargetEnabled | bool | — | true / false | `true` |
+| Action対象 | actionRelayTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 親Relay | `-1` |
+| Action | actionRelayActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnAction"` |
+
+#### Thruster
+
+表示名「推進力」／カテゴリ「3D物理」／Inspector描画 `DrawThrusterComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 推進方向 | thrusterDirection | Vector3 | 0.01 | -1.0 〜 1.0 | `{0.0, 0.0, 1.0}` |
+| ローカル作用点 | thrusterLocalApplicationPoint | Vector3 | 0.01 | -100000.0 〜 100000.0 | `{0.0, 0.0, 0.0}` |
+| 推進力 N | thrusterForce | float | 1.0 | -1000000000.0 〜 1000000000.0 | `100.0` |
+| スロットル | thrusterThrottle | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| ローカル方向を使用 | thrusterUseLocalDirection | bool | — | true / false | `true` |
+
+#### PulleyConstraint
+
+表示名「滑車拘束」／カテゴリ「3D物理」／Inspector描画 `DrawPulleyConstraintComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 反対側Object | pulleyTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 所有者Anchor | pulleyOwnerLocalAnchor | Vector3 | 0.01 | -100000.0 〜 100000.0 | `{0.0, 0.0, 0.0}` |
+| 反対側Anchor | pulleyTargetLocalAnchor | Vector3 | 0.01 | -100000.0 〜 100000.0 | `{0.0, 0.0, 0.0}` |
+| 所有者側支持点 | pulleyOwnerWorldSupport | Vector3 | 0.01 | -1000000.0 〜 1000000.0 | `{-1.0, 3.0, 0.0}` |
+| 反対側支持点 | pulleyTargetWorldSupport | Vector3 | 0.01 | -1000000.0 〜 1000000.0 | `{1.0, 3.0, 0.0}` |
+| 全長 m | pulleyTotalLength | float | 0.01 | 0.0 〜 1000000.0 | `6.0` |
+| 滑車比 | pulleyRatio | float | 0.01 | 0.0001 〜 10000.0 | `1.0` |
+| 張力係数 N/m | pulleyStiffness | float | 1.0 | 0.0 〜 1000000000.0 | `3000.0` |
+| 減衰 Ns/m | pulleyDamping | float | 0.1 | 0.0 〜 1000000000.0 | `100.0` |
+| 張力上限 N | pulleyMaximumTension | float | 10.0 | 0.0 〜 1000000000.0 | `100000.0` |
+| 破断張力 N | pulleyBreakingTension | float | 10.0 | 0.0 〜 1000000000.0 | `0.0` |
+
+#### PhysicsServo
+
+表示名「物理サーボ」／カテゴリ「3D物理」／Inspector描画 `DrawPhysicsServoComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 追従先 | servoTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は World目標 | `-1` |
+| component.servoTargetGameObjectId >= 0 ? "位置オフセット" : "目標World位置" | servoTargetPosition | Vector3 | 0.01 | -1000000.0 〜 1000000.0 | `{0.0, 0.0, 0.0}` |
+| 位置ばね N/m | servoPositionStiffness | float | 0.1 | 0.0 〜 1000000000.0 | `100.0` |
+| 速度減衰 Ns/m | servoPositionDamping | float | 0.1 | 0.0 〜 1000000000.0 | `20.0` |
+| Force上限 N | servoMaximumForce | float | 10.0 | 0.0 〜 1000000000.0 | `100000.0` |
+| 回転ばね N*m/rad | servoRotationStiffness | float | 0.1 | 0.0 〜 1000000000.0 | `50.0` |
+| 角速度減衰 | servoRotationDamping | float | 0.1 | 0.0 〜 1000000000.0 | `8.0` |
+| Torque上限 N*m | servoMaximumTorque | float | 10.0 | 0.0 〜 1000000000.0 | `100000.0` |
+| 追従先へ反作用 | servoApplyReaction | bool | — | true / false | `false` |
+
+#### VortexField
+
+表示名「渦流場」／カテゴリ「3D物理」／Inspector描画 `DrawVortexFieldComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| ローカル渦軸 | vortexAxis | Vector3 | 0.01 | -1.0 〜 1.0 | `{0.0, 1.0, 0.0}` |
+| 影響半径 m | vortexRadius | float | 0.1 | 0.0 〜 1000000.0 | `10.0` |
+| 角速度 rad/s | vortexAngularVelocity | float | 0.01 | -10000.0 〜 10000.0 | `1.0` |
+| 中心流入速度 m/s | vortexRadialInflowVelocity | float | 0.01 | -10000.0 〜 10000.0 | `0.0` |
+| 軸方向速度 m/s | vortexAxialVelocity | float | 0.01 | -10000.0 〜 10000.0 | `0.0` |
+| 速度結合率 1/s | vortexVelocityCoupling | float | 0.01 | 0.0 〜 10000.0 | `2.0` |
+| 加速度上限 m/s2 | vortexMaximumAcceleration | float | 0.1 | 0.0 〜 1000000000.0 | `100.0` |
+
+#### PressureField
+
+表示名「圧力場」／カテゴリ「3D物理」／Inspector描画 `DrawPressureFieldComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 圧力 Pa | pressureFieldPressure | float | 1.0 | -1000000000.0 〜 1000000000.0 | `1000.0` |
+| 影響半径 m | pressureFieldRadius | float | 0.1 | 0.0 〜 1000000.0 | `10.0` |
+| 減衰指数 | pressureFieldFalloffExponent | float | 0.01 | 0.0 〜 32.0 | `2.0` |
+| Force上限 N | pressureFieldMaximumForce | float | 10.0 | 0.0 〜 1000000000.0 | `1000000.0` |
+
+#### Suspension
+
+表示名「サスペンション」／カテゴリ「3D物理」／Inspector描画 `DrawSuspensionComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| ローカル取付点 | suspensionLocalAnchor | Vector3 | 0.01 | -100000.0 〜 100000.0 | `{0.0, -0.5, 0.0}` |
+| ローカル接地方向 | suspensionLocalDirection | Vector3 | 0.01 | -1.0 〜 1.0 | `{0.0, -1.0, 0.0}` |
+| 自然長 m | suspensionRestLength | float | 0.01 | 0.0 〜 1000000.0 | `0.8` |
+| 最大伸長 m | suspensionMaximumLength | float | 0.01 | 0.0 〜 1000000.0 | `1.2` |
+| 車輪半径 m | suspensionWheelRadius | float | 0.01 | 0.0 〜 1000000.0 | `0.3` |
+| ばね定数 N/m | suspensionStiffness | float | 1.0 | 0.0 〜 1000000000.0 | `20000.0` |
+| 減衰 Ns/m | suspensionDamping | float | 1.0 | 0.0 〜 1000000000.0 | `2500.0` |
+| Force上限 N | suspensionMaximumForce | float | 10.0 | 0.0 〜 1000000000.0 | `100000.0` |
+| 接地法線へForce | suspensionUseHitNormal | bool | — | true / false | `false` |
+| 接地物へ反作用 | suspensionApplyReaction | bool | — | true / false | `true` |
+
+#### UprightStabilizer
+
+表示名「姿勢安定化」／カテゴリ「3D物理」／Inspector描画 `DrawUprightStabilizerComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| ローカル上方向 | uprightLocalUpAxis | Vector3 | 0.01 | -1.0 〜 1.0 | `{0.0, 1.0, 0.0}` |
+| 目標World上方向 | uprightTargetWorldUp | Vector3 | 0.01 | -1.0 〜 1.0 | `{0.0, 1.0, 0.0}` |
+| 姿勢ばね N*m/rad | uprightStiffness | float | 0.1 | 0.0 〜 1000000000.0 | `100.0` |
+| 角速度減衰 | uprightDamping | float | 0.1 | 0.0 〜 1000000000.0 | `15.0` |
+| Torque上限 N*m | uprightMaximumTorque | float | 10.0 | 0.0 〜 1000000000.0 | `100000.0` |
+
+#### TargetPoint
+
+表示名「ターゲットポイント」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawTargetPointComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 優先値 | targetPointPriority | float | 0.1 | -100000.0 〜 100000.0 | `0.0` |
+| 注視半径 | targetPointRadius | float | 0.01 | 0.01 〜 100000.0 | `0.25` |
+| 注視Offset | targetPointAimOffset | Vector3 | 0.01 | -100000.0 〜 100000.0 | `{0.0, 0.0, 0.0}` |
+
+#### Team
+
+表示名「チーム」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawTeamComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Team ID | teamId | int32 | 1 | — | `-1` |
+| Target可能 | teamTargetable | bool | — | true / false | `true` |
+
+#### Timer
+
+表示名「タイマー」／カテゴリ「入力・イベント」／Inspector描画 `DrawTimerComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 時間 | timerDuration | float | 0.01 | 0.001 〜 86400.0 | `1.0` |
+| 繰り返す | timerRepeat | bool | — | true / false | `false` |
+| Play開始時に再生 | timerPlayOnStart | bool | — | true / false | `true` |
+| 一時停止 | timerPaused | bool | — | true / false | `false` |
+| Action対象 | timerActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 発火Action | timerActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnTimer"` |
+
+#### GenericStateMachine
+
+表示名「汎用ステートマシン」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawGenericStateMachineComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 初期State | stateMachineInitialState | string | — | 文字列 | `"Initial"` |
+| Action対象 | stateMachineActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 変更Action | stateMachineChangedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnStateChanged"` |
+
+#### Attribute
+
+表示名「属性・リソース」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawAttributeComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 属性名 | attributeName | string | — | 文字列 | `"Resource"` |
+| 最小 | attributeMinimum | float | 0.1 | -1000000.0 〜 1000000.0 | `0.0` |
+| 最大 | attributeMaximum | float | 0.1 | -1000000.0 〜 1000000.0 | `100.0` |
+| 現在 | attributeCurrent | float | 0.1 | -1000000.0 〜 1000000.0 | `100.0` |
+| 毎秒回復 | attributeRegenerationPerSecond | float | 0.1 | -1000000.0 〜 1000000.0 | `0.0` |
+| Action対象 | attributeActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 変更Action | attributeChangedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnAttributeChanged"` |
+
+#### DestructiblePart
+
+表示名「破壊可能部位」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawDestructiblePartComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Health Source | destructibleHealthGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 無効化Component (;区切り) | destructibleDisableComponentNames | string | — | 文字列 | — |
+| 子Objectを無効化 | destructibleDisableChildren | bool | — | true / false | `true` |
+| Action対象 | destructibleActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 破壊Action | destructibleDestroyedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnPartDestroyed"` |
+
+#### FormationFollower
+
+表示名「編隊追従」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawFormationFollowerComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Leader | formationLeaderGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| ローカルOffset | formationLocalOffset | Vector3 | 0.1 | -100000.0 〜 100000.0 | `{}` |
+| 位置追従速度 | formationPositionSpeed | float | 0.1 | 0.0 〜 100000.0 | `8.0` |
+| 回転追従速度 deg/s | formationRotationSpeed | float | 1.0 | 0.0 〜 100000.0 | `180.0` |
+| 回転を追従 | formationFollowRotation | bool | — | true / false | `true` |
+
+#### TargetLock
+
+表示名「ターゲットロック」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawTargetLockComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| TargetSelector | targetLockSelectorGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| Lock時間 | targetLockSeconds | float | 0.01 | 0.0 〜 3600.0 | `0.75` |
+| 喪失猶予 | targetLockLostGraceSeconds | float | 0.01 | 0.0 〜 3600.0 | `0.25` |
+| Action対象 | targetLockActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 開始Action | targetLockStartedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnLockStarted"` |
+| 完了Action | targetLockCompletedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnLockCompleted"` |
+| 解除Action | targetLockLostActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnLockLost"` |
+
+#### MultiTargetLock
+
+表示名「複数ターゲットロック」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawMultiTargetLockComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| TargetSelector | multiTargetLockSelectorGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 最大Lock数 | multiTargetLockMaximumCount | int32 | 1 | — | `8` |
+| 1体のLock時間 | multiTargetLockSecondsPerTarget | float | 0.01 | 0.0 〜 3600.0 | `0.35` |
+| 喪失猶予 | multiTargetLockLostGraceSeconds | float | 0.01 | 0.0 〜 3600.0 | `0.25` |
+| 候補を自動取得 | multiTargetLockAutoAcquire | bool | — | true / false | `true` |
+| Action対象 | multiTargetLockActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 追加Action | multiTargetLockAddedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnMultiTargetAdded"` |
+| Lock完了Action | multiTargetLockCompletedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnMultiTargetLocked"` |
+| 解除Action | multiTargetLockLostActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnMultiTargetLost"` |
+
+#### WorldTargetMarker
+
+表示名「ワールドターゲットマーカー」／カテゴリ「UI」／Inspector描画 `DrawTargetMarkerComponent`／同じ描画関数を共有: OffScreenIndicator
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 明示Target | targetMarkerTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 自動参照 | `-1` |
+| TargetSelector | targetMarkerSelectorGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未使用 | `-1` |
+| TargetLock | targetMarkerLockGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未使用 | `-1` |
+| Multi Lock番号 | targetMarkerMultiLockIndex | int32 | 1 | — | `0` |
+| World Offset | targetMarkerWorldOffset | Vector3 | 0.01 | -100000.0 〜 100000.0 | `{0.0, 0.0, 0.0}` |
+| Screen Offset | targetMarkerScreenOffset | Vector2 | 1.0 | -100000.0 〜 100000.0 | `{0.0, 0.0}` |
+| 画面端余白 | targetMarkerEdgePadding | float | 1.0 | 0.0 〜 1000.0 | `32.0` |
+| カメラ後方を隠す | targetMarkerHideBehindCamera | bool | — | true / false | `true` |
+| Lock完了時だけ表示 | targetMarkerOnlyWhenLocked | bool | — | true / false | `false` |
+| Target方向へ回転 | targetMarkerRotateToDirection | bool | — | true / false | `true` |
+
+#### OffScreenIndicator
+
+表示名「画面外インジケーター」／カテゴリ「UI」／Inspector描画 `DrawTargetMarkerComponent`／同じ描画関数を共有: WorldTargetMarker
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 明示Target | targetMarkerTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 自動参照 | `-1` |
+| TargetSelector | targetMarkerSelectorGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未使用 | `-1` |
+| TargetLock | targetMarkerLockGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未使用 | `-1` |
+| Multi Lock番号 | targetMarkerMultiLockIndex | int32 | 1 | — | `0` |
+| World Offset | targetMarkerWorldOffset | Vector3 | 0.01 | -100000.0 〜 100000.0 | `{0.0, 0.0, 0.0}` |
+| Screen Offset | targetMarkerScreenOffset | Vector2 | 1.0 | -100000.0 〜 100000.0 | `{0.0, 0.0}` |
+| 画面端余白 | targetMarkerEdgePadding | float | 1.0 | 0.0 〜 1000.0 | `32.0` |
+| カメラ後方を隠す | targetMarkerHideBehindCamera | bool | — | true / false | `true` |
+| Lock完了時だけ表示 | targetMarkerOnlyWhenLocked | bool | — | true / false | `false` |
+| Target方向へ回転 | targetMarkerRotateToDirection | bool | — | true / false | `true` |
+
+#### AttributeSet
+
+表示名「属性セット」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawAttributeSetComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 名前 | [要素].name | string | — | 文字列 | — |
+| 最小 | [要素].minimum | float | 0.1 | -1000000.0 〜 1000000.0 | `0.0` |
+| 最大 | [要素].maximum | float | 0.1 | entry.minimum 〜 1000000.0 | `100.0` |
+| 現在 | [要素].current | float | 0.1 | entry.minimum 〜 entry.maximum | `100.0` |
+| 毎秒回復 | [要素].regenerationPerSecond | float | 0.1 | -1000000.0 〜 1000000.0 | `0.0` |
+| Action対象 | attributeSetActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 変更Action | attributeSetChangedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnAttributeSetChanged"` |
+
+#### GenericCounter
+
+表示名「汎用カウンター」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawGenericCounterComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 名前 | counterName | string | — | 文字列 | `"Counter"` |
+| 初期値 | counterInitialValue | float | 1.0 | -1000000.0 〜 1000000.0 | `0.0` |
+| 最小 | counterMinimumValue | float | 1.0 | -1000000.0 〜 1000000.0 | `0.0` |
+| 最大 | counterMaximumValue | float | 1.0 | counterMinimumValue 〜 1000000.0 | `999999.0` |
+| 閾値 | counterThresholdValue | float | 1.0 | -1000000.0 〜 1000000.0 | `1.0` |
+| 比較 | counterCompareMode | int32(選択) | — | 0=>= / 1=<= / 2=> / 3=< | `0` |
+| 成立時は1回だけ | counterFireOnce | bool | — | true / false | `true` |
+| Action対象 | counterActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 変更Action | counterChangedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnCounterChanged"` |
+| 閾値Action | counterThresholdActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnCounterThreshold"` |
+
+#### GenericCondition
+
+表示名「汎用条件」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawGenericConditionComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 比較元 | conditionSourceGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 比較元種類 | conditionSourceType | int32(選択) | — | 0=Runtime Float / 1=Runtime Int / 2=Runtime Bool / 3=AttributeSet / 4=Counter / 5=Object Active / 6=Generic State / 7=Target Locked | `0` |
+| Component | conditionComponentName | string | — | 文字列 | — |
+| Property / 属性名 | conditionPropertyName | string | — | 文字列 | — |
+| 比較 | conditionCompareMode | int32(選択) | — | 0=>= / 1=<= / 2=> / 3=< | `0` |
+| 比較State | conditionCompareString | string | — | 文字列 | — |
+| 比較値 | conditionCompareFloat | float | 0.1 | -1000000.0 〜 1000000.0 | `0.0` |
+| 毎Frame評価 | conditionEvaluateEveryFrame | bool | — | true / false | `false` |
+| 結果変化時だけ通知 | conditionFireOnChangeOnly | bool | — | true / false | `true` |
+| Action対象 | conditionActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 成立Action | conditionTrueActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnConditionTrue"` |
+| 不成立Action | conditionFalseActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnConditionFalse"` |
+
+#### GameplayData
+
+表示名「ゲームプレイデータ」／カテゴリ「データ」／Inspector描画 `DrawGameplayDataComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Data Asset | gameplayDataAssetPath | string | — | 文字列 | — |
+| Key | [要素].key | string | — | 文字列 | — |
+| 型 | [要素].type | int32(選択) | — | 0=String / 1=Int / 2=Float / 3=Bool / 4=Asset Path | `0` |
+| 値 | [要素].value | string | — | 文字列 | — |
+
+#### AreaDamage
+
+表示名「範囲ダメージ」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawAreaDamageComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 半径 | areaDamageRadius | float | 0.1 | 0.01 〜 100000.0 | `5.0` |
+| 基礎Damage | areaDamageBaseDamage | float | 1.0 | 0.0 〜 1000000.0 | `50.0` |
+| 端の最低倍率 | areaDamageMinimumMultiplier | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| Impulse | areaDamageImpulse | float | 1.0 | -1000000.0 〜 1000000.0 | `0.0` |
+| 距離減衰 | areaDamageFalloffMode | int32(選択) | — | 0=一定 / 1=線形 / 2=SmoothStep | `1` |
+| Layer Mask | areaDamageLayerMask | int32 | 1 | — | `-1` |
+| Damage Tag | areaDamageTag | string | — | 文字列 | `"Explosion"` |
+| 発生元を除外 | areaDamageIgnoreOwner | bool | — | true / false | `true` |
+| 遮蔽判定 | areaDamageOcclusionMode | int32(選択) | — | 0=なし / 1=Physics / 2=Ocean / 3=Physics + Ocean | `0` |
+| 遮蔽Layer Mask | areaDamageOcclusionLayerMask | int32 | 1 | — | `-1` |
+| 遮蔽時倍率 | areaDamageBlockedMultiplier | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 遮蔽Sample数 | areaDamageOcclusionSamplePoints | int32 | 1 | — | `1` |
+| Teamルール | areaDamageTeamRule | int32(選択) | — | 0=すべて / 1=異なるTeamのみ / 2=同じTeamのみ | `0` |
+| Neutralを無視 | areaDamageIgnoreNeutral | bool | — | true / false | `false` |
+| Team Source | areaDamageTeamSourceGameObjectId | GameObject参照 (int32 ID) | — | 未設定は Instigator | `-1` |
+| Play開始時に実行 | areaDamagePlayOnStart | bool | — | true / false | `false` |
+| Action対象 | areaDamageActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 適用Action | areaDamageAppliedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnAreaDamageApplied"` |
+
+#### HitZone
+
+表示名「ヒットゾーン」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawHitZoneComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Health対象 | hitZoneHealthGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 部位Damage倍率 | hitZoneDamageMultiplier | float | 0.05 | 0.0 〜 1000.0 | `1.0` |
+
+#### DamageTagModifier
+
+表示名「ダメージタグ倍率」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawDamageTagModifierComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 未登録Tag倍率 | damageTagDefaultMultiplier | float | 0.05 | 0.0 〜 1000.0 | `1.0` |
+| Tag | [要素].tagName | string | — | 文字列 | — |
+| 倍率 | [要素].multiplier | float | 0.05 | 0.0 〜 1000.0 | `1.0` |
+
+#### ProjectileDetonator
+
+表示名「弾起爆装置」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawProjectileDetonatorComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 接触時起爆 | projectileDetonateOnContact | bool | — | true / false | `true` |
+| 近接時起爆 | projectileDetonateOnProximity | bool | — | true / false | `false` |
+| 寿命切れ時起爆 | projectileDetonateOnLifetime | bool | — | true / false | `false` |
+| 近接Target | projectileDetonatorTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は TargetSteering | `-1` |
+| 近接半径 | projectileDetonatorProximityRadius | float | 0.1 | 0.0 〜 100000.0 | `1.0` |
+| AreaDamage | projectileDetonatorAreaDamageGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| Action対象 | projectileDetonatorActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 起爆Action | projectileDetonatedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnProjectileDetonated"` |
+
+#### ThreatTracker
+
+表示名「脅威トラッカー」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawThreatTrackerComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 監視対象 | threatTrackerTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 最大距離 | threatTrackerMaximumDistance | float | 1.0 | 0.0 〜 1000000.0 | `200.0` |
+| 最低接近速度 | threatTrackerMinimumClosingSpeed | float | 0.1 | 0.0 〜 1000000.0 | `1.0` |
+| 最大逸れ距離 | threatTrackerMaximumMissDistance | float | 0.1 | 0.0 〜 1000000.0 | `10.0` |
+| 最大脅威数 | threatTrackerMaximumCount | int32 | 1 | — | `8` |
+| Action対象 | threatTrackerActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 追加Action | threatTrackerAddedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnThreatAdded"` |
+| 解除Action | threatTrackerLostActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnThreatLost"` |
+
+#### RuntimeStateReset
+
+表示名「実行状態リセット」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawRuntimeStateResetComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Health | runtimeResetHealth | bool | — | true / false | `true` |
+| State Machine | runtimeResetStateMachine | bool | — | true / false | `true` |
+| Attribute / Counter | runtimeResetAttributes | bool | — | true / false | `true` |
+| Target Lock | runtimeResetLocks | bool | — | true / false | `true` |
+| Timer | runtimeResetTimers | bool | — | true / false | `true` |
+| 破壊可能部位 | runtimeResetDestructibleParts | bool | — | true / false | `true` |
+| Cooldown | runtimeResetCooldowns | bool | — | true / false | `true` |
+| Action対象 | runtimeResetActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| Reset Action | runtimeResetActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnRuntimeStateReset"` |
+
+#### CooldownSet
+
+表示名「クールダウンセット」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawCooldownSetComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 名前 | [要素].name | string | — | 文字列 | — |
+| 時間 | [要素].duration | float | 0.05 | 0.0 〜 36000.0 | `1.0` |
+| 開始時使用可能 | [要素].startReady | bool | — | true / false | `true` |
+| Action対象 | cooldownSetActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 完了Action | cooldownSetCompletedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnCooldownCompleted"` |
+
+#### WeaponFirePattern
+
+表示名「武器発射パターン」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawWeaponFirePatternComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| モード | weaponFirePatternMode | int32(選択) | — | 0=単発 / 1=バースト / 2=斉射 / 3=扇状拡散 / 4=発射点順番 / 5=チャージ | `0` |
+| 発射数 | weaponFirePatternCount | int32 | 1 | — | `3` |
+| 発射間隔 | weaponFirePatternInterval | float | 0.01 | 0.0 〜 60.0 | `0.1` |
+| 扇状角度 deg | weaponFirePatternSpreadAngle | float | 0.1 | 0.0 〜 360.0 | `8.0` |
+| チャージ秒 | weaponFirePatternChargeSeconds | float | 0.05 | 0.0 〜 60.0 | `0.75` |
+| 発射点 | weaponFirePatternSpawnPointGameObjectIds | GameObject参照 (int32 ID) | — | 未設定は 未設定 | — |
+| Action対象 | weaponFirePatternActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 完了Action | weaponFirePatternCompletedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnFirePatternCompleted"` |
+
+#### TargetAssignment
+
+表示名「ターゲット割り当て斉射」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawTargetAssignmentComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 複数Target Lock | targetAssignmentMultiTargetLockGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 最大Target数 | targetAssignmentMaximumTargets | int32 | 1 | — | `8` |
+| 発射間隔 | targetAssignmentInterval | float | 0.01 | 0.0 〜 60.0 | `0.1` |
+| Lock完了Targetのみ | targetAssignmentLockedOnly | bool | — | true / false | `true` |
+| Action対象 | targetAssignmentActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 完了Action | targetAssignmentCompletedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnTargetSalvoCompleted"` |
+
+#### WeaponAccuracy
+
+表示名「武器命中精度」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawWeaponAccuracyComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 基礎Spread deg | weaponAccuracyBaseSpread | float | 0.05 | 0.0 〜 180.0 | `0.0` |
+| 最大Spread deg | weaponAccuracyMaximumSpread | float | 0.05 | 0.0 〜 180.0 | `12.0` |
+| 1発の増加 deg | weaponAccuracySpreadPerShot | float | 0.05 | 0.0 〜 180.0 | `0.5` |
+| 毎秒回復 deg | weaponAccuracyRecoveryPerSecond | float | 0.05 | 0.0 〜 1000.0 | `3.0` |
+| 移動Spread倍率 | weaponAccuracyMovementSpread | float | 0.05 | 0.0 〜 1000.0 | `0.0` |
+| 分布 | weaponAccuracyDistribution | int32(選択) | — | 0=一様Cone / 1=一様Disk / 2=中心寄り | `2` |
+
+#### WeaponRecoil
+
+表示名「武器反動」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawWeaponRecoilComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Body Impulse | weaponRecoilBodyImpulse | Vector3 | 0.05 | -100000.0 〜 100000.0 | `{0.0, 0.0, -1.0}` |
+| Body Torque | weaponRecoilBodyTorque | Vector3 | 0.05 | -100000.0 〜 100000.0 | `{0.0, 0.0, 0.0}` |
+| 表示反動対象 | weaponRecoilVisualGameObjectId | GameObject参照 (int32 ID) | — | 未設定は なし | `-1` |
+| 表示位置反動 | weaponRecoilVisualPosition | Vector3 | 0.01 | -1000.0 〜 1000.0 | `{0.0, 0.0, -0.1}` |
+| 表示回転反動 rad | weaponRecoilVisualRotation | Vector3 | 0.01 | -100.0 〜 100.0 | `{0.0, 0.0, 0.0}` |
+| 回復速度 | weaponRecoilRecoveryPerSecond | float | 0.1 | 0.0 〜 1000.0 | `8.0` |
+| Camera Shake | weaponRecoilCameraShakeGameObjectId | GameObject参照 (int32 ID) | — | 未設定は なし | `-1` |
+| Action対象 | weaponRecoilActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 反動Action | weaponRecoilActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnWeaponRecoil"` |
+
+#### ImpactResponder
+
+表示名「命中応答」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawImpactResponderComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Damage Tag | [要素].damageTag | string | — | 文字列 | — |
+| Surface Tag | [要素].surfaceTag | string | — | 文字列 | — |
+| Effect Asset | [要素].effectAssetPath | string | — | 文字列 | — |
+| Audio Source | [要素].audioSourceGameObjectId | GameObject参照 (int32 ID) | — | 未設定は なし | `-1` |
+| Decal | [要素].decalGameObjectId | GameObject参照 (int32 ID) | — | 未設定は なし | `-1` |
+| Camera Shake | [要素].cameraShakeGameObjectId | GameObject参照 (int32 ID) | — | 未設定は なし | `-1` |
+| Action対象 | [要素].actionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 命中Action | [要素].actionName | string(Action名) | — | 対象ScriptのAction候補 | — |
+
+#### SurfaceType
+
+表示名「サーフェスタイプ」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawSurfaceTypeComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Surface Tag | surfaceTypeTag | string | — | 文字列 | `"Default"` |
+
+#### TimeScale
+
+表示名「時間倍率・ヒットストップ」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawTimeScaleComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 時間倍率 | timeScaleValue | float | 0.01 | 0.0 〜 8.0 | `0.0` |
+| 継続秒（実時間） | timeScaleDuration | float | 0.01 | 0.0 〜 3600.0 | `0.1` |
+| Blend秒（実時間） | timeScaleBlendSeconds | float | 0.01 | 0.0 〜 60.0 | `0.0` |
+| Play開始時に実行 | timeScalePlayOnStart | bool | — | true / false | `false` |
+| Action対象 | timeScaleActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 完了Action | timeScaleCompletedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnTimeScaleCompleted"` |
+
+#### AimAssist
+
+表示名「照準補助」／カテゴリ「照準」／Inspector描画 `DrawAimAssistComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 画面照準 | aimAssistScreenAimGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| Target Selector | aimAssistTargetSelectorGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 補助半径 | aimAssistRadius | float | 0.01 | 0.0 〜 1.0 | `0.12` |
+| 補助強度 | aimAssistStrength | float | 0.01 | 0.0 〜 1.0 | `0.35` |
+| 追従速度 | aimAssistFollowSpeed | float | 0.1 | 0.0 〜 100.0 | `8.0` |
+| 入力中の抑制 | aimAssistInputSuppression | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+
+#### InterceptPrediction
+
+表示名「迎撃予測」／カテゴリ「照準」／Inspector描画 `DrawInterceptPredictionComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 明示Target | interceptTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は なし | `-1` |
+| Target Selector | interceptTargetSelectorGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| Projectile速度 | interceptProjectileSpeed | float | 0.1 | 0.01 〜 100000.0 | `100.0` |
+| 最大予測秒 | interceptMaximumTime | float | 0.1 | 0.01 〜 3600.0 | `10.0` |
+
+#### DamageDirectionIndicator
+
+表示名「被弾方向表示」／カテゴリ「UI」／Inspector描画 `DrawDamageDirectionIndicatorComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 表示秒 | damageDirectionDuration | float | 0.05 | 0.0 〜 60.0 | `1.5` |
+| Fade秒 | damageDirectionFadeSeconds | float | 0.05 | 0.0 〜 60.0 | `0.4` |
+| 最低Damage | damageDirectionMinimumDamage | float | 0.1 | 0.0 〜 1000000.0 | `1.0` |
+| 画面端半径 | damageDirectionEdgeRadius | float | 0.01 | 0.0 〜 1.0 | `0.45` |
+
+#### ObjectiveTracker
+
+表示名「目標トラッカー」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawObjectiveTrackerComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| ID | [要素].objectiveId | string | — | 文字列 | — |
+| 表示名 | [要素].displayName | string | — | 文字列 | — |
+| 状態 | [要素].state | int32(選択) | — | 0=無効 / 1=進行中 / 2=完了 / 3=失敗 | `0` |
+| 現在値 | [要素].currentValue | float | 0.1 | -1000000.0 〜 1000000.0 | `0.0` |
+| 目標値 | [要素].targetValue | float | 0.1 | -1000000.0 〜 1000000.0 | `1.0` |
+| Action対象 | objectiveActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 変更Action | objectiveChangedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnObjectiveChanged"` |
+
+#### EncounterController
+
+表示名「エンカウンター制御」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawEncounterControllerComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Play開始時に実行 | encounterPlayOnStart | bool | — | true / false | `false` |
+| Wave Spawner | [要素].waveSpawnerGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 開始前待機 | [要素].startDelay | float | 0.05 | 0.0 〜 3600.0 | `0.0` |
+| 全撃破を待つ | [要素].waitsForAllDefeated | bool | — | true / false | `true` |
+| Action対象 | encounterActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 完了Action | encounterCompletedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnEncounterCompleted"` |
+
+#### SpawnPointSet
+
+表示名「生成地点セット」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawSpawnPointSetComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 選択方法 | spawnPointSetMode | int32(選択) | — | 0=単発 / 1=バースト / 2=斉射 / 3=扇状拡散 / 4=発射点順番 / 5=チャージ | `0` |
+| Volume Size | spawnPointVolumeSize | Vector3 | 0.1 | 0.0 〜 100000.0 | `{10.0, 0.0, 10.0}` |
+| 直前を避ける | spawnPointAvoidImmediateRepeat | bool | — | true / false | `true` |
+| 生成地点 | [要素].gameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 重み | [要素].weight | float | 0.1 | 0.0 〜 100000.0 | `1.0` |
+
+#### DifficultyParameterSet
+
+表示名「難易度パラメーターセット」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawDifficultyParameterSetComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 選択Index | difficultySelectedIndex | int32 | 1 | — | `1` |
+| Play開始時に適用 | difficultyApplyOnStart | bool | — | true / false | `false` |
+| 難易度名 | difficultyNames | string | — | 文字列 | `{"Easy", "Normal", "Hard"}` |
+| 難易度Index | [要素].difficultyIndex | int32 | 1 | — | `0` |
+| 対象 | [要素].targetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| Component | [要素].componentName | string | — | 文字列 | — |
+| Property | [要素].propertyName | string | — | 文字列 | — |
+| 型 | [要素].valueType | int32(選択) | — | 0=Float / 1=Int / 2=Bool | `0` |
+| 値 | [要素].floatValue | float | 0.1 | -1000000.0 〜 1000000.0 | `0.0` |
+| 値 | [要素].intValue | int32 | 1 | — | `0` |
+| 値 | [要素].boolValue | bool | — | true / false | `false` |
+| Action対象 | difficultyActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 適用Action | difficultyAppliedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnDifficultyApplied"` |
+
+#### CameraFeedbackMixer
+
+表示名「カメラフィードバックミキサー」／カテゴリ「カメラ」／Inspector描画 `DrawCameraFeedbackMixerComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 最大位置振幅 | cameraFeedbackMaximumPosition | Vector3 | 0.01 | 0.0 〜 1000.0 | `{1.0, 1.0, 1.0}` |
+| 最大回転振幅 | cameraFeedbackMaximumRotation | Vector3 | 0.01 | 0.0 〜 100.0 | `{0.2, 0.2, 0.2}` |
+| 最大同時数 | cameraFeedbackMaximumConcurrent | int32 | 1 | — | `8` |
+| 合成 | cameraFeedbackMixMode | int32(選択) | — | 0=単発 / 1=バースト / 2=斉射 / 3=扇状拡散 / 4=発射点順番 / 5=チャージ | `0` |
+| 全体強度 | cameraFeedbackGlobalStrength | float | 0.01 | 0.0 〜 10.0 | `1.0` |
+
+#### BallisticPrediction
+
+表示名「弾道予測」／カテゴリ「照準」／Inspector描画 `DrawBallisticPredictionComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 明示Target | ballisticTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は なし | `-1` |
+| Target Selector | ballisticTargetSelectorGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 初速 | ballisticInitialSpeed | float | 0.1 | 0.01 〜 100000.0 | `80.0` |
+| 重力 | ballisticGravity | Vector3 | 0.01 | -10000.0 〜 10000.0 | `{0.0, -9.81, 0.0}` |
+| 線形Drag | ballisticDrag | float | 0.001 | 0.0 〜 1000.0 | `0.0` |
+| Target加速度 | ballisticTargetAcceleration | Vector3 | 0.01 | -10000.0 〜 10000.0 | `{0.0, 0.0, 0.0}` |
+| 最大飛翔秒 | ballisticMaximumTime | float | 0.05 | 0.01 〜 3600.0 | `12.0` |
+| 積分Step | ballisticSimulationStep | float | 0.001 | 0.001 〜 0.25 | `1.0 / 60.0` |
+| 最大Point数 | ballisticMaximumPoints | int32 | 1 | — | `128` |
+| 発射元速度を継承 | ballisticInheritSourceVelocity | bool | — | true / false | `true` |
+| 速度Source | ballisticSourceVelocityGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 親Rigidbodyを検索 | ballisticUseParentRigidBody | bool | — | true / false | `true` |
+| 並進速度継承 | ballisticLinearVelocityInheritance | float | 0.01 | -10.0 〜 10.0 | `1.0` |
+| 角速度継承 | ballisticAngularVelocityInheritance | float | 0.01 | -10.0 〜 10.0 | `1.0` |
+| 発射元World速度 | ballisticSourceVelocity | Vector3 | 0.0 | -1000000.0 〜 1000000.0 | `{0.0, 0.0, 0.0}` |
+| 初期World速度 | ballisticLaunchVelocity | Vector3 | 0.0 | -1000000.0 〜 1000000.0 | `{0.0, 0.0, 0.0}` |
+
+#### DamageEventBuffer
+
+表示名「複数被弾履歴」／カテゴリ「UI」／Inspector描画 `DrawDamageEventBufferComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 最大Entry数 | damageEventMaximumEntries | int32 | 1 | — | `8` |
+| 表示寿命 | damageEventLifetime | float | 0.05 | 0.01 〜 60.0 | `1.5` |
+| 最低Damage | damageEventMinimumDamage | float | 0.1 | 0.0 〜 1000000.0 | `1.0` |
+| 同じSourceを統合 | damageEventMergeSameSource | bool | — | true / false | `true` |
+
+#### GamePause
+
+表示名「ゲーム一時停止」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawGamePauseComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| ゲーム時間を停止 | gamePausePauseGameTime | bool | — | true / false | `true` |
+| 物理を停止 | gamePausePausePhysics | bool | — | true / false | `true` |
+| Audioを停止 | gamePausePauseAudio | bool | — | true / false | `true` |
+| Gameplay Input Map | gamePauseGameplayInputMap | string | — | 文字列 | `"Gameplay"` |
+| UI Input Map | gamePauseUiInputMap | string | — | 文字列 | `"UI"` |
+| Action対象 | gamePauseActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| Pause Action | gamePausePausedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnGamePaused"` |
+| Resume Action | gamePauseResumedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnGameResumed"` |
+
+#### SurfaceWakeEmitter
+
+表示名「水面航跡エミッター」／カテゴリ「海・水面」／Inspector描画 `DrawSurfaceWakeEmitterComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Ocean | surfaceWakeOceanGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 自動検索 | `-1` |
+| 左航跡Effect | surfaceWakeLeftEffectGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 右航跡Effect | surfaceWakeRightEffectGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 船首Spray Effect | surfaceWakeBowEffectGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 最低速度 | surfaceWakeMinimumSpeed | float | 0.05 | 0.0 〜 10000.0 | `0.5` |
+| 最大強度速度 | surfaceWakeMaximumSpeed | float | 0.1 | 0.01 〜 10000.0 | `20.0` |
+| 航跡幅 | surfaceWakeWidth | float | 0.05 | 0.01 〜 1000.0 | `1.5` |
+| Foam寿命 | surfaceWakeLifetime | float | 0.05 | 0.01 〜 120.0 | `4.0` |
+| 最大発生数/秒 | surfaceWakeMaximumEmissionRate | float | 1.0 | 0.0 〜 100000.0 | `80.0` |
+| 水面へ局所波を与える | surfaceWakeAffectOceanSurface | bool | — | true / false | `false` |
+| 局所波の強度 | surfaceWakeWaveAmplitudeScale | float | 0.01 | 0.0 〜 2.0 | `0.10` |
+| 局所波の影響半径 | surfaceWakeWaveRadiusScale | float | 0.1 | 0.5 〜 20.0 | `4.0` |
+
+#### TrajectoryRenderer
+
+表示名「軌道プレビュー」／カテゴリ「描画・レンダリング」／Inspector描画 `DrawTrajectoryRendererComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 弾道予測 | trajectoryPredictionGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 透明度 | trajectoryAlpha | float | 0.01 | 0.0 〜 1.0 | `0.9` |
+| 太さ | trajectoryThickness | float | 0.1 | 0.1 〜 20.0 | `2.0` |
+| 最大Point数 | trajectoryMaximumPoints | int32 | 1 | — | `128` |
+| Scene View | trajectoryShowInSceneView | bool | — | true / false | `true` |
+| Game View | trajectoryShowInGameView | bool | — | true / false | `true` |
+| 着弾点 | trajectoryShowImpactPoint | bool | — | true / false | `true` |
+
+#### WaterSurfaceState
+
+表示名「水面出入り状態」／カテゴリ「海・水面」／Inspector描画 `DrawWaterSurfaceStateComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Ocean | waterSurfaceOceanGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 自動検索 | `-1` |
+| ローカル判定位置 | waterSurfaceLocalOffset | Vector3 | 0.01 | -100000.0 〜 100000.0 | `{0.0, 0.0, 0.0}` |
+| Clearance | waterSurfaceClearance | float | 0.01 | -1000.0 〜 1000.0 | `0.0` |
+| Action対象 | waterSurfaceActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 入水Action | waterSurfaceEnteredActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnWaterEntered"` |
+| 出水Action | waterSurfaceExitedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnWaterExited"` |
+
+#### OceanProbeSet
+
+表示名「海面前方プローブ」／カテゴリ「海・水面」／Inspector描画 `DrawOceanProbeSetComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Ocean | oceanProbeOceanGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 自動検索 | `-1` |
+| ローカル原点 | oceanProbeLocalOriginOffset | Vector3 | 0.01 | -100000.0 〜 100000.0 | `{0.0, 0.0, 0.0}` |
+| ローカル方向 | oceanProbeLocalDirection | Vector3 | 0.01 | -1.0 〜 1.0 | `{0.0, 0.0, 1.0}` |
+| 距離 | probeEntry.distance | float | 0.1 | 0.0 〜 1000000.0 | — |
+
+#### AttackCollisionFilter
+
+表示名「攻撃コリジョンフィルター」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawAttackCollisionFilterComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 発射責任者 | attackFilterInstigatorGameObjectId | GameObject参照 (int32 ID) | — | 未設定は Filter所有者 | `-1` |
+| 発射者を無視 | attackFilterIgnoreInstigator | bool | — | true / false | `true` |
+| 発射者の子も無視 | attackFilterIgnoreInstigatorHierarchy | bool | — | true / false | `true` |
+| Teamルール | attackFilterTeamRule | int32(選択) | — | 0=すべて / 1=異なるTeamのみ / 2=同じTeamのみ | `1` |
+| Neutralを無視 | attackFilterIgnoreNeutral | bool | — | true / false | `false` |
+| Arming距離 | attackFilterArmingDistance | float | 0.1 | 0.0 〜 100000.0 | `1.0` |
+| 無視Object | attackFilterIgnoredGameObjectIds | GameObject参照 (int32 ID) | — | 未設定は 未設定 | — |
+
+#### TurretAim
+
+表示名「砲塔照準」／カテゴリ「照準」／Inspector描画 `DrawTurretAimComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 明示Target | turretTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は Selectorを使用 | `-1` |
+| Target Selector | turretTargetSelectorGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| Yaw Pivot | turretYawPivotGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| Pitch Pivot | turretPitchPivotGameObjectId | GameObject参照 (int32 ID) | — | 未設定は Yaw Pivot | `-1` |
+| Yaw最小 deg | turretYawMinimumDegrees | float | 0.1 | -360.0 〜 360.0 | `-180.0` |
+| Yaw最大 deg | turretYawMaximumDegrees | float | 0.1 | -360.0 〜 360.0 | `180.0` |
+| Pitch最小 deg | turretPitchMinimumDegrees | float | 0.1 | -180.0 〜 180.0 | `-10.0` |
+| Pitch最大 deg | turretPitchMaximumDegrees | float | 0.1 | -180.0 〜 180.0 | `75.0` |
+| Yaw速度 deg/s | turretYawSpeedDegrees | float | 1.0 | 0.0 〜 100000.0 | `90.0` |
+| Pitch速度 deg/s | turretPitchSpeedDegrees | float | 1.0 | 0.0 〜 100000.0 | `60.0` |
+| 照準許容角 deg | turretAimToleranceDegrees | float | 0.1 | 0.0 〜 180.0 | `2.0` |
+| Target予測秒 | turretPredictionSeconds | float | 0.01 | 0.0 〜 60.0 | `0.0` |
+
+#### WeaponGroup
+
+表示名「武器グループ」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawWeaponGroupComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 発射方式 | weaponGroupMode | int32(選択) | — | 0=単発 / 1=バースト / 2=斉射 / 3=扇状拡散 / 4=発射点順番 / 5=チャージ | `0` |
+| 順次間隔 | weaponGroupInterval | float | 0.01 | 0.0 〜 3600.0 | `0.1` |
+| 全武器Ready必須 | weaponGroupRequireAllReady | bool | — | true / false | `true` |
+| Weapon | [要素].weaponGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| 使用 | [要素].isEnabled | bool | — | true / false | `true` |
+| 完了Action対象 | weaponGroupActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 完了Action | weaponGroupCompletedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnWeaponGroupCompleted"` |
+
+#### ProjectileImpactPhysics
+
+表示名「弾体貫通・跳弾」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawProjectileImpactPhysicsComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 初期貫通Energy | projectileImpactPenetrationEnergy | float | 0.1 | 0.0 〜 1000000.0 | `0.0` |
+| 基本貫通損失 | projectileImpactPenetrationLoss | float | 0.1 | 0.0 〜 1000000.0 | `1.0` |
+| 最大貫通回数 | projectileImpactMaximumPenetrations | int32 | 1 | — | `0` |
+| 跳弾開始角 deg | projectileImpactRicochetAngleDegrees | float | 0.1 | 0.0 〜 90.0 | `75.0` |
+| 速度保持率 | projectileImpactEnergyRetention | float | 0.01 | 0.0 〜 1.0 | `0.65` |
+| Damage保持率 | projectileImpactDamageRetention | float | 0.01 | 0.0 〜 1.0 | `0.75` |
+| 最大跳弾回数 | projectileImpactMaximumRicochets | int32 | 1 | — | `0` |
+| Surface Tag | [要素].surfaceTag | string | — | 文字列 | — |
+| 貫通損失倍率 | [要素].penetrationLossMultiplier | float | 0.01 | 0.0 〜 1000.0 | `1.0` |
+| 跳弾角Offset | [要素].ricochetAngleOffset | float | 0.1 | -90.0 〜 90.0 | `0.0` |
+| Energy保持倍率 | [要素].energyRetentionMultiplier | float | 0.01 | 0.0 〜 1000.0 | `1.0` |
+
+#### CameraHorizonStabilizer
+
+表示名「水平線スタビライザー」／カテゴリ「カメラ」／Inspector描画 `DrawCameraHorizonStabilizerComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 追従Source | horizonSourceGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 未設定 | `-1` |
+| ローカル位置Offset | horizonLocalPositionOffset | Vector3 | 0.01 | -100000.0 〜 100000.0 | `{0.0, 2.0, -6.0}` |
+| 回転Offset deg | horizonRotationOffsetDegrees | Vector3 | 0.1 | -360.0 〜 360.0 | `{0.0, 0.0, 0.0}` |
+| 位置を追従 | horizonFollowPosition | bool | — | true / false | `true` |
+| Pitch継承 | horizonPitchInheritance | float | 0.01 | 0.0 〜 1.0 | `0.35` |
+| Yaw継承 | horizonYawInheritance | float | 0.01 | 0.0 〜 1.0 | `1.0` |
+| Roll継承 | horizonRollInheritance | float | 0.01 | 0.0 〜 1.0 | `0.2` |
+| World Up | horizonWorldUp | Vector3 | 0.01 | -1.0 〜 1.0 | `{0.0, 1.0, 0.0}` |
+| 減衰 | horizonDamping | float | 0.1 | 0.0 〜 1000.0 | `8.0` |
+| 最大Roll deg | horizonMaximumRollDegrees | float | 0.1 | 0.0 〜 180.0 | `8.0` |
+
+#### FireLineCheck
+
+表示名「発射前射線チェック」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawFireLineCheckComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 砲口 | fireLineMuzzleGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 前方向Source | fireLineDirectionGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 砲口 | `-1` |
+| 許可Target | fireLineAllowedTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は なし | `-1` |
+| 検査距離 | fireLineDistance | float | 0.1 | 0.0 〜 1000000.0 | `10.0` |
+| 検査半径 | fireLineRadius | float | 0.01 | 0.0 〜 100000.0 | `0.05` |
+| Block Layer Mask | fireLineLayerMask | int32 | 1 | — | `-1` |
+| 無視Object | fireLineIgnoredGameObjectIds | GameObject参照 (int32 ID) | — | 未設定は 未設定 | — |
+
+#### StatusEffectSet
+
+表示名「状態効果セット」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawStatusEffectSetComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Action対象 | statusEffectActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| Effect ID | [要素].effectId | string | — | 文字列 | — |
+| Duration | [要素].duration | float | 0.05 | 0.001 〜 1000000.0 | `5.0` |
+| Stack Mode | [要素].stackMode | int32(選択) | — | 0=Refresh / 1=Stack / 2=Ignore | `0` |
+| 最大Stack | [要素].maximumStacks | int32 | 1 | — | `1` |
+| Tick間隔 | [要素].tickInterval | float | 0.05 | 0.0 〜 1000000.0 | `1.0` |
+| 開始Action | [要素].startedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnStatusEffectStarted"` |
+| Tick Action | [要素].tickActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnStatusEffectTick"` |
+| 終了Action | [要素].endedActionName | string(Action名) | — | 対象ScriptのAction候補 | `"OnStatusEffectEnded"` |
+
+#### RailSpeedProfile
+
+表示名「レール速度プロファイル」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawRailSpeedProfileComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| プロファイルを使用 | railSpeedProfileEnabled | bool | — | true / false | `true` |
+| 進行率 | speedKey.normalizedProgress | float | 0.01 | 0.0 〜 1.0 | — |
+| 速度倍率 | speedKey.speedMultiplier | float | 0.01 | 0.0 〜 100.0 | — |
+
+#### RailZone
+
+表示名「レール区間」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawRailZoneComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Action対象 | railZoneActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| Zone ID | [要素].zoneId | string | — | 文字列 | — |
+| 開始進行率 | [要素].startNormalized | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 終了進行率 | [要素].endNormalized | float | 0.01 | 0.0 〜 1.0 | `0.25` |
+| 速度倍率 | [要素].speedMultiplier | float | 0.01 | 0.0 〜 100.0 | `1.0` |
+| 移動範囲を上書き | [要素].overrideMovementRange | bool | — | true / false | `false` |
+| 左右・上下範囲 | [要素].movementRange | Vector2 | 0.1 | 0.0 〜 10000.0 | `{5.0, 3.0}` |
+| 進入Action | [要素].enteredActionName | string | — | 文字列 | `"OnRailZoneEntered"` |
+| 退出Action | [要素].exitedActionName | string | — | 文字列 | `"OnRailZoneExited"` |
+
+#### CameraFollowComposer
+
+表示名「カメラ追従コンポーザー」／カテゴリ「カメラ」／Inspector描画 `DrawCameraFollowComposerComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 追従対象 | cameraComposerTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は Cameraの接続先 | `-1` |
+| 追従Offset | cameraComposerFollowOffset | Vector3 | 0.1 | -10000.0 〜 10000.0 | `{0.0, 3.0, -8.0}` |
+| 注視Offset | cameraComposerLookAtOffset | Vector3 | 0.1 | -10000.0 〜 10000.0 | `{0.0, 1.0, 6.0}` |
+| 位置減衰 | cameraComposerPositionDamping | float | 0.1 | 0.0 〜 1000.0 | `6.0` |
+| 回転減衰 | cameraComposerRotationDamping | float | 0.1 | 0.0 〜 1000.0 | `8.0` |
+| 速度先読み秒 | cameraComposerLookAheadSeconds | float | 0.01 | 0.0 〜 10.0 | `0.25` |
+| デッドゾーン | cameraComposerDeadZone | Vector2 | 0.01 | 0.0 〜 1000.0 | `{0.0, 0.0}` |
+| 1Frame最大追従距離 | cameraComposerMaximumDistance | float | 0.1 | 0.0 〜 10000.0 | `30.0` |
+| 対象Yawを継承 | cameraComposerInheritTargetYaw | bool | — | true / false | `true` |
+| Pitch/Rollを安定化 | cameraComposerStabilizePitchRoll | bool | — | true / false | `true` |
+
+#### SpeedFeedback
+
+表示名「速度フィードバック」／カテゴリ「カメラ」／Inspector描画 `DrawSpeedFeedbackComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 速度Source | speedFeedbackSourceGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| 対象Camera | speedFeedbackCameraGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 最高Priority Camera | `-1` |
+| 最小速度 | speedFeedbackMinimumSpeed | float | 0.1 | 0.0 〜 10000.0 | `0.0` |
+| 最大速度 | speedFeedbackMaximumSpeed | float | 0.1 | 0.01 〜 10000.0 | `40.0` |
+| 最小FOV | speedFeedbackMinimumFovDegrees | float | 0.1 | 1.0 〜 179.0 | `60.0` |
+| 最大FOV | speedFeedbackMaximumFovDegrees | float | 0.1 | 1.0 〜 179.0 | `78.0` |
+| 最小Blur | speedFeedbackMinimumMotionBlur | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 最大Blur | speedFeedbackMaximumMotionBlur | float | 0.01 | 0.0 〜 1.0 | `0.2` |
+| Camera強度加算 | speedFeedbackCameraStrength | float | 0.01 | 0.0 〜 10.0 | `0.35` |
+| 応答速度 | speedFeedbackResponseSpeed | float | 0.1 | 0.0 〜 1000.0 | `5.0` |
+
+#### SpawnedObjectSetup
+
+表示名「生成オブジェクト設定」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawSpawnedObjectSetupComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Rail Path | spawnedSetupRailPathGameObjectId | GameObject参照 (int32 ID) | — | 未設定は Template設定を使用 | `-1` |
+| 開始進行率 | spawnedSetupRailStartNormalized | float | 0.01 | 0.0 〜 1.0 | `0.0` |
+| 個体ごとの進行率差 | spawnedSetupRailStartStep | float | 0.001 | -1.0 〜 1.0 | `0.0` |
+| Rail速度倍率 | spawnedSetupRailSpeedMultiplier | float | 0.01 | 0.0 〜 100.0 | `1.0` |
+| Teamを上書き | spawnedSetupOverrideTeam | bool | — | true / false | `false` |
+| Team ID | spawnedSetupTeamId | int32 | 1 | — | `1` |
+| 生成時にRuntime状態をReset | spawnedSetupResetRuntimeState | bool | — | true / false | `true` |
+| Action対象 | spawnedSetupActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このWave | `-1` |
+| 適用完了Action | spawnedSetupAppliedActionName | string | — | 文字列 | `"OnSpawnedObjectSetup"` |
+
+#### WaveMotionProfile
+
+表示名「ウェーブ移動プロファイル」／カテゴリ「ゲームプレイ」／Inspector描画 `DrawWaveMotionProfileComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 移動パターン | waveMotionMode | int32(選択) | — | 0=なし / 1=Sine / 2=8の字 / 3=交互運動 | `0` |
+| 左右・上下振幅 | waveMotionAmplitude | Vector2 | 0.1 | 0.0 〜 10000.0 | `{6.0, 2.0}` |
+| 周波数 | waveMotionFrequency | float | 0.01 | 0.0 〜 1000.0 | `0.35` |
+| 個体ごとの位相差 | waveMotionPhaseStep | float | 0.01 | -100.0 〜 100.0 | `0.7` |
+| Blend In秒 | waveMotionBlendInSeconds | float | 0.01 | 0.0 〜 1000.0 | `0.5` |
+
+#### DistanceActivation
+
+表示名「距離アクティベーション」／カテゴリ「最適化」／Inspector描画 `DrawDistanceActivationComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 距離基準 | distanceActivationReferenceGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 最高Priority Camera | `-1` |
+| 有効化距離 | distanceActivationEnterDistance | float | 1.0 | 0.0 〜 1000000.0 | `250.0` |
+| 無効化距離 | distanceActivationExitDistance | float | 1.0 | 0.0 〜 1000000.0 | `300.0` |
+| 子階層も対象 | distanceActivationAffectHierarchy | bool | — | true / false | `true` |
+
+#### SimulationLOD
+
+表示名「シミュレーション LOD」／カテゴリ「最適化」／Inspector描画 `DrawSimulationLodComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 距離基準 | simulationLodReferenceGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 最高Priority Camera | `-1` |
+| Medium距離 | simulationLodMediumDistance | float | 1.0 | 0.0 〜 1000000.0 | `100.0` |
+| Far距離 | simulationLodFarDistance | float | 1.0 | 0.0 〜 1000000.0 | `250.0` |
+| Culled距離 | simulationLodCulledDistance | float | 1.0 | 0.0 〜 1000000.0 | `500.0` |
+| Medium Script更新秒 | simulationLodMediumScriptInterval | float | 0.01 | 0.0 〜 10.0 | `1.0 / 30.0` |
+| Far Script更新秒 | simulationLodFarScriptInterval | float | 0.01 | 0.0 〜 10.0 | `0.2` |
+| FarでPhysics停止 | simulationLodDisablePhysicsAtFar | bool | — | true / false | `true` |
+| FarでScript停止 | simulationLodDisableScriptsAtFar | bool | — | true / false | `false` |
+| FarでAI停止 | simulationLodDisableAiAtFar | bool | — | true / false | `true` |
+| FarでAnimation停止 | simulationLodDisableAnimationAtFar | bool | — | true / false | `true` |
+| FarでEffect停止 | simulationLodDisableEffectsAtFar | bool | — | true / false | `true` |
+| 子階層も対象 | simulationLodAffectHierarchy | bool | — | true / false | `true` |
+
+#### RailEventMarker
+
+表示名「レールイベントマーカー」／カテゴリ「入力・イベント」／Inspector描画 `DrawRailEventMarkerComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Action対象 | railEventMarkerActionTargetGameObjectId | GameObject参照 (int32 ID) | — | 未設定は このObject | `-1` |
+| Marker ID | [要素].markerId | string | — | 文字列 | — |
+| 進行率 | [要素].normalizedProgress | float | 0.01 | 0.0 〜 1.0 | `0.5` |
+| 通過方向 | [要素].directionMode | int32(選択) | — | 0=両方向 / 1=順方向のみ / 2=逆方向のみ | `0` |
+| Play中1回だけ | [要素].triggerOnce | bool | — | true / false | `true` |
+| Action | [要素].actionName | string | — | 文字列 | `"OnRailMarker"` |
+
+#### SceneStreaming
+
+表示名「Scene Streaming」／カテゴリ「最適化」／Inspector描画 `DrawSceneStreamingComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| Scene Path | sceneStreamingScenePath | string | — | 文字列 | — |
+| 距離基準 | sceneStreamingReferenceGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 最高Priority Camera | `-1` |
+| 読込距離 | sceneStreamingLoadDistance | float | 1.0 | 0.0 〜 1000000.0 | `500.0` |
+| 解除距離 | sceneStreamingUnloadDistance | float | 1.0 | 0.0 〜 1000000.0 | `650.0` |
+| 遠距離でSceneを破棄 | sceneStreamingUnloadWhenFar | bool | — | true / false | `true` |
+
+#### TextEffect
+
+表示名「テキストエフェクト」／カテゴリ「UI」／Inspector描画 `DrawTextEffectComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 出現効果 | textAppearEffectType | int32(選択) | — | 0=なし / 1=フェードイン / 2=タイプライター / 3=スケールポップ | `0` |
+| 継続時間(秒) | textAppearDuration | float | 0.01 | 0.01 〜 60.0 | `0.6` |
+| 開始遅延(秒) | textAppearDelay | float | 0.01 | 0.0 〜 60.0 | `0.0` |
+| 文字/秒 | textAppearParamA | float | 0.1 | 0.1 〜 200.0 | `12.0` |
+| オーバーシュート倍率 | textAppearParamA | float | 0.01 | 1.0 〜 3.0 | `12.0` |
+| 常時効果 | textContinuousEffectType | int32(選択) | — | 0=なし / 1=点滅 / 2=レインボー / 3=波 / 4=発光 / 5=輪郭の発光 / 6=色収差 / 7=微振動 / 8=不規則点滅 / 9=脈動 / 10=残像 / 11=簡易グリッチ | `0` |
+| 開始遅延(秒) | textContinuousDelay | float | 0.01 | 0.0 〜 60.0 | `0.0` |
+| 点滅間隔(秒) | textContinuousParamA | float | 0.01 | 0.02 〜 5.0 | `8.0` |
+| 色相回転速度(周/秒) | textContinuousParamA | float | 0.01 | 0.01 〜 10.0 | `8.0` |
+| 文字ごとの色ずれ | textContinuousParamB | float | 0.01 | 0.0 〜 1.0 | `0.35` |
+| 振幅(px) | textContinuousParamA | float | 0.1 | 0.0 〜 200.0 | `8.0` |
+| 文字ごとの位相 | textContinuousParamB | float | 0.01 | 0.0 〜 3.0 | `0.35` |
+| 揺れる速さ | textContinuousParamC | float | 0.1 | 0.0 〜 20.0 | `3.0` |
+| Glow半径(px) | textContinuousParamA | float | 0.1 | 0.0 〜 60.0 | `8.0` |
+| 脈動速度(0で静止) | textContinuousParamB | float | 0.05 | 0.0 〜 20.0 | `0.35` |
+| 脈動の深さ | textContinuousParamC | float | 0.01 | 0.0 〜 1.0 | `3.0` |
+| 輪郭太さ(px) | textContinuousParamA | float | 0.1 | 0.5 〜 20.0 | `8.0` |
+| ズレ量(px) | textContinuousParamA | float | 0.1 | 0.0 〜 20.0 | `8.0` |
+| 振れ幅(px) | textContinuousParamA | float | 0.1 | 0.0 〜 40.0 | `8.0` |
+| 速さ | textContinuousParamB | float | 0.1 | 0.1 〜 60.0 | `0.35` |
+| 最低輝度(0-1) | textContinuousParamA | float | 0.01 | 0.0 〜 1.0 | `8.0` |
+| フリッカー速さ | textContinuousParamB | float | 0.1 | 0.1 〜 30.0 | `0.35` |
+| 最大拡大率 | textContinuousParamA | float | 0.01 | 1.0 〜 2.0 | `8.0` |
+| 残像の数 | textContinuousParamC | float | 1.0 | 2.0 〜 6.0 | `3.0` |
+| 発生頻度(回/秒) | textContinuousParamB | float | 0.05 | 0.05 〜 10.0 | `0.35` |
+| 強さ(0-1) | textContinuousParamC | float | 0.01 | 0.0 〜 1.0 | `3.0` |
+
+#### SceneTransition
+
+表示名「シーン遷移」／カテゴリ「エフェクト」／Inspector描画 `DrawSceneTransitionComponent`
+
+| Inspector表示 | 内部Field | 型 | ドラッグ量 | 範囲・選択肢 | 既定値 |
+| --- | --- | --- | --- | --- | --- |
+| 種類 | sceneTransitionType | int32(選択) | — | 0=なし / 1=色フェード / 2=ワイプ / 3=Camera Dive | `0` |
+| 遷移先 Scene | sceneTransitionTargetScenePath | string | — | 文字列 | `""` |
+| 覆うまでの時間(秒) | sceneTransitionOutDuration | float | 0.01 | 0.01 〜 30.0 | `0.8` |
+| 静止時間(秒) | sceneTransitionHoldSeconds | float | 0.01 | 0.0 〜 30.0 | `0.2` |
+| 見せる時間(秒) | sceneTransitionInDuration | float | 0.01 | 0.01 〜 30.0 | `0.8` |
+| 色 | sceneTransitionColor | Vector3 | 0.01 | 0.0 〜 1.0 | `{1.0, 1.0, 1.0}` |
+| Dive基準Object | sceneTransitionCameraDiveSourceGameObjectId | GameObject参照 (int32 ID) | — | 未設定は 遷移開始時のCamera位置 | `-1` |
+| Dive開始位置 Offset | sceneTransitionCameraDivePositionOffset | Vector3 | 0.1 | -100000.0 〜 100000.0 | `{0.0, 60.0, 0.0}` |
+| Dive開始角度 deg | sceneTransitionCameraDiveRotationDegrees | Vector3 | 0.1 | -360.0 〜 360.0 | `{90.0, 0.0, 0.0}` |

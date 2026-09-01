@@ -4,6 +4,7 @@
 #include "EditorScene.h"
 
 #include <functional>
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -13,6 +14,55 @@
 
 class EditorPhysicsManager {
 public:
+	using WireHandle = uint64_t;
+	static constexpr WireHandle kInvalidWireHandle = 0ULL;
+
+	struct RuntimeWireDesc {
+		int32_t firstGameObjectId = -1;
+		int32_t secondGameObjectId = -1;
+		int32_t ownerGameObjectId = -1;
+		int32_t rendererSettingsGameObjectId = -1;
+		Vector3 firstLocalAnchor = {0.0f, 0.0f, 0.0f};
+		Vector3 secondLocalAnchor = {0.0f, 0.0f, 0.0f};
+		float maximumLength = 1.0f;
+		float minimumLength = 0.1f;
+		float stiffness = 1200.0f;
+		float damping = 80.0f;
+		float maximumTension = 0.0f;
+		float breakingTension = 0.0f;
+		float shrinkSpeed = 0.0f;
+		bool applyReaction = true;
+		bool requireConnectable = true;
+	};
+
+	struct RuntimeWireState {
+		WireHandle handle = kInvalidWireHandle;
+		RuntimeWireDesc desc{};
+		Vector3 firstWorldAnchor = {0.0f, 0.0f, 0.0f};
+		Vector3 secondWorldAnchor = {0.0f, 0.0f, 0.0f};
+		float currentLength = 0.0f;
+		float currentTension = 0.0f;
+		bool isActive = true;
+		bool isBroken = false;
+	};
+
+	enum class RuntimeWireEventType {
+		Connected,
+		TensionChanged,
+		Broken,
+		TargetLost,
+		Destroyed
+	};
+
+	struct RuntimeWireEvent {
+		RuntimeWireEventType type = RuntimeWireEventType::Connected;
+		WireHandle handle = kInvalidWireHandle;
+		int32_t firstGameObjectId = -1;
+		int32_t secondGameObjectId = -1;
+		int32_t ownerGameObjectId = -1;
+		float tension = 0.0f;
+	};
+
 	enum class PhysicsDebugCastType {
 		Ray,
 		Sphere,
@@ -56,17 +106,36 @@ public:
 	bool OverlapBox(const Vector3& center, const Vector3& size, std::vector<int32_t>& hitGameObjectIds) const;  // Runtime から Physics.OverlapBox 相当を呼べる入口
 	bool AddForce(int32_t gameObjectId, const Vector3& force);  // Runtime から Rigidbody.AddForce 相当を呼べる入口
 	bool GetBodyMass(int32_t gameObjectId, float& bodyMass) const;  // Jolt へ反映済みの実質量を返す（診断用）
+	bool GetBodyDiagnostics(int32_t gameObjectId, Vector3& bodyPosition, bool& isAddedToWorld) const;  // Body実座標とWorld登録状態（診断用）
 	bool AddForceAtPosition(int32_t gameObjectId, const Vector3& force, const Vector3& worldPosition);  // 船体内部など World 位置へ力を加える入口
 	bool AddImpulse(int32_t gameObjectId, const Vector3& impulse);  // Runtime から Rigidbody.AddImpulse 相当を呼べる入口
 	bool AddTorque(int32_t gameObjectId, const Vector3& torque);  // Runtime から Rigidbody.AddTorque 相当を呼べる入口
 	bool SetVelocity(int32_t gameObjectId, const Vector3& velocity);  // Runtime から Rigidbody.velocity 相当を呼べる入口
 	bool SetAngularVelocity(int32_t gameObjectId, const Vector3& angularVelocity);  // Runtime から Rigidbody.angularVelocity 相当を呼べる入口
 	int32_t AddExplosionImpulse(const Vector3& center, float radius, float impulseStrength, float upwardModifier);  // 範囲内の Dynamic Rigidbody へ距離減衰付き爆発Impulseを加える
+	uint64_t CreateSpringJoint(int32_t ownerGameObjectId, int32_t connectedGameObjectId, const Vector3& ownerAnchor, const Vector3& connectedAnchor, float minDistance, float maxDistance, float frequency, float damping);  // 実行中の2 Body間へSpringJointを生成する
+	bool DestroyJoint(uint64_t jointHandle);  // Handleで指定したRuntime Jointを破棄する
+	bool SetSpringJointSettings(uint64_t jointHandle, const Vector3& ownerAnchor, const Vector3& connectedAnchor, float minDistance, float maxDistance, float frequency, float damping);  // Runtime SpringJointを再設定する
+	bool IsJointValid(uint64_t jointHandle) const;  // Runtime Joint Handleが有効か返す
+	uint64_t CreateJoint(EditorJoltPhysicsManager::RuntimeJointType jointType, int32_t ownerGameObjectId, int32_t connectedGameObjectId, const EditorJoltPhysicsManager::RuntimeJointSettings& jointSettings);  // 対応するRuntime Jointを生成する
+	bool SetJointSettings(uint64_t jointHandle, const EditorJoltPhysicsManager::RuntimeJointSettings& jointSettings);  // Joint種別を維持して設定を更新する
 	bool AttachRope(int32_t ownerGameObjectId, int32_t targetGameObjectId, const Vector3& ownerLocalAnchor, const Vector3& targetAnchor, float maximumLength);  // RopeConstraint を実行中に接続する。target=-1 なら targetAnchor は World 固定点
 	bool DetachRope(int32_t ownerGameObjectId);  // RopeConstraint を無効化して張力を止める
 	bool SetRopeLength(int32_t ownerGameObjectId, float maximumLength);  // ウインチ用途に実行中の最大長を変更する
 	bool RepairRope(int32_t ownerGameObjectId);  // 破断状態を解除して再接続する
 	bool GetRopeState(int32_t ownerGameObjectId, bool& isActive, bool& isBroken, int32_t& targetGameObjectId, float& maximumLength, float& currentLength, float& currentTension) const;  // Script / HUD がロープ状態を読む
+	WireHandle CreateWire(const RuntimeWireDesc& wireDesc);  // Componentに依存しない複数接続Wireを生成する
+	bool DestroyWire(WireHandle wireHandle);  // 指定Wireだけを破棄する
+	bool SetWireLength(WireHandle wireHandle, float maximumLength);  // Handle単位で巻取り長を変更する
+	bool SetWireShrinkSpeed(WireHandle wireHandle, float shrinkSpeed);  // 自動巻取り速度m/sを変更する
+	bool RepairWire(WireHandle wireHandle);  // 破断状態を解除する
+	bool GetWireState(WireHandle wireHandle, RuntimeWireState& wireState) const;
+	int32_t GetWireCountForGameObject(int32_t gameObjectId) const;
+	bool GetWireForGameObject(int32_t gameObjectId, int32_t wireIndex, RuntimeWireState& wireState) const;
+	bool CanConnectWire(int32_t gameObjectId) const;  // WireConnectableと最大接続数を検証する
+	const std::unordered_map<WireHandle, RuntimeWireState>& GetRuntimeWires() const;  // Game/Scene View描画用
+	const std::vector<RuntimeWireEvent>& GetFrameWireEvents() const;  // Script通知用
+	void ClearRuntimeWires();  // Play停止、Scene切替時の一括破棄
 	const std::vector<EditorJoltPhysicsManager::PhysicsEvent>& GetFrameEvents() const;  // 直近フレームの全固定更新で集めた接触イベント一覧
 	const std::vector<EditorJoltPhysicsManager::PhysicsEvent>& GetContactDebugEvents() const;  // 最後に進んだ固定更新の接触を描画フレーム間で保持する
 	const std::vector<PhysicsDebugCast>& GetFrameDebugCasts() const;  // 直近フレームで実行した Ray / ShapeCast 一覧
@@ -120,6 +189,9 @@ private:
 	std::vector<EditorJoltPhysicsManager::PhysicsEvent> contactDebugEvents_;  // 高FPS時も接触表示が点滅しないよう最後の固定更新結果を保持する
 	mutable std::vector<PhysicsDebugCast> frameDebugCasts_;  // const の Cast API から記録する直近フレームの可視化情報
 	std::unordered_map<int32_t, BuoyancyRuntimeState> buoyancyRuntimeStates_;  // Object ごとの入水履歴。Scene 保存対象にはしない
+	std::unordered_map<WireHandle, RuntimeWireState> runtimeWires_;  // 複数接続WireをHandle単位で保持する
+	std::vector<RuntimeWireEvent> frameWireEvents_;  // この描画フレームに発生したWire通知
+	WireHandle nextWireHandle_ = 1ULL;  // 0は無効Handleとして予約する
 	std::vector<PhysicsStepObject> physicsStepObjects_;  // 固定更新内でComponent検索結果を再利用する一時索引
 	std::vector<PhysicsStepObject*> windZoneObjects_;  // 空力計算が使う有効な風源だけの索引
 	std::vector<PhysicsStepObject*> gravityFieldObjects_;  // 点重力計算が使う有効な重力源だけの索引
@@ -143,6 +215,8 @@ private:
 	void ApplyFluidVolumeForces();  // 有限流体領域の浮力、粘性抵抗、二次抗力を加える
 	void ApplySpringForces();  // World点または別Bodyとの間へHookeばね力と減衰を加える
 	void ApplyRopeForces();  // 最大長を超えた時だけ片方向の張力を加え、必要なら破断させる
+	void ApplyRuntimeWireForces(float fixedDeltaTime);  // Handle Wireを複数本同時に解く
+	void PushWireEvent(RuntimeWireEventType eventType, const RuntimeWireState& wireState);
 	void ApplyTorsionSpringTorques();  // Worldまたは別Bodyの目標角へ回転ばねTorqueを加える
 	void ApplyThrusterForces();  // ローカル作用点へ推進力を加え、重心との差から旋回Torqueを作る
 	void ApplyPulleyForces();  // 2本のロープ長と滑車比から両Bodyへ張力を加える

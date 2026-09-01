@@ -1,5 +1,7 @@
 ﻿#include "EditorGpuCullingManager.h"
 
+#include "Source/Engine/Editor/EditorProfilerManager.h"
+
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -143,6 +145,7 @@ bool EditorGpuCullingManager::Execute(
 	commandList->SetComputeRootDescriptorTable(2u, visibilitySrvHandle_);
 	commandList->SetComputeRootDescriptorTable(3u, frustumVisibilityUavHandle_);
 	commandList->SetComputeRoot32BitConstants(4u, kComputeConstantCount, constants.data(), 0u);
+	RecordEditorProfilerDispatch();
 	commandList->Dispatch((objectCount + kThreadGroupSize - 1u) / kThreadGroupSize, 1u, 1u);
 
 	D3D12_RESOURCE_BARRIER frustumVisibilityUnorderedAccessBarrier{};
@@ -172,6 +175,7 @@ bool EditorGpuCullingManager::Execute(
 	commandList->SetComputeRootDescriptorTable(2u, frustumVisibilitySrvHandle_);
 	commandList->SetComputeRootDescriptorTable(3u, visibilityUavHandle_);
 	commandList->SetComputeRoot32BitConstants(4u, kComputeConstantCount, constants.data(), 0u);
+	RecordEditorProfilerDispatch();
 	commandList->Dispatch((objectCount + kThreadGroupSize - 1u) / kThreadGroupSize, 1u, 1u);
 
 	D3D12_RESOURCE_BARRIER visibilityUnorderedAccessBarrier{};
@@ -201,6 +205,7 @@ bool EditorGpuCullingManager::Execute(
 	commandList->SetComputeRootDescriptorTable(2u, visibilitySrvHandle_);
 	commandList->SetComputeRootDescriptorTable(3u, drawArgumentsUavHandle_);
 	commandList->SetComputeRoot32BitConstants(4u, kComputeConstantCount, constants.data(), 0u);
+	RecordEditorProfilerDispatch();
 	commandList->Dispatch((objectCount + kThreadGroupSize - 1u) / kThreadGroupSize, 1u, 1u);
 
 	D3D12_RESOURCE_BARRIER drawArgumentsUnorderedAccessBarrier{};

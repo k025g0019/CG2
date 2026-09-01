@@ -3,6 +3,7 @@
 #include "EditorInspectorWindowManager.h"
 
 #include "EditorSharedState.h"
+#include "EditorTeamCollaborationManager.h"
 
 using namespace EditorSharedState;
 
@@ -84,6 +85,21 @@ void EditorInspectorWindowManager::Draw() {
 		.selectedAssetPath = g_selectedAssetPath,
 	};
 
+	const bool isLockedByAnotherUser =
+		IsEditorTeamGameObjectLockedByAnotherUser(g_selectedEditorGameObjectId);
+
+	if (isLockedByAnotherUser) {
+		ImGui::BeginDisabled();
+	}
+
 	g_editorInspectorPanel.Draw(inspectorContext);  // InspectorPanel はこの Context を参照して、選択中の Transform / Component / 環境設定を描画する。
+
+	if (isLockedByAnotherUser) {
+		ImGui::EndDisabled();
+		ImGui::SetNextWindowBgAlpha(0.92f);
+		ImGui::BeginTooltip();
+		ImGui::TextUnformatted("共同制作: 他のユーザーが編集中です");
+		ImGui::EndTooltip();
+	}
 #endif
 }

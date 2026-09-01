@@ -112,6 +112,8 @@ void EditorFrameInputManager::Update() {
 	// DirectInput マウス状態の取得
 	//================================================================
 
+	g_preMouseState = g_mouseState;
+
 	if (g_mouseDevice != nullptr) {
 		g_hr = g_mouseDevice->Acquire();
 		g_hr = g_mouseDevice->GetDeviceState(sizeof(g_mouseState), &g_mouseState);
@@ -119,6 +121,10 @@ void EditorFrameInputManager::Update() {
 			g_mouseDevice->Acquire();
 			g_hr = g_mouseDevice->GetDeviceState(sizeof(g_mouseState), &g_mouseState);
 		}
+	}
+
+	if (g_runtimeCursorLocked) {
+		ApplyRuntimeCursorLock(true);
 	}
 
 	//================================================================

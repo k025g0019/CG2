@@ -6,7 +6,7 @@
 // DLL Script と Editor 本体が共有する C 互換 API
 //================================================================
 
-constexpr uint32_t kEditorScriptApiVersion = 7U;  // 既存DLL互換を維持し、追加APIは構造体末尾だけへ拡張する。
+constexpr uint32_t kEditorScriptApiVersion = 8U;  // 末尾拡張で旧DLL互換を維持する。
 
 enum EditorScriptPhysicsEventType : int32_t {
 	EditorScriptPhysicsEventTypeCollisionEnter = 0,
@@ -175,6 +175,9 @@ struct EditorScriptPhysicsEvent {
 	EditorScriptVector3 normal;
 	EditorScriptVector3 relativeVelocity;
 	float separation;
+	float contactImpulse;  // 接触法線方向の推定Impulse。衝突Damageの強度判定に使う。
+	float selfMass;  // self側Bodyの実質量。Static / Kinematicは0。
+	float otherMass;  // other側Bodyの実質量。Static / Kinematicは0。
 	bool isTrigger;
 	uint8_t reservedPadding[3];
 };
@@ -404,6 +407,108 @@ struct EditorScriptRopeState {
 	float currentTension;
 };
 #pragma warning(pop)
+
+//============================================================
+// 複数接続対応 Wire Runtime
+//============================================================
+
+using EditorScriptWireHandle = uint64_t;
+constexpr EditorScriptWireHandle kInvalidEditorScriptWireHandle = 0ULL;
+
+enum EditorScriptWireEventType : int32_t {
+	EditorScriptWireEventTypeConnected = 0,
+	EditorScriptWireEventTypeTensionChanged = 1,
+	EditorScriptWireEventTypeBroken = 2,
+	EditorScriptWireEventTypeTargetLost = 3,
+	EditorScriptWireEventTypeDestroyed = 4,
+};
+
+struct EditorScriptWireDesc {
+	int32_t firstGameObjectId = -1;
+	int32_t secondGameObjectId = -1;
+	int32_t ownerGameObjectId = -1;  // Wireを作ったPlayer等。通知と一括破棄に使う。
+	int32_t rendererSettingsGameObjectId = -1;  // WireRenderer設定を読むObject。-1なら既定値。
+	EditorScriptVector3 firstLocalAnchor = {0.0f, 0.0f, 0.0f};
+	EditorScriptVector3 secondLocalAnchor = {0.0f, 0.0f, 0.0f};
+	float maximumLength = 1.0f;
+	float minimumLength = 0.1f;
+	float stiffness = 1200.0f;
+	float damping = 80.0f;
+	float maximumTension = 0.0f;
+	float breakingTension = 0.0f;
+	float shrinkSpeed = 0.0f;
+	bool applyReaction = true;
+	bool requireConnectable = true;
+	uint8_t reservedPadding[2] = {0U, 0U};
+};
+
+struct EditorScriptWireState {
+	EditorScriptWireHandle handle = kInvalidEditorScriptWireHandle;
+	int32_t firstGameObjectId = -1;
+	int32_t secondGameObjectId = -1;
+	int32_t ownerGameObjectId = -1;
+	bool isActive = false;
+	bool isBroken = false;
+	uint8_t reservedPadding[2] = {0U, 0U};
+	EditorScriptVector3 firstWorldAnchor{};
+	EditorScriptVector3 secondWorldAnchor{};
+	float maximumLength = 0.0f;
+	float minimumLength = 0.0f;
+	float currentLength = 0.0f;
+	float currentTension = 0.0f;
+};
+
+struct EditorScriptWireEvent {
+	int32_t type = EditorScriptWireEventTypeConnected;
+	EditorScriptWireHandle handle = kInvalidEditorScriptWireHandle;
+	int32_t firstGameObjectId = -1;
+	int32_t secondGameObjectId = -1;
+	int32_t ownerGameObjectId = -1;
+	float tension = 0.0f;
+};
+
+using EditorScriptJointHandle = uint64_t;
+constexpr EditorScriptJointHandle kInvalidEditorScriptJointHandle = 0ULL;
+
+enum class EditorScriptJointType : int32_t {
+	Fixed = 0,
+	Hinge = 1,
+	Spring = 2,
+	Configurable = 3,
+	Character = 4
+};
+
+//============================================================
+// Runtime SpringJoint 設定
+//============================================================
+
+struct EditorScriptSpringJointDesc {
+	EditorScriptVector3 ownerAnchor = {0.0f, 0.0f, 0.0f};  // owner のローカルアンカー
+	EditorScriptVector3 connectedAnchor = {0.0f, 0.0f, 0.0f};  // connected のローカルアンカー
+	float minDistance = 0.0f;  // これより縮まない距離
+	float maxDistance = 1.0f;  // これより伸びない距離
+	float frequency = 5.0f;  // ばね周波数
+	float damping = 0.7f;  // ばね減衰
+};
+
+struct EditorScriptJointDesc {
+	EditorScriptVector3 ownerAnchor = {0.0f, 0.0f, 0.0f};  // ownerのローカルアンカー
+	EditorScriptVector3 connectedAnchor = {0.0f, 0.0f, 0.0f};  // connectedのローカルアンカー
+	EditorScriptVector3 axis = {1.0f, 0.0f, 0.0f};  // Hinge / Character / Configurableの基準軸
+	float minDistance = 0.0f;
+	float maxDistance = 1.0f;
+	float minAngle = -3.1415926f;
+	float maxAngle = 3.1415926f;
+	float frequency = 5.0f;
+	float damping = 0.7f;
+	bool freezePositionX = false;
+	bool freezePositionY = false;
+	bool freezePositionZ = false;
+	bool freezeRotationX = false;
+	bool freezeRotationY = false;
+	bool freezeRotationZ = false;
+	uint8_t reservedPadding[2] = {0U, 0U};
+};
 
 #pragma warning(push)
 #pragma warning(disable : 4820)
@@ -685,6 +790,75 @@ struct EditorScriptRuntimeApi {
 	void (*StopEffekseerEffectAtPosition)(int32_t effekseerPlaybackHandle);
 	// ABI互換のため、EffectDefinition(.effectdef)のWorld座標再生APIは末尾へ追加する。
 	bool (*PlayVfxAtPosition)(const char* effectId, const EditorScriptVector3* position);
+	// ABI互換のため、Runtime Joint APIは既存構造体を変えず末尾へ追加する。
+	EditorScriptJointHandle (*CreateSpringJoint)(
+		int32_t ownerGameObjectId,
+		int32_t connectedGameObjectId,
+		const EditorScriptSpringJointDesc* springJointDesc);
+	bool (*DestroyJoint)(EditorScriptJointHandle jointHandle);
+	bool (*SetSpringJointSettings)(
+		EditorScriptJointHandle jointHandle,
+		const EditorScriptSpringJointDesc* springJointDesc);
+	bool (*IsJointValid)(EditorScriptJointHandle jointHandle);
+	// Spring以外も同じHandle管理へ載せる汎用Runtime Constraint API。
+	EditorScriptJointHandle (*CreateJoint)(
+		EditorScriptJointType jointType,
+		int32_t ownerGameObjectId,
+		int32_t connectedGameObjectId,
+		const EditorScriptJointDesc* jointDesc);
+	bool (*SetJointSettings)(
+		EditorScriptJointHandle jointHandle,
+		const EditorScriptJointDesc* jointDesc);
+	// ABI互換のため、実行時Camera制作用のマウス・カーソルAPIは末尾へ追加する。
+	EditorScriptVector2 (*GetMouseDelta)();
+	bool (*IsMouseButtonDown)(int32_t mouseButton);
+	bool (*WasMouseButtonPressed)(int32_t mouseButton);
+	bool (*WasMouseButtonReleased)(int32_t mouseButton);
+	void (*SetCursorLocked)(bool isLocked);
+	bool (*IsCursorLocked)();
+	void (*SetCursorVisible)(bool isVisible);
+	bool (*IsCursorVisible)();
+	// Wireゲーム向けの独立Runtime接続。GameObject Componentの個数制限を受けない。
+	EditorScriptWireHandle (*CreateWire)(const EditorScriptWireDesc* wireDesc);
+	bool (*DestroyWire)(EditorScriptWireHandle wireHandle);
+	bool (*SetWireLengthByHandle)(EditorScriptWireHandle wireHandle, float maximumLength);
+	bool (*SetWireShrinkSpeed)(EditorScriptWireHandle wireHandle, float shrinkSpeed);
+	bool (*RepairWire)(EditorScriptWireHandle wireHandle);
+	bool (*GetWireStateByHandle)(EditorScriptWireHandle wireHandle, EditorScriptWireState* wireState);
+	int32_t (*GetWireCountForGameObject)(int32_t gameObjectId);
+	bool (*GetWireForGameObject)(int32_t gameObjectId, int32_t wireIndex, EditorScriptWireState* wireState);
+	bool (*CanConnectWire)(int32_t gameObjectId);
+	// 実行時Component構成とGameObject生成をScriptから変更する。
+	bool (*AddComponent)(int32_t gameObjectId, const char* componentTypeName);
+	bool (*RemoveComponent)(int32_t gameObjectId, const char* componentTypeName);
+	int32_t (*FindGameObjectsWithComponent)(const char* componentTypeName, int32_t* gameObjectIds, int32_t capacity);
+	int32_t (*InstantiateGameObject)(int32_t sourceGameObjectId, const EditorScriptVector3* position, const EditorScriptVector3* rotation);
+	bool (*DestroyGameObject)(int32_t gameObjectId);
+	// 親子、回転、Scaleを含む正しい座標変換。
+	bool (*WorldToLocalPoint)(int32_t gameObjectId, const EditorScriptVector3* worldPoint, EditorScriptVector3* localPoint);
+	bool (*LocalToWorldPoint)(int32_t gameObjectId, const EditorScriptVector3* localPoint, EditorScriptVector3* worldPoint);
+	bool (*WorldToLocalDirection)(int32_t gameObjectId, const EditorScriptVector3* worldDirection, EditorScriptVector3* localDirection);
+	bool (*LocalToWorldDirection)(int32_t gameObjectId, const EditorScriptVector3* localDirection, EditorScriptVector3* worldDirection);
+	// Layer、Trigger、必須Componentを同時に指定する選択用Raycast。
+	bool (*PhysicsRaycastFiltered)(
+		const EditorScriptRay* ray,
+		float distance,
+		uint32_t physicsLayerMask,
+		bool includeTriggers,
+		const char* requiredComponentTypeName,
+		EditorScriptPhysicsHit* hit);
+	// Hook表示、質量色表示、実行時Hierarchy構築をユーザーScriptへ公開する。
+	bool (*SetRendererColor)(int32_t gameObjectId, const EditorScriptVector3* color);
+	bool (*SetRendererEmission)(int32_t gameObjectId, const EditorScriptVector3* color, float strength);
+	bool (*SetHookVisualState)(int32_t hookGameObjectId, int32_t visualState);
+	int32_t (*CreateGameObject)(const char* name);
+	int32_t (*GetParentGameObject)(int32_t gameObjectId);
+	bool (*SetParentGameObject)(int32_t childGameObjectId, int32_t parentGameObjectId, bool preserveWorldTransform);
+	int32_t (*GetChildGameObjectCount)(int32_t gameObjectId);
+	int32_t (*GetChildGameObject)(int32_t gameObjectId, int32_t childIndex);
+	bool (*ReloadPrimaryScene)();
+	// 質量色表示（質量に応じてSetRendererColorへ渡す色を決める）用。RigidBodyが無ければ0を返す。
+	float (*GetMass)(int32_t gameObjectId);
 };
 
 extern "C" {
@@ -694,6 +868,7 @@ extern "C" {
 	typedef void(__cdecl* EditorScriptUpdateFn)(int32_t gameObjectId, float deltaTime);
 	typedef void(__cdecl* EditorScriptFixedUpdateFn)(int32_t gameObjectId, float fixedDeltaTime);
 	typedef void(__cdecl* EditorScriptPhysicsEventFn)(int32_t gameObjectId, const EditorScriptPhysicsEvent* physicsEvent);
+	typedef void(__cdecl* EditorScriptWireEventFn)(int32_t gameObjectId, const EditorScriptWireEvent* wireEvent);
 	typedef void(__cdecl* EditorScriptAnimationEventFn)(int32_t gameObjectId, const EditorScriptAnimationEvent* animationEvent);
 	typedef void(__cdecl* EditorScriptStopFn)(int32_t gameObjectId);
 	typedef int32_t(__cdecl* EditorScriptGetFieldCountFn)();
@@ -712,6 +887,7 @@ extern "C" {
 	typedef void(__cdecl* EditorScriptUpdateInstanceFn)(void* instance, float deltaTime);
 	typedef void(__cdecl* EditorScriptFixedUpdateInstanceFn)(void* instance, float fixedDeltaTime);
 	typedef void(__cdecl* EditorScriptPhysicsEventInstanceFn)(void* instance, const EditorScriptPhysicsEvent* physicsEvent);
+	typedef void(__cdecl* EditorScriptWireEventInstanceFn)(void* instance, const EditorScriptWireEvent* wireEvent);
 	typedef void(__cdecl* EditorScriptAnimationEventInstanceFn)(void* instance, const EditorScriptAnimationEvent* animationEvent);
 	typedef void(__cdecl* EditorScriptStopInstanceFn)(void* instance);
 	typedef bool(__cdecl* EditorScriptGetFieldValueInstanceFn)(void* instance, const char* fieldName, EditorScriptFieldValue* fieldValue);

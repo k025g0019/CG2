@@ -4,6 +4,7 @@
 
 #include "EditorComponentUtility.h"
 #include "EditorSharedState.h"
+#include "EditorTeamCollaborationManager.h"
 #include "ThirdParty/imgui-docking/imgui-docking/imgui_internal.h"
 
 #include <algorithm>
@@ -2302,7 +2303,16 @@ void EditorSceneViewManager::Draw() {
 		ImGuizmo::SetDrawlist(sceneDrawList);
 		ImGuizmo::SetRect(g_editorSceneX, g_editorSceneY, g_editorSceneWidth, g_editorSceneHeight);
 
-		if (hasSelectedGizmoTransform && selectedGizmoTransform != nullptr) {
+		bool isSelectionLockedByAnotherUser =
+			IsEditorTeamGameObjectLockedByAnotherUser(g_selectedEditorGameObjectId);
+
+		for (const int32_t selectedGameObjectId : g_selectedEditorGameObjectIds) {
+			isSelectionLockedByAnotherUser = isSelectionLockedByAnotherUser ||
+				IsEditorTeamGameObjectLockedByAnotherUser(selectedGameObjectId);
+		}
+
+		if (hasSelectedGizmoTransform && selectedGizmoTransform != nullptr &&
+			!isSelectionLockedByAnotherUser) {
 			ImGuizmo::OPERATION gizmoOperation = GetActiveGizmoOperation();  // gizmoOperation は移動・回転・拡縮・統合のどれを操作するかを表す。
 			const Transforms originalGizmoTransform = *selectedGizmoTransform;  // 複数選択時は変換前との差分を各 GameObject へ配るため、編集前を保持する。
 

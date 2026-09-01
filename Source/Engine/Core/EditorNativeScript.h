@@ -79,6 +79,12 @@ enum class KeyCode : int32_t {
 	DownArrow = 0xD0,
 };
 
+enum class MouseButton : int32_t {
+	Left = 0,
+	Right = 1,
+	Middle = 2,
+};
+
 class Input final {
 public:
 	static bool GetKey(KeyCode keyCode) {
@@ -100,10 +106,87 @@ public:
 
 		return runtimeApi->IsKeyPressed(static_cast<int32_t>(keyCode));
 	}
+
+	static EditorScriptVector2 GetMousePosition() {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi == nullptr || runtimeApi->GetMousePosition == nullptr) {
+			return EditorScriptVector2{};
+		}
+
+		return runtimeApi->GetMousePosition();
+	}
+
+	static EditorScriptVector2 GetMouseDelta() {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi == nullptr || runtimeApi->GetMouseDelta == nullptr) {
+			return EditorScriptVector2{};
+		}
+
+		return runtimeApi->GetMouseDelta();
+	}
+
+	static bool GetMouseButton(MouseButton mouseButton) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		return runtimeApi != nullptr && runtimeApi->IsMouseButtonDown != nullptr &&
+			runtimeApi->IsMouseButtonDown(static_cast<int32_t>(mouseButton));
+	}
+
+	static bool GetMouseButtonDown(MouseButton mouseButton) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		return runtimeApi != nullptr && runtimeApi->WasMouseButtonPressed != nullptr &&
+			runtimeApi->WasMouseButtonPressed(static_cast<int32_t>(mouseButton));
+	}
+
+	static bool GetMouseButtonUp(MouseButton mouseButton) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		return runtimeApi != nullptr && runtimeApi->WasMouseButtonReleased != nullptr &&
+			runtimeApi->WasMouseButtonReleased(static_cast<int32_t>(mouseButton));
+	}
+
+	static void SetCursorLocked(bool isLocked) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi != nullptr && runtimeApi->SetCursorLocked != nullptr) {
+			runtimeApi->SetCursorLocked(isLocked);
+		}
+	}
+
+	static bool IsCursorLocked() {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		return runtimeApi != nullptr && runtimeApi->IsCursorLocked != nullptr &&
+			runtimeApi->IsCursorLocked();
+	}
+
+	static void SetCursorVisible(bool isVisible) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi != nullptr && runtimeApi->SetCursorVisible != nullptr) {
+			runtimeApi->SetCursorVisible(isVisible);
+		}
+	}
+
+	static bool IsCursorVisible() {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		return runtimeApi == nullptr || runtimeApi->IsCursorVisible == nullptr ||
+			runtimeApi->IsCursorVisible();
+	}
 };
 
 class SceneManager final {
 public:
+	static bool Reload() {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->ReloadPrimaryScene != nullptr &&
+			runtimeApi->ReloadPrimaryScene();
+	}
+
 	static bool LoadScene(const char* scenePath) {
 		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
 
@@ -199,6 +282,8 @@ public:
 	}
 };
 
+class Component;
+
 class GameObject final {
 public:
 	explicit GameObject(int32_t gameObjectId = -1)
@@ -214,6 +299,50 @@ public:
 		}
 
 		return GameObject{runtimeApi->FindGameObjectByName(gameObjectName)};
+	}
+
+	static std::vector<GameObject> FindAllWithComponent(const char* componentTypeName) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		std::vector<GameObject> gameObjects;
+
+		if (runtimeApi == nullptr || runtimeApi->FindGameObjectsWithComponent == nullptr ||
+			componentTypeName == nullptr || componentTypeName[0] == '\0') {
+			return gameObjects;
+		}
+
+		const int32_t gameObjectCount = runtimeApi->FindGameObjectsWithComponent(
+			componentTypeName,
+			nullptr,
+			0);
+
+		if (gameObjectCount <= 0) {
+			return gameObjects;
+		}
+
+		std::vector<int32_t> gameObjectIds(static_cast<size_t>(gameObjectCount), -1);
+		const int32_t resolvedCount = runtimeApi->FindGameObjectsWithComponent(
+			componentTypeName,
+			gameObjectIds.data(),
+			gameObjectCount);
+		gameObjects.reserve(static_cast<size_t>((std::min)(resolvedCount, gameObjectCount)));
+
+		for (int32_t gameObjectIndex = 0;
+			gameObjectIndex < resolvedCount && gameObjectIndex < gameObjectCount;
+			gameObjectIndex++) {
+			gameObjects.emplace_back(gameObjectIds[static_cast<size_t>(gameObjectIndex)]);
+		}
+
+		return gameObjects;
+	}
+
+	static GameObject Create(const char* gameObjectName = "GameObject") {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi == nullptr || runtimeApi->CreateGameObject == nullptr) {
+			return GameObject{};
+		}
+
+		return GameObject{runtimeApi->CreateGameObject(gameObjectName)};
 	}
 
 	int32_t GetInstanceId() const {
@@ -271,6 +400,42 @@ public:
 			runtimeApi->HasComponent(gameObjectId_, componentTypeName);
 	}
 
+	Component GetComponent(const char* componentTypeName) const;
+
+	bool AddComponent(const char* componentTypeName) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return HasReference() && componentTypeName != nullptr && componentTypeName[0] != '\0' &&
+			runtimeApi != nullptr && runtimeApi->AddComponent != nullptr &&
+			runtimeApi->AddComponent(gameObjectId_, componentTypeName);
+	}
+
+	bool RemoveComponent(const char* componentTypeName) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return HasReference() && componentTypeName != nullptr && componentTypeName[0] != '\0' &&
+			runtimeApi != nullptr && runtimeApi->RemoveComponent != nullptr &&
+			runtimeApi->RemoveComponent(gameObjectId_, componentTypeName);
+	}
+
+	template <typename ComponentType>
+	ComponentType AddComponent() const {
+		AddComponent(ComponentType::TypeName());
+		return ComponentType{gameObjectId_};
+	}
+
+	template <typename ComponentType>
+	ComponentType GetOrAddComponent() const {
+		if (!HasComponent(ComponentType::TypeName())) {
+			AddComponent(ComponentType::TypeName());
+		}
+
+		return ComponentType{gameObjectId_};
+	}
+
+	template <typename ComponentType>
+	bool RemoveComponent() const {
+		return RemoveComponent(ComponentType::TypeName());
+	}
+
 	bool InvokeAction(const char* functionName) const {
 		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
 
@@ -308,9 +473,256 @@ public:
 		return true;
 	}
 
+	bool WorldToLocalPoint(const EditorScriptVector3& worldPoint, EditorScriptVector3& localPoint) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return HasReference() && runtimeApi != nullptr && runtimeApi->WorldToLocalPoint != nullptr &&
+			runtimeApi->WorldToLocalPoint(gameObjectId_, &worldPoint, &localPoint);
+	}
+
+	bool LocalToWorldPoint(const EditorScriptVector3& localPoint, EditorScriptVector3& worldPoint) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return HasReference() && runtimeApi != nullptr && runtimeApi->LocalToWorldPoint != nullptr &&
+			runtimeApi->LocalToWorldPoint(gameObjectId_, &localPoint, &worldPoint);
+	}
+
+	bool WorldToLocalDirection(const EditorScriptVector3& worldDirection, EditorScriptVector3& localDirection) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return HasReference() && runtimeApi != nullptr && runtimeApi->WorldToLocalDirection != nullptr &&
+			runtimeApi->WorldToLocalDirection(gameObjectId_, &worldDirection, &localDirection);
+	}
+
+	bool LocalToWorldDirection(const EditorScriptVector3& localDirection, EditorScriptVector3& worldDirection) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return HasReference() && runtimeApi != nullptr && runtimeApi->LocalToWorldDirection != nullptr &&
+			runtimeApi->LocalToWorldDirection(gameObjectId_, &localDirection, &worldDirection);
+	}
+
+	GameObject Instantiate(
+		const EditorScriptVector3& position,
+		const EditorScriptVector3& rotation = EditorScriptVector3{}) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (!HasReference() || runtimeApi == nullptr || runtimeApi->InstantiateGameObject == nullptr) {
+			return GameObject{};
+		}
+
+		return GameObject{runtimeApi->InstantiateGameObject(gameObjectId_, &position, &rotation)};
+	}
+
+	bool Destroy() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return HasReference() && runtimeApi != nullptr && runtimeApi->DestroyGameObject != nullptr &&
+			runtimeApi->DestroyGameObject(gameObjectId_);
+	}
+
+	GameObject GetParent() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return HasReference() && runtimeApi != nullptr && runtimeApi->GetParentGameObject != nullptr
+			? GameObject{runtimeApi->GetParentGameObject(gameObjectId_)}
+			: GameObject{};
+	}
+
+	bool SetParent(const GameObject& parent, bool preserveWorldTransform = false) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return HasReference() && runtimeApi != nullptr && runtimeApi->SetParentGameObject != nullptr &&
+			runtimeApi->SetParentGameObject(
+				gameObjectId_,
+				parent.GetInstanceId(),
+				preserveWorldTransform);
+	}
+
+	int32_t GetChildCount() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return HasReference() && runtimeApi != nullptr && runtimeApi->GetChildGameObjectCount != nullptr
+			? runtimeApi->GetChildGameObjectCount(gameObjectId_)
+			: 0;
+	}
+
+	GameObject GetChild(int32_t childIndex) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return HasReference() && runtimeApi != nullptr && runtimeApi->GetChildGameObject != nullptr
+			? GameObject{runtimeApi->GetChildGameObject(gameObjectId_, childIndex)}
+			: GameObject{};
+	}
+
 private:
 	int32_t gameObjectId_ = -1;
 };
+
+//============================================================
+// 既存Component参照
+//============================================================
+
+class Component final {
+public:
+	Component(const GameObject& ownerGameObject, const char* componentTypeName)
+		: ownerGameObject_(ownerGameObject),
+		componentTypeName_(componentTypeName != nullptr ? componentTypeName : "") {
+	}
+
+	bool IsValid() const {
+		return !componentTypeName_.empty() &&
+			ownerGameObject_.HasComponent(componentTypeName_.c_str());
+	}
+
+	bool SetActive(bool isActive) const {
+		return ownerGameObject_.HasReference() && !componentTypeName_.empty() &&
+			ownerGameObject_.SetComponentActive(componentTypeName_.c_str(), isActive);
+	}
+
+	bool IsActive() const {
+		return ownerGameObject_.HasReference() && !componentTypeName_.empty() &&
+			ownerGameObject_.IsComponentActive(componentTypeName_.c_str());
+	}
+
+	bool SetFloat(const char* propertyName, float value) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		return CanAccessProperty(propertyName) && runtimeApi != nullptr &&
+			runtimeApi->SetRuntimeFloat != nullptr &&
+			runtimeApi->SetRuntimeFloat(
+				ownerGameObject_.GetInstanceId(),
+				componentTypeName_.c_str(),
+				propertyName,
+				value);
+	}
+
+	bool GetFloat(const char* propertyName, float& value) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		return CanAccessProperty(propertyName) && runtimeApi != nullptr &&
+			runtimeApi->GetRuntimeFloat != nullptr &&
+			runtimeApi->GetRuntimeFloat(
+				ownerGameObject_.GetInstanceId(),
+				componentTypeName_.c_str(),
+				propertyName,
+				&value);
+	}
+
+	bool SetInt(const char* propertyName, int32_t value) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		return CanAccessProperty(propertyName) && runtimeApi != nullptr &&
+			runtimeApi->SetRuntimeInt != nullptr &&
+			runtimeApi->SetRuntimeInt(
+				ownerGameObject_.GetInstanceId(),
+				componentTypeName_.c_str(),
+				propertyName,
+				value);
+	}
+
+	bool GetInt(const char* propertyName, int32_t& value) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		return CanAccessProperty(propertyName) && runtimeApi != nullptr &&
+			runtimeApi->GetRuntimeInt != nullptr &&
+			runtimeApi->GetRuntimeInt(
+				ownerGameObject_.GetInstanceId(),
+				componentTypeName_.c_str(),
+				propertyName,
+				&value);
+	}
+
+	bool SetBool(const char* propertyName, bool value) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		return CanAccessProperty(propertyName) && runtimeApi != nullptr &&
+			runtimeApi->SetRuntimeBool != nullptr &&
+			runtimeApi->SetRuntimeBool(
+				ownerGameObject_.GetInstanceId(),
+				componentTypeName_.c_str(),
+				propertyName,
+				value);
+	}
+
+	bool GetBool(const char* propertyName, bool& value) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		return CanAccessProperty(propertyName) && runtimeApi != nullptr &&
+			runtimeApi->GetRuntimeBool != nullptr &&
+			runtimeApi->GetRuntimeBool(
+				ownerGameObject_.GetInstanceId(),
+				componentTypeName_.c_str(),
+				propertyName,
+				&value);
+	}
+
+	bool SetVector2(const char* propertyName, const EditorScriptVector2& value) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		return CanAccessProperty(propertyName) && runtimeApi != nullptr &&
+			runtimeApi->SetRuntimeVector2 != nullptr &&
+			runtimeApi->SetRuntimeVector2(
+				ownerGameObject_.GetInstanceId(),
+				componentTypeName_.c_str(),
+				propertyName,
+				&value);
+	}
+
+	bool GetVector2(const char* propertyName, EditorScriptVector2& value) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		return CanAccessProperty(propertyName) && runtimeApi != nullptr &&
+			runtimeApi->GetRuntimeVector2 != nullptr &&
+			runtimeApi->GetRuntimeVector2(
+				ownerGameObject_.GetInstanceId(),
+				componentTypeName_.c_str(),
+				propertyName,
+				&value);
+	}
+
+	bool SetVector3(const char* propertyName, const EditorScriptVector3& value) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		return CanAccessProperty(propertyName) && runtimeApi != nullptr &&
+			runtimeApi->SetRuntimeVector3 != nullptr &&
+			runtimeApi->SetRuntimeVector3(
+				ownerGameObject_.GetInstanceId(),
+				componentTypeName_.c_str(),
+				propertyName,
+				&value);
+	}
+
+	bool GetVector3(const char* propertyName, EditorScriptVector3& value) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		return CanAccessProperty(propertyName) && runtimeApi != nullptr &&
+			runtimeApi->GetRuntimeVector3 != nullptr &&
+			runtimeApi->GetRuntimeVector3(
+				ownerGameObject_.GetInstanceId(),
+				componentTypeName_.c_str(),
+				propertyName,
+				&value);
+	}
+
+	bool SetGameObject(const char* propertyName, const GameObject& value) const {
+		return SetInt(propertyName, value.GetInstanceId());
+	}
+
+	bool GetGameObject(const char* propertyName, GameObject& value) const {
+		int32_t referencedGameObjectId = -1;
+
+		if (!GetInt(propertyName, referencedGameObjectId)) {
+			return false;
+		}
+
+		value = GameObject{referencedGameObjectId};
+		return true;
+	}
+
+private:
+	bool CanAccessProperty(const char* propertyName) const {
+		return ownerGameObject_.HasReference() && !componentTypeName_.empty() &&
+			propertyName != nullptr && propertyName[0] != '\0';
+	}
+
+	GameObject ownerGameObject_{};
+	std::string componentTypeName_{};
+};
+
+inline Component GameObject::GetComponent(const char* componentTypeName) const {
+	return Component{*this, componentTypeName};
+}
 
 class RailFollower final {
 public:
@@ -517,6 +929,11 @@ private:
 	int32_t gameObjectId_ = -1;
 };
 
+using JointHandle = EditorScriptJointHandle;
+using SpringJointDesc = EditorScriptSpringJointDesc;
+using JointType = EditorScriptJointType;
+using JointDesc = EditorScriptJointDesc;
+
 class Physics final {
 public:
 	static bool ViewportPointToRay(const EditorScriptVector2& normalizedPosition, EditorScriptRay& ray) {
@@ -599,6 +1016,210 @@ public:
 		return runtimeApi != nullptr && runtimeApi->AddExplosionImpulse != nullptr
 			? runtimeApi->AddExplosionImpulse(&center, radius, impulseStrength, upwardModifier)
 			: 0;
+	}
+
+	static bool RaycastFiltered(
+		const EditorScriptRay& ray,
+		float distance,
+		uint32_t physicsLayerMask,
+		bool includeTriggers,
+		const char* requiredComponentTypeName,
+		EditorScriptPhysicsHit& hit) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->PhysicsRaycastFiltered != nullptr &&
+			runtimeApi->PhysicsRaycastFiltered(
+				&ray,
+				distance,
+				physicsLayerMask,
+				includeTriggers,
+				requiredComponentTypeName,
+				&hit);
+	}
+
+	static bool RaycastConnectable(
+		const EditorScriptRay& ray,
+		float distance,
+		EditorScriptPhysicsHit& hit,
+		uint32_t physicsLayerMask = 0xFFFFFFFFU) {
+		return RaycastFiltered(
+			ray,
+			distance,
+			physicsLayerMask,
+			false,
+			"WireConnectable",
+			hit);
+	}
+
+	// 照準Rayを中心とする円錐内から、角度が最も近く遮蔽されていないHookを選ぶ。
+	static bool FindBestHook(
+		const EditorScriptRay& aimRay,
+		float maximumDistance,
+		float maximumAngleDegrees,
+		EditorScriptPhysicsHit& hit) {
+		const float directionLength = std::sqrt(
+			aimRay.direction.x * aimRay.direction.x +
+			aimRay.direction.y * aimRay.direction.y +
+			aimRay.direction.z * aimRay.direction.z);
+
+		if (directionLength <= 0.0001f || maximumDistance <= 0.0f) {
+			return false;
+		}
+
+		const EditorScriptVector3 normalizedAimDirection{
+			aimRay.direction.x / directionLength,
+			aimRay.direction.y / directionLength,
+			aimRay.direction.z / directionLength};
+		const float minimumDot = std::cos(
+			(std::clamp)(maximumAngleDegrees, 0.0f, 180.0f) * 0.017453292519943295f);
+		float bestDot = -2.0f;
+		float bestDistance = maximumDistance;
+		bool foundHook = false;
+
+		for (const GameObject& hookGameObject : GameObject::FindAllWithComponent("WireConnectable")) {
+			EditorScriptVector3 hookWorldPosition{};
+			EditorScriptVector3 localAnchor{};
+			const Component hookComponent = hookGameObject.GetComponent("WireConnectable");
+			hookComponent.GetVector3("wireConnectableLocalAnchor", localAnchor);
+
+			if (!hookGameObject.LocalToWorldPoint(localAnchor, hookWorldPosition)) {
+				continue;
+			}
+
+			const EditorScriptVector3 toHook{
+				hookWorldPosition.x - aimRay.origin.x,
+				hookWorldPosition.y - aimRay.origin.y,
+				hookWorldPosition.z - aimRay.origin.z};
+			const float hookDistance = std::sqrt(
+				toHook.x * toHook.x + toHook.y * toHook.y + toHook.z * toHook.z);
+
+			if (hookDistance <= 0.0001f || hookDistance > maximumDistance) {
+				continue;
+			}
+
+			const EditorScriptVector3 hookDirection{
+				toHook.x / hookDistance,
+				toHook.y / hookDistance,
+				toHook.z / hookDistance};
+			const float directionDot =
+				normalizedAimDirection.x * hookDirection.x +
+				normalizedAimDirection.y * hookDirection.y +
+				normalizedAimDirection.z * hookDirection.z;
+
+			if (directionDot < minimumDot ||
+				(directionDot < bestDot && hookDistance >= bestDistance)) {
+				continue;
+			}
+
+			EditorScriptRay hookRay{};
+			hookRay.origin = aimRay.origin;
+			hookRay.direction = hookDirection;
+			EditorScriptPhysicsHit candidateHit{};
+
+			// 通常Raycastを使い、壁や別物体の裏にあるHookを選ばない。
+			if (!Raycast(hookRay, hookDistance + 0.1f, candidateHit) ||
+				candidateHit.gameObjectId != hookGameObject.GetInstanceId()) {
+				continue;
+			}
+
+			bestDot = directionDot;
+			bestDistance = hookDistance;
+			hit = candidateHit;
+			foundHook = true;
+		}
+
+		return foundHook;
+	}
+
+	static JointHandle CreateSpringJoint(
+		const GameObject& ownerGameObject,
+		const GameObject& connectedGameObject,
+		const SpringJointDesc& springJointDesc) {
+		if (!ownerGameObject.HasReference() || !connectedGameObject.HasReference()) {
+			return kInvalidEditorScriptJointHandle;
+		}
+
+		return CreateSpringJoint(
+			ownerGameObject.GetInstanceId(),
+			connectedGameObject.GetInstanceId(),
+			springJointDesc);
+	}
+
+	static JointHandle CreateSpringJoint(
+		int32_t ownerGameObjectId,
+		int32_t connectedGameObjectId,
+		const SpringJointDesc& springJointDesc) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		if (ownerGameObjectId < 0 || connectedGameObjectId < 0 ||
+			runtimeApi == nullptr || runtimeApi->CreateSpringJoint == nullptr) {
+			return kInvalidEditorScriptJointHandle;
+		}
+
+		return runtimeApi->CreateSpringJoint(
+			ownerGameObjectId,
+			connectedGameObjectId,
+			&springJointDesc);
+	}
+
+	static bool DestroyJoint(JointHandle jointHandle) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return jointHandle != kInvalidEditorScriptJointHandle && runtimeApi != nullptr &&
+			runtimeApi->DestroyJoint != nullptr && runtimeApi->DestroyJoint(jointHandle);
+	}
+
+	static bool SetSpringJointSettings(
+		JointHandle jointHandle,
+		const SpringJointDesc& springJointDesc) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return jointHandle != kInvalidEditorScriptJointHandle && runtimeApi != nullptr &&
+			runtimeApi->SetSpringJointSettings != nullptr &&
+			runtimeApi->SetSpringJointSettings(jointHandle, &springJointDesc);
+	}
+
+	static bool IsJointValid(JointHandle jointHandle) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return jointHandle != kInvalidEditorScriptJointHandle && runtimeApi != nullptr &&
+			runtimeApi->IsJointValid != nullptr && runtimeApi->IsJointValid(jointHandle);
+	}
+
+	static JointHandle CreateJoint(
+		JointType jointType,
+		int32_t ownerGameObjectId,
+		int32_t connectedGameObjectId,
+		const JointDesc& jointDesc) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		if (ownerGameObjectId < 0 || connectedGameObjectId < 0 ||
+			runtimeApi == nullptr || runtimeApi->CreateJoint == nullptr) {
+			return kInvalidEditorScriptJointHandle;
+		}
+
+		return runtimeApi->CreateJoint(
+			jointType,
+			ownerGameObjectId,
+			connectedGameObjectId,
+			&jointDesc);
+	}
+
+	static JointHandle CreateJoint(
+		JointType jointType,
+		const GameObject& ownerGameObject,
+		const GameObject& connectedGameObject,
+		const JointDesc& jointDesc) {
+		if (!ownerGameObject.HasReference() || !connectedGameObject.HasReference()) {
+			return kInvalidEditorScriptJointHandle;
+		}
+
+		return CreateJoint(
+			jointType,
+			ownerGameObject.GetInstanceId(),
+			connectedGameObject.GetInstanceId(),
+			jointDesc);
+	}
+
+	static bool SetJointSettings(JointHandle jointHandle, const JointDesc& jointDesc) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return jointHandle != kInvalidEditorScriptJointHandle && runtimeApi != nullptr &&
+			runtimeApi->SetJointSettings != nullptr &&
+			runtimeApi->SetJointSettings(jointHandle, &jointDesc);
 	}
 };
 
@@ -2288,6 +2909,10 @@ private:
 
 class Rigidbody final {
 public:
+	static constexpr const char* TypeName() {
+		return "RigidBody";
+	}
+
 	explicit Rigidbody(const GameObject& gameObject)
 		: gameObjectId_(gameObject.GetInstanceId()) {
 	}
@@ -2353,6 +2978,10 @@ private:
 
 class RopeConstraint final {
 public:
+	static constexpr const char* TypeName() {
+		return "RopeConstraint";
+	}
+
 	explicit RopeConstraint(const GameObject& gameObject)
 		: gameObjectId_(gameObject.GetInstanceId()) {
 	}
@@ -2424,11 +3053,382 @@ private:
 };
 
 //================================================================
+// 複数接続対応 Wire
+//================================================================
+
+class WireConnectable final {
+public:
+	static constexpr const char* TypeName() {
+		return "WireConnectable";
+	}
+
+	explicit WireConnectable(const GameObject& gameObject)
+		: gameObjectId_(gameObject.GetInstanceId()) {
+	}
+
+	explicit WireConnectable(int32_t gameObjectId)
+		: gameObjectId_(gameObjectId) {
+	}
+
+	bool IsValid() const {
+		return GameObject{gameObjectId_}.HasComponent(TypeName());
+	}
+
+	bool CanConnect() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->CanConnectWire != nullptr &&
+			runtimeApi->CanConnectWire(gameObjectId_);
+	}
+
+private:
+	int32_t gameObjectId_ = -1;
+};
+
+enum class HookVisualState : int32_t {
+	Normal = 0,
+	Targeted = 1,
+	Selected = 2,
+	Connected = 3,
+};
+
+class Wire;
+
+// Editor上の互換Component名はWireConnectableのまま保ち、ユーザーScriptにはHookPointとして見せる。
+class HookPoint final {
+public:
+	static constexpr const char* TypeName() {
+		return "WireConnectable";
+	}
+
+	explicit HookPoint(const GameObject& gameObject)
+		: gameObjectId_(gameObject.GetInstanceId()) {
+	}
+
+	explicit HookPoint(int32_t gameObjectId)
+		: gameObjectId_(gameObjectId) {
+	}
+
+	bool IsValid() const {
+		return GameObject{gameObjectId_}.HasComponent(TypeName());
+	}
+
+	bool CanConnect() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->CanConnectWire != nullptr &&
+			runtimeApi->CanConnectWire(gameObjectId_);
+	}
+
+	bool SetVisualState(HookVisualState visualState) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->SetHookVisualState != nullptr &&
+			runtimeApi->SetHookVisualState(gameObjectId_, static_cast<int32_t>(visualState));
+	}
+
+	std::vector<Wire> GetWires() const;
+
+private:
+	int32_t gameObjectId_ = -1;
+};
+
+class Renderer final {
+public:
+	explicit Renderer(const GameObject& gameObject)
+		: gameObjectId_(gameObject.GetInstanceId()) {
+	}
+
+	bool SetColor(const EditorScriptVector3& color) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->SetRendererColor != nullptr &&
+			runtimeApi->SetRendererColor(gameObjectId_, &color);
+	}
+
+	bool SetEmission(const EditorScriptVector3& color, float strength) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->SetRendererEmission != nullptr &&
+			runtimeApi->SetRendererEmission(gameObjectId_, &color, strength);
+	}
+
+	bool SetColorFromMass(
+		const GameObject& rigidBodyGameObject,
+		float minimumMass,
+		float maximumMass,
+		const EditorScriptVector3& lightColor,
+		const EditorScriptVector3& heavyColor) const {
+		float mass = minimumMass;
+
+		if (!rigidBodyGameObject.GetComponent("RigidBody").GetFloat("mass", mass)) {
+			return false;
+		}
+
+		const float massRange = maximumMass - minimumMass;
+		const float normalizedMass = std::fabs(massRange) > 0.0001f
+			? (std::clamp)((mass - minimumMass) / massRange, 0.0f, 1.0f)
+			: 0.0f;
+		return SetColor(EditorScriptVector3{
+			lightColor.x + (heavyColor.x - lightColor.x) * normalizedMass,
+			lightColor.y + (heavyColor.y - lightColor.y) * normalizedMass,
+			lightColor.z + (heavyColor.z - lightColor.z) * normalizedMass});
+	}
+
+private:
+	int32_t gameObjectId_ = -1;
+};
+
+class WireRenderer final {
+public:
+	static constexpr const char* TypeName() {
+		return "WireRenderer";
+	}
+
+	explicit WireRenderer(const GameObject& gameObject)
+		: gameObjectId_(gameObject.GetInstanceId()) {
+	}
+
+	explicit WireRenderer(int32_t gameObjectId)
+		: gameObjectId_(gameObjectId) {
+	}
+
+	bool IsValid() const {
+		return GameObject{gameObjectId_}.HasComponent(TypeName());
+	}
+
+private:
+	int32_t gameObjectId_ = -1;
+};
+
+class Wire final {
+public:
+	using Handle = EditorScriptWireHandle;
+	using Desc = EditorScriptWireDesc;
+	using State = EditorScriptWireState;
+
+	explicit Wire(Handle wireHandle = kInvalidEditorScriptWireHandle)
+		: wireHandle_(wireHandle) {
+	}
+
+	static Wire Create(const Desc& wireDesc) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi == nullptr || runtimeApi->CreateWire == nullptr) {
+			return Wire{};
+		}
+
+		return Wire{runtimeApi->CreateWire(&wireDesc)};
+	}
+
+	static Wire Create(
+		const GameObject& firstGameObject,
+		const GameObject& secondGameObject,
+		const EditorScriptVector3& firstLocalAnchor,
+		const EditorScriptVector3& secondLocalAnchor,
+		float maximumLength,
+		const GameObject& ownerGameObject = GameObject{}) {
+		Desc wireDesc{};
+		wireDesc.firstGameObjectId = firstGameObject.GetInstanceId();
+		wireDesc.secondGameObjectId = secondGameObject.GetInstanceId();
+		wireDesc.ownerGameObjectId = ownerGameObject.GetInstanceId();
+		wireDesc.rendererSettingsGameObjectId = ownerGameObject.GetInstanceId();
+		wireDesc.firstLocalAnchor = firstLocalAnchor;
+		wireDesc.secondLocalAnchor = secondLocalAnchor;
+		wireDesc.maximumLength = maximumLength;
+		return Create(wireDesc);
+	}
+
+	static int32_t GetCount(const GameObject& gameObject) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObject.HasReference() && runtimeApi != nullptr &&
+			runtimeApi->GetWireCountForGameObject != nullptr
+			? runtimeApi->GetWireCountForGameObject(gameObject.GetInstanceId())
+			: 0;
+	}
+
+	static std::vector<Wire> GetAll(const GameObject& gameObject) {
+		std::vector<Wire> wires;
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		const int32_t wireCount = GetCount(gameObject);
+
+		if (runtimeApi == nullptr || runtimeApi->GetWireForGameObject == nullptr ||
+			wireCount <= 0) {
+			return wires;
+		}
+
+		wires.reserve(static_cast<size_t>(wireCount));
+
+		for (int32_t wireIndex = 0; wireIndex < wireCount; wireIndex++) {
+			State wireState{};
+
+			if (runtimeApi->GetWireForGameObject(
+				gameObject.GetInstanceId(),
+				wireIndex,
+				&wireState)) {
+				wires.emplace_back(wireState.handle);
+			}
+		}
+
+		return wires;
+	}
+
+	Handle GetHandle() const {
+		return wireHandle_;
+	}
+
+	bool IsValid() const {
+		State wireState{};
+		return GetState(wireState);
+	}
+
+	bool Destroy() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return wireHandle_ != kInvalidEditorScriptWireHandle && runtimeApi != nullptr &&
+			runtimeApi->DestroyWire != nullptr && runtimeApi->DestroyWire(wireHandle_);
+	}
+
+	bool SetLength(float maximumLength) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return wireHandle_ != kInvalidEditorScriptWireHandle && runtimeApi != nullptr &&
+			runtimeApi->SetWireLengthByHandle != nullptr &&
+			runtimeApi->SetWireLengthByHandle(wireHandle_, maximumLength);
+	}
+
+	bool SetShrinkSpeed(float shrinkSpeed) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return wireHandle_ != kInvalidEditorScriptWireHandle && runtimeApi != nullptr &&
+			runtimeApi->SetWireShrinkSpeed != nullptr &&
+			runtimeApi->SetWireShrinkSpeed(wireHandle_, shrinkSpeed);
+	}
+
+	bool Repair() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return wireHandle_ != kInvalidEditorScriptWireHandle && runtimeApi != nullptr &&
+			runtimeApi->RepairWire != nullptr && runtimeApi->RepairWire(wireHandle_);
+	}
+
+	bool GetState(State& wireState) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return wireHandle_ != kInvalidEditorScriptWireHandle && runtimeApi != nullptr &&
+			runtimeApi->GetWireStateByHandle != nullptr &&
+			runtimeApi->GetWireStateByHandle(wireHandle_, &wireState);
+	}
+
+private:
+	Handle wireHandle_ = kInvalidEditorScriptWireHandle;
+};
+
+inline std::vector<Wire> HookPoint::GetWires() const {
+	return Wire::GetAll(GameObject{gameObjectId_});
+}
+
+//================================================================
 // ユーザー C++ Script の共通基底クラス
 //================================================================
 
+struct EditorNativeScriptAutoFieldDefinition {
+	std::string name;
+	std::string displayName;
+	EditorScriptFieldValue defaultValue{};
+	bool hasRange = false;
+	float minValue = 0.0f;
+	float maxValue = 0.0f;
+	float step = 1.0f;
+};
+
+inline std::vector<EditorNativeScriptAutoFieldDefinition>& GetEditorNativeScriptAutoFieldRegistry() {
+	static std::vector<EditorNativeScriptAutoFieldDefinition> fieldDefinitions;
+	return fieldDefinitions;
+}
+
+class EditorNativeScriptAutoFieldRegistrar final {
+public:
+	EditorNativeScriptAutoFieldRegistrar(
+		const char* name,
+		const char* displayName,
+		int32_t fieldType,
+		bool boolValue,
+		int32_t intValue,
+		float floatValue,
+		const EditorScriptVector2& vector2Value,
+		const EditorScriptVector3& vector3Value,
+		const char* stringValue,
+		bool hasRange,
+		float minValue,
+		float maxValue,
+		float step) {
+		EditorNativeScriptAutoFieldDefinition definition{};
+		definition.name = name != nullptr ? name : "";
+		definition.displayName = displayName != nullptr ? displayName : definition.name;
+		definition.defaultValue.type = fieldType;
+		definition.defaultValue.boolValue = boolValue;
+		definition.defaultValue.intValue = intValue;
+		definition.defaultValue.floatValue = floatValue;
+		definition.defaultValue.vector2Value = vector2Value;
+		definition.defaultValue.vector3Value = vector3Value;
+		definition.hasRange = hasRange;
+		definition.minValue = minValue;
+		definition.maxValue = maxValue;
+		definition.step = step;
+		const char* sourceText = stringValue != nullptr ? stringValue : "";
+		size_t characterIndex = 0U;
+
+		while (sourceText[characterIndex] != '\0' &&
+			characterIndex + 1U < sizeof(definition.defaultValue.stringValue)) {
+			definition.defaultValue.stringValue[characterIndex] = sourceText[characterIndex];
+			characterIndex++;
+		}
+
+		definition.defaultValue.stringValue[characterIndex] = '\0';
+
+		if (!definition.name.empty()) {
+			GetEditorNativeScriptAutoFieldRegistry().push_back(std::move(definition));
+		}
+	}
+};
+
+#define EDITOR_SCRIPT_JOIN_INNER(firstToken, secondToken) firstToken##secondToken
+#define EDITOR_SCRIPT_JOIN(firstToken, secondToken) EDITOR_SCRIPT_JOIN_INNER(firstToken, secondToken)
+#define EDITOR_SCRIPT_AUTO_FIELD(fieldName, displayName, fieldType, boolValue, intValue, floatValue, vector2Value, vector3Value, stringValue, hasRange, minValue, maxValue, step) \
+	namespace { const EditorNativeScriptAutoFieldRegistrar EDITOR_SCRIPT_JOIN(gEditorScriptAutoField_, __COUNTER__){ \
+		#fieldName, displayName, fieldType, boolValue, intValue, floatValue, vector2Value, vector3Value, stringValue, hasRange, minValue, maxValue, step}; }
+#define SCRIPT_FIELD_BOOL(fieldName, displayName, defaultValue) \
+	EDITOR_SCRIPT_AUTO_FIELD(fieldName, displayName, EditorScriptFieldTypeBool, defaultValue, 0, 0.0f, EditorScriptVector2{}, EditorScriptVector3{}, "", false, 0.0f, 0.0f, 1.0f)
+#define SCRIPT_FIELD_INT(fieldName, displayName, defaultValue, minValue, maxValue, step) \
+	EDITOR_SCRIPT_AUTO_FIELD(fieldName, displayName, EditorScriptFieldTypeInt32, false, defaultValue, 0.0f, EditorScriptVector2{}, EditorScriptVector3{}, "", true, static_cast<float>(minValue), static_cast<float>(maxValue), static_cast<float>(step))
+#define SCRIPT_FIELD_FLOAT(fieldName, displayName, defaultValue, minValue, maxValue, step) \
+	EDITOR_SCRIPT_AUTO_FIELD(fieldName, displayName, EditorScriptFieldTypeFloat, false, 0, defaultValue, EditorScriptVector2{}, EditorScriptVector3{}, "", true, minValue, maxValue, step)
+#define SCRIPT_FIELD_VECTOR2(fieldName, displayName, defaultX, defaultY, minValue, maxValue, step) \
+	EDITOR_SCRIPT_AUTO_FIELD(fieldName, displayName, EditorScriptFieldTypeVector2, false, 0, 0.0f, (EditorScriptVector2{defaultX, defaultY}), EditorScriptVector3{}, "", true, minValue, maxValue, step)
+#define SCRIPT_FIELD_VECTOR3(fieldName, displayName, defaultX, defaultY, defaultZ, minValue, maxValue, step) \
+	EDITOR_SCRIPT_AUTO_FIELD(fieldName, displayName, EditorScriptFieldTypeVector3, false, 0, 0.0f, EditorScriptVector2{}, (EditorScriptVector3{defaultX, defaultY, defaultZ}), "", true, minValue, maxValue, step)
+#define SCRIPT_FIELD_STRING(fieldName, displayName, defaultValue) \
+	EDITOR_SCRIPT_AUTO_FIELD(fieldName, displayName, EditorScriptFieldTypeString, false, 0, 0.0f, EditorScriptVector2{}, EditorScriptVector3{}, defaultValue, false, 0.0f, 0.0f, 1.0f)
+#define SCRIPT_FIELD_GAMEOBJECT(fieldName, displayName, defaultGameObjectId) \
+	EDITOR_SCRIPT_AUTO_FIELD(fieldName, displayName, EditorScriptFieldTypeGameObject, false, defaultGameObjectId, 0.0f, EditorScriptVector2{}, EditorScriptVector3{}, "", false, 0.0f, 0.0f, 1.0f)
+#define SCRIPT_FIELD_SCENE(fieldName, displayName, defaultScenePath) \
+	EDITOR_SCRIPT_AUTO_FIELD(fieldName, displayName, EditorScriptFieldTypeSceneAsset, false, 0, 0.0f, EditorScriptVector2{}, EditorScriptVector3{}, defaultScenePath, false, 0.0f, 0.0f, 1.0f)
+
 class EditorNativeScript {
 public:
+	EditorNativeScript() {
+		for (const EditorNativeScriptAutoFieldDefinition& definition :
+			GetEditorNativeScriptAutoFieldRegistry()) {
+			autoFieldValues_[definition.name] = definition.defaultValue;
+			const std::string fieldName = definition.name;
+			AddField(
+				definition.name.c_str(),
+				definition.displayName.c_str(),
+				definition.defaultValue,
+				definition.hasRange,
+				definition.minValue,
+				definition.maxValue,
+				definition.step,
+				[this, fieldName](EditorScriptFieldValue& fieldValue) {
+					fieldValue = autoFieldValues_[fieldName];
+				},
+				[this, fieldName](const EditorScriptFieldValue& fieldValue) {
+					autoFieldValues_[fieldName] = fieldValue;
+				});
+		}
+	}
+
 	virtual ~EditorNativeScript() = default;
 
 	//============================================================
@@ -2500,6 +3500,52 @@ public:
 			break;
 		case EditorScriptPhysicsEventTypeTriggerExit:
 			OnTriggerExit(physicsEvent);
+			break;
+		default:
+			break;
+		}
+	}
+
+	//============================================================
+	// Wireイベント
+	//============================================================
+
+	virtual void OnWireConnected(const EditorScriptWireEvent& wireEvent) {
+		(void)wireEvent;
+	}
+
+	virtual void OnWireTensionChanged(const EditorScriptWireEvent& wireEvent) {
+		(void)wireEvent;
+	}
+
+	virtual void OnWireBroken(const EditorScriptWireEvent& wireEvent) {
+		(void)wireEvent;
+	}
+
+	virtual void OnWireTargetLost(const EditorScriptWireEvent& wireEvent) {
+		(void)wireEvent;
+	}
+
+	virtual void OnWireDestroyed(const EditorScriptWireEvent& wireEvent) {
+		(void)wireEvent;
+	}
+
+	void DispatchWireEvent(const EditorScriptWireEvent& wireEvent) {
+		switch (wireEvent.type) {
+		case EditorScriptWireEventTypeConnected:
+			OnWireConnected(wireEvent);
+			break;
+		case EditorScriptWireEventTypeTensionChanged:
+			OnWireTensionChanged(wireEvent);
+			break;
+		case EditorScriptWireEventTypeBroken:
+			OnWireBroken(wireEvent);
+			break;
+		case EditorScriptWireEventTypeTargetLost:
+			OnWireTargetLost(wireEvent);
+			break;
+		case EditorScriptWireEventTypeDestroyed:
+			OnWireDestroyed(wireEvent);
 			break;
 		default:
 			break;
@@ -2588,6 +3634,43 @@ public:
 			actionName,
 			static_cast<size_t>(actionNameCapacity));
 		return true;
+	}
+
+	bool FieldBool(const char* fieldName) const {
+		const EditorScriptFieldValue* fieldValue = FindAutoFieldValue(fieldName, EditorScriptFieldTypeBool);
+		return fieldValue != nullptr ? fieldValue->boolValue : false;
+	}
+
+	int32_t FieldInt(const char* fieldName) const {
+		const EditorScriptFieldValue* fieldValue = FindAutoFieldValue(fieldName, EditorScriptFieldTypeInt32);
+		return fieldValue != nullptr ? fieldValue->intValue : 0;
+	}
+
+	float FieldFloat(const char* fieldName) const {
+		const EditorScriptFieldValue* fieldValue = FindAutoFieldValue(fieldName, EditorScriptFieldTypeFloat);
+		return fieldValue != nullptr ? fieldValue->floatValue : 0.0f;
+	}
+
+	EditorScriptVector2 FieldVector2(const char* fieldName) const {
+		const EditorScriptFieldValue* fieldValue = FindAutoFieldValue(fieldName, EditorScriptFieldTypeVector2);
+		return fieldValue != nullptr ? fieldValue->vector2Value : EditorScriptVector2{};
+	}
+
+	EditorScriptVector3 FieldVector3(const char* fieldName) const {
+		const EditorScriptFieldValue* fieldValue = FindAutoFieldValue(fieldName, EditorScriptFieldTypeVector3);
+		return fieldValue != nullptr ? fieldValue->vector3Value : EditorScriptVector3{};
+	}
+
+	std::string FieldString(const char* fieldName) const {
+		const auto fieldIterator = autoFieldValues_.find(fieldName != nullptr ? fieldName : "");
+		return fieldIterator != autoFieldValues_.end()
+			? std::string(fieldIterator->second.stringValue)
+			: std::string{};
+	}
+
+	GameObject FieldGameObject(const char* fieldName) const {
+		const EditorScriptFieldValue* fieldValue = FindAutoFieldValue(fieldName, EditorScriptFieldTypeGameObject);
+		return GameObject{fieldValue != nullptr ? fieldValue->intValue : -1};
 	}
 
 protected:
@@ -2776,6 +3859,7 @@ private:
 	};
 
 	std::vector<FieldBinding> fieldBindings_;  // 登録順を Inspector の表示順として保持する。
+	std::unordered_map<std::string, EditorScriptFieldValue> autoFieldValues_;  // .cpp宣言FieldをScriptインスタンスごとに保持する。
 	std::unordered_map<std::string, ActionFunction> actionFunctions_;  // Inspector の関数名から C++ メソッドへ振り分ける。
 	std::vector<std::string> actionNames_;  // Script が公開した Action を Inspector の候補へ登録順で渡す。
 
@@ -2855,4 +3939,93 @@ private:
 
 		return nullptr;
 	}
+
+	const EditorScriptFieldValue* FindAutoFieldValue(const char* fieldName, int32_t fieldType) const {
+		const auto fieldIterator = autoFieldValues_.find(fieldName != nullptr ? fieldName : "");
+
+		if (fieldIterator == autoFieldValues_.end() || fieldIterator->second.type != fieldType) {
+			return nullptr;
+		}
+
+		return &fieldIterator->second;
+	}
+};
+
+//================================================================
+// ユーザー C++ Script 用の自己参照型ライフサイクル
+//
+// DLL ABI と GameObject ID の受け渡しは Generated 側が担当する。
+// ユーザーは必要なライフサイクルだけ override すればよい。
+//================================================================
+
+class Script : public EditorNativeScript {
+public:
+	virtual void Start() {
+	}
+
+	virtual void Update(float deltaTime) {
+		(void)deltaTime;
+	}
+
+	virtual void FixedUpdate(float fixedDeltaTime) {
+		(void)fixedDeltaTime;
+	}
+
+	virtual void Stop() {
+	}
+
+	GameObject GetGameObject() const {
+		return GameObject{gameObjectId_};
+	}
+
+	template <typename ComponentType>
+	ComponentType GetComponent() const {
+		return ComponentType{gameObjectId_};
+	}
+
+	template <typename ComponentType>
+	ComponentType AddComponent() const {
+		return GetGameObject().AddComponent<ComponentType>();
+	}
+
+	template <typename ComponentType>
+	ComponentType GetOrAddComponent() const {
+		return GetGameObject().GetOrAddComponent<ComponentType>();
+	}
+
+	template <typename ComponentType>
+	bool RemoveComponent() const {
+		return GetGameObject().RemoveComponent<ComponentType>();
+	}
+
+	int32_t GetGameObjectId() const {
+		return gameObjectId_;
+	}
+
+	void AttachToGameObject(int32_t gameObjectId) {
+		gameObjectId_ = gameObjectId;
+	}
+
+private:
+	void Start(int32_t gameObjectId) final {
+		AttachToGameObject(gameObjectId);
+		Start();
+	}
+
+	void Update(int32_t gameObjectId, float deltaTime) final {
+		AttachToGameObject(gameObjectId);
+		Update(deltaTime);
+	}
+
+	void FixedUpdate(int32_t gameObjectId, float fixedDeltaTime) final {
+		AttachToGameObject(gameObjectId);
+		FixedUpdate(fixedDeltaTime);
+	}
+
+	void Stop(int32_t gameObjectId) final {
+		AttachToGameObject(gameObjectId);
+		Stop();
+	}
+
+	int32_t gameObjectId_ = -1;
 };

@@ -12,6 +12,7 @@ struct EditorNativeScriptAssetResult {
 	std::string scriptDirectoryPath;  // 生成した script フォルダ。
 	std::string headerFilePath;  // 生成した .h の相対パス。
 	std::string sourceFilePath;  // 生成した .cpp の相対パス。
+	std::string generatedSourceFilePath;  // Engine ABI だけを持つ自動生成 .Generated.cpp の相対パス。
 	std::string buildDebugFilePath;  // 生成した Debug ビルド bat の相対パス。
 	std::string buildReleaseFilePath;  // 生成した Release ビルド bat の相対パス。
 	std::string dllFilePath;  // Script Component に割り当てる想定 DLL パス。
@@ -71,6 +72,7 @@ private:
 		const std::string& scriptName,
 		EditorNativeScriptTemplate scriptTemplate);  // DLL 側の状態クラスを生成する用途別 .h テンプレート。
 	static std::string MakeSourceText(const std::string& scriptName, EditorNativeScriptTemplate scriptTemplate);  // EditorScriptApi を使う用途別 .cpp テンプレート。
+	static std::string MakeGeneratedSourceText(const std::string& scriptName);  // ユーザーコードから分離した DLL ABI ブリッジ。
 	static std::string MakeBuildScriptText(const std::string& scriptName, bool isDebug);  // DLL を cl /LD で作る bat テンプレート。
 	static bool WriteUtf8BomFile(const std::string& filePath, const std::string& text);  // 文字化け防止のため UTF-8 BOM 付きで保存する。
 };

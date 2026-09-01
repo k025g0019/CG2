@@ -694,6 +694,9 @@ namespace EditorSharedState {
 	inline IDirectInputDevice8* g_keyboardDevice = nullptr; // g_keyboardDevice �� DIK_* �̉�����Ԃ�ǂޓ��̓f�o�C�X�B
 	inline IDirectInputDevice8* g_mouseDevice = nullptr; // g_mouseDevice �̓}�E�X�̑��Έړ��ʁE�{�^����Ԃ�ǂޓ��̓f�o�C�X�B
 	inline DIMOUSESTATE g_mouseState{}; // g_mouseState �̓}�E�X�̊e���ړ��ʂƃ{�^��������ԁB
+	inline DIMOUSESTATE g_preMouseState{};  // Scriptの押した瞬間・離した瞬間判定に使う前フレーム状態。
+	inline bool g_runtimeCursorLocked = false;  // Play中のCameraまたはScriptがカーソル固定を要求している。
+	inline bool g_runtimeCursorVisible = true;  // Win32 ShowCursorの現在要求値。
 
 	// g_key �͍��t���[���� 256 �L�[������ԁB
 	inline BYTE g_key[256] = {};
@@ -804,6 +807,13 @@ namespace EditorSharedState {
 	};
 
 	inline EditorRenderProfile g_renderProfile{};
+
+	// 物理Body生成の失敗はConsoleへ出しても他のLogに埋もれて追えないため、
+	// 直近の失敗内容と件数をここへ保持し、Log監視(RuntimeLog)から参照できるようにする。
+	// Bodyが作られないObjectはRay/ShapeCastに一切引っかからない(弾がすり抜ける)ので、
+	// 「気づけないまま放置される」ことが一番の問題になる。
+	inline std::string g_lastPhysicsBodyFailure = "-";
+	inline uint32_t g_physicsBodyFailureCount = 0u;
 
 	inline ComPtr<IDxcUtils> g_dxcUtils; // g_dxc* �� HLSL �̓ǂݍ��݁E�R���p�C���Einclude �����Ɏg�� DXC �I�u�W�F�N�g�B
 	inline ComPtr<IDxcCompiler3> g_dxcCompiler;
@@ -975,6 +985,7 @@ namespace EditorSharedState {
 	inline bool g_isStateGraphWindowVisible = false;  // trueなら汎用Threshold State Graphを表示する。
 	inline bool g_isDiagnosticsWindowVisible = false;  // trueならProfilerとScene Validatorを表示する。
 	inline bool g_isLogMonitorWindowVisible = false;  // trueなら汎用ログ・監視Windowを表示する。
+	inline bool g_isTeamCollaborationWindowVisible = false;  // trueなら共同制作Server、接続、競合画面を表示する。
 	inline bool g_isGameViewUsingSceneCamera = true; // true �Ȃ� Camera Component ���Ȃ����� Scene �J�������p���Ă���B
 
 	// g_viewport / g_scissorRect �� DirectX �� SceneView �������֕`�����߂̋�`�B
@@ -1094,6 +1105,64 @@ namespace EditorSharedState {
 	// g_hierarchyFilter / g_assetFilter �͊e�������̓��̓o�b�t�@�B
 	inline bool g_isStandaloneGame = false;  // 書き出した Player として起動中なら true。
 	inline std::vector<std::string> g_gameBuildScenePaths;  // Player に含めた遷移可能 Scene 一覧。
+
+	inline bool g_isPvShootModeActive = false;  // PV撮影モード中はGameViewだけを全画面表示し、他Windowを隠す。
+	inline float g_pvShootManualTimeScale = 1.0f;  // PV撮影モード中にRuntimeへ乗算する再生速度。1で通常速度。
+
+	inline RECT GetRuntimeCursorClipRect() {
+		RECT cursorClipRect{};
+
+		if (g_isGameViewVisible && g_editorGameWidth > 1.0f && g_editorGameHeight > 1.0f) {
+			cursorClipRect.left = static_cast<LONG>(g_editorGameX);
+			cursorClipRect.top = static_cast<LONG>(g_editorGameY);
+			cursorClipRect.right = static_cast<LONG>(g_editorGameX + g_editorGameWidth);
+			cursorClipRect.bottom = static_cast<LONG>(g_editorGameY + g_editorGameHeight);
+			return cursorClipRect;
+		}
+
+		if (g_windowHandle != nullptr) {
+			GetClientRect(g_windowHandle, &cursorClipRect);
+			POINT clientOrigin{cursorClipRect.left, cursorClipRect.top};
+			POINT clientEnd{cursorClipRect.right, cursorClipRect.bottom};
+			ClientToScreen(g_windowHandle, &clientOrigin);
+			ClientToScreen(g_windowHandle, &clientEnd);
+			cursorClipRect = {clientOrigin.x, clientOrigin.y, clientEnd.x, clientEnd.y};
+		}
+
+		return cursorClipRect;
+	}
+
+	inline void ApplyRuntimeCursorLock(bool isLocked) {
+		g_runtimeCursorLocked = isLocked;
+
+		if (!isLocked) {
+			ClipCursor(nullptr);
+			return;
+		}
+
+		const RECT cursorClipRect = GetRuntimeCursorClipRect();
+		ClipCursor(&cursorClipRect);
+		SetCursorPos(
+			(cursorClipRect.left + cursorClipRect.right) / 2,
+			(cursorClipRect.top + cursorClipRect.bottom) / 2);
+	}
+
+	inline void ApplyRuntimeCursorVisibility(bool isVisible) {
+		if (g_runtimeCursorVisible == isVisible) {
+			return;
+		}
+
+		g_runtimeCursorVisible = isVisible;
+
+		if (isVisible) {
+			while (ShowCursor(TRUE) < 0) {
+			}
+		}
+		else {
+			while (ShowCursor(FALSE) >= 0) {
+			}
+		}
+	}
 
 	inline char g_hierarchyFilter[128] = {};
 	inline char g_assetFilter[128] = {};

@@ -28,6 +28,7 @@ class EditorCameraEffectManager;
 class EditorActionSequenceManager;
 class EditorDamageManager;
 class EditorObjectPoolManager;
+class EditorProfilerManager;
 class EditorVfxManager;
 class EditorRailBranchManager;
 class EditorSaveManager;
@@ -73,6 +74,7 @@ public:
 	void Update(const uint8_t* keyState, float deltaTime);  // 毎フレームの Script 更新を呼ぶ
 	void FixedUpdate(float fixedDeltaTime);  // 固定時間更新の Script を呼ぶ
 	void SetPhysicsEvents(const std::vector<EditorJoltPhysicsManager::PhysicsEvent>& physicsEvents);  // 衝突イベントを Script 側へ渡す
+	void SetWireEvents(const std::vector<EditorPhysicsManager::RuntimeWireEvent>& wireEvents);  // Wire接続、張力、破断通知をScriptへ渡す
 	void DispatchAnimationEvent(
 		int32_t gameObjectId,
 		const std::string& eventName,
@@ -106,6 +108,7 @@ public:
 	void SetRailMovementManager(EditorRailMovementManager* railMovementManager);  // C++ Script の RailFollower API を実行系へ接続する。
 	void SetEffekseerManager(EditorEffekseerManager* effekseerManager);  // 位置指定Effekseer再生(PlayEffekseerAtPosition等)を実行系へ接続する。
 	void SetVfxManager(EditorVfxManager* vfxManager);  // .effectdefをWorld座標へ再生する新VFX経路を接続する。
+	void SetProfilerManager(EditorProfilerManager* profilerManager);  // 有効なNative Script DLLの実行時間を自動計測するProfilerを接続する。
 	void SetGameplayManagers(
 		EditorTargetingManager* targetingManager,
 		EditorDamageManager* damageManager,
@@ -153,6 +156,7 @@ private:
 		EditorScriptUpdateFn updateFunction = nullptr;  // 毎フレーム更新関数
 		EditorScriptFixedUpdateFn fixedUpdateFunction = nullptr;  // 固定更新関数
 		EditorScriptPhysicsEventFn physicsEventFunction = nullptr;  // 接触イベント通知関数
+		EditorScriptWireEventFn wireEventFunction = nullptr;  // Wire Runtimeイベント通知関数
 		EditorScriptAnimationEventFn animationEventFunction = nullptr;  // Animation Graph の任意イベント通知関数
 		EditorScriptStopFn stopFunction = nullptr;  // Play 停止時の終了関数
 		EditorScriptGetFieldCountFn getFieldCountFunction = nullptr;  // DLL が公開する Inspector 変数数を返す
@@ -168,6 +172,7 @@ private:
 		EditorScriptUpdateInstanceFn updateInstanceFunction = nullptr;  // Component 固有実体へ Update を通知する
 		EditorScriptFixedUpdateInstanceFn fixedUpdateInstanceFunction = nullptr;  // Component 固有実体へ FixedUpdate を通知する
 		EditorScriptPhysicsEventInstanceFn physicsEventInstanceFunction = nullptr;  // Component 固有実体へ物理 Event を通知する
+		EditorScriptWireEventInstanceFn wireEventInstanceFunction = nullptr;  // Component固有実体へWire Eventを通知する
 		EditorScriptAnimationEventInstanceFn animationEventInstanceFunction = nullptr;  // Component 固有実体へ Animation Event を通知する
 		EditorScriptStopInstanceFn stopInstanceFunction = nullptr;  // Component 固有実体へ Stop を通知する
 		EditorScriptGetFieldValueInstanceFn getFieldValueInstanceFunction = nullptr;  // Component 固有実体の公開値を読む
@@ -216,12 +221,15 @@ private:
 	EditorWeaponLoadoutManager* weaponLoadoutManager_ = nullptr;  // 可変Weapon SlotとReloadを操作するAPI
 	EditorRuntimePropertyManager* runtimePropertyManager_ = nullptr;  // 型付きProperty、Tween、Relayを操作するAPI
 	EditorWaveSpawnerManager* waveSpawnerManager_ = nullptr;  // Wave、Encounter、Spawn地点を操作するAPI
+	EditorProfilerManager* profilerManager_ = nullptr;  // Native Scriptの各コールバックをDLL別に集計するProfiler
 	std::vector<std::string>* consoleMessages_ = nullptr;  // Script のログやエラーを出す Console
 	bool isStarted_ = false;  // Start が呼ばれていれば true
 	float lastDeltaTime_ = 0.0f;  // 最後に Update へ渡した秒数
 	float lastFixedDeltaTime_ = 0.0f;  // 最後に FixedUpdate へ渡した秒数
 	std::vector<EditorJoltPhysicsManager::PhysicsEvent> physicsEvents_;  // OnCollision / OnTrigger 相当の元データ
+	std::vector<EditorPhysicsManager::RuntimeWireEvent> wireEvents_;  // OnWireConnected / Broken等の元データ
 	std::vector<ScriptBinding> scriptBindings_;  // Scene 内 Script Component から作った実行対象一覧
+	std::vector<int32_t> pendingRuntimeHierarchyRegistrations_;  // Script Update中のInstantiateを反復終了後に登録する。
 	std::unordered_map<int32_t, std::vector<size_t>> scriptBindingIndicesByGameObjectId_;  // Input/UI 通知を対象 Script へ直接渡す索引
 	std::unordered_map<std::string, ScriptModule> scriptModules_;  // DLL パス単位で 1 度だけロードしたモジュール一覧
 	std::unordered_map<std::string, std::string> moduleStatusMessages_;  // DLL ごとの最新状態メッセージ
@@ -252,6 +260,7 @@ private:
 	bool InvokeBindingAction(const ScriptBinding& scriptBinding, ScriptModule& scriptModule, const char* functionName, const EditorScriptInputActionContext& inputContext);  // 新旧 ABI を吸収して対象 Component の Action を呼ぶ
 	void DispatchQueuedUiEvents();  // Button などの UI イベントを C++ Script 関数へ通知する
 	void DispatchInputActions();  // PlayerInput の Action を同じ GameObject の C++ 関数へ通知する
+	void DispatchWireEvents();  // Wireの両端と生成者へ接続、張力、破断イベントを通知する
 	void ApplyComponentFieldsToInstance(const ScriptBinding& scriptBinding, ScriptModule& scriptModule);  // 保存済み Inspector 値を Script インスタンスへ戻す
 	void ReadInstanceFieldsToComponent(const ScriptBinding& scriptBinding, ScriptModule& scriptModule);  // Script が更新した公開変数を Inspector と Scene 保存値へ戻す
 	void SynchronizeComponentProperties(EditorComponent& scriptComponent, const std::vector<EditorScriptFieldDescriptor>& fieldDescriptors);  // DLL 定義と保存値を名前で統合する
@@ -273,22 +282,44 @@ private:
 	bool IsActionPressedInternal(int32_t gameObjectId, const char* actionMapName, const char* actionName) const;  // DLL API 用に Button Action の押下中判定を返す
 	bool WasActionJustPressedInternal(int32_t gameObjectId, const char* actionMapName, const char* actionName) const;  // DLL API 用に Button Action の押した瞬間判定を返す
 	EditorScriptVector2 GetMousePositionInternal() const;  // DLL API 用にクライアント座標のマウス位置を返す
+	EditorScriptVector2 GetMouseDeltaInternal() const;  // DLL API 用にDirectInputの相対マウス移動量を返す
+	bool IsMouseButtonDownInternal(int32_t mouseButton) const;  // DLL API 用にマウスボタン押下中を返す
+	bool WasMouseButtonPressedInternal(int32_t mouseButton) const;  // DLL API 用にマウスボタンを押した瞬間を返す
+	bool WasMouseButtonReleasedInternal(int32_t mouseButton) const;  // DLL API 用にマウスボタンを離した瞬間を返す
+	void SetCursorLockedInternal(bool isLocked);  // DLL API 用にPlay中カーソルをGame Viewへ固定する
+	void SetCursorVisibleInternal(bool isVisible);  // DLL API 用にPlay中カーソル表示を切り替える
 	EditorScriptTransform GetTransformInternal(int32_t gameObjectId) const;  // DLL API 用に GameObject Transform を返す
 	void SetTransformInternal(int32_t gameObjectId, const EditorScriptTransform& transform);  // DLL API 用に GameObject Transform を上書きする
 	EditorScriptVector3 GetVelocityInternal(int32_t gameObjectId) const;  // DLL API 用に Rigidbody 速度を返す
 	void SetVelocityInternal(int32_t gameObjectId, const EditorScriptVector3& velocity);  // DLL API 用に Rigidbody 速度を設定する
 	EditorScriptVector3 GetAngularVelocityInternal(int32_t gameObjectId) const;  // DLL API 用に Rigidbody 角速度を返す
 	void SetAngularVelocityInternal(int32_t gameObjectId, const EditorScriptVector3& angularVelocity);  // DLL API 用に Rigidbody 角速度を設定する
+	float GetMassInternal(int32_t gameObjectId) const;  // DLL API 用に Rigidbody 質量を返す。無ければ0
 	bool AddForceInternal(int32_t gameObjectId, const EditorScriptVector3& force);  // DLL API 用に継続力を加える
 	bool AddForceAtPositionInternal(int32_t gameObjectId, const EditorScriptVector3& force, const EditorScriptVector3& worldPosition);  // DLL API 用に作用点付き継続力を加える
 	bool AddImpulseInternal(int32_t gameObjectId, const EditorScriptVector3& impulse);  // DLL API 用に瞬間力を加える
 	bool AddTorqueInternal(int32_t gameObjectId, const EditorScriptVector3& torque);  // DLL API 用に回転トルクを加える
 	int32_t AddExplosionImpulseInternal(const EditorScriptVector3& center, float radius, float impulseStrength, float upwardModifier);  // DLL API 用に範囲爆発を発生させる
+	EditorScriptJointHandle CreateSpringJointInternal(int32_t ownerGameObjectId, int32_t connectedGameObjectId, const EditorScriptSpringJointDesc& springJointDesc);  // DLL API 用にRuntime SpringJointを生成する
+	bool DestroyJointInternal(EditorScriptJointHandle jointHandle);  // DLL API 用にRuntime Jointを破棄する
+	bool SetSpringJointSettingsInternal(EditorScriptJointHandle jointHandle, const EditorScriptSpringJointDesc& springJointDesc);  // DLL API 用にRuntime SpringJointを再設定する
+	bool IsJointValidInternal(EditorScriptJointHandle jointHandle) const;  // DLL API 用にRuntime Joint Handleを検証する
+	EditorScriptJointHandle CreateJointInternal(EditorScriptJointType jointType, int32_t ownerGameObjectId, int32_t connectedGameObjectId, const EditorScriptJointDesc& jointDesc);  // DLL API用の汎用Runtime Joint生成
+	bool SetJointSettingsInternal(EditorScriptJointHandle jointHandle, const EditorScriptJointDesc& jointDesc);  // DLL API用の汎用Runtime Joint再設定
 	bool AttachRopeInternal(int32_t ownerGameObjectId, int32_t targetGameObjectId, const EditorScriptVector3& ownerLocalAnchor, const EditorScriptVector3& targetAnchor, float maximumLength);  // DLL API 用にロープを接続する
 	bool DetachRopeInternal(int32_t ownerGameObjectId);  // DLL API 用にロープを解除する
 	bool SetRopeLengthInternal(int32_t ownerGameObjectId, float maximumLength);  // DLL API 用にロープ長を変更する
 	bool RepairRopeInternal(int32_t ownerGameObjectId);  // DLL API 用にロープ破断を修復する
 	EditorScriptRopeState GetRopeStateInternal(int32_t ownerGameObjectId) const;  // DLL API 用にロープ状態を返す
+	EditorScriptWireHandle CreateWireInternal(const EditorScriptWireDesc& wireDesc);
+	bool DestroyWireInternal(EditorScriptWireHandle wireHandle);
+	bool SetWireLengthByHandleInternal(EditorScriptWireHandle wireHandle, float maximumLength);
+	bool SetWireShrinkSpeedInternal(EditorScriptWireHandle wireHandle, float shrinkSpeed);
+	bool RepairWireInternal(EditorScriptWireHandle wireHandle);
+	bool GetWireStateByHandleInternal(EditorScriptWireHandle wireHandle, EditorScriptWireState& wireState) const;
+	int32_t GetWireCountForGameObjectInternal(int32_t gameObjectId) const;
+	bool GetWireForGameObjectInternal(int32_t gameObjectId, int32_t wireIndex, EditorScriptWireState& wireState) const;
+	bool CanConnectWireInternal(int32_t gameObjectId) const;
 	EditorScriptAiSensorState GetAiSensorStateInternal(int32_t gameObjectId, int32_t sensorKind) const;  // DLL API 用に AI センサー状態を返す
 	EditorScriptMaterialState GetMaterialStateInternal(int32_t gameObjectId) const;  // DLL API 用に Material 情報を返す
 	EditorScriptAnimationState GetAnimationStateInternal(int32_t gameObjectId) const;  // DLL API 用に Animation 情報を返す
@@ -310,6 +341,25 @@ private:
 	bool SetComponentActiveInternal(int32_t gameObjectId, const char* componentTypeName, bool isActive);  // DLL API 用に任意 Component の有効状態を変更する
 	bool IsComponentActiveInternal(int32_t gameObjectId, const char* componentTypeName) const;  // DLL API 用に任意 Component の有効状態を取得する
 	bool HasComponentInternal(int32_t gameObjectId, const char* componentTypeName) const;  // DLL API 用にComponentの有無を取得する
+	bool AddComponentInternal(int32_t gameObjectId, const char* componentTypeName);
+	bool RemoveComponentInternal(int32_t gameObjectId, const char* componentTypeName);
+	int32_t FindGameObjectsWithComponentInternal(const char* componentTypeName, int32_t* gameObjectIds, int32_t capacity) const;
+	int32_t InstantiateGameObjectInternal(int32_t sourceGameObjectId, const EditorScriptVector3& position, const EditorScriptVector3& rotation);
+	bool DestroyGameObjectInternal(int32_t gameObjectId);
+	bool SetRendererColorInternal(int32_t gameObjectId, const EditorScriptVector3& color);
+	bool SetRendererEmissionInternal(int32_t gameObjectId, const EditorScriptVector3& color, float strength);
+	bool SetHookVisualStateInternal(int32_t gameObjectId, int32_t visualState);
+	int32_t CreateGameObjectInternal(const char* name);
+	int32_t GetParentGameObjectInternal(int32_t gameObjectId) const;
+	bool SetParentGameObjectInternal(int32_t childGameObjectId, int32_t parentGameObjectId, bool preserveWorldTransform);
+	int32_t GetChildGameObjectCountInternal(int32_t gameObjectId) const;
+	int32_t GetChildGameObjectInternal(int32_t gameObjectId, int32_t childIndex) const;
+	bool ReloadPrimarySceneInternal();
+	bool WorldToLocalPointInternal(int32_t gameObjectId, const EditorScriptVector3& worldPoint, EditorScriptVector3& localPoint) const;
+	bool LocalToWorldPointInternal(int32_t gameObjectId, const EditorScriptVector3& localPoint, EditorScriptVector3& worldPoint) const;
+	bool WorldToLocalDirectionInternal(int32_t gameObjectId, const EditorScriptVector3& worldDirection, EditorScriptVector3& localDirection) const;
+	bool LocalToWorldDirectionInternal(int32_t gameObjectId, const EditorScriptVector3& localDirection, EditorScriptVector3& worldDirection) const;
+	bool PhysicsRaycastFilteredInternal(const EditorScriptRay& ray, float distance, uint32_t physicsLayerMask, bool includeTriggers, const char* requiredComponentTypeName, EditorScriptPhysicsHit& hit) const;
 	bool InvokeScriptActionInternal(int32_t gameObjectId, const char* functionName);  // DLL API 用に別Scriptの登録済みActionをキューへ積む
 	bool RequestSceneLoadInternal(const std::string& scenePath, bool isAdditive = false, bool isAsynchronous = false);  // Scene読込要求を検証して保留する。
 	bool RequestSceneLoadByBuildIndexInternal(int32_t sceneIndex);  // Build Settings の順番から Scene 遷移を要求する。
@@ -321,22 +371,46 @@ private:
 	static bool ScriptIsActionPressedBridge(int32_t gameObjectId, const char* actionMapName, const char* actionName);  // DLL からの Button Action 押下判定を現在の ScriptManager へ流す
 	static bool ScriptWasActionJustPressedBridge(int32_t gameObjectId, const char* actionMapName, const char* actionName);  // DLL からの Button Action 押した瞬間判定を現在の ScriptManager へ流す
 	static EditorScriptVector2 ScriptGetMousePositionBridge();  // DLL からのマウス座標取得を現在の ScriptManager へ流す
+	static EditorScriptVector2 ScriptGetMouseDeltaBridge();  // DLL からの相対マウス移動量取得を流す
+	static bool ScriptIsMouseButtonDownBridge(int32_t mouseButton);  // DLL からのマウスボタン押下中判定を流す
+	static bool ScriptWasMouseButtonPressedBridge(int32_t mouseButton);  // DLL からのマウスボタン押下開始判定を流す
+	static bool ScriptWasMouseButtonReleasedBridge(int32_t mouseButton);  // DLL からのマウスボタン解放判定を流す
+	static void ScriptSetCursorLockedBridge(bool isLocked);  // DLL からのカーソル固定要求を流す
+	static bool ScriptIsCursorLockedBridge();  // DLL へカーソル固定状態を返す
+	static void ScriptSetCursorVisibleBridge(bool isVisible);  // DLL からのカーソル表示要求を流す
+	static bool ScriptIsCursorVisibleBridge();  // DLL へカーソル表示状態を返す
 	static EditorScriptTransform ScriptGetTransformBridge(int32_t gameObjectId);  // DLL からの Transform 取得を現在の ScriptManager へ流す
 	static void ScriptSetTransformBridge(int32_t gameObjectId, const EditorScriptTransform* transform);  // DLL からの Transform 設定を現在の ScriptManager へ流す
 	static EditorScriptVector3 ScriptGetVelocityBridge(int32_t gameObjectId);  // DLL からの Rigidbody 速度取得を現在の ScriptManager へ流す
 	static void ScriptSetVelocityBridge(int32_t gameObjectId, const EditorScriptVector3* velocity);  // DLL からの Rigidbody 速度設定を現在の ScriptManager へ流す
 	static EditorScriptVector3 ScriptGetAngularVelocityBridge(int32_t gameObjectId);  // DLL からの Rigidbody 角速度取得を現在の ScriptManager へ流す
 	static void ScriptSetAngularVelocityBridge(int32_t gameObjectId, const EditorScriptVector3* angularVelocity);  // DLL からの Rigidbody 角速度設定を現在の ScriptManager へ流す
+	static float ScriptGetMassBridge(int32_t gameObjectId);  // DLL からの Rigidbody 質量取得を現在の ScriptManager へ流す
 	static bool ScriptAddForceBridge(int32_t gameObjectId, const EditorScriptVector3* force);  // DLL からの継続力要求を現在の ScriptManager へ流す
 	static bool ScriptAddForceAtPositionBridge(int32_t gameObjectId, const EditorScriptVector3* force, const EditorScriptVector3* worldPosition);  // DLL からの作用点付き継続力要求を流す
 	static bool ScriptAddImpulseBridge(int32_t gameObjectId, const EditorScriptVector3* impulse);  // DLL からの瞬間力要求を現在の ScriptManager へ流す
 	static bool ScriptAddTorqueBridge(int32_t gameObjectId, const EditorScriptVector3* torque);  // DLL からの回転トルク要求を現在の ScriptManager へ流す
 	static int32_t ScriptAddExplosionImpulseBridge(const EditorScriptVector3* center, float radius, float impulseStrength, float upwardModifier);  // DLL からの範囲爆発要求を流す
+	static EditorScriptJointHandle ScriptCreateSpringJointBridge(int32_t ownerGameObjectId, int32_t connectedGameObjectId, const EditorScriptSpringJointDesc* springJointDesc);  // DLLからのRuntime SpringJoint生成要求を流す
+	static bool ScriptDestroyJointBridge(EditorScriptJointHandle jointHandle);  // DLLからのRuntime Joint破棄要求を流す
+	static bool ScriptSetSpringJointSettingsBridge(EditorScriptJointHandle jointHandle, const EditorScriptSpringJointDesc* springJointDesc);  // DLLからのRuntime SpringJoint再設定要求を流す
+	static bool ScriptIsJointValidBridge(EditorScriptJointHandle jointHandle);  // DLLからのRuntime Joint検証要求を流す
+	static EditorScriptJointHandle ScriptCreateJointBridge(EditorScriptJointType jointType, int32_t ownerGameObjectId, int32_t connectedGameObjectId, const EditorScriptJointDesc* jointDesc);  // DLLからの汎用Runtime Joint生成要求を流す
+	static bool ScriptSetJointSettingsBridge(EditorScriptJointHandle jointHandle, const EditorScriptJointDesc* jointDesc);  // DLLからの汎用Runtime Joint再設定要求を流す
 	static bool ScriptAttachRopeBridge(int32_t ownerGameObjectId, int32_t targetGameObjectId, const EditorScriptVector3* ownerLocalAnchor, const EditorScriptVector3* targetAnchor, float maximumLength);  // DLL からのロープ接続要求を流す
 	static bool ScriptDetachRopeBridge(int32_t ownerGameObjectId);  // DLL からのロープ解除要求を流す
 	static bool ScriptSetRopeLengthBridge(int32_t ownerGameObjectId, float maximumLength);  // DLL からのロープ長変更要求を流す
 	static bool ScriptRepairRopeBridge(int32_t ownerGameObjectId);  // DLL からのロープ修復要求を流す
 	static EditorScriptRopeState ScriptGetRopeStateBridge(int32_t ownerGameObjectId);  // DLL へロープ状態を返す
+	static EditorScriptWireHandle ScriptCreateWireBridge(const EditorScriptWireDesc* wireDesc);
+	static bool ScriptDestroyWireBridge(EditorScriptWireHandle wireHandle);
+	static bool ScriptSetWireLengthByHandleBridge(EditorScriptWireHandle wireHandle, float maximumLength);
+	static bool ScriptSetWireShrinkSpeedBridge(EditorScriptWireHandle wireHandle, float shrinkSpeed);
+	static bool ScriptRepairWireBridge(EditorScriptWireHandle wireHandle);
+	static bool ScriptGetWireStateByHandleBridge(EditorScriptWireHandle wireHandle, EditorScriptWireState* wireState);
+	static int32_t ScriptGetWireCountForGameObjectBridge(int32_t gameObjectId);
+	static bool ScriptGetWireForGameObjectBridge(int32_t gameObjectId, int32_t wireIndex, EditorScriptWireState* wireState);
+	static bool ScriptCanConnectWireBridge(int32_t gameObjectId);
 	static EditorScriptAiSensorState ScriptGetAiSensorStateBridge(int32_t gameObjectId, int32_t sensorKind);  // DLL からの AI センサー取得を現在の ScriptManager へ流す
 	static EditorScriptMaterialState ScriptGetMaterialStateBridge(int32_t gameObjectId);  // DLL からの Material 取得を現在の ScriptManager へ流す
 	static EditorScriptAnimationState ScriptGetAnimationStateBridge(int32_t gameObjectId);  // DLL からの Animation 取得を現在の ScriptManager へ流す
@@ -493,6 +567,25 @@ private:
 	static bool ScriptIsPropertyTweenPlayingBridge(int32_t gameObjectId);
 	static bool ScriptRelayActionBridge(int32_t gameObjectId);
 	static bool ScriptHasComponentBridge(int32_t gameObjectId, const char* componentTypeName);
+	static bool ScriptAddComponentBridge(int32_t gameObjectId, const char* componentTypeName);
+	static bool ScriptRemoveComponentBridge(int32_t gameObjectId, const char* componentTypeName);
+	static int32_t ScriptFindGameObjectsWithComponentBridge(const char* componentTypeName, int32_t* gameObjectIds, int32_t capacity);
+	static int32_t ScriptInstantiateGameObjectBridge(int32_t sourceGameObjectId, const EditorScriptVector3* position, const EditorScriptVector3* rotation);
+	static bool ScriptDestroyGameObjectBridge(int32_t gameObjectId);
+	static bool ScriptSetRendererColorBridge(int32_t gameObjectId, const EditorScriptVector3* color);
+	static bool ScriptSetRendererEmissionBridge(int32_t gameObjectId, const EditorScriptVector3* color, float strength);
+	static bool ScriptSetHookVisualStateBridge(int32_t gameObjectId, int32_t visualState);
+	static int32_t ScriptCreateGameObjectBridge(const char* name);
+	static int32_t ScriptGetParentGameObjectBridge(int32_t gameObjectId);
+	static bool ScriptSetParentGameObjectBridge(int32_t childGameObjectId, int32_t parentGameObjectId, bool preserveWorldTransform);
+	static int32_t ScriptGetChildGameObjectCountBridge(int32_t gameObjectId);
+	static int32_t ScriptGetChildGameObjectBridge(int32_t gameObjectId, int32_t childIndex);
+	static bool ScriptReloadPrimarySceneBridge();
+	static bool ScriptWorldToLocalPointBridge(int32_t gameObjectId, const EditorScriptVector3* worldPoint, EditorScriptVector3* localPoint);
+	static bool ScriptLocalToWorldPointBridge(int32_t gameObjectId, const EditorScriptVector3* localPoint, EditorScriptVector3* worldPoint);
+	static bool ScriptWorldToLocalDirectionBridge(int32_t gameObjectId, const EditorScriptVector3* worldDirection, EditorScriptVector3* localDirection);
+	static bool ScriptLocalToWorldDirectionBridge(int32_t gameObjectId, const EditorScriptVector3* localDirection, EditorScriptVector3* worldDirection);
+	static bool ScriptPhysicsRaycastFilteredBridge(const EditorScriptRay* ray, float distance, uint32_t physicsLayerMask, bool includeTriggers, const char* requiredComponentTypeName, EditorScriptPhysicsHit* hit);
 	static bool ScriptInvokeScriptActionBridge(int32_t gameObjectId, const char* functionName);
 	static bool ScriptInvokeScriptActionPayloadBridge(int32_t gameObjectId, const char* functionName, const EditorScriptActionPayload* payload);
 	static bool ScriptStartTimerBridge(int32_t gameObjectId);

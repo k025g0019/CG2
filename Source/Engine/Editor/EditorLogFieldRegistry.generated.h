@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // このファイルは Tools/generate_log_field_registry.py が自動生成する。
 // 手動で編集しないこと。Inspectorにフィールドを追加/変更したら、

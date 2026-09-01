@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 
 namespace {
@@ -24,6 +25,7 @@ namespace {
 	constexpr float kProjectileAimDistance = 1000.0f;
 	constexpr float kHitscanCollisionRadius = 0.15f;
 	constexpr float kDegreesToRadians = 0.01745329251994329577f;
+	constexpr int32_t kMaximumCollisionConsoleLogs = 300;  // Play中の大量連射でConsoleを無制限に増やさない
 
 	Vector3 AddVector3(const Vector3& firstValue, const Vector3& secondValue) {
 		return {
@@ -85,6 +87,101 @@ namespace {
 			std::sin(worldRotation.y) * cosPitch,
 			-std::sin(worldRotation.x),
 			std::cos(worldRotation.y) * cosPitch});
+	}
+
+	// FindMainCollider(EditorJoltPhysicsManager)と同じ優先順で、当たり判定に実際に使われる
+	// Collider1つを見つける。ここはLog専用の簡易複製で、Bodyそのものは触らない。
+	const EditorComponent* FindPrimaryColliderForLog(const EditorGameObject& gameObject) {
+		const EditorComponentType colliderTypes[] = {
+			EditorComponentType::AutoConvexCollision,
+			EditorComponentType::BoxCollider,
+			EditorComponentType::SphereCollider,
+			EditorComponentType::CapsuleCollider,
+			EditorComponentType::MeshCollider,
+			EditorComponentType::TerrainCollider};
+
+		for (EditorComponentType colliderType : colliderTypes) {
+			const EditorComponent* collider = EditorComponentUtility::FindComponent(gameObject, colliderType);
+			if (collider != nullptr && collider->isActive) {
+				return collider;
+			}
+		}
+
+		return nullptr;
+	}
+
+	std::string FormatVector3(const Vector3& value) {
+		std::ostringstream stream;
+		stream << std::fixed << std::setprecision(3)
+			<< value.x << "," << value.y << "," << value.z;
+		return stream.str();
+	}
+
+	struct NearestColliderCandidate {
+		bool found = false;
+		int32_t gameObjectId = -1;
+		std::string name = "-";
+		float distance = -1.0f;
+		Vector3 worldPosition{};
+		Vector3 colliderWorldCenter{};
+		Vector3 colliderWorldSize{};
+	};
+
+	// 命中判定の基準点(referencePosition)から最も近いHealth持ち(=敵/Player)の実際のWorld座標と
+	// 実Colliderサイズを1件だけ返す。RuntimeLog監視項目としてそのまま数値比較できる形にする。
+	NearestColliderCandidate FindNearestColliderCandidate(
+		const EditorScene& editorScene,
+		const Vector3& referencePosition) {
+		NearestColliderCandidate nearest;
+		float nearestDistanceSquared = std::numeric_limits<float>::max();
+
+		for (const EditorGameObject& gameObject : editorScene.GetGameObjects()) {
+			if (!gameObject.isActive) {
+				continue;
+			}
+
+			const EditorComponent* health = EditorComponentUtility::FindComponent(
+				gameObject,
+				EditorComponentType::Health);
+
+			if (health == nullptr || !health->isActive) {
+				continue;
+			}
+
+			Vector3 worldScale = gameObject.scale;
+			Vector3 worldRotation = gameObject.rotate;
+			Vector3 worldPosition = gameObject.translate;
+			editorScene.GetWorldTransform(gameObject.id, worldScale, worldRotation, worldPosition);
+			const float dx = worldPosition.x - referencePosition.x;
+			const float dy = worldPosition.y - referencePosition.y;
+			const float dz = worldPosition.z - referencePosition.z;
+			const float distanceSquared = dx * dx + dy * dy + dz * dz;
+
+			if (distanceSquared >= nearestDistanceSquared) {
+				continue;
+			}
+
+			nearestDistanceSquared = distanceSquared;
+			nearest.found = true;
+			nearest.gameObjectId = gameObject.id;
+			nearest.name = gameObject.name;
+			nearest.distance = std::sqrt(distanceSquared);
+			nearest.worldPosition = worldPosition;
+
+			const EditorComponent* collider = FindPrimaryColliderForLog(gameObject);
+			if (collider != nullptr) {
+				nearest.colliderWorldCenter = {
+					worldPosition.x + collider->colliderCenter.x * worldScale.x,
+					worldPosition.y + collider->colliderCenter.y * worldScale.y,
+					worldPosition.z + collider->colliderCenter.z * worldScale.z};
+				nearest.colliderWorldSize = {
+					collider->colliderSize.x * worldScale.x,
+					collider->colliderSize.y * worldScale.y,
+					collider->colliderSize.z * worldScale.z};
+			}
+		}
+
+		return nearest;
 	}
 }
 
@@ -239,7 +336,10 @@ void EditorWeaponManager::RecordProjectileCollision(
 	float hitDistance,
 	float appliedDamage,
 	float healthBefore,
-	float healthAfter) {
+	float healthAfter,
+	const Vector3& castOrigin,
+	float castRadius,
+	const std::vector<int32_t>& ignoredGameObjectIds) {
 	const EditorGameObject* rawHitGameObject =
 		editorScene_ != nullptr && rawHitGameObjectId >= 0
 		? editorScene_->FindGameObject(rawHitGameObjectId)
@@ -255,6 +355,43 @@ void EditorWeaponManager::RecordProjectileCollision(
 	lastProjectileAppliedDamage_ = appliedDamage;
 	lastProjectileHealthBefore_ = healthBefore;
 	lastProjectileHealthAfter_ = healthAfter;
+	lastProjectileCastOrigin_ = FormatVector3(castOrigin);
+	lastProjectileRadius_ = castRadius;
+
+	// RuntimeLog監視項目(GetLastProjectileNearestCandidate*)へ、CastOrigin基準で最も近い
+	// Health所持GameObjectの実座標・実Colliderサイズを残す。Consoleは他Logに埋もれて追えないため
+	// ここでは短い結果行だけ出し、詳細な位置/サイズ比較はRuntimeLog側で行う前提にする。
+	if (editorScene_ != nullptr) {
+		const NearestColliderCandidate nearest = FindNearestColliderCandidate(*editorScene_, castOrigin);
+		lastProjectileNearestCandidateName_ = nearest.found ? nearest.name : "-";
+		lastProjectileNearestCandidateDistance_ = nearest.distance;
+		lastProjectileNearestCandidateWorldPosition_ = nearest.found ? FormatVector3(nearest.worldPosition) : "-";
+		lastProjectileNearestCandidateColliderCenter_ = nearest.found ? FormatVector3(nearest.colliderWorldCenter) : "-";
+		lastProjectileNearestCandidateColliderSize_ = nearest.found ? FormatVector3(nearest.colliderWorldSize) : "-";
+
+		// GameObjectのTransformではなく、Jolt World上の実Body座標と登録状態を記録する。
+		// ここがWorldPositionと大きくズレていたり未登録なら、Castが当たらないのは当然になる。
+		lastProjectileNearestCandidateBodyPosition_ = "-";
+		lastProjectileNearestCandidateBodyInWorld_ = "-";
+
+		if (nearest.found && physicsManager_ != nullptr) {
+			Vector3 bodyPosition{};
+			bool isAddedToWorld = false;
+
+			if (physicsManager_->GetBodyDiagnostics(nearest.gameObjectId, bodyPosition, isAddedToWorld)) {
+				lastProjectileNearestCandidateBodyPosition_ = FormatVector3(bodyPosition);
+				lastProjectileNearestCandidateBodyInWorld_ = isAddedToWorld ? "true" : "false";
+			}
+			else {
+				lastProjectileNearestCandidateBodyInWorld_ = "NoBody";
+			}
+		}
+		lastProjectileNearestCandidateWasIgnored_ = nearest.found &&
+			std::find(
+				ignoredGameObjectIds.begin(),
+				ignoredGameObjectIds.end(),
+				nearest.gameObjectId) != ignoredGameObjectIds.end();
+	}
 
 	std::ostringstream messageStream;
 	messageStream << std::fixed << std::setprecision(3)
@@ -269,8 +406,6 @@ void EditorWeaponManager::RecordProjectileCollision(
 		<< " health=" << healthBefore << "->" << healthAfter;
 	const std::string message = messageStream.str();
 	OutputDebugStringA((message + "\n").c_str());
-
-	constexpr int32_t kMaximumCollisionConsoleLogs = 300;
 
 	if (consoleMessages_ != nullptr && collisionLogCount_ < kMaximumCollisionConsoleLogs) {
 		consoleMessages_->push_back(message);
@@ -776,12 +911,20 @@ bool EditorWeaponManager::FireWeaponObject(int32_t weaponGameObjectId) {
 		return false;
 	}
 
-	if (EditorComponentUtility::FindComponent(*weapon, EditorComponentType::ProjectileEmitter) != nullptr) {
-		return FireProjectile(weaponGameObjectId);
+	const EditorComponent* hitscanWeapon = EditorComponentUtility::FindComponent(
+		*weapon,
+		EditorComponentType::HitscanWeapon);
+
+	if (hitscanWeapon != nullptr && hitscanWeapon->isActive) {
+		return FireHitscan(weaponGameObjectId);
 	}
 
-	if (EditorComponentUtility::FindComponent(*weapon, EditorComponentType::HitscanWeapon) != nullptr) {
-		return FireHitscan(weaponGameObjectId);
+	const EditorComponent* projectileEmitter = EditorComponentUtility::FindComponent(
+		*weapon,
+		EditorComponentType::ProjectileEmitter);
+
+	if (projectileEmitter != nullptr && projectileEmitter->isActive) {
+		return FireProjectile(weaponGameObjectId);
 	}
 
 	return false;
@@ -1208,6 +1351,27 @@ int32_t EditorWeaponManager::ExecuteProjectileShot(
 		activeProjectile.instigatorGameObjectId,
 		activeProjectile.armingDistance,
 		activeProjectile.ignoredGameObjectIds);
+
+	const int32_t projectilePoolGameObjectId = projectile->projectilePoolGameObjectId;
+
+	if (projectilePoolGameObjectId >= 0 && editorScene_ != nullptr) {
+		// 同じプール内の弾同士で当たると、敵へ届く前に Health 無しとして弾が消える。
+		for (const EditorGameObject& candidate : editorScene_->GetGameObjects()) {
+			if (IsInHierarchy(candidate.id, projectilePoolGameObjectId)) {
+				activeProjectile.ignoredGameObjectIds.push_back(candidate.id);
+			}
+		}
+
+		std::sort(
+			activeProjectile.ignoredGameObjectIds.begin(),
+			activeProjectile.ignoredGameObjectIds.end());
+		activeProjectile.ignoredGameObjectIds.erase(
+			std::unique(
+				activeProjectile.ignoredGameObjectIds.begin(),
+				activeProjectile.ignoredGameObjectIds.end()),
+			activeProjectile.ignoredGameObjectIds.end());
+	}
+
 	activeProjectile.actionTargetGameObjectId = projectile->projectileActionTargetGameObjectId;
 	activeProjectile.hitActionName = projectile->projectileHitActionName;
 	activeProjectile.velocity = AddVector3(MultiplyVector3(muzzleSpeed, direction), sourceVelocity);
@@ -2031,7 +2195,10 @@ void EditorWeaponManager::UpdateProjectiles(float deltaTime) {
 					oceanHit.distance,
 					0.0f,
 					-1.0f,
-					-1.0f);
+					-1.0f,
+					collisionStart,
+					activeProjectile.radius,
+					activeProjectile.ignoredGameObjectIds);
 
 				ExecuteImpactResponse(
 					activeProjectile.ownerGameObjectId,
@@ -2091,7 +2258,10 @@ void EditorWeaponManager::UpdateProjectiles(float deltaTime) {
 					physicsHit.distance,
 					appliedDamage,
 					healthBefore,
-					healthAfter);
+					healthAfter,
+					collisionStart,
+					activeProjectile.radius,
+					activeProjectile.ignoredGameObjectIds);
 
 				ExecuteImpactResponse(
 					activeProjectile.ownerGameObjectId,
@@ -2207,6 +2377,23 @@ void EditorWeaponManager::UpdateProjectiles(float deltaTime) {
 				activeProjectile.remainingLifetime -= deltaTime;
 				activeProjectile.traveledDistance += travelDistance;
 				shouldRelease = activeProjectile.remainingLifetime <= 0.0f;
+
+				if (shouldRelease) {
+					// 一度も命中しないまま寿命切れでReleaseされる瞬間だけ記録する
+					// (Frame毎のMissをそのままLogすると連射武器で埋まるため)。
+					RecordProjectileCollision(
+						"MissExpired",
+						activeProjectile.gameObjectId,
+						-1,
+						-1,
+						activeProjectile.traveledDistance,
+						0.0f,
+						-1.0f,
+						-1.0f,
+						projectileGameObject->translate,
+						activeProjectile.radius,
+					activeProjectile.ignoredGameObjectIds);
+				}
 
 				if (shouldRelease && detonator != nullptr && detonator->isActive && detonator->projectileDetonateOnLifetime) {
 					ExecuteDetonation(activeProjectile, projectileGameObject->translate, -1);

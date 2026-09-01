@@ -1,0 +1,8 @@
+﻿# CG2 PlayerInput Actions
+# Action|ActionMap|ActionName|ValueType|BindingType|...
+
+Action|Player|Move|Vector2|2DVector|W|S|A|D
+Action|Player|Connect|Button|Mouse|LeftButton
+Action|Player|Shrink|Button|Key|Space
+Action|Player|Detach|Button|Key|E
+Action|Player|Cancel|Button|Mouse|RightButton

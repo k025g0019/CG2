@@ -13,7 +13,7 @@ class EditorCameraEffectManager {
 public:
 	void Initialize(EditorScene* editorScene);  // Camera Blend / Shake対象Sceneを接続する
 	void Start();  // Play On Start設定を開始し、Runtime Camera差分を初期化する
-	void Update(float deltaTime);  // Blend補間とShake波形をGame View共有状態へ反映する
+	void Update(float deltaTime, const uint8_t* keyState);  // 入力Camera、Blend、ShakeをGame View共有状態へ反映する
 	void Stop();  // Camera上書きと振動差分を解除する
 	bool PlayBlend(int32_t componentOwnerGameObjectId);  // 指定ObjectのCameraBlendを再生する
 	bool PlayShake(int32_t componentOwnerGameObjectId);  // 指定ObjectのCameraShakeを再生する
@@ -40,12 +40,25 @@ private:
 	EditorScene* editorScene_ = nullptr;  // Camera GameObjectと設定Componentを検索するScene
 	BlendRuntime blendRuntime_{};  // 同時に有効なCamera Blendは最後に開始した1件
 	std::vector<ShakeRuntime> shakeRuntimes_;  // 複数Shakeは位置・回転差分を加算する
-	bool followComposerWasActive_ = false;  // Composer無効化時だけ自身のCamera上書きを解除する。
+	bool cameraControllerWasActive_ = false;  // 入力CameraまたはComposer無効化時だけ自身のCamera上書きを解除する。
+	int32_t cameraInputOwnerGameObjectId_ = -1;  // 入力状態を初期化したCamera GameObject。
+	Transforms cameraInputRuntimeTransform_{};  // FreeLook／Orbitで更新する実行時Camera姿勢。
+	float cameraInputYaw_ = 0.0f;
+	float cameraInputPitch_ = 0.0f;
+	float cameraInputOrbitDistance_ = 0.0f;
+	bool cameraInputInitialized_ = false;
+	bool cameraInputOwnsCursorLock_ = false;  // Scriptのカーソル固定を誤って解除しないためCamera側の所有を記録する。
+	bool cameraInputOwnsCursorVisibility_ = false;  // Camera側が非表示へ変更した時だけStop時に表示へ戻す。
 	bool isStarted_ = false;  // Play中だけ共有Camera状態を書き換える
 
 	Transforms ResolveWorldTransform(const EditorGameObject& gameObject) const;  // 親Transformを含む簡易World姿勢を返す
+	Transforms ResolveFollowedCameraTransform(
+		const EditorGameObject& cameraGameObject,
+		const EditorComponent& cameraComponent) const;  // Camera Followのoffsetを反映したWorld姿勢を返す
 	bool FindHighestPriorityCameraTransform(Transforms& cameraTransform) const;  // 現在選択されるCamera姿勢を返す
 	EditorGameObject* FindHighestPriorityCameraGameObject() const;  // SpeedFeedbackと追従合成で共通利用するCameraを返す
+	bool UpdateCameraInput(float deltaTime, const uint8_t* keyState);  // 標準FreeLook／Orbitを最高Priority Cameraへ適用する
+	void ReleaseCameraInputCursor();  // Camera操作が終わった時にカーソル固定と非表示を解除する
 	bool UpdateFollowComposer(float deltaTime);  // 対象姿勢、速度先読み、減衰を合成してGame Cameraへ反映する
 	float UpdateSpeedFeedback(float deltaTime);  // 実速度からFOV、Motion Blur、Camera演出強度を更新する
 	static Transforms LerpTransform(

@@ -82,6 +82,12 @@ void GameScene::Initialize(_In_ HINSTANCE instanceHandle) {
 	gameplayToolsWindowManager_.Initialize();  // 汎用Spline、Event Timeline、State Graphを初期化する。
 	diagnosticsWindowManager_.Initialize();  // Runtime負荷とScene設定不足を検査できる状態にする。
 	logMonitorWindowManager_.Initialize();  // 汎用ログ・監視の選択UIを使うための担当。
+	pvShootWindowManager_.Initialize();  // PV撮影モードのCamera/PostProcess/TimeScale調整を使うための担当。
+
+	if (!isStandaloneGame_) {
+		teamCollaborationManager_.Initialize(&g_editorScene, &g_editorConsoleMessages);
+	}
+
 	renderManager_.Initialize();  // DirectX12 の描画コマンドを積む Renderer 担当。
 }
 
@@ -122,6 +128,8 @@ void GameScene::Update() {
 	gameplayToolsWindowManager_.Update();  // Gameplay編集WindowはDraw時編集のため状態維持だけを行う。
 	diagnosticsWindowManager_.Update();  // 表示中だけ一定間隔でScene構成を静的検査する。
 	logMonitorWindowManager_.Update();  // 選択UIはDraw中に編集するためUpdateは空実装。
+	pvShootWindowManager_.Update();  // PV撮影モードのTimeScale倍率をRuntimeへ反映する。
+	teamCollaborationManager_.Update(1.0f / 60.0f, g_editorRuntimeManager.IsPlaying());
 	renderManager_.Update();  // Renderer は Draw で GPU コマンドを発行するため Update は空実装。
 }
 
@@ -146,22 +154,33 @@ void GameScene::Draw() {
 	}
 
 	mainMenuManager_.Draw();  // 上部メニューと Play / Stop の UI を構築する。
-	dockingManager_.Draw();  // 各ウィンドウをドラッグ移動・ドッキングできる DockSpace を構築する。
-	sceneViewManager_.Draw();  // Scene タブ、グリッド、ギズモ、ドラッグ配置、範囲選択を描画する。
+	pvShootWindowManager_.Draw();  // PV撮影モードの切り替えチェックボックスと調整パネルを描画する。
+
+	if (!pvShootWindowManager_.IsActive()) {
+		dockingManager_.Draw();  // 各ウィンドウをドラッグ移動・ドッキングできる DockSpace を構築する。
+		sceneViewManager_.Draw();  // Scene タブ、グリッド、ギズモ、ドラッグ配置、範囲選択を描画する。
+	}
+
 	gameViewManager_.Draw();  // GameView の独立ウィンドウと Camera Component 出力範囲を描画する。
-	hierarchyWindowManager_.Draw();  // GameObject 階層を描画し、選択や親子付けの入力を処理する。
-	inspectorWindowManager_.Draw();  // 選択中 GameObject の Transform / Component / 環境設定を描画する。
-	bottomPanelWindowManager_.Draw();  // Project アセット一覧と Console ログを描画する。
-	animationWindowManager_.Draw();  // Animation Clip の Timeline、Track、Keyframe、Event を描画する。
-	gameplayToolsWindowManager_.Draw();  // 汎用Spline、Event Timeline、State Graphを描画する。
-	diagnosticsWindowManager_.Draw();  // ProfilerとScene Validatorを独立Windowへ描画する。
-	logMonitorWindowManager_.Draw();  // 汎用ログ・監視の選択UIを独立Windowへ描画する。
+
+	if (!pvShootWindowManager_.IsActive()) {
+		hierarchyWindowManager_.Draw();  // GameObject 階層を描画し、選択や親子付けの入力を処理する。
+		inspectorWindowManager_.Draw();  // 選択中 GameObject の Transform / Component / 環境設定を描画する。
+		bottomPanelWindowManager_.Draw();  // Project アセット一覧と Console ログを描画する。
+		animationWindowManager_.Draw();  // Animation Clip の Timeline、Track、Keyframe、Event を描画する。
+		gameplayToolsWindowManager_.Draw();  // 汎用Spline、Event Timeline、State Graphを描画する。
+		diagnosticsWindowManager_.Draw();  // ProfilerとScene Validatorを独立Windowへ描画する。
+		logMonitorWindowManager_.Draw();  // 汎用ログ・監視の選択UIを独立Windowへ描画する。
+		teamCollaborationManager_.Draw(&g_isTeamCollaborationWindowVisible);
+	}
+
 	imguiFrameManager_.Draw();  // ImGui の DrawData を確定し、Renderer が GPU に送れる状態にする。
 	renderManager_.Draw();  // 3D/2D オブジェクト、ImGui、Present、Fence 待ちまでを実行する。
 }
 
 int GameScene::Finalize() {
 	// DirectX / ImGui / Win32 / 音声リソースを解放し、WinMain に返す終了コードを受け取る。
+	teamCollaborationManager_.Finalize();
 	return platformManager_.Finalize();
 }
 

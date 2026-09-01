@@ -238,6 +238,10 @@ ClientBin/
 *.jfm
 *.pfx
 *.publishsettings
+
+# CG2 Team Collaboration local state
+.team/
+ProjectSettings/TeamCollaboration.settings
 orleans.codegen.cs
 
 # Including strong name files can present a security risk

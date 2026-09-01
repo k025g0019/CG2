@@ -12,5 +12,5 @@ if errorlevel 1 exit /b 1
 
 if not exist "%SCRIPT_DIR%\x64\Debug" mkdir "%SCRIPT_DIR%\x64\Debug"
 
-cl /nologo /utf-8 /std:c++20 /EHsc /MDd /Od /Zi /LD /I "%PROJECT_ROOT%" "%SCRIPT_DIR%\en_fbxScript.cpp" /Fe:"%SCRIPT_DIR%\x64\Debug\en_fbxScript.dll"
+cl /nologo /utf-8 /std:c++20 /EHsc /MDd /Od /Zi /LD /I "%PROJECT_ROOT%\Source\Engine\Core" /I "%PROJECT_ROOT%" "%SCRIPT_DIR%\en_fbxScript.cpp" "%SCRIPT_DIR%\en_fbxScript.Generated.cpp" /Fe:"%SCRIPT_DIR%\x64\Debug\en_fbxScript.dll"
 popd

@@ -3,6 +3,7 @@
 #include "EditorAssetUtility.h"
 #include "EditorComponentUtility.h"
 #include "EditorMeshCollision.h"
+#include "EditorSharedState.h"
 #include "Source/Engine/Core/Vector&Matrix.h"
 
 #include <algorithm>
@@ -239,6 +240,9 @@ constexpr int32_t kPhysicsLayerCount = 8;  // Inspector に出している物理
 		Vector3 normal = {0.0f, 1.0f, 0.0f};  // first -> second の方向を表す接触法線
 		Vector3 relativeVelocity = {0.0f, 0.0f, 0.0f};  // second - first の相対速度
 		float separation = 0.0f;  // 貫通深さ
+		float contactImpulse = 0.0f;  // 法線方向の衝突Impulse推定値
+		float firstMass = 0.0f;  // first側Dynamic Body質量
+		float secondMass = 0.0f;  // second側Dynamic Body質量
 	};
 
 	void EnsureJoltGlobalInitialized() {
@@ -473,6 +477,7 @@ public:
 			physicsSystem_->SetContactListener(nullptr);
 		}
 
+		runtimeJoints_.clear();
 		constraints_.clear();
 		characterVirtualLinks_.clear();
 		bodyLinks_.clear();
@@ -512,6 +517,12 @@ public:
 		EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
 
 		if (gameObject == nullptr || !gameObject->isActive) {
+			// Play中の明示登録(Pool貸出など)でここに来るのは想定外。
+			// 非ActiveのままではBodyが作られず、以後Castに一切引っかからない。
+			RecordBodyCreationFailure(
+				"非Activeで登録スキップ " +
+				(gameObject != nullptr ? gameObject->name : std::string("(不明)")) +
+				" (id=" + std::to_string(gameObjectId) + ")");
 			return false;
 		}
 
@@ -690,6 +701,31 @@ foundBody = true;
 			(std::max)(size.z * 0.5f, kJoltMinimumShapeSize));
 		JPH::RefConst<JPH::Shape> shape = new JPH::BoxShape(halfExtent, 0.0f);
 		return OverlapShape(shape, center, hitGameObjectIds);
+	}
+
+	// Body実座標とWorld登録状態を返す。GameObject側のTransformと突き合わせるための診断。
+	bool GetBodyDiagnostics(int32_t gameObjectId, Vector3& bodyPosition, bool& isAddedToWorld) const {
+		bodyPosition = {0.0f, 0.0f, 0.0f};
+		isAddedToWorld = false;
+
+		if (!isActive_ || physicsSystem_ == nullptr) {
+			return false;
+		}
+
+		JPH::BodyID bodyId{};
+
+		if (!TryFindPrimaryBodyId(gameObjectId, bodyId)) {
+			return false;
+		}
+
+		JPH::BodyInterface& bodyInterface = physicsSystem_->GetBodyInterface();
+		isAddedToWorld = bodyInterface.IsAdded(bodyId);
+		const JPH::RVec3 position = bodyInterface.GetPosition(bodyId);
+		bodyPosition = {
+			static_cast<float>(position.GetX()),
+			static_cast<float>(position.GetY()),
+			static_cast<float>(position.GetZ())};
+		return true;
 	}
 
 	bool GetBodyMass(int32_t gameObjectId, float& bodyMass) const {
@@ -1157,6 +1193,192 @@ foundBody = true;
 		return true;
 	}
 
+	uint64_t CreateSpringJoint(
+		int32_t ownerGameObjectId,
+		int32_t connectedGameObjectId,
+		const Vector3& ownerAnchor,
+		const Vector3& connectedAnchor,
+		float minDistance,
+		float maxDistance,
+		float frequency,
+		float damping) {
+		if (!CanCreateRuntimeSpringJoint(
+			ownerGameObjectId,
+			connectedGameObjectId,
+			minDistance,
+			maxDistance,
+			frequency,
+			damping)) {
+			return 0ULL;
+		}
+
+		JPH::Ref<JPH::Constraint> constraint = CreateRuntimeSpringConstraint(
+			ownerGameObjectId,
+			connectedGameObjectId,
+			ownerAnchor,
+			connectedAnchor,
+			minDistance,
+			maxDistance,
+			frequency,
+			damping);
+
+		if (constraint == nullptr) {
+			return 0ULL;
+		}
+
+		const uint64_t jointHandle = AllocateRuntimeJointHandle();
+		physicsSystem_->AddConstraint(constraint.GetPtr());
+		runtimeJoints_.emplace(
+			jointHandle,
+			RuntimeJoint{
+				constraint,
+				RuntimeJointType::Spring,
+				ownerGameObjectId,
+				connectedGameObjectId});
+		ActivateJointBodies(ownerGameObjectId, connectedGameObjectId);
+		return jointHandle;
+	}
+
+	bool DestroyJoint(uint64_t jointHandle) {
+		auto jointIterator = runtimeJoints_.find(jointHandle);
+		if (jointIterator == runtimeJoints_.end() || physicsSystem_ == nullptr) {
+			return false;
+		}
+
+		physicsSystem_->RemoveConstraint(jointIterator->second.constraint.GetPtr());
+		runtimeJoints_.erase(jointIterator);
+		return true;
+	}
+
+	bool SetSpringJointSettings(
+		uint64_t jointHandle,
+		const Vector3& ownerAnchor,
+		const Vector3& connectedAnchor,
+		float minDistance,
+		float maxDistance,
+		float frequency,
+		float damping) {
+		auto jointIterator = runtimeJoints_.find(jointHandle);
+		if (jointIterator == runtimeJoints_.end()) {
+			return false;
+		}
+
+		const RuntimeJoint& currentJoint = jointIterator->second;
+		if (!CanCreateRuntimeSpringJoint(
+			currentJoint.ownerGameObjectId,
+			currentJoint.connectedGameObjectId,
+			minDistance,
+			maxDistance,
+			frequency,
+			damping)) {
+			return false;
+		}
+
+		JPH::Ref<JPH::Constraint> replacementConstraint = CreateRuntimeSpringConstraint(
+			currentJoint.ownerGameObjectId,
+			currentJoint.connectedGameObjectId,
+			ownerAnchor,
+			connectedAnchor,
+			minDistance,
+			maxDistance,
+			frequency,
+			damping);
+
+		if (replacementConstraint == nullptr) {
+			return false;
+		}
+
+		physicsSystem_->RemoveConstraint(currentJoint.constraint.GetPtr());
+		physicsSystem_->AddConstraint(replacementConstraint.GetPtr());
+		jointIterator->second.constraint = replacementConstraint;
+		ActivateJointBodies(currentJoint.ownerGameObjectId, currentJoint.connectedGameObjectId);
+		return true;
+	}
+
+	bool IsJointValid(uint64_t jointHandle) const {
+		return jointHandle != 0ULL && runtimeJoints_.find(jointHandle) != runtimeJoints_.end();
+	}
+
+	uint64_t CreateJoint(
+		RuntimeJointType jointType,
+		int32_t ownerGameObjectId,
+		int32_t connectedGameObjectId,
+		const RuntimeJointSettings& jointSettings) {
+		if (jointType == RuntimeJointType::Spring) {
+			return CreateSpringJoint(
+				ownerGameObjectId,
+				connectedGameObjectId,
+				jointSettings.ownerAnchor,
+				jointSettings.connectedAnchor,
+				jointSettings.minDistance,
+				jointSettings.maxDistance,
+				jointSettings.frequency,
+				jointSettings.damping);
+		}
+
+		if (!CanCreateRuntimeJoint(ownerGameObjectId, connectedGameObjectId, jointSettings)) {
+			return 0ULL;
+		}
+
+		JPH::Ref<JPH::Constraint> constraint = CreateRuntimeConstraint(
+			jointType,
+			ownerGameObjectId,
+			connectedGameObjectId,
+			jointSettings);
+		if (constraint == nullptr) {
+			return 0ULL;
+		}
+
+		const uint64_t jointHandle = AllocateRuntimeJointHandle();
+		physicsSystem_->AddConstraint(constraint.GetPtr());
+		runtimeJoints_.emplace(
+			jointHandle,
+			RuntimeJoint{constraint, jointType, ownerGameObjectId, connectedGameObjectId});
+		ActivateJointBodies(ownerGameObjectId, connectedGameObjectId);
+		return jointHandle;
+	}
+
+	bool SetJointSettings(uint64_t jointHandle, const RuntimeJointSettings& jointSettings) {
+		auto jointIterator = runtimeJoints_.find(jointHandle);
+		if (jointIterator == runtimeJoints_.end()) {
+			return false;
+		}
+
+		const RuntimeJoint currentJoint = jointIterator->second;
+		if (currentJoint.jointType == RuntimeJointType::Spring) {
+			return SetSpringJointSettings(
+				jointHandle,
+				jointSettings.ownerAnchor,
+				jointSettings.connectedAnchor,
+				jointSettings.minDistance,
+				jointSettings.maxDistance,
+				jointSettings.frequency,
+				jointSettings.damping);
+		}
+
+		if (!CanCreateRuntimeJoint(
+			currentJoint.ownerGameObjectId,
+			currentJoint.connectedGameObjectId,
+			jointSettings)) {
+			return false;
+		}
+
+		JPH::Ref<JPH::Constraint> replacementConstraint = CreateRuntimeConstraint(
+			currentJoint.jointType,
+			currentJoint.ownerGameObjectId,
+			currentJoint.connectedGameObjectId,
+			jointSettings);
+		if (replacementConstraint == nullptr) {
+			return false;
+		}
+
+		physicsSystem_->RemoveConstraint(currentJoint.constraint.GetPtr());
+		physicsSystem_->AddConstraint(replacementConstraint.GetPtr());
+		jointIterator->second.constraint = replacementConstraint;
+		ActivateJointBodies(currentJoint.ownerGameObjectId, currentJoint.connectedGameObjectId);
+		return true;
+	}
+
 	const std::vector<PhysicsEvent>& GetStepEvents() const {
 		return stepEvents_;
 	}
@@ -1308,7 +1530,16 @@ private:
 	mutable std::unordered_map<uint32_t, std::vector<HydrodynamicSurfaceTriangle>> hydrodynamicSurfaceCache_;  // Body Shapeを最大512面へ縮約したローカル水力面
 	std::unordered_map<uint64_t, ActiveContactPair> activeContactPairs_;  // Enter 済み接触の Stay / Exit 管理
 	std::vector<PhysicsEvent> stepEvents_;  // 1 固定更新中に発生した接触イベントを Script へ渡すために保持する
-	std::vector<JPH::Ref<JPH::Constraint>> constraints_;  // Play 中に Jolt World へ追加した Joint 制約
+	struct RuntimeJoint {
+		JPH::Ref<JPH::Constraint> constraint{};  // PhysicsSystemへ登録した実Constraint
+		RuntimeJointType jointType = RuntimeJointType::Fixed;  // 再設定時にも生成種別を維持する
+		int32_t ownerGameObjectId = -1;  // アンカーを所有するGameObject
+		int32_t connectedGameObjectId = -1;  // 接続先GameObject
+	};
+
+	std::vector<JPH::Ref<JPH::Constraint>> constraints_;  // Scene Component から追加した Joint 制約
+	std::unordered_map<uint64_t, RuntimeJoint> runtimeJoints_;  // Script生成JointをHandle単位で所有する
+	uint64_t nextRuntimeJointHandle_ = 1ULL;  // 0は無効Handleとして予約する
 	bool isActive_ = false;  // Start 済みなら true
 
 	void AddSceneBodies() {
@@ -1331,6 +1562,15 @@ private:
 			if (rigidBody == nullptr ||
 				!rigidBody->isActive ||
 				!MakeImplicitMeshCollider(gameObject, implicitMeshCollider)) {
+				// Collider無しは Route Marker や Pool の入れ物など大多数で正常なので警告しない。
+				// ただし「Rigidbodyがあるのに当たり判定が作れない」のは明確な設定ミスで、
+				// そのObjectはRay/ShapeCastに一切引っかからない(見た目は動くのに弾が当たらない)ため必ず知らせる。
+				if (rigidBody != nullptr && rigidBody->isActive) {
+					RecordBodyCreationFailure(
+						"Collider無し " + gameObject.name +
+						" (id=" + std::to_string(gameObject.id) + ")");
+				}
+
 				return false;
 			}
 
@@ -1362,6 +1602,18 @@ private:
 		JPH::BodyID bodyId = CreateColliderBody(worldGameObject, runtimeCollider, rigidBody, isDynamic);
 
 		if (bodyId.IsInvalid()) {
+			// Shapeが不正、またはJoltのBody上限到達。ここを黙って抜けると
+			// そのObjectは物理世界に存在せず、弾も当たらない状態のまま動き続ける。
+			RecordBodyCreationFailure(
+				"Body生成失敗 " + gameObject.name +
+				" (id=" + std::to_string(gameObject.id) +
+				" collider=" + ToString(runtimeCollider.type) +
+				" size=" + std::to_string(runtimeCollider.colliderSize.x) +
+				"," + std::to_string(runtimeCollider.colliderSize.y) +
+				"," + std::to_string(runtimeCollider.colliderSize.z) +
+				" scale=" + std::to_string(worldGameObject.scale.x) +
+				"," + std::to_string(worldGameObject.scale.y) +
+				"," + std::to_string(worldGameObject.scale.z) + ")");
 			return false;
 		}
 
@@ -1543,6 +1795,250 @@ private:
 		distanceSettings.mLimitsSpringSettings.mFrequency = (std::max)(joint.jointSpringFrequency, 0.0f);
 		distanceSettings.mLimitsSpringSettings.mDamping = (std::max)(joint.jointSpringDamping, 0.0f);
 		return distanceSettings.Create(ownerBody, connectedBody);
+	}
+
+	bool CanCreateRuntimeSpringJoint(
+		int32_t ownerGameObjectId,
+		int32_t connectedGameObjectId,
+		float minDistance,
+		float maxDistance,
+		float frequency,
+		float damping) const {
+		if (!isActive_ || editorScene_ == nullptr || physicsSystem_ == nullptr) {
+			return false;
+		}
+
+		if (ownerGameObjectId < 0 || connectedGameObjectId < 0 ||
+			ownerGameObjectId == connectedGameObjectId) {
+			return false;
+		}
+
+		if (minDistance < 0.0f || maxDistance < minDistance ||
+			frequency < 0.0f || damping < 0.0f) {
+			return false;
+		}
+
+		return editorScene_->FindGameObject(ownerGameObjectId) != nullptr &&
+			editorScene_->FindGameObject(connectedGameObjectId) != nullptr;
+	}
+
+	JPH::Ref<JPH::Constraint> CreateRuntimeSpringConstraint(
+		int32_t ownerGameObjectId,
+		int32_t connectedGameObjectId,
+		const Vector3& ownerAnchor,
+		const Vector3& connectedAnchor,
+		float minDistance,
+		float maxDistance,
+		float frequency,
+		float damping) const {
+		JPH::BodyID ownerBodyId{};
+		JPH::BodyID connectedBodyId{};
+		if (!TryFindPrimaryBodyId(ownerGameObjectId, ownerBodyId) ||
+			!TryFindPrimaryBodyId(connectedGameObjectId, connectedBodyId) ||
+			ownerBodyId == connectedBodyId) {
+			return nullptr;
+		}
+
+		const JPH::BodyInterface& bodyInterface = physicsSystem_->GetBodyInterface();
+		if (!bodyInterface.IsAdded(ownerBodyId) || !bodyInterface.IsAdded(connectedBodyId)) {
+			return nullptr;
+		}
+
+		const JPH::BodyLockInterface& lockInterface = physicsSystem_->GetBodyLockInterface();
+		JPH::BodyLockWrite ownerBodyLock(lockInterface, ownerBodyId);
+		JPH::BodyLockWrite connectedBodyLock(lockInterface, connectedBodyId);
+		if (!ownerBodyLock.Succeeded() || !connectedBodyLock.Succeeded()) {
+			return nullptr;
+		}
+
+		const Vector3 ownerWorldAnchor = Transform(
+			ownerAnchor,
+			editorScene_->GetWorldMatrix(ownerGameObjectId));
+		const Vector3 connectedWorldAnchor = Transform(
+			connectedAnchor,
+			editorScene_->GetWorldMatrix(connectedGameObjectId));
+
+		JPH::DistanceConstraintSettings distanceSettings{};
+		distanceSettings.mSpace = JPH::EConstraintSpace::WorldSpace;
+		distanceSettings.mPoint1 = MakeJoltPosition(ownerWorldAnchor);
+		distanceSettings.mPoint2 = MakeJoltPosition(connectedWorldAnchor);
+		distanceSettings.mMinDistance = minDistance;
+		distanceSettings.mMaxDistance = maxDistance;
+		distanceSettings.mLimitsSpringSettings.mMode = JPH::ESpringMode::FrequencyAndDamping;
+		distanceSettings.mLimitsSpringSettings.mFrequency = frequency;
+		distanceSettings.mLimitsSpringSettings.mDamping = damping;
+		return distanceSettings.Create(ownerBodyLock.GetBody(), connectedBodyLock.GetBody());
+	}
+
+	bool CanCreateRuntimeJoint(
+		int32_t ownerGameObjectId,
+		int32_t connectedGameObjectId,
+		const RuntimeJointSettings& jointSettings) const {
+		if (!isActive_ || editorScene_ == nullptr || physicsSystem_ == nullptr) {
+			return false;
+		}
+
+		if (ownerGameObjectId < 0 || connectedGameObjectId < 0 ||
+			ownerGameObjectId == connectedGameObjectId) {
+			return false;
+		}
+
+		if (jointSettings.minDistance < 0.0f ||
+			jointSettings.maxDistance < jointSettings.minDistance ||
+			jointSettings.maxAngle < jointSettings.minAngle ||
+			jointSettings.frequency < 0.0f || jointSettings.damping < 0.0f) {
+			return false;
+		}
+
+		return editorScene_->FindGameObject(ownerGameObjectId) != nullptr &&
+			editorScene_->FindGameObject(connectedGameObjectId) != nullptr;
+	}
+
+	JPH::Ref<JPH::Constraint> CreateRuntimeConstraint(
+		RuntimeJointType jointType,
+		int32_t ownerGameObjectId,
+		int32_t connectedGameObjectId,
+		const RuntimeJointSettings& jointSettings) const {
+		JPH::BodyID ownerBodyId{};
+		JPH::BodyID connectedBodyId{};
+		if (!TryFindPrimaryBodyId(ownerGameObjectId, ownerBodyId) ||
+			!TryFindPrimaryBodyId(connectedGameObjectId, connectedBodyId) ||
+			ownerBodyId == connectedBodyId) {
+			return nullptr;
+		}
+
+		const JPH::BodyInterface& bodyInterface = physicsSystem_->GetBodyInterface();
+		if (!bodyInterface.IsAdded(ownerBodyId) || !bodyInterface.IsAdded(connectedBodyId)) {
+			return nullptr;
+		}
+
+		const JPH::BodyLockInterface& lockInterface = physicsSystem_->GetBodyLockInterface();
+		JPH::BodyLockWrite ownerBodyLock(lockInterface, ownerBodyId);
+		JPH::BodyLockWrite connectedBodyLock(lockInterface, connectedBodyId);
+		if (!ownerBodyLock.Succeeded() || !connectedBodyLock.Succeeded()) {
+			return nullptr;
+		}
+
+		const Vector3 ownerWorldAnchor = Transform(
+			jointSettings.ownerAnchor,
+			editorScene_->GetWorldMatrix(ownerGameObjectId));
+		const Vector3 connectedWorldAnchor = Transform(
+			jointSettings.connectedAnchor,
+			editorScene_->GetWorldMatrix(connectedGameObjectId));
+		JPH::Body& ownerBody = ownerBodyLock.GetBody();
+		JPH::Body& connectedBody = connectedBodyLock.GetBody();
+
+		if (jointType == RuntimeJointType::Fixed) {
+			JPH::FixedConstraintSettings fixedSettings{};
+			fixedSettings.mSpace = JPH::EConstraintSpace::WorldSpace;
+			fixedSettings.mAutoDetectPoint = false;
+			fixedSettings.mPoint1 = MakeJoltPosition(ownerWorldAnchor);
+			fixedSettings.mPoint2 = MakeJoltPosition(connectedWorldAnchor);
+			fixedSettings.mAxisX1 = JPH::Vec3::sAxisX();
+			fixedSettings.mAxisY1 = JPH::Vec3::sAxisY();
+			fixedSettings.mAxisX2 = JPH::Vec3::sAxisX();
+			fixedSettings.mAxisY2 = JPH::Vec3::sAxisY();
+			return fixedSettings.Create(ownerBody, connectedBody);
+		}
+
+		const Vector3 normalizedAxis = MakeJointAxis(jointSettings.axis);
+		const JPH::Vec3 primaryAxis = MakeJoltVector(normalizedAxis);
+		const JPH::Vec3 secondaryAxis = MakeJointNormalAxis(normalizedAxis);
+		if (jointType == RuntimeJointType::Hinge ||
+			jointType == RuntimeJointType::Character) {
+			JPH::HingeConstraintSettings hingeSettings{};
+			hingeSettings.mSpace = JPH::EConstraintSpace::WorldSpace;
+			hingeSettings.mPoint1 = MakeJoltPosition(ownerWorldAnchor);
+			hingeSettings.mPoint2 = MakeJoltPosition(connectedWorldAnchor);
+			hingeSettings.mHingeAxis1 = primaryAxis;
+			hingeSettings.mHingeAxis2 = primaryAxis;
+			hingeSettings.mNormalAxis1 = secondaryAxis;
+			hingeSettings.mNormalAxis2 = secondaryAxis;
+			hingeSettings.mLimitsMin = (std::clamp)(jointSettings.minAngle, -3.1415926f, 0.0f);
+			hingeSettings.mLimitsMax = (std::clamp)(jointSettings.maxAngle, 0.0f, 3.1415926f);
+			hingeSettings.mLimitsSpringSettings.mMode = JPH::ESpringMode::FrequencyAndDamping;
+			hingeSettings.mLimitsSpringSettings.mFrequency = jointSettings.frequency;
+			hingeSettings.mLimitsSpringSettings.mDamping = jointSettings.damping;
+			return hingeSettings.Create(ownerBody, connectedBody);
+		}
+
+		if (jointType != RuntimeJointType::Configurable) {
+			return nullptr;
+		}
+
+		JPH::SixDOFConstraintSettings configurableSettings{};
+		configurableSettings.mSpace = JPH::EConstraintSpace::WorldSpace;
+		configurableSettings.mPosition1 = MakeJoltPosition(ownerWorldAnchor);
+		configurableSettings.mPosition2 = MakeJoltPosition(connectedWorldAnchor);
+		configurableSettings.mAxisX1 = primaryAxis;
+		configurableSettings.mAxisX2 = primaryAxis;
+		configurableSettings.mAxisY1 = secondaryAxis;
+		configurableSettings.mAxisY2 = secondaryAxis;
+		const bool fixedTranslationAxes[] = {
+			jointSettings.freezePositionX,
+			jointSettings.freezePositionY,
+			jointSettings.freezePositionZ};
+		const bool fixedRotationAxes[] = {
+			jointSettings.freezeRotationX,
+			jointSettings.freezeRotationY,
+			jointSettings.freezeRotationZ};
+
+		for (int32_t axisIndex = 0; axisIndex < 3; axisIndex++) {
+			const auto translationAxis = static_cast<JPH::SixDOFConstraintSettings::EAxis>(
+				static_cast<int32_t>(JPH::SixDOFConstraintSettings::EAxis::TranslationX) + axisIndex);
+			const auto rotationAxis = static_cast<JPH::SixDOFConstraintSettings::EAxis>(
+				static_cast<int32_t>(JPH::SixDOFConstraintSettings::EAxis::RotationX) + axisIndex);
+
+			if (fixedTranslationAxes[axisIndex]) {
+				configurableSettings.MakeFixedAxis(translationAxis);
+			}
+			else {
+				configurableSettings.SetLimitedAxis(
+					translationAxis,
+					jointSettings.minDistance,
+					jointSettings.maxDistance);
+				configurableSettings.mLimitsSpringSettings[axisIndex].mMode =
+					JPH::ESpringMode::FrequencyAndDamping;
+				configurableSettings.mLimitsSpringSettings[axisIndex].mFrequency = jointSettings.frequency;
+				configurableSettings.mLimitsSpringSettings[axisIndex].mDamping = jointSettings.damping;
+			}
+
+			if (fixedRotationAxes[axisIndex]) {
+				configurableSettings.MakeFixedAxis(rotationAxis);
+			}
+			else {
+				configurableSettings.SetLimitedAxis(
+					rotationAxis,
+					(std::clamp)(jointSettings.minAngle, -3.1415926f, 3.1415926f),
+					(std::clamp)(jointSettings.maxAngle, -3.1415926f, 3.1415926f));
+			}
+		}
+
+		return configurableSettings.Create(ownerBody, connectedBody);
+	}
+
+	uint64_t AllocateRuntimeJointHandle() {
+		while (nextRuntimeJointHandle_ == 0ULL ||
+			runtimeJoints_.find(nextRuntimeJointHandle_) != runtimeJoints_.end()) {
+			nextRuntimeJointHandle_++;
+		}
+
+		const uint64_t jointHandle = nextRuntimeJointHandle_;
+		nextRuntimeJointHandle_++;
+		return jointHandle;
+	}
+
+	void ActivateJointBodies(int32_t ownerGameObjectId, int32_t connectedGameObjectId) {
+		JPH::BodyID ownerBodyId{};
+		JPH::BodyID connectedBodyId{};
+		if (!TryFindPrimaryBodyId(ownerGameObjectId, ownerBodyId) ||
+			!TryFindPrimaryBodyId(connectedGameObjectId, connectedBodyId)) {
+			return;
+		}
+
+		JPH::BodyInterface& bodyInterface = physicsSystem_->GetBodyInterface();
+		bodyInterface.ActivateBody(ownerBodyId);
+		bodyInterface.ActivateBody(connectedBodyId);
 	}
 
 	JPH::Constraint* CreateConfigurableConstraint(
@@ -2041,9 +2537,14 @@ private:
 		}
 
 		const float toleranceRates[] = {0.0001f, 0.0005f, 0.001f, 0.005f, 0.01f};
+		// 凸包半径を0にすると、GJK/EPAの投機的接触マージンが完全に無くなり、SphereCast/RayCast
+		// がこのShapeを検出できないことがある(Boxでは当たっていたのにAuto Convexに変えた
+		// 途端に一切当たらなくなった原因はこれ)。Jolt既定のcDefaultConvexRadius(0.05)相当を
+		// 与え、極端に小さいShapeでは半径の方が大きくならないよう上限を掛ける。
+		const float convexRadius = (std::min)(0.05f, maximumExtent * 0.1f);
 
 		for (float toleranceRate : toleranceRates) {
-			JPH::ConvexHullShapeSettings hullSettings(hullPoints, 0.0f);
+			JPH::ConvexHullShapeSettings hullSettings(hullPoints, convexRadius);
 			hullSettings.mHullTolerance = (std::max)(
 				maximumExtent * toleranceRate,
 				0.00001f);
@@ -3090,6 +3591,16 @@ private:
 		JPH::RMat44 startTransform = JPH::RMat44::sTranslation(MakeJoltPosition(origin));
 		JPH::RShapeCast shapeCast(shape, JPH::Vec3::sReplicate(1.0f), startTransform, castDirection);
 		JPH::ShapeCastSettings shapeCastSettings{};
+		// Joltの既定(IgnoreBackFaces)は、Castの開始点が既に相手Shapeの内側にある場合、
+		// 内側から見える面が全て裏面になるため何も返さない。
+		// 船のような大きなColliderへ弾が1Frameで深く入り込むと、この状態になって
+		// 「弾は敵の箱の中にいるのに命中しない」が起きる(実測: 弾y=1.43が
+		// 中心y=5.18/高さ11の箱の内側なのにMiss)。裏面も拾い、開始時めり込みを
+		// 正しく解決する設定へ変更する。
+		shapeCastSettings.mBackFaceModeConvex = JPH::EBackFaceMode::CollideWithBackFaces;
+		shapeCastSettings.mBackFaceModeTriangles = JPH::EBackFaceMode::CollideWithBackFaces;
+		shapeCastSettings.mUseShrunkenShapeAndConvexRadius = true;
+		shapeCastSettings.mReturnDeepestPoint = true;
 		JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
 		JoltQueryObjectLayerFilter queryObjectLayerFilter;
 
@@ -3232,6 +3743,38 @@ private:
 		contactPair.normal = MakeEditorVector(manifold.mWorldSpaceNormal);
 		contactPair.relativeVelocity = GetRelativeVelocity(firstBody, secondBody);
 		contactPair.separation = manifold.mPenetrationDepth;
+		const auto resolveDynamicMass = [](const JPH::Body& body) {
+			if (body.GetMotionType() != JPH::EMotionType::Dynamic || body.GetMotionProperties() == nullptr) {
+				return 0.0f;
+			}
+
+			const float inverseMass = body.GetMotionProperties()->GetInverseMass();
+			return std::isfinite(inverseMass) && inverseMass > 0.000001f
+				? 1.0f / inverseMass
+				: 0.0f;
+		};
+		contactPair.firstMass = resolveDynamicMass(firstBody);
+		contactPair.secondMass = resolveDynamicMass(secondBody);
+
+		if (!contactPair.isTrigger) {
+			const float closingSpeed = (std::max)(
+				-(contactPair.relativeVelocity.x * contactPair.normal.x +
+				  contactPair.relativeVelocity.y * contactPair.normal.y +
+				  contactPair.relativeVelocity.z * contactPair.normal.z),
+				0.0f);
+			float effectiveMass = 0.0f;
+
+			if (contactPair.firstMass > 0.0f && contactPair.secondMass > 0.0f) {
+				effectiveMass =
+					(contactPair.firstMass * contactPair.secondMass) /
+					(contactPair.firstMass + contactPair.secondMass);
+			}
+			else {
+				effectiveMass = (std::max)(contactPair.firstMass, contactPair.secondMass);
+			}
+
+			contactPair.contactImpulse = effectiveMass * closingSpeed;
+		}
 		if (!manifold.mRelativeContactPointsOn1.empty()) {
 			contactPair.point = MakeEditorPosition(manifold.GetWorldSpaceContactPointOn1(0));
 		}
@@ -3246,6 +3789,9 @@ private:
 		collisionInfo.normal = contactPair.normal;
 		collisionInfo.relativeVelocity = contactPair.relativeVelocity;
 		collisionInfo.separation = contactPair.separation;
+		collisionInfo.contactImpulse = contactPair.contactImpulse;
+		collisionInfo.selfMass = contactPair.firstMass;
+		collisionInfo.otherMass = contactPair.secondMass;
 		collisionInfo.isTrigger = contactPair.isTrigger;
 		return collisionInfo;
 	}
@@ -3264,6 +3810,9 @@ private:
 			-contactPair.relativeVelocity.y,
 			-contactPair.relativeVelocity.z};
 		collisionInfo.separation = contactPair.separation;
+		collisionInfo.contactImpulse = contactPair.contactImpulse;
+		collisionInfo.selfMass = contactPair.secondMass;
+		collisionInfo.otherMass = contactPair.firstMass;
 		collisionInfo.isTrigger = contactPair.isTrigger;
 		return collisionInfo;
 	}
@@ -3307,7 +3856,19 @@ private:
 		return gameObject->name;
 	}
 
+	// 物理Body生成の失敗を、Consoleだけでなく Log監視(RuntimeLog)からも見える場所へ残す。
+	// Bodyが無いObjectはCastに一切引っかからず、見た目は正常なのに弾がすり抜けるため、
+	// 失敗を静かに握り潰さないことが重要。
+	void RecordBodyCreationFailure(const std::string& reason) {
+		EditorSharedState::g_lastPhysicsBodyFailure = reason;
+		EditorSharedState::g_physicsBodyFailureCount++;
+		PushConsoleMessage("物理: " + reason);
+	}
+
 	void PushConsoleMessage(const std::string& message) {
+		// Consoleは他のLogで流れて見失いやすいため、デバッグ出力にも必ず残す。
+		OutputDebugStringA((message + "\n").c_str());
+
 		if (consoleMessages_ == nullptr) {
 			return;
 		}
@@ -3418,6 +3979,13 @@ bool EditorJoltPhysicsManager::GetBodyMass(int32_t gameObjectId, float& bodyMass
 	return impl_->GetBodyMass(gameObjectId, bodyMass);
 }
 
+bool EditorJoltPhysicsManager::GetBodyDiagnostics(
+	int32_t gameObjectId,
+	Vector3& bodyPosition,
+	bool& isAddedToWorld) const {
+	return impl_->GetBodyDiagnostics(gameObjectId, bodyPosition, isAddedToWorld);
+}
+
 bool EditorJoltPhysicsManager::GetSubmergedVolume(
 	int32_t gameObjectId,
 	const Vector3& surfacePosition,
@@ -3479,6 +4047,70 @@ bool EditorJoltPhysicsManager::SetVelocity(int32_t gameObjectId, const Vector3& 
 
 bool EditorJoltPhysicsManager::SetAngularVelocity(int32_t gameObjectId, const Vector3& angularVelocity) {
 	return impl_->SetAngularVelocity(gameObjectId, angularVelocity);
+}
+
+uint64_t EditorJoltPhysicsManager::CreateSpringJoint(
+	int32_t ownerGameObjectId,
+	int32_t connectedGameObjectId,
+	const Vector3& ownerAnchor,
+	const Vector3& connectedAnchor,
+	float minDistance,
+	float maxDistance,
+	float frequency,
+	float damping) {
+	return impl_->CreateSpringJoint(
+		ownerGameObjectId,
+		connectedGameObjectId,
+		ownerAnchor,
+		connectedAnchor,
+		minDistance,
+		maxDistance,
+		frequency,
+		damping);
+}
+
+bool EditorJoltPhysicsManager::DestroyJoint(uint64_t jointHandle) {
+	return impl_->DestroyJoint(jointHandle);
+}
+
+bool EditorJoltPhysicsManager::SetSpringJointSettings(
+	uint64_t jointHandle,
+	const Vector3& ownerAnchor,
+	const Vector3& connectedAnchor,
+	float minDistance,
+	float maxDistance,
+	float frequency,
+	float damping) {
+	return impl_->SetSpringJointSettings(
+		jointHandle,
+		ownerAnchor,
+		connectedAnchor,
+		minDistance,
+		maxDistance,
+		frequency,
+		damping);
+}
+
+bool EditorJoltPhysicsManager::IsJointValid(uint64_t jointHandle) const {
+	return impl_->IsJointValid(jointHandle);
+}
+
+uint64_t EditorJoltPhysicsManager::CreateJoint(
+	RuntimeJointType jointType,
+	int32_t ownerGameObjectId,
+	int32_t connectedGameObjectId,
+	const RuntimeJointSettings& jointSettings) {
+	return impl_->CreateJoint(
+		jointType,
+		ownerGameObjectId,
+		connectedGameObjectId,
+		jointSettings);
+}
+
+bool EditorJoltPhysicsManager::SetJointSettings(
+	uint64_t jointHandle,
+	const RuntimeJointSettings& jointSettings) {
+	return impl_->SetJointSettings(jointHandle, jointSettings);
 }
 
 const std::vector<EditorJoltPhysicsManager::PhysicsEvent>& EditorJoltPhysicsManager::GetStepEvents() const {

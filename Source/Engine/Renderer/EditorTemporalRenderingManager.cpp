@@ -1,5 +1,7 @@
 ﻿#include "EditorTemporalRenderingManager.h"
 
+#include "Source/Engine/Editor/EditorProfilerManager.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -726,6 +728,7 @@ bool EditorTemporalRenderingManager::Dispatch(
 	std::memcpy(&viewportHeight, &constants[43], sizeof(float));
 	const uint32_t dispatchWidth = static_cast<uint32_t>(std::ceil((std::max)(viewportWidth, 1.0f)));
 	const uint32_t dispatchHeight = static_cast<uint32_t>(std::ceil((std::max)(viewportHeight, 1.0f)));
+	RecordEditorProfilerDispatch();
 	commandList->Dispatch(
 		(dispatchWidth + kThreadGroupSize - 1u) / kThreadGroupSize,
 		(dispatchHeight + kThreadGroupSize - 1u) / kThreadGroupSize,

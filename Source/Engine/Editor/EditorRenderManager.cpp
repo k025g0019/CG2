@@ -80,6 +80,7 @@ namespace {
 		if (sceneObject.customMeshIndexResource != nullptr &&
 			sceneObject.customMeshIndexCount > 0u) {
 			commandList->IASetIndexBuffer(&sceneObject.customMeshIndexBufferView);
+			RecordEditorProfilerDrawCall();
 			commandList->DrawIndexedInstanced(
 				sceneObject.customMeshIndexCount,
 				instanceCount,
@@ -112,6 +113,7 @@ namespace {
 			startVertexLocation = sceneObject.surface.terrainLodVertexOffsets[lodIndex];
 		}
 
+		RecordEditorProfilerDrawCall();
 		commandList->DrawInstanced(
 			vertexCount,
 			instanceCount,
@@ -1161,6 +1163,8 @@ void EditorRenderManager::Draw() {
 	auto& renderTimestampReadback = g_renderTimestampReadback;
 	auto& renderTimestampFrequency = g_renderTimestampFrequency;
 	auto& renderProfile = g_renderProfile;
+	EditorProfilerManager& profilerManager = g_editorRuntimeManager.GetProfilerManager();
+	uint32_t renderTimestampQueryCount = 2u;
 	auto& useAdapter = g_useAdapter;
 
 	auto& swapChain = g_swapChain;
@@ -1900,6 +1904,16 @@ void EditorRenderManager::Draw() {
 			0u);
 	}
 
+	profilerManager.BeginGpuFrame();
+	const uint32_t gpuFrameDetailEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Render Frame Detail");
+	const uint32_t gpuOceanEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Ocean FFT");
+
 	//================================================================
 	// Ocean FFT 更新
 	// Scene に Ocean がある時だけGPU波面を更新し、同一設定の海面へ共有する。
@@ -2247,6 +2261,7 @@ void EditorRenderManager::Draw() {
 			}
 			else {
 				commandList->IASetVertexBuffers(0, 1, &primitiveVertexBufferViews[meshTypeIndex]);
+				RecordEditorProfilerDrawCall();
 				commandList->DrawInstanced(
 					primitiveVertexCounts[meshTypeIndex],
 					GetSceneObjectInstanceCount(sceneObject),
@@ -2261,9 +2276,16 @@ void EditorRenderManager::Draw() {
 				1,
 				sphereTransformationMatrixResource->GetGPUVirtualAddress());
 			commandList->IASetVertexBuffers(0, 1, &modelVertexBufferView);
+			RecordEditorProfilerDrawCall();
 			commandList->DrawInstanced(static_cast<UINT>(modelData.vertices.size()), 1, 0, 0);
 		}
 	};
+
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuOceanEvent);
+	const uint32_t gpuShadowEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Shadow Map");
 
 	if (shouldRenderShadowMap &&
 		shadowRenderPassCount > 0u &&
@@ -2341,6 +2363,12 @@ void EditorRenderManager::Draw() {
 		commandList->ResourceBarrier(1, &shadowBarrier);
 		hasRecordedShadowMapUpdate = true;
 	}
+
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuShadowEvent);
+	const uint32_t gpuSceneHdrEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Scene HDR");
 
 	//================================================================
 	// Scene rendering to HDR RT
@@ -2486,6 +2514,7 @@ void EditorRenderManager::Draw() {
 		skyboxParams[47] = skyCloudSettings.color.z;
 		commandList->SetGraphicsRoot32BitConstants(2, 48, skyboxParams, 0);
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		RecordEditorProfilerDrawCall();
 		commandList->DrawInstanced(3, 1, 0, 0);
 
 		commandList->SetGraphicsRootSignature(rootSignature.Get());
@@ -2736,6 +2765,7 @@ void EditorRenderManager::Draw() {
 				bindMaterialTextureHandles(sceneObject, textureHandle);
 				commandList->IASetVertexBuffers(0, 1, &spriteVertexBufferView);
 				commandList->IASetIndexBuffer(&spriteIndexBufferView);
+				RecordEditorProfilerDrawCall();
 				commandList->DrawIndexedInstanced(_countof(spriteIndices), 1, 0, 0, 0);
 			}
 			else {
@@ -2833,6 +2863,7 @@ void EditorRenderManager::Draw() {
 				}
 				else {
 					commandList->IASetVertexBuffers(0, 1, &primitiveVertexBufferViews[meshTypeIndex]);
+					RecordEditorProfilerDrawCall();
 					commandList->DrawInstanced(
 						primitiveVertexCounts[meshTypeIndex],
 						GetSceneObjectInstanceCount(sceneObject),
@@ -2930,6 +2961,7 @@ void EditorRenderManager::Draw() {
 			}
 			else {
 				commandList->IASetVertexBuffers(0, 1, &primitiveVertexBufferViews[meshTypeIndex]);
+				RecordEditorProfilerDrawCall();
 				commandList->DrawInstanced(
 					primitiveVertexCounts[meshTypeIndex],
 					GetSceneObjectInstanceCount(sceneObject),
@@ -3130,6 +3162,12 @@ void EditorRenderManager::Draw() {
 	} else {
 		oceanReflectionUpdateFrameIndex = 0u;
 	}
+
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuSceneHdrEvent);
+	const uint32_t gpuPlanarCaptureEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Planar Reflection Capture");
 
 	if (shouldRenderPlanarReflection) {
 
@@ -3380,6 +3418,7 @@ void EditorRenderManager::Draw() {
 				sphereTransformationMatrixResource->GetGPUVirtualAddress());
 			commandList->SetGraphicsRootDescriptorTable(3, textureSrvHandlesGPU[2]);
 			commandList->IASetVertexBuffers(0, 1, &modelVertexBufferView);
+			RecordEditorProfilerDrawCall();
 			commandList->DrawInstanced(static_cast<UINT>(modelData.vertices.size()), 1, 0, 0);
 		}
 
@@ -3418,6 +3457,12 @@ void EditorRenderManager::Draw() {
 			false,
 			SceneObjectDrawFilter::Opaque);
 	}
+
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuPlanarCaptureEvent);
+	const uint32_t gpuWaterEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Water Surface");
 
 	//================================================================
 	// Water Surface: Opaque Color / Depth を参照する専用パス
@@ -3590,6 +3635,12 @@ void EditorRenderManager::Draw() {
 
 	}
 
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuWaterEvent);
+	const uint32_t gpuRefractiveEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Refractive Surface");
+
 	//================================================================
 	// Refractive Surface: 水面合成後のColor / 不透明Depthを参照するガラス専用パス
 	//================================================================
@@ -3750,6 +3801,12 @@ void EditorRenderManager::Draw() {
 		drawReflectionMaskObjects(true, firstReflectorId);
 	}
 
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuRefractiveEvent);
+	const uint32_t gpuGBufferEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"GBuffer");
+
 	//================================================================
 	// GBuffer: 不透明モデルの材質値と法線マップ適用後の法線を保存
 	//================================================================
@@ -3814,6 +3871,7 @@ void EditorRenderManager::Draw() {
 			}
 			else {
 				commandList->IASetVertexBuffers(0, 1, &primitiveVertexBufferViews[meshTypeIndex]);
+				RecordEditorProfilerDrawCall();
 				commandList->DrawInstanced(
 					primitiveVertexCounts[meshTypeIndex],
 					GetSceneObjectInstanceCount(sceneObject),
@@ -3867,6 +3925,12 @@ void EditorRenderManager::Draw() {
 		depthBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		commandList->ResourceBarrier(1, &depthBarrier);
 	}
+
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuGBufferEvent);
+	const uint32_t gpuPlanarCompositeEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Planar Reflection Composite");
 
 	//================================================================
 	// 平面反射の合成
@@ -3928,6 +3992,7 @@ void EditorRenderManager::Draw() {
 			commandList->RSSetScissorRects(1, &targetScissorRect);
 			commandList->SetGraphicsRoot32BitConstants(2, 48, reflectionParams, 0);
 			commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			RecordEditorProfilerDrawCall();
 			commandList->DrawInstanced(3, 1, 0, 0);
 		};
 
@@ -3958,6 +4023,12 @@ void EditorRenderManager::Draw() {
 		commandList->ResourceBarrier(1, &compositeBarrier);
 		hasPlanarReflectionComposite = true;
 	}
+
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuPlanarCompositeEvent);
+	const uint32_t gpuDepthHierarchyEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Depth Hierarchy and GPU Culling");
 
 	//================================================================
 	// Compute: 深度ピラミッドとワールド法線の生成
@@ -4132,6 +4203,12 @@ void EditorRenderManager::Draw() {
 		commandList->ResourceBarrier(1u, &depthComputeBarrier);
 	}
 
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuDepthHierarchyEvent);
+	const uint32_t gpuAmbientOcclusionEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Ambient Occlusion");
+
 	//================================================================
 	// Post-process: Bloom + ToneMapping
 	//================================================================
@@ -4193,6 +4270,7 @@ void EditorRenderManager::Draw() {
 		};
 		commandList->SetGraphicsRoot32BitConstants(2, 8, ssaoParams, 0);
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		RecordEditorProfilerDrawCall();
 		commandList->DrawInstanced(3, 1, 0, 0);
 
 		ssaoBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -4216,12 +4294,19 @@ void EditorRenderManager::Draw() {
 			1800.0f
 		};
 		commandList->SetGraphicsRoot32BitConstants(2, 4, ssaoBlurParams, 0);
+		RecordEditorProfilerDrawCall();
 		commandList->DrawInstanced(3, 1, 0, 0);
 
 		ssaoBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		ssaoBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		commandList->ResourceBarrier(1, &ssaoBarrier);
 	}
+
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuAmbientOcclusionEvent);
+	const uint32_t gpuSsgiEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"SSGI");
 
 	//================================================================
 	// SSGI: DepthとGBufferから近傍面の色・放射を集め、HDRへ加算する
@@ -4272,6 +4357,7 @@ void EditorRenderManager::Draw() {
 			commandList->RSSetScissorRects(1, &targetScissor);
 			commandList->SetGraphicsRoot32BitConstants(2, 24, ssgiParams, 0);
 			commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			RecordEditorProfilerDrawCall();
 			commandList->DrawInstanced(3, 1, 0, 0);
 		};
 
@@ -4287,6 +4373,12 @@ void EditorRenderManager::Draw() {
 		ssgiTargetBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		commandList->ResourceBarrier(1, &ssgiTargetBarrier);
 	}
+
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuSsgiEvent);
+	const uint32_t gpuTemporalSsrEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Temporal and SSR");
 
 	//================================================================
 	// Compute: SSR と時間方向の履歴解決
@@ -4406,6 +4498,12 @@ void EditorRenderManager::Draw() {
 		}
 	}
 
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuTemporalSsrEvent);
+	const uint32_t gpuOitEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Weighted OIT");
+
 	//================================================================
 	// Weighted Blended OIT 合成
 	//================================================================
@@ -4455,6 +4553,7 @@ void EditorRenderManager::Draw() {
 		const float oitCompositeParams[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 		commandList->SetGraphicsRoot32BitConstants(2, 4, oitCompositeParams, 0);
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		RecordEditorProfilerDrawCall();
 		commandList->DrawInstanced(3, 1, 0, 0);
 
 		oitDestinationBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -4463,6 +4562,12 @@ void EditorRenderManager::Draw() {
 		hdrPostSourceSrvHandle = oitDestinationSrvHandle;
 		hdrPostSourceResource = oitDestinationResource;
 	}
+
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuOitEvent);
+	const uint32_t gpuUnderwaterEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Underwater and Caustics");
 
 	//================================================================
 	// Underwater / Caustics
@@ -4609,6 +4714,7 @@ void EditorRenderManager::Draw() {
 			commandList->RSSetScissorRects(1, &targetScissor);
 			commandList->SetGraphicsRoot32BitConstants(2, 48, underwaterParams, 0);
 			commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			RecordEditorProfilerDrawCall();
 			commandList->DrawInstanced(3, 1, 0, 0);
 		};
 
@@ -4647,6 +4753,12 @@ void EditorRenderManager::Draw() {
 		hdrPostSourceResource = underwaterDestinationResource;
 	}
 
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuUnderwaterEvent);
+	const uint32_t gpuBloomEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Bloom");
+
 	//================================================================
 	// 多段Bloomを実行し、失敗時は既存Bloomを最終合成に使う
 	//================================================================
@@ -4668,6 +4780,12 @@ void EditorRenderManager::Draw() {
 	if (isQualityBloomExecuted) {
 		finalBloomSrvHandle = g_postProcessQualityManager.GetBloomSrvHandle();
 	}
+
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuBloomEvent);
+	const uint32_t gpuGlareEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Glare");
 
 	//================================================================
 	// Blender 風 Glare: Bloom 明部を Ghosts / Streaks / Fog Glow 等へ変換する
@@ -4705,6 +4823,12 @@ void EditorRenderManager::Draw() {
 			}
 		}
 	}
+
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuGlareEvent);
+	const uint32_t gpuDepthOfFieldEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Depth of Field");
 
 	//================================================================
 	// Depth of Field: 現在の HDR 結果と depth を元に被写界深度ブラー
@@ -4769,6 +4893,7 @@ void EditorRenderManager::Draw() {
 		};
 		commandList->SetGraphicsRoot32BitConstants(2u, 12u, dofParams, 0u);
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		RecordEditorProfilerDrawCall();
 		commandList->DrawInstanced(3, 1, 0, 0);
 
 		dofBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -4777,6 +4902,12 @@ void EditorRenderManager::Draw() {
 		hdrPostSourceSrvHandle = dofDestinationSrvHandle;
 		hdrPostSourceResource = dofDestinationResource;
 	}
+
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuDepthOfFieldEvent);
+	const uint32_t gpuMotionBlurEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Motion Blur");
 
 	//================================================================
 	// Motion Blur: velocity を使って移動ブラー
@@ -4836,6 +4967,7 @@ void EditorRenderManager::Draw() {
 		};
 		commandList->SetGraphicsRoot32BitConstants(2u, 12u, mbParams, 0u);
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		RecordEditorProfilerDrawCall();
 		commandList->DrawInstanced(3, 1, 0, 0);
 
 		mbBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -4844,6 +4976,12 @@ void EditorRenderManager::Draw() {
 		hdrPostSourceSrvHandle = motionBlurDestinationSrvHandle;
 		hdrPostSourceResource = motionBlurDestinationResource;
 	}
+
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuMotionBlurEvent);
+	const uint32_t gpuExposureEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Exposure and Tone Mapping");
 
 	//================================================================
 	// 1x1 の履歴 Texture へ画面平均露出を更新する
@@ -4984,12 +5122,19 @@ void EditorRenderManager::Draw() {
 		};
 		commandList->SetGraphicsRoot32BitConstants(2u, 40u, finalCompositeParams, 0u);
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		RecordEditorProfilerDrawCall();
 		commandList->DrawInstanced(3, 1, 0, 0);
 
 		postProcessBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		postProcessBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		commandList->ResourceBarrier(1, &postProcessBarrier);
 	}
+
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuExposureEvent);
+	const uint32_t gpuFilterEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Post Filter");
 
 	//================================================================
 	// Blender 風 Filter: ToneMapping 後の画面へ 3x3 畳み込みを適用する
@@ -5017,6 +5162,12 @@ void EditorRenderManager::Draw() {
 			filteredPostProcessSrvHandle = g_postProcessQualityManager.GetFilterSrvHandle();
 		}
 	}
+
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuFilterEvent);
+	const uint32_t gpuSharpenEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Sharpen");
 
 	//================================================================
 	// 闕ｳ・�E�E�E�: Sharpen
@@ -5052,6 +5203,7 @@ void EditorRenderManager::Draw() {
 		};
 		commandList->SetGraphicsRoot32BitConstants(2, 4, sharpenParams, 0);
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		RecordEditorProfilerDrawCall();
 		commandList->DrawInstanced(3, 1, 0, 0);
 
 		sharpenBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -5059,6 +5211,12 @@ void EditorRenderManager::Draw() {
 		commandList->ResourceBarrier(1, &sharpenBarrier);
 		isSharpenExecuted = true;
 	}
+
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuSharpenEvent);
+	const uint32_t gpuAntialiasEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Antialias");
 
 	//================================================================
 	// SMAA 3パスで輪郭検出、重み計算、近傍合成を順番に行う
@@ -5114,6 +5272,7 @@ void EditorRenderManager::Draw() {
 		}
 		commandList->SetGraphicsRoot32BitConstants(2, 4, fxaaParams, 0);
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		RecordEditorProfilerDrawCall();
 		commandList->DrawInstanced(3, 1, 0, 0);
 	}
 
@@ -5124,6 +5283,11 @@ void EditorRenderManager::Draw() {
 	backBufferBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 	backBufferBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
 	commandList->ResourceBarrier(1, &backBufferBarrier);
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuAntialiasEvent);
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuFrameDetailEvent);
+	renderTimestampQueryCount = (std::max)(
+		profilerManager.GetGpuTimestampQueryCount(),
+		2u);
 
 	if (renderTimestampQueryHeap != nullptr && renderTimestampReadback != nullptr) {
 		commandList->EndQuery(
@@ -5134,7 +5298,7 @@ void EditorRenderManager::Draw() {
 			renderTimestampQueryHeap.Get(),
 			D3D12_QUERY_TYPE_TIMESTAMP,
 			0u,
-			2u,
+			renderTimestampQueryCount,
 			renderTimestampReadback.Get(),
 			0u);
 	}
@@ -5190,7 +5354,9 @@ void EditorRenderManager::Draw() {
 
 	// GPU が完了したため、次フレームで使う可視結果を安全に読み戻す。
 	if (renderTimestampReadback != nullptr && renderTimestampFrequency > 0u) {
-		const D3D12_RANGE readRange{0u, sizeof(std::uint64_t) * 2u};
+		const D3D12_RANGE readRange{
+			0u,
+			sizeof(std::uint64_t) * static_cast<SIZE_T>(renderTimestampQueryCount)};
 		std::uint64_t* timestampData = nullptr;
 
 		if (SUCCEEDED(renderTimestampReadback->Map(
@@ -5205,6 +5371,11 @@ void EditorRenderManager::Draw() {
 					? measuredMilliseconds
 					: renderProfile.gpuFrameMilliseconds * 0.90f + measuredMilliseconds * 0.10f;
 			}
+
+			profilerManager.ResolveGpuFrame(
+				timestampData,
+				renderTimestampQueryCount,
+				renderTimestampFrequency);
 
 			const D3D12_RANGE writeRange{0u, 0u};
 			renderTimestampReadback->Unmap(0u, &writeRange);

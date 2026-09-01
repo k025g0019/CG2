@@ -661,17 +661,11 @@ W キーで前進する例は、次を途中で省略せず記載する。
 
 ### 18.2 DLL ライフサイクル
 
-次の export 関数を個別に説明する。
+DLL ABIはEngineが`.Generated.cpp`へ自動生成する内部実装として調査する。使用者向け手順やコード例にexport関数を記載せず、ユーザー `.cpp` へ手書きさせない。
 
-- `EditorScript_Load`
-- `EditorScript_Unload`
-- `EditorScript_CreateInstance` / `EditorScript_DestroyInstance`
-- `EditorScript_StartInstance`
-- `EditorScript_UpdateInstance`
-- `EditorScript_FixedUpdateInstance`
-- `EditorScript_OnPhysicsEventInstance`
-- `EditorScript_OnAnimationEventInstance`
-- `EditorScript_StopInstance`
+- ユーザー側: `Script`を継承し、必要な`Start()`、`Update(float)`、`FixedUpdate(float)`、Collision / Trigger、`Stop()`だけを書く。
+- Engine側: DLL読込、Instance生成・破棄、ライフサイクル、Physics / Animation Event、Field、ActionをGeneratedコードから転送する。
+- 所有Object: `GetGameObject()`または`GetComponent<T>()`から辿り、毎回`gameObjectId`を引数で受け取らない。
 
 各関数について、呼ばれる回数、タイミング、引数、保持してよい状態、してはいけない処理、失敗時の動作を確認する。
 
@@ -1968,21 +1962,16 @@ Project Settings 相当の画面または設定ファイルを全て調査する
 C++ スクリプトは、使用者向けサイトで最優先に詳細化する。
 理由は、GameObject を動かす、入力を読む、物理を動かす、イベントを受ける、AI や Material の状態を見る入口になるためである。
 
-### 56.1 必ず説明するライフサイクル関数
+### 56.1 必ず説明するユーザーライフサイクル
 
 | 関数 | 呼ばれるタイミング | 使用目的 | 使用者が書く内容 | 注意点 |
 | --- | --- | --- | --- | --- |
-| `EditorScript_Load` | DLL 読み込み時に 1 回。 | API Version 確認、`runtimeApi` の保持。 | `apiVersion` と `api` を確認して `runtimeApi` を保存する。 | ここで GameObject 固有処理を書かない。 |
-| `EditorScript_Unload` | DLL解放時。 | DLL全体の参照解放。 | `runtimeApi`を`nullptr`へ戻す。 | Component実体は先にEngineが破棄する。 |
-| `EditorScript_CreateInstance` | Script Component開始時にComponentごとに1回。 | 独立状態の生成。 | C++ Scriptクラスを生成して`void*`で返す。 | `nullptr`ならそのComponentは開始しない。 |
-| `EditorScript_DestroyInstance` | Script Component終了時。 | 独立状態の破棄。 | 受け取った実体をdeleteする。 | CreateとDestroyは必ず両方exportする。 |
-| `EditorScript_StartInstance` | Inspector値反映後、対象Componentごとに1回。 | 初期化。 | 速度、HP、初期状態、ログ。 | 毎フレーム処理は書かない。 |
-| `EditorScript_UpdateInstance` | ActiveなComponentへ毎フレーム。 | 入力、見た目の更新、通常の移動。 | `GetTransform`、Input Action、簡単な制御。 | Rigidbody物理と直接Transform更新を競合させない。 |
-| `EditorScript_FixedUpdateInstance` | ActiveなComponentへ固定時間物理更新。 | 力、速度、物理操作。 | `AddForce`、`AddImpulse`、`AddTorque`、`SetVelocity`。 | 物理系は原則ここで説明する。 |
-| `EditorScript_OnPhysicsEventInstance` | 所有ObjectのCollision / Trigger発生時。 | 接触イベント処理。 | 相手ID、接触点、法線、相対速度で分岐。 | 毎フレームログを出す例は避ける。 |
-| `EditorScript_OnAnimationEventInstance` | Animation Event時刻を通過した時。 | 足音、攻撃判定、Effect、任意処理。 | Event名、Effect Path、時刻、Local Offsetで分岐。 | Event内文字列PointerはCallback中だけ有効。 |
-| `EditorScript_StopInstance` | Play停止、Object破棄、Script停止。 | 終了通知。 | 購読解除などを行う。 | 実体のdeleteはDestroyInstanceへ分離する。 |
-| `EditorScript_InvokeActionInstance` | Input / UI Actionから関数名で呼ばれる時。 | 任意関数実行。 | 登録済み処理へ転送する。 | 同一DLLでもComponent実体ごとに呼び分ける。 |
+| `Start()` | Inspector値反映後、対象Componentごとに1回。 | 初期化。 | 速度、HP、初期状態、ログ。 | 不要なら宣言・実装しない。 |
+| `Update(float deltaTime)` | ActiveなComponentへ毎フレーム。 | 入力、見た目の更新、通常の移動。 | `GetGameObject()`、Input、簡単な制御。 | Rigidbody物理と直接Transform更新を競合させない。 |
+| `FixedUpdate(float fixedDeltaTime)` | ActiveなComponentへ固定時間物理更新。 | 力、速度、物理操作。 | `GetComponent<Rigidbody>()`から物理操作する。 | 不要なら宣言・実装しない。 |
+| Collision / Trigger | 所有Objectの物理Event発生時。 | 接触イベント処理。 | 相手ID、接触点、法線、相対速度で分岐。 | 不要なEvent関数は書かない。 |
+| `OnAnimationEvent(...)` | Animation Event時刻を通過した時。 | 足音、攻撃判定、Effect、任意処理。 | Event名、Effect Path、時刻、Local Offsetで分岐。 | Event内文字列PointerはCallback中だけ有効。 |
+| `Stop()` | Play停止、Object破棄、Script停止。 | 終了通知。 | 購読解除などを行う。 | 不要なら宣言・実装しない。 |
 
 ### 56.2 Inspector 公開変数関数
 
@@ -2156,18 +2145,13 @@ C++ スクリプト
 テンプレートには全 API を詰め込まない。
 初期テンプレートは、使用者が読み始めやすい最小構成にする。
 
-テンプレートに入れるもの:
+空Templateのユーザー `.cpp` に入れるもの:
 
-- `EditorScript_Load`
-- `EditorScript_Unload`
-- `EditorScript_CreateInstance` / `EditorScript_DestroyInstance`
-- `EditorScript_StartInstance`
-- `EditorScript_UpdateInstance`
-- `EditorScript_FixedUpdateInstance`
-- `EditorScript_OnPhysicsEventInstance`
-- `EditorScript_StopInstance`
-- `runtimeApi` 保持。
-- Componentごとの`ScriptInstance`と通常メンバー変数の最小例。
+- `#include "ScriptName.h"`
+- `void ScriptName::Update(float deltaTime)`
+- ゲーム処理を書く位置を示す短いComment。
+
+DLL ABI、Runtime API保持、ComponentごとのInstance、Field転送、Action転送は`.Generated.cpp`だけへ生成する。
 - `GetTransform` と `SetTransform` の最小例。
 - `WasActionJustPressed` の最小例。
 
@@ -2680,7 +2664,7 @@ Timelineをクリックまたは`現在時間`を変更すると、その時刻�
 | 項目 | 型 | 実行内容 |
 | --- | --- | --- |
 | イベント時刻 | float秒 | 前フレームからこの時刻を通過した時に1回発火する。 |
-| イベント名 | UTF-8文字列 | C++ DLLの`EditorScript_OnAnimationEvent`へ渡す。 |
+| イベント名 | UTF-8文字列 | Generated側を経由してユーザーScriptの`OnAnimationEvent(...)`へ渡す。 |
 | Effectパス | `.effect` Path | 空でなければ同時にEffectを再生する。 |
 | ローカル発生位置 | Vector3 | 所有GameObject位置へ加えるEffect発生Offset。 |
 
@@ -2688,22 +2672,17 @@ Loopで終端から先頭へ戻った場合も、通過区間に含まれるEven
 Script Componentが複数ある場合は、同じGameObjectへ付いた各DLLに通知する。
 
 ```cpp
-extern "C" __declspec(dllexport) void EditorScript_OnAnimationEvent(
-    int32_t gameObjectId,
-    const EditorScriptAnimationEvent* animationEvent) {
+void PlayerScript::OnAnimationEvent(
+    const EditorScriptAnimationEvent& animationEvent) {
 
-    if (runtimeApi == nullptr || animationEvent == nullptr) {
-        return;
-    }
-
-    if (std::strcmp(animationEvent->name, "Footstep") == 0) {
-        runtimeApi->Log("足音イベントを受信");
+    if (std::string(animationEvent.name) == "Footstep") {
+        // 足音処理をここへ記述する。
     }
 }
 ```
 
-`animationEvent` PointerはCallback中だけ有効である。
-`name`や`effectAssetPath`を後で使う場合は、Callback内で`std::string`へコピーする。
+`animationEvent`内の文字列PointerはCallback中だけ有効である。
+`name`や`effectAssetPath`を後で使う場合は、関数内で`std::string`へコピーする。
 
 ### 65.8 Animation Component と Animator Component の使い分け
 
@@ -2783,7 +2762,11 @@ Animator Parameter系はAnimator Componentと読み込み成功した`.animgraph
 移動入力を方向Blendへ渡す例:
 
 ```cpp
-extern "C" __declspec(dllexport) void EditorScript_Update(int32_t gameObjectId, float deltaTime) {
+void MovementScript::Update(float deltaTime) {
+    const int32_t gameObjectId = GetGameObjectId();
+    const EditorScriptRuntimeApi* runtimeApi =
+        EditorNativeScriptRuntime::GetRuntimeApi();
+
     if (runtimeApi == nullptr) {
         return;
     }
@@ -3177,14 +3160,14 @@ Transform、Renderer、Collider、Healthなどへ、用途不明の開始 / 終�
 ### 71.2 登録から選択まで
 
 1. 新規C++ Scriptを作る。
-2. `EditorNativeScript`継承ClassのConstructorで`BindAction`する。
+2. `Script`継承ClassのConstructorで`BindAction`する。
 3. DLLをBuildする。
 4. 受信GameObjectへScriptまたはMonoBehaviourを追加する。
 5. 通知Componentの`Action 対象`へ受信GameObjectを指定する。
 6. Action名を直接入力するか、`... 候補`Comboから選ぶ。
 7. Sceneを保存してPlayする。
 
-候補は対象GameObjectのDLLが公開する`EditorScript_GetActionCount`と`EditorScript_GetActionName`から取得する。旧DLLにExportがない場合は直接入力を残す。
+候補はGenerated側が対象GameObjectの登録済みActionから公開する。使用者はExport関数を記述しない。
 
 ### 71.3 受信値と失敗診断
 
@@ -3891,12 +3874,14 @@ Troubleshootingには、現象別に確認順を書く。
 
 ### 83.1 現行コードを正とする対象数
 
-2026-08-09時点の現行コードでは、`kEditorComponentTypeNames`に268 Component、`EditorScriptRuntimeApi`に208 API Entryがある。文書完成判定では、最近追加した機能だけでなく、この全件を機械照合する。
+現行コードでは、`EditorScene.h`の`EditorComponentType`に280 Component（`Count`を除く。うち「コンポーネントを追加」から選べるのは276、残り4は旧Scene読み込み専用のLegacy互換スロット）、`EditorScriptApi.h`の`EditorScriptRuntimeApi`に229 API Entry、`EditorNativeScript.h`に61の高水準Wrapper Class、`EditorNativeScriptAssetManager.cpp`に26のC++ Script Templateがある。文書完成判定では、最近追加した機能だけでなく、この全件を機械照合する。
+
+全件の実データは、Componentが`component-documentation-detail-seed.md`の「全280 Component Inspector値表」、API・型・Wrapperが`cpp-script-documentation-detail-seed.md`の「Runtime API・型・Wrapper 完全リファレンス」にある。この章より下に出てくる旧件数は、その章を書いた時点の履歴であり、最新値はこの節を正とする。
 
 | 対象 | 正本 | 詳細を書く文書 | 完成条件 |
 | --- | --- | --- | --- |
-| Component 268件 | `EditorScene.cpp`の`kEditorComponentTypeNames` | `component-documentation-detail-seed.md` | 全内部名が存在し、似たComponentとの差、設定、依存、Runtime状態、Debugが説明される。 |
-| Runtime API 211件 | `EditorScriptApi.h`の`EditorScriptRuntimeApi` | `cpp-script-documentation-detail-seed.md` | 全Entry名が存在し、推奨Wrapper、引数、戻り値、失敗条件、必要Componentが説明される。 |
+| Component 280件 | `EditorScene.h`の`EditorComponentType` | `component-documentation-detail-seed.md` | 全内部名が存在し、似たComponentとの差、設定、依存、Runtime状態、Debugが説明される。 |
+| Runtime API 229件 | `EditorScriptApi.h`の`EditorScriptRuntimeApi` | `cpp-script-documentation-detail-seed.md` | 全Entry名が存在し、推奨Wrapper、引数、戻り値、失敗条件、必要Componentが説明される。 |
 | C++ Script Template | `EditorNativeScriptAssetManager`のTemplate定義 | C++ Script文書と利用者文書 | 作成手順、生成物、公開Field、Action、推奨Component、変更箇所が説明される。 |
 | Editor Window/Workflow | Menu、Window Manager、Project/Hierarchy/Inspector実装 | 本文書 | Projectから作る実操作、保存先、Play/Build、失敗時確認が説明される。 |
 
@@ -4074,7 +4059,7 @@ $apiNames | Where-Object {
 
 ### 84.1 Componentページは一覧表だけで完成にしない
 
-268 Componentは、カテゴリ説明に名前が含まれるだけでは未完成である。各Componentについて、最低でも次の情報を個別に確定する。
+280 Component（追加可能276＋Legacy互換4）は、カテゴリ説明に名前が含まれるだけでは未完成である。各Componentについて、最低でも次の情報を個別に確定する。
 
 | 必須項目 | 書く内容 | 調査元 |
 | --- | --- | --- |
@@ -4111,7 +4096,7 @@ $apiNames | Where-Object {
 
 ### 84.3 C++ APIページは関数名一覧だけで完成にしない
 
-211 Runtime API Entryと全型付きWrapperについて、最低でも次を個別に書く。
+229 Runtime API Entryと61の型付きWrapper Classについて、最低でも次を個別に書く。
 
 | 必須項目 | 書く内容 |
 | --- | --- |
@@ -4167,8 +4152,8 @@ C++説明はAPIだけでなく、ゲームを作るためのScript作成と運�
 
 | 文書 | 詳細の中心 | 重複しても残す情報 |
 | --- | --- | --- |
-| `component-documentation-detail-seed.md` | 268 Componentの個別設定、Runtime、連携、Debug。 | 必須Component、C++入口、失敗確認。 |
-| `cpp-script-documentation-detail-seed.md` | Native Script lifecycle、Wrapper、211 Runtime API、コード例。 | 対応Component、単位、失敗条件。 |
+| `component-documentation-detail-seed.md` | 280 Componentの個別設定、全Inspector値、Runtime、連携、Debug。 | 必須Component、C++入口、失敗確認。 |
+| `cpp-script-documentation-detail-seed.md` | Native Script lifecycle、61 Wrapper Class、229 Runtime API、共有型全件、コード例。 | 対応Component、単位、失敗条件。 |
 | `user-documentation-research-spec.md` | ProjectからBuildまでの利用者導線、調査方法、完成監査。 | 実装状態、確認手順、文書間の参照先。 |
 
 3文書は同じ文章を複製するのではなく、Componentから探す利用者、C++から探す利用者、ゲーム制作手順から探す利用者の3つの入口を提供する。
@@ -4519,7 +4504,7 @@ Componentの有無で挙動を合成するため、通常弾、Burst、Spread、
 
 ### 88.7 機械照合基準
 
-追加時点の基準値はComponent 246件、Runtime API Entry 172件である。前段で追加した7内部型名、7日本語Add Component名、7専用Extension、WeaponManager実行経路、非スケールTimeScale更新、3 Runtime API Entry、高水準Wrapper、3資料の説明と受入試験を同時に照合する。現行基準はComponent 268件、Runtime API Entry 211件である。
+この章の追加開始時点の基準値はComponent 246件、Runtime API Entry 172件である。前段で追加した7内部型名、7日本語Add Component名、7専用Extension、WeaponManager実行経路、非スケールTimeScale更新、3 Runtime API Entry、高水準Wrapper、3資料の説明と受入試験を同時に照合する。この章の完了時点ではComponent 268件、Runtime API Entry 211件だった。
 
 Runtime APIの追加9 Entryは既存順序を変更せず構造体末尾へ置く。文書件数は`EditorScene.cpp`の`kEditorComponentTypeNames`と`EditorScriptApi.h`の`EditorScriptRuntimeApi`を再計数して更新する。
 
@@ -4607,7 +4592,7 @@ EncounterはWaveSpawnerを自動作成せず、敵の移動・攻撃も変更し
 | Camera Mixer | 最大同時数、Priority、Clamp、Global強度が独立して効く。 |
 | C++ API | 7高水準呼出がDebug/Releaseで同じ成功・失敗を返す。 |
 
-この章の機械照合基準は、8内部Component型、8日本語Add Component名、8専用Extension、Camera Shake Priority互換列、7 Runtime API Entry、高水準Wrapper、Debug/Releaseビルドである。現行総数はComponent 268件、Runtime API Entry 211件である。
+この章の機械照合基準は、8内部Component型、8日本語Add Component名、8専用Extension、Camera Shake Priority互換列、7 Runtime API Entry、高水準Wrapper、Debug/Releaseビルドである。この章の完了時点の総数はComponent 268件、Runtime API Entry 211件だった。
 
 ## 90. Scene自動保存と復旧
 
@@ -4751,7 +4736,7 @@ Runtimeは船RootのWorld移動量から速度と0～1強度を求める。各Ef
 | Scene保存 | 5 Componentの全設定値と参照が再読込後に一致し、Runtime値はPlay開始時に初期化される。 |
 | C++ API | 7追加Entryと4高水準WrapperがDebug/Releaseで同じ成功・失敗を返す。 |
 
-現行の機械照合基準はComponent 268件、Runtime API Entry 211件、C++ Script Template 24件である。
+この章の追加時点の機械照合基準はComponent 268件、Runtime API Entry 211件、C++ Script Template 24件だった。
 
 ## 92. FFT海面をゲーム判定へ接続する
 
@@ -4829,7 +4814,7 @@ Oceanが先ならHealthへDamageを送らず、Surface Tagを`Water`としてImp
 | 保存 | Ocean参照、Mode、Clearance、Collision Flag、状態設定、Probe配列がScene再読込後に一致する。 |
 | C++ API | 5追加Entryと3高水準Wrapper群がDebug/Releaseで同じ成功・失敗を返す。 |
 
-現行の機械照合基準はComponent 268件、Runtime API Entry 211件、C++ Script Template 24件である。
+この章の追加時点の機械照合基準はComponent 268件、Runtime API Entry 211件、C++ Script Template 24件だった。
 
 ## 93. 自艦誤爆を防ぎ、砲塔と複数艦砲を構成する
 
@@ -4945,7 +4930,7 @@ loadout.RefillMagazine(0);
 | Scene再読込 | 5 Componentの全参照、配列、文字列、数値、Flagが復元される。 |
 | C++ ABI | 10追加Runtime APIと3高水準Wrapper群がDebug/Releaseで同じ結果を返す。 |
 
-現行の機械照合基準はComponent 268件、Runtime API Entry 211件、C++ Script Template 24件である。
+この章の追加時点の機械照合基準はComponent 268件、Runtime API Entry 211件、C++ Script Template 24件だった。
 
 ## 94. 移動母体からの射撃、爆発遮蔽、発射前安全検査、時間制Effect
 
@@ -5038,7 +5023,7 @@ Engineは`Fire`を毎秒Damageへ変換しない。開始/Tick/終了通知とRu
 | 保存 | 新規2 Componentと既存3 Componentの全設定がScene再読込後に一致する。 |
 | C++ ABI | 7追加Entryと2高水準WrapperがDebug/Releaseで同じ結果を返す。 |
 
-現行の機械照合基準はComponent 268件、Runtime API Entry 211件、C++ Script Template 24件である。
+この章の追加時点の機械照合基準はComponent 268件、Runtime API Entry 211件、C++ Script Template 24件だった。
 
 ## 95. Particle / VisualEffectのBillboard設定
 
@@ -5096,7 +5081,7 @@ Component内部名は`ParticleSystem`または`VisualEffect`、Property名は`Bi
 | 保存 | Sceneと`.effect`のMode / Stretchが再読込後に一致する。 |
 | Runtime Property | int Modeとfloat Stretchの正しい型だけ成功し、不正Component名・Property名・型はfalseになる。 |
 
-この変更は既存Componentの描画設定追加であり、現行基準はComponent 268件、Runtime API Entry 211件、C++ Script Template 24件のままである。
+この変更は既存Componentの描画設定追加であり、この章の追加時点ではComponent 268件、Runtime API Entry 211件、C++ Script Template 24件のままだった。
 
 ## 96. Camera追従と船体向けRailMovement
 
@@ -5154,7 +5139,7 @@ Component内部名は`ParticleSystem`または`VisualEffect`、Property名は`Bi
 | 浮力併用 | RailがY/Pitch/Rollを上書きせず、Buoyancyの上下動と傾きが残る。 |
 | 保存 | Camera方式、Rail方式、船首軸、水平推力、横ずれ補助率が再読込後も一致する。 |
 
-この変更は既存Camera / CinemachineCamera / RailMovementの拡張であり、現行基準はComponent 268件、Runtime API Entry 211件、C++ Script Template 24件のままである。
+この変更は既存Camera / CinemachineCamera / RailMovementの拡張であり、この章の追加時点ではComponent 268件、Runtime API Entry 211件、C++ Script Template 24件のままだった。
 
 ## 97. Ocean Buoyancyを実Physics Shapeへ接続する
 
@@ -5383,7 +5368,7 @@ DistanceActivationとSimulationLODは同じObjectへ併用できる。最終実�
 - レールイベント受信TemplateはMarker IDを受ける開始コードであり、ステージ進行をEngine Managerへ固定しない。
 - シミュレーションLOD参照TemplateはRuntime Levelを読むだけで、EngineのActive制御をScript側へ重複実装しない。
 
-この節追加後の現行機械照合基準はComponent 277件、Runtime API Entry 216件、C++ Script Template 26件である。
+この節の追加時点の機械照合基準はComponent 277件、Runtime API Entry 216件、C++ Script Template 26件だった。
 
 ## 100. 遠距離Waveを実体化しない制作手順
 
@@ -5440,4 +5425,4 @@ Wave RootをPlayerの子にしない。距離基準点がPlayerと一緒に動�
 | Enemy Pool | 初期32、最大128、拡張可 | 同時出現数だけ実体を保持して再利用。 |
 | Player Rail | RailEventMarker | 厳密な演出地点は距離ではなく進行率Actionを使う。 |
 
-この節追加後の現行機械照合基準はComponent 277件、Runtime API Entry 218件、C++ Script Template 26件である。
+この節の追加時点の機械照合基準はComponent 277件、Runtime API Entry 218件、C++ Script Template 26件だった。

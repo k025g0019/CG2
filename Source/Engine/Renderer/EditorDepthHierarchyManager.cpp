@@ -1,5 +1,7 @@
 ﻿#include "EditorDepthHierarchyManager.h"
 
+#include "Source/Engine/Editor/EditorProfilerManager.h"
+
 #include <algorithm>
 #include <cstring>
 
@@ -147,6 +149,7 @@ bool EditorDepthHierarchyManager::Generate(
 			(depthPyramidWidths_[levelIndex] + kThreadGroupSize - 1u) / kThreadGroupSize;
 		const uint32_t dispatchGroupY =
 			(depthPyramidHeights_[levelIndex] + kThreadGroupSize - 1u) / kThreadGroupSize;
+		RecordEditorProfilerDispatch();
 		commandList->Dispatch(dispatchGroupX, dispatchGroupY, 1u);
 
 		D3D12_RESOURCE_BARRIER unorderedAccessBarrier{};
@@ -186,6 +189,7 @@ bool EditorDepthHierarchyManager::Generate(
 		kComputeConstantCount,
 		normalConstants.data(),
 		0u);
+	RecordEditorProfilerDispatch();
 	commandList->Dispatch(
 		(renderWidth_ + kThreadGroupSize - 1u) / kThreadGroupSize,
 		(renderHeight_ + kThreadGroupSize - 1u) / kThreadGroupSize,

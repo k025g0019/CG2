@@ -287,6 +287,8 @@ namespace {
 		{"3D物理", "流体ボリューム", EditorComponentType::FluidVolume},
 		{"3D物理", "ばね力", EditorComponentType::SpringForce},
 		{"3D物理", "ロープ拘束", EditorComponentType::RopeConstraint},
+		{"3D物理", "フックポイント", EditorComponentType::WireConnectable},
+		{"描画・レンダリング", "ワイヤーレンダラー", EditorComponentType::WireRenderer},
 		{"3D物理", "ねじりばね", EditorComponentType::TorsionSpring},
 		{"3D物理", "推進力", EditorComponentType::Thruster},
 		{"3D物理", "滑車拘束", EditorComponentType::PulleyConstraint},
@@ -2619,6 +2621,50 @@ namespace {
 		DrawFloatRow("張力上限 N", component.ropeMaximumTension, 10.0f, 0.0f, 1000000000.0f);
 		DrawFloatRow("破断張力 N", component.ropeBreakingTension, 10.0f, 0.0f, 1000000000.0f);
 		DrawCheckboxRow("接続先へ反作用", component.ropeApplyReaction);
+	}
+
+	void DrawWireConnectableComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& ownerGameObject,
+		EditorComponent& component) {
+		DrawTextRow("説明", "Hook専用の接続点です。子Hookの場合は力を伝える親Rigidbodyを指定します。");
+		DrawCheckboxRow("選択可能", component.wireConnectableAllowSelection);
+		DrawIntRow("最大接続本数", component.wireConnectableMaximumConnections);
+		DrawFloatRow("破断強度 N", component.wireConnectableStrength, 10.0f, 0.0f, 1000000000.0f);
+		DrawIntRow("カテゴリ", component.wireConnectableCategory);
+		DrawCheckboxRow("命中点をAnchorに使用", component.wireConnectableUseHitPoint);
+
+		if (!component.wireConnectableUseHitPoint) {
+			DrawVector3Row("固定ローカルAnchor", component.wireConnectableLocalAnchor, 0.01f, -100000.0f, 100000.0f);
+		}
+
+		DrawGameObjectReferenceRow(
+			context,
+			ownerGameObject,
+			"力を伝えるRigidbody",
+			component.wireConnectablePhysicsBodyGameObjectId,
+			"自身",
+			true);
+		DrawVector3Row("通常色", component.wireConnectableNormalColor, 0.01f, 0.0f, 1.0f);
+		DrawVector3Row("照準中色", component.wireConnectableTargetedColor, 0.01f, 0.0f, 1.0f);
+		DrawVector3Row("選択中色", component.wireConnectableSelectedColor, 0.01f, 0.0f, 1.0f);
+		DrawVector3Row("接続中色", component.wireConnectableConnectedColor, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("発光倍率", component.wireConnectableEmissionStrength, 0.05f, 0.0f, 100.0f);
+	}
+
+	void DrawWireRendererComponent(EditorComponent& component) {
+		DrawTextRow("説明", "Scriptから生成された複数WireをGame Viewへ描画します。");
+		DrawCheckboxRow("表示", component.wireRendererVisible);
+		DrawFloatRow("線幅 px", component.wireRendererWidth, 0.1f, 0.1f, 128.0f);
+		DrawFloatRow("3D半径 m", component.wireRendererWorldRadius, 0.005f, 0.001f, 10.0f);
+		DrawIntRow("断面分割数", component.wireRendererRadialSegments);
+		DrawFloatRow("発光倍率", component.wireRendererEmissionStrength, 0.05f, 0.0f, 100.0f);
+		DrawVector3Row("通常色", component.wireRendererColor, 0.01f, 0.0f, 1.0f);
+		DrawVector3Row("高張力色", component.wireRendererTensionColor, 0.01f, 0.0f, 1.0f);
+		DrawVector3Row("破断色", component.wireRendererBrokenColor, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("不透明度", component.wireRendererAlpha, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("たるみ量 m", component.wireRendererSlackSag, 0.01f, 0.0f, 1000.0f);
+		DrawIntRow("分割数", component.wireRendererSegmentCount);
 	}
 
 	void DrawTorsionSpringComponent(
@@ -6932,6 +6978,60 @@ namespace {
 		if (component.cameraMotionBlurEnabled) {
 			DrawFloatRow("ブラー強度", component.cameraMotionBlurIntensity, 0.01f, 0.0f, 1.0f);
 		}
+
+		ImGui::SeparatorText("ゲーム中の視点操作");
+		DrawCheckboxRow("視点操作を有効化", component.cameraInputEnabled);
+
+		if (component.cameraInputEnabled) {
+			DrawTextRow("説明", "標準操作はここで設定し、特殊な動きはInputとCamera TransformのScript APIで上書きできます。");
+			const char* cameraInputStyleItems[] = {"FreeLook", "Orbit"};
+			DrawComboRow(
+				"操作形式",
+				component.cameraInputStyle,
+				cameraInputStyleItems,
+				static_cast<int32_t>(_countof(cameraInputStyleItems)));
+			const char* cameraInputActivationItems[] = {"右ボタンを押している間", "常時"};
+			DrawComboRow(
+				"回転入力",
+				component.cameraInputActivation,
+				cameraInputActivationItems,
+				static_cast<int32_t>(_countof(cameraInputActivationItems)));
+			DrawFloatRow("マウス感度", component.cameraInputLookSensitivity, 0.0001f, 0.0f, 0.1f);
+			DrawCheckboxRow("Y軸反転", component.cameraInputInvertY);
+			DrawFloatRow("Pitch最小角度", component.cameraInputMinimumPitchDegrees, 1.0f, -89.0f, 89.0f);
+			DrawFloatRow("Pitch最大角度", component.cameraInputMaximumPitchDegrees, 1.0f, -89.0f, 89.0f);
+			component.cameraInputMaximumPitchDegrees = (std::max)(
+				component.cameraInputMaximumPitchDegrees,
+				component.cameraInputMinimumPitchDegrees);
+			DrawCheckboxRow("操作中カーソル固定", component.cameraInputLockCursor);
+			DrawCheckboxRow("操作中カーソル非表示", component.cameraInputHideCursor);
+
+			if (component.cameraInputStyle == 0) {
+				DrawCheckboxRow("WASD/QE移動", component.cameraInputMovementEnabled);
+
+				if (component.cameraInputMovementEnabled) {
+					DrawFloatRow("移動速度", component.cameraInputMoveSpeed, 0.1f, 0.0f, 10000.0f);
+					DrawFloatRow("Shift倍率", component.cameraInputFastMultiplier, 0.1f, 1.0f, 100.0f);
+				}
+			}
+			else {
+				DrawGameObjectReferenceRow(
+					context,
+					gameObject,
+					"Orbit中心",
+					component.cameraInputTargetGameObjectId,
+					"Cameraの接続先",
+					true);
+				DrawVector3Row("中心Offset", component.cameraInputPivotOffset, 0.1f, -10000.0f, 10000.0f);
+				DrawFloatRow("距離", component.cameraInputOrbitDistance, 0.1f, 0.01f, 10000.0f);
+				DrawFloatRow("最小距離", component.cameraInputMinimumDistance, 0.1f, 0.01f, 10000.0f);
+				DrawFloatRow("最大距離", component.cameraInputMaximumDistance, 0.1f, 0.01f, 10000.0f);
+				component.cameraInputMaximumDistance = (std::max)(
+					component.cameraInputMaximumDistance,
+					component.cameraInputMinimumDistance);
+				DrawFloatRow("ホイールZoom速度", component.cameraInputZoomSpeed, 0.1f, 0.0f, 1000.0f);
+			}
+		}
 	}
 
 	void DrawLightProbeGroupComponent(EditorComponent& component) {
@@ -7551,6 +7651,12 @@ namespace {
 			break;
 		case EditorComponentType::RopeConstraint:
 			DrawRopeConstraintComponent(context, gameObject, component);
+			break;
+		case EditorComponentType::WireConnectable:
+			DrawWireConnectableComponent(context, gameObject, component);
+			break;
+		case EditorComponentType::WireRenderer:
+			DrawWireRendererComponent(component);
 			break;
 		case EditorComponentType::TorsionSpring:
 			DrawTorsionSpringComponent(context, gameObject, component);
@@ -8841,6 +8947,11 @@ namespace {
 				ImVec2(160.0f, 160.0f));
 		}
 	}
+}
+
+const char* GetEditorComponentDisplayName(EditorComponentType type) {
+	// Inspector 内部の日本語名テーブルを、Log監視など他 UI からも同じ表記で使えるよう公開する。
+	return GetComponentDisplayName(type);
 }
 
 void EditorInspectorPanel::Initialize() {

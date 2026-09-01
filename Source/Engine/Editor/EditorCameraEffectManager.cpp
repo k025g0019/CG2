@@ -2,6 +2,7 @@
 
 #include "EditorComponentUtility.h"
 #include "EditorSharedState.h"
+#include "Vector&Matrix.h"
 
 #include <algorithm>
 #include <cmath>
@@ -12,6 +13,21 @@ using namespace EditorSharedState;
 namespace {
 	float Lerp(float sourceValue, float targetValue, float ratio) {
 		return sourceValue + (targetValue - sourceValue) * ratio;
+	}
+
+	bool IsNearlyZeroVector3(const Vector3& value) {
+		return
+			std::fabs(value.x) <= 0.001f &&
+			std::fabs(value.y) <= 0.001f &&
+			std::fabs(value.z) <= 0.001f;
+	}
+
+	Vector3 RotateVectorByEuler(const Vector3& value, const Vector3& rotation) {
+		const Matrix4x4 rotationMatrix = MakeAffineMatrix(
+			{1.0f, 1.0f, 1.0f},
+			rotation,
+			{0.0f, 0.0f, 0.0f});
+		return Transform(value, rotationMatrix);
 	}
 
 	Vector3 AddVector3(const Vector3& firstValue, const Vector3& secondValue) {
@@ -48,13 +64,42 @@ namespace {
 	float CalculateDampingRatio(float damping, float deltaTime) {
 		return 1.0f - std::exp(-(std::max)(damping, 0.0f) * deltaTime);
 	}
+
+	bool IsKeyDown(const uint8_t* keyState, int32_t keyCode) {
+		return keyState != nullptr && keyCode >= 0 && keyCode < 256 &&
+			(keyState[keyCode] & 0x80u) != 0u;
+	}
+
+	bool IsCursorInsideGameView() {
+		if (g_isStandaloneGame) {
+			return true;
+		}
+
+		POINT cursorPosition{};
+		if (!g_isGameViewVisible || !GetCursorPos(&cursorPosition)) {
+			return false;
+		}
+
+		return static_cast<float>(cursorPosition.x) >= g_editorGameX &&
+			static_cast<float>(cursorPosition.x) <= g_editorGameX + g_editorGameWidth &&
+			static_cast<float>(cursorPosition.y) >= g_editorGameY &&
+			static_cast<float>(cursorPosition.y) <= g_editorGameY + g_editorGameHeight;
+	}
 }
 
 void EditorCameraEffectManager::Initialize(EditorScene* editorScene) {
 	editorScene_ = editorScene;
 	blendRuntime_ = {};
 	shakeRuntimes_.clear();
-	followComposerWasActive_ = false;
+	cameraControllerWasActive_ = false;
+	cameraInputOwnerGameObjectId_ = -1;
+	cameraInputRuntimeTransform_ = {};
+	cameraInputYaw_ = 0.0f;
+	cameraInputPitch_ = 0.0f;
+	cameraInputOrbitDistance_ = 0.0f;
+	cameraInputInitialized_ = false;
+	cameraInputOwnsCursorLock_ = false;
+	cameraInputOwnsCursorVisibility_ = false;
 	isStarted_ = false;
 }
 
@@ -111,12 +156,14 @@ void EditorCameraEffectManager::Start() {
 	}
 }
 
-void EditorCameraEffectManager::Update(float deltaTime) {
+void EditorCameraEffectManager::Update(float deltaTime, const uint8_t* keyState) {
 	if (!isStarted_ || deltaTime < 0.0f) {
 		return;
 	}
 
-	const bool followComposerApplied = !blendRuntime_.isActive && UpdateFollowComposer(deltaTime);
+	const bool cameraInputApplied = !blendRuntime_.isActive && UpdateCameraInput(deltaTime, keyState);
+	const bool cameraControllerApplied = cameraInputApplied ||
+		(!blendRuntime_.isActive && UpdateFollowComposer(deltaTime));
 
 	if (blendRuntime_.isActive) {
 		blendRuntime_.elapsedTime += deltaTime;
@@ -223,17 +270,20 @@ void EditorCameraEffectManager::Update(float deltaTime) {
 	g_runtimeGameCameraPositionOffset = positionOffset;
 	g_runtimeGameCameraRotationOffset = rotationOffset;
 
-	if (!blendRuntime_.isActive && !followComposerApplied && followComposerWasActive_) {
+	if (!blendRuntime_.isActive && !cameraControllerApplied && cameraControllerWasActive_) {
 		g_runtimeGameCameraOverrideActive = false;
 	}
 
-	followComposerWasActive_ = followComposerApplied;
+	cameraControllerWasActive_ = cameraControllerApplied;
 }
 
 void EditorCameraEffectManager::Stop() {
 	blendRuntime_ = {};
 	shakeRuntimes_.clear();
-	followComposerWasActive_ = false;
+	cameraControllerWasActive_ = false;
+	cameraInputOwnerGameObjectId_ = -1;
+	cameraInputInitialized_ = false;
+	ReleaseCameraInputCursor();
 	g_runtimeGameCameraOverrideActive = false;
 	g_runtimeGameCameraPositionOffset = {0.0f, 0.0f, 0.0f};
 	g_runtimeGameCameraRotationOffset = {0.0f, 0.0f, 0.0f};
@@ -365,12 +415,86 @@ Transforms EditorCameraEffectManager::ResolveWorldTransform(const EditorGameObje
 	return worldTransform;
 }
 
+// GameViewの描画に使うBuildFollowCameraTransform(EditorGameViewManager.cpp)と同じ計算を行う。
+// これを使わずResolveWorldTransformだけでFreeLook/Blendの初期姿勢を作ると、
+// Camera FollowでPlayer等へ追従しているCameraは「Followを無視した素のTransform」から始まってしまい、
+// 視点操作を有効化した瞬間に位置が飛ぶ。
+Transforms EditorCameraEffectManager::ResolveFollowedCameraTransform(
+	const EditorGameObject& cameraGameObject,
+	const EditorComponent& cameraComponent) const {
+	Transforms cameraTransform = ResolveWorldTransform(cameraGameObject);
+
+	if (editorScene_ == nullptr) {
+		return cameraTransform;
+	}
+
+	const EditorComponent* horizonStabilizer = EditorComponentUtility::FindComponent(
+		cameraGameObject,
+		EditorComponentType::CameraHorizonStabilizer);
+
+	if (horizonStabilizer != nullptr &&
+		horizonStabilizer->isActive &&
+		horizonStabilizer->horizonSourceGameObjectId >= 0) {
+		return cameraTransform;
+	}
+
+	if (cameraComponent.connectedGameObjectId < 0 ||
+		cameraComponent.connectedGameObjectId == cameraGameObject.id) {
+		return cameraTransform;
+	}
+
+	const EditorGameObject* targetGameObject =
+		editorScene_->FindGameObject(cameraComponent.connectedGameObjectId);
+	if (targetGameObject == nullptr || !targetGameObject->isActive) {
+		return cameraTransform;
+	}
+
+	constexpr Vector3 defaultFollowOffset = {0.0f, 2.0f, -6.0f};
+	Vector3 followOffset = cameraGameObject.translate;
+	if (IsNearlyZeroVector3(followOffset)) {
+		followOffset = defaultFollowOffset;
+	}
+
+	const Transforms targetWorldTransform = ResolveWorldTransform(*targetGameObject);
+	const int32_t positionSpace = (std::clamp)(cameraComponent.cameraFollowPositionSpace, 0, 1);
+
+	if (positionSpace == 1) {
+		followOffset = RotateVectorByEuler(followOffset, targetWorldTransform.rotate);
+	}
+
+	cameraTransform.translate = AddVector3(targetWorldTransform.translate, followOffset);
+	const int32_t rotationMode = (std::clamp)(cameraComponent.cameraFollowRotationMode, 0, 2);
+
+	if (rotationMode == 1) {
+		cameraTransform.rotate = AddVector3(
+			targetWorldTransform.rotate,
+			cameraGameObject.rotate);
+	}
+	else if (rotationMode == 2) {
+		const Vector3 lookDirection = SubtractVector3(
+			targetWorldTransform.translate,
+			cameraTransform.translate);
+		const float lookDistance = LengthVector3(lookDirection);
+
+		if (lookDistance > 0.0001f) {
+			const Vector3 normalizedDirection = MultiplyVector3(1.0f / lookDistance, lookDirection);
+			cameraTransform.rotate = {
+				-std::asin((std::clamp)(normalizedDirection.y, -1.0f, 1.0f)) + cameraGameObject.rotate.x,
+				std::atan2(normalizedDirection.x, normalizedDirection.z) + cameraGameObject.rotate.y,
+				cameraGameObject.rotate.z};
+		}
+	}
+
+	return cameraTransform;
+}
+
 bool EditorCameraEffectManager::FindHighestPriorityCameraTransform(Transforms& cameraTransform) const {
 	if (editorScene_ == nullptr) {
 		return false;
 	}
 
 	const EditorGameObject* selectedCameraGameObject = nullptr;
+	const EditorComponent* selectedCameraComponent = nullptr;
 	int32_t selectedPriority = INT32_MIN;
 
 	for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
@@ -394,15 +518,204 @@ bool EditorCameraEffectManager::FindHighestPriorityCameraTransform(Transforms& c
 		}
 
 		selectedCameraGameObject = &gameObject;
+		selectedCameraComponent = cameraComponent;
 		selectedPriority = cameraComponent->cameraPriority;
 	}
 
-	if (selectedCameraGameObject == nullptr) {
+	if (selectedCameraGameObject == nullptr || selectedCameraComponent == nullptr) {
 		return false;
 	}
 
-	cameraTransform = ResolveWorldTransform(*selectedCameraGameObject);
+	cameraTransform = ResolveFollowedCameraTransform(*selectedCameraGameObject, *selectedCameraComponent);
 	return true;
+}
+
+bool EditorCameraEffectManager::UpdateCameraInput(float deltaTime, const uint8_t* keyState) {
+	EditorGameObject* cameraGameObject = FindHighestPriorityCameraGameObject();
+
+	if (cameraGameObject == nullptr) {
+		cameraInputInitialized_ = false;
+		cameraInputOwnerGameObjectId_ = -1;
+		ReleaseCameraInputCursor();
+		return false;
+	}
+
+	EditorComponent* cameraComponent = EditorComponentUtility::FindComponent(
+		*cameraGameObject,
+		EditorComponentType::Camera);
+
+	if (cameraComponent == nullptr) {
+		cameraComponent = EditorComponentUtility::FindComponent(
+			*cameraGameObject,
+			EditorComponentType::CinemachineCamera);
+	}
+
+	if (cameraComponent == nullptr || !cameraComponent->isActive ||
+		!cameraComponent->cameraInputEnabled) {
+		cameraInputInitialized_ = false;
+		cameraInputOwnerGameObjectId_ = -1;
+		ReleaseCameraInputCursor();
+		return false;
+	}
+
+	if (!cameraInputInitialized_ || cameraInputOwnerGameObjectId_ != cameraGameObject->id) {
+		cameraInputRuntimeTransform_ = ResolveFollowedCameraTransform(*cameraGameObject, *cameraComponent);
+		cameraInputYaw_ = cameraInputRuntimeTransform_.rotate.y;
+		cameraInputPitch_ = cameraInputRuntimeTransform_.rotate.x;
+		const float minimumDistance = (std::max)(cameraComponent->cameraInputMinimumDistance, 0.01f);
+		const float maximumDistance = (std::max)(cameraComponent->cameraInputMaximumDistance, minimumDistance);
+		cameraInputOrbitDistance_ = (std::clamp)(
+			cameraComponent->cameraInputOrbitDistance,
+			minimumDistance,
+			maximumDistance);
+		cameraInputOwnerGameObjectId_ = cameraGameObject->id;
+		cameraInputInitialized_ = true;
+	}
+
+	const bool isCursorAvailable = IsCursorInsideGameView() || cameraInputOwnsCursorLock_;
+	const bool isRightMouseDown = (g_mouseState.rgbButtons[1] & 0x80u) != 0u ||
+		(GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+	const bool isRotationActive = isCursorAvailable &&
+		(cameraComponent->cameraInputActivation == 1 || isRightMouseDown);
+
+	if (isRotationActive) {
+		const float invertY = cameraComponent->cameraInputInvertY ? -1.0f : 1.0f;
+		cameraInputYaw_ += static_cast<float>(g_mouseState.lX) * cameraComponent->cameraInputLookSensitivity;
+		cameraInputPitch_ += static_cast<float>(g_mouseState.lY) *
+			cameraComponent->cameraInputLookSensitivity * invertY;
+		const float minimumPitch = cameraComponent->cameraInputMinimumPitchDegrees *
+			(std::numbers::pi_v<float> / 180.0f);
+		const float maximumPitch = cameraComponent->cameraInputMaximumPitchDegrees *
+			(std::numbers::pi_v<float> / 180.0f);
+		cameraInputPitch_ = (std::clamp)(
+			cameraInputPitch_,
+			(std::min)(minimumPitch, maximumPitch),
+			(std::max)(minimumPitch, maximumPitch));
+
+		if (cameraComponent->cameraInputLockCursor) {
+			ApplyRuntimeCursorLock(true);
+			cameraInputOwnsCursorLock_ = true;
+		}
+		else if (cameraInputOwnsCursorLock_) {
+			ApplyRuntimeCursorLock(false);
+			cameraInputOwnsCursorLock_ = false;
+		}
+
+		if (cameraComponent->cameraInputHideCursor) {
+			ApplyRuntimeCursorVisibility(false);
+			cameraInputOwnsCursorVisibility_ = true;
+		}
+		else if (cameraInputOwnsCursorVisibility_) {
+			ApplyRuntimeCursorVisibility(true);
+			cameraInputOwnsCursorVisibility_ = false;
+		}
+	}
+	else {
+		ReleaseCameraInputCursor();
+	}
+
+	const float pitchCosine = std::cos(cameraInputPitch_);
+	const Vector3 cameraForward{
+		std::sin(cameraInputYaw_) * pitchCosine,
+		-std::sin(cameraInputPitch_),
+		std::cos(cameraInputYaw_) * pitchCosine};
+	const Vector3 cameraRight{
+		std::cos(cameraInputYaw_),
+		0.0f,
+		-std::sin(cameraInputYaw_)};
+
+	if (cameraComponent->cameraInputStyle == 1) {
+		if (isCursorAvailable && cameraComponent->cameraInputZoomSpeed > 0.0f) {
+			const float wheelSteps = static_cast<float>(g_mouseState.lZ) / 120.0f;
+			cameraInputOrbitDistance_ -= wheelSteps * cameraComponent->cameraInputZoomSpeed;
+		}
+
+		const float minimumDistance = (std::max)(cameraComponent->cameraInputMinimumDistance, 0.01f);
+		const float maximumDistance = (std::max)(cameraComponent->cameraInputMaximumDistance, minimumDistance);
+		cameraInputOrbitDistance_ = (std::clamp)(
+			cameraInputOrbitDistance_,
+			minimumDistance,
+			maximumDistance);
+		int32_t targetGameObjectId = cameraComponent->cameraInputTargetGameObjectId;
+
+		if (targetGameObjectId < 0) {
+			targetGameObjectId = cameraComponent->connectedGameObjectId;
+		}
+
+		const EditorGameObject* targetGameObject = editorScene_ != nullptr
+			? editorScene_->FindGameObject(targetGameObjectId)
+			: nullptr;
+		Vector3 orbitPivot = cameraComponent->cameraInputPivotOffset;
+
+		if (targetGameObject != nullptr && targetGameObject->isActive) {
+			orbitPivot = AddVector3(
+				ResolveWorldTransform(*targetGameObject).translate,
+				cameraComponent->cameraInputPivotOffset);
+		}
+
+		cameraInputRuntimeTransform_.translate = SubtractVector3(
+			orbitPivot,
+			MultiplyVector3(cameraInputOrbitDistance_, cameraForward));
+	}
+	else if (isCursorAvailable && cameraComponent->cameraInputMovementEnabled) {
+		Vector3 movementDirection{0.0f, 0.0f, 0.0f};
+
+		if (IsKeyDown(keyState, 0x11)) {
+			movementDirection = AddVector3(movementDirection, cameraForward);
+		}
+
+		if (IsKeyDown(keyState, 0x1F)) {
+			movementDirection = SubtractVector3(movementDirection, cameraForward);
+		}
+
+		if (IsKeyDown(keyState, 0x20)) {
+			movementDirection = AddVector3(movementDirection, cameraRight);
+		}
+
+		if (IsKeyDown(keyState, 0x1E)) {
+			movementDirection = SubtractVector3(movementDirection, cameraRight);
+		}
+
+		if (IsKeyDown(keyState, 0x12)) {
+			movementDirection.y += 1.0f;
+		}
+
+		if (IsKeyDown(keyState, 0x10)) {
+			movementDirection.y -= 1.0f;
+		}
+
+		const float movementLength = LengthVector3(movementDirection);
+
+		if (movementLength > 0.0f) {
+			const bool isFastMove = IsKeyDown(keyState, 0x2A) || IsKeyDown(keyState, 0x36);
+			const float fastMultiplier = isFastMove
+				? (std::max)(cameraComponent->cameraInputFastMultiplier, 1.0f)
+				: 1.0f;
+			const float movementScale = cameraComponent->cameraInputMoveSpeed *
+				fastMultiplier * (std::max)(deltaTime, 0.0f) / movementLength;
+			cameraInputRuntimeTransform_.translate = AddVector3(
+				cameraInputRuntimeTransform_.translate,
+				MultiplyVector3(movementScale, movementDirection));
+		}
+	}
+
+	cameraInputRuntimeTransform_.rotate = {cameraInputPitch_, cameraInputYaw_, 0.0f};
+	cameraInputRuntimeTransform_.scale = {1.0f, 1.0f, 1.0f};
+	g_runtimeGameCameraOverrideTransform = cameraInputRuntimeTransform_;
+	g_runtimeGameCameraOverrideActive = true;
+	return true;
+}
+
+void EditorCameraEffectManager::ReleaseCameraInputCursor() {
+	if (cameraInputOwnsCursorLock_) {
+		ApplyRuntimeCursorLock(false);
+		cameraInputOwnsCursorLock_ = false;
+	}
+
+	if (cameraInputOwnsCursorVisibility_) {
+		ApplyRuntimeCursorVisibility(true);
+		cameraInputOwnsCursorVisibility_ = false;
+	}
 }
 
 EditorGameObject* EditorCameraEffectManager::FindHighestPriorityCameraGameObject() const {

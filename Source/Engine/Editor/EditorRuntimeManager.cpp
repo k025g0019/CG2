@@ -1280,3 +1280,141 @@ void EditorRuntimeManager::PublishSceneRuntimeState() {
 		isSceneLoading_,
 		loadedScenePaths);
 }
+
+void EditorRuntimeManager::CollectAreaGameObjectIds(
+	int32_t rootGameObjectId,
+	std::vector<int32_t>& outGameObjectIds) const {
+	if (editorScene_ == nullptr) {
+		return;
+	}
+
+	const EditorGameObject* rootGameObject = editorScene_->FindGameObject(rootGameObjectId);
+	if (rootGameObject == nullptr) {
+		return;
+	}
+
+	outGameObjectIds.push_back(rootGameObjectId);
+
+	// Hookは子GameObjectとして置く構成が前提なので、Root配下を再帰的に全て対象にする。
+	for (const int32_t childGameObjectId : rootGameObject->children) {
+		CollectAreaGameObjectIds(childGameObjectId, outGameObjectIds);
+	}
+}
+
+bool EditorRuntimeManager::CaptureAreaState(int32_t areaRootGameObjectId) {
+	if (editorScene_ == nullptr || areaRootGameObjectId < 0) {
+		return false;
+	}
+
+	std::vector<int32_t> areaGameObjectIds;
+	CollectAreaGameObjectIds(areaRootGameObjectId, areaGameObjectIds);
+
+	if (areaGameObjectIds.empty()) {
+		return false;
+	}
+
+	std::vector<AreaObjectState> capturedStates;
+	capturedStates.reserve(areaGameObjectIds.size());
+
+	for (const int32_t gameObjectId : areaGameObjectIds) {
+		const EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+		if (gameObject == nullptr) {
+			continue;
+		}
+
+		AreaObjectState state{};
+		state.gameObjectId = gameObjectId;
+		// Transformは親空間のローカル値で控える。復元時も同じ親子構成へ書き戻す。
+		state.translate = gameObject->translate;
+		state.rotate = gameObject->rotate;
+		state.scale = gameObject->scale;
+		state.isActive = gameObject->isActive;
+
+		const EditorComponent* rigidBody = EditorComponentUtility::FindComponent(
+			*gameObject,
+			EditorComponentType::RigidBody);
+		if (rigidBody != nullptr) {
+			state.hasRigidBody = true;
+			state.velocity = rigidBody->velocity;
+			state.angularVelocity = rigidBody->angularVelocity;
+		}
+
+		capturedStates.push_back(state);
+	}
+
+	areaStates_[areaRootGameObjectId] = std::move(capturedStates);
+	return true;
+}
+
+bool EditorRuntimeManager::HasAreaState(int32_t areaRootGameObjectId) const {
+	return areaStates_.find(areaRootGameObjectId) != areaStates_.end();
+}
+
+bool EditorRuntimeManager::ResetArea(int32_t areaRootGameObjectId) {
+	if (editorScene_ == nullptr) {
+		return false;
+	}
+
+	const auto areaStateIterator = areaStates_.find(areaRootGameObjectId);
+	if (areaStateIterator == areaStates_.end()) {
+		return false;
+	}
+
+	// 先にこのエリアのHookへ繋がっているWireを破棄する。
+	// 物体を戻した後にWireが残っていると、保存時と噛み合わない長さのまま張力が発生する。
+	std::vector<EditorPhysicsManager::WireHandle> wireHandlesToDestroy;
+
+	for (const auto& [wireHandle, wireState] : physicsManager_.GetRuntimeWires()) {
+		const bool isFirstInsideArea = std::any_of(
+			areaStateIterator->second.begin(),
+			areaStateIterator->second.end(),
+			[&wireState](const AreaObjectState& state) {
+				return state.gameObjectId == wireState.desc.firstGameObjectId;
+			});
+		const bool isSecondInsideArea = std::any_of(
+			areaStateIterator->second.begin(),
+			areaStateIterator->second.end(),
+			[&wireState](const AreaObjectState& state) {
+				return state.gameObjectId == wireState.desc.secondGameObjectId;
+			});
+
+		if (isFirstInsideArea || isSecondInsideArea) {
+			wireHandlesToDestroy.push_back(wireHandle);
+		}
+	}
+
+	for (const EditorPhysicsManager::WireHandle wireHandle : wireHandlesToDestroy) {
+		physicsManager_.DestroyWire(wireHandle);
+	}
+
+	for (const AreaObjectState& state : areaStateIterator->second) {
+		EditorGameObject* gameObject = editorScene_->FindGameObject(state.gameObjectId);
+		if (gameObject == nullptr) {
+			continue;
+		}
+
+		gameObject->translate = state.translate;
+		gameObject->rotate = state.rotate;
+		gameObject->scale = state.scale;
+		gameObject->isActive = state.isActive;
+
+		if (state.hasRigidBody) {
+			EditorComponent* rigidBody = EditorComponentUtility::FindComponent(
+				*gameObject,
+				EditorComponentType::RigidBody);
+			if (rigidBody != nullptr) {
+				rigidBody->velocity = state.velocity;
+				rigidBody->angularVelocity = state.angularVelocity;
+			}
+
+			// Component側の値だけ戻してもJolt内部のBodyは動き続けるため、実物理へも反映する。
+			physicsManager_.SetVelocity(state.gameObjectId, state.velocity);
+			physicsManager_.SetAngularVelocity(state.gameObjectId, state.angularVelocity);
+		}
+
+		// Animationで動かしている物体は再生位置も先頭へ戻す。Animation非所持なら何も起きない。
+		animationManager_.SetAnimationTime(state.gameObjectId, 0.0f);
+	}
+
+	return true;
+}

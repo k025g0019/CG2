@@ -285,10 +285,32 @@ Camera Blend中は標準操作を適用せず、標準操作が有効なとき�
 
 ### LightProbeGroup
 
-- 目的: 間接光のサンプル点を配置する。
-- 使う場面: 動的 Object の間接光補間。
-- 主な設定: Probe Position、Group。
-- 注意: 実処理未接続なら設定のみと書く。
+- 目的: 間接光(GI)の Light Probe を直方体グリッドへ等間隔に配置し、Bake した間接光を全 Object へ供給する。
+- 使う場面: 室内が暗くならない、壁の色が床へ回り込まない、動的 Object に間接光が乗らない、といった場面。
+- 追加場所: Add Component →`ライト・環境`→`ライトプローブグループ`。
+- 必要条件: Sun(Light) と、影を落とす Mesh。Probe は「ライティング済みの Scene を実際に撮る」ため、影が正しく出ていることが前提。
+- Inspector 項目:
+
+  | 表示名 | 内部フィールド | 初期値 | 単位 | 範囲 |
+  | --- | --- | --- | --- | --- |
+  | GIを使用 | `environmentTextureEnabled` | OFF | - | ON / OFF |
+  | 範囲(半径) | `colliderSize` | (8, 4, 8) | m | 0.5〜500 |
+  | Probe間隔 | `colliderRadius` | 2.0 | m | 0.5〜50 |
+  | GIの強さ | `intensity` | 1.0 | 倍率 | 0〜4 |
+  | 法線バイアス | `roughness` | 0.15 | m | 0〜2 |
+  | 撮影距離 | `reflectionStrength` | 60.0 | m | 1〜500 |
+  | 時間平滑 | `metallic` | 0.92 | 係数 | 0〜0.99 |
+
+- 配置: GameObject の位置がグリッドの**中心**。各軸の Probe 数は `floor(半径 × 2 ÷ 間隔) + 1`。Inspector に総 Probe 数が表示される。
+- Play 時: 1 フレームにつき 8 Probe ずつ焼き直す。焼き直すたびにバウンス数が 1 段ずつ増え、時間をかけて収束する。Sun を動かすと追従する。
+- 保存: Scene に上記フィールドが保存される。Bake 結果は保存されず、起動のたびに焼き直す。
+- 制限:
+  - 総 Probe 数の上限は 4096。超えると GI は無効になり Inspector に警告が出る。
+  - Bake 結果はファイルへ保存しない(Lightmap 未対応)。
+  - 半透明 Object と Ocean は Probe のキャプチャ対象外。
+  - Scene に置ける LightProbeGroup は 1 つだけ(最初に見つかったものを使う)。
+- 既定は OFF: 既存 Scene の見た目を勝手に変えないため。チェックを入れて初めて GI が働く。
+- 確認手順: 窓が 1 つだけの密閉した部屋を作り、`GIを使用`の ON / OFF を比べる。ON で室内が自然に暗くなり、壁の色が床へ回り込み、隣室へ光が漏れないことを確認する。
 
 ### LightProbeProxyVolume
 
@@ -340,6 +362,32 @@ Camera Blend中は標準操作を適用せず、標準操作が有効なとき�
 - 使う場面: Scene 全体の明るさ、Skybox、反射、Ambient。
 - 主な設定: Sky Color、Ambient Intensity、HDRI Path、IBL Intensity、Rotation。
 - 注意: Light なしでも光る場合、Environment か Shader 固定光か確認する。
+- 光の筋(ボリュメトリックライト): `光の筋を使用`で Sun Beams(God Ray)を有効にする。`強さ`、`筋の鋭さ`(Henyey-Greenstein の異方性)、`到達距離`を持つ。実体は深度バッファ全体をレイマーチする専用のポストエフェクトパスで、隙間から漏れた光だけが空気中の筋として浮かび上がる。既定は OFF。
+
+### SunPortal
+
+- 目的: 窓や開口部を簡易的な Area Light として扱い、室内側だけへ Sun の光を足す。
+- 使う場面: 窓から差し込む日光を、フル GI を使わず軽量に補強したい場面。
+- 追加場所: Add Component →`ライト・環境`→`Sun Portal`。
+- 必要条件: Scene に Sun(Light) があり、影が有効であること。
+- 向き: GameObject の向き(+Z)が Portal の**外向き(Sun 側)**。
+- Inspector 項目:
+
+  | 表示名 | 内部フィールド | 初期値 | 単位 | 範囲 |
+  | --- | --- | --- | --- | --- |
+  | 強さ | `intensity` | 1.0 | 倍率 | 0〜4 |
+  | 色味 | `color` | 白 | - | - |
+  | 半幅 | `colliderSize.x` | 1.0 | m | 0.05〜50 |
+  | 半高 | `colliderSize.y` | 1.0 | m | 0.05〜50 |
+  | 到達距離 | `colliderRadius` | 6.0 | m | 0.1〜100 |
+  | 奥への広がり | `roughness` | 0.6 | 係数 | 0〜2 |
+
+- Play 時: Sun が Portal の正面に当たっている間だけ、外向き法線の内側(室内側)へ光を足す。遮蔽判定は「Sun → Portal 自身」だけを既存の Cascaded Shadow で見る。対象ピクセルが壁の影に入っていても、窓に日が当たっていれば光る。
+- 制限:
+  - 「Portal → 対象ピクセル」の遮蔽は判定しない。矩形と広がり範囲が隣室まで届く配置だと光が漏れる。`到達距離`で調整する。
+  - 窓かどうかの自動判定は行わない。人間が配置した仮想の板として扱う。
+  - Scene に置ける Sun Portal は 4 つまで。
+- 確認手順: 窓のある部屋へ置き、Sun を窓の裏へ回して完全に消えること、`強さ`0 で無効になることを確認する。
 
 ## 3D物理
 
@@ -560,6 +608,8 @@ Camera Blend中は標準操作を適用せず、標準操作が有効なとき�
 - 選択: `Physics::FindBestHook`へ選択距離と選択角度を渡す。壁に隠れたHookは候補にしない。
 - 状態表示: `HookPoint::SetVisualState`へ`Normal`、`Targeted`、`Selected`、`Connected`を渡す。
 - 注意: 敵やBOX本体へ自動追加しない。接続させたい場所に専用Hook GameObjectを配置する。
+- 作成支援: Hierarchyの`作成 > Hook（選択物体の子）`で、選択中の物体の子としてRenderer・選択Collider・HookPointを1セットで作り、「力を伝えるRigidbody」へ選択中の物体を設定する。Hook自身にRigidbodyは付けない。
+- 設定不備の確認: `ウィンドウ > Hook / Wire デバッグ`でRenderer不足、Collider不足、伝達先の参照切れ、伝達先のRigidbody不足、子Hookなのに伝達先が自身、を一覧できる。SceneViewにはAnchorの実位置と伝達先への線を重ねる（伝達先が無効なら橙）。
 - Script: `GetOrAddComponent<HookPoint>()`で必要な接続点へ実行時追加できる。`GetWires()`はこのHookを端点とするActive・未破断Wireのみを返し、`CanConnect()`で接続枠を確認できる。
 - 選択制限: 現行`FindBestHook`は照準候補検索であり、選択可能フラグや本数制限を自身では除外しない。ScriptでCanConnectを確認する。requireConnectable=trueのWire生成でも接続可否を検証する。
 - 色の反映先: Hook自身のModelRenderer、なければSkinnedMeshRenderer。子・親Rendererの自動探索はしない。4状態の切替もScriptが担当する。

@@ -164,8 +164,9 @@ struct DirectionalLight {
 	float spotCosOuter;
 	int32_t lightType;
 	float areaRadius;
-	Vector3 cameraPosition;
+	// HLSLのfloat3が16バイト境界をまたがないよう、埋め草を先に置く。
 	float padding3;
+	Vector3 cameraPosition;
 	float environmentTextureEnabled;
 	float environmentTextureIntensity;
 	float environmentTextureRotation;
@@ -176,15 +177,67 @@ struct DirectionalLight {
 	float shadowTileUvBiasX;
 	float shadowTileUvBiasY;
 	float shadowEnabled;
-	float shadowPadding0, shadowPadding1, shadowPadding2;
+	// 旧shadowPadding0-2。ボリュメトリックライト(光の筋)のパラメータへ転用。
+	float volumetricIntensity;  // 散乱光の強さ。0なら光の筋は無効
+	float volumetricAnisotropy;  // Henyey-Greenstein の g。1に近いほど光源方向へ鋭い筋になる
+	float volumetricDistance;  // カメラから何mまでレイマーチするか
 	Matrix4x4 shadowVP;
 	Vector4 shadowCascadeSplits;
 	float shadowCascadeCount;
 	float shadowCascadePadding0;
 	float shadowCascadePadding1;
 	float shadowCascadePadding2;
-	std::array<Matrix4x4, 4u> shadowCascadeVP;
-	std::array<Vector4, 4u> shadowCascadeAtlas;
+	// Sun(lightType==0)は[0..3]をCascade分割に使う。
+	// Point Light(lightType==1)は[0..5]をキューブシャドウの6面(+X,-X,+Y,-Y,+Z,-Z)に使う。
+	// 同じLight枠がSunとPointを両方兼ねることはないため配列を共用する。
+	std::array<Matrix4x4, 6u> shadowCascadeVP;
+	std::array<Vector4, 6u> shadowCascadeAtlas;
+};
+
+// GPU定数バッファの配置契約。Common/SceneLightData.hlsliと一致させる。
+static_assert(offsetof(DirectionalLight, cameraPosition) == 112u);
+static_assert(offsetof(DirectionalLight, environmentTextureEnabled) == 124u);
+static_assert(offsetof(DirectionalLight, shadowEnabled) == 160u);
+static_assert(offsetof(DirectionalLight, shadowVP) == 176u);
+static_assert(offsetof(DirectionalLight, shadowCascadeSplits) == 240u);
+static_assert(offsetof(DirectionalLight, shadowCascadeCount) == 256u);
+static_assert(offsetof(DirectionalLight, shadowCascadeVP) == 272u);
+static_assert(offsetof(DirectionalLight, shadowCascadeAtlas) == 656u);
+static_assert(sizeof(DirectionalLight) == 752u);
+
+constexpr int32_t kMaxSunPortals = 4;
+
+// Sun Portal: 窓/開口部にSunが当たっているとき、その面を簡易的な
+// Area Lightとして扱い、室内側だけへ光を足す。フルGIではなく、
+// 「Sunの光が開口部から入ってくる」という一方向の現象だけを近似する。
+struct SunPortalLight {
+	Vector3 position;  // Portal面の中心（ワールド座標）
+	float halfWidth;  // Portal面の半幅（GameObjectのローカルX方向）
+	Vector3 outwardNormal;  // Portalの外向き（Sun側）法線
+	float halfHeight;  // Portal面の半高（GameObjectのローカルY方向）
+	Vector3 right;  // Portalのローカル右方向（半幅の軸）
+	float range;  // 室内側へ光が届く最大距離
+	Vector3 up;  // Portalのローカル上方向（半高の軸）
+	float spreadRate;  // 室内へ入るほど照らす範囲がどれだけ広がるか
+	Vector3 tint;  // Sunの色に掛ける追加の色味（既定は白＝無着色）
+	float intensityScale;  // 強さの倍率
+};
+
+// Light Probe GI のグリッド定義。Assets/Shaders/GI/ProbeCommon.hlsli の
+// LightProbeGridData と同じ並びにする。
+struct LightProbeGridData {
+	Vector3 gridOrigin;  // 最小コーナーにあるProbeの中心座標
+	float normalBias;  // 自己遮蔽を避けるため法線方向へ押し出す量(m)
+	Vector3 gridSpacing;  // Probe間隔(m)
+	float intensity;  // GIの強さ倍率。0ならGI無効
+	int32_t gridCountX;  // 各軸のProbe数
+	int32_t gridCountY;
+	int32_t gridCountZ;
+	int32_t visibilityTilesPerRow;  // 可視性アトラス1行あたりのProbe数
+	float visibilityInverseAtlasWidth;
+	float visibilityInverseAtlasHeight;
+	float probeGridPadding0;
+	float probeGridPadding1;
 };
 
 struct EmissiveLightArray {
@@ -193,7 +246,16 @@ struct EmissiveLightArray {
 	float padding1;
 	float padding2;
 	EmissiveLight lights[kMaxEmissiveLights];  // 放射光源配列
+	int32_t sunPortalCount;  // 有効なSun Portalの数
+	float sunPortalPadding0;
+	float sunPortalPadding1;
+	float sunPortalPadding2;
+	SunPortalLight sunPortals[kMaxSunPortals];
+	LightProbeGridData probeGrid;  // Light Probe GI のグリッド定義
 };
+
+// HLSL側の LightProbeGridData と配置が一致していること。
+static_assert(sizeof(LightProbeGridData) == 64u);
 
 struct TransformationMatrix {
 	Matrix4x4 WVP;  // World * View * Projection の合成行列

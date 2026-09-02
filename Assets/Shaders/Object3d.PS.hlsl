@@ -5,6 +5,9 @@
 #include "Lighting/IBLRuntime.hlsli"
 #include "Reflection/ParallaxCorrectedCubemap.hlsli"
 #include "Shadow/SoftShadow.hlsli"
+#include "Shadow/ShadowSampling.hlsli"
+#include "Common/SceneLightData.hlsli"
+#include "GI/ProbeSampling.hlsli"
 #include "Water/OceanSurface.hlsli"
 
 struct Material
@@ -75,51 +78,7 @@ struct Material
     float surfaceMaterialPadding2;
 };
 
-struct DirectionalLightData
-{
-    float4 color;
-    float3 direction;
-    float intensity;
-    float3 position;
-    float range;
-    float3 skyUpperColor;
-    float skyIntensity;
-    float3 skyLowerColor;
-    float skyEmission;
-    float ambientIntensity;
-    float horizonSharpness;
-    float reflectionIntensity;
-    float spotCosInner;
-    float spotCosOuter;
-    int lightType;
-    float areaRadius;
-    float3 cameraPosition;
-    float padding3;
-    float environmentTextureEnabled;
-    float environmentTextureIntensity;
-    float environmentTextureRotation;
-    float environmentTextureMipBias;
-    float shadowTileIndex;
-    float shadowTileUvScaleX;
-    float shadowTileUvScaleY;
-    float shadowTileUvBiasX;
-    float shadowTileUvBiasY;
-    float shadowEnabled;
-    float shadowPadding0, shadowPadding1, shadowPadding2;
-    row_major float4x4 shadowVP;
-    float4 shadowCascadeSplits;
-    float shadowCascadeCount;
-    float shadowCascadePadding0;
-    float shadowCascadePadding1;
-    float shadowCascadePadding2;
-    row_major float4x4 shadowCascadeVP[4];
-    float4 shadowCascadeAtlas[4];
-};
-
-struct DirectionalLightArray
-{
-    DirectionalLightData lights[4];
-};
+#include "Common/SceneLightData.hlsli"
 
 struct PixelShaderInput
 {
@@ -148,24 +107,14 @@ bool IsOceanSurfacePass()
 #endif
 }
 
-struct EmissiveLightData
-{
-    float3 position;
-    float intensity;
-    float3 color;
-    float range;
-};
-
-struct EmissiveLightArray
-{
-    int count;
-    float padding0;
-    float padding1;
-    float padding2;
-    EmissiveLightData lights[8];
-};
-
+// EmissiveLightData / SunPortalLightData / EmissiveLightArray は
+// Common/SceneLightData.hlsli で共有する(C++の構造体と1対1で保つため)。
 ConstantBuffer<EmissiveLightArray> gEmissiveLights : register(b2);
+
+// Light Probe GI。Root Signature の 64 DWORD 上限の都合で、
+// この2つは1つのDescriptor Tableへまとめて束縛している。
+StructuredBuffer<float4> gProbeShBuffer : register(t20);
+Texture2D<float2> gProbeVisibilityAtlas : register(t21);
 
 struct WaterViewConstants
 {
@@ -287,142 +236,23 @@ void BuildLightInfo(float3 worldPosition, out float3 lightDirection, out float l
         lightIntensity *= CalculateSpotAttenuation(-lightDirection, light.direction, light);
 }
 
-float CalculateSunWrappedDiffuse(float normalDotLight)
+// 不透明材質の直接光は面の向きで決める。直角・背面には直接光を足さない。
+// 回り込みは材質が指定したSubsurface（水面・草を含む）だけに限定する。
+float EvaluateDiffuseCosine(float normalDotLight, float subsurfaceWrap)
 {
-    // SUNは距離減衰を持たないため、完全なLambertのままだと正面が均一・背面が真っ黒になりやすい。
-    // DirectLightの方向感は残しつつ、ゲーム用の軽い回り込みで側面と背面の落ち方を緩める。
-    const float sunWrap = 0.14f;
-    return saturate((normalDotLight + sunWrap) / (1.0f + sunWrap));
+    return saturate((normalDotLight + subsurfaceWrap) / (1.0f + subsurfaceWrap));
 }
 
-float3 EvaluateSunHemisphereFill(
-    float3 normal,
-    float3 albedo,
-    float normalDotLight,
-    float metallic,
-    DirectionalLightData light)
+// 影のサンプリング本体は Shadow/ShadowSampling.hlsli で共有する。
+// ここは既存の呼び出し名を保つための薄いラッパー。
+float SampleShadowAtlas(float3 worldPosition, float normalDotLight, DirectionalLightData light)
 {
-    // PointLightの距離減衰とは別に、SUNだけ空/地平色から弱い環境フィルを作る。
-    // 背面を真っ黒にせず、斜め面の形状が読める程度に抑える。
-    const float skyBlend = saturate(normal.y * 0.5f + 0.5f);
-    const float3 hemisphereColor = lerp(
-        light.skyLowerColor,
-        light.skyUpperColor,
-        skyBlend);
-    const float sideAndBack = 1.0f - smoothstep(-0.20f, 0.55f, normalDotLight);
-    const float fillStrength =
-        max(light.ambientIntensity, 0.0f) *
-        max(light.intensity, 0.0f) *
-        sideAndBack *
-        (1.0f - metallic) *
-        0.08f;
-
-    return albedo * hemisphereColor * fillStrength;
-}
-
-float SampleShadowProjection(
-    float3 worldPosition,
-    float normalDotLight,
-    row_major float4x4 shadowViewProjection,
-    float4 atlasTransform)
-{
-    float4 shadowPosition = mul(float4(worldPosition, 1.0f), shadowViewProjection);
-    if (shadowPosition.w <= 0.000001f) return 1.0f;
-    float3 shadowNdc = shadowPosition.xyz / shadowPosition.w;
-    float2 shadowUv = float2(shadowNdc.x * 0.5f + 0.5f, -shadowNdc.y * 0.5f + 0.5f);
-    if (shadowUv.x < 0.0f || shadowUv.x > 1.0f || shadowUv.y < 0.0f || shadowUv.y > 1.0f) return 1.0f;
-    float2 atlasUv = shadowUv * atlasTransform.xy + atlasTransform.zw;
-    float receiverDepth = saturate(shadowNdc.z);
-    uint shadowMapWidth = 1u;
-    uint shadowMapHeight = 1u;
-    gShadowMap.GetDimensions(shadowMapWidth, shadowMapHeight);
-    const float2 texelSize = rcp(max(float2(shadowMapWidth, shadowMapHeight), 1.0f));
-    const float2 tileMinimumUv = atlasTransform.zw + texelSize * 2.0f;
-    const float2 tileMaximumUv =
-        atlasTransform.zw +
-        atlasTransform.xy -
-        texelSize * 2.0f;
-    const float receiverBias = lerp(
-        0.0020f,
-        0.00035f,
-        saturate(normalDotLight));
-    return SampleSoftShadow9Tap(
+    return SampleShadowAtlasForLight(
         gShadowMap,
         gShadowSampler,
-        atlasUv,
-        receiverDepth - receiverBias,
-        texelSize,
-        1.35f,
-        tileMinimumUv,
-        tileMaximumUv);
-}
-
-float SampleShadowAtlas(
-    float3 worldPosition,
-    float normalDotLight,
-    DirectionalLightData light)
-{
-    if (light.shadowEnabled < 0.5f)
-    {
-        return 1.0f;
-    }
-
-    const bool usesCascadedShadow =
-        light.lightType == 0 &&
-        light.shadowCascadeCount > 1.5f;
-
-    if (!usesCascadedShadow)
-    {
-        const float4 atlasTransform = float4(
-            light.shadowTileUvScaleX,
-            light.shadowTileUvScaleY,
-            light.shadowTileUvBiasX,
-            light.shadowTileUvBiasY);
-        return SampleShadowProjection(
-            worldPosition,
-            normalDotLight,
-            light.shadowVP,
-            atlasTransform);
-    }
-
-    const float cameraDistance = length(worldPosition - light.cameraPosition);
-    uint cascadeIndex = 0u;
-    cascadeIndex += cameraDistance > light.shadowCascadeSplits.x ? 1u : 0u;
-    cascadeIndex += cameraDistance > light.shadowCascadeSplits.y ? 1u : 0u;
-    cascadeIndex += cameraDistance > light.shadowCascadeSplits.z ? 1u : 0u;
-    cascadeIndex = min(cascadeIndex, 3u);
-
-    const float currentShadow = SampleShadowProjection(
         worldPosition,
         normalDotLight,
-        light.shadowCascadeVP[cascadeIndex],
-        light.shadowCascadeAtlas[cascadeIndex]);
-
-    if (cascadeIndex >= 3u)
-    {
-        return currentShadow;
-    }
-
-    const float cascadeNearDistance = cascadeIndex == 0u
-        ? 0.0f
-        : light.shadowCascadeSplits[cascadeIndex - 1u];
-    const float cascadeFarDistance = light.shadowCascadeSplits[cascadeIndex];
-    const float blendStartDistance = lerp(cascadeNearDistance, cascadeFarDistance, 0.88f);
-    const float cascadeBlend = saturate(
-        (cameraDistance - blendStartDistance) /
-        max(cascadeFarDistance - blendStartDistance, 0.0001f));
-
-    if (cascadeBlend <= 0.0f)
-    {
-        return currentShadow;
-    }
-
-    const float nextShadow = SampleShadowProjection(
-        worldPosition,
-        normalDotLight,
-        light.shadowCascadeVP[cascadeIndex + 1u],
-        light.shadowCascadeAtlas[cascadeIndex + 1u]);
-    return lerp(currentShadow, nextShadow, cascadeBlend);
+        light);
 }
 
 float GetShadowVisibility(float3 normal, float3 lightDirection, float3 worldPosition, DirectionalLightData light)
@@ -430,6 +260,107 @@ float GetShadowVisibility(float3 normal, float3 lightDirection, float3 worldPosi
     const float normalDotLight = saturate(dot(normal, lightDirection));
     if (normalDotLight <= 0.0001f) return 1.0f;
     return SampleShadowAtlas(worldPosition, normalDotLight, light);
+}
+
+//============================================================
+// Sun Portal
+//============================================================
+// 窓や開口部にSun Portalを置くと、その面を簡易的なArea Lightとして扱い、
+// 室内側だけへSunの光を足す。フルGIではなく、以下だけの軽量な近似:
+//   ・光の向きはPortalの外向き法線の逆で固定(放射状の計算はしない)
+//   ・遮蔽は「Sun→Portal自身」だけ既存Cascaded Shadowを再利用して見る。
+//     「Sun→対象ピクセル」の遮蔽(=壁や天井の影)は無関係なので使わない。
+//     窓の先の壁で光が止まる「Portal→対象ピクセル」の遮蔽は、この
+//     軽量版では判定しない(隣室まで多少漏れる可能性は割り切り事項)。
+//   ・室内へ入るほど照らす範囲が広がる、という奥行き方向の減衰だけを持つ
+float3 EvaluateSunPortalLight(
+    float3 worldPosition,
+    float3 normal,
+    DirectionalLightData sunLight)
+{
+    float3 result = float3(0.0f, 0.0f, 0.0f);
+
+    // Sun強度が0(夜・無効化)なら、Portalも一緒に無効。
+    if (gEmissiveLights.sunPortalCount <= 0 || sunLight.intensity <= 0.0001f)
+    {
+        return result;
+    }
+
+    const float3 sunTravelDirection = normalize(sunLight.direction);
+    const float3 towardSun = -sunTravelDirection;
+
+    for (int portalIndex = 0; portalIndex < gEmissiveLights.sunPortalCount; portalIndex++)
+    {
+        SunPortalLightData portal = gEmissiveLights.sunPortals[portalIndex];
+
+        // SunがPortalの裏側にある(窓の外側から光が来ていない)場合は無効。
+        const float sunFacing = dot(towardSun, portal.outwardNormal);
+        if (sunFacing <= 0.0f)
+        {
+            continue;
+        }
+
+        const float3 toPixel = worldPosition - portal.position;
+        // 外向き法線の逆＝室内方向への深さ。0以下や範囲外は無効。
+        const float depth = dot(toPixel, -portal.outwardNormal);
+        if (depth <= 0.0f || depth >= portal.range)
+        {
+            continue;
+        }
+
+        const float rightOffset = dot(toPixel, portal.right);
+        const float upOffset = dot(toPixel, portal.up);
+        // 窓の外形をそのまま延長すると室内が真っ暗な角柱になるため、
+        // 奥へ進むほど広がる簡易的な円錐台で近似する。
+        const float spread = 1.0f + depth * max(portal.spreadRate, 0.0f);
+        const float extentX = max(portal.halfWidth * spread, 0.001f);
+        const float extentY = max(portal.halfHeight * spread, 0.001f);
+        const float edgeX = 1.0f - smoothstep(extentX * 0.6f, extentX, abs(rightOffset));
+        const float edgeY = 1.0f - smoothstep(extentY * 0.6f, extentY, abs(upOffset));
+
+        if (edgeX <= 0.0f || edgeY <= 0.0f)
+        {
+            continue;
+        }
+
+        const float rangeFalloff = 1.0f - smoothstep(portal.range * 0.6f, portal.range, depth);
+        // 光は「窓から室内向き」の一定方向で流れると単純化し、
+        // 本物のArea Lightのような放射状の方向計算を省く。
+        const float3 portalLightDirection = -portal.outwardNormal;
+        const float portalNdotL = saturate(dot(normal, portalLightDirection));
+
+        const float coverage = edgeX * edgeY * rangeFalloff * sunFacing * portalNdotL;
+
+        if (coverage <= 0.0f)
+        {
+            continue;
+        }
+
+        // ここで見るのは「Sun→対象ピクセル」ではなく「Sun→Portal自身」の遮蔽。
+        // 対象ピクセルが壁や天井の影に入っていても、窓自体に日が当たっていれば
+        // Portal光は通す。既存のCascaded Shadowをそのまま再利用するだけで、
+        // 追加のShadow Map/追加パスは持たない。
+        const float sunToPortalVisibility = GetShadowVisibility(
+            portal.outwardNormal,
+            towardSun,
+            portal.position,
+            sunLight);
+
+        if (sunToPortalVisibility <= 0.0f)
+        {
+            continue;
+        }
+
+        result +=
+            sunLight.color.rgb *
+            sunLight.intensity *
+            max(portal.tint, 0.0f) *
+            max(portal.intensityScale, 0.0f) *
+            coverage *
+            sunToPortalVisibility;
+    }
+
+    return result;
 }
 
 float2 BuildMaterialUv(float2 texcoord)
@@ -1017,9 +948,7 @@ ObjectPixelOutput main(PixelShaderInput input) : SV_TARGET0
                 ? normalize(lightDirection)
                 : float3(0.0f, 1.0f, 0.0f);
             float rawNdotL = dot(N, L);
-            float diffuseFactor = light.lightType == 0
-                ? CalculateSunWrappedDiffuse(rawNdotL)
-                : saturate(rawNdotL);
+            float diffuseFactor = EvaluateDiffuseCosine(rawNdotL, 0.0f);
 
             if (gMaterial.enableLighting == 2)
             {
@@ -1031,15 +960,6 @@ ObjectPixelOutput main(PixelShaderInput input) : SV_TARGET0
             float3 radiance = light.color.rgb * max(lightIntensity, 0.0f);
             classicDirect += albedo * diffuseFactor * radiance * shadowVisibility;
 
-            if (light.lightType == 0)
-            {
-                classicDirect += EvaluateSunHemisphereFill(
-                    N,
-                    albedo,
-                    rawNdotL,
-                    0.0f,
-                    light);
-            }
         }
 
         float skyBlend = saturate(N.y * 0.5f + 0.5f);
@@ -1092,22 +1012,19 @@ ObjectPixelOutput main(PixelShaderInput input) : SV_TARGET0
             ? normalize(lightDirection)
             : float3(0.0f, 1.0f, 0.0f);
         float rawNdotL = dot(opticalNormal, L);
+        // 直接光はLambertを基準にする(NdotL<0で確実に0)。側面・裏の柔らかさは
+        // ambient/IBL側の仕事なので、直接光にwrapで底上げするのはSubsurfaceを
+        // 明示指定した材質(肌・葉など)だけに限定する。海面だけは既存の見た目を
+        // 保つため最低限のwrapを残す。
         const float effectiveSubsurface = IsOceanSurfacePass()
             ? max(saturate(gMaterial.subsurface), 0.18f)
-            : (gMaterial.surfaceMode == 2
-                ? max(saturate(gMaterial.subsurface), 0.38f)
-                : saturate(gMaterial.subsurface));
-        const float effectiveSunWrap =
-            (!IsOceanSurfacePass() && light.lightType == 0)
-                ? max(effectiveSubsurface, 0.20f)
-                : effectiveSubsurface;
-        float NdotL = saturate(
-            (rawNdotL + effectiveSunWrap) /
-            (1.0f + effectiveSunWrap));
+            : saturate(gMaterial.subsurface);
+        const float NdotL = EvaluateDiffuseCosine(rawNdotL, effectiveSubsurface);
+
         if (NdotL > 0.0f)
         {
-            // 各ライトの shadowVP でワールド座標を投影し、atlas 内の対応タイルを読む。
-            float localShadow = GetShadowVisibility(opticalNormal, L, input.worldPosition, light);
+            // 拡散光と鏡面反射の両方に、同じ遮蔽を適用する。
+            const float localShadow = GetShadowVisibility(opticalNormal, L, input.worldPosition, light);
             float3 H = normalize(V + L);
             const float anisotropy = clamp(gMaterial.anisotropy, -0.98f, 0.98f);
             float D = abs(anisotropy) > 0.001f
@@ -1195,13 +1112,19 @@ ObjectPixelOutput main(PixelShaderInput input) : SV_TARGET0
 
         if (!IsOceanSurfacePass() && light.lightType == 0)
         {
-            direct += EvaluateSunHemisphereFill(
+            // Sun Portalの光は、Sunそのものへ向くNdotL(rawNdotL)ではなく
+            // Portal自身の向きに対するNdotLで別途評価するため、NdotL>0の
+            // 分岐の外(=ここ)で加算する。壁の陰で直接Sunが見えない床でも、
+            // 窓に日が当たっていれば正しく明るくなる。
+            direct += albedo * EvaluateSunPortalLight(
+                input.worldPosition,
                 opticalNormal,
-                albedo,
-                rawNdotL,
-                metallic,
                 light);
         }
+
+        // 光の筋(God Ray)は PostProcess/VolumetricLightShaft.PS.hlsl の専用パスが
+        // 深度バッファ全体をレイマーチして描く。ここで同じ値を面ごとに加算すると
+        // 二重に明るくなるため、表面シェーダー側では加算しない。
     }
 
     for (int emissiveIndex = 0; emissiveIndex < gEmissiveLights.count; emissiveIndex++)
@@ -1236,6 +1159,17 @@ ObjectPixelOutput main(PixelShaderInput input) : SV_TARGET0
         }
     }
 
+    // ambient/IBLの拡散成分だけに、Sunの遮蔽をゆるく反映する。囲まれた室内は
+    // ちゃんと暗くなり、Sun Beamsのような「暗い所から明るい所へ」の差が出る。
+    // 完全な0にはしない: Sunそのものは遮られていても、別方向からの空光や
+    // バウンス光は物理的に残るはずなので、下限を残した緩やかな減衰にする。
+    // 法線に依存せず「その位置がSunから見えるか」だけを見るため、
+    // normalDotLightには常に1.0を渡してバイアス計算をスキップする。
+    const float sunOcclusionForAmbient = LIGHT_PRIMARY.shadowEnabled > 0.5f
+        ? SampleShadowAtlas(input.worldPosition, 1.0f, LIGHT_PRIMARY)
+        : 1.0f;
+    const float ambientShadowFactor = lerp(0.15f, 1.0f, sunOcclusionForAmbient);
+
     const float cubemapModeMask =
         step(0.5f, gMaterial.reflectionMode) *
         (1.0f - step(1.5f, gMaterial.reflectionMode));
@@ -1251,10 +1185,28 @@ ObjectPixelOutput main(PixelShaderInput input) : SV_TARGET0
     const float3 generatedIrradiance = gIrradianceCube.Sample(
         gIblSampler,
         opticalNormal).rgb;
-    const float3 diffuseEnvironment = lerp(
+    const float3 skyIrradiance = lerp(
         generatedIrradiance,
         SampleRuntimeEnvironment(opticalNormal, 5.0f),
-        saturate(LIGHT_PRIMARY.environmentTextureEnabled)) * albedo;
+        saturate(LIGHT_PRIMARY.environmentTextureEnabled));
+
+    // Light Probe が焼けている場所では、空由来の一様な拡散環境光を
+    // Probeの間接光で置き換える。Probeは空の見え方も遮蔽も含んでいるので、
+    // 室内が暗くなることも、壁のバウンスで色が付くことも同時に成立する。
+    // Probeが無い(または範囲外の)場所は従来どおり空＋Sun遮蔽近似へ戻す。
+    bool hasProbeIrradiance = false;
+    const float3 probeIrradiance = SampleLightProbeGi(
+        gProbeShBuffer,
+        gProbeVisibilityAtlas,
+        gEmissiveLights.probeGrid,
+        input.worldPosition,
+        opticalNormal,
+        -V,
+        hasProbeIrradiance);
+    const float3 indirectIrradiance = hasProbeIrradiance
+        ? probeIrradiance
+        : skyIrradiance * ambientShadowFactor;
+    const float3 diffuseEnvironment = indirectIrradiance * albedo;
     const float3 reflectionDirection = normalize(reflect(-V, opticalNormal));
     const float reflectionMip =
         roughness * (kIBLPrefilterMipCount - 1.0f);
@@ -1325,7 +1277,8 @@ ObjectPixelOutput main(PixelShaderInput input) : SV_TARGET0
     float3 ambient =
         albedo *
         max(LIGHT_PRIMARY.ambientIntensity, 0.0f) *
-        (1.0f - metallic);
+        (1.0f - metallic) *
+        ambientShadowFactor;
 
     float3 emissionMap = gMaterial.useEmissionMap != 0
         ? gEmissionMap.Sample(gTextureSampler, materialUv).rgb

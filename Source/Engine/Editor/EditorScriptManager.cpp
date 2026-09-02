@@ -1364,6 +1364,18 @@ float EditorScriptManager::ScriptGetMassBridge(int32_t gameObjectId) {
 	return gActiveScriptManager->GetMassInternal(gameObjectId);
 }
 
+bool EditorScriptManager::ScriptCaptureAreaStateBridge(int32_t areaRootGameObjectId) {
+	return EditorSharedState::g_editorRuntimeManager.CaptureAreaState(areaRootGameObjectId);
+}
+
+bool EditorScriptManager::ScriptResetAreaBridge(int32_t areaRootGameObjectId) {
+	return EditorSharedState::g_editorRuntimeManager.ResetArea(areaRootGameObjectId);
+}
+
+bool EditorScriptManager::ScriptHasAreaStateBridge(int32_t areaRootGameObjectId) {
+	return EditorSharedState::g_editorRuntimeManager.HasAreaState(areaRootGameObjectId);
+}
+
 void EditorScriptManager::ScriptSetAngularVelocityBridge(int32_t gameObjectId, const EditorScriptVector3* angularVelocity) {
 	if (gActiveScriptManager == nullptr || angularVelocity == nullptr) {
 		return;
@@ -4140,6 +4152,9 @@ void EditorScriptManager::BuildRuntimeApi() {
 	runtimeApi_.GetChildGameObject = ScriptGetChildGameObjectBridge;
 	runtimeApi_.ReloadPrimaryScene = ScriptReloadPrimarySceneBridge;
 	runtimeApi_.GetMass = ScriptGetMassBridge;
+	runtimeApi_.CaptureAreaState = ScriptCaptureAreaStateBridge;
+	runtimeApi_.ResetArea = ScriptResetAreaBridge;
+	runtimeApi_.HasAreaState = ScriptHasAreaStateBridge;
 }
 
 bool EditorScriptManager::ScriptAddComponentBridge(

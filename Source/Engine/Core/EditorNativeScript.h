@@ -179,6 +179,34 @@ public:
 	}
 };
 
+// パズル1エリア分だけを初期状態へ戻す。Scene全体のReloadと違い、
+// 他エリアの進行、接続済みWire、Playerの位置を巻き戻さない。
+// エリアの起点GameObjectを渡すと、その子孫すべてが対象になる。
+class PuzzleArea final {
+public:
+	// 戻す先の状態を控える。通常はPlay開始直後に1回呼ぶ。
+	static bool CaptureInitialState(int32_t areaRootGameObjectId) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->CaptureAreaState != nullptr &&
+			runtimeApi->CaptureAreaState(areaRootGameObjectId);
+	}
+
+	// Transform、速度、角速度、Active、Animation再生位置を戻し、
+	// このエリアのHookに繋がっているRuntime Wireを破棄する。
+	static bool Reset(int32_t areaRootGameObjectId) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->ResetArea != nullptr &&
+			runtimeApi->ResetArea(areaRootGameObjectId);
+	}
+
+	// CaptureInitialState済みならtrue。未CaptureのエリアへResetを呼んでも何も起きない。
+	static bool HasInitialState(int32_t areaRootGameObjectId) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->HasAreaState != nullptr &&
+			runtimeApi->HasAreaState(areaRootGameObjectId);
+	}
+};
+
 class SceneManager final {
 public:
 	static bool Reload() {

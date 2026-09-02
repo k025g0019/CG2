@@ -218,6 +218,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
 	<ClCompile Include="Source\Engine\Animation\PropertyAnimationClip.cpp" />
 	<ClCompile Include="Source\Engine\Editor\EditorAnimationWindowManager.cpp" />
 	<ClCompile Include="Source\Engine\Editor\EditorDiagnosticsWindowManager.cpp" />
+	<ClCompile Include="Source\Engine\Editor\EditorHookWireDebugWindowManager.cpp" />
 	<ClCompile Include="Source\Engine\Editor\EditorPvShootWindowManager.cpp" />
 	<ClCompile Include="Source\Engine\Editor\EditorLogFieldRegistry.generated.cpp" />
 	<ClCompile Include="Source\Engine\Editor\EditorLogMonitorManager.cpp" />
@@ -471,6 +472,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
     <ClCompile Include="Source\Engine\Editor\EditorRenderManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorDepthHierarchyManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorGBufferManager.cpp" />
+	<ClCompile Include="Source\Engine\Renderer\EditorLightProbeManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorGpuCullingManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorOceanFftManager.cpp" />
 	<ClCompile Include="Source\Engine\Renderer\EditorGpuParticleManager.cpp" />
@@ -588,6 +590,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
 	<ClInclude Include="Source\Engine\Animation\PropertyAnimationClip.h" />
 	<ClInclude Include="Source\Engine\Editor\EditorAnimationWindowManager.h" />
 	<ClInclude Include="Source\Engine\Editor\EditorDiagnosticsWindowManager.h" />
+	<ClInclude Include="Source\Engine\Editor\EditorHookWireDebugWindowManager.h" />
 	<ClInclude Include="Source\Engine\Editor\EditorPvShootWindowManager.h" />
 	<ClInclude Include="Source\Engine\Editor\EditorLogFieldKind.h" />
 	<ClInclude Include="Source\Engine\Editor\EditorLogFieldRegistry.generated.h" />
@@ -655,6 +658,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
     <ClInclude Include="Source\Engine\Editor\EditorRenderManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorDepthHierarchyManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorGBufferManager.h" />
+	<ClInclude Include="Source\Engine\Renderer\EditorLightProbeManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorGpuCullingManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorOceanFftManager.h" />
 	<ClInclude Include="Source\Engine\Renderer\EditorGpuParticleManager.h" />

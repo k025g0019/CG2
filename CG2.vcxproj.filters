@@ -13,6 +13,9 @@
 	<ClCompile Include="Source\Engine\Editor\EditorDiagnosticsWindowManager.cpp">
 	  <Filter>ソース ファイル</Filter>
 	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorHookWireDebugWindowManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
 	<ClCompile Include="Source\Engine\Editor\EditorPvShootWindowManager.cpp">
 	  <Filter>ソース ファイル</Filter>
 	</ClCompile>
@@ -88,6 +91,9 @@
 	  <Filter>ヘッダー ファイル</Filter>
 	</ClInclude>
 	<ClInclude Include="Source\Engine\Editor\EditorDiagnosticsWindowManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorHookWireDebugWindowManager.h">
 	  <Filter>ヘッダー ファイル</Filter>
 	</ClInclude>
 	<ClInclude Include="Source\Engine\Editor\EditorPvShootWindowManager.h">

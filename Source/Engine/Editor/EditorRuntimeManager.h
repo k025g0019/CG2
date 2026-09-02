@@ -91,8 +91,26 @@ public:
 	bool StartSceneTransition(const EditorGameObject& ownerGameObject, const EditorComponent& transitionComponent);  // SceneTransition Extensionを使ってCamera Dive/色フェード付きの遷移を開始する。
 	bool IsSceneTransitionActive() const;  // 遷移演出の実行中なら true。
 	void GetSceneTransitionOverlay(Vector3& color, float& alpha) const;  // Game ViewへオーバーレイするColorとAlphaを返す。
+	// パズル1エリア分だけを最初の状態へ戻す。Scene全体のReloadと違い、他エリアの進行と接続を壊さない。
+	bool CaptureAreaState(int32_t areaRootGameObjectId);  // 指定GameObject以下のTransform/速度/Activeを控える。
+	bool ResetArea(int32_t areaRootGameObjectId);  // 控えた状態へ戻し、そのエリアのHookに付いたWireを破棄する。
+	bool HasAreaState(int32_t areaRootGameObjectId) const;  // Captureu済みならtrue。
 
 private:
+	struct AreaObjectState {
+		int32_t gameObjectId = -1;
+		Vector3 translate{0.0f, 0.0f, 0.0f};
+		Vector3 rotate{0.0f, 0.0f, 0.0f};
+		Vector3 scale{1.0f, 1.0f, 1.0f};
+		Vector3 velocity{0.0f, 0.0f, 0.0f};
+		Vector3 angularVelocity{0.0f, 0.0f, 0.0f};
+		bool isActive = true;
+		bool hasRigidBody = false;
+	};
+
+	void CollectAreaGameObjectIds(int32_t rootGameObjectId, std::vector<int32_t>& outGameObjectIds) const;  // rootとその全子孫を集める。
+	std::unordered_map<int32_t, std::vector<AreaObjectState>> areaStates_;  // エリアRoot ID → Capture時点の状態一覧。
+
 	EditorScene* editorScene_ = nullptr;  // Play 実行対象の Scene
 	std::vector<std::string>* consoleMessages_ = nullptr;  // Play 中の物理 / Script ログを出す Console
 	EditorScene sceneBackup_;  // Stop 時に編集前状態へ戻すための Scene バックアップ

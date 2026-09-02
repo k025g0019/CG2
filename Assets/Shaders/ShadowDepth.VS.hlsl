@@ -18,6 +18,12 @@
 
 ConstantBuffer<TransformationMatrix> gTransformationMatrix : register(b0);
 
+// 影パスごとの行列はRoot Constantsへ記録し、GPU実行まで個別に保持する。
+cbuffer ShadowView : register(b3)
+{
+    row_major float4x4 shadowViewProjection;
+};
+
 #define SURFACE_SHADOW_PASS 1
 #include "Common/SurfaceDeformation.hlsli"
 #include "Common/Skinning.hlsli"
@@ -54,7 +60,8 @@ VertexShaderOutput main(VertexShaderInput input) {
         gTransformationMatrix.oceanParams4,
         gTransformationMatrix.oceanParams5.zw,
         input.instanceId);
-    output.position = mul(localPosition, gTransformationMatrix.lightWVP);
+    const float4 worldPosition = mul(localPosition, gTransformationMatrix.World);
+    output.position = mul(worldPosition, shadowViewProjection);
     output.texcoord = input.texcoord;
     return output;
 }

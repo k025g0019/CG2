@@ -166,6 +166,16 @@ if (wire.IsValid()) {
 | `bool Renderer::SetEmission(const EditorScriptVector3& color, float strength) const` | 同じRendererの発光色と強度を設定。対応Rendererなし等はfalse。 |
 | `bool Renderer::SetColorFromMass(const GameObject& rigidBodyGameObject, float minimumMass, float maximumMass, const EditorScriptVector3& lightColor, const EditorScriptVector3& heavyColor) const` | 指定Objectの`RigidBody.mass`を読み、正規化して0～1へClampし、2色を線形補間してSetColorする。質量取得または色設定失敗でfalse。質量範囲の差の絶対値が0.0001以下ならlightColor。通常はminimumMass < maximumMassで指定する。 |
 
+#### パズルエリア単位のリセット
+
+| Wrapper | 契約 |
+| --- | --- |
+| `static bool PuzzleArea::CaptureInitialState(int32_t areaRootGameObjectId)` | 起点GameObjectとその子孫すべてのTransform(親空間のローカル値)、Rigidbody velocity / angular velocity、GameObject Activeを控える。同じ起点へ再度呼ぶと控え直す。起点が見つからない、Runtime未接続はfalse。 |
+| `static bool PuzzleArea::Reset(int32_t areaRootGameObjectId)` | 控えた状態へ戻し、Animation再生位置を0秒にし、そのエリアのHookへ繋がるRuntime Wireを破棄する。Wireは物体復元より先に破棄する。未Capture、Runtime未接続はfalseで何も起きない。 |
+| `static bool PuzzleArea::HasInitialState(int32_t areaRootGameObjectId)` | 指定エリアがCapture済みならtrue。 |
+
+エリア境界はHierarchyの親子構造そのもので、専用Componentは持たない。RigidbodyのないObjectはTransformとActiveだけ戻す。速度はComponent値とJolt側の実Bodyの両方へ反映する。Effect、Audio、Script側の独自進行状態、Captureしていない外部Objectは戻さない。Scene全体を巻き戻す`SceneManager::Reload`とは別物で、他エリアの進行と接続済みWireには触れない。
+
 `HookPoint`と`WireConnectable`は同じComponentを参照する。文字列APIでは`"WireConnectable"`を使う。`Renderer`は描画Componentを作る型ではなく操作用Wrapperである。`SetColorFromMass`は呼び出した時点の色だけを更新し、質量変化を自動監視しない。Hookの状態色もEngineが自動遷移させるのではなくScriptから切り替える。
 
 #### Wireの生成・個別操作・状態取得

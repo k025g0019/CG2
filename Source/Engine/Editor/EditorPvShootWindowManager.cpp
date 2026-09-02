@@ -114,32 +114,21 @@ void EditorPvShootWindowManager::Draw() {
 		return;
 	}
 
-	DrawToggleWindow();
-
-	if (g_isPvShootModeActive) {
-		DrawControlPanel();
+	// F9は非表示中も含めて常に監視する。録画直前にパネルごと消し、終わったら同じキーで戻せるようにするため。
+	if (ImGui::IsKeyPressed(ImGuiKey_F9, false)) {
+		isUiHidden_ = !isUiHidden_;
 	}
+
+	if (isUiHidden_) {
+		return;
+	}
+
+	DrawPanel();
 #endif
 }
 
 bool EditorPvShootWindowManager::IsActive() const {
 	return g_isPvShootModeActive;
-}
-
-void EditorPvShootWindowManager::DrawToggleWindow() {
-#ifdef USE_IMGUI
-	constexpr ImGuiWindowFlags toggleWindowFlags =
-		ImGuiWindowFlags_NoCollapse |
-		ImGuiWindowFlags_AlwaysAutoResize |
-		ImGuiWindowFlags_NoSavedSettings;
-
-	ImGui::SetNextWindowPos(ImVec2(8.0f, 8.0f), ImGuiCond_FirstUseEver);
-	if (ImGui::Begin("PV撮影###PvShootToggle", nullptr, toggleWindowFlags)) {
-		ImGui::Checkbox("PV撮影モード", &g_isPvShootModeActive);
-		ImGui::TextDisabled("ONの間はGameViewだけ全画面表示します。");
-	}
-	ImGui::End();
-#endif
 }
 
 void EditorPvShootWindowManager::DrawPlaybackControls() {
@@ -207,12 +196,27 @@ void EditorPvShootWindowManager::DrawPlaybackControls() {
 #endif
 }
 
-void EditorPvShootWindowManager::DrawControlPanel() {
+void EditorPvShootWindowManager::DrawPanel() {
 #ifdef USE_IMGUI
-	ImGui::SetNextWindowPos(ImVec2(8.0f, 96.0f), ImGuiCond_FirstUseEver);
+	// NoMoveで固定し、位置も毎フレームCond_Alwaysで揃えることで、
+	// 「タブ化されておらずあちこちに浮遊する」問題と、ドラッグで行方不明になる事故を防ぐ。
+	constexpr ImGuiWindowFlags panelWindowFlags =
+		ImGuiWindowFlags_NoMove |
+		ImGuiWindowFlags_NoCollapse |
+		ImGuiWindowFlags_NoSavedSettings;
+
+	ImGui::SetNextWindowPos(ImVec2(8.0f, 8.0f), ImGuiCond_Always);
 	ImGui::SetNextWindowSize(ImVec2(360.0f, 0.0f), ImGuiCond_FirstUseEver);
 
-	if (!ImGui::Begin("PV撮影パネル###PvShootPanel")) {
+	if (!ImGui::Begin("PV撮影パネル###PvShootPanel", nullptr, panelWindowFlags)) {
+		ImGui::End();
+		return;
+	}
+
+	ImGui::Checkbox("PV撮影モード", &g_isPvShootModeActive);
+	ImGui::TextDisabled("ONの間はGameViewだけ全画面表示します。F9でこのパネルごと非表示/再表示。");
+
+	if (!g_isPvShootModeActive) {
 		ImGui::End();
 		return;
 	}

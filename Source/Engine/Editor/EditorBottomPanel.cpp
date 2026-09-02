@@ -407,16 +407,12 @@ namespace {
 		consoleMessages.push_back("Asset: 開く " + assetPath);
 	}
 
-	void DeleteSelectedAsset(std::string& selectedAssetPath, std::vector<std::string>& consoleMessages) {
-		// Project の選択ファイルを Delete で消し、削除後は Inspector 選択も空に戻す。
-		if (selectedAssetPath.empty()) {
-			return;
-		}
-
-		const std::string deletingAssetPath = selectedAssetPath;
+	void PerformAssetDeletion(const std::string& deletingAssetPath, std::string& selectedAssetPath, std::vector<std::string>& consoleMessages) {
 		if (!std::filesystem::exists(deletingAssetPath)) {
 			consoleMessages.push_back("Asset: 削除対象が見つかりません " + deletingAssetPath);
-			selectedAssetPath.clear();
+			if (selectedAssetPath == deletingAssetPath) {
+				selectedAssetPath.clear();
+			}
 			if (g_selectedAssetPath == deletingAssetPath) {
 				g_selectedAssetPath.clear();
 			}
@@ -437,10 +433,53 @@ namespace {
 
 		consoleMessages.push_back("Asset: 削除 " + deletingAssetPath);
 		InvalidateProjectAssetCache();
-		selectedAssetPath.clear();
+		if (selectedAssetPath == deletingAssetPath) {
+			selectedAssetPath.clear();
+		}
 		if (g_selectedAssetPath == deletingAssetPath) {
 			g_selectedAssetPath.clear();
 		}
+	}
+
+	// Scene / モデル / Resource 等のAsset削除はディスクから直接消え、Undoで戻せない。
+	// Deleteキー一発で即消えると事故りやすいため、必ず確認ダイアログを一度挟む。
+	inline std::string g_pendingAssetDeletePath;  // 確認待ちのAsset相対パス。空なら確認ダイアログを開かない。
+
+	void DeleteSelectedAsset(std::string& selectedAssetPath, std::vector<std::string>& /*consoleMessages*/) {
+		if (selectedAssetPath.empty()) {
+			return;
+		}
+
+		g_pendingAssetDeletePath = selectedAssetPath;
+		ImGui::OpenPopup("Asset削除確認");
+	}
+
+	void DrawAssetDeleteConfirmationPopup(std::string& selectedAssetPath, std::vector<std::string>& consoleMessages) {
+		if (!ImGui::BeginPopupModal("Asset削除確認", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+			return;
+		}
+
+		ImGui::Text("次のAssetをディスクから削除します。元に戻せません。");
+		ImGui::TextColored(
+			ImVec4(1.0f, 0.55f, 0.15f, 1.0f),
+			"%s",
+			EditorAssetUtility::GetFilename(g_pendingAssetDeletePath).c_str());
+		ImGui::TextDisabled("%s", g_pendingAssetDeletePath.c_str());
+
+		if (ImGui::Button("削除する", ImVec2(120.0f, 0.0f))) {
+			PerformAssetDeletion(g_pendingAssetDeletePath, selectedAssetPath, consoleMessages);
+			g_pendingAssetDeletePath.clear();
+			ImGui::CloseCurrentPopup();
+		}
+
+		ImGui::SameLine();
+
+		if (ImGui::Button("キャンセル", ImVec2(120.0f, 0.0f))) {
+			g_pendingAssetDeletePath.clear();
+			ImGui::CloseCurrentPopup();
+		}
+
+		ImGui::EndPopup();
 	}
 
 	const std::vector<std::string>& CollectProjectAssetPaths() {
@@ -913,6 +952,8 @@ void EditorBottomPanel::Draw(
 				ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
 				DeleteSelectedAsset(selectedAssetPath, consoleMessages);
 			}
+
+			DrawAssetDeleteConfirmationPopup(selectedAssetPath, consoleMessages);
 
 			ImGui::EndChild();
 			ImGui::EndTabItem();

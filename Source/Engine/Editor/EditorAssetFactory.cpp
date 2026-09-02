@@ -86,7 +86,7 @@ void EditorAssetFactory::CreateModelGameObject(
 	sceneObjectManager_->GetSceneObjects()[static_cast<size_t>(selectedPlacedSceneObjectIndex)].meshType = meshType;
 	selectedSceneObject = 0;  // 旧選択分類では Model が 0
 	editorScene_->PushUndo();  // 生成操作を Undo 対象にする
-	selectedGameObjectId = editorScene_->CreateGameObject(EditorAssetUtility::GetFilename(assetPath));  // Scene の正データとして GameObject を作る
+	selectedGameObjectId = editorScene_->CreateGameObject(editorScene_->MakeUniqueGameObjectName(EditorAssetUtility::GetFilename(assetPath)));  // Scene の正データとして GameObject を作る
 	// 描画用 SceneObject と GameObject を ID で紐づける
 	sceneObjectManager_->GetSceneObjects()[static_cast<size_t>(selectedPlacedSceneObjectIndex)].gameObjectId =
 		selectedGameObjectId;
@@ -172,7 +172,7 @@ void EditorAssetFactory::CreateSpriteGameObject(
 
 	selectedSceneObject = 1;  // 旧選択分類では Sprite が 1
 	editorScene_->PushUndo();  // 生成操作を Undo 対象にする
-	selectedGameObjectId = editorScene_->CreateGameObject(EditorAssetUtility::GetFilename(assetPath));  // Scene の正データとして GameObject を作る
+	selectedGameObjectId = editorScene_->CreateGameObject(editorScene_->MakeUniqueGameObjectName(EditorAssetUtility::GetFilename(assetPath)));  // Scene の正データとして GameObject を作る
 	// 描画用 SceneObject と GameObject を ID で紐づける
 	sceneObjectManager_->GetSceneObjects()[static_cast<size_t>(selectedPlacedSceneObjectIndex)].gameObjectId =
 		selectedGameObjectId;

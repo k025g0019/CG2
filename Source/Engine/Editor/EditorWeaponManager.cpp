@@ -318,7 +318,6 @@ void EditorWeaponManager::RecordHitscanCollision(
 		<< " damage=" << appliedDamage
 		<< " health=" << healthBefore << "->" << healthAfter;
 	const std::string message = messageStream.str();
-	OutputDebugStringA((message + "\n").c_str());
 
 	constexpr int32_t kMaximumCollisionConsoleLogs = 300;
 
@@ -405,7 +404,6 @@ void EditorWeaponManager::RecordProjectileCollision(
 		<< " damage=" << appliedDamage
 		<< " health=" << healthBefore << "->" << healthAfter;
 	const std::string message = messageStream.str();
-	OutputDebugStringA((message + "\n").c_str());
 
 	if (consoleMessages_ != nullptr && collisionLogCount_ < kMaximumCollisionConsoleLogs) {
 		consoleMessages_->push_back(message);

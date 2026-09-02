@@ -462,7 +462,6 @@ public:
 					bodyLink.gameObjectId,
 					objectName.c_str(),
 					bodyLink.bodyId.GetIndex());
-				OutputDebugStringA(logBuffer);
 
 				if (consoleMessages_ != nullptr &&
 					consoleMessages_->size() < kMaxPhysicsConsoleMessages) {
@@ -549,20 +548,6 @@ foundBody = true;
 				bodyInterface.AddBody(bodyLink.bodyId, JPH::EActivation::Activate);
 			}
 			else if (!isActive && isBodyAdded) {
-				std::string objectName = "(unknown)";
-				const EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
-				if (gameObject != nullptr) {
-					objectName = gameObject->name;
-				}
-				char logBuffer[512];
-				snprintf(
-					logBuffer,
-					sizeof(logBuffer),
-					"[JoltInvariant] RemoveBody: gameObjectId=%d name=%s bodyIndex=%u\n",
-					gameObjectId,
-					objectName.c_str(),
-					bodyLink.bodyId.GetIndex());
-				OutputDebugStringA(logBuffer);
 				bodyInterface.RemoveBody(bodyLink.bodyId);
 			}
 		}
@@ -3866,9 +3851,6 @@ private:
 	}
 
 	void PushConsoleMessage(const std::string& message) {
-		// Consoleは他のLogで流れて見失いやすいため、デバッグ出力にも必ず残す。
-		OutputDebugStringA((message + "\n").c_str());
-
 		if (consoleMessages_ == nullptr) {
 			return;
 		}

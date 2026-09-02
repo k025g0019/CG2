@@ -82,6 +82,7 @@ void GameScene::Initialize(_In_ HINSTANCE instanceHandle) {
 	gameplayToolsWindowManager_.Initialize();  // 汎用Spline、Event Timeline、State Graphを初期化する。
 	diagnosticsWindowManager_.Initialize();  // Runtime負荷とScene設定不足を検査できる状態にする。
 	logMonitorWindowManager_.Initialize();  // 汎用ログ・監視の選択UIを使うための担当。
+	hookWireDebugWindowManager_.Initialize();  // Hook構成とWireの検査Windowを使うための担当。
 	pvShootWindowManager_.Initialize();  // PV撮影モードのCamera/PostProcess/TimeScale調整を使うための担当。
 
 	if (!isStandaloneGame_) {
@@ -128,6 +129,7 @@ void GameScene::Update() {
 	gameplayToolsWindowManager_.Update();  // Gameplay編集WindowはDraw時編集のため状態維持だけを行う。
 	diagnosticsWindowManager_.Update();  // 表示中だけ一定間隔でScene構成を静的検査する。
 	logMonitorWindowManager_.Update();  // 選択UIはDraw中に編集するためUpdateは空実装。
+	hookWireDebugWindowManager_.Update();  // 検査はDraw中に行うためUpdateは空実装。
 	pvShootWindowManager_.Update();  // PV撮影モードのTimeScale倍率をRuntimeへ反映する。
 	teamCollaborationManager_.Update(1.0f / 60.0f, g_editorRuntimeManager.IsPlaying());
 	renderManager_.Update();  // Renderer は Draw で GPU コマンドを発行するため Update は空実装。
@@ -172,6 +174,7 @@ void GameScene::Draw() {
 		diagnosticsWindowManager_.Draw();  // ProfilerとScene Validatorを独立Windowへ描画する。
 		logMonitorWindowManager_.Draw();  // 汎用ログ・監視の選択UIを独立Windowへ描画する。
 		teamCollaborationManager_.Draw(&g_isTeamCollaborationWindowVisible);
+		hookWireDebugWindowManager_.Draw();  // Hook構成の設定不備とRuntime Wireを独立Windowへ描画する。
 	}
 
 	imguiFrameManager_.Draw();  // ImGui の DrawData を確定し、Renderer が GPU に送れる状態にする。

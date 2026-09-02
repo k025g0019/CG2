@@ -370,6 +370,7 @@ namespace {
 		"SceneTransition",
 		"WireConnectable",
 		"WireRenderer",
+		"SunPortal",
 	};
 	constexpr int32_t kEditorComponentTypeCount =
 		static_cast<int32_t>(sizeof(kEditorComponentTypeNames) / sizeof(kEditorComponentTypeNames[0]));
@@ -487,88 +488,99 @@ namespace {
 		component.inputEventBindings.push_back({"Player", "Fire", "OnFire", 0});
 	}
 
+	// clearIfNotFound=true: 参照先が集合の外なら無効化する(Prefab/Scene結合のように、
+	//   参照する側もされる側も丸ごと同じ集合内にある前提の時に使う)。
+	// clearIfNotFound=false: 参照先が集合の外ならそのまま変更しない(部分木だけを複製する時に使う。
+	//   複製対象の外にある既存Objectへの正当な参照を、誤って無効化しないため)。
 	void RemapGameObjectReference(
 		int32_t& gameObjectId,
-		const std::unordered_map<int32_t, int32_t>& remappedIds) {
+		const std::unordered_map<int32_t, int32_t>& remappedIds,
+		bool clearIfNotFound = true) {
 		if (gameObjectId < 0) {
 			return;
 		}
 
 		const auto remappedIterator = remappedIds.find(gameObjectId);
-		gameObjectId = remappedIterator == remappedIds.end()
-			? kInvalidGameObjectId
-			: remappedIterator->second;
+		if (remappedIterator == remappedIds.end()) {
+			if (clearIfNotFound) {
+				gameObjectId = kInvalidGameObjectId;
+			}
+			return;
+		}
+
+		gameObjectId = remappedIterator->second;
 	}
 
 	void RemapComponentGameObjectReferences(
 		EditorComponent& component,
-		const std::unordered_map<int32_t, int32_t>& remappedIds) {
+		const std::unordered_map<int32_t, int32_t>& remappedIds,
+		bool clearIfNotFound = true) {
 		// PrefabとAdditive Sceneの複製先が、元SceneのIDを誤参照しないよう全参照を一括変換する。
-		RemapGameObjectReference(component.connectedGameObjectId, remappedIds);
-		RemapGameObjectReference(component.buoyancyOceanGameObjectId, remappedIds);
-		RemapGameObjectReference(component.railPathGameObjectId, remappedIds);
-		RemapGameObjectReference(component.springForceTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.ropeTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.torsionTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.pulleyTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.servoTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.waveTriggerSourceGameObjectId, remappedIds);
-		RemapGameObjectReference(component.waveActionTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.enemySpawnFollowerGameObjectId, remappedIds);
-		RemapGameObjectReference(component.enemyAttackTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.enemyProjectileTemplateGameObjectId, remappedIds);
-		RemapGameObjectReference(component.railShipSpeedSourceGameObjectId, remappedIds);
-		RemapGameObjectReference(component.railShipSailGameObjectId, remappedIds);
-		RemapGameObjectReference(component.railShipWakeEffectGameObjectId, remappedIds);
-		RemapGameObjectReference(component.railShipWindEffectGameObjectId, remappedIds);
-		RemapGameObjectReference(component.enemyMotionTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.stageFollowerGameObjectId, remappedIds);
-		RemapGameObjectReference(component.stageStartMarkerGameObjectId, remappedIds);
-		RemapGameObjectReference(component.stageGoalMarkerGameObjectId, remappedIds);
-		RemapGameObjectReference(component.stageStartEffectGameObjectId, remappedIds);
-		RemapGameObjectReference(component.stageGoalEffectGameObjectId, remappedIds);
-		RemapGameObjectReference(component.timelineSourceGameObjectId, remappedIds);
-		RemapGameObjectReference(component.timelineTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.railEventFollowerGameObjectId, remappedIds);
-		RemapGameObjectReference(component.railEventTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.thresholdSourceGameObjectId, remappedIds);
-		RemapGameObjectReference(component.thresholdTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.uiBindingSourceGameObjectId, remappedIds);
-		RemapGameObjectReference(component.railHudSourceGameObjectId, remappedIds);
-		RemapGameObjectReference(component.screenAimInputGameObjectId, remappedIds);
-		RemapGameObjectReference(component.screenAimReticleGameObjectId, remappedIds);
-		RemapGameObjectReference(component.hitscanAimGameObjectId, remappedIds);
-		RemapGameObjectReference(component.hitscanInputGameObjectId, remappedIds);
-		RemapGameObjectReference(component.hitscanActionTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.projectileAimGameObjectId, remappedIds);
-		RemapGameObjectReference(component.projectileInputGameObjectId, remappedIds);
-		RemapGameObjectReference(component.projectilePoolGameObjectId, remappedIds);
-		RemapGameObjectReference(component.projectileSpawnPointGameObjectId, remappedIds);
-		RemapGameObjectReference(component.projectileActionTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.damageActionTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.objectPoolTemplateGameObjectId, remappedIds);
-		RemapGameObjectReference(component.prefabSpawnerPoolGameObjectId, remappedIds);
-		RemapGameObjectReference(component.prefabSpawnerPointGameObjectId, remappedIds);
-		RemapGameObjectReference(component.prefabSpawnerActionTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.cameraBlendSourceGameObjectId, remappedIds);
-		RemapGameObjectReference(component.cameraBlendTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.cameraInputTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.railBranchFollowerGameObjectId, remappedIds);
-		RemapGameObjectReference(component.railBranchTargetPathGameObjectId, remappedIds);
-		RemapGameObjectReference(component.railBranchActionTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.actionSequenceTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.checkpointActionTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.railZoneActionTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.cameraComposerTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.speedFeedbackSourceGameObjectId, remappedIds);
-		RemapGameObjectReference(component.speedFeedbackCameraGameObjectId, remappedIds);
-		RemapGameObjectReference(component.spawnedSetupRailPathGameObjectId, remappedIds);
-		RemapGameObjectReference(component.spawnedSetupActionTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.distanceActivationReferenceGameObjectId, remappedIds);
-		RemapGameObjectReference(component.simulationLodReferenceGameObjectId, remappedIds);
-		RemapGameObjectReference(component.railEventMarkerActionTargetGameObjectId, remappedIds);
-		RemapGameObjectReference(component.sceneStreamingReferenceGameObjectId, remappedIds);
-		RemapGameObjectReference(component.wireConnectablePhysicsBodyGameObjectId, remappedIds);
+		RemapGameObjectReference(component.connectedGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.buoyancyOceanGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.railPathGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.springForceTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.ropeTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.torsionTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.pulleyTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.servoTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.waveTriggerSourceGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.waveActionTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.enemySpawnFollowerGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.enemyAttackTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.enemyProjectileTemplateGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.railShipSpeedSourceGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.railShipSailGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.railShipWakeEffectGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.railShipWindEffectGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.enemyMotionTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.stageFollowerGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.stageStartMarkerGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.stageGoalMarkerGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.stageStartEffectGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.stageGoalEffectGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.timelineSourceGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.timelineTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.railEventFollowerGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.railEventTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.thresholdSourceGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.thresholdTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.uiBindingSourceGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.railHudSourceGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.screenAimInputGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.screenAimReticleGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.hitscanAimGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.hitscanInputGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.hitscanActionTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.projectileAimGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.projectileInputGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.projectilePoolGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.projectileSpawnPointGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.projectileActionTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.damageActionTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.objectPoolTemplateGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.prefabSpawnerPoolGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.prefabSpawnerPointGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.prefabSpawnerActionTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.cameraBlendSourceGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.cameraBlendTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.cameraInputTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.railBranchFollowerGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.railBranchTargetPathGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.railBranchActionTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.actionSequenceTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.checkpointActionTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.railZoneActionTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.cameraComposerTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.speedFeedbackSourceGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.speedFeedbackCameraGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.spawnedSetupRailPathGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.spawnedSetupActionTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.distanceActivationReferenceGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.simulationLodReferenceGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.railEventMarkerActionTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.sceneStreamingReferenceGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.wireConnectablePhysicsBodyGameObjectId, remappedIds, clearIfNotFound);
 	}
 
 	int32_t ToInt(const std::string& text) {
@@ -712,6 +724,32 @@ int32_t EditorScene::CreateGameObject(const std::string& name) {
 	return gameObject.id;
 }
 
+std::string EditorScene::MakeUniqueGameObjectName(const std::string& baseName, int32_t excludeGameObjectId) const {
+	const auto nameExists = [this, excludeGameObjectId](const std::string& candidateName) {
+		for (const EditorGameObject& gameObject : gameObjects_) {
+			if (gameObject.id != excludeGameObjectId && gameObject.name == candidateName) {
+				return true;
+			}
+		}
+		return false;
+	};
+
+	if (!nameExists(baseName)) {
+		return baseName;
+	}
+
+	// 同じFBXを複数回置く、空GameObjectを続けて作る、複製する、といった操作で
+	// 同名のまま増えていくと後で見分けが付かなくなるため、Unityの"Name (1)"方式で連番を振る。
+	for (int32_t suffix = 1; suffix < 100000; suffix++) {
+		std::string candidateName = baseName + " (" + std::to_string(suffix) + ")";
+		if (!nameExists(candidateName)) {
+			return candidateName;
+		}
+	}
+
+	return baseName;
+}
+
 int32_t EditorScene::DuplicateGameObject(int32_t gameObjectId) {
 	const EditorGameObject* sourceGameObject = FindGameObject(gameObjectId);  // コピー元がなければ無効 ID を返す
 	if (sourceGameObject == nullptr) {
@@ -766,9 +804,17 @@ int32_t EditorScene::DuplicateGameObject(int32_t gameObjectId) {
 			? kInvalidGameObjectId
 			: duplicatedIds[sourceObject.parentId];
 		duplicatedGameObject.children.clear();
-		duplicatedGameObject.name += "_Copy";
 
+		// Hookの「力を伝えるRigidbody」のような、Component内のGameObject参照を複製先へ付け替える。
+		// 複製した部分木の外を指す参照(例: 常設の固定Object)はそのまま残す(clearIfNotFound=false)。
+		for (EditorComponent& component : duplicatedGameObject.components) {
+			RemapComponentGameObjectReferences(component, duplicatedIds, false);
+		}
+
+		// 名前が増えていくのはユーザーが直接見るRootだけで十分。
+		// 子は元々ネスト先で区別が付くので、そのままの名前で複製する。
 		if (sourceObject.id == gameObjectId) {
+			duplicatedGameObject.name = MakeUniqueGameObjectName(sourceObject.name);
 			duplicatedGameObject.translate.x += 0.2f;
 		}
 
@@ -2045,6 +2091,14 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 				     << "|" << component.environmentHeatHorizonWidth
 				     << "|" << component.environmentHeatSunInfluence
 				     << "|" << component.environmentHeatDistortionScale
+				     << "\n";
+				// ボリュメトリックライトも独立行にし、旧Sceneをそのまま読めるようにする。
+				file << "EnvironmentVolumetricLightExtension"
+				     << "|" << gameObject.id
+				     << "|" << (component.volumetricLightEnabled ? 1 : 0)
+				     << "|" << component.volumetricLightIntensity
+				     << "|" << component.volumetricLightAnisotropy
+				     << "|" << component.volumetricLightDistance
 				     << "\n";
 			}
 
@@ -4819,6 +4873,29 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 				break;
 			}
 		}
+		else if (elements[0] == "EnvironmentVolumetricLightExtension" && elements.size() >= 6u) {
+			const int32_t ownerId = ToInt(elements[1]);
+
+			for (EditorGameObject& gameObject : loadedGameObjects) {
+				if (gameObject.id != ownerId) {
+					continue;
+				}
+
+				for (EditorComponent& component : gameObject.components) {
+					if (component.type != EditorComponentType::Environment) {
+						continue;
+					}
+
+					component.volumetricLightEnabled = ToInt(elements[2]) != 0;
+					component.volumetricLightIntensity = (std::clamp)(ToFloat(elements[3]), 0.0f, 4.0f);
+					component.volumetricLightAnisotropy = (std::clamp)(ToFloat(elements[4]), 0.0f, 0.95f);
+					component.volumetricLightDistance = (std::clamp)(ToFloat(elements[5]), 1.0f, 500.0f);
+					break;
+				}
+
+				break;
+			}
+		}
 		else if (elements[0] == "SunSystemExtension" && elements.size() >= 8u) {
 			const int32_t ownerId = ToInt(elements[1]);
 
@@ -6862,6 +6939,12 @@ int32_t EditorScene::InstantiatePrefab(const std::string& filePath) {
 		}
 	}
 
+	// 同じPrefabを繰り返し配置・貼り付けした時に名前が全部同じにならないよう、Rootだけ連番にする。
+	if (EditorGameObject* instantiatedRootGameObject = FindGameObject(instantiatedRootId)) {
+		instantiatedRootGameObject->name =
+			MakeUniqueGameObjectName(instantiatedRootGameObject->name, instantiatedRootId);
+	}
+
 	return instantiatedRootId;
 }
 
@@ -8014,11 +8097,35 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.volumetricCloudLightAbsorption = 1.25f;
 		component.volumetricCloudSilverLining = 0.75f;
 		component.volumetricCloudColor = {0.92f, 0.96f, 1.0f};
+		// 既定はOFF。既存Sceneの見た目を勝手に変えないため。
+		component.volumetricLightEnabled = false;
+		component.volumetricLightIntensity = 0.35f;
+		component.volumetricLightAnisotropy = 0.72f;
+		component.volumetricLightDistance = 40.0f;
 		component.environmentHeatIntensity = 0.0f;
 		component.environmentHeatHorizonCenter = 0.46f;
 		component.environmentHeatHorizonWidth = 0.16f;
 		component.environmentHeatSunInfluence = 0.55f;
 		component.environmentHeatDistortionScale = 0.65f;
+	}
+
+	if (type == EditorComponentType::LightProbeGroup) {
+		// 既定はOFF。既存Sceneの見た目を勝手に変えないため。
+		component.environmentTextureEnabled = false;
+		component.colliderSize = {8.0f, 4.0f, 8.0f};  // グリッドの半径(m)
+		component.colliderRadius = 2.0f;  // Probe間隔(m)
+		component.intensity = 1.0f;  // GIの強さ
+		component.roughness = 0.15f;  // 法線バイアス(m)
+		component.reflectionStrength = 60.0f;  // キャプチャの遠クリップ(m)
+		component.metallic = 0.92f;  // 時間平滑(ヒステリシス)
+	}
+
+	if (type == EditorComponentType::SunPortal) {
+		component.color = {1.0f, 1.0f, 1.0f};
+		component.intensity = 1.0f;
+		component.colliderSize = {1.0f, 1.0f, 0.0f};
+		component.colliderRadius = 6.0f;
+		component.roughness = 0.6f;
 	}
 
 	if (type == EditorComponentType::Camera) {

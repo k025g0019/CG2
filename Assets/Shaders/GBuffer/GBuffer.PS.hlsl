@@ -70,53 +70,7 @@
 
 ConstantBuffer<Material> gMaterial : register(b0);
 
-struct DirectionalLightData
-{
-    float4 color;
-    float3 direction;
-    float intensity;
-    float3 position;
-    float range;
-    float3 skyUpperColor;
-    float skyIntensity;
-    float3 skyLowerColor;
-    float skyEmission;
-    float ambientIntensity;
-    float horizonSharpness;
-    float reflectionIntensity;
-    float spotCosInner;
-    float spotCosOuter;
-    int lightType;
-    float areaRadius;
-    float3 cameraPosition;
-    float padding3;
-    float environmentTextureEnabled;
-    float environmentTextureIntensity;
-    float environmentTextureRotation;
-    float environmentTextureMipBias;
-    float shadowTileIndex;
-    float shadowTileUvScaleX;
-    float shadowTileUvScaleY;
-    float shadowTileUvBiasX;
-    float shadowTileUvBiasY;
-    float shadowEnabled;
-    float shadowPadding0;
-    float shadowPadding1;
-    float shadowPadding2;
-    row_major float4x4 shadowVP;
-    float4 shadowCascadeSplits;
-    float shadowCascadeCount;
-    float shadowCascadePadding0;
-    float shadowCascadePadding1;
-    float shadowCascadePadding2;
-    row_major float4x4 shadowCascadeVP[4];
-    float4 shadowCascadeAtlas[4];
-};
-
-struct DirectionalLightArray
-{
-    DirectionalLightData lights[4];
-};
+#include "../Common/SceneLightData.hlsli"
 
 ConstantBuffer<DirectionalLightArray> gDirectionalLight : register(b1);
 Texture2D gBaseColorMap : register(t0);

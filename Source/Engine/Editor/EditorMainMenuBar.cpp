@@ -368,6 +368,106 @@ namespace {
 		SyncSelectionToScene();
 	}
 
+	//================================================================
+	// Ctrl+C / Ctrl+X / Ctrl+V
+	//================================================================
+	// GameObjectは子階層・Component内部参照まで持つため、独自の深いコピーを書くより
+	// 既にID再割り当てまで面倒を見ているPrefabの仕組み(SavePrefab/InstantiatePrefab)を
+	// クリップボードとして使い回す方が安全。runtime_cache配下の一時Prefabへ書き出す。
+	inline std::vector<std::string> g_gameObjectClipboardPrefabPaths;
+
+	std::vector<int32_t> GetCopySourceGameObjectIds() {
+		if (g_selectedEditorGameObjectIds.size() >= 2) {
+			return g_selectedEditorGameObjectIds;
+		}
+		if (g_selectedEditorGameObjectId >= 0) {
+			return {g_selectedEditorGameObjectId};
+		}
+		return {};
+	}
+
+	bool CopyGameObjectsToClipboard(std::vector<std::string>& consoleMessages) {
+		const std::vector<int32_t> copySourceIds = GetCopySourceGameObjectIds();
+		if (copySourceIds.empty()) {
+			return false;
+		}
+
+		std::error_code directoryError;
+		std::filesystem::create_directories("runtime_cache/clipboard", directoryError);
+
+		g_gameObjectClipboardPrefabPaths.clear();
+		int32_t savedCount = 0;
+
+		for (int32_t sourceIndex = 0; sourceIndex < static_cast<int32_t>(copySourceIds.size()); sourceIndex++) {
+			const int32_t gameObjectId = copySourceIds[static_cast<size_t>(sourceIndex)];
+			const std::string clipboardPath =
+				"runtime_cache/clipboard/_clipboard_" + std::to_string(sourceIndex) + ".prefab";
+
+			if (g_editorScene.SavePrefab(gameObjectId, clipboardPath)) {
+				g_gameObjectClipboardPrefabPaths.push_back(clipboardPath);
+				savedCount++;
+			}
+		}
+
+		if (savedCount > 0) {
+			consoleMessages.push_back("Edit: コピー " + std::to_string(savedCount) + "件");
+		}
+		return savedCount > 0;
+	}
+
+	void CutSelectedGameObjects(std::vector<std::string>& consoleMessages) {
+		const std::vector<int32_t> cutSourceIds = GetCopySourceGameObjectIds();
+		if (!CopyGameObjectsToClipboard(consoleMessages)) {
+			return;
+		}
+
+		// UndoスタックがあるためCutは確認なしで削除する（Ctrl+Zでいつでも戻せる）。
+		g_editorScene.PushUndo();
+		for (const int32_t gameObjectId : cutSourceIds) {
+			g_editorScene.DeleteGameObject(gameObjectId);
+		}
+
+		if (g_editorScene.GetGameObjects().empty()) {
+			ClearSelectedGameObjects();
+		}
+		else {
+			SelectGameObject(g_editorScene.GetGameObjects()[0].id);
+		}
+
+		RefreshSceneObjects();
+		consoleMessages.push_back("Edit: 切り取り " + std::to_string(cutSourceIds.size()) + "件");
+	}
+
+	void PasteGameObjectsFromClipboard(std::vector<std::string>& consoleMessages) {
+		if (g_gameObjectClipboardPrefabPaths.empty()) {
+			return;
+		}
+
+		g_editorScene.PushUndo();
+		std::vector<int32_t> pastedGameObjectIds;
+
+		for (const std::string& clipboardPath : g_gameObjectClipboardPrefabPaths) {
+			const int32_t pastedRootId = g_editorScene.InstantiatePrefab(clipboardPath);
+			if (pastedRootId >= 0) {
+				pastedGameObjectIds.push_back(pastedRootId);
+			}
+		}
+
+		if (pastedGameObjectIds.empty()) {
+			return;
+		}
+
+		ClearSelectedGameObjects();
+		for (const int32_t pastedGameObjectId : pastedGameObjectIds) {
+			g_selectedEditorGameObjectIds.push_back(pastedGameObjectId);
+		}
+		SetSingleSelectedGameObject(pastedGameObjectIds.back());
+		g_selectedPlacedSceneObjectIndex = -1;
+		SyncSelectionToScene();
+		RefreshSceneObjects();
+		consoleMessages.push_back("Edit: 貼り付け " + std::to_string(pastedGameObjectIds.size()) + "件");
+	}
+
 	void OpenProjectSettings(std::vector<std::string>& consoleMessages) {
 		// Inspector は GameObject 未選択時に、環境 / 物理 / モデル設定などの Project 設定を表示する。
 		ClearSelectedGameObjects();
@@ -459,14 +559,14 @@ namespace {
 
 	void CreateEmptyGameObject(std::vector<std::string>& consoleMessages) {
 		g_editorScene.PushUndo();  // GameObject 生成を Undo 対象にする
-		const int32_t gameObjectId = g_editorScene.CreateGameObject("GameObject");
+		const int32_t gameObjectId = g_editorScene.CreateGameObject(g_editorScene.MakeUniqueGameObjectName("GameObject"));
 		SelectGameObject(gameObjectId);
 		consoleMessages.push_back("Scene: 空のGameObjectを作成");
 	}
 
 	void CreateLightGameObject(std::vector<std::string>& consoleMessages) {
 		g_editorScene.PushUndo();  // ライト生成を Undo 対象にする
-		const int32_t gameObjectId = g_editorScene.CreateGameObject("Light");
+		const int32_t gameObjectId = g_editorScene.CreateGameObject(g_editorScene.MakeUniqueGameObjectName("Light"));
 		g_editorScene.AddComponent(gameObjectId, EditorComponentType::Light);
 		EditorGameObject* lightGameObject = g_editorScene.FindGameObject(gameObjectId);
 		if (lightGameObject != nullptr) {
@@ -481,7 +581,7 @@ namespace {
 
 	void CreateCameraGameObject(std::vector<std::string>& consoleMessages) {
 		g_editorScene.PushUndo();  // カメラ生成を Undo 対象にする
-		const int32_t gameObjectId = g_editorScene.CreateGameObject("Camera");
+		const int32_t gameObjectId = g_editorScene.CreateGameObject(g_editorScene.MakeUniqueGameObjectName("Camera"));
 		g_editorScene.AddComponent(gameObjectId, EditorComponentType::Camera);
 		EditorGameObject* cameraGameObject = g_editorScene.FindGameObject(gameObjectId);
 		if (cameraGameObject != nullptr) {
@@ -496,7 +596,7 @@ namespace {
 
 	void CreateOceanGameObject(std::vector<std::string>& consoleMessages) {
 		g_editorScene.PushUndo();
-		const int32_t gameObjectId = g_editorScene.CreateGameObject("Ocean");
+		const int32_t gameObjectId = g_editorScene.CreateGameObject(g_editorScene.MakeUniqueGameObjectName("Ocean"));
 		g_editorScene.AddComponent(gameObjectId, EditorComponentType::Ocean);
 		SelectGameObject(gameObjectId);
 		RefreshSceneObjects();
@@ -542,7 +642,7 @@ namespace {
 			g_editorScene.PushUndo();
 		}
 
-		const int32_t canvasGameObjectId = g_editorScene.CreateGameObject("Canvas");
+		const int32_t canvasGameObjectId = g_editorScene.CreateGameObject(g_editorScene.MakeUniqueGameObjectName("Canvas"));
 		g_editorScene.AddComponent(canvasGameObjectId, EditorComponentType::Canvas);
 		g_editorScene.AddComponent(canvasGameObjectId, EditorComponentType::CanvasScaler);
 		g_editorScene.AddComponent(canvasGameObjectId, EditorComponentType::GraphicRaycaster);
@@ -1419,6 +1519,38 @@ void EditorMainMenuBar::Draw(
 
 	UpdateAutoSave(consoleMessages);
 
+	// Ctrl+Z/Y/C/X/V。メニュー項目の"Ctrl+Z"表示はImGuiでは単なるヒント文字列で、
+	// 実際のキー入力は拾わないため、ここでグローバルに監視して実処理へつなぐ。
+	// テキスト入力中や他Widget操作中は割り込まない。
+	{
+		const ImGuiIO& shortcutIo = ImGui::GetIO();
+		const bool isShortcutGuardActive = shortcutIo.WantTextInput || ImGui::IsAnyItemActive();
+
+		if (!isShortcutGuardActive && shortcutIo.KeyCtrl) {
+			if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
+				if (editorScene_->Undo()) {
+					RefreshSceneObjects();
+					consoleMessages.push_back("Edit: 元に戻す (Ctrl+Z)");
+				}
+			}
+			else if (ImGui::IsKeyPressed(ImGuiKey_Y, false)) {
+				if (editorScene_->Redo()) {
+					RefreshSceneObjects();
+					consoleMessages.push_back("Edit: やり直し (Ctrl+Y)");
+				}
+			}
+			else if (ImGui::IsKeyPressed(ImGuiKey_C, false)) {
+				CopyGameObjectsToClipboard(consoleMessages);
+			}
+			else if (ImGui::IsKeyPressed(ImGuiKey_X, false)) {
+				CutSelectedGameObjects(consoleMessages);
+			}
+			else if (ImGui::IsKeyPressed(ImGuiKey_V, false)) {
+				PasteGameObjectsFromClipboard(consoleMessages);
+			}
+		}
+	}
+
 	static bool shouldOpenSceneSaveAsPopup = false;  // 保存先入力モーダルを次フレームで開く要求
 	static bool shouldOpenSceneLoadPopup = false;  // 読込候補一覧モーダルを次フレームで開く要求
 	static bool shouldOpenNewScenePopup = false;  // 編集中 Scene を新規 Scene へ置き換える確認要求
@@ -1587,6 +1719,20 @@ void EditorMainMenuBar::Draw(
 
 		ImGui::Separator();
 
+		if (ImGui::MenuItem("コピー", "Ctrl+C", false, !GetCopySourceGameObjectIds().empty())) {
+			CopyGameObjectsToClipboard(consoleMessages);
+		}
+
+		if (ImGui::MenuItem("切り取り", "Ctrl+X", false, !GetCopySourceGameObjectIds().empty())) {
+			CutSelectedGameObjects(consoleMessages);
+		}
+
+		if (ImGui::MenuItem("貼り付け", "Ctrl+V", false, !g_gameObjectClipboardPrefabPaths.empty())) {
+			PasteGameObjectsFromClipboard(consoleMessages);
+		}
+
+		ImGui::Separator();
+
 		if (ImGui::MenuItem("設定を開く")) {
 			OpenProjectSettings(consoleMessages);
 		}
@@ -1735,6 +1881,7 @@ void EditorMainMenuBar::Draw(
 		ImGui::MenuItem("診断・Profiler", nullptr, &g_isDiagnosticsWindowVisible);
 		ImGui::MenuItem("ログ監視", nullptr, &g_isLogMonitorWindowVisible);
 		ImGui::MenuItem("共同制作", nullptr, &g_isTeamCollaborationWindowVisible);
+		ImGui::MenuItem("Hook / Wire デバッグ", nullptr, &g_isHookWireDebugWindowVisible);
 
 		if (ImGui::MenuItem("描画負荷テスト Scene を作成")) {
 			shouldOpenRenderStressPopup = true;

@@ -859,6 +859,10 @@ struct EditorScriptRuntimeApi {
 	bool (*ReloadPrimaryScene)();
 	// 質量色表示（質量に応じてSetRendererColorへ渡す色を決める）用。RigidBodyが無ければ0を返す。
 	float (*GetMass)(int32_t gameObjectId);
+	// パズル1エリア分だけを初期状態へ戻す。Scene全体のReloadと違い他エリアの進行を壊さない。
+	bool (*CaptureAreaState)(int32_t areaRootGameObjectId);
+	bool (*ResetArea)(int32_t areaRootGameObjectId);
+	bool (*HasAreaState)(int32_t areaRootGameObjectId);
 };
 
 extern "C" {

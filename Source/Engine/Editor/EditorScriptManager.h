@@ -386,6 +386,9 @@ private:
 	static EditorScriptVector3 ScriptGetAngularVelocityBridge(int32_t gameObjectId);  // DLL からの Rigidbody 角速度取得を現在の ScriptManager へ流す
 	static void ScriptSetAngularVelocityBridge(int32_t gameObjectId, const EditorScriptVector3* angularVelocity);  // DLL からの Rigidbody 角速度設定を現在の ScriptManager へ流す
 	static float ScriptGetMassBridge(int32_t gameObjectId);  // DLL からの Rigidbody 質量取得を現在の ScriptManager へ流す
+	static bool ScriptCaptureAreaStateBridge(int32_t areaRootGameObjectId);  // DLLからのエリア状態Captureを現在のRuntimeへ流す
+	static bool ScriptResetAreaBridge(int32_t areaRootGameObjectId);  // DLLからのエリアResetを現在のRuntimeへ流す
+	static bool ScriptHasAreaStateBridge(int32_t areaRootGameObjectId);  // Capture済みかをDLLへ返す
 	static bool ScriptAddForceBridge(int32_t gameObjectId, const EditorScriptVector3* force);  // DLL からの継続力要求を現在の ScriptManager へ流す
 	static bool ScriptAddForceAtPositionBridge(int32_t gameObjectId, const EditorScriptVector3* force, const EditorScriptVector3* worldPosition);  // DLL からの作用点付き継続力要求を流す
 	static bool ScriptAddImpulseBridge(int32_t gameObjectId, const EditorScriptVector3* impulse);  // DLL からの瞬間力要求を現在の ScriptManager へ流す

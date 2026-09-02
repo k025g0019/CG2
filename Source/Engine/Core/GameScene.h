@@ -12,6 +12,7 @@
 #include "EditorGameBuildManager.h"
 #include "EditorGameViewManager.h"
 #include "EditorHierarchyWindowManager.h"
+#include "EditorHookWireDebugWindowManager.h"
 #include "EditorImguiFrameManager.h"
 #include "EditorInspectorWindowManager.h"
 #include "EditorLogMonitorWindowManager.h"
@@ -56,6 +57,7 @@ private:
 	EditorDiagnosticsWindowManager diagnosticsWindowManager_;  // Runtime ProfilerとScene静的検査を扱うManager。
 	EditorLogMonitorWindowManager logMonitorWindowManager_;  // GameObject/Component/System横断の汎用ログ・監視選択UIを扱うManager。
 	EditorTeamCollaborationManager teamCollaborationManager_;  // 3人共同制作のRevision、変更ログ、TCP同期を扱うManager。
+	EditorHookWireDebugWindowManager hookWireDebugWindowManager_;  // Hook構成の設定不備とRuntime Wireを検査するManager。
 	EditorPvShootWindowManager pvShootWindowManager_;  // PV撮影モードのCamera/PostProcess/TimeScale調整を扱うManager。
 	EditorRenderManager renderManager_;  // SceneObject / Sprite / ImGui を GPU に描画する Manager。
 	EditorGameBuildSettings gameBuildSettings_;  // Standalone Player の起動 Scene と遷移可能 Scene を保持する。

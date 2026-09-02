@@ -5,6 +5,7 @@
 #include "EditorComponentUtility.h"
 #include "EditorSharedState.h"
 #include "EditorTeamCollaborationManager.h"
+#include "Log.h"
 #include "ThirdParty/imgui-docking/imgui-docking/imgui_internal.h"
 
 #include <algorithm>
@@ -1586,6 +1587,102 @@ namespace {
 		}
 	}
 
+	// Hookは「選択点」と「力を伝えるRigidbody」が別Objectになるため、
+	// Hierarchyの数値だけでは接続先の取り違えに気付けない。SceneView上で線として見せる。
+	void DrawHookWireDebug(ImDrawList* sceneDrawList) {
+		if (!g_isHookWireSceneGizmoVisible) {
+			return;
+		}
+
+		for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
+			if (!gameObject.isActive) {
+				continue;
+			}
+
+			const EditorComponent* hookComponent = EditorComponentUtility::FindComponent(
+				gameObject,
+				EditorComponentType::WireConnectable);
+			if (hookComponent == nullptr || !hookComponent->isActive) {
+				continue;
+			}
+
+			Vector3 hookWorldScale{};
+			Vector3 hookWorldRotation{};
+			Vector3 hookWorldPosition{};
+			if (!g_editorScene.GetWorldTransform(
+					gameObject.id,
+					hookWorldScale,
+					hookWorldRotation,
+					hookWorldPosition)) {
+				continue;
+			}
+
+			// AnchorはHookのローカル座標なので、World行列を通した実位置を描く。
+			const Vector3 anchorWorldPosition = Transform(
+				hookComponent->wireConnectableLocalAnchor,
+				g_editorScene.GetWorldMatrix(gameObject.id));
+
+			ProjectedScenePoint anchorPoint{};
+			if (!TryProjectWorldPosition(anchorWorldPosition, anchorPoint)) {
+				continue;
+			}
+
+			const int32_t physicsBodyGameObjectId =
+				hookComponent->wireConnectablePhysicsBodyGameObjectId >= 0
+					? hookComponent->wireConnectablePhysicsBodyGameObjectId
+					: gameObject.id;
+			const EditorGameObject* physicsBodyGameObject =
+				g_editorScene.FindGameObject(physicsBodyGameObjectId);
+			const EditorComponent* physicsBodyRigidBody = physicsBodyGameObject != nullptr
+				? EditorComponentUtility::FindComponent(*physicsBodyGameObject, EditorComponentType::RigidBody)
+				: nullptr;
+			// 力の伝わらない構成（参照切れ、Rigidbodyなし）は警告色にして配置中に気付けるようにする。
+			const bool isPhysicsBodyValid = physicsBodyGameObject != nullptr && physicsBodyRigidBody != nullptr;
+			const ImU32 hookColor = isPhysicsBodyValid
+				? IM_COL32(120, 220, 255, 235)
+				: IM_COL32(255, 140, 60, 235);
+
+			sceneDrawList->AddCircleFilled(anchorPoint.screenPosition, 4.0f, hookColor);
+			sceneDrawList->AddCircle(anchorPoint.screenPosition, 8.0f, hookColor, 0, 1.5f);
+
+			if (physicsBodyGameObject == nullptr || physicsBodyGameObjectId == gameObject.id) {
+				continue;
+			}
+
+			Vector3 bodyWorldScale{};
+			Vector3 bodyWorldRotation{};
+			Vector3 bodyWorldPosition{};
+			if (!g_editorScene.GetWorldTransform(
+					physicsBodyGameObjectId,
+					bodyWorldScale,
+					bodyWorldRotation,
+					bodyWorldPosition)) {
+				continue;
+			}
+
+			ProjectedScenePoint bodyPoint{};
+			if (!TryProjectWorldPosition(bodyWorldPosition, bodyPoint)) {
+				continue;
+			}
+
+			const bool isLineSafe =
+				std::fabs(anchorPoint.ndcX) <= kProjectedLineNdcLimit &&
+				std::fabs(anchorPoint.ndcY) <= kProjectedLineNdcLimit &&
+				std::fabs(bodyPoint.ndcX) <= kProjectedLineNdcLimit &&
+				std::fabs(bodyPoint.ndcY) <= kProjectedLineNdcLimit;
+			if (!isLineSafe) {
+				continue;
+			}
+
+			sceneDrawList->AddLine(
+				anchorPoint.screenPosition,
+				bodyPoint.screenPosition,
+				hookColor,
+				1.5f);
+			sceneDrawList->AddCircle(bodyPoint.screenPosition, 5.0f, hookColor, 0, 1.5f);
+		}
+	}
+
 	void DrawPhysicsDebug(ImDrawList* sceneDrawList) {
 		const EditorPhysicsSettings& physicsSettings = g_editorScene.GetPhysicsSettings();
 		if (!physicsSettings.drawColliderDebug &&
@@ -2224,6 +2321,7 @@ void EditorSceneViewManager::Draw() {
 		DrawRailPathDebug(sceneDrawList);
 		DrawTrajectoryPreviewDebug(sceneDrawList);
 		DrawPhysicsDebug(sceneDrawList);
+		DrawHookWireDebug(sceneDrawList);
 
 		sceneDrawList->PopClipRect();
 	}
@@ -2384,6 +2482,55 @@ void EditorSceneViewManager::Draw() {
 				else {
 					g_editorSelectionManager.SyncSelectedPlacedObjectToGameObject(g_selectedPlacedSceneObjectIndex);  // SceneObject を動かした結果を、対応する GameObject の Transform Component へ同期する。
 				}
+			}
+
+			// ギズモが反応しない不具合の再現時にVS出力から状態を追えるようにする。
+			// 毎フレーム出すと埋もれるので、SceneView内で左クリックした瞬間だけ出す。
+			if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+				const ImVec2 clickMousePosition = ImGui::GetMousePos();
+				// カメラや行列がNaN/Infになっていないかもここで確認する。
+				// NaNになった編集用カメラでギズモを計算すると、比較が常にfalseになり
+				// 「出るのに一切反応しない」症状に一致する。
+				const bool isCameraTransformFinite =
+					std::isfinite(g_cameraTransform.translate.x) &&
+					std::isfinite(g_cameraTransform.translate.y) &&
+					std::isfinite(g_cameraTransform.translate.z) &&
+					std::isfinite(g_cameraTransform.rotate.x) &&
+					std::isfinite(g_cameraTransform.rotate.y) &&
+					std::isfinite(g_cameraTransform.rotate.z);
+				const bool isViewMatrixFinite = std::isfinite(g_viewMatrix.matrix[3][0]) &&
+					std::isfinite(g_viewMatrix.matrix[3][1]) &&
+					std::isfinite(g_viewMatrix.matrix[3][2]);
+
+				char gizmoDiagnosticBuffer[512];
+				std::snprintf(
+					gizmoDiagnosticBuffer,
+					sizeof(gizmoDiagnosticBuffer),
+					"[GIZMO-DIAG] click=(%.1f,%.1f) sceneRect=(%.1f,%.1f,%.1f,%.1f) "
+					"hasSelectedGizmoTransform=%d isSelectionLockedByAnotherUser=%d "
+					"isGizmoHovered=%d isGizmoActive=%d selectedGameObjectId=%d "
+					"multiSelectCount=%zu wantCaptureMouse=%d "
+					"cameraTransformFinite=%d viewMatrixFinite=%d cameraPos=(%.2f,%.2f,%.2f)\n",
+					static_cast<double>(clickMousePosition.x),
+					static_cast<double>(clickMousePosition.y),
+					static_cast<double>(g_editorSceneX),
+					static_cast<double>(g_editorSceneY),
+					static_cast<double>(g_editorSceneWidth),
+					static_cast<double>(g_editorSceneHeight),
+					hasSelectedGizmoTransform ? 1 : 0,
+					isSelectionLockedByAnotherUser ? 1 : 0,
+					isGizmoHovered ? 1 : 0,
+					isGizmoActive ? 1 : 0,
+					g_selectedEditorGameObjectId,
+					g_selectedEditorGameObjectIds.size(),
+					ImGui::GetIO().WantCaptureMouse ? 1 : 0,
+					isCameraTransformFinite ? 1 : 0,
+					isViewMatrixFinite ? 1 : 0,
+					static_cast<double>(g_cameraTransform.translate.x),
+					static_cast<double>(g_cameraTransform.translate.y),
+					static_cast<double>(g_cameraTransform.translate.z));
+				// このタグはVS出力で意図的に必ず見せたいため、抑制済みのLog()ではなく直接出す。
+				OutputDebugStringA(gizmoDiagnosticBuffer);
 			}
 		}
 

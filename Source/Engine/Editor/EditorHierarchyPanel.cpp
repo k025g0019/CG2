@@ -1,6 +1,7 @@
 ﻿#include "EditorHierarchyPanel.h"
 
 #include "EditorAssetUtility.h"
+#include "EditorComponentUtility.h"
 #include "EditorSharedState.h"
 
 #pragma warning(push, 0)
@@ -28,6 +29,18 @@ namespace {
 			worldScale,
 			worldRotation,
 			worldPosition);
+
+		// Wireで大きな力を受けた物体等がNaN/Infへ吹き飛んだ状態でダブルクリックすると、
+		// 編集用カメラ(g_cameraTransform)自体がNaNになり、以後SceneView全体のギズモの
+		// 当たり判定計算が壊れる(NaNとの比較は常にfalseになるため)。書き込む前に弾く。
+		const bool isWorldPositionFinite =
+			std::isfinite(worldPosition.x) &&
+			std::isfinite(worldPosition.y) &&
+			std::isfinite(worldPosition.z);
+		if (!isWorldPositionFinite) {
+			return;
+		}
+
 		const float focusDistance = 6.0f;
 		g_cameraTransform.translate.x = worldPosition.x - forward.x * focusDistance;
 		g_cameraTransform.translate.y = worldPosition.y - forward.y * focusDistance;
@@ -118,10 +131,87 @@ void EditorHierarchyPanel::Draw(
 		editorScene_->SetParent(selectedGameObjectId, -1, true);
 	}
 
+	// Hookは「選択中の物体の子として、見た目・選択Collider・HookPointを揃えた1セット」を作る。
+	// 手作業でRenderer/Collider/HookPoint/力伝達先を毎回設定するとPhysicsBody設定漏れが起きやすいため、
+	// 20個並べても事故らないようにEditor側で組み立てる。
+	auto createHookOnSelectedGameObject = [&]() {
+		EditorGameObject* parentGameObject = editorScene_->FindGameObject(selectedGameObjectId);
+		const int32_t parentGameObjectId = parentGameObject != nullptr ? parentGameObject->id : -1;
+
+		// Renderer付きSphereとして作り、描画用SceneObjectの登録までAssetFactoryに任せる。
+		assetFactory_->CreateModelGameObject(
+			"resources/sphere.fbx",
+			Vector3{0.0f, 0.0f, 0.0f},
+			selectedGameObjectId,
+			selectedPlacedSceneObjectIndex,
+			selectedSceneObject);
+
+		const int32_t hookGameObjectId = selectedGameObjectId;
+		EditorGameObject* hookGameObject = editorScene_->FindGameObject(hookGameObjectId);
+		if (hookGameObject == nullptr) {
+			return;
+		}
+
+		hookGameObject->name = editorScene_->MakeUniqueGameObjectName("Hook");
+		editorScene_->AddComponent(hookGameObjectId, EditorComponentType::WireConnectable);
+
+		// Raycastで狙えるかはCollider(FindMainCollider)だけで決まり、Rigidbodyの有無は無関係。
+		// 子Hook（親を選択して作った場合）は力を親へ渡すだけの選択点なので、Rigidbody自体を持たせない。
+		// 親を選ばず作った場合はwireConnectablePhysicsBodyGameObjectIdがHook自身になり、
+		// Wireの力もHook自身のRigidbodyへ掛かるため、こちらはDynamicのRigidbodyを残す。
+		if (parentGameObjectId >= 0) {
+			editorScene_->RemoveComponent(hookGameObjectId, EditorComponentType::RigidBody);
+		}
+
+		// 掴む目印として分かる大きさにする。Colliderは選択用で、物体同士の衝突用ではない。
+		hookGameObject->scale = {0.25f, 0.25f, 0.25f};
+
+		if (EditorComponent* hookComponent = EditorComponentUtility::FindComponent(
+			*hookGameObject,
+			EditorComponentType::WireConnectable)) {
+			// 親が指定されていれば力の伝達先を親へ向ける。-1のままだとHook自身を物理Bodyとして扱ってしまう。
+			hookComponent->wireConnectablePhysicsBodyGameObjectId = parentGameObjectId;
+			hookComponent->wireConnectableUseHitPoint = false;  // 固定フックなのでAnchorはローカル原点に固定する。
+			hookComponent->wireConnectableLocalAnchor = {0.0f, 0.0f, 0.0f};
+		}
+
+		if (parentGameObjectId >= 0) {
+			editorScene_->SetParent(hookGameObjectId, parentGameObjectId, false);
+			hookGameObject = editorScene_->FindGameObject(hookGameObjectId);
+			if (hookGameObject != nullptr) {
+				// 親の中心(ローカル原点)にそのまま置くと、親自身の当たり判定の内部に
+				// 埋まってしまい、狙うRayが必ず親の表面で止まってHookまで届かない
+				// (FindBestHookはRaycastの命中GameObjectがHook自身と一致するかで判定するため、
+				// 親に埋まっていると永遠に選択できない)。表面に出るよう手前へ少しずらす。
+				hookGameObject->translate = {0.0f, 0.0f, -0.6f};
+			}
+		}
+
+		SetSingleSelectedGameObject(hookGameObjectId);
+		previousSelectedGameObjectId = -1;
+
+		if (consoleMessages_ != nullptr) {
+			consoleMessages_->push_back(
+				parentGameObjectId >= 0
+					? "Scene: Hookを子として作成し、力を伝えるRigidbodyへ親を設定"
+					: "Scene: Hookを作成（親未選択のため力の伝達先はHook自身）");
+		}
+	};
+
 	if (ImGui::BeginPopup("HierarchyCreatePopup")) {
+		if (ImGui::MenuItem("Hook（選択物体の子）")) {
+			createHookOnSelectedGameObject();
+		}
+
+		ImGui::SetItemTooltip(
+			"選択中の物体の子として Renderer + 選択Collider + HookPoint を作り、\n"
+			"HookPointの「力を伝えるRigidbody」に選択中の物体を設定します。");
+
+		ImGui::Separator();
+
 		if (ImGui::MenuItem("空のGameObject")) {
 			editorScene_->PushUndo();
-			selectedGameObjectId = editorScene_->CreateGameObject("GameObject");
+			selectedGameObjectId = editorScene_->CreateGameObject(editorScene_->MakeUniqueGameObjectName("GameObject"));
 			SetSingleSelectedGameObject(selectedGameObjectId);
 			selectedPlacedSceneObjectIndex = -1;
 			previousSelectedGameObjectId = -1;
@@ -157,7 +247,7 @@ void EditorHierarchyPanel::Draw(
 
 		if (ImGui::MenuItem("ライト")) {
 			editorScene_->PushUndo();
-			selectedGameObjectId = editorScene_->CreateGameObject("Light");
+			selectedGameObjectId = editorScene_->CreateGameObject(editorScene_->MakeUniqueGameObjectName("Light"));
 			editorScene_->AddComponent(selectedGameObjectId, EditorComponentType::Light);
 			EditorGameObject* lightGameObject = editorScene_->FindGameObject(selectedGameObjectId);
 			if (lightGameObject != nullptr) {
@@ -173,7 +263,7 @@ void EditorHierarchyPanel::Draw(
 
 		if (ImGui::MenuItem("カメラ")) {
 			editorScene_->PushUndo();
-			selectedGameObjectId = editorScene_->CreateGameObject("Camera");
+			selectedGameObjectId = editorScene_->CreateGameObject(editorScene_->MakeUniqueGameObjectName("Camera"));
 			editorScene_->AddComponent(selectedGameObjectId, EditorComponentType::Camera);
 			EditorGameObject* cameraGameObject = editorScene_->FindGameObject(selectedGameObjectId);
 			if (cameraGameObject != nullptr) {
@@ -210,28 +300,51 @@ void EditorHierarchyPanel::Draw(
 		}
 	}
 
+	// Undoはあるが、Deleteキー一発で子階層ごと即消えると事故りやすいため確認を挟む。
+	static int32_t pendingHierarchyDeleteGameObjectId = -1;
+
 	if (isHierarchyWindowFocused &&
 		!ImGui::IsAnyItemActive() &&
 		!ImGui::GetIO().WantTextInput &&
 		selectedGameObjectId >= 0 &&
 		ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
-		EditorGameObject* deletingGameObject = editorScene_->FindGameObject(selectedGameObjectId);
+		pendingHierarchyDeleteGameObjectId = selectedGameObjectId;
+		ImGui::OpenPopup("Hierarchy削除確認");
+	}
+
+	if (ImGui::BeginPopupModal("Hierarchy削除確認", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+		EditorGameObject* deletingGameObject = editorScene_->FindGameObject(pendingHierarchyDeleteGameObjectId);
 		const std::string deletingName =
 			deletingGameObject != nullptr ? deletingGameObject->name : "GameObject";
 
-		editorScene_->PushUndo();  // Delete も Undo で戻せるように、削除前の Scene を退避する。
-		if (editorScene_->DeleteGameObject(selectedGameObjectId)) {
-			SelectFirstGameObjectOrClear(
-				editorScene_,
-				selectionManager_,
-				selectedGameObjectId,
-				selectedPlacedSceneObjectIndex,
-				previousSelectedGameObjectId,
-				selectedSceneObject);
-			if (consoleMessages_ != nullptr) {
-				consoleMessages_->push_back("Hierarchy: 削除 " + deletingName);
+		ImGui::Text("「%s」を子階層ごと削除しますか？", deletingName.c_str());
+
+		if (ImGui::Button("削除する", ImVec2(120.0f, 0.0f))) {
+			editorScene_->PushUndo();  // Delete も Undo で戻せるように、削除前の Scene を退避する。
+			if (editorScene_->DeleteGameObject(pendingHierarchyDeleteGameObjectId)) {
+				SelectFirstGameObjectOrClear(
+					editorScene_,
+					selectionManager_,
+					selectedGameObjectId,
+					selectedPlacedSceneObjectIndex,
+					previousSelectedGameObjectId,
+					selectedSceneObject);
+				if (consoleMessages_ != nullptr) {
+					consoleMessages_->push_back("Hierarchy: 削除 " + deletingName);
+				}
 			}
+			pendingHierarchyDeleteGameObjectId = -1;
+			ImGui::CloseCurrentPopup();
 		}
+
+		ImGui::SameLine();
+
+		if (ImGui::Button("キャンセル", ImVec2(120.0f, 0.0f))) {
+			pendingHierarchyDeleteGameObjectId = -1;
+			ImGui::CloseCurrentPopup();
+		}
+
+		ImGui::EndPopup();
 	}
 }
 

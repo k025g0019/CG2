@@ -1416,6 +1416,34 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		L"Assets/Shaders/PostProcess/SSGI.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
 		includeHandler.Get(),
 		logStream);
+	ComPtr<IDxcBlob> volumetricLightShaftPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/PostProcess/VolumetricLightShaft.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> ssgiTemporalPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/PostProcess/SsgiTemporal.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> ssgiUpsamplePixelShaderBlob = CompileShader(
+		L"Assets/Shaders/PostProcess/SsgiUpsample.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> probeCaptureVertexShaderBlob = CompileShader(
+		L"Assets/Shaders/GI/ProbeCapture.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> probeCapturePixelShaderBlob = CompileShader(
+		L"Assets/Shaders/GI/ProbeCapture.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> probeShProjectionComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/GI/ProbeShProjection.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> probeVisibilityComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/GI/ProbeVisibility.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
 	ComPtr<IDxcBlob> skyboxPixelShaderBlob = CompileShader(
 		L"Assets/Shaders/PostProcess/Skybox.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
 		includeHandler.Get(),
@@ -1768,7 +1796,17 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	// 0-10 は既存描画、11-17 は PBR Map、18-19 は Ocean FFT、20-21 は現在 / 前 Bone 行列。
 	// 22-23 は水面専用パスが読む不透明 Scene Color / Depth、24 は Viewport ごとの水面復元定数。
 	// 水面SSRでWorldを画面へ戻すため、逆行列20値にView軸と投影倍率12値を加える。
-	D3D12_ROOT_PARAMETER rootParameters[26] = {};
+	// t20 = Light Probe の SH 係数、t21 = 八面体の可視性アトラス。
+	// Root Signature は 64 DWORD 上限に対して既に 63 使っているため、
+	// 2つのSRVを1つのDescriptor Table(1 DWORD)へまとめて丁度 64 に収める。
+	D3D12_DESCRIPTOR_RANGE lightProbeDescriptorRange[1] = {};
+	lightProbeDescriptorRange[0].BaseShaderRegister = 20u;
+	lightProbeDescriptorRange[0].NumDescriptors = 2u;
+	lightProbeDescriptorRange[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	lightProbeDescriptorRange[0].OffsetInDescriptorsFromTableStart =
+		D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_ROOT_PARAMETER rootParameters[27] = {};
 
 	rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 	rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -1868,7 +1906,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	rootParameters[23].DescriptorTable.NumDescriptorRanges = _countof(waterSceneDepthRange);
 
 	rootParameters[24].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-	rootParameters[24].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	// 通常描画はPSのWaterView、影描画はVSのShadowViewProjectionとして使う。
+	// 同じRoot Constantsをパスごとに記録し、共有Upload Bufferの上書きを避ける。
+	rootParameters[24].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 	rootParameters[24].Constants.ShaderRegister = 3u;
 	rootParameters[24].Constants.RegisterSpace = 0u;
 	rootParameters[24].Constants.Num32BitValues = 29u;
@@ -1879,6 +1919,11 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	rootParameters[25].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 	rootParameters[25].Descriptor.ShaderRegister = 4u;
 	rootParameters[25].Descriptor.RegisterSpace = 0u;
+
+	rootParameters[26].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	rootParameters[26].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	rootParameters[26].DescriptorTable.pDescriptorRanges = lightProbeDescriptorRange;
+	rootParameters[26].DescriptorTable.NumDescriptorRanges = _countof(lightProbeDescriptorRange);
 
 	descriptionRootSignature.pParameters = rootParameters;
 	descriptionRootSignature.NumParameters = _countof(rootParameters);
@@ -2874,6 +2919,23 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		RequestInitializationFailure();
 		return;
 	}
+
+	// Light Probe GI は任意機能なので、初期化に失敗しても描画自体は続行する。
+	const bool isLightProbeInitialized = g_lightProbeManager.Initialize(
+		device.Get(),
+		srvDescriptorHeap,
+		srvSize,
+		rootSignature.Get(),
+		probeCaptureVertexShaderBlob.Get(),
+		probeCapturePixelShaderBlob.Get(),
+		probeShProjectionComputeShaderBlob.Get(),
+		probeVisibilityComputeShaderBlob.Get(),
+		inputElementDescs,
+		_countof(inputElementDescs));
+
+	Log(logStream, isLightProbeInitialized
+		? "Init Stage: light probe manager initialized"
+		: "Light probe manager initialization failed (GI disabled)");
 
 	const bool isDepthHierarchyInitialized = g_depthHierarchyManager.Initialize(
 		device.Get(),
@@ -4226,11 +4288,183 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		return;
 	}
 
+	// SSGI は専用の半解像度RTへ書くので上書き。加算は最後のUpsampleで行う。
 	ComPtr<ID3D12PipelineState> ssgiPipelineState = CreatePostProcessPSO(
-		"SSGI", ssgiPixelShaderBlob.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT, true);
+		"SSGI", ssgiPixelShaderBlob.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT, false);
 	if (ssgiPipelineState == nullptr) {
 		RequestInitializationFailure();
 		return;
+	}
+
+	ComPtr<ID3D12PipelineState> ssgiTemporalPipelineState = CreatePostProcessPSO(
+		"SsgiTemporal", ssgiTemporalPixelShaderBlob.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT, false);
+	if (ssgiTemporalPipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
+	ComPtr<ID3D12PipelineState> ssgiUpsamplePipelineState = CreatePostProcessPSO(
+		"SsgiUpsample", ssgiUpsamplePixelShaderBlob.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT, true);
+	if (ssgiUpsamplePipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
+	//================================================================
+	// Volumetric Light Shaft (Sun Beams): 専用の小さなRootSignature。
+	// 既存のpostProcessRootSignatureは32bit定数が48値しかなく、Cascaded
+	// Shadowを見るのに必要なデータ量に足りないため、共有シグネチャを
+	// 太らせて他パスへ影響させるより、独立させたほうが安全。
+	//================================================================
+	D3D12_DESCRIPTOR_RANGE volumetricDepthRange[1] = {};
+	volumetricDepthRange[0].BaseShaderRegister = 0u;
+	volumetricDepthRange[0].NumDescriptors = 1u;
+	volumetricDepthRange[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	volumetricDepthRange[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_DESCRIPTOR_RANGE volumetricShadowRange[1] = {};
+	volumetricShadowRange[0].BaseShaderRegister = 1u;
+	volumetricShadowRange[0].NumDescriptors = 1u;
+	volumetricShadowRange[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	volumetricShadowRange[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_ROOT_PARAMETER volumetricRootParameters[4] = {};
+	volumetricRootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	volumetricRootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	volumetricRootParameters[0].DescriptorTable.pDescriptorRanges = volumetricDepthRange;
+	volumetricRootParameters[0].DescriptorTable.NumDescriptorRanges = _countof(volumetricDepthRange);
+
+	volumetricRootParameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	volumetricRootParameters[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	volumetricRootParameters[1].DescriptorTable.pDescriptorRanges = volumetricShadowRange;
+	volumetricRootParameters[1].DescriptorTable.NumDescriptorRanges = _countof(volumetricShadowRange);
+
+	// b0: Sunの情報一式(色・強さ・Cascaded ShadowVP・Atlas UV・volumetric設定)。
+	// 既存のdirectionalLightResourceをそのまま束縛するだけで、追加の
+	// アップロード処理を持たない。
+	volumetricRootParameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+	volumetricRootParameters[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	volumetricRootParameters[2].Descriptor.ShaderRegister = 0u;
+	volumetricRootParameters[2].Descriptor.RegisterSpace = 0u;
+
+	// b1: 画面 <-> ワールド復元用の行列とビューポート情報。
+	volumetricRootParameters[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+	volumetricRootParameters[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	volumetricRootParameters[3].Constants.ShaderRegister = 1u;
+	volumetricRootParameters[3].Constants.Num32BitValues = 24u;
+
+	D3D12_STATIC_SAMPLER_DESC volumetricSamplers[2] = {};
+	volumetricSamplers[0].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+	volumetricSamplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	volumetricSamplers[0].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	volumetricSamplers[0].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	volumetricSamplers[0].ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+	volumetricSamplers[0].MaxLOD = D3D12_FLOAT32_MAX;
+	volumetricSamplers[0].ShaderRegister = 0u;
+	volumetricSamplers[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	volumetricSamplers[1].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+	volumetricSamplers[1].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	volumetricSamplers[1].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	volumetricSamplers[1].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	volumetricSamplers[1].ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+	volumetricSamplers[1].MaxLOD = D3D12_FLOAT32_MAX;
+	volumetricSamplers[1].ShaderRegister = 1u;
+	volumetricSamplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	D3D12_ROOT_SIGNATURE_DESC volumetricRootSignatureDesc{};
+	volumetricRootSignatureDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+	volumetricRootSignatureDesc.pParameters = volumetricRootParameters;
+	volumetricRootSignatureDesc.NumParameters = _countof(volumetricRootParameters);
+	volumetricRootSignatureDesc.pStaticSamplers = volumetricSamplers;
+	volumetricRootSignatureDesc.NumStaticSamplers = _countof(volumetricSamplers);
+
+	ComPtr<ID3DBlob> volumetricSignatureBlob;
+	ComPtr<ID3DBlob> volumetricErrorBlob;
+	hr = D3D12SerializeRootSignature(
+		&volumetricRootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1,
+		volumetricSignatureBlob.GetAddressOf(), volumetricErrorBlob.GetAddressOf());
+	if (FAILED(hr) || volumetricSignatureBlob == nullptr) {
+		Log(logStream, std::format(
+			"VolumetricLightShaft RootSignature serialize failed. hr=0x{:08X}",
+			static_cast<uint32_t>(hr)));
+
+		if (volumetricErrorBlob != nullptr) {
+			const auto* errorMessage = reinterpret_cast<const char*>(volumetricErrorBlob->GetBufferPointer());
+			Log(logStream, std::string(errorMessage, volumetricErrorBlob->GetBufferSize()));
+		}
+
+		RequestInitializationFailure();
+		return;
+	}
+
+	ComPtr<ID3D12RootSignature> volumetricLightShaftRootSignature;
+	hr = device->CreateRootSignature(
+		0, volumetricSignatureBlob->GetBufferPointer(), volumetricSignatureBlob->GetBufferSize(),
+		IID_PPV_ARGS(volumetricLightShaftRootSignature.GetAddressOf()));
+
+	if (FAILED(hr) || volumetricLightShaftRootSignature == nullptr) {
+		Log(logStream, std::format(
+			"VolumetricLightShaft RootSignature Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	ComPtr<ID3D12PipelineState> volumetricLightShaftPipelineState;
+
+	if (volumetricLightShaftPixelShaderBlob != nullptr && fullscreenVertexShaderBlob != nullptr) {
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC volumetricDesc{};
+		volumetricDesc.pRootSignature = volumetricLightShaftRootSignature.Get();
+		volumetricDesc.VS = {
+			fullscreenVertexShaderBlob->GetBufferPointer(), fullscreenVertexShaderBlob->GetBufferSize()};
+		volumetricDesc.PS = {
+			volumetricLightShaftPixelShaderBlob->GetBufferPointer(),
+			volumetricLightShaftPixelShaderBlob->GetBufferSize()};
+		D3D12_BLEND_DESC volumetricBlendDesc{};
+		// God Ray はHDRシーンへ加算合成する光なので、常に加算ブレンド。
+		volumetricBlendDesc.RenderTarget[0].BlendEnable = TRUE;
+		volumetricBlendDesc.RenderTarget[0].SrcBlend = D3D12_BLEND_ONE;
+		volumetricBlendDesc.RenderTarget[0].DestBlend = D3D12_BLEND_ONE;
+		volumetricBlendDesc.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+		volumetricBlendDesc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+		volumetricBlendDesc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
+		volumetricBlendDesc.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+		volumetricBlendDesc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+		volumetricDesc.BlendState = volumetricBlendDesc;
+		D3D12_RASTERIZER_DESC volumetricRasterDesc{};
+		volumetricRasterDesc.FillMode = D3D12_FILL_MODE_SOLID;
+		volumetricRasterDesc.CullMode = D3D12_CULL_MODE_NONE;
+		volumetricRasterDesc.DepthClipEnable = TRUE;
+		volumetricDesc.RasterizerState = volumetricRasterDesc;
+		D3D12_DEPTH_STENCIL_DESC volumetricDsDesc{};
+		volumetricDsDesc.DepthEnable = FALSE;
+		volumetricDsDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+		volumetricDsDesc.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+		volumetricDsDesc.StencilEnable = FALSE;
+		volumetricDesc.DepthStencilState = volumetricDsDesc;
+		volumetricDesc.DSVFormat = DXGI_FORMAT_UNKNOWN;
+		volumetricDesc.NumRenderTargets = 1;
+		volumetricDesc.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+
+		for (int i = 1; i < 8; ++i) {
+			volumetricDesc.RTVFormats[i] = DXGI_FORMAT_UNKNOWN;
+		}
+
+		volumetricDesc.SampleDesc.Count = 1;
+		volumetricDesc.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
+		volumetricDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+		volumetricDesc.InputLayout.pInputElementDescs = nullptr;
+		volumetricDesc.InputLayout.NumElements = 0;
+		hr = device->CreateGraphicsPipelineState(
+			&volumetricDesc, IID_PPV_ARGS(volumetricLightShaftPipelineState.GetAddressOf()));
+
+		if (FAILED(hr) || volumetricLightShaftPipelineState == nullptr) {
+			Log(logStream, std::format(
+				"VolumetricLightShaft PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+			volumetricLightShaftPipelineState = nullptr;
+		}
+	}
+	else {
+		Log(std::string("VolumetricLightShaft PSO skipped: shader blob is null"));
 	}
 
 	// 日本語UIはDPIに合わせたGlyphを構築し、拡大表示時の文字の粗さを防ぐ。
@@ -4398,6 +4632,13 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_ssaoPixelShaderBlob = ssaoPixelShaderBlob;
 	g_ssaoBlurPixelShaderBlob = ssaoBlurPixelShaderBlob;
 	g_ssgiPixelShaderBlob = ssgiPixelShaderBlob;
+	g_ssgiTemporalPixelShaderBlob = ssgiTemporalPixelShaderBlob;
+	g_ssgiUpsamplePixelShaderBlob = ssgiUpsamplePixelShaderBlob;
+	g_volumetricLightShaftPixelShaderBlob = volumetricLightShaftPixelShaderBlob;
+	g_probeCaptureVertexShaderBlob = probeCaptureVertexShaderBlob;
+	g_probeCapturePixelShaderBlob = probeCapturePixelShaderBlob;
+	g_probeShProjectionComputeShaderBlob = probeShProjectionComputeShaderBlob;
+	g_probeVisibilityComputeShaderBlob = probeVisibilityComputeShaderBlob;
 	g_skyboxPixelShaderBlob = skyboxPixelShaderBlob;
 	g_planarReflectionPixelShaderBlob = planarReflectionPixelShaderBlob;
 	g_sharpenPixelShaderBlob = sharpenPixelShaderBlob;
@@ -4439,6 +4680,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_ssaoPipelineState = ssaoPipelineState;
 	g_ssaoBlurPipelineState = ssaoBlurPipelineState;
 	g_ssgiPipelineState = ssgiPipelineState;
+	g_ssgiTemporalPipelineState = ssgiTemporalPipelineState;
+	g_ssgiUpsamplePipelineState = ssgiUpsamplePipelineState;
+	g_volumetricLightShaftRootSignature = volumetricLightShaftRootSignature;
+	g_volumetricLightShaftPipelineState = volumetricLightShaftPipelineState;
 	g_skyboxPipelineState = skyboxPipelineState;
 	g_planarReflectionPipelineState = planarReflectionPipelineState;
 	g_sharpenPipelineState = sharpenPipelineState;
@@ -4836,6 +5081,7 @@ int EditorPlatformManager::Finalize() {
 	g_temporalRenderingManager.Finalize();
 	g_depthHierarchyManager.Finalize();
 	g_gBufferManager.Finalize();
+	g_lightProbeManager.Finalize();
 	srvDescriptorHeap->Release();
 	dsvDescriptorHeap->Release();
 	rtvDescriptorHeap->Release();

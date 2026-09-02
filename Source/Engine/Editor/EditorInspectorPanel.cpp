@@ -527,6 +527,7 @@ namespace {
 		{"FeelKit", "FeelKit 触覚ソース", EditorComponentType::HapticSource},
 		{"ライト・環境", "ポストプロセス", EditorComponentType::PostProcess},
 		{"ライト・環境", "環境", EditorComponentType::Environment},
+		{"ライト・環境", "Sun Portal", EditorComponentType::SunPortal},
 		{"UI", "テキストエフェクト", EditorComponentType::TextEffect},
 		{"エフェクト", "シーン遷移", EditorComponentType::SceneTransition},
 	};
@@ -6835,6 +6836,7 @@ namespace {
 		}
 
 		DrawFloatRow("ホワイトポイント", component.compositeWhitePoint, 0.1f, 0.1f, 20.0f);
+		DrawFloatRow("グレア合成強さ", component.compositeBloomIntensity, 0.01f, 0.0f, 4.0f);
 		DrawFloatRow("彩度", component.compositeSaturation, 0.01f, 0.0f, 4.0f);
 		DrawFloatRow("コントラスト", component.compositeContrast, 0.01f, 0.0f, 4.0f);
 		DrawFloatRow("色温度", component.compositeTemperature, 0.01f, -1.0f, 1.0f);
@@ -6905,6 +6907,13 @@ namespace {
 			DrawColor3Row("雲の色", component.volumetricCloudColor);
 			ImGui::TreePop();
 		}
+		if (ImGui::TreeNodeEx("光の筋(ボリュメトリックライト)", ImGuiTreeNodeFlags_DefaultOpen)) {
+			DrawCheckboxRow("光の筋を使用", component.volumetricLightEnabled);
+			DrawFloatRow("強さ", component.volumetricLightIntensity, 0.01f, 0.0f, 4.0f);
+			DrawFloatRow("筋の鋭さ", component.volumetricLightAnisotropy, 0.01f, 0.0f, 0.95f);
+			DrawFloatRow("到達距離", component.volumetricLightDistance, 0.5f, 1.0f, 500.0f);
+			ImGui::TreePop();
+		}
 		if (ImGui::TreeNodeEx("熱気・遠景揺らぎ", ImGuiTreeNodeFlags_DefaultOpen)) {
 			DrawFloatRow("熱気の強さ", component.environmentHeatIntensity, 0.01f, 0.0f, 1.0f);
 			DrawFloatRow("地平線中心", component.environmentHeatHorizonCenter, 0.01f, 0.0f, 1.0f);
@@ -6913,6 +6922,20 @@ namespace {
 			DrawFloatRow("歪みスケール", component.environmentHeatDistortionScale, 0.01f, 0.01f, 4.0f);
 			ImGui::TreePop();
 		}
+	}
+
+	void DrawSunPortalComponent(EditorComponent& component) {
+		DrawTextRow(
+			"説明",
+			"窓や開口部に置くと、その面を簡易的なArea Lightとして扱い、"
+			"Sunが正面から当たっている間だけ室内側へ光を足します。"
+			"GameObjectの向き(+Z)がPortalの外向き(Sun側)になります。");
+		DrawFloatRow("強さ", component.intensity, 0.01f, 0.0f, 4.0f);
+		DrawColor3Row("色味", component.color);
+		DrawFloatRow("半幅", component.colliderSize.x, 0.05f, 0.05f, 50.0f);
+		DrawFloatRow("半高", component.colliderSize.y, 0.05f, 0.05f, 50.0f);
+		DrawFloatRow("到達距離", component.colliderRadius, 0.1f, 0.1f, 100.0f);
+		DrawFloatRow("奥への広がり", component.roughness, 0.01f, 0.0f, 2.0f);
 	}
 
 	void DrawCameraFollowRows(
@@ -7035,10 +7058,42 @@ namespace {
 	}
 
 	void DrawLightProbeGroupComponent(EditorComponent& component) {
-		DrawTextRow("説明", "Scene 全体の間接光と反射補間へ使うライトプローブ設定です。");
-		DrawColor3Row("間接光色", component.color);
-		DrawFloatRow("反射寄与", component.intensity, 0.01f, 0.0f, 4.0f);
-		DrawFloatRow("ぼかし", component.roughness, 0.01f, 0.0f, 1.0f);
+		DrawTextRow(
+			"説明",
+			"間接光(GI)用のライトプローブを直方体グリッドへ等間隔に置きます。"
+			"GameObjectの位置がグリッドの中心です。各Probeから周囲を撮影して"
+			"間接光を焼き、動的な物体もそこから間接光を受け取ります。");
+		DrawCheckboxRow("GIを使用", component.environmentTextureEnabled);
+		DrawVector3Row("範囲(半径)", component.colliderSize, 0.1f, 0.5f, 500.0f);
+		DrawFloatRow("Probe間隔", component.colliderRadius, 0.1f, 0.5f, 50.0f);
+		DrawFloatRow("GIの強さ", component.intensity, 0.01f, 0.0f, 4.0f);
+		DrawFloatRow("法線バイアス", component.roughness, 0.01f, 0.0f, 2.0f);
+		DrawFloatRow("撮影距離", component.reflectionStrength, 1.0f, 1.0f, 500.0f);
+		DrawFloatRow("時間平滑", component.metallic, 0.01f, 0.0f, 0.99f);
+
+		// 設定から実際に生成されるProbe数を出しておく。上限を超えるとGIは無効になる。
+		const float spacing = (std::max)(component.colliderRadius, 0.5f);
+		int64_t probeCount = 1;
+
+		for (int32_t axisIndex = 0; axisIndex < 3; axisIndex++) {
+			const float halfExtent = axisIndex == 0
+				? component.colliderSize.x
+				: (axisIndex == 1 ? component.colliderSize.y : component.colliderSize.z);
+			const int64_t axisCount = static_cast<int64_t>(
+				std::floor((std::max)(halfExtent, 0.0f) * 2.0f / spacing)) + 1;
+			probeCount *= (std::max)(axisCount, static_cast<int64_t>(1));
+		}
+
+		DrawTextRow(
+			"Probe数",
+			std::format(
+				"{} 個 (上限 {} 個)",
+				probeCount,
+				EditorLightProbeManager::kMaxProbeCount).c_str());
+
+		if (probeCount > static_cast<int64_t>(EditorLightProbeManager::kMaxProbeCount)) {
+			DrawTextRow("警告", "上限を超えているためGIは無効です。間隔を広げてください。");
+		}
 	}
 
 	void DrawLightProbeProxyVolumeComponent(EditorComponent& component) {
@@ -7491,6 +7546,9 @@ namespace {
 			break;
 		case EditorComponentType::Environment:
 			DrawEnvironmentComponent(component);
+			break;
+		case EditorComponentType::SunPortal:
+			DrawSunPortalComponent(component);
 			break;
 		case EditorComponentType::Ocean:
 			DrawOceanComponent(component);

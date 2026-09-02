@@ -94,6 +94,16 @@ float4 main(PixelShaderInput input) : SV_TARGET0
                 continue;
             }
 
+            // SSGIは近距離のバウンス専用。遠くから拾うと、画面外へ出た途端に
+            // 消える不安定な光になるうえ、Light Probeの間接光と二重になる。
+            // 中距離以上はProbeの担当なので、ワールド距離で短く打ち切る。
+            const float kMaxSampleWorldDistance = 2.0f;
+
+            if (sampleDistance > kMaxSampleWorldDistance)
+            {
+                continue;
+            }
+
             const float3 sampleDirection = receiverToSample / sampleDistance;
             const float receiverWeight = saturate(dot(centerNormal, sampleDirection));
             const float distanceWeight = rcp(1.0f + sampleDistance * sampleDistance * 0.08f);
@@ -106,6 +116,21 @@ float4 main(PixelShaderInput input) : SV_TARGET0
         }
     }
 
+    // 有効サンプルがどれだけ取れたかを信頼度とする。画面外・遠方・背面ばかりで
+    // 情報が足りなかったPixelは信頼度が下がり、SSGIの寄与が自然に0へ向かう。
+    // そこはHDRへ既に載っているLight Probeの間接光がそのまま残る = Probeへのフォールバック。
+    // 十分なサンプルが取れていれば1.0で頭打ちにし、既存の明るさを変えない。
+    // 足りないPixelだけ滑らかに0へ落とす。
+    const float kConfidentWeight = 4.0f;
+    const float confidence = saturate(accumulatedWeight / kConfidentWeight);
+
+    if (confidence <= 0.0001f)
+    {
+        return float4(0.0f, 0.0f, 0.0f, 0.0f);
+    }
+
     indirectLight /= max(accumulatedWeight, 1.0f);
-    return float4(max(indirectLight, 0.0f) * max(gSsgi.intensity, 0.0f), 0.0f);
+    return float4(
+        max(indirectLight, 0.0f) * max(gSsgi.intensity, 0.0f) * confidence,
+        0.0f);
 }

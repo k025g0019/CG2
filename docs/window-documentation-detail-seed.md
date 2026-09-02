@@ -1,4 +1,4 @@
-# CG2 ウィンドウ・設定 詳細下書き
+﻿# CG2 ウィンドウ・設定 詳細下書き
 
 このファイルは、ChatGPT Work が使用者向けサイトを作るための「エディタウィンドウ」「メニュー操作」「Project設定」詳細素材である。
 `docs/user-documentation-research-spec.md` は調査仕様、`docs/component-documentation-detail-seed.md` はComponent詳細、`docs/cpp-script-documentation-detail-seed.md` はC++ Script API詳細、このファイルはそれ以外（ウィンドウ・設定）のページ本文下書きとして使う。
@@ -40,13 +40,14 @@
 | 診断・Profiler | チェックボックス付きWindow表示切替 | `g_isDiagnosticsWindowVisible` |
 | ログ監視 | チェックボックス付きWindow表示切替 | `g_isLogMonitorWindowVisible` |
 | 共同制作 | チェックボックス付きWindow表示切替 | `g_isTeamCollaborationWindowVisible` |
+| Hook / Wire デバッグ | チェックボックス付きWindow表示切替 | `g_isHookWireDebugWindowVisible` |
 | 描画負荷テスト Scene を作成 | 即実行（確認Popup経由） | `CreateRenderStressScene` |
 | ゲーム基盤検証 Scene を作成 | 即実行（確認Popup経由） | `CreateGameplayFoundationValidationScene` |
 | Console 表示 | 即実行 | `g_isConsoleCleared = false` |
 | 選択解除 | 即実行 | `ClearSelectedGameObjects()` |
 | レイアウト再構築 | 即実行（次回起動時反映） | `g_isDockLayoutInitialized = false` |
 
-「アニメーション」〜「共同制作」の7項目は独立したDockableウィンドウで、チェックを外すまで開いたままになる。Scene保存とは無関係で、Windowの表示状態自体はSceneファイルへ保存されない（Editor起動ごとに既定の表示状態へ戻る想定）。
+「アニメーション」〜「Hook / Wire デバッグ」の8項目は独立したDockableウィンドウで、チェックを外すまで開いたままになる。Scene保存とは無関係で、Windowの表示状態自体はSceneファイルへ保存されない（Editor起動ごとに既定の表示状態へ戻る想定）。
 
 ---
 
@@ -589,3 +590,58 @@ Consoleは全Managerの出力が同じ配列に時系列で混ざって流れる
 2. 物理設定の「重力」をY=-20等に変更してPlay。
 3. 落下速度が変わることを確認する。
 4. Scene保存→再読込し、値が保持されているか確認する。
+
+---
+
+## 14. Hook / Wire デバッグ ウィンドウ
+
+根拠: `Source/Engine/Editor/EditorHookWireDebugWindowManager.cpp`、SceneView側は `Source/Engine/Editor/EditorSceneViewManager.cpp` の `DrawHookWireDebug`
+
+Wireパズルでは「どの物体のどこにHookを置いたか」がそのままレベルデザインになる。
+「Wireがおかしい」の実体はHook設定のミス（力を伝えるRigidbody違い、Anchorずれ、Collider不足）で
+あることが多いため、それをScene編集中に見つけるための検査Window。
+
+### 画面構成・主な操作
+
+Window上部に「SceneViewへHookの構成を重ねる」チェックボックス（`g_isHookWireSceneGizmoVisible`、既定ON）があり、
+その下がタブで分かれる。
+
+**Hook構成タブ** — Scene内の`WireConnectable`を持つGameObjectを列挙する。
+設定不備があるHookは見出しへ `[要確認 n]` を出し、既定で開いた状態にする。
+
+| 検出する不備 | 表示される症状 |
+| --- | --- |
+| Rendererがない | Hookの見た目と状態色を表示できない。 |
+| Colliderがない | 狙って選択できない（`FindBestHook`に当たらない）。 |
+| 力を伝えるRigidbodyの参照先が見つからない | Wireの力が伝わらない。 |
+| 力を伝える先にRigidbodyがない | 引いても動かない（Static扱い）。 |
+| 子Hookなのに伝達先がHook自身 | 親の物体ではなくHookへ力が掛かる。 |
+
+各Hookでは親、力を伝えるRigidbody、Hook World位置、Anchorのローカル値、選択可能、最大接続本数を表示する。
+`このHookを選択`でHierarchy選択へ移動できる。Play中は現在の接続Wire数も出す。
+
+**Runtime Wireタブ** — Play中のみ内容を表示する。Wire Handle、両端のHook名、現在長、
+最小長、現在の上限長、張力、破断張力、収縮速度を出し、破断・非Activeも表示する。
+
+### SceneViewギズモ
+
+Anchorの実World位置（`wireConnectableLocalAnchor`をHookのWorld行列で変換した位置）に円を描き、
+そこから「力を伝えるRigidbody」のWorld位置へ線を引く。伝達先が無効、または伝達先にRigidbodyがない
+構成は橙色で描くため、配置作業中に取り違えへ気付ける。伝達先がHook自身の場合は線を引かず円だけ描く。
+
+### Play中の違い
+
+Hook構成タブの接続Wire数とRuntime Wireタブは、Play中だけ意味のある値を出す。
+SceneViewギズモはPlay中・停止中どちらでも描く。
+
+### 保存
+
+Windowの表示状態、ギズモのON/OFFはSceneへ保存しない（Editor起動ごとに既定へ戻る）。
+このWindowはHookとWireを読み取って表示するだけで、値を書き換える機能は持たない。
+
+### 確認手順
+
+1. Hierarchyで物体を選び、`作成 > Hook（選択物体の子）`でHookを作る。
+2. `ウィンドウ > Hook / Wire デバッグ`を開き、Hook構成タブに`[要確認]`が出ないことを確認する。
+3. HookのHookPointで「力を伝えるRigidbody」を空(-1)にすると`[要確認 1]`が出て、SceneViewの円が橙になる。
+4. Playしてワイヤーを接続し、Runtime Wireタブに長さと張力が出ることを確認する。

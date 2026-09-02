@@ -54,6 +54,7 @@
 #include "EditorGpuParticleManager.h"
 #include "EditorVfxRenderer.h"
 #include "EditorGBufferManager.h"
+#include "EditorLightProbeManager.h"
 #include "EditorPostProcessQualityManager.h"
 #include "EditorTemporalRenderingManager.h"
 #include "EditorScene.h"
@@ -652,10 +653,11 @@ namespace EditorSharedState {
 	constexpr uint32_t kRuntimeTextureCount = 4; // kRuntimeTextureCount �͋N�����ɌŒ�Ŋm�ۂ���W�� Texture ���B
 	constexpr uint32_t kRuntimeSwapChainBufferCount = 2; // kRuntimeSwapChainBufferCount �� SwapChain �� back buffer ���B
 	constexpr uint32_t kRuntimeSpriteIndexCount = 6; // kRuntimeSpriteIndexCount �� Sprite �l�p�`�� 2 �O�p�`�ŕ`�� index ���B
-	constexpr uint32_t kRuntimeShadowMapSize = 4096; // 4x4 atlas。Sun CSM とローカルライト影を同居させる。
+	constexpr uint32_t kRuntimeShadowMapSize = 5120; // 5x5 atlas。Sun CSM とPoint Lightのキューブ影(6面)を同居させる。
 	constexpr uint32_t kRuntimeShadowSrvDescriptorIndex = 15;
 	constexpr uint32_t kMaxShadowLights = 4;
-	constexpr uint32_t kShadowAtlasTiles = 4; // 4x4 grid。各タイルは 1024x1024。
+	constexpr uint32_t kShadowAtlasTiles = 5; // 5x5 grid = 25 タイル。各タイルは 1024x1024。
+	// タイル予算: Sun cascade 4 + Point Light最大3灯 x 6面 = 22。25タイルなら収まる。
 	constexpr uint32_t kRuntimeHdrSrvDescriptorIndex = 16; // HDR RT �� SRV �� DescriptorHeap �� 16 �ԖځB
 	constexpr uint32_t kRuntimeBloomSrvDescriptorIndexA = 17; // Bloom A �� SRV �� 17 �ԖځB
 	constexpr uint32_t kRuntimeBloomSrvDescriptorIndexB = 18; // Bloom B �� SRV �� 18 �ԖځB
@@ -675,11 +677,19 @@ namespace EditorSharedState {
 	constexpr uint32_t kRuntimeDepthPyramidDescriptorStartIndex = 31u; // 深度ピラミッドは SRV/UAV を交互に 31～54 番へ配置する。
 	constexpr uint32_t kRuntimeReconstructedNormalSrvDescriptorIndex = 55u; // 深度から再構築したワールド法線の SRV。
 	constexpr uint32_t kRuntimeReconstructedNormalUavDescriptorIndex = 56u; // ワールド法線を書き込む UAV。
+	// Light Probe GI は 57-62 番を使う。SRV(57,58)とUAV(59,60)とキャプチャ(61,62)は
+	// それぞれ連続していないとDescriptor Tableで束ねられないので、順番を変えないこと。
+	constexpr uint32_t kRuntimeLightProbeDescriptorStartIndex = 57u;
+	constexpr uint32_t kRuntimeLightProbeDescriptorCount = 6u;
+	// SSGI の半解像度RT。63 = 現在フレーム、64/65 = 履歴のピンポン。
+	constexpr uint32_t kRuntimeSsgiSrvDescriptorIndex = 63u;
+	constexpr uint32_t kRuntimeSsgiHistorySrvDescriptorIndexA = 64u;
+	constexpr uint32_t kRuntimeSsgiHistorySrvDescriptorIndexB = 65u;
 	constexpr uint32_t kRuntimeOitAccumulationSrvDescriptorIndex = 120u;
 	constexpr uint32_t kRuntimeOitRevealageSrvDescriptorIndex = 121u;
 	constexpr uint32_t kRuntimeOitRevealageDuplicateSrvDescriptorIndex = 122u;
 	constexpr uint32_t kRuntimeOpaqueDepthCopySrvDescriptorIndex = 114u;
-	constexpr uint32_t kRuntimeRtvCount = 14; // swap2 + HDR/Bloom/Post/SSAO/Composite/Mask/Planar + OIT 2枚
+	constexpr uint32_t kRuntimeRtvCount = 17; // +3: SSGI 半解像度(現在フレーム + 履歴2枚) // swap2 + HDR/Bloom/Post/SSAO/Composite/Mask/Planar + OIT 2枚
 	inline HINSTANCE g_instanceHandle = nullptr; // g_instanceHandle �� Win32 Window �� DirectInput �������Ɏg���A�v�����́B
 	inline int g_exitCode = 0; // g_exitCode �� WinMain �֕Ԃ��I���R�[�h�B
 	inline bool g_isInitialized = false; // g_isInitialized �� PlatformManager �̏�������������������\���t���O�B
@@ -773,6 +783,19 @@ namespace EditorSharedState {
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_postProcessSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_postProcessSrvHandleGPU{};
 	inline ID3D12Resource* g_ssaoRenderTargets[2] = {};
+	// SSGI は半解像度で解き、Temporal で均してからフル解像度へ加算する。
+	inline ID3D12Resource* g_ssgiRenderTarget = nullptr;
+	inline D3D12_CPU_DESCRIPTOR_HANDLE g_ssgiRtvHandle{};
+	inline D3D12_CPU_DESCRIPTOR_HANDLE g_ssgiSrvHandleCPU{};
+	inline D3D12_GPU_DESCRIPTOR_HANDLE g_ssgiSrvHandleGPU{};
+	inline ID3D12Resource* g_ssgiHistoryRenderTargets[2] = {};
+	inline D3D12_CPU_DESCRIPTOR_HANDLE g_ssgiHistoryRtvHandles[2]{};
+	inline D3D12_CPU_DESCRIPTOR_HANDLE g_ssgiHistorySrvHandlesCPU[2]{};
+	inline D3D12_GPU_DESCRIPTOR_HANDLE g_ssgiHistorySrvHandlesGPU[2]{};
+	inline uint32_t g_ssgiHistoryWriteIndex = 0u;
+	inline bool g_isSsgiHistoryValid = false;
+	inline uint32_t g_ssgiRenderWidth = 0u;
+	inline uint32_t g_ssgiRenderHeight = 0u;
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_ssaoRtvHandles[2]{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_ssaoSrvHandlesCPU[2]{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_ssaoSrvHandlesGPU[2]{};
@@ -834,6 +857,14 @@ namespace EditorSharedState {
 	inline ComPtr<IDxcBlob> g_ssaoPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_ssaoBlurPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_ssgiPixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_ssgiTemporalPixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_ssgiUpsamplePixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_volumetricLightShaftPixelShaderBlob;
+	// Light Probe GI: Probe位置からのキャプチャとSH/可視性のBake。
+	inline ComPtr<IDxcBlob> g_probeCaptureVertexShaderBlob;
+	inline ComPtr<IDxcBlob> g_probeCapturePixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_probeShProjectionComputeShaderBlob;
+	inline ComPtr<IDxcBlob> g_probeVisibilityComputeShaderBlob;
 	inline ComPtr<IDxcBlob> g_skyboxPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_planarReflectionPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_sharpenPixelShaderBlob;
@@ -881,6 +912,12 @@ namespace EditorSharedState {
 	inline ComPtr<ID3D12PipelineState> g_ssaoPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_ssaoBlurPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_ssgiPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_ssgiTemporalPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_ssgiUpsamplePipelineState;
+	// Volumetric Light Shaft(Sun Beams)専用。48値制約のあるpostProcessRootSignatureでは
+	// Cascaded ShadowVPを渡すデータ量に足りないため、独立したRootSignatureを持つ。
+	inline ComPtr<ID3D12RootSignature> g_volumetricLightShaftRootSignature;
+	inline ComPtr<ID3D12PipelineState> g_volumetricLightShaftPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_skyboxPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_planarReflectionPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_sharpenPipelineState;
@@ -892,6 +929,7 @@ namespace EditorSharedState {
 	inline ComPtr<ID3D12PipelineState> g_underwaterCausticsPipelineState;
 	inline EditorDepthHierarchyManager g_depthHierarchyManager;
 	inline EditorGBufferManager g_gBufferManager;
+	inline EditorLightProbeManager g_lightProbeManager;
 	inline EditorGpuCullingManager g_gpuCullingManager;
 	inline EditorOceanFftManager g_oceanFftManager;
 	inline EditorGpuParticleManager g_gpuParticleManager;
@@ -986,6 +1024,8 @@ namespace EditorSharedState {
 	inline bool g_isDiagnosticsWindowVisible = false;  // trueならProfilerとScene Validatorを表示する。
 	inline bool g_isLogMonitorWindowVisible = false;  // trueなら汎用ログ・監視Windowを表示する。
 	inline bool g_isTeamCollaborationWindowVisible = false;  // trueなら共同制作Server、接続、競合画面を表示する。
+	inline bool g_isHookWireDebugWindowVisible = false;  // trueならHook構成とRuntime Wireの検査Windowを表示する。
+	inline bool g_isHookWireSceneGizmoVisible = true;  // trueならSceneViewへHook→力伝達先の線とAnchorを重ねる。
 	inline bool g_isGameViewUsingSceneCamera = true; // true �Ȃ� Camera Component ���Ȃ����� Scene �J�������p���Ă���B
 
 	// g_viewport / g_scissorRect �� DirectX �� SceneView �������֕`�����߂̋�`�B
@@ -1133,7 +1173,17 @@ namespace EditorSharedState {
 	}
 
 	inline void ApplyRuntimeCursorLock(bool isLocked) {
+		const bool wasLocked = g_runtimeCursorLocked;
 		g_runtimeCursorLocked = isLocked;
+
+		// Editor内でPlayしているだけの時にOSカーソルを実際にClipCursor/SetCursorPosすると、
+		// GameView外(SceneView、Inspector、他Window)へマウスが一切出せなくなり、
+		// 「視点操作を常時ONにしたScene」でギズモやWindow切り替えが完全に触れなくなる。
+		// これは書き出し済みPlayer(g_isStandaloneGame)でだけ意味のある拘束なので、
+		// Editor実行中はIsCursorLocked()が返す要求状態だけ更新し、実際のOS拘束は行わない。
+		if (!g_isStandaloneGame) {
+			return;
+		}
 
 		if (!isLocked) {
 			ClipCursor(nullptr);
@@ -1142,9 +1192,15 @@ namespace EditorSharedState {
 
 		const RECT cursorClipRect = GetRuntimeCursorClipRect();
 		ClipCursor(&cursorClipRect);
-		SetCursorPos(
-			(cursorClipRect.left + cursorClipRect.right) / 2,
-			(cursorClipRect.top + cursorClipRect.bottom) / 2);
+
+		// Lock開始時だけ中央へ戻す。毎フレーム呼ぶ関数なので、ここをwasLocked判定なしに
+		// 呼び続けると、実カーソルが視点操作で動いた直後に強制的に中央へ引き戻され続け、
+		// 「中央のカーソル」と「動かした先で点滅するカーソル」の二重表示に見えていた。
+		if (!wasLocked) {
+			SetCursorPos(
+				(cursorClipRect.left + cursorClipRect.right) / 2,
+				(cursorClipRect.top + cursorClipRect.bottom) / 2);
+		}
 	}
 
 	inline void ApplyRuntimeCursorVisibility(bool isVisible) {
@@ -1153,6 +1209,12 @@ namespace EditorSharedState {
 		}
 
 		g_runtimeCursorVisible = isVisible;
+
+		// ロックと同じ理由。Editor内Playでカーソルを消すと、GameView外のWindowを
+		// マウスで探すことすらできなくなるため、書き出し済みPlayerでだけ実際に隠す。
+		if (!g_isStandaloneGame) {
+			return;
+		}
 
 		if (isVisible) {
 			while (ShowCursor(TRUE) < 0) {
@@ -1493,6 +1555,22 @@ namespace EditorSharedState {
 				GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 6u + i));
 		}
 
+		// SSGI は半解像度。ノイズは後段のTemporalで均す。
+		g_ssgiRenderWidth = (std::max)(1u, g_renderWidth / 2u);
+		g_ssgiRenderHeight = (std::max)(1u, g_renderHeight / 2u);
+		recreateRenderTarget(g_ssgiRenderTarget, g_ssgiRenderWidth, g_ssgiRenderHeight,
+			DXGI_FORMAT_R16G16B16A16_FLOAT,
+			GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 14u));
+
+		for (uint32_t i = 0; i < 2; i++) {
+			recreateRenderTarget(g_ssgiHistoryRenderTargets[i], g_ssgiRenderWidth, g_ssgiRenderHeight,
+				DXGI_FORMAT_R16G16B16A16_FLOAT,
+				GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 15u + i));
+		}
+
+		// 解像度が変わると履歴の位置が合わないので作り直す。
+		g_isSsgiHistoryValid = false;
+
 		recreateRenderTarget(g_hdrCompositeRenderTarget, g_renderWidth, g_renderHeight,
 			DXGI_FORMAT_R16G16B16A16_FLOAT,
 			GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 8u));
@@ -1563,6 +1641,34 @@ namespace EditorSharedState {
 			g_ssaoSrvHandlesCPU[i] = GetCPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, srvIndex);
 			g_ssaoSrvHandlesGPU[i] = GetGPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, srvIndex);
 			g_device->CreateShaderResourceView(g_ssaoRenderTargets[i], &srvDesc, g_ssaoSrvHandlesCPU[i]);
+		}
+
+		{
+			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+			srvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MipLevels = 1;
+			g_ssgiRtvHandle = GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 14u);
+			g_ssgiSrvHandleCPU = GetCPUDescriptorHandle(
+				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeSsgiSrvDescriptorIndex);
+			g_ssgiSrvHandleGPU = GetGPUDescriptorHandle(
+				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeSsgiSrvDescriptorIndex);
+			g_device->CreateShaderResourceView(g_ssgiRenderTarget, &srvDesc, g_ssgiSrvHandleCPU);
+
+			for (uint32_t i = 0; i < 2; i++) {
+				const uint32_t srvIndex = (i == 0u)
+					? kRuntimeSsgiHistorySrvDescriptorIndexA
+					: kRuntimeSsgiHistorySrvDescriptorIndexB;
+				g_ssgiHistoryRtvHandles[i] =
+					GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 15u + i);
+				g_ssgiHistorySrvHandlesCPU[i] =
+					GetCPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, srvIndex);
+				g_ssgiHistorySrvHandlesGPU[i] =
+					GetGPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, srvIndex);
+				g_device->CreateShaderResourceView(
+					g_ssgiHistoryRenderTargets[i], &srvDesc, g_ssgiHistorySrvHandlesCPU[i]);
+			}
 		}
 
 		{

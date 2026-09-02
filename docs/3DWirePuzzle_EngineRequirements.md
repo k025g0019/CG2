@@ -45,7 +45,10 @@ Hook GameObject
 | Hookを4状態で色分けする | `HookPoint::SetVisualState` | 状態遷移をScriptから呼ぶ。Hook自身にRendererが必要。 |
 | 重さを色にする | `Renderer::SetColorFromMass` / `SetColor` / `SetEmission` | 質量Objectと表示Objectを分けられる。 |
 | 階層と接続位置を扱う | `GetParent` / `GetChildCount` / `GetChild` / World・Local変換 | Anchorは各Hookのローカル座標、距離計算はWorld座標。 |
-| ステージをやり直す | `SceneManager::Reload` | Primary Sceneの読込要求。エリア単位のSnapshot/Restoreではない。 |
+| ステージをやり直す | `SceneManager::Reload` | Primary Sceneの読込要求。Scene全体を巻き戻す。 |
+| 1エリアだけやり直す | `PuzzleArea::CaptureInitialState` / `Reset` | 起点GameObjectの子孫だけを戻し、そのエリアのWireを破棄する。 |
+| Hookを1セットで置く | Hierarchy `作成 > Hook（選択物体の子）` | Renderer・選択Collider・HookPoint・力の伝達先をまとめて作る。 |
+| Hook設定の不備を探す | `ウィンドウ > Hook / Wire デバッグ` | 伝達先違い、Collider不足、Anchorずれを一覧とSceneView線で確認する。 |
 
 APIの引数・戻り値・失敗条件は[C++ Script仕様書](cpp-script-documentation-detail-seed.md)の「追加Wrapperの契約」、設定名と保存・描画の制約は[Component仕様書](component-documentation-detail-seed.md)のHookPoint / WireRenderer節を参照する。
 
@@ -75,6 +78,93 @@ Reset用ActionはこのAssetに未登録。Reload APIがあるだけで、自動
 
 サンプルの初期長は`max(選択時の2点間距離 - 0.05m, minimumWireLength)`。軽く張った状態を作る補正があり、距離そのものと完全に同じではない。最大接続距離の拒否判定はない。
 
+## 制作支援機能（2026-09-02 追加）
+
+Hook配置そのものがレベルデザインになるため、Component種類を増やすのではなく
+「手作業だと事故りやすい部分」だけをEditor側で支援する。
+
+### Hookの作成
+
+Hierarchyの `作成 > Hook（選択物体の子）` で、選択中の物体の子として次を1セットで作る。
+
+```text
+Door                      ← 選択していた物体
+└ Hook
+   ├ ModelRenderer        ← Hookの見た目（Sphere、scale 0.25）
+   ├ SphereCollider       ← 狙って選ぶための判定。物体本体の衝突用ではない
+   └ HookPoint
+       力を伝えるRigidbody = Door
+       命中点をAnchorに使用 = false
+       固定ローカルAnchor   = (0, 0, 0)
+```
+
+Hook自身にRigidbodyは付けない。力は「力を伝えるRigidbody」に指定した親物体へ渡す。
+親を選択せずに実行した場合は力の伝達先がHook自身になるため、Consoleへその旨を出す。
+20個並べる時に毎回Renderer・Collider・HookPoint・伝達先を手設定しないための入口であり、
+新しいComponentを追加するものではない。
+
+### Hook / Wire デバッグ
+
+`ウィンドウ > Hook / Wire デバッグ` で開く。「Wireがおかしい」の実体が
+Hook設定のミスであることが多いため、Scene編集中に設定不備を検出する。
+
+**Hook構成タブ** — Scene内のHookPointを一覧し、見出しへ `[要確認 n]` を出す。
+
+| 検出する不備 | 症状 |
+| --- | --- |
+| Rendererがない | Hookの見た目と状態色を表示できない。 |
+| Colliderがない | 狙って選択できない。`FindBestHook`に当たらない。 |
+| 力を伝えるRigidbodyの参照先が見つからない | Wireの力が伝わらない。 |
+| 力を伝える先にRigidbodyがない | 引いても動かない（Static扱い）。 |
+| 子Hookなのに伝達先がHook自身 | 親の物体ではなくHookへ力が掛かる。 |
+
+各Hookでは親、力を伝えるRigidbody、Hook World位置、Anchorのローカル値、選択可能、
+最大接続本数を表示し、Play中は現在の接続Wire数も出す。`このHookを選択` でHierarchy選択へ飛べる。
+
+**Runtime Wireタブ** — Play中のみ。Wire Handle、両端Hook名、現在長、最小長、
+現在の上限長、張力、破断張力、収縮速度、破断・非Active状態を出す。
+
+**SceneViewギズモ** — 既定でON。Anchorの実World位置に円を描き、
+そこから「力を伝えるRigidbody」へ線を引く。伝達先が無効、または伝達先にRigidbodyがない
+構成は警告色（橙）で描くため、配置作業中に取り違えへ気付ける。デバッグWindow上のチェックで切り替える。
+
+### パズルエリア単位のリセット
+
+Scene全体の`SceneManager::Reload`と違い、1エリア分だけを初期状態へ戻す。
+他エリアの進行、接続済みWire、Playerの位置は巻き戻さない。
+
+```cpp
+PuzzleArea::CaptureInitialState(areaRoot.GetInstanceId());  // 通常はPlay開始直後に1回
+PuzzleArea::Reset(areaRoot.GetInstanceId());                // 続行不能になった時
+PuzzleArea::HasInitialState(areaRoot.GetInstanceId());
+```
+
+エリアは起点GameObjectの**子孫すべて**が対象になる。`PuzzleArea`はComponentではなく、
+Hierarchyの親子構造をそのままエリア境界として使う。
+
+```text
+PuzzleArea (この起点GameObject IDを渡す)
+├ Box
+├ Door
+│  └ Hook
+├ Gear
+└ MovingObject
+```
+
+`Reset`が戻すもの:
+
+```text
+Transform（親空間のローカル値）
+Rigidbody velocity / angular velocity（Jolt側の実Bodyへも反映）
+GameObject Active
+Animation再生位置を0秒へ
+そのエリアのHookに繋がっているRuntime WireをDestroy
+```
+
+Wireは物体を戻す前に破棄する。先に物体だけ戻すと、保存時と噛み合わない長さのまま
+張力が残るため。未Captureのエリアへ`Reset`を呼ぶと`false`を返し、何も起きない。
+Captureしていない外部の物体、Scriptが持つ独自の進行状態、Effect、Audioは対象外である。
+
 ## ワイヤーの見た目と未実装の境界
 
 現行WireRendererは、World上の両端・余長からたるんだ線を計算し、Game Viewへ投影して太いImGui線として描く。外周・ハイライト・疑似Glowで縄らしく見せる。専用縄モデルは不要だが、立体メッシュを生成しているわけではない。
@@ -83,7 +173,8 @@ Reset用ActionはこのAssetに未登録。Reload APIがあるだけで、自動
 - 遮蔽は区間中点へのCollider Raycastによる近似。GPU深度判定ではなく、Colliderなしの物体では隠れない。
 - 断面分割数は保存・Inspector表示のみで、描画には未使用。
 - 縄のチューブメッシュ、Texture、影・反射、障害物への巻き付きは未実装。
-- エリア単位の物理状態Snapshot/Restore、名前指定の`FindChild` APIは未実装。現在の代替はScene ReloadとGetChild列挙。
+- 名前指定の`FindChild` APIは未実装。現在の代替はGetChild列挙。
+- エリア単位のTransform/速度/Active/Animation時間のSnapshot/Restoreは`PuzzleArea`で実装済み。Effect、Audio、Script独自の進行状態は戻さない。
 - 任意HookのWire取得・削除APIはあるが、サンプル操作は「最新Wire削除」まで。Wire選択UIは別途ゲームScriptで組む必要がある。
 
 サンプルの既知の制約として、選択状態とWire配列は名前空間変数であり複数Scriptインスタンス間で共有される。また、1点目のWorld位置は選択時に保持されるため、2点目を選ぶまでに1点目が動く場合の追従は未対応。これらを完成済みの汎用挙動として扱わない。

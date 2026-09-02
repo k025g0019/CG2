@@ -215,6 +215,7 @@ private:
 	void ApplyFluidVolumeForces();  // 有限流体領域の浮力、粘性抵抗、二次抗力を加える
 	void ApplySpringForces();  // World点または別Bodyとの間へHookeばね力と減衰を加える
 	void ApplyRopeForces();  // 最大長を超えた時だけ片方向の張力を加え、必要なら破断させる
+	void SyncHookBodyTransforms();  // 親に追従するHookのJolt Bodyを毎固定Step現在のWorld姿勢へ合わせる
 	void ApplyRuntimeWireForces(float fixedDeltaTime);  // Handle Wireを複数本同時に解く
 	void PushWireEvent(RuntimeWireEventType eventType, const RuntimeWireState& wireState);
 	void ApplyTorsionSpringTorques();  // Worldまたは別Bodyの目標角へ回転ばねTorqueを加える

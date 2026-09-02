@@ -574,6 +574,9 @@ enum class EditorComponentType {
 	WireConnectable,
 	// Runtime Wireの太さ、色、たるみなどの表示設定を提供する
 	WireRenderer,
+	// Sun Portal（窓/開口部を簡易Area Lightとして扱い、室内側へSun光を足す）
+	// 既存Sceneのシリアライズ済み型番号を一切ズラさないよう、必ず末尾へ追加する。
+	SunPortal,
 	// Component 種類数。範囲チェックに使う
 	Count,
 };
@@ -1056,6 +1059,14 @@ struct EditorComponent {
 	float volumetricCloudLightAbsorption;  // 雲内部でSun光を吸収する量
 	float volumetricCloudSilverLining;  // Sun方向の縁光強度
 	Vector3 volumetricCloudColor;  // 雲の散乱色
+	// ボリュメトリックライト(光の筋 / God Ray)。
+	// カメラからピクセルまでの空間をレイマーチし、各点がShadow Mapで
+	// 照らされているかを判定して空気中の散乱光を積算する。
+	// これにより「隙間から漏れた光がスポットライトの筋になる」表現ができる。
+	bool volumetricLightEnabled;  // 光の筋を有効にするか
+	float volumetricLightIntensity;  // 散乱光の強さ。0で無効と同じ
+	float volumetricLightAnisotropy;  // 前方散乱の偏り(0=均一, 1に近いほど光源方向で細く鋭い筋)
+	float volumetricLightDistance;  // カメラから何mまでレイマーチするか
 	float environmentHeatIntensity;  // 遠景の熱気揺らぎ強度。0で無効
 	float environmentHeatHorizonCenter;  // 熱気を配置する画面上の地平線中心
 	float environmentHeatHorizonWidth;  // 地平線から上下へ広げる範囲
@@ -2471,6 +2482,7 @@ public:
 
 	void InitializeDefaultScene();  // Environment / Camera / Point Light を持つ初期 Scene を作る
 	int32_t CreateGameObject(const std::string& name);  // Transform だけを持つ GameObject を作成する
+	std::string MakeUniqueGameObjectName(const std::string& baseName, int32_t excludeGameObjectId = -1) const;  // 同名が既にあれば "名前 (1)"、"名前 (2)" ... を返す。無ければそのまま返す。excludeGameObjectIdは自分自身との重複を無視する時に使う
 	int32_t DuplicateGameObject(int32_t gameObjectId);  // 既存 GameObject をコピーして新しい ID を付ける
 	bool DeleteGameObject(int32_t gameObjectId);  // 指定 ID の GameObject と子を削除する
 	bool RenameGameObject(int32_t gameObjectId, const std::string& name);  // 指定 ID の GameObject 名を変更する

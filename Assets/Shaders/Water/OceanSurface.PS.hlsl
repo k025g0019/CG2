@@ -97,53 +97,7 @@ struct Material
     float oceanDebugView;
 };
 
-struct DirectionalLightData
-{
-    float4 color;
-    float3 direction;
-    float intensity;
-    float3 position;
-    float range;
-    float3 skyUpperColor;
-    float skyIntensity;
-    float3 skyLowerColor;
-    float skyEmission;
-    float ambientIntensity;
-    float horizonSharpness;
-    float reflectionIntensity;
-    float spotCosInner;
-    float spotCosOuter;
-    int lightType;
-    float areaRadius;
-    float3 cameraPosition;
-    float padding3;
-    float environmentTextureEnabled;
-    float environmentTextureIntensity;
-    float environmentTextureRotation;
-    float environmentTextureMipBias;
-    float shadowTileIndex;
-    float shadowTileUvScaleX;
-    float shadowTileUvScaleY;
-    float shadowTileUvBiasX;
-    float shadowTileUvBiasY;
-    float shadowEnabled;
-    float shadowPadding0;
-    float shadowPadding1;
-    float shadowPadding2;
-    row_major float4x4 shadowVP;
-    float4 shadowCascadeSplits;
-    float shadowCascadeCount;
-    float shadowCascadePadding0;
-    float shadowCascadePadding1;
-    float shadowCascadePadding2;
-    row_major float4x4 shadowCascadeVP[4];
-    float4 shadowCascadeAtlas[4];
-};
-
-struct DirectionalLightArray
-{
-    DirectionalLightData lights[4];
-};
+#include "../Common/SceneLightData.hlsli"
 
 struct WaterViewConstants
 {
@@ -440,12 +394,16 @@ void BuildOceanLight(
 // Ocean Shadow
 //============================================================
 
+// perspectiveNearClip が 0 以下なら平行投影(Sun/Spot)として従来の固定バイアスを使う。
+// 正の値を渡すと透視投影(Point Lightのキューブ面)として深度依存バイアスへ切り替える。
 float SampleOceanShadowProjection(
     float3 worldPosition,
     float normalDotLight,
     row_major float4x4 shadowViewProjection,
     float4 atlasTransform,
-    float filterRadius)
+    float filterRadius,
+    float perspectiveNearClip,
+    float perspectiveFarClip)
 {
     const float4 shadowPosition = mul(
         float4(worldPosition, 1.0f),
@@ -480,10 +438,23 @@ float SampleOceanShadowProjection(
         texelSize * 2.0f;
     const float2 atlasUv = shadowUv * atlasTransform.xy + atlasTransform.zw;
     const float receiverDepth = saturate(shadowNdc.z);
-    const float receiverBias = lerp(
+    float receiverBias = lerp(
         0.0020f,
         0.00035f,
         saturate(normalDotLight));
+
+    if (perspectiveNearClip > 0.0f)
+    {
+        // 透視投影の深度は 1/z 分布なので、NDC上で一定のバイアスは
+        // 遠方ではワールド換算で巨大なズレになり影が消える。
+        const float worldBias = lerp(0.055f, 0.014f, saturate(normalDotLight));
+        const float viewDepth = max(shadowPosition.w, 0.0001f);
+        const float ndcPerWorldUnit =
+            (perspectiveNearClip * perspectiveFarClip) /
+            (max(perspectiveFarClip - perspectiveNearClip, 0.0001f) * viewDepth * viewDepth);
+        receiverBias = clamp(worldBias * ndcPerWorldUnit, 0.00002f, 0.01f);
+    }
+
     const float filteredShadow = SampleSoftShadow9Tap(
         gShadowMap,
         gSceneSampler,
@@ -520,6 +491,38 @@ float SampleOceanShadowAtlas(
         light.lightType == 0 &&
         light.shadowCascadeCount > 1.5f;
 
+    const bool usesCubeShadow =
+        light.lightType == 1 &&
+        light.shadowCascadeCount > 1.5f;
+
+    if (usesCubeShadow)
+    {
+        const float3 lightToPixel = worldPosition - light.position;
+        const float3 absDirection = abs(lightToPixel);
+        uint faceIndex = 0u;
+        if (absDirection.x >= absDirection.y && absDirection.x >= absDirection.z)
+        {
+            faceIndex = lightToPixel.x >= 0.0f ? 0u : 1u;
+        }
+        else if (absDirection.y >= absDirection.x && absDirection.y >= absDirection.z)
+        {
+            faceIndex = lightToPixel.y >= 0.0f ? 2u : 3u;
+        }
+        else
+        {
+            faceIndex = lightToPixel.z >= 0.0f ? 4u : 5u;
+        }
+
+        return SampleOceanShadowProjection(
+            worldPosition,
+            normalDotLight,
+            light.shadowCascadeVP[faceIndex],
+            light.shadowCascadeAtlas[faceIndex],
+            shadowFilterRadius,
+            light.shadowCascadeSplits.x,
+            light.shadowCascadeSplits.y);
+    }
+
     if (!usesCascadedShadow)
     {
         const float4 atlasTransform = float4(
@@ -532,7 +535,9 @@ float SampleOceanShadowAtlas(
             normalDotLight,
             light.shadowVP,
             atlasTransform,
-            shadowFilterRadius);
+            shadowFilterRadius,
+            0.0f,
+            0.0f);
     }
 
     uint cascadeIndex = 0u;
@@ -546,7 +551,9 @@ float SampleOceanShadowAtlas(
         normalDotLight,
         light.shadowCascadeVP[cascadeIndex],
         light.shadowCascadeAtlas[cascadeIndex],
-        shadowFilterRadius);
+        shadowFilterRadius,
+        0.0f,
+        0.0f);
 
     if (cascadeIndex >= 3u)
     {
@@ -575,7 +582,9 @@ float SampleOceanShadowAtlas(
         normalDotLight,
         light.shadowCascadeVP[cascadeIndex + 1u],
         light.shadowCascadeAtlas[cascadeIndex + 1u],
-        shadowFilterRadius);
+        shadowFilterRadius,
+        0.0f,
+        0.0f);
     return lerp(currentShadow, nextShadow, cascadeBlend);
 }
 

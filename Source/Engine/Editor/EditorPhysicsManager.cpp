@@ -539,6 +539,9 @@ int32_t EditorPhysicsManager::Update(float deltaTime) {
 		ApplyElectromagneticForces();
 		ApplySpringForces();
 		ApplyRopeForces();
+		// Hookは親物体の子として置くが、Jolt側のStatic/Kinematic Bodyは自動で親に追従しない。
+		// 同期しないと扉が動いた後もHookの判定が開始位置に残り、狙って選択できなくなる。
+		SyncHookBodyTransforms();
 		ApplyRuntimeWireForces(fixedTimeStep_);
 		ApplyTorsionSpringTorques();
 		ApplyThrusterForces();
@@ -1283,6 +1286,44 @@ void EditorPhysicsManager::PushWireEvent(
 	wireEvent.ownerGameObjectId = wireState.desc.ownerGameObjectId;
 	wireEvent.tension = wireState.currentTension;
 	frameWireEvents_.push_back(wireEvent);
+}
+
+void EditorPhysicsManager::SyncHookBodyTransforms() {
+	if (editorScene_ == nullptr) {
+		return;
+	}
+
+	for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
+		if (!gameObject.isActive || gameObject.parentId < 0) {
+			continue;  // 親を持たないHookは自分で動かない限りズレないので同期不要。
+		}
+
+		const EditorComponent* hookComponent = EditorComponentUtility::FindComponent(
+			gameObject,
+			EditorComponentType::WireConnectable);
+		if (hookComponent == nullptr || !hookComponent->isActive) {
+			continue;
+		}
+
+		// Dynamic BodyはJolt自身が積分して姿勢を持つため、ここで上書きすると物理が壊れる。
+		const EditorComponent* hookRigidBody = EditorComponentUtility::FindComponent(
+			gameObject,
+			EditorComponentType::RigidBody);
+		const bool isDynamicHook =
+			hookRigidBody != nullptr && hookRigidBody->isActive && !hookRigidBody->isKinematic;
+		if (isDynamicHook) {
+			continue;
+		}
+
+		Vector3 worldScale{};
+		Vector3 worldRotation{};
+		Vector3 worldPosition{};
+		if (!editorScene_->GetWorldTransform(gameObject.id, worldScale, worldRotation, worldPosition)) {
+			continue;
+		}
+
+		SetGameObjectTransform(gameObject.id, worldPosition, worldRotation);
+	}
 }
 
 void EditorPhysicsManager::ApplyRuntimeWireForces(float fixedDeltaTime) {

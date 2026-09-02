@@ -448,6 +448,42 @@ namespace {
 		return Vector3{-towardSun.x, -towardSun.y, -towardSun.z};
 	}
 
+	// 光の筋(ボリュメトリックライト)はScene全体で1組の設定なので、
+	// Environmentコンポーネントから読んで全ライトへ同じ値を配る。
+	void ApplyVolumetricLightSettings(DirectionalLight* lightsOut, int32_t lightCount) {
+		float intensity = 0.0f;
+		float anisotropy = 0.72f;
+		float distance = 40.0f;
+
+		for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
+			if (!gameObject.isActive) {
+				continue;
+			}
+
+			const EditorComponent* environmentComponent = EditorComponentUtility::FindComponent(
+				gameObject,
+				EditorComponentType::Environment);
+
+			if (environmentComponent == nullptr || !environmentComponent->isActive) {
+				continue;
+			}
+
+			if (environmentComponent->volumetricLightEnabled) {
+				intensity = (std::clamp)(environmentComponent->volumetricLightIntensity, 0.0f, 4.0f);
+				anisotropy = (std::clamp)(environmentComponent->volumetricLightAnisotropy, 0.0f, 0.95f);
+				distance = (std::clamp)(environmentComponent->volumetricLightDistance, 1.0f, 500.0f);
+			}
+
+			break;
+		}
+
+		for (int32_t lightIndex = 0; lightIndex < lightCount; lightIndex++) {
+			lightsOut[lightIndex].volumetricIntensity = intensity;
+			lightsOut[lightIndex].volumetricAnisotropy = anisotropy;
+			lightsOut[lightIndex].volumetricDistance = distance;
+		}
+	}
+
 	int32_t CollectSceneLights(DirectionalLight* lightsOut) {
 		for (int32_t i = 0; i < kMaxShadowLights; i++) {
 			ClearDisabledSceneLight(lightsOut[i]);
@@ -551,6 +587,7 @@ namespace {
 			}
 		}
 
+		ApplyVolumetricLightSettings(lightsOut, count);
 		return count;
 	}
 
@@ -787,6 +824,60 @@ namespace {
 			shadowRadius * 4.0f + 50.0f);
 
 		return Multiply(lightViewMatrix, lightProjectionMatrix);
+	}
+
+	// Point Lightは全方向へ光るため、1方向だけの平面シャドウマップでは背後や側面が
+	// 「影データが無い=遮る物が無い扱い」になり、壁越しに光が漏れる。
+	// キューブマップの6面(+X,-X,+Y,-Y,+Z,-Z)相当を、Atlas内の6タイルへ個別に描画して解決する。
+	constexpr uint32_t kCubeFaceCount = 6u;
+
+	Vector3 GetCubeFaceForwardDirection(uint32_t faceIndex) {
+		switch (faceIndex) {
+			case 0u: return {1.0f, 0.0f, 0.0f};
+			case 1u: return {-1.0f, 0.0f, 0.0f};
+			case 2u: return {0.0f, 1.0f, 0.0f};
+			case 3u: return {0.0f, -1.0f, 0.0f};
+			case 4u: return {0.0f, 0.0f, 1.0f};
+			default: return {0.0f, 0.0f, -1.0f};
+		}
+	}
+
+	Vector3 GetCubeFaceUpDirection(uint32_t faceIndex) {
+		// +Y/-Y面はforwardと同じ軸のupを使えないため、そこだけ別軸のupにする。
+		if (faceIndex == 2u) {
+			return {0.0f, 0.0f, -1.0f};
+		}
+		if (faceIndex == 3u) {
+			return {0.0f, 0.0f, 1.0f};
+		}
+		return {0.0f, 1.0f, 0.0f};
+	}
+
+	// Point Lightの影は透視投影になるため、Near clipを小さくし過ぎると深度分布が
+	// 1/z で光源直近へ極端に偏り、少し離れた壁の深度差が丸め潰されて影が消える。
+	// Rangeに比例した控えめなNearを使い、深度精度を実用域へ寄せる。
+	float CalculatePointLightShadowNearClip(float farClip) {
+		return (std::clamp)(farClip * 0.02f, 0.05f, 0.5f);
+	}
+
+	Matrix4x4 MakePointLightCubeFaceViewProjectionMatrix(
+		const Vector3& lightPosition,
+		float nearClip,
+		float farClip,
+		uint32_t faceIndex) {
+		const Vector3 forward = GetCubeFaceForwardDirection(faceIndex);
+		const Vector3 up = GetCubeFaceUpDirection(faceIndex);
+		const Matrix4x4 viewMatrix = MakeLookAtMatrix(
+			lightPosition,
+			Add(lightPosition, forward),
+			up);
+		// 90度FOVの正方形Frustumを6面分並べればキューブ全体を隙間なく覆える。
+		const Matrix4x4 projectionMatrix = MakePerspectiveFovMatrix(
+			1.5707963f, // 90度
+			1.0f,
+			nearClip,
+			farClip);
+		return Multiply(viewMatrix, projectionMatrix);
 	}
 
 	Matrix4x4 MakeSunCascadeViewProjectionMatrix(
@@ -1220,6 +1311,10 @@ void EditorRenderManager::Draw() {
 	auto& ssaoPipelineState = g_ssaoPipelineState;
 	auto& ssaoBlurPipelineState = g_ssaoBlurPipelineState;
 	auto& ssgiPipelineState = g_ssgiPipelineState;
+	auto& ssgiTemporalPipelineState = g_ssgiTemporalPipelineState;
+	auto& ssgiUpsamplePipelineState = g_ssgiUpsamplePipelineState;
+	auto& volumetricLightShaftRootSignature = g_volumetricLightShaftRootSignature;
+	auto& volumetricLightShaftPipelineState = g_volumetricLightShaftPipelineState;
 	auto& hdrCompositeRenderTarget = g_hdrCompositeRenderTarget;
 	auto& hdrCompositeRtvHandle = g_hdrCompositeRtvHandle;
 	auto& hdrCompositeSrvHandleGPU = g_hdrCompositeSrvHandleGPU;
@@ -1356,6 +1451,93 @@ void EditorRenderManager::Draw() {
 		emissiveLightData->count++;
 	}
 
+	// Sun Portal: 窓/開口部のGameObjectをそのままArea Light近似の元データにする。
+	// GameObjectの向き(+Z)がPortalの外向き(Sun側)になる。
+	emissiveLightData->sunPortalCount = 0;
+	for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
+		if (!gameObject.isActive || emissiveLightData->sunPortalCount >= kMaxSunPortals) {
+			continue;
+		}
+
+		const EditorComponent* sunPortal =
+			EditorComponentUtility::FindComponent(gameObject, EditorComponentType::SunPortal);
+
+		if (sunPortal == nullptr || !sunPortal->isActive || sunPortal->intensity <= 0.0001f) {
+			continue;
+		}
+
+		const int32_t portalIndex = emissiveLightData->sunPortalCount;
+		SunPortalLight& portal = emissiveLightData->sunPortals[portalIndex];
+		portal.position = gameObject.translate;
+		portal.outwardNormal = GetForwardDirectionFromRotation(gameObject.rotate);
+		portal.right = GetRightDirectionFromRotation(gameObject.rotate);
+		portal.up = GetUpDirectionFromRotation(gameObject.rotate);
+		portal.halfWidth = (std::max)(sunPortal->colliderSize.x, 0.01f);
+		portal.halfHeight = (std::max)(sunPortal->colliderSize.y, 0.01f);
+		portal.range = (std::max)(sunPortal->colliderRadius, 0.1f);
+		portal.spreadRate = (std::max)(sunPortal->roughness, 0.0f);
+		portal.tint = {sunPortal->color.x, sunPortal->color.y, sunPortal->color.z};
+		portal.intensityScale = sunPortal->intensity;
+		emissiveLightData->sunPortalCount++;
+	}
+
+	// Light Probe GI: LightProbeGroup が定義する直方体へProbeを等間隔に置く。
+	// GameObjectの位置がグリッドの中心。
+	EditorLightProbeManager::GridSettings lightProbeSettings{};
+
+	for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
+		if (!gameObject.isActive) {
+			continue;
+		}
+
+		const EditorComponent* probeGroup =
+			EditorComponentUtility::FindComponent(gameObject, EditorComponentType::LightProbeGroup);
+
+		if (probeGroup == nullptr ||
+			!probeGroup->isActive ||
+			!probeGroup->environmentTextureEnabled) {
+			continue;
+		}
+
+		const float probeSpacing = (std::max)(probeGroup->colliderRadius, 0.5f);
+		const Vector3 halfExtent{
+			(std::max)(probeGroup->colliderSize.x, 0.0f),
+			(std::max)(probeGroup->colliderSize.y, 0.0f),
+			(std::max)(probeGroup->colliderSize.z, 0.0f)};
+		const int32_t countX = static_cast<int32_t>(
+			std::floor(halfExtent.x * 2.0f / probeSpacing)) + 1;
+		const int32_t countY = static_cast<int32_t>(
+			std::floor(halfExtent.y * 2.0f / probeSpacing)) + 1;
+		const int32_t countZ = static_cast<int32_t>(
+			std::floor(halfExtent.z * 2.0f / probeSpacing)) + 1;
+
+		lightProbeSettings.isEnabled = true;
+		lightProbeSettings.countX = (std::max)(countX, 1);
+		lightProbeSettings.countY = (std::max)(countY, 1);
+		lightProbeSettings.countZ = (std::max)(countZ, 1);
+		lightProbeSettings.spacing = {probeSpacing, probeSpacing, probeSpacing};
+		// グリッド全体がGameObjectの位置を中心に来るよう原点をずらす。
+		lightProbeSettings.origin = {
+			gameObject.translate.x -
+				static_cast<float>(lightProbeSettings.countX - 1) * probeSpacing * 0.5f,
+			gameObject.translate.y -
+				static_cast<float>(lightProbeSettings.countY - 1) * probeSpacing * 0.5f,
+			gameObject.translate.z -
+				static_cast<float>(lightProbeSettings.countZ - 1) * probeSpacing * 0.5f};
+		lightProbeSettings.intensity = (std::max)(probeGroup->intensity, 0.0f);
+		lightProbeSettings.normalBias = (std::clamp)(probeGroup->roughness, 0.0f, 2.0f);
+		lightProbeSettings.captureFarDistance = (std::clamp)(
+			probeGroup->reflectionStrength,
+			1.0f,
+			500.0f);
+		lightProbeSettings.hysteresis = (std::clamp)(probeGroup->metallic, 0.0f, 0.99f);
+		lightProbeSettings.captureSky = true;
+		break;
+	}
+
+	g_lightProbeManager.UpdateGrid(lightProbeSettings);
+	g_lightProbeManager.FillGridData(emissiveLightData->probeGrid);
+
 	cameraMatrix = MakeAffineMatrix(cameraTransform.scale, cameraTransform.rotate, cameraTransform.translate);
 	// cameraMatrix 邵�E�E�E�・�E�E�E� SceneView 郢�E�E�E�・�E�E�E�郢晢�E�E�E��E�E�E�郢晢�E�E�E��E�E�E�邵�E�E�E�・�E�E�E� Transform 邵�E�E�E�荵晢�E�E�E�芽抁E�E��E�奁E�E��E�狗ｹ晢�E�E�E��E�E�E�郢晢�E�E�E��E�E�E�郢晢�E�E�E��E�E�E�郢晁歓�E�E�E�E�謔溘�E邵�E�E�E�繝ｻ
 	viewMatrix = Inverse(cameraMatrix);
@@ -1429,6 +1611,13 @@ void EditorRenderManager::Draw() {
 		ppSettings.hasPostProcessComponent &&
 		ppSettings.compositeSsgiEnabled &&
 		ppSettings.compositeSsgiIntensity > 0.0f;
+	// Sun Beams(光の筋)。Environmentコンポーネントの設定はCollectSceneLights内の
+	// ApplyVolumetricLightSettingsで既にdirectionalLightData[0]へ反映済み。
+	const bool shouldRenderVolumetricLightShaft =
+		lightCount > 0 &&
+		directionalLightData[0].lightType == 0 &&
+		directionalLightData[0].shadowEnabled > 0.5f &&
+		directionalLightData[0].volumetricIntensity > 0.0001f;
 	// 履歴テクスチャは共有するが、行列と履歴有効状態は Scene / Game の Viewport ごとに分離する。
 	const bool shouldExecuteTemporalOrSsr =
 		ppSettings.hasPostProcessComponent &&
@@ -1481,8 +1670,10 @@ void EditorRenderManager::Draw() {
 	//================================================================
 
 	constexpr uint32_t kSunCascadeCount = 4u;
+	// 最悪ケースは「Sunが無く、全灯がPoint LightでCube化される」場合の
+	// kMaxShadowLights * 6面。Sunありの 4 + 3*6 = 22 もこの中に収まる。
 	constexpr uint32_t kMaxShadowRenderPassCount =
-		kSunCascadeCount + static_cast<uint32_t>(kMaxShadowLights) - 1u;
+		static_cast<uint32_t>(kMaxShadowLights) * kCubeFaceCount;
 	struct ShadowRenderPass {
 		Matrix4x4 viewProjection;
 		uint32_t tileIndex;
@@ -1592,6 +1783,62 @@ void EditorRenderManager::Draw() {
 				cascadeSplits[3]
 			};
 			light.shadowCascadeCount = static_cast<float>(kSunCascadeCount);
+			light.shadowVP = light.shadowCascadeVP[0];
+			light.shadowTileIndex = 0.0f;
+			light.shadowTileUvScaleX = light.shadowCascadeAtlas[0].x;
+			light.shadowTileUvScaleY = light.shadowCascadeAtlas[0].y;
+			light.shadowTileUvBiasX = light.shadowCascadeAtlas[0].z;
+			light.shadowTileUvBiasY = light.shadowCascadeAtlas[0].w;
+			lightViewProjectionMatrixPerLight[lightIndex] = light.shadowVP;
+			continue;
+		}
+
+		// Point Lightは全方向へ光るため、1タイルの平面シャドウでは背後や側面が
+		// 「影データ無し=遮蔽物無し扱い」になり壁越しに光が漏れる。
+		// 6面(Cube)分のタイルをAtlasへ個別配置し、光源からの方向で面を選んで判定する。
+		const bool isPointLightShadow = (light.lightType == 1);
+		const uint32_t totalAtlasTileCount =
+			static_cast<uint32_t>(kShadowAtlasTiles) * static_cast<uint32_t>(kShadowAtlasTiles);
+		const uint32_t faceCount = isPointLightShadow ? kCubeFaceCount : 1u;
+
+		if (isPointLightShadow &&
+			nextLocalShadowTileIndex + kCubeFaceCount <= totalAtlasTileCount &&
+			shadowRenderPassCount + kCubeFaceCount <= kMaxShadowRenderPassCount) {
+			// Rangeを超えた先はシェーダ側の距離減衰で光が完全に消えるため、
+			// Far clipにRangeをそのまま使えば必要な範囲を過不足なく覆える。
+			const float farClip = (std::max)(light.range, 1.0f);
+			const float nearClip = CalculatePointLightShadowNearClip(farClip);
+
+			for (uint32_t faceIndex = 0u; faceIndex < faceCount; faceIndex++) {
+				const Matrix4x4 faceViewProjection = MakePointLightCubeFaceViewProjectionMatrix(
+					light.position,
+					nearClip,
+					farClip,
+					faceIndex);
+				const uint32_t tileIndex = nextLocalShadowTileIndex;
+				const uint32_t tileX = tileIndex % static_cast<uint32_t>(kShadowAtlasTiles);
+				const uint32_t tileY = tileIndex / static_cast<uint32_t>(kShadowAtlasTiles);
+				const Vector4 atlasTransform = {
+					tileScale,
+					tileScale,
+					static_cast<float>(tileX) * tileScale,
+					static_cast<float>(tileY) * tileScale
+				};
+				light.shadowCascadeVP[faceIndex] = faceViewProjection;
+				light.shadowCascadeAtlas[faceIndex] = atlasTransform;
+				shadowRenderPasses[shadowRenderPassCount] = {
+					faceViewProjection,
+					tileIndex,
+					lightIndex
+				};
+				shadowRenderPassCount++;
+				nextLocalShadowTileIndex++;
+			}
+
+			light.shadowCascadeCount = static_cast<float>(kCubeFaceCount);
+			// Cascade用のsplitはPoint Lightでは未使用なので、
+			// 透視深度バイアス計算に必要なNear/Farの受け渡しに転用する。
+			light.shadowCascadeSplits = {nearClip, farClip, 0.0f, 0.0f};
 			light.shadowVP = light.shadowCascadeVP[0];
 			light.shadowTileIndex = 0.0f;
 			light.shadowTileUvScaleX = light.shadowCascadeAtlas[0].x;
@@ -2281,6 +2528,64 @@ void EditorRenderManager::Draw() {
 		}
 	};
 
+	// Light Probe のキャプチャは影パスと同じ「任意ViewProjectionでシーン全体を
+	// 描く」形だが、色が要るので材質とベースカラーも束縛する。
+	// 半透明は間接光への寄与が曖昧なので、影と同じく対象外にする。
+	auto drawLightProbeCaptureObjects = [&]() {
+		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
+			if (sceneObject.type != EditorSceneObjectType::Model ||
+				sceneObject.ocean.isEnabled ||
+				sceneObject.transformationResource == nullptr ||
+				sceneObject.materialResource == nullptr ||
+				(sceneObject.materialData != nullptr && sceneObject.materialData->alphaMode == 2)) {
+				continue;
+			}
+
+			const bool isDoubleSided =
+				sceneObject.cullMode == 2 ||
+				(sceneObject.materialData != nullptr && sceneObject.materialData->doubleSided != 0);
+			g_lightProbeManager.BindCapturePipelineState(commandList.Get(), isDoubleSided);
+
+			size_t meshTypeIndex = static_cast<size_t>(sceneObject.meshType);
+
+			if (meshTypeIndex >= kEditorModelMeshTypeCount ||
+				primitiveVertexCounts[meshTypeIndex] == 0u) {
+				meshTypeIndex = static_cast<size_t>(EditorModelMeshType::Plane);
+			}
+
+			commandList->SetGraphicsRootConstantBufferView(
+				0,
+				sceneObject.materialResource->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootConstantBufferView(
+				1,
+				sceneObject.transformationResource->GetGPUVirtualAddress());
+			const D3D12_GPU_DESCRIPTOR_HANDLE baseColorHandle =
+				sceneObject.customTextureSrvGpuHandle.ptr != 0u
+				? sceneObject.customTextureSrvGpuHandle
+				: textureSrvHandlesGPU[2];
+			commandList->SetGraphicsRootDescriptorTable(3, baseColorHandle);
+
+			if (sceneObject.usesCustomMesh &&
+				sceneObject.customMeshVertexResource != nullptr &&
+				sceneObject.customMeshVertexCount > 0u) {
+				DrawCustomSceneMesh(
+					commandList.Get(),
+					sceneObject,
+					&cameraTransform.translate,
+					true);
+			}
+			else {
+				commandList->IASetVertexBuffers(0, 1, &primitiveVertexBufferViews[meshTypeIndex]);
+				RecordEditorProfilerDrawCall();
+				commandList->DrawInstanced(
+					primitiveVertexCounts[meshTypeIndex],
+					GetSceneObjectInstanceCount(sceneObject),
+					0,
+					0);
+			}
+		}
+	};
+
 	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuOceanEvent);
 	const uint32_t gpuShadowEvent = profilerManager.BeginGpuEvent(
 		commandList.Get(),
@@ -2336,27 +2641,15 @@ void EditorRenderManager::Draw() {
 			D3D12_RECT clearRects[] = {shadowScissorRect};
 			commandList->ClearDepthStencilView(shadowDsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 1, clearRects);
 
-			for (EditorSceneObject& sceneObject : editorSceneObjects) {
-				if (sceneObject.transformationData != nullptr) {
-					sceneObject.transformationData->lightWVP = Multiply(
-						sceneObject.transformationData->World,
-						shadowRenderPass.viewProjection);
-				}
-			}
-			sphereTransformationMatrixData->lightWVP = Multiply(
-				worldMatrix,
-				shadowRenderPass.viewProjection);
+			// 各Cascade / Cube面の行列をコマンドへコピーする。
+			// 同じCBVのlightWVPを書き換えると、GPUは最後の値で全タイルを描いてしまう。
+			commandList->SetGraphicsRoot32BitConstants(
+				24u,
+				16u,
+				&shadowRenderPass.viewProjection,
+				0u);
 			drawShadowObjects();
 		}
-
-		for (EditorSceneObject& sceneObject : editorSceneObjects) {
-			if (sceneObject.transformationData != nullptr) {
-				sceneObject.transformationData->lightWVP = Multiply(
-					sceneObject.transformationData->World,
-					lightViewProjectionMatrixPerLight[0]);
-			}
-		}
-		sphereTransformationMatrixData->lightWVP = Multiply(worldMatrix, lightViewProjectionMatrixPerLight[0]);
 
 		shadowBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 		shadowBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
@@ -2365,6 +2658,84 @@ void EditorRenderManager::Draw() {
 	}
 
 	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuShadowEvent);
+	const uint32_t gpuLightProbeEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"Light Probe Bake");
+
+	//================================================================
+	// Light Probe GI: 1フレームにつき数個ずつProbeを焼く
+	//----------------------------------------------------------------
+	// 影を描いた直後に走らせるので、Bakeされる間接光は同じフレームの
+	// 影と整合する。キャプチャは前回のProbeを間接光として読み戻すため、
+	// 焼き直しを重ねるほどバウンス数が増えていく。
+	//================================================================
+
+	// 作りたてのProbeを0クリアし、描画が読む状態へ整える。
+	g_lightProbeManager.PrepareFrame(commandList.Get());
+
+	uint32_t bakeBaseProbeIndex = 0u;
+	uint32_t bakeProbeCount = 0u;
+
+	if (g_lightProbeManager.PrepareBakeBatch(bakeBaseProbeIndex, bakeProbeCount)) {
+		g_lightProbeManager.BeginCapture(commandList.Get());
+		commandList->SetGraphicsRootSignature(rootSignature.Get());
+		BindSceneObjectSkinningResources(commandList.Get(), nullptr);
+		ID3D12DescriptorHeap* probeDescriptorHeaps[] = {srvDescriptorHeap};
+		commandList->SetDescriptorHeaps(1, probeDescriptorHeaps);
+		commandList->SetGraphicsRootConstantBufferView(
+			2,
+			directionalLightResource->GetGPUVirtualAddress());
+		commandList->SetGraphicsRootConstantBufferView(
+			5,
+			emissiveLightResource->GetGPUVirtualAddress());
+		commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);
+		commandList->SetGraphicsRootDescriptorTable(
+			26,
+			g_lightProbeManager.GetProbeResourceTableHandle());
+		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+		for (uint32_t batchSlot = 0u; batchSlot < bakeProbeCount; batchSlot++) {
+			const uint32_t probeIndex = bakeBaseProbeIndex + batchSlot;
+			const Vector3 probePosition = g_lightProbeManager.GetProbeWorldPosition(probeIndex);
+
+			for (uint32_t faceIndex = 0u;
+				faceIndex < EditorLightProbeManager::kCubeFaceCount;
+				faceIndex++) {
+				const Matrix4x4 faceViewProjection = g_lightProbeManager.BeginCaptureFace(
+					commandList.Get(),
+					batchSlot,
+					faceIndex,
+					probeIndex);
+
+				// b3 = ViewProjection(16) + Probe位置(3) + 遠クリップ(1)。
+				float probeViewConstants[20] = {};
+				std::memcpy(
+					&probeViewConstants[0],
+					&faceViewProjection.matrix[0][0],
+					sizeof(float) * 16u);
+				probeViewConstants[16] = probePosition.x;
+				probeViewConstants[17] = probePosition.y;
+				probeViewConstants[18] = probePosition.z;
+				probeViewConstants[19] = lightProbeSettings.captureFarDistance;
+				commandList->SetGraphicsRoot32BitConstants(24u, 20u, probeViewConstants, 0u);
+				drawLightProbeCaptureObjects();
+			}
+		}
+
+		g_lightProbeManager.EndCapture(commandList.Get());
+		g_lightProbeManager.DispatchBake(
+			commandList.Get(),
+			srvDescriptorHeap,
+			directionalLightResource->GetGPUVirtualAddress(),
+			bakeBaseProbeIndex,
+			bakeProbeCount);
+	}
+
+	profilerManager.EndGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		gpuLightProbeEvent);
 	const uint32_t gpuSceneHdrEvent = profilerManager.BeginGpuEvent(
 		commandList.Get(),
 		renderTimestampQueryHeap.Get(),
@@ -2391,6 +2762,13 @@ void EditorRenderManager::Draw() {
 	ID3D12DescriptorHeap* descriptorHeaps[] = {srvDescriptorHeap};
 	commandList->SetDescriptorHeaps(1, descriptorHeaps);
 	commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);
+
+	if (g_lightProbeManager.HasResources()) {
+		commandList->SetGraphicsRootDescriptorTable(
+			26,
+			g_lightProbeManager.GetProbeResourceTableHandle());
+	}
+
 	commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
 	commandList->OMSetRenderTargets(1, &hdrRtvHandle, FALSE, &dsvHandle);
@@ -2569,6 +2947,14 @@ void EditorRenderManager::Draw() {
 			int32_t planarSurfaceGameObjectId = -1,
 			bool useWeightedOit = false,
 			SceneObjectDrawFilter drawFilter = SceneObjectDrawFilter::All) {
+		// Object3d.PS が参照する Light Probe の SRV(t20/t21)を束縛する。
+		// GI無効時も最小構成のDescriptorを保持しているので常に束縛してよい。
+		if (g_lightProbeManager.HasResources()) {
+			commandList->SetGraphicsRootDescriptorTable(
+				26,
+				g_lightProbeManager.GetProbeResourceTableHandle());
+		}
+
 		const bool usesDepthAttachment =
 			drawFilter != SceneObjectDrawFilter::Refractive;
 
@@ -4309,28 +4695,77 @@ void EditorRenderManager::Draw() {
 		"SSGI");
 
 	//================================================================
-	// SSGI: DepthとGBufferから近傍面の色・放射を集め、HDRへ加算する
+	// SSGI: 半解像度で解き -> Temporalで均し -> フル解像度のHDRへ加算
+	//----------------------------------------------------------------
+	// 半解像度にするのは、SSGIが少数サンプルで重い割に低周波な情報しか
+	// 持たないため。残るちらつきはTemporal Reprojectionで時間方向に均す。
+	// サンプル不足のPixelはシェーダ側で0へ落ちるので、そこはHDRに既に
+	// 載っているLight Probeの間接光がそのまま残る。
 	//================================================================
+
+	const uint32_t ssgiHistoryWriteIndex = g_ssgiHistoryWriteIndex;
+	const uint32_t ssgiHistoryReadIndex = 1u - ssgiHistoryWriteIndex;
 
 	if (shouldRenderSsgi &&
 		hdrPostSourceResource != nullptr &&
 		depthStencilResource != nullptr &&
 		g_gBufferManager.IsReady() &&
-		ssgiPipelineState != nullptr) {
-		D3D12_RESOURCE_BARRIER ssgiTargetBarrier{};
-		ssgiTargetBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		ssgiTargetBarrier.Transition.pResource = hdrPostSourceResource;
-		ssgiTargetBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-		ssgiTargetBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		ssgiTargetBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-		commandList->ResourceBarrier(1, &ssgiTargetBarrier);
+		ssgiPipelineState != nullptr &&
+		ssgiTemporalPipelineState != nullptr &&
+		ssgiUpsamplePipelineState != nullptr &&
+		g_ssgiRenderTarget != nullptr &&
+		g_ssgiHistoryRenderTargets[0] != nullptr &&
+		g_ssgiHistoryRenderTargets[1] != nullptr) {
+		const float halfInverseWidth =
+			1.0f / static_cast<float>((std::max)(g_ssgiRenderWidth, 1u));
+		const float halfInverseHeight =
+			1.0f / static_cast<float>((std::max)(g_ssgiRenderHeight, 1u));
 
-		const D3D12_CPU_DESCRIPTOR_HANDLE ssgiTargetRtv = hasPlanarReflectionComposite
-			? hdrCompositeRtvHandle
-			: hdrRtvHandle;
+		// 半解像度側のViewportは、フル解像度のViewportをそのまま半分にしたもの。
+		const auto makeHalfViewport = [](const D3D12_VIEWPORT& source) {
+			D3D12_VIEWPORT halfViewport{};
+			halfViewport.TopLeftX = source.TopLeftX * 0.5f;
+			halfViewport.TopLeftY = source.TopLeftY * 0.5f;
+			halfViewport.Width = (std::max)(source.Width * 0.5f, 1.0f);
+			halfViewport.Height = (std::max)(source.Height * 0.5f, 1.0f);
+			halfViewport.MinDepth = 0.0f;
+			halfViewport.MaxDepth = 1.0f;
+			return halfViewport;
+		};
+
+		const auto makeScissorFromViewport = [](const D3D12_VIEWPORT& source) {
+			return D3D12_RECT{
+				static_cast<LONG>(source.TopLeftX),
+				static_cast<LONG>(source.TopLeftY),
+				static_cast<LONG>(source.TopLeftX + source.Width),
+				static_cast<LONG>(source.TopLeftY + source.Height)};
+		};
+
+		const auto transitionResource = [&](
+			ID3D12Resource* resource,
+			D3D12_RESOURCE_STATES beforeState,
+			D3D12_RESOURCE_STATES afterState) {
+			D3D12_RESOURCE_BARRIER barrier{};
+			barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			barrier.Transition.pResource = resource;
+			barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+			barrier.Transition.StateBefore = beforeState;
+			barrier.Transition.StateAfter = afterState;
+			commandList->ResourceBarrier(1, &barrier);
+		};
+
 		commandList->SetGraphicsRootSignature(postProcessRootSignature.Get());
+		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+		//------------------------------------------------------------
+		// 1) 半解像度でSSGIを解く
+		//------------------------------------------------------------
+		transitionResource(
+			g_ssgiRenderTarget,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+			D3D12_RESOURCE_STATE_RENDER_TARGET);
 		commandList->SetPipelineState(ssgiPipelineState.Get());
-		commandList->OMSetRenderTargets(1, &ssgiTargetRtv, FALSE, nullptr);
+		commandList->OMSetRenderTargets(1, &g_ssgiRtvHandle, FALSE, nullptr);
 		commandList->SetGraphicsRootDescriptorTable(0, depthSrvHandleGPU);
 		commandList->SetGraphicsRootDescriptorTable(1, g_gBufferManager.GetAlbedoSrvHandle());
 		// MaterialとEmissionはGBuffer内で連続したSRVなので、t2の先頭だけを設定する。
@@ -4338,9 +4773,11 @@ void EditorRenderManager::Draw() {
 
 		auto drawSsgiViewport = [&](
 			const D3D12_VIEWPORT& targetViewport,
-			const D3D12_RECT& targetScissor,
 			const Matrix4x4& targetInverseViewProjection) {
+			const D3D12_VIEWPORT halfViewport = makeHalfViewport(targetViewport);
+			const D3D12_RECT halfScissor = makeScissorFromViewport(halfViewport);
 			float ssgiParams[24] = {};
+			// Depth と GBuffer はフル解像度なので、UV変換はフル解像度基準のまま。
 			ssgiParams[0] = 1.0f / static_cast<float>((std::max)(g_renderWidth, 1u));
 			ssgiParams[1] = 1.0f / static_cast<float>((std::max)(g_renderHeight, 1u));
 			ssgiParams[2] = (std::max)(ppSettings.compositeSsgiIntensity, 0.0f);
@@ -4353,28 +4790,214 @@ void EditorRenderManager::Draw() {
 			ssgiParams[21] = targetViewport.TopLeftY;
 			ssgiParams[22] = targetViewport.Width;
 			ssgiParams[23] = targetViewport.Height;
+			commandList->RSSetViewports(1, &halfViewport);
+			commandList->RSSetScissorRects(1, &halfScissor);
+			commandList->SetGraphicsRoot32BitConstants(2, 24, ssgiParams, 0);
+			RecordEditorProfilerDrawCall();
+			commandList->DrawInstanced(3, 1, 0, 0);
+		};
+
+		if (g_isSceneViewVisible) {
+			drawSsgiViewport(viewport, inverseViewProjectionMatrix);
+		}
+
+		if (g_isGameViewVisible) {
+			drawSsgiViewport(gameViewport, inverseGameViewProjectionMatrix);
+		}
+
+		transitionResource(
+			g_ssgiRenderTarget,
+			D3D12_RESOURCE_STATE_RENDER_TARGET,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+		//------------------------------------------------------------
+		// 2) Motion Vector で前フレームへ位置合わせして混ぜる
+		//------------------------------------------------------------
+		transitionResource(
+			g_ssgiHistoryRenderTargets[ssgiHistoryWriteIndex],
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+			D3D12_RESOURCE_STATE_RENDER_TARGET);
+		commandList->SetPipelineState(ssgiTemporalPipelineState.Get());
+		commandList->OMSetRenderTargets(
+			1,
+			&g_ssgiHistoryRtvHandles[ssgiHistoryWriteIndex],
+			FALSE,
+			nullptr);
+		commandList->SetGraphicsRootDescriptorTable(0, g_ssgiSrvHandleGPU);
+		commandList->SetGraphicsRootDescriptorTable(
+			1,
+			g_ssgiHistorySrvHandlesGPU[ssgiHistoryReadIndex]);
+		commandList->SetGraphicsRootDescriptorTable(
+			3,
+			g_gBufferManager.GetMotionVectorSrvHandle());
+
+		auto drawSsgiTemporalViewport = [&](const D3D12_VIEWPORT& targetViewport) {
+			const D3D12_VIEWPORT halfViewport = makeHalfViewport(targetViewport);
+			const D3D12_RECT halfScissor = makeScissorFromViewport(halfViewport);
+			float temporalParams[16] = {};
+			temporalParams[0] = halfInverseWidth;
+			temporalParams[1] = halfInverseHeight;
+			temporalParams[2] = halfViewport.TopLeftX;
+			temporalParams[3] = halfViewport.TopLeftY;
+			temporalParams[4] = halfViewport.Width;
+			temporalParams[5] = halfViewport.Height;
+			temporalParams[6] = 1.0f / static_cast<float>((std::max)(g_renderWidth, 1u));
+			temporalParams[7] = 1.0f / static_cast<float>((std::max)(g_renderHeight, 1u));
+			temporalParams[8] = targetViewport.TopLeftX;
+			temporalParams[9] = targetViewport.TopLeftY;
+			temporalParams[10] = targetViewport.Width;
+			temporalParams[11] = targetViewport.Height;
+			temporalParams[12] = 0.90f;
+			temporalParams[13] = g_isSsgiHistoryValid ? 1.0f : 0.0f;
+			commandList->RSSetViewports(1, &halfViewport);
+			commandList->RSSetScissorRects(1, &halfScissor);
+			commandList->SetGraphicsRoot32BitConstants(2, 16, temporalParams, 0);
+			RecordEditorProfilerDrawCall();
+			commandList->DrawInstanced(3, 1, 0, 0);
+		};
+
+		if (g_isSceneViewVisible) {
+			drawSsgiTemporalViewport(viewport);
+		}
+
+		if (g_isGameViewVisible) {
+			drawSsgiTemporalViewport(gameViewport);
+		}
+
+		transitionResource(
+			g_ssgiHistoryRenderTargets[ssgiHistoryWriteIndex],
+			D3D12_RESOURCE_STATE_RENDER_TARGET,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+		//------------------------------------------------------------
+		// 3) フル解像度のHDRへ加算合成
+		//------------------------------------------------------------
+		transitionResource(
+			hdrPostSourceResource,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+			D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+		const D3D12_CPU_DESCRIPTOR_HANDLE ssgiTargetRtv = hasPlanarReflectionComposite
+			? hdrCompositeRtvHandle
+			: hdrRtvHandle;
+		commandList->SetPipelineState(ssgiUpsamplePipelineState.Get());
+		commandList->OMSetRenderTargets(1, &ssgiTargetRtv, FALSE, nullptr);
+		commandList->SetGraphicsRootDescriptorTable(
+			0,
+			g_ssgiHistorySrvHandlesGPU[ssgiHistoryWriteIndex]);
+
+		auto drawSsgiUpsampleViewport = [&](
+			const D3D12_VIEWPORT& targetViewport,
+			const D3D12_RECT& targetScissor) {
+			const D3D12_VIEWPORT halfViewport = makeHalfViewport(targetViewport);
+			float upsampleParams[8] = {};
+			upsampleParams[0] = halfInverseWidth;
+			upsampleParams[1] = halfInverseHeight;
+			upsampleParams[2] = halfViewport.TopLeftX;
+			upsampleParams[3] = halfViewport.TopLeftY;
+			upsampleParams[4] = halfViewport.Width;
+			upsampleParams[5] = halfViewport.Height;
 			commandList->RSSetViewports(1, &targetViewport);
 			commandList->RSSetScissorRects(1, &targetScissor);
-			commandList->SetGraphicsRoot32BitConstants(2, 24, ssgiParams, 0);
+			commandList->SetGraphicsRoot32BitConstants(2, 8, upsampleParams, 0);
+			RecordEditorProfilerDrawCall();
+			commandList->DrawInstanced(3, 1, 0, 0);
+		};
+
+		if (g_isSceneViewVisible) {
+			drawSsgiUpsampleViewport(viewport, scissorRect);
+		}
+
+		if (g_isGameViewVisible) {
+			drawSsgiUpsampleViewport(gameViewport, gameScissorRect);
+		}
+
+		transitionResource(
+			hdrPostSourceResource,
+			D3D12_RESOURCE_STATE_RENDER_TARGET,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+		// 次フレームは今回書いた履歴を読む。
+		g_ssgiHistoryWriteIndex = ssgiHistoryReadIndex;
+		g_isSsgiHistoryValid = true;
+	}
+	else {
+		// SSGIを止めている間の履歴は位置が合わなくなるため無効にする。
+		g_isSsgiHistoryValid = false;
+	}
+
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuSsgiEvent);
+	const uint32_t gpuVolumetricLightShaftEvent = profilerManager.BeginGpuEvent(
+		commandList.Get(),
+		renderTimestampQueryHeap.Get(),
+		"VolumetricLightShaft");
+
+	//================================================================
+	// Volumetric Light Shaft (Sun Beams): 深度バッファをレイマーチし、
+	// 隙間から漏れたSun光の散乱をHDRへ加算する。表面の有無に関係なく、
+	// 空気そのものに浮かぶ光の筋(God Ray)を描く専用パス。
+	//================================================================
+
+	if (shouldRenderVolumetricLightShaft &&
+		hdrPostSourceResource != nullptr &&
+		depthStencilResource != nullptr &&
+		volumetricLightShaftPipelineState != nullptr &&
+		volumetricLightShaftRootSignature != nullptr) {
+		D3D12_RESOURCE_BARRIER volumetricTargetBarrier{};
+		volumetricTargetBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		volumetricTargetBarrier.Transition.pResource = hdrPostSourceResource;
+		volumetricTargetBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		volumetricTargetBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		volumetricTargetBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		commandList->ResourceBarrier(1, &volumetricTargetBarrier);
+
+		const D3D12_CPU_DESCRIPTOR_HANDLE volumetricTargetRtv = hasPlanarReflectionComposite
+			? hdrCompositeRtvHandle
+			: hdrRtvHandle;
+		commandList->SetGraphicsRootSignature(volumetricLightShaftRootSignature.Get());
+		commandList->SetPipelineState(volumetricLightShaftPipelineState.Get());
+		commandList->OMSetRenderTargets(1, &volumetricTargetRtv, FALSE, nullptr);
+		commandList->SetGraphicsRootDescriptorTable(0, depthSrvHandleGPU);
+		commandList->SetGraphicsRootDescriptorTable(1, shadowMapSrvGpuHandle);
+		commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
+
+		auto drawVolumetricLightShaftViewport = [&](
+			const D3D12_VIEWPORT& targetViewport,
+			const D3D12_RECT& targetScissor,
+			const Matrix4x4& targetInverseViewProjection) {
+			float volumetricParams[24] = {};
+			std::memcpy(
+				&volumetricParams[0],
+				&targetInverseViewProjection.matrix[0][0],
+				sizeof(float) * 16u);
+			volumetricParams[16] = targetViewport.TopLeftX;
+			volumetricParams[17] = targetViewport.TopLeftY;
+			volumetricParams[18] = targetViewport.Width;
+			volumetricParams[19] = targetViewport.Height;
+			volumetricParams[20] = 1.0f / static_cast<float>((std::max)(g_renderWidth, 1u));
+			volumetricParams[21] = 1.0f / static_cast<float>((std::max)(g_renderHeight, 1u));
+			commandList->RSSetViewports(1, &targetViewport);
+			commandList->RSSetScissorRects(1, &targetScissor);
+			commandList->SetGraphicsRoot32BitConstants(3, 24, volumetricParams, 0);
 			commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			RecordEditorProfilerDrawCall();
 			commandList->DrawInstanced(3, 1, 0, 0);
 		};
 
 		if (g_isSceneViewVisible) {
-			drawSsgiViewport(viewport, scissorRect, inverseViewProjectionMatrix);
+			drawVolumetricLightShaftViewport(viewport, scissorRect, inverseViewProjectionMatrix);
 		}
 
 		if (g_isGameViewVisible) {
-			drawSsgiViewport(gameViewport, gameScissorRect, inverseGameViewProjectionMatrix);
+			drawVolumetricLightShaftViewport(gameViewport, gameScissorRect, inverseGameViewProjectionMatrix);
 		}
 
-		ssgiTargetBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-		ssgiTargetBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		commandList->ResourceBarrier(1, &ssgiTargetBarrier);
+		volumetricTargetBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		volumetricTargetBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		commandList->ResourceBarrier(1, &volumetricTargetBarrier);
 	}
 
-	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuSsgiEvent);
+	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuVolumetricLightShaftEvent);
 	const uint32_t gpuTemporalSsrEvent = profilerManager.BeginGpuEvent(
 		commandList.Get(),
 		renderTimestampQueryHeap.Get(),
@@ -4791,6 +5414,11 @@ void EditorRenderManager::Draw() {
 	// Blender 風 Glare: Bloom 明部を Ghosts / Streaks / Fog Glow 等へ変換する
 	//================================================================
 
+	// Ghost/Streak等はシェーダー内で自分の色(glareColorByModeその物)を焼き込み済み。
+	// 最終合成で「ブルーム」の色をもう一度掛けると二重着色になるため、
+	// 実際に使われた最後のテクスチャがどちらかをここで覚えておく。
+	bool wasFinalGlareTextureTinted = false;
+
 	if (isQualityBloomExecuted) {
 		bool preserveGlareSource = (ppSettings.glareModeMask & (1 << 1)) != 0;
 
@@ -4820,6 +5448,7 @@ void EditorRenderManager::Draw() {
 			if (isGlareExecuted) {
 				finalBloomSrvHandle = g_postProcessQualityManager.GetGlareSrvHandle();
 				preserveGlareSource = true;
+				wasFinalGlareTextureTinted = true;
 			}
 		}
 	}
@@ -5089,9 +5718,11 @@ void EditorRenderManager::Draw() {
 			ppSettings.compositeChromaticAberration,
 			ppSettings.compositeAmbientOcclusionStrength,
 			static_cast<float>(ppSettings.compositeDebugView),
-			ppSettings.glareColorByMode[bloomModeIndex].x,
-			ppSettings.glareColorByMode[bloomModeIndex].y,
-			ppSettings.glareColorByMode[bloomModeIndex].z,
+			// Ghost/Streak等が最後に実行された場合、そのテクスチャは既に自分の色を
+			// 焼き込み済みなので、ここで「ブルーム」の色を重ねて二重着色しない。
+			wasFinalGlareTextureTinted ? 1.0f : ppSettings.glareColorByMode[bloomModeIndex].x,
+			wasFinalGlareTextureTinted ? 1.0f : ppSettings.glareColorByMode[bloomModeIndex].y,
+			wasFinalGlareTextureTinted ? 1.0f : ppSettings.glareColorByMode[bloomModeIndex].z,
 			// Ocean Debug専用の後段停止は通常描画の反射改善と無関係なため、
 			// FinalCompositeへは常に無効値を渡す。
 			0.0f,

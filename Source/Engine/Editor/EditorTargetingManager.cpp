@@ -1602,10 +1602,6 @@ void EditorTargetingManager::UpdateReticleUi(const EditorComponent& screenAimCom
 		EditorComponentType::RectTransform);
 
 	if (rectTransform == nullptr || !rectTransform->isActive) {
-		static uint32_t debugCounter = 0u;
-		if ((debugCounter++ % 60u) == 0u) {
-			OutputDebugStringA("[ReticleUI] rectTransform is null or inactive\n");
-		}
 		return;
 	}
 
@@ -1693,18 +1689,4 @@ void EditorTargetingManager::UpdateReticleUi(const EditorComponent& screenAimCom
 		screenAimComponent.screenAimNormalizedPosition.y * g_editorGameHeight * inverseUniformScale -
 			visualCenterY};
 
-	static uint32_t debugCounter = 0u;
-	if ((debugCounter++ % 60u) == 0u) {
-		char debugBuffer[256];
-		snprintf(
-			debugBuffer,
-			sizeof(debugBuffer),
-			"[ReticleUI] pos=(%.1f,%.1f) size=(%.1f,%.1f) normalized=(%.2f,%.2f) scale=%.3f\n",
-			rectTransform->buttonPosition.x, rectTransform->buttonPosition.y,
-			rectTransform->buttonSize.x, rectTransform->buttonSize.y,
-			screenAimComponent.screenAimNormalizedPosition.x,
-			screenAimComponent.screenAimNormalizedPosition.y,
-			uniformScale);
-		OutputDebugStringA(debugBuffer);
-	}
 }

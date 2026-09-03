@@ -1,0 +1,31 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!-- PhysX 5.10 CPU/GPU SDK / Blast 1.1.5 low-level SDK -->
+  <PropertyGroup>
+    <CG2PhysicsSdkRoot>$(MSBuildThisFileDirectory)..\..\ThirdParty\PhysicsSdk\</CG2PhysicsSdkRoot>
+    <CG2PhysicsSdkLibraries>NvBlast.lib;PhysX_64.lib;PhysXCommon_64.lib;PhysXFoundation_64.lib;PhysXCooking_64.lib;PhysXExtensions_static_64.lib;PhysXPvdSDK_static_64.lib;PhysXCharacterKinematic_static_64.lib;PhysXVehicle_static_64.lib</CG2PhysicsSdkLibraries>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)..\..\ThirdParty\PhysX\physx\include;$(MSBuildThisFileDirectory)..\..\ThirdParty\Blast-1.1.5\sdk\lowlevel\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(CG2PhysicsSdkRoot)lib\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>$(CG2PhysicsSdkLibraries);%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <CG2PhysicsRequiredLibrary Include="$(CG2PhysicsSdkLibraries);PhysXGpu_64.lib" />
+    <CG2PhysicsRuntimeDll Include="$(CG2PhysicsSdkRoot)bin\$(Configuration)\NvBlast.dll;$(CG2PhysicsSdkRoot)bin\$(Configuration)\PhysX_64.dll;$(CG2PhysicsSdkRoot)bin\$(Configuration)\PhysXCommon_64.dll;$(CG2PhysicsSdkRoot)bin\$(Configuration)\PhysXFoundation_64.dll;$(CG2PhysicsSdkRoot)bin\$(Configuration)\PhysXCooking_64.dll;$(CG2PhysicsSdkRoot)bin\$(Configuration)\PhysXGpu_64.dll" />
+  </ItemGroup>
+  <!-- 不足 SDK をリンク時の不明なエラーにせず、再構築手順を表示する。 -->
+  <Target Name="ValidateCG2PhysicsSdk" BeforeTargets="PrepareForBuild" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Error Condition="'$(Platform)' != 'x64'" Text="CG2 Physics SDK requires x64." />
+    <Error Condition="!Exists('$(CG2PhysicsSdkRoot)lib\$(Configuration)\%(CG2PhysicsRequiredLibrary.Identity)')" Text="Physics SDK library missing: %(CG2PhysicsRequiredLibrary.Identity). Run powershell -File Build\PhysicsSdk\Setup.ps1" />
+    <Error Condition="!Exists('%(CG2PhysicsRuntimeDll.Identity)')" Text="Physics SDK DLL missing: %(CG2PhysicsRuntimeDll.Identity). Run powershell -File Build\PhysicsSdk\Setup.ps1" />
+  </Target>
+  <!-- ゲーム出力の DLL コピーは EditorGameBuildManager の既存処理が引き継ぐ。 -->
+  <Target Name="CopyCG2PhysicsSdkRuntime" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Copy SourceFiles="@(CG2PhysicsRuntimeDll)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

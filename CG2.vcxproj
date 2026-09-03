@@ -132,6 +132,13 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
   </ItemDefinitionGroup>
   <ItemGroup>
     <None Include=".editorconfig" />
+    <None Include="Build\PhysicsSdk\CMakeLists.txt" />
+    <None Include="Build\PhysicsSdk\Setup.ps1" />
+    <None Include="Build\PhysicsSdk\ApplyCompatibility.ps1" />
+    <None Include="Build\PhysicsSdk\PhysicsSdk.props" />
+    <None Include="Build\PhysicsSdk\README.md" />
+    <None Include="Build\PhysicsSdk\Smoke.cpp" />
+    <None Include="Build\PhysicsSdk\Cuda13Compatibility.cpp" />
     <None Include="Assets\Input\InGameInputAction.json" />
 	<None Include="Assets\Shaders\Particle\ParticleClear.CS.hlsl" />
 	<None Include="Assets\Shaders\Particle\ParticleCommon.hlsli" />
@@ -727,6 +734,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
       <DisableSpecificWarnings>5045;26812;26495;26451;6387;6262;6011;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
   </ItemGroup>
+  <Import Project="Build\PhysicsSdk\PhysicsSdk.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

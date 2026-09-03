@@ -2655,7 +2655,7 @@ commandList->SetGraphicsRoot32BitConstants(
         16u,
         &shadowRenderPass.viewProjection,
         0u);
-drawShadowObjects();
+drawShadowObjects(shadowRenderPass.viewProjection);
 		}
 
 		shadowBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;

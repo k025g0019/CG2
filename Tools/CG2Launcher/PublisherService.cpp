@@ -649,7 +649,8 @@ bool PublisherService::SaveSettings(const std::filesystem::path& installRoot, co
 
 bool PublisherService::IsPublishFile(const std::filesystem::path& relativePath) {
 	const std::string name = relativePath.filename().string(); const std::string extension = Lower(relativePath.extension().string());
-	if (name == "CG2Launcher.exe" || name == "CG2Launcher.pdb" || name == "CG2.exe" || name == "imgui.ini") return false;
+	// CG2.exe は Engine 本体なので配布対象。Launcher 自身と Editor の窓配置だけ除く。
+	if (name == "CG2Launcher.exe" || name == "CG2Launcher.pdb" || name == "imgui.ini") return false;
 	if (extension == ".pdb" || extension == ".ilk" || extension == ".exp" || extension == ".lib" || extension == ".log") return false;
 	// Assets配下はProject固有の中身(サンプルFBX・Scene・Input設定等)を配布しないためExcludeするが、
 	// Assets/Shadersだけは例外。RendererがEditorPlatformManager.cppから実行時に読み込むEngine本体の

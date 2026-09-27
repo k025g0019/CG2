@@ -367,7 +367,7 @@ namespace {
 
 	bool WriteProjectRecoveryFiles(const std::filesystem::path& projectRoot, std::string& error) {
 		static constexpr const char* kGitIgnore =
-			"# ManoEngine generated/cache\r\nLibrary/\r\nBuilds/\r\nBuildLogs/\r\nlogs/\r\n.team/\r\n.vs/\r\n"
+			"# CG2Engine generated/cache\r\nLibrary/\r\nBuilds/\r\nBuildLogs/\r\nlogs/\r\n.team/\r\n.vs/\r\n"
 			"**/obj/\r\n**/x64/Debug/\r\n*.pdb\r\n*.ilk\r\n*.exp\r\n*.lib\r\n*.user\r\n*.suo\r\n";
 		std::error_code ec;
 		if (!std::filesystem::exists(projectRoot / ".gitignore", ec) &&
@@ -382,18 +382,18 @@ namespace {
 			"$candidates = @(\r\n"
 			"  (Join-Path $project ('PortableEngine\\' + $version + '\\CG2.exe')),\r\n"
 			"  (Join-Path $project 'PortableEngine\\CG2.exe'),\r\n"
-			"  (Join-Path $env:LOCALAPPDATA ('ManoEngine\\Engines\\' + $version + '\\CG2.exe')),\r\n"
-			"  ('C:\\ManoHub\\Engines\\' + $version + '\\CG2.exe')\r\n"
+			"  (Join-Path $env:LOCALAPPDATA ('CG2Engine\\Engines\\' + $version + '\\CG2.exe')),\r\n"
+			"  ('C:\\CG2Hub\\Engines\\' + $version + '\\CG2.exe')\r\n"
 			")\r\n"
-			"if ($env:MANOENGINE_INSTALL_ROOT) { $candidates += (Join-Path $env:MANOENGINE_INSTALL_ROOT ('Engines\\' + $version + '\\CG2.exe')) }\r\n"
+			"if ($env:CG2ENGINE_INSTALL_ROOT) { $candidates += (Join-Path $env:CG2ENGINE_INSTALL_ROOT ('Engines\\' + $version + '\\CG2.exe')) }\r\n"
 			"$engine = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1\r\n"
 			"if (-not $engine) { throw ('Engine ' + $version + ' が見つかりません。Portable Engine ZIPを展開するかOffline導入してください。') }\r\n"
 			"Start-Process -FilePath $engine -ArgumentList @('--project', $project) -WorkingDirectory (Split-Path -Parent $engine)\r\n";
-		if (!std::filesystem::exists(projectRoot / "OpenManoProject.ps1", ec) &&
-			!WriteText(projectRoot / "OpenManoProject.ps1", kStartScript, error)) return false;
+		if (!std::filesystem::exists(projectRoot / "OpenCG2Project.ps1", ec) &&
+			!WriteText(projectRoot / "OpenCG2Project.ps1", kStartScript, error)) return false;
 		static constexpr const char* kGuide =
 			"# Launcherが使えない場合\r\n\r\n"
-			"- `OpenManoProject.ps1` をPowerShellで実行すると、Project指定のEngineを直接起動します。\r\n"
+			"- `OpenCG2Project.ps1` をPowerShellで実行すると、Project指定のEngineを直接起動します。\r\n"
 			"- Hubへ接続できない場合は、Portable Engine ZIPをOffline導入できます。\r\n"
 			"- 共同制作サーバーが使えない場合は、Launcherの「Git共有へ切替」を使い、Gitでcommit/pull/pushしてください。\r\n"
 			"- Git切替は自動接続を停止します。commitやpushは勝手に実行しません。\r\n";
@@ -457,7 +457,7 @@ namespace {
 		const std::string& collaborationId, const std::string& ownerId,
 		std::uint64_t lastSyncedRevision, std::string& error) {
 		std::ostringstream metadata;
-		metadata << "ManoProjectCollaboration|1\r\n"
+		metadata << "CG2ProjectCollaboration|1\r\n"
 			<< "ProjectId|" << projectId << "\r\n"
 			<< "ProjectName|" << projectName << "\r\n"
 			<< "CollaborationId|" << collaborationId << "\r\n"
@@ -538,7 +538,7 @@ namespace {
 		while (std::getline(input, line)) {
 			if (!line.empty() && line.back() == '\r') line.pop_back();
 			const auto values = Split(line, '|'); if (values.empty()) continue;
-			if (values[0] == "ManoProjectManifest" && values.size() == 2U && values[1] == "1") header = true;
+			if (values[0] == "CG2ProjectManifest" && values.size() == 2U && values[1] == "1") header = true;
 			else if (values.size() == 2U && values[0] == "ProjectId") loaded.projectId = values[1];
 			else if (values.size() == 2U && values[0] == "ProjectName") loaded.projectName = values[1];
 			else if (values.size() == 2U && values[0] == "RequiredEngineVersion") loaded.requiredEngineVersion = values[1];
@@ -583,7 +583,7 @@ namespace {
 		const DWORD count = GetEnvironmentVariableW(L"USERPROFILE", profile, _countof(profile));
 		const std::filesystem::path root = count > 0U && count < _countof(profile)
 			? std::filesystem::path(profile) / "Documents" : std::filesystem::current_path();
-		return root / "ManoEngine Projects";
+		return root / "CG2Engine Projects";
 	}
 
 	std::wstring SafeProjectFolderName(const std::string& name) {
@@ -592,7 +592,7 @@ namespace {
 			if (std::wstring(L"<>:\"/\\|?*").find(character) != std::wstring::npos) character = L'_';
 		}
 		while (!value.empty() && (value.back() == L'.' || value.back() == L' ')) value.pop_back();
-		return value.empty() ? L"ManoProject" : value;
+		return value.empty() ? L"CG2Project" : value;
 	}
 
 	std::filesystem::path FindAvailableProjectDirectory(const std::string& projectName) {
@@ -606,7 +606,7 @@ namespace {
 		return {};
 	}
 
-	bool DownloadProjectSnapshot(const ManoInvite& invite, const std::filesystem::path& installRoot,
+	bool DownloadProjectSnapshot(const CG2Invite& invite, const std::filesystem::path& installRoot,
 		std::filesystem::path& projectRoot, std::string& result, const LauncherProgress& progress) {
 		const std::string endpoint = invite.projectEndpoint.empty()
 			? "/projects/" + invite.projectId + "/project.manifest" : invite.projectEndpoint;
@@ -688,21 +688,21 @@ namespace {
 std::filesystem::path LauncherExperience::DefaultInstallRoot() {
 	wchar_t value[32768]{};
 	const DWORD count = GetEnvironmentVariableW(L"LOCALAPPDATA", value, _countof(value));
-	return count > 0U && count < _countof(value) ? std::filesystem::path(value) / "ManoEngine" : std::filesystem::current_path() / "ManoEngineInstall";
+	return count > 0U && count < _countof(value) ? std::filesystem::path(value) / "CG2Engine" : std::filesystem::current_path() / "CG2EngineInstall";
 }
 
 std::string LauncherExperience::DefaultHubAddress() {
 	char configured[2048]{};
-	const DWORD count = GetEnvironmentVariableA("MANOENGINE_HUB", configured, static_cast<DWORD>(std::size(configured)));
+	const DWORD count = GetEnvironmentVariableA("CG2ENGINE_HUB", configured, static_cast<DWORD>(std::size(configured)));
 	if (count > 0U && count < std::size(configured)) return configured;
-	// 配布するManoLauncher.exe単体で発見できる既定Hub。環境変数があればそちらを優先する。
+	// 配布するCG2Launcher.exe単体で発見できる既定Hub。環境変数があればそちらを優先する。
 	return "http://ms.tailf0bf0a.ts.net:8080";
 }
 
-bool LauncherExperience::LoadInvite(const std::filesystem::path& path, ManoInvite& invite, std::string& error) {
-	if (path.extension() != ".mano-invite") { error = "*.mano-inviteを選択してください"; return false; }
+bool LauncherExperience::LoadInvite(const std::filesystem::path& path, CG2Invite& invite, std::string& error) {
+	if (path.extension() != ".cg2-invite") { error = "*.cg2-inviteを選択してください"; return false; }
 	const std::string json = ReadText(path); if (json.empty()) { error = "Inviteを読めません"; return false; }
-	ManoInvite loaded{}; loaded.formatVersion = JsonUInt(json, "formatVersion");
+	CG2Invite loaded{}; loaded.formatVersion = JsonUInt(json, "formatVersion");
 	loaded.projectId = JsonString(json, "projectId"); loaded.projectName = JsonString(json, "projectName");
 	loaded.hubHost = JsonString(json, "hub"); loaded.requiredEngineVersion = JsonString(json, "requiredEngineVersion");
 	loaded.projectEndpoint = JsonString(json, "projectEndpoint"); loaded.engineManifestEndpoint = JsonString(json, "engineManifestEndpoint");
@@ -718,7 +718,7 @@ bool LauncherExperience::LoadInvite(const std::filesystem::path& path, ManoInvit
 	invite = std::move(loaded); return true;
 }
 
-bool LauncherExperience::SaveInvite(const std::filesystem::path& path, const ManoInvite& invite, std::string& error) {
+bool LauncherExperience::SaveInvite(const std::filesystem::path& path, const CG2Invite& invite, std::string& error) {
 	if (!IsSafeProjectId(invite.projectId) || invite.projectName.empty() || invite.hubHost.empty()) {
 		error = "InviteのProject ID、Name、Hubは必須です"; return false;
 	}
@@ -737,20 +737,20 @@ bool LauncherExperience::SaveInvite(const std::filesystem::path& path, const Man
 	return WriteText(path, json.str(), error);
 }
 
-bool LauncherExperience::ResolveManifest(const ManoInvite& invite, const std::filesystem::path& installRoot,
+bool LauncherExperience::ResolveManifest(const CG2Invite& invite, const std::filesystem::path& installRoot,
 	std::filesystem::path& manifestPath, EngineUpdateManifest& manifest, std::string& error) {
 	const auto cache = installRoot / "Cache" / "Hub" / invite.projectId;
 	std::error_code ec; std::filesystem::create_directories(cache, ec);
 	std::string endpoint = invite.engineManifestEndpoint;
 	if (endpoint.empty()) {
-		const auto hubInfo = cache / "mano-hub.json"; std::string hubInfoUrl;
-		if (DownloadHubFile(invite.hubHost, "/mano-hub.json", hubInfo, hubInfoUrl)) {
+		const auto hubInfo = cache / "cg2-hub.json"; std::string hubInfoUrl;
+		if (DownloadHubFile(invite.hubHost, "/cg2-hub.json", hubInfo, hubInfoUrl)) {
 			const std::string json = ReadText(hubInfo);
 			const std::string availableLauncher = JsonString(json, "launcherVersion");
-			if (!availableLauncher.empty() && availableLauncher != kManoLauncherVersion) {
+			if (!availableLauncher.empty() && availableLauncher != kCG2LauncherVersion) {
 				std::string noticeError;
 				WriteText(LauncherUpdate::GetLauncherStateDirectory(installRoot) / "launcher-update.notice",
-					"Launcher Update Available|" + std::string(kManoLauncherVersion) + "|" + availableLauncher + "\r\n", noticeError);
+					"Launcher Update Available|" + std::string(kCG2LauncherVersion) + "|" + availableLauncher + "\r\n", noticeError);
 			}
 			const std::string channel = GetEngineUpdateChannelText(invite.updateChannel);
 			const auto channelPos = json.find("\"" + channel + "\"");
@@ -820,7 +820,7 @@ bool LauncherExperience::SaveProjects(const std::filesystem::path& installRoot,
 
 bool LauncherExperience::SetupInvite(const std::filesystem::path& invitePath, const std::filesystem::path& installRoot,
 	const std::filesystem::path& projectRoot, std::string& result) {
-	ManoInvite invite{}; if (!LoadInvite(invitePath, invite, result)) return false;
+	CG2Invite invite{}; if (!LoadInvite(invitePath, invite, result)) return false;
 	if (projectRoot.empty()) {
 		HubProjectCatalogEntry project{};
 		project.projectId = invite.projectId; project.projectName = invite.projectName;
@@ -850,7 +850,7 @@ bool LauncherExperience::SetupInvite(const std::filesystem::path& invitePath, co
 	}
 	if (!projectRoot.empty()) {
 		ProjectVersionSettings project{}; std::string projectError;
-		if (!ProjectVersionManager::Load(projectRoot, project, projectError)) { result = "選択FolderはManoEngine Projectではありません: " + projectError; return false; }
+		if (!ProjectVersionManager::Load(projectRoot, project, projectError)) { result = "選択FolderはCG2Engine Projectではありません: " + projectError; return false; }
 		invite.requiredEngineVersion = project.requiredEngineVersion.ToString();
 		if (project.updateChannel != invite.updateChannel) { result = "ProjectとInviteのChannelが一致しません"; return false; }
 	}
@@ -928,7 +928,7 @@ bool LauncherExperience::FetchProjectCatalog(const std::string& hubHost,
 	while (std::getline(input, line)) {
 		if (!line.empty() && line.back() == '\r') line.pop_back();
 		const auto values = Split(line, '|');
-		if (values.size() == 2U && values[0] == "ManoProjectCatalog" && values[1] == "1") { header = true; continue; }
+		if (values.size() == 2U && values[0] == "CG2ProjectCatalog" && values[1] == "1") { header = true; continue; }
 		if ((values.size() != 8U && values.size() != 11U) || values[0] != "Project") continue;
 		HubProjectCatalogEntry project{}; project.projectId = values[1]; project.projectName = values[2];
 		project.requiredEngineVersion = values[3]; project.projectManifestEndpoint = values[5];
@@ -955,10 +955,10 @@ bool LauncherExperience::FetchEngineCatalog(const std::string& hubHost, const st
 
 	const auto cache = installRoot / "Cache" / "Hub" / "__catalog__";
 	std::error_code ec; std::filesystem::create_directories(cache, ec);
-	const auto hubInfoPath = cache / "mano-hub.json"; std::string hubInfoUrl;
+	const auto hubInfoPath = cache / "cg2-hub.json"; std::string hubInfoUrl;
 
 	std::string downloadDetail;
-	if (!DownloadHubFile(hubHost, "/mano-hub.json", hubInfoPath, hubInfoUrl, &downloadDetail)) {
+	if (!DownloadHubFile(hubHost, "/cg2-hub.json", hubInfoPath, hubInfoUrl, &downloadDetail)) {
 		error = WithReason("Hubへ接続できません: " + hubInfoUrl, downloadDetail); return false;
 	}
 
@@ -994,7 +994,7 @@ bool LauncherExperience::FetchEngineCatalog(const std::string& hubHost, const st
 bool LauncherExperience::JoinProject(const HubProjectCatalogEntry& project, const std::string& hubHost,
 	const std::filesystem::path& installRoot, std::filesystem::path& installedProjectRoot,
 	std::string& result, const LauncherProgress& progress) {
-	ManoInvite invite{}; invite.formatVersion = 1U; invite.projectId = project.projectId;
+	CG2Invite invite{}; invite.formatVersion = 1U; invite.projectId = project.projectId;
 	invite.projectName = project.projectName; invite.hubHost = hubHost;
 	invite.updateChannel = project.updateChannel; invite.requiredEngineVersion = project.requiredEngineVersion;
 	invite.projectEndpoint = project.projectManifestEndpoint; invite.collaborationHost = project.collaborationHost;
@@ -1119,7 +1119,7 @@ bool LauncherExperience::CreateProject(const std::filesystem::path& projectRoot,
 	if (!WriteText(projectRoot / "ProjectSettings" / "TeamCollaboration.settings", team.str(), result)) return false;
 	if (!WriteProjectRecoveryFiles(projectRoot, result)) return false;
 	if (templateName == "標準" && !WriteText(projectRoot / "README.md",
-		"# " + projectName + "\r\n\r\nManoEngine 標準Projectです。\r\n", result)) return false;
+		"# " + projectName + "\r\n\r\nCG2Engine 標準Projectです。\r\n", result)) return false;
 
 	registeredProject = {projectId, projectName, DefaultHubAddress(), installedManifest.channel,
 		engineVersion, {}, projectRoot, "Ready", collaborationId, ownerId, 0U};
@@ -1138,8 +1138,8 @@ bool LauncherExperience::ExportProjectZip(const RegisteredProject& project,
 		return false;
 	}
 	if (outputZip.empty()) { result = "ZIP保存先が指定されていません"; return false; }
-	const auto stagingRoot = std::filesystem::temp_directory_path() / "ManoLauncher" / ("project-export-" + CreateLauncherUuid());
-	const std::filesystem::path packageName = project.projectRoot.filename().empty() ? "ManoProject" : project.projectRoot.filename();
+	const auto stagingRoot = std::filesystem::temp_directory_path() / "CG2Launcher" / ("project-export-" + CreateLauncherUuid());
+	const std::filesystem::path packageName = project.projectRoot.filename().empty() ? "CG2Project" : project.projectRoot.filename();
 	std::error_code ec;
 	std::filesystem::create_directories(stagingRoot, ec);
 	if (ec || !CopyProjectSnapshot(project.projectRoot, stagingRoot / packageName, result)) {
@@ -1157,7 +1157,7 @@ bool LauncherExperience::ImportProjectZip(const std::filesystem::path& archivePa
 	const std::filesystem::path& destinationParent, const std::filesystem::path& installRoot,
 	RegisteredProject& importedProject, std::string& result) {
 	if (archivePath.empty() || destinationParent.empty()) { result = "ZIPと取込先を指定してください"; return false; }
-	const auto staging = std::filesystem::temp_directory_path() / "ManoLauncher" / ("project-import-" + CreateLauncherUuid());
+	const auto staging = std::filesystem::temp_directory_path() / "CG2Launcher" / ("project-import-" + CreateLauncherUuid());
 	std::error_code ec;
 	std::filesystem::create_directories(staging, ec);
 	if (ec || !ExtractZipSafely(archivePath, staging, result)) {
@@ -1278,8 +1278,8 @@ bool LauncherExperience::ExportPortableEngine(const std::filesystem::path& insta
 	if (!std::filesystem::exists(engineRoot) || !std::filesystem::exists(manifest)) { result = "導入済みEngineが見つかりません"; return false; }
 	EngineUpdateManifest installedManifest{};
 	if (!LauncherUpdate::LoadManifest(manifest, installedManifest, result)) return false;
-	const auto staging = std::filesystem::temp_directory_path() / "ManoLauncher" / ("engine-export-" + CreateLauncherUuid());
-	const std::filesystem::path packageName = "ManoEngine-" + versionText;
+	const auto staging = std::filesystem::temp_directory_path() / "CG2Launcher" / ("engine-export-" + CreateLauncherUuid());
+	const std::filesystem::path packageName = "CG2Engine-" + versionText;
 	const auto package = staging / packageName;
 	std::error_code ec;
 	std::filesystem::create_directories(staging, ec);
@@ -1290,7 +1290,7 @@ bool LauncherExperience::ExportPortableEngine(const std::filesystem::path& insta
 	std::ostringstream installer;
 	installer << "$ErrorActionPreference = 'Stop'\r\n"
 		<< "$package = $PSScriptRoot\r\n$version = '" << versionText << "'\r\n"
-		<< "$root = Join-Path $env:LOCALAPPDATA 'ManoEngine'\r\n"
+		<< "$root = Join-Path $env:LOCALAPPDATA 'CG2Engine'\r\n"
 		<< "$target = Join-Path $root ('Engines\\' + $version)\r\n"
 		<< "if (Test-Path -LiteralPath $target) { throw ('既に導入済みです: ' + $target) }\r\n"
 		<< "$manifest = Join-Path $package 'engine.manifest'\r\n"
@@ -1302,19 +1302,19 @@ bool LauncherExperience::ExportPortableEngine(const std::filesystem::path& insta
 		<< "  if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -ne $parts[3].ToLowerInvariant()) { throw ('Hash不一致: ' + $parts[1]) }\r\n}\r\n"
 		<< "$pending = $target + '.pending'\r\nif (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending -Recurse -Force }\r\n"
 		<< "New-Item -ItemType Directory -Force -Path $pending | Out-Null\r\n"
-		<< "Get-ChildItem -LiteralPath $package -Force | Where-Object { $_.Name -notin @('engine.manifest','Install-ManoEngine.ps1') } | Copy-Item -Destination $pending -Recurse -Force\r\n"
+		<< "Get-ChildItem -LiteralPath $package -Force | Where-Object { $_.Name -notin @('engine.manifest','Install-CG2Engine.ps1') } | Copy-Item -Destination $pending -Recurse -Force\r\n"
 		<< "Move-Item -LiteralPath $pending -Destination $target\r\n"
 		<< "$manifestDir = Join-Path $root ('LauncherState\\Manifests\\' + $version)\r\nNew-Item -ItemType Directory -Force -Path $manifestDir | Out-Null\r\n"
 		<< "Copy-Item -LiteralPath (Join-Path $package 'engine.manifest') -Destination (Join-Path $manifestDir 'engine.manifest') -Force\r\n"
 		<< "$stateDir = Join-Path $root 'LauncherState'\r\n$statePath = Join-Path $stateDir 'launcher.state'\r\n$previous = ''\r\n"
 		<< "if (Test-Path -LiteralPath $statePath) { $old = Get-Content -LiteralPath $statePath | Where-Object { $_ -like 'CurrentVersion|*' } | Select-Object -First 1; if ($old) { $previous = ($old -split '\\|', 2)[1] } }\r\n"
-		<< "$state = \"ManoLauncherState|1`r`nCurrentVersion|$version`r`nPreviousVersion|$previous`r`nChannel|"
+		<< "$state = \"CG2LauncherState|1`r`nCurrentVersion|$version`r`nPreviousVersion|$previous`r`nChannel|"
 		<< GetEngineUpdateChannelText(installedManifest.channel)
 		<< "`r`nManifestLocation|$manifestDir\\engine.manifest`r`n\"\r\n"
 		<< "New-Item -ItemType Directory -Force -Path $stateDir | Out-Null\r\n"
 		<< "[IO.File]::WriteAllText($statePath, $state, [Text.UTF8Encoding]::new($true))\r\n"
 		<< "Write-Host ('Offline導入完了: ' + $version)\r\n";
-	if (!WriteText(package / "Install-ManoEngine.ps1", installer.str(), result)) { std::filesystem::remove_all(staging, ec); return false; }
+	if (!WriteText(package / "Install-CG2Engine.ps1", installer.str(), result)) { std::filesystem::remove_all(staging, ec); return false; }
 	const bool ok = CreateZip(staging, packageName, outputZip, result);
 	std::filesystem::remove_all(staging, ec);
 	if (ok) result = "Portable Engine ZIPを作成しました: " + PathToUtf8(outputZip);
@@ -1395,7 +1395,7 @@ bool LauncherExperience::InstallOfflineEngine(const std::filesystem::path& archi
 
 bool LauncherExperience::GetProjectManifest(const RegisteredProject& project, const std::filesystem::path& installRoot,
 	std::filesystem::path& manifestPath, EngineUpdateManifest& manifest, std::string& error) {
-	ManoInvite invite{1U, project.projectId, project.projectName, project.hubHost, project.updateChannel,
+	CG2Invite invite{1U, project.projectId, project.projectName, project.hubHost, project.updateChannel,
 		project.requiredEngineVersion, project.projectEndpoint, {}};
 	return ResolveManifest(invite, installRoot, manifestPath, manifest, error);
 }

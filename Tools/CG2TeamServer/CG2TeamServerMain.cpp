@@ -1,9 +1,9 @@
-﻿// ManoTeamServer
+﻿// CG2TeamServer
 //
 // 共同制作の中継Server。誰かのEditorがHostとして起動していなくても、
 // 各自のEditorがここへ接続するだけで共同制作できるようにするために独立させた。
 //
-//                ManoTeamServer
+//                CG2TeamServer
 //                      │
 //         ┌────────────┼────────────┐
 //         │            │            │
@@ -302,7 +302,7 @@ public:
 		std::filesystem::create_directories(dataDirectory_, directoryError);
 		LoadRevision();
 
-		ManoCollaboration::TransportConfig config{};
+		CG2Collaboration::TransportConfig config{};
 		config.maximumClientCount = maximumClientCount;
 		std::string error;
 
@@ -320,12 +320,12 @@ public:
 			if (processIdOutput) processIdOutput << _getpid() << "\r\n";
 		}
 
-		LogLine("ManoTeamServer 起動");
+		LogLine("CG2TeamServer 起動");
 		LogLine("  Project ID : " + projectId_);
 		LogLine("  Port       : " + std::to_string(port));
 		LogLine("  Max Clients: " + std::to_string(maximumClientCount));
 		LogLine("  Protocol   : " +
-			std::to_string(ManoCollaboration::kCollaborationProtocolVersion));
+			std::to_string(CG2Collaboration::kCollaborationProtocolVersion));
 		LogLine("  Revision   : " + std::to_string(revision_));
 		LogLine("  Data       : " + dataDirectory_.string());
 		LogLine("LAN/Tailscaleのどちらからでも、このPortへ接続できれば共同制作できます");
@@ -356,7 +356,7 @@ public:
 	}
 
 private:
-	ManoCollaboration::TcpCollaborationTransport transport_;
+	CG2Collaboration::TcpCollaborationTransport transport_;
 	std::string projectId_;
 	std::filesystem::path dataDirectory_;
 	std::filesystem::path statusFile_;
@@ -380,7 +380,7 @@ private:
 	}
 
 	void SendText(const std::string& text) {
-		ManoCollaboration::TransportMessage message{};
+		CG2Collaboration::TransportMessage message{};
 		message.text = text;
 
 		if (message.text.empty() || message.text.back() != '\n') {
@@ -455,7 +455,7 @@ private:
 
 	void HandleMessage(const std::string& message) {
 		// Message自体が大きすぎる場合は中継しない(分割転送されているはずのため)。
-		if (message.size() > ManoCollaboration::kMaximumMessageBytes) {
+		if (message.size() > CG2Collaboration::kMaximumMessageBytes) {
 			LogLine("拒否: Messageが大きすぎます (" + std::to_string(message.size()) + " bytes)");
 			return;
 		}
@@ -466,12 +466,12 @@ private:
 			return;
 		}
 
-		if (messageType == ManoCollaboration::MessageType::kHandshake) {
+		if (messageType == CG2Collaboration::MessageType::kHandshake) {
 			HandleHandshake(message);
 			return;
 		}
 
-		if (messageType == ManoCollaboration::MessageType::kHeartbeat) {
+		if (messageType == CG2Collaboration::MessageType::kHeartbeat) {
 			HandleHeartbeat(message);
 			return;
 		}
@@ -490,7 +490,7 @@ private:
 			return;
 		}
 
-		if (messageType == ManoCollaboration::MessageType::kHistoryRequest) {
+		if (messageType == CG2Collaboration::MessageType::kHistoryRequest) {
 			SendHistory(userId, ReadJsonUnsigned(message, "afterRevision"));
 			return;
 		}
@@ -577,7 +577,7 @@ private:
 
 			const std::uint64_t fileSize = ReadJsonUnsigned(message, "fileSize");
 
-			if (fileSize > ManoCollaboration::kMaximumSynchronizedFileBytes) {
+			if (fileSize > CG2Collaboration::kMaximumSynchronizedFileBytes) {
 				LogLine(
 					"拒否: File Sizeが上限を超えています " + scenePath + " (" +
 					std::to_string(fileSize) + " bytes)");
@@ -636,10 +636,10 @@ private:
 		const std::string userId = ReadJsonString(message, "userId");
 		const std::string userName = ReadJsonString(message, "userName");
 
-		if (peerProtocol != ManoCollaboration::kCollaborationProtocolVersion) {
+		if (peerProtocol != CG2Collaboration::kCollaborationProtocolVersion) {
 			const std::string reason =
 				"共同制作Protocolが一致しません。Server: " +
-				std::to_string(ManoCollaboration::kCollaborationProtocolVersion) +
+				std::to_string(CG2Collaboration::kCollaborationProtocolVersion) +
 				" / Client: " + std::to_string(peerProtocol);
 			SendRejection(reason, userId);
 			LogLine("接続拒否 (" + userName + "): " + reason);
@@ -668,9 +668,9 @@ private:
 		clients_[userId] = record;
 
 		SendText(
-			std::string("{\"type\":\"") + ManoCollaboration::MessageType::kHandshakeAccepted +
+			std::string("{\"type\":\"") + CG2Collaboration::MessageType::kHandshakeAccepted +
 			"\",\"protocol\":" +
-			std::to_string(ManoCollaboration::kCollaborationProtocolVersion) +
+			std::to_string(CG2Collaboration::kCollaborationProtocolVersion) +
 			",\"targetUserId\":\"" + EscapeJsonText(userId) +
 			"\",\"revision\":" + std::to_string(revision_) + "}");
 		for (const auto& lockStatePair : lockStateMessageByKey_) {
@@ -681,9 +681,9 @@ private:
 
 	void SendRejection(const std::string& reason, const std::string& targetUserId) {
 		std::string rejection =
-			std::string("{\"type\":\"") + ManoCollaboration::MessageType::kHandshakeRejected +
+			std::string("{\"type\":\"") + CG2Collaboration::MessageType::kHandshakeRejected +
 			"\",\"protocol\":" +
-			std::to_string(ManoCollaboration::kCollaborationProtocolVersion) +
+			std::to_string(CG2Collaboration::kCollaborationProtocolVersion) +
 			",\"reason\":\"" + EscapeJsonText(reason) + "\"}";
 		if (!targetUserId.empty()) {
 			rejection = SetJsonString(std::move(rejection), "targetUserId", targetUserId);
@@ -701,7 +701,7 @@ private:
 
 		// 送信時刻をそのまま返し、Client側でLatencyを算出させる。
 		SendText(
-			std::string("{\"type\":\"") + ManoCollaboration::MessageType::kHeartbeatAck +
+			std::string("{\"type\":\"") + CG2Collaboration::MessageType::kHeartbeatAck +
 			"\",\"userId\":\"" + EscapeJsonText(userId) + "\",\"targetUserId\":\"" + EscapeJsonText(userId) + "\",\"sentAt\":" +
 			std::to_string(ReadJsonUnsigned(message, "sentAt")) + "}");
 	}
@@ -715,8 +715,8 @@ private:
 			record.silenceSeconds += deltaSeconds;
 
 			if (record.silenceSeconds >
-				ManoCollaboration::kHeartbeatTimeoutSeconds +
-					ManoCollaboration::kLockReleaseGracePeriodSeconds) {
+				CG2Collaboration::kHeartbeatTimeoutSeconds +
+					CG2Collaboration::kLockReleaseGracePeriodSeconds) {
 				timedOutUserIds.push_back(userId);
 			}
 		}
@@ -739,7 +739,7 @@ private:
 
 			// 残ったClientへ「このUserは居なくなった」と伝え、Lock表示を消させる。
 			SendText(
-				std::string("{\"type\":\"") + ManoCollaboration::MessageType::kPeerLeft +
+				std::string("{\"type\":\"") + CG2Collaboration::MessageType::kPeerLeft +
 				"\",\"userId\":\"" + EscapeJsonText(userId) + "\",\"userName\":\"" +
 				EscapeJsonText(userName) + "\"}");
 			LogLine(
@@ -762,20 +762,20 @@ private:
 
 void PrintUsage() {
 	std::cout
-		<< "ManoTeamServer - ManoEngine 共同制作中継Server\n"
+		<< "CG2TeamServer - CG2Engine 共同制作中継Server\n"
 		<< "\n"
 		<< "使い方:\n"
-		<< "  ManoTeamServer.exe --project-id <id> [--port <port>] [--max-clients <n>] [--data <dir>] [--status-file <file>] [--pid-file <file>]\n"
+		<< "  CG2TeamServer.exe --project-id <id> [--port <port>] [--max-clients <n>] [--data <dir>] [--status-file <file>] [--pid-file <file>]\n"
 		<< "\n"
 		<< "  --project-id  必須。接続してくるEditorのProject IDと一致させる。\n"
 		<< "  --port        既定 " << kDefaultPort << "\n"
 		<< "  --max-clients 既定 " << kDefaultMaximumClientCount << "\n"
-		<< "  --data        Revision/Change Logの保存先。既定 ./ManoTeamServerData\n"
+		<< "  --data        Revision/Change Logの保存先。既定 ./CG2TeamServerData\n"
 		<< "\n"
 		<< "Tailscale越しで使う場合も、このServer側の設定は変わりません。\n"
 		<< "Tailscaleが動いているPCでこのServerを起動し、各EditorのCollaboration Hostへ\n"
 		<< "そのPCのMagicDNS hostname (例 ms.tailxxxx.ts.net) を設定してください。\n"
-		<< "ManoTeamServer自体はTailscaleのAPIを一切使いません。\n";
+		<< "CG2TeamServer自体はTailscaleのAPIを一切使いません。\n";
 }
 
 }  // namespace
@@ -784,7 +784,7 @@ int main(int argumentCount, char** argumentValues) {
 	std::uint16_t port = kDefaultPort;
 	std::string projectId;
 	std::int32_t maximumClientCount = kDefaultMaximumClientCount;
-	std::filesystem::path dataDirectory = "ManoTeamServerData";
+	std::filesystem::path dataDirectory = "CG2TeamServerData";
 	std::filesystem::path statusFile;
 	std::filesystem::path processIdFile;
 
@@ -831,7 +831,7 @@ int main(int argumentCount, char** argumentValues) {
 		}
 	}
 
-	if (!ManoCollaboration::IsValidProjectId(projectId)) {
+	if (!CG2Collaboration::IsValidProjectId(projectId)) {
 		std::cout << "--project-id を指定してください (英数字と - _ . のみ、64文字以内)" << std::endl;
 		std::cout << std::endl;
 		PrintUsage();

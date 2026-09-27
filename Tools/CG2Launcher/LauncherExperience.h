@@ -6,9 +6,9 @@
 #include <string>
 #include <vector>
 
-inline constexpr const char* kManoLauncherVersion = "1.1.0+3";
+inline constexpr const char* kCG2LauncherVersion = "1.1.0+3";
 
-struct ManoInvite {
+struct CG2Invite {
 	std::uint32_t formatVersion = 0U;
 	std::string projectId;
 	std::string projectName;
@@ -17,7 +17,7 @@ struct ManoInvite {
 	std::string requiredEngineVersion;
 	std::string projectEndpoint;
 	std::string engineManifestEndpoint;
-	// 共同制作Serverの接続先。Hub(配布用HTTP)とは別で、ManoTeamServerのTCP接続先を指す。
+	// 共同制作Serverの接続先。Hub(配布用HTTP)とは別で、CG2TeamServerのTCP接続先を指す。
 	// Tailscale利用時は 100.x.x.x ではなく MagicDNS hostname を入れる。
 	std::string collaborationHost;
 	std::uint16_t collaborationPort = 0U;
@@ -69,9 +69,9 @@ class LauncherExperience {
 public:
 	static std::filesystem::path DefaultInstallRoot();
 	static std::string DefaultHubAddress();
-	static bool LoadInvite(const std::filesystem::path& path, ManoInvite& invite, std::string& error);
-	static bool SaveInvite(const std::filesystem::path& path, const ManoInvite& invite, std::string& error);
-	static bool ResolveManifest(const ManoInvite& invite, const std::filesystem::path& installRoot,
+	static bool LoadInvite(const std::filesystem::path& path, CG2Invite& invite, std::string& error);
+	static bool SaveInvite(const std::filesystem::path& path, const CG2Invite& invite, std::string& error);
+	static bool ResolveManifest(const CG2Invite& invite, const std::filesystem::path& installRoot,
 		std::filesystem::path& manifestPath, EngineUpdateManifest& manifest, std::string& error);
 	static bool SetupInvite(const std::filesystem::path& invitePath, const std::filesystem::path& installRoot,
 		const std::filesystem::path& projectRoot, std::string& result);

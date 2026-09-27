@@ -114,7 +114,7 @@ namespace {
 	}
 
 	bool ValidateRequiredReleaseFiles(const std::filesystem::path& release, std::string& error) {
-		const std::array<const wchar_t*, 17U> required = {L"CG2.exe", L"ManoTeamServer.exe",
+		const std::array<const wchar_t*, 17U> required = {L"CG2.exe", L"CG2TeamServer.exe",
 			L"dxcompiler.dll", L"dxil.dll",
 			L"libfbxsdk.dll", L"onnxruntime.dll", L"PhysX_64.dll", L"PhysXCommon_64.dll",
 			L"PhysXFoundation_64.dll", L"PhysXCooking_64.dll", L"PhysXGpu_64.dll",
@@ -149,7 +149,7 @@ namespace {
 	bool TestHubWrite(const std::filesystem::path& root, std::string& error) {
 		std::error_code ec; std::filesystem::create_directories(root, ec);
 		if (ec) { error = "配布フォルダーを作成できません: " + ec.message(); return false; }
-		const auto marker = root / ".mano-publish-write-test";
+		const auto marker = root / ".cg2-publish-write-test";
 		{
 			std::ofstream file(marker, std::ios::binary | std::ios::trunc);
 			if (!file) { error = "配布フォルダーへ書き込めません: " + root.generic_string(); return false; }
@@ -521,7 +521,7 @@ namespace {
 
 	std::string ContentType(const std::filesystem::path& path) {
 		const std::string extension = Lower(path.extension().string());
-		if (extension == ".json" || extension == ".manifest" || extension == ".mano-invite") return "application/json; charset=utf-8";
+		if (extension == ".json" || extension == ".manifest" || extension == ".cg2-invite") return "application/json; charset=utf-8";
 		if (extension == ".txt" || extension == ".log") return "text/plain; charset=utf-8";
 		return "application/octet-stream";
 	}
@@ -573,7 +573,7 @@ namespace {
 PublisherSettings PublisherService::CreateDefaults(const std::filesystem::path&) {
 	wchar_t executable[32768]{}; GetModuleFileNameW(nullptr, executable, _countof(executable));
 	PublisherSettings settings{}; settings.releaseSource = std::filesystem::path(executable).parent_path();
-	settings.hubRoot = L"C:\\ManoHub"; settings.collaborationServer = settings.releaseSource / "ManoTeamServer.exe";
+	settings.hubRoot = L"C:\\CG2Hub"; settings.collaborationServer = settings.releaseSource / "CG2TeamServer.exe";
 	// 招待先の別PCから到達できるよう、Tailscaleではなく通常のLANアドレスを既定値にする。
 	settings.publicHubAddress = LocalHubAddress(settings.distributionPort);
 	wchar_t userName[256]{}; DWORD userNameLength = static_cast<DWORD>(std::size(userName));
@@ -649,7 +649,7 @@ bool PublisherService::SaveSettings(const std::filesystem::path& installRoot, co
 
 bool PublisherService::IsPublishFile(const std::filesystem::path& relativePath) {
 	const std::string name = relativePath.filename().string(); const std::string extension = Lower(relativePath.extension().string());
-	if (name == "ManoLauncher.exe" || name == "ManoLauncher.pdb" || name == "CG2.exe" || name == "imgui.ini") return false;
+	if (name == "CG2Launcher.exe" || name == "CG2Launcher.pdb" || name == "CG2.exe" || name == "imgui.ini") return false;
 	if (extension == ".pdb" || extension == ".ilk" || extension == ".exp" || extension == ".lib" || extension == ".log") return false;
 	// Assets配下はProject固有の中身(サンプルFBX・Scene・Input設定等)を配布しないためExcludeするが、
 	// Assets/Shadersだけは例外。RendererがEditorPlatformManager.cppから実行時に読み込むEngine本体の
@@ -660,7 +660,7 @@ bool PublisherService::IsPublishFile(const std::filesystem::path& relativePath) 
 			if (part == "Shaders") { insideAssets = false; continue; }
 			return false;
 		}
-		if (part == "ManoLauncher" || part == "BuildLogs" || part == "logs" || part == "obj" || part == ".team" ||
+		if (part == "CG2Launcher" || part == "BuildLogs" || part == "logs" || part == "obj" || part == ".team" ||
 			part == "ProjectSettings" || part == "Library") return false;
 		if (part == "Assets") insideAssets = true;
 	}
@@ -694,7 +694,7 @@ bool PublisherService::PublishProjectSnapshot(const std::filesystem::path& proje
 	const PublisherSettings& settings, std::string& result, const PublisherProgress& progress) {
 	ProjectVersionSettings projectVersion{};
 	if (!ProjectVersionManager::Load(projectRoot, projectVersion, result)) {
-		result = "選択したフォルダーはManoEngine Projectではありません: " + result; return false;
+		result = "選択したフォルダーはCG2Engine Projectではありません: " + result; return false;
 	}
 	// Projectの識別子はProject側のMetadataが正。配布者画面の文字入力を使うと、
 	// Hubの公開先とProject自身のProject IDがずれて「Project IDが一致しません」になる。
@@ -760,7 +760,7 @@ bool PublisherService::PublishProjectSnapshot(const std::filesystem::path& proje
 	const std::string baseUrl = publicHub + "/projects/" + projectId + "/snapshots/" + snapshotId;
 	const std::string collaborationHost = HostOnly(publicHub);
 	std::ostringstream manifest;
-	manifest << "ManoProjectManifest|1\r\nProjectId|" << projectId
+	manifest << "CG2ProjectManifest|1\r\nProjectId|" << projectId
 		<< "\r\nProjectName|" << projectName
 		<< "\r\nRequiredEngineVersion|" << projectVersion.requiredEngineVersion.ToString()
 		<< "\r\nRequiredScriptApiVersion|" << projectVersion.requiredScriptApiVersion
@@ -799,7 +799,7 @@ bool PublisherService::PublishProjectSnapshot(const std::filesystem::path& proje
 		const auto values = Split(line, '|');
 		if (!line.empty() && !(values.size() >= 2U && values[0] == "Project" && values[1] == projectId)) catalogLines.push_back(line);
 	}
-	if (catalogLines.empty() || catalogLines.front() != "ManoProjectCatalog|1") catalogLines.insert(catalogLines.begin(), "ManoProjectCatalog|1");
+	if (catalogLines.empty() || catalogLines.front() != "CG2ProjectCatalog|1") catalogLines.insert(catalogLines.begin(), "CG2ProjectCatalog|1");
 	catalogLines.push_back("Project|" + projectId + "|" + projectName + "|" +
 		projectVersion.requiredEngineVersion.ToString() + "|" + GetEngineUpdateChannelText(projectVersion.updateChannel) +
 		"|/projects/" + projectId + "/project.manifest|" + collaborationHost + "|" + std::to_string(collaborationPort) +
@@ -817,7 +817,7 @@ bool PublisherService::PublishProjectSnapshot(const std::filesystem::path& proje
 
 bool PublisherService::CreatePreview(const PublisherSettings& settings, PublishPreview& preview, std::string& error,
 	const PublisherProgress& progress) {
-	return CreatePreviewForVersion(settings, GetManoEngineVersion(), preview, error, progress);
+	return CreatePreviewForVersion(settings, GetCG2EngineVersion(), preview, error, progress);
 }
 
 bool PublisherService::BuildNextVersionPreview(const PublisherSettings& settings, PublishPreview& preview, std::string& error,
@@ -827,7 +827,7 @@ bool PublisherService::BuildNextVersionPreview(const PublisherSettings& settings
 	const std::filesystem::path versionFile = repositoryRoot / "Engine" / "Version" / "engine-version.json";
 	const std::filesystem::path engineProject = repositoryRoot / "CG2.vcxproj";
 	if (!std::filesystem::is_regular_file(versionFile) || !std::filesystem::is_regular_file(engineProject)) {
-		error = "リリース元は <ManoEngine>\\x64\\Release を指定してください。engine-version.json または CG2.vcxproj が見つかりません。";
+		error = "リリース元は <CG2Engine>\\x64\\Release を指定してください。engine-version.json または CG2.vcxproj が見つかりません。";
 		return false;
 	}
 	if (!ValidateRequiredReleaseFiles(settings.releaseSource, error)) return false;
@@ -967,7 +967,7 @@ bool PublisherService::Publish(const PublisherSettings& settings, const PublishP
 	}
 	if (progress) progress("更新情報を生成中..."); EngineUpdateManifest settingsManifest{};
 	settingsManifest.version = preview.version; settingsManifest.channel = preview.channel;
-	settingsManifest.requiredProjectFormat = GetManoProjectFormatVersion(); settingsManifest.scriptApiVersion = GetManoScriptApiVersion();
+	settingsManifest.requiredProjectFormat = GetCG2ProjectFormatVersion(); settingsManifest.scriptApiVersion = GetCG2ScriptApiVersion();
 	settingsManifest.baseUrl = preview.publicHub + "/engines/" + version; settingsManifest.removedFiles = preview.removedFiles;
 	if (!LauncherUpdate::CreateManifest(pendingRoot, pendingRoot / "engine.manifest", settingsManifest, result)) return false;
 	EngineUpdateManifest generated{}; if (!LauncherUpdate::LoadManifest(pendingRoot / "engine.manifest", generated, result)) return false;
@@ -990,15 +990,15 @@ bool PublisherService::Publish(const PublisherSettings& settings, const PublishP
 	const std::string channelName = Lower(GetEngineUpdateChannelText(preview.channel)); const auto metadataPending = settings.hubRoot / ".publish" / "metadata.pending";
 	std::filesystem::remove_all(metadataPending, ec); std::filesystem::create_directories(metadataPending, ec);
 	std::filesystem::copy_file(package / "engine.manifest", metadataPending / "engine.manifest", std::filesystem::copy_options::overwrite_existing, ec);
-	std::ostringstream hub; hub << "{\r\n  \"formatVersion\": 1,\r\n  \"launcherVersion\": \"" << kManoLauncherVersion << "\",\r\n  \"channels\": {\r\n";
+	std::ostringstream hub; hub << "{\r\n  \"formatVersion\": 1,\r\n  \"launcherVersion\": \"" << kCG2LauncherVersion << "\",\r\n  \"channels\": {\r\n";
 	const char* channels[] = {"Stable", "Beta", "Dev"};
 	for (std::size_t i = 0U; i < 3U; ++i) hub << "    \"" << channels[i] << "\": { \"manifestEndpoint\": \"/update/" << Lower(channels[i])
 		<< "/engine.manifest\" }" << (i < 2U ? "," : "") << "\r\n";
-	hub << "  }\r\n}\r\n"; if (!WriteText(metadataPending / "mano-hub.json", hub.str(), result)) return false;
+	hub << "  }\r\n}\r\n"; if (!WriteText(metadataPending / "cg2-hub.json", hub.str(), result)) return false;
 	std::filesystem::path channelBackup; const auto channelDestination = settings.hubRoot / "update" / channelName / "engine.manifest";
 	if (!ReplaceFileKeepingBackup(metadataPending / "engine.manifest", channelDestination, channelBackup, result)) return false;
 	std::filesystem::path hubBackup;
-	if (!ReplaceFileKeepingBackup(metadataPending / "mano-hub.json", settings.hubRoot / "mano-hub.json", hubBackup, result)) {
+	if (!ReplaceFileKeepingBackup(metadataPending / "cg2-hub.json", settings.hubRoot / "cg2-hub.json", hubBackup, result)) {
 		std::error_code restore; std::filesystem::remove(channelDestination, restore);
 		if (std::filesystem::exists(channelBackup, restore)) std::filesystem::rename(channelBackup, channelDestination, restore);
 		result += "。公開先は旧バージョンへ復元しました"; return false;
@@ -1042,7 +1042,7 @@ bool PublisherServerService::Start(PublisherSettings& settings, const std::files
 	DWORD processId = 0U; if (!StartDetached(executable, arguments, working, processId, result)) return false;
 	std::string error; if (!WriteText(DistributionProcessFile(installRoot), std::to_string(processId) + "\r\n", error)) { result = error; return false; }
 	result = "配布サーバーを開始しました";
-	result += "\r\nLAN内の接続先: " + NormalizeHub(settings.publicHubAddress) + "/mano-hub.json";
+	result += "\r\nLAN内の接続先: " + NormalizeHub(settings.publicHubAddress) + "/cg2-hub.json";
 	result += "\r\n接続できない場合は、Windows ファイアウォールでTCP " +
 		std::to_string(settings.distributionPort) + " の受信を許可してください";
 	return true;
@@ -1132,7 +1132,7 @@ bool PublisherServerService::RunDistributionServer(const std::filesystem::path& 
 		const bool requestTargetValid = DecodeUrlPath(target, decodedTarget);
 		if (requestTargetValid) target = std::move(decodedTarget);
 		std::replace(target.begin(), target.end(), '\\', '/'); while (!target.empty() && target.front() == '/') target.erase(target.begin());
-		if (target.empty() && requestTargetValid) target = "mano-hub.json";
+		if (target.empty() && requestTargetValid) target = "cg2-hub.json";
 		std::filesystem::path filePath; bool safe = requestTargetValid && target.find("..") == std::string::npos;
 		if (safe) { filePath = std::filesystem::weakly_canonical(absoluteRoot / ToWide(target), ec); safe = !ec && filePath.native().starts_with(absoluteRoot.native()); }
 		if (!safe || !std::filesystem::is_regular_file(filePath, ec)) {

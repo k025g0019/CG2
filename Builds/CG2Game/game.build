@@ -1,8 +1,0 @@
-﻿CG2GameBuild|1
-ProductName|CG2Game
-OutputDirectory|Builds/CG2Game
-StartupScene|Assets/Scenes/Title.scene
-ReferencedAssetsOnly|1
-Scene|Assets/Scenes/WaterRailShooter_0817.scene
-Scene|Assets/Scenes/Title.scene
-Scene|Assets/Scenes/Result.scene

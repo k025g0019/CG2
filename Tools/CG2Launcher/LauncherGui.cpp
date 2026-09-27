@@ -411,7 +411,7 @@ namespace {
 
 		if (MessageBoxW(window,
 			L"ブラウザでTailscaleの認証を完了し、参加先のネットワークを選んでください。\r\n\r\n"
-			L"認証が完了したら［OK］を押すと、ManoEngineが自動的に接続先を探します。",
+			L"認証が完了したら［OK］を押すと、CG2Engineが自動的に接続先を探します。",
 			L"Tailscale認証", MB_OKCANCEL | MB_ICONINFORMATION) != IDOK) {
 			result = "Tailscale認証をキャンセルしました";
 			return false;
@@ -449,7 +449,7 @@ namespace {
 
 	void ShowResult(HWND window, WindowState& state, bool succeeded, const std::string& result) {
 		SetStatus(state, result);
-		MessageBoxW(window, ToWide(result).c_str(), succeeded ? L"ManoEngine Hub" : L"ManoEngine Hub - エラー",
+		MessageBoxW(window, ToWide(result).c_str(), succeeded ? L"CG2Engine Hub" : L"CG2Engine Hub - エラー",
 			MB_OK | (succeeded ? MB_ICONINFORMATION : MB_ICONERROR));
 	}
 
@@ -471,7 +471,7 @@ namespace {
 	std::filesystem::path PickInvite(HWND owner) {
 		wchar_t path[32768]{};
 		OPENFILENAMEW dialog{}; dialog.lStructSize = sizeof(dialog); dialog.hwndOwner = owner;
-		dialog.lpstrFilter = L"ManoEngine 招待ファイル (*.mano-invite)\0*.mano-invite\0すべてのファイル\0*.*\0";
+		dialog.lpstrFilter = L"CG2Engine 招待ファイル (*.cg2-invite)\0*.cg2-invite\0すべてのファイル\0*.*\0";
 		dialog.lpstrFile = path; dialog.nMaxFile = _countof(path); dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
 		return GetOpenFileNameW(&dialog) ? std::filesystem::path(path) : std::filesystem::path{};
 	}
@@ -482,13 +482,13 @@ namespace {
 		for (wchar_t& character : defaultName) {
 			if (std::wstring_view(L"<>:\"/\\|?*").find(character) != std::wstring_view::npos) character = L'_';
 		}
-		if (defaultName.empty()) defaultName = L"ManoEngine-Project";
-		defaultName += L".mano-invite";
+		if (defaultName.empty()) defaultName = L"CG2Engine-Project";
+		defaultName += L".cg2-invite";
 		wcsncpy_s(path, defaultName.c_str(), _TRUNCATE);
 
 		OPENFILENAMEW dialog{}; dialog.lStructSize = sizeof(dialog); dialog.hwndOwner = owner;
-		dialog.lpstrFilter = L"ManoEngine 招待ファイル (*.mano-invite)\0*.mano-invite\0すべてのファイル\0*.*\0";
-		dialog.lpstrFile = path; dialog.nMaxFile = _countof(path); dialog.lpstrDefExt = L"mano-invite";
+		dialog.lpstrFilter = L"CG2Engine 招待ファイル (*.cg2-invite)\0*.cg2-invite\0すべてのファイル\0*.*\0";
+		dialog.lpstrFile = path; dialog.nMaxFile = _countof(path); dialog.lpstrDefExt = L"cg2-invite";
 		dialog.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
 		return GetSaveFileNameW(&dialog) ? std::filesystem::path(path) : std::filesystem::path{};
 	}
@@ -508,7 +508,7 @@ namespace {
 		for (wchar_t& character : defaultName) {
 			if (std::wstring_view(L"<>:\"/\\|?*").find(character) != std::wstring_view::npos) character = L'_';
 		}
-		if (defaultName.empty()) defaultName = L"ManoEngine-package";
+		if (defaultName.empty()) defaultName = L"CG2Engine-package";
 		if (!defaultName.ends_with(L".zip")) defaultName += L".zip";
 		wcsncpy_s(path, defaultName.c_str(), _TRUNCATE);
 		OPENFILENAMEW dialog{}; dialog.lStructSize = sizeof(dialog); dialog.hwndOwner = owner;
@@ -752,7 +752,7 @@ namespace {
 		std::vector<RegisteredProject>& projects, std::string& result) {
 		ProjectVersionSettings settings{};
 		if (!ProjectVersionManager::Load(projectRoot, settings, result)) {
-			result = "ManoEngineのプロジェクトではありません: " + result; return false;
+			result = "CG2Engineのプロジェクトではありません: " + result; return false;
 		}
 		for (const auto& existing : projects) {
 			if (existing.projectRoot == projectRoot) { result = "既に登録されています"; return false; }
@@ -847,7 +847,7 @@ namespace {
 				ProjectVersionSettings projectVersion{}; std::string metadataError;
 				if (!project.projectRoot.empty() && ProjectVersionManager::Load(project.projectRoot, projectVersion, metadataError) &&
 					projectVersion.engineVersionPolicy == ProjectEngineVersionPolicy::Pinned) continue;
-				ManoInvite invite{1U, project.projectId, project.projectName, project.hubHost, project.updateChannel, {}, project.projectEndpoint, {}};
+				CG2Invite invite{1U, project.projectId, project.projectName, project.hubHost, project.updateChannel, {}, project.projectEndpoint, {}};
 				std::filesystem::path manifestPath; EngineUpdateManifest available{}; std::string error; EngineVersion installed{};
 				if (EngineVersion::TryParse(project.requiredEngineVersion, installed) && LauncherExperience::ResolveManifest(invite, installRoot, manifestPath, available, error) && installed < available.version) {
 					auto* found = new UpdateFound{ project.projectId,
@@ -859,12 +859,12 @@ namespace {
 	}
 
 	void Setup(HWND window, WindowState& state, const std::filesystem::path& invitePath) {
-		ManoInvite invite{}; std::string error;
+		CG2Invite invite{}; std::string error;
 		if (!LauncherExperience::LoadInvite(invitePath, invite, error)) { ShowResult(window, state, false, error); return; }
 		const std::wstring summary = ToWide(invite.projectName + "\n\n配布サーバー:\n" + invite.hubHost + "\n\n更新種別:\n" +
 			ChannelLabel(invite.updateChannel) + "\n\n必要なエンジン:\n" +
 			(invite.requiredEngineVersion.empty() ? "配布元の指定に従う" : invite.requiredEngineVersion) + "\n\n参加とセットアップを開始しますか？");
-		if (MessageBoxW(window, summary.c_str(), L"ManoEngine プロジェクト招待", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+		if (MessageBoxW(window, summary.c_str(), L"CG2Engine プロジェクト招待", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
 		const auto projectRoot = PickFolder(window, L"取得済みのプロジェクトフォルダーを選択してください。未取得ならキャンセルできます。");
 		SetStatus(state, "配布サーバー確認・エンジン導入・検証中..."); UpdateWindow(window);
 		const bool ok = LauncherExperience::SetupInvite(invitePath, state.installRoot, projectRoot, error);
@@ -875,7 +875,7 @@ namespace {
 	std::filesystem::path EnsureLauncherInstalled(const std::filesystem::path& installRoot) {
 		wchar_t executable[32768]{}; if (GetModuleFileNameW(nullptr, executable, _countof(executable)) == 0U) return {};
 		const std::filesystem::path source(executable);
-		const auto destination = installRoot / "Launcher" / "ManoLauncher.exe";
+		const auto destination = installRoot / "Launcher" / "CG2Launcher.exe";
 		std::error_code ec; std::filesystem::create_directories(destination.parent_path(), ec);
 		const bool same = std::filesystem::exists(destination, ec) && std::filesystem::equivalent(source, destination, ec);
 		if (!same) std::filesystem::copy_file(source, destination, std::filesystem::copy_options::overwrite_existing, ec);
@@ -885,10 +885,10 @@ namespace {
 	void RegisterInviteAssociation(const std::filesystem::path& launcherPath) {
 		const std::wstring executable = launcherPath.wstring(); if (executable.empty()) return;
 		HKEY key = nullptr;
-		if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\.mano-invite", 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) == ERROR_SUCCESS) {
-			const wchar_t type[] = L"ManoEngine.ProjectInvite"; RegSetValueExW(key, nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(type), sizeof(type)); RegCloseKey(key);
+		if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\.cg2-invite", 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) == ERROR_SUCCESS) {
+			const wchar_t type[] = L"CG2Engine.ProjectInvite"; RegSetValueExW(key, nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(type), sizeof(type)); RegCloseKey(key);
 		}
-		if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\ManoEngine.ProjectInvite\\shell\\open\\command", 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) == ERROR_SUCCESS) {
+		if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\CG2Engine.ProjectInvite\\shell\\open\\command", 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) == ERROR_SUCCESS) {
 			const std::wstring command = L"\"" + executable + L"\" \"%1\"";
 			RegSetValueExW(key, nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(command.c_str()), static_cast<DWORD>((command.size() + 1U) * sizeof(wchar_t))); RegCloseKey(key);
 		}
@@ -945,7 +945,7 @@ namespace {
 		MakeButton(window, state, HubPage::Projects, L"Hubへ公開", kContentLeft + 158, 472, 150, IdPublishProjectToHub);
 		MakeButton(window, state, HubPage::Projects, L"招待を作成", kContentLeft + 316, 472, 140, IdCreateInvite);
 		MakeLabel(window, state, HubPage::Projects,
-			L"招待ファイル (.mano-invite) は、ドラッグ＆ドロップでも開けます。", kContentLeft + 466, 478, 430, 40);
+			L"招待ファイル (.cg2-invite) は、ドラッグ＆ドロップでも開けます。", kContentLeft + 466, 478, 430, 40);
 
 		MakeButton(window, state, HubPage::Projects, L"ProjectをZIP出力", kContentLeft, 518, 170, IdExportProjectZip, 30);
 		MakeButton(window, state, HubPage::Projects, L"Project ZIPを取込", kContentLeft + 180, 518, 170, IdImportProjectZip, 30);
@@ -1036,7 +1036,7 @@ namespace {
 			CreateWindowW(L"BUTTON", L"インストール", WS_CHILD | WS_VISIBLE, 16, 66, 176, 40, window, reinterpret_cast<HMENU>(IdNavInstalls), nullptr, nullptr);
 			CreateWindowW(L"BUTTON", L"更新", WS_CHILD | WS_VISIBLE, 16, 112, 176, 40, window, reinterpret_cast<HMENU>(IdNavUpdates), nullptr, nullptr);
 			CreateWindowW(L"BUTTON", L"設定", WS_CHILD | WS_VISIBLE, 16, 158, 176, 40, window, reinterpret_cast<HMENU>(IdNavSettings), nullptr, nullptr);
-			CreateWindowW(L"STATIC", ToWide(std::string("ManoEngine Hub ") + kManoLauncherVersion).c_str(),
+			CreateWindowW(L"STATIC", ToWide(std::string("CG2Engine Hub ") + kCG2LauncherVersion).c_str(),
 				WS_CHILD | WS_VISIBLE, 16, 214, 176, 40, window, nullptr, nullptr, nullptr);
 
 			BuildProjectsPage(window, *state);
@@ -1092,7 +1092,7 @@ namespace {
 			SetStatus(*state, completed->message);
 			const std::wstring question = ToWide(completed->message +
 				"\r\n\r\n保存先をExplorerで開きますか？");
-			if (MessageBoxW(window, question.c_str(), L"ManoEngine Hub - 参加完了",
+			if (MessageBoxW(window, question.c_str(), L"CG2Engine Hub - 参加完了",
 				MB_YESNO | MB_ICONINFORMATION) == IDYES) {
 				std::string openError;
 				if (!OpenFolderInExplorer(window, completed->installedProjectRoot, openError)) {
@@ -1386,7 +1386,7 @@ namespace {
 					ShowResult(window, *state, false, "Portable ZIPにする導入済みEngineを選んでください"); return 0;
 				}
 				const std::string version = state->installedEngineVersions[static_cast<std::size_t>(selected)];
-				const auto output = PickZipOutput(window, "ManoEngine-" + version);
+				const auto output = PickZipOutput(window, "CG2Engine-" + version);
 				if (output.empty()) return 0;
 				std::string result;
 				const bool ok = LauncherExperience::ExportPortableEngine(state->installRoot, version, output, result);
@@ -1507,7 +1507,7 @@ namespace {
 					ShowResult(window, *state, false, result); return 0;
 				}
 
-				ManoInvite invite{};
+				CG2Invite invite{};
 				invite.formatVersion = 1U;
 				// Projectフォルダーが持つMetadataのIDが正。配布者画面の文字入力を使うと、
 				// Hubの公開先とProject自身のIDがずれて「Project IDが一致しません」になる。
@@ -1573,7 +1573,7 @@ namespace {
 				if (!ProjectVersionManager::Load(project->projectRoot, projectVersion, result)) { ShowResult(window, *state, false, result); return 0; }
 				EngineVersion selected{};
 				if (!EngineVersion::TryParse(project->requiredEngineVersion, selected)) { ShowResult(window, *state, false, "プロジェクトのエンジンバージョンが不正です"); return 0; }
-				ManoInvite updateInvite{1U, project->projectId, project->projectName, project->hubHost, project->updateChannel,
+				CG2Invite updateInvite{1U, project->projectId, project->projectName, project->hubHost, project->updateChannel,
 					projectVersion.engineVersionPolicy == ProjectEngineVersionPolicy::Pinned ? projectVersion.requiredEngineVersion.ToString() : std::string{}, project->projectEndpoint, {}};
 				std::error_code installedError; const bool installed = std::filesystem::exists(
 					LauncherUpdate::GetInstalledManifestPath(state->installRoot, selected), installedError);
@@ -1626,7 +1626,7 @@ namespace {
 						: LauncherUpdate::Apply(manifest, state->installRoot, project->projectRoot, true, result);
 				}
 			} else if (id == IdUpdate) {
-				ManoInvite invite{1U, project->projectId, project->projectName, project->hubHost, project->updateChannel, {}, project->projectEndpoint, {}};
+				CG2Invite invite{1U, project->projectId, project->projectName, project->hubHost, project->updateChannel, {}, project->projectEndpoint, {}};
 				ProjectVersionSettings settings{}; std::string metadataError;
 				if (!project->projectRoot.empty() && ProjectVersionManager::Load(project->projectRoot, settings, metadataError) && settings.engineVersionPolicy == ProjectEngineVersionPolicy::Pinned) {
 					invite.requiredEngineVersion = settings.requiredEngineVersion.ToString();
@@ -1691,11 +1691,11 @@ int LauncherGui::Run(HINSTANCE instance, const std::filesystem::path& initialInv
 	const auto installRoot = LauncherExperience::DefaultInstallRoot();
 	RegisterInviteAssociation(EnsureLauncherInstalled(installRoot));
 	WNDCLASSEXW type{}; type.cbSize = sizeof(type); type.hInstance = instance; type.lpfnWndProc = WindowProc;
-	type.lpszClassName = L"ManoLauncherWindow"; type.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+	type.lpszClassName = L"CG2LauncherWindow"; type.hCursor = LoadCursorW(nullptr, IDC_ARROW);
 	type.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1); type.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
 	if (!RegisterClassExW(&type) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return 1;
 	WindowState state{}; state.installRoot = installRoot;
-	HWND window = CreateWindowExW(0, type.lpszClassName, L"ManoEngine Hub", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+	HWND window = CreateWindowExW(0, type.lpszClassName, L"CG2Engine Hub", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
 		CW_USEDEFAULT, CW_USEDEFAULT, kWindowWidth, kWindowHeight, nullptr, nullptr, instance, &state);
 	if (!window) return 1;
 	ShowWindow(window, SW_SHOW); UpdateWindow(window);

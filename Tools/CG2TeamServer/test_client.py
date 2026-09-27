@@ -1,4 +1,4 @@
-﻿# ManoTeamServer の接続動作を確認する検証Client。
+﻿# CG2TeamServer の接続動作を確認する検証Client。
 # Editorを起動せずに、Server側の契約だけを機械的に確かめる。
 #   1. MagicDNS/Hostname 解決で接続できること(localhost名で確認)
 #   2. Protocol不一致を拒否すること

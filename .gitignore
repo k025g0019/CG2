@@ -405,3 +405,30 @@ Tools/Whisper/*
 .git/
 .codex/
 imgui.ini
+
+# ここから CG2 リポジトリ固有の除外
+# Player/Game のビルド成果物。過去に追跡していたが Git へ上げる必要はない。
+Builds/
+
+# 未使用外部ライブラリの保管場所。中身は外部配布物なので追跡しない。
+UnusedLibraries/*
+!UnusedLibraries/README.md
+
+# Script の Build 生成物。*.cpp / *.h / build_*.bat だけ追跡する。
+resources/scripts/**/*.dll
+resources/scripts/**/*.lib
+resources/scripts/**/*.exp
+resources/scripts/**/*.pdb
+resources/scripts/**/*.ilk
+
+# Shader / Script の実行時キャッシュ。
+runtime_cache/*.dxil
+runtime_cache/scripts/**/*.dll
+runtime_cache/scripts/**/*.lib
+runtime_cache/scripts/**/*.exp
+runtime_cache/scripts/**/*.pdb
+runtime_cache/scripts/**/*.ilk
+
+# Physics SDK の Smoke Test 成果物。
+BuildLogs/*.exe
+BuildLogs/*.dll

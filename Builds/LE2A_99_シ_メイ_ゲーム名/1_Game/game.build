@@ -1,8 +1,0 @@
-﻿CG2GameBuild|1
-ProductName|LE2B_26_マノ_ショウタ_海に流れて
-OutputDirectory|Builds/dasuyou
-StartupScene|Assets/Scenes/Title.scene
-ReferencedAssetsOnly|1
-Scene|Assets/Scenes/WaterRailShooter_0817.scene
-Scene|Assets/Scenes/Title.scene
-Scene|Assets/Scenes/Result.scene

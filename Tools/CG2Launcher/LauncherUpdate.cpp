@@ -66,7 +66,7 @@ namespace {
 
 	bool SaveState(const std::filesystem::path& root, const LauncherState& state, std::string& error) {
 		std::ostringstream text;
-		text << "ManoLauncherState|1\r\nCurrentVersion|" << state.currentVersion
+		text << "CG2LauncherState|1\r\nCurrentVersion|" << state.currentVersion
 			<< "\r\nPreviousVersion|" << state.previousVersion << "\r\nChannel|"
 			<< GetEngineUpdateChannelText(state.channel) << "\r\nManifestLocation|" << state.manifestLocation << "\r\n";
 		return WriteAtomic(LauncherUpdate::GetLauncherStateDirectory(root) / "launcher.state", text.str(), error);
@@ -186,11 +186,11 @@ bool LauncherUpdate::LoadManifest(const std::filesystem::path& path, EngineUpdat
 bool LauncherUpdate::CreateManifest(const std::filesystem::path& packageDirectory,
 	const std::filesystem::path& outputPath, const EngineUpdateManifest& settings, std::string& error) {
 	std::ostringstream text;
-	text << "ManoEngineUpdateManifest|1\r\nEngineVersion|" << settings.version.ToString()
+	text << "CG2EngineUpdateManifest|1\r\nEngineVersion|" << settings.version.ToString()
 		<< "\r\nChannel|" << GetEngineUpdateChannelText(settings.channel)
 		<< "\r\nRequiredProjectFormat|" << settings.requiredProjectFormat << "\r\nBaseUrl|" << settings.baseUrl << "\r\n";
 	// Script API is independent from Engine and Project format versions. Older manifests omit this optional line.
-	text << "ScriptApiVersion|" << (settings.scriptApiVersion == 0U ? GetManoScriptApiVersion() : settings.scriptApiVersion) << "\r\n";
+	text << "ScriptApiVersion|" << (settings.scriptApiVersion == 0U ? GetCG2ScriptApiVersion() : settings.scriptApiVersion) << "\r\n";
 	std::error_code ec;
 	for (const auto& entry : std::filesystem::recursive_directory_iterator(packageDirectory,
 		std::filesystem::directory_options::skip_permission_denied, ec)) {

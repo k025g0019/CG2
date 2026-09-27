@@ -1,3 +1,0 @@
-edition = "unstable_2025"
-include = [ "**/*.wesl" ]
-root = "."

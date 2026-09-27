@@ -49,7 +49,7 @@ namespace {
 		if (url.empty()) return Value(args, L"--manifest");
 		wchar_t temporaryRoot[MAX_PATH]{};
 		if (GetTempPathW(_countof(temporaryRoot), temporaryRoot) == 0U) { error = "Temp Pathを取得できません"; return {}; }
-		const std::filesystem::path cache = std::filesystem::path(temporaryRoot) / "ManoLauncher" / "engine.manifest";
+		const std::filesystem::path cache = std::filesystem::path(temporaryRoot) / "CG2Launcher" / "engine.manifest";
 		std::error_code ec; std::filesystem::create_directories(cache.parent_path(), ec);
 		const std::string urlText = ToUtf8(url);
 		if (ec || !DownloadHttpFile(urlText, cache, error)) {
@@ -66,7 +66,7 @@ namespace {
 		catch (...) { return fallback; }
 	}
 	void PrintHelp() {
-		std::cout << "ManoLauncher " << kManoLauncherVersion << " / Engine tools " << GetManoEngineDisplayVersion() << "\n"
+		std::cout << "CG2Launcher " << kCG2LauncherVersion << " / Engine tools " << GetCG2EngineDisplayVersion() << "\n"
 			<< "  install|update|repair --manifest <engine.manifest> --root <EngineRoot> [--project <Project>]\n"
 			<< "    Remote manifest: --manifest-url https://server/channel/engine.manifest\n"
 			<< "  verify --manifest <engine.manifest> --root <EngineRoot>\n"
@@ -80,8 +80,8 @@ namespace {
 			<< "  publish-project --project <ProjectFolder> [--root <InstallRoot>]\n"
 			<< "  publisher-config|publisher-preview|publisher-publish [Publisher settings]\n"
 			<< "  publisher-server --action start|stop|restart|status\n"
-			<< "  create-invite --output <File.mano-invite> --project-id <Id> --project-name <Name> --hub <Host> --channel <Channel> [--required-engine <Version>]\n"
-			<< "  setup-invite --invite <File.mano-invite> [--root <InstallRoot>] [--project <ProjectFolder>]\n";
+			<< "  create-invite --output <File.cg2-invite> --project-id <Id> --project-name <Name> --hub <Host> --channel <Channel> [--required-engine <Version>]\n"
+			<< "  setup-invite --invite <File.cg2-invite> [--root <InstallRoot>] [--project <ProjectFolder>]\n";
 	}
 }
 
@@ -89,7 +89,7 @@ int wmain(int argc, wchar_t** argv) {
 	std::vector<std::wstring> args(argv, argv + argc);
 	if (argc < 2) { HideConsoleForGui(); return LauncherGui::Run(GetModuleHandleW(nullptr), {}); }
 	if (args[1] == L"--gui") { HideConsoleForGui(); return LauncherGui::Run(GetModuleHandleW(nullptr), {}); }
-	if (std::filesystem::path(args[1]).extension() == L".mano-invite") {
+	if (std::filesystem::path(args[1]).extension() == L".cg2-invite") {
 		HideConsoleForGui(); return LauncherGui::Run(GetModuleHandleW(nullptr), args[1]);
 	}
 	const std::wstring command = args[1];
@@ -178,7 +178,7 @@ int wmain(int argc, wchar_t** argv) {
 			const std::wstring peerChannelWide = WideValue(args, L"--peer-channel");
 			const std::wstring peerFormatWide = WideValue(args, L"--peer-format");
 			const std::wstring peerApiWide = WideValue(args, L"--peer-api");
-			succeeded = CheckManoEnginePeerCompatibility(
+			succeeded = CheckCG2EnginePeerCompatibility(
 				ToUtf8(peerEngineWide),
 				static_cast<std::uint32_t>(std::wcstoul(peerFormatWide.c_str(), nullptr, 10)),
 				static_cast<std::uint32_t>(std::wcstoul(peerApiWide.c_str(), nullptr, 10)),
@@ -205,20 +205,20 @@ int wmain(int argc, wchar_t** argv) {
 		const std::string versionText = version.string();
 		const std::string channelText = channel.string();
 		settings.baseUrl = base.string();
-		settings.requiredProjectFormat = GetManoProjectFormatVersion();
-		settings.scriptApiVersion = GetManoScriptApiVersion();
+		settings.requiredProjectFormat = GetCG2ProjectFormatVersion();
+		settings.scriptApiVersion = GetCG2ScriptApiVersion();
 		if (!EngineVersion::TryParse(versionText, settings.version) || !TryParseEngineUpdateChannel(channelText, settings.channel)) result = "Version/Channelが不正です";
 		else succeeded = LauncherUpdate::CreateManifest(Value(args, L"--package"), Value(args, L"--output"), settings, result);
 	} else if (command == L"publish-engine") {
 		EngineUpdateManifest settings{};
-		settings.requiredProjectFormat = GetManoProjectFormatVersion(); settings.scriptApiVersion = GetManoScriptApiVersion();
+		settings.requiredProjectFormat = GetCG2ProjectFormatVersion(); settings.scriptApiVersion = GetCG2ScriptApiVersion();
 		const std::string versionText = Value(args, L"--version").string();
 		const std::string channelText = Value(args, L"--channel").string();
 		if (!EngineVersion::TryParse(versionText, settings.version) || !TryParseEngineUpdateChannel(channelText, settings.channel)) result = "Version/Channelが不正です";
 		else succeeded = LauncherExperience::PublishEngine(Value(args, L"--release"), Value(args, L"--output"), settings,
 			ToUtf8(WideValue(args, L"--hub")), result);
 	} else if (command == L"create-invite") {
-		ManoInvite invite{}; invite.formatVersion = 1U;
+		CG2Invite invite{}; invite.formatVersion = 1U;
 		invite.projectId = ToUtf8(WideValue(args, L"--project-id")); invite.projectName = ToUtf8(WideValue(args, L"--project-name"));
 		invite.hubHost = ToUtf8(WideValue(args, L"--hub")); invite.requiredEngineVersion = ToUtf8(WideValue(args, L"--required-engine"));
 		invite.projectEndpoint = ToUtf8(WideValue(args, L"--project-endpoint"));

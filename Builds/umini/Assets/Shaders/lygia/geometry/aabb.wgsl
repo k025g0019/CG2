@@ -1,6 +1,0 @@
-#include "aabb/centroid.wgsl"
-#include "aabb/contain.wgsl"
-#include "aabb/diagonal.wgsl"
-#include "aabb/expand.wgsl"
-#include "aabb/intersect.wgsl"
-#include "aabb/square.wgsl"

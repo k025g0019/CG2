@@ -76,9 +76,9 @@ namespace {
 	}
 
 	std::filesystem::path PickInviteOutput(HWND owner) {
-		wchar_t path[32768] = L"MyGame.mano-invite"; OPENFILENAMEW dialog{}; dialog.lStructSize = sizeof(dialog); dialog.hwndOwner = owner;
-		dialog.lpstrFilter = L"ManoEngine 招待ファイル (*.mano-invite)\0*.mano-invite\0"; dialog.lpstrFile = path; dialog.nMaxFile = _countof(path);
-		dialog.lpstrDefExt = L"mano-invite"; dialog.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+		wchar_t path[32768] = L"MyGame.cg2-invite"; OPENFILENAMEW dialog{}; dialog.lStructSize = sizeof(dialog); dialog.hwndOwner = owner;
+		dialog.lpstrFilter = L"CG2Engine 招待ファイル (*.cg2-invite)\0*.cg2-invite\0"; dialog.lpstrFile = path; dialog.nMaxFile = _countof(path);
+		dialog.lpstrDefExt = L"cg2-invite"; dialog.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
 		return GetSaveFileNameW(&dialog) ? std::filesystem::path(path) : std::filesystem::path{};
 	}
 
@@ -172,8 +172,8 @@ namespace {
 
 	void RefreshInfo(PublisherWindowState& state) {
 		const auto distribution = PublisherServerService::GetStatus(state.settings, state.installRoot);
-		std::ostringstream text; text << "エンジン " << GetManoEngineDisplayVersion() << "    プロジェクト形式 " << GetManoProjectFormatVersion()
-			<< "    スクリプトAPI " << GetManoScriptApiVersion() << "\r\n安定版: " << PublishedVersion(state.settings, EngineUpdateChannel::Stable)
+		std::ostringstream text; text << "エンジン " << GetCG2EngineDisplayVersion() << "    プロジェクト形式 " << GetCG2ProjectFormatVersion()
+			<< "    スクリプトAPI " << GetCG2ScriptApiVersion() << "\r\n安定版: " << PublishedVersion(state.settings, EngineUpdateChannel::Stable)
 			<< "    ベータ版: " << PublishedVersion(state.settings, EngineUpdateChannel::Beta) << "    開発版: " << PublishedVersion(state.settings, EngineUpdateChannel::Dev)
 			<< "\r\n配布サーバー: " << distribution.detail;
 		SetWindowTextW(state.serverStatus, ToWide(text.str()).c_str());
@@ -335,11 +335,11 @@ namespace {
 			if (id == IdCheck) { ReadControls(*state); RefreshInfo(*state); SetWindowTextW(state->progress, L"サーバー確認完了"); return 0; }
 			if (id == IdCreateInvite) {
 				ReadControls(*state); const auto output = PickInviteOutput(window); if (output.empty()) return 0;
-				ManoInvite invite{}; invite.formatVersion = 1U; invite.projectId = state->settings.collaborationProjectId;
+				CG2Invite invite{}; invite.formatVersion = 1U; invite.projectId = state->settings.collaborationProjectId;
 				invite.projectName = state->settings.collaborationProjectName;
 				// 設定どおりのアドレスが必ず繋がるとは限らないため、応答した候補を選んで書き出す。
 				invite.hubHost = PublisherServerService::ResolveReachableHubAddress(state->settings, state->settings.publicHubAddress);
-				invite.updateChannel = state->settings.defaultChannel; invite.requiredEngineVersion = GetManoEngineDisplayVersion();
+				invite.updateChannel = state->settings.defaultChannel; invite.requiredEngineVersion = GetCG2EngineDisplayVersion();
 				invite.projectEndpoint = "/projects/" + state->settings.collaborationProjectId + "/project.manifest";
 				// 共同制作Serverの接続先が無いと、参加してもEditorが同じ部屋へ入れない。
 				invite.collaborationHost = PublisherServerService::ResolveCollaborationHost(state->settings);
@@ -362,11 +362,11 @@ void PublisherGui::Open(HINSTANCE instance, HWND owner, const std::filesystem::p
 	static bool registered = false;
 	if (!registered) {
 		WNDCLASSEXW type{}; type.cbSize = sizeof(type); type.hInstance = instance; type.lpfnWndProc = PublisherProc;
-		type.lpszClassName = L"ManoPublisherWindow"; type.hCursor = LoadCursorW(nullptr, IDC_ARROW); type.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+		type.lpszClassName = L"CG2PublisherWindow"; type.hCursor = LoadCursorW(nullptr, IDC_ARROW); type.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
 		registered = RegisterClassExW(&type) != 0U || GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
 	}
 	auto* state = new PublisherWindowState{}; state->installRoot = installRoot; std::string error; PublisherService::LoadSettings(installRoot, state->settings, error);
-	HWND window = CreateWindowExW(WS_EX_APPWINDOW, L"ManoPublisherWindow", L"ManoEngine ランチャー - 配布者", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+	HWND window = CreateWindowExW(WS_EX_APPWINDOW, L"CG2PublisherWindow", L"CG2Engine ランチャー - 配布者", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
 		CW_USEDEFAULT, CW_USEDEFAULT, 960, 740, owner, nullptr, instance, state);
 	if (!window) { delete state; return; } ShowWindow(window, SW_SHOW); UpdateWindow(window);
 }

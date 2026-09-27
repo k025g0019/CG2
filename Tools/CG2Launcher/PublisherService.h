@@ -69,7 +69,7 @@ public:
 	static bool CreatePreview(const PublisherSettings& settings, PublishPreview& preview, std::string& error,
 		const PublisherProgress& progress = {});
 	// リリース元からリポジトリを特定し、build 番号を一つ進めて Engine をビルドした後に公開内容を作る。
-	// Launcher 自身は実行中に上書きできないため、この操作では ManoEngine だけをビルドする。
+	// Launcher 自身は実行中に上書きできないため、この操作では CG2Engine だけをビルドする。
 	static bool BuildNextVersionPreview(const PublisherSettings& settings, PublishPreview& preview, std::string& error,
 		const PublisherProgress& progress = {});
 	static bool CreatePreviewForVersion(const PublisherSettings& settings, const EngineVersion& version,

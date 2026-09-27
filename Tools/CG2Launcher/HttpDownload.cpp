@@ -80,7 +80,7 @@ bool DownloadHttpFile(const std::string& url, const std::filesystem::path& desti
 	const DWORD accessType = ShouldBypassAutomaticProxy(host)
 		? WINHTTP_ACCESS_TYPE_NO_PROXY
 		: WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY;
-	InternetHandle session{WinHttpOpen(L"ManoLauncher/1.0", accessType,
+	InternetHandle session{WinHttpOpen(L"CG2Launcher/1.0", accessType,
 		WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0U)};
 	if (!session.value) { error = "HTTP Sessionを作成できません"; return false; }
 	WinHttpSetTimeouts(session.value, 5000, 5000, 15000, 30000);

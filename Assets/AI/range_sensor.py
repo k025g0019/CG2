@@ -1,4 +1,4 @@
-﻿# ManoEngine Python AI sensor template
+﻿# CG2Engine Python AI sensor template
 # 互換形式: 0 または 1
 # 詳細形式: 1|label=Target|confidence=0.8|distance=3.2|text=...|command=...
 

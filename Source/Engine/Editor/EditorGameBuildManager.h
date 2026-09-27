@@ -15,8 +15,8 @@ enum class EditorGameBuildConfiguration : int32_t {
 };
 
 struct EditorGameBuildSettings {
-	std::string productName = "ManoEngineGame";
-	std::string outputDirectory = "Builds/ManoEngineGame";
+	std::string productName = "CG2EngineGame";
+	std::string outputDirectory = "Builds/CG2EngineGame";
 	std::string startupScenePath;
 	std::vector<std::string> scenePaths;
 	EditorGameBuildConfiguration configuration = EditorGameBuildConfiguration::Release;

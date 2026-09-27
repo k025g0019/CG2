@@ -6,14 +6,14 @@
 #pragma warning(push)
 #pragma warning(disable : 4820)
 
-namespace ManoCollaboration {
+namespace CG2Collaboration {
 
-// Editor と ManoTeamServer が共有する通信規約。
+// Editor と CG2TeamServer が共有する通信規約。
 // 遠隔共同制作では異なるEngine Buildが接続し得るため、接続時に必ず突き合わせる。
 //
 // Version履歴:
 //   1 : Editor内Host同士のLAN接続(暗黙。handshakeにprotocol項目が無い旧Build)
-//   2 : ManoTeamServer導入。projectId / protocolVersion / heartbeat を追加
+//   2 : CG2TeamServer導入。projectId / protocolVersion / heartbeat を追加
 //   3 : Snapshot Revision、履歴再送、Offline 3-way同期を追加
 constexpr std::uint32_t kCollaborationProtocolVersion = 3u;
 
@@ -69,6 +69,6 @@ inline bool IsValidProjectId(const std::string& projectId) {
 	return true;
 }
 
-}  // namespace ManoCollaboration
+}  // namespace CG2Collaboration
 
 #pragma warning(pop)

@@ -1,12 +1,12 @@
-# ManoEngine Online Services (Cloudflare Worker)
+# CG2Engine Online Services (Cloudflare Worker)
 
-ManoEngine の `OnlineService` がそのまま呼べる Cloudflare Worker の参照実装です。
+CG2Engine の `OnlineService` がそのまま呼べる Cloudflare Worker の参照実装です。
 ゲーム側は HTTP を直接書かず、Engine の `OnlineService` / `Leaderboard` / `CloudSave` API を使います。
 
 ## 構成
 
 ```
-Game (ManoEngine)
+Game (CG2Engine)
   ↓ HTTPS
 Cloudflare Workers (src/index.js)
   ↓
@@ -45,10 +45,10 @@ Engine 側が自動で付けます。
 
 | Header | 内容 |
 |--------|------|
-| `X-ManoEngine-Game-Id` | Project Settings の Game ID |
-| `X-ManoEngine-Environment` | `development` / `production` |
-| `X-ManoEngine-Client-Key` | Project Settings の Client Key（公開鍵） |
-| `X-ManoEngine-Player-Id` | 実行中の Player ID |
+| `X-CG2Engine-Game-Id` | Project Settings の Game ID |
+| `X-CG2Engine-Environment` | `development` / `production` |
+| `X-CG2Engine-Client-Key` | Project Settings の Client Key（公開鍵） |
+| `X-CG2Engine-Player-Id` | 実行中の Player ID |
 
 Client Key は「そのゲームからの Request か」を見るだけの公開鍵です。
 これ 1 つで重要データを書き換えられない構造にしてあります（共有データ書き込みは別途 `ADMIN_KEY` が必要）。
@@ -60,14 +60,14 @@ npm install -g wrangler
 wrangler login
 
 # 開発用リソースを作る
-wrangler d1 create manoengine-online-dev
+wrangler d1 create cg2engine-online-dev
 wrangler kv namespace create ONLINE_KV
-wrangler r2 bucket create manoengine-online-dev
+wrangler r2 bucket create cg2engine-online-dev
 
 # wrangler.toml の database_id / kv id を、作成時に表示された値へ書き換える
 
 # スキーマ適用
-wrangler d1 execute manoengine-online-dev --file=./schema.sql
+wrangler d1 execute cg2engine-online-dev --file=./schema.sql
 
 # 公開鍵・管理鍵を登録（ファイルへは書かない）
 wrangler secret put DEVELOPMENT_CLIENT_KEY
@@ -81,13 +81,13 @@ wrangler deploy
 本番は `--env production` を付けて、Database も KV も R2 も別リソースにします。
 
 ```bash
-wrangler d1 create manoengine-online-prod
-wrangler d1 execute manoengine-online-prod --file=./schema.sql
+wrangler d1 create cg2engine-online-prod
+wrangler d1 execute cg2engine-online-prod --file=./schema.sql
 wrangler secret put PRODUCTION_CLIENT_KEY --env production
 wrangler deploy --env production
 ```
 
-## ManoEngine 側の設定
+## CG2Engine 側の設定
 
 Inspector の「プロジェクト設定 → Online Services」で次を設定します。
 

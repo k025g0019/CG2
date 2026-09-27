@@ -44,7 +44,7 @@ index c6a4fb7..f1f5b7c 100644
  export default function EngineSpecPage() {
    return <DocsShell>
 -    <DocHeader eyebrow="CURRENT ENGINE SPEC / 08" title="利用者が使える範囲を確認する。" lead="現行Buildで利用できる環境、Editor機能、Project互換、Component、Script、描画、共同制作の対応範囲を利用者向けに整理します。内部の所有関係や処理順は別の内部仕様ページで説明します。" meta={`ENGINE / ${engineVersion.display} · API VERSION / ${engineVersion.scriptApi} · PROJECT FORMAT / ${engineVersion.projectFormat}`} />
-+    <DocHeader eyebrow="CURRENT ENGINE SPEC" title="ManoEngineの対応範囲。" lead="現行Buildで利用できる環境、Editor機能、Project互換、Component、Script、描画、共同制作の対応範囲をまとめます。" meta={`ENGINE / ${engineVersion.display} · API VERSION / ${engineVersion.scriptApi} · PROJECT FORMAT / ${engineVersion.projectFormat}`} />
++    <DocHeader eyebrow="CURRENT ENGINE SPEC" title="CG2Engineの対応範囲。" lead="現行Buildで利用できる環境、Editor機能、Project互換、Component、Script、描画、共同制作の対応範囲をまとめます。" meta={`ENGINE / ${engineVersion.display} · API VERSION / ${engineVersion.scriptApi} · PROJECT FORMAT / ${engineVersion.projectFormat}`} />
      <div className="doc-badge-row"><StatusPill tone="stable">WINDOWS 64 BIT</StatusPill><StatusPill tone="stable">DIRECTX 12</StatusPill><StatusPill tone="partial">CURRENT BUILD</StatusPill></div>
      <Callout title="現行値を優先する" tone="note"><p>現在の基準はComponent 287種類、Runtime API 413 Entry、Script Template 26種類、Inspector 1,981 Field / 278 Componentです。過去の評価章や追加時点の件数は履歴として扱います。</p></Callout>
      <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">SUPPORTED SCOPE</p><h2>利用できる環境</h2></div><div className="two-column-doc"><div><h3>Editor / Game</h3><p>Windows 64 bit、DirectX 12、Dear ImGui Docking、XAudio2、Jolt Physics、FBX/OBJ Import、C++ DLL Scriptを基準にします。</p></div><div><h3>対象外</h3><p>Linux/macOS Editor、Vulkan/Metal Renderer、Web Buildは現行仕様に含まれません。外部DeviceやNetworkも利用できない場合の代替経路を用意します。</p></div></div></section>
@@ -79,8 +79,8 @@ index 0000000..77907b5
 +import { DocHeader, DocsShell } from "../../../ui";
 +
 +export default function CollaborationInternalsPage() {
-+  return <DocsShell><DocHeader eyebrow="INTERNAL SPEC / COLLABORATION" title="共同制作のRevisionと同期責務" lead="Editor、ManoTeamServer、Launcher、Asset Registry間の通信と永続化をまとめます。" meta="SOURCE / team-collaboration-internals.md" />
-+    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">OWNERSHIP</p><h2>同期データの所有者</h2></div><div className="detail-card-grid"><article><h3>Editor Manager</h3><p><code>EditorTeamCollaborationManager</code>が接続状態、差分、Revision、Lock、Presence、履歴、競合、TeamItemを所有します。</p></article><article><h3>ManoTeamServer</h3><p>Project単位でRevisionを確定し、変更配信、履歴再送、Heartbeat、接続上限を管理します。</p></article><article><h3>Asset Registry</h3><p>受信Assetを登録し、依存索引とHot Reload通知へ接続します。各Editor Windowは同期データ本体を保持しません。</p></article></div></section>
++  return <DocsShell><DocHeader eyebrow="INTERNAL SPEC / COLLABORATION" title="共同制作のRevisionと同期責務" lead="Editor、CG2TeamServer、Launcher、Asset Registry間の通信と永続化をまとめます。" meta="SOURCE / team-collaboration-internals.md" />
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">OWNERSHIP</p><h2>同期データの所有者</h2></div><div className="detail-card-grid"><article><h3>Editor Manager</h3><p><code>EditorTeamCollaborationManager</code>が接続状態、差分、Revision、Lock、Presence、履歴、競合、TeamItemを所有します。</p></article><article><h3>CG2TeamServer</h3><p>Project単位でRevisionを確定し、変更配信、履歴再送、Heartbeat、接続上限を管理します。</p></article><article><h3>Asset Registry</h3><p>受信Assetを登録し、依存索引とHot Reload通知へ接続します。各Editor Windowは同期データ本体を保持しません。</p></article></div></section>
 +    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">CHANGE FLOW</p><h2>変更確定の流れ</h2></div><div className="numbered-steps"><article><span>01</span><h3>Change Event</h3><p>変更をchangeId、baseRevision、Scene/Object/Component UUID、Operation、Payloadへ正規化します。</p></article><article><span>02</span><h3>Host Commit</h3><p>HostまたはServerが全体順序Revisionを付け、Commitを認証済みPeerへ配信します。</p></article><article><span>03</span><h3>履歴と復旧</h3><p>Commitをchange-logへ追記し、未同期変更は再接続後にBase Revisionと比較します。競合内容は上書きせず退避します。</p></article></div></section>
 +    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">PROTOCOL</p><h2>Handshakeと途中参加</h2></div><p className="section-intro">HandshakeでProtocol、Project ID、Engine互換情報を検証します。途中参加用SnapshotやHandshake応答は宛先User IDを付け、認証前Payloadと他Client宛Messageを適用しません。Protocol 3はSnapshot Revision、履歴再送、Offline 3-way同期を含みます。</p><Link className="text-link" href="/docs/team-collaboration">共同制作の設定と使い方 →</Link></section>
 +    <Link className="text-link" href="/docs/internal-specs">内部仕様の分野一覧へ →</Link>
@@ -118,7 +118,7 @@ index 7cd49d2..3b0f462 100644
 -  ["03", "データ保存・互換性", "Project、Scene、Prefab、Asset Registry、Hash、依存、Backup、Invite、共同制作Change Log。"],
 -  ["04", "Rendering Pipeline", "DirectX 12 Pass、GPU Resource、Barrier、Scene/Game View、Temporal History、Bloom、SMAA、SSR。"],
 -  ["05", "外部連携内部設計", "Speech、Vision、Haptics、OnlineのBackend、Thread、Memory、Device失敗、DirectX/GL境界。"],
--  ["06", "共同制作内部設計", "ManoTeamServer、認証、Revision、Scene/Asset同期、TeamItem、Lock、Conflict、永続化。"],
+-  ["06", "共同制作内部設計", "CG2TeamServer、認証、Revision、Scene/Asset同期、TeamItem、Lock、Conflict、永続化。"],
 +  ["01", "全体構成", "Engineの所有関係、起動順、Scene・GameObject・Component、拡張規約。", "/docs/internal-specs/architecture"],
 +  ["02", "Runtime", "Play開始と停止、Manager依存、1 Frameの更新順、時間とEvent。", "/docs/internal-specs/runtime"],
 +  ["03", "保存と互換性", "Project、Scene、Prefab、Asset Registry、共同制作データの保存契約。", "/docs/internal-specs/persistence"],
@@ -126,7 +126,7 @@ index 7cd49d2..3b0f462 100644
 +  ["05", "Asset管理", "UUID、Hash、依存索引、種別別Hot Reload、手動対応の内部契約。", "/docs/asset-management"],
 +  ["06", "Lighting / GI", "Shadow、Light Probe、SSGI、Volumetric、Reflection、最終合成の接続。", "/docs/lighting-gi"],
 +  ["07", "外部連携", "Speech、Vision、Haptics、OnlineのBackend、Thread、Memory境界。", "/docs/internal-specs/external-integration"],
-+  ["08", "共同制作", "ManoTeamServer、認証、Revision、同期、Lock、Conflict、復旧設計。", "/docs/internal-specs/collaboration"],
++  ["08", "共同制作", "CG2TeamServer、認証、Revision、同期、Lock、Conflict、復旧設計。", "/docs/internal-specs/collaboration"],
  ];
  
  export default function InternalSpecsPage() {
@@ -137,7 +137,7 @@ index 7cd49d2..3b0f462 100644
 -    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">INTERNAL MAP</p><h2>分野別の内部説明</h2></div><div className="doc-card-grid">{internalTopics.map(([number, title, copy]) => <article className="doc-topic-card" key={number}><span className="doc-topic-number">{number}</span><h3>{title}</h3><p>{copy}</p><div className="topic-tags"><span>内部設計</span><span>Source照合</span></div></article>)}</div></section>
 -    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">BOUNDARY RULES</p><h2>内部仕様で固定するもの</h2></div><div className="detail-card-grid"><article><span>OWNERSHIP</span><h3>責務を一箇所に置く</h3><p>mainやGameSceneへ処理を集中させず、Scene、Object、Component、Manager、Systemの所有関係を維持します。</p></article><article><span>LIFETIME</span><h3>開始と停止を対にする</h3><p>Thread、Backend、Handle、Queue、GPU Resourceは開始順と停止順を明記し、次のPlayへ状態を残しません。</p></article><article><span>COMPATIBILITY</span><h3>既存形式を壊さない</h3><p>Sceneの未知行、APIの末尾拡張、Project Version、BackupとConflictを前提に変更します。</p></article></div></section>
 -    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">RETURN TO USER DOCS</p><h2>利用者向け説明へ戻る</h2></div><div className="link-grid"><Link href="/docs/engine-spec">現行Engine仕様 →</Link><Link href="/docs/user-guide">利用者ガイド →</Link><Link href="/docs/cpp-scripting">C++ API →</Link><Link href="/docs/external-integration">外部連携の使い方 →</Link></div></section>
-+    <DocHeader eyebrow="INTERNAL SPECIFICATIONS" title="ManoEngine 内部仕様" lead="Engine内部の構成と処理を、分野ごとにまとめています。" meta="ENGINEERING REFERENCE / 2026.09.26" />
++    <DocHeader eyebrow="INTERNAL SPECIFICATIONS" title="CG2Engine 内部仕様" lead="Engine内部の構成と処理を、分野ごとにまとめています。" meta="ENGINEERING REFERENCE / 2026.09.26" />
 +    <section className="doc-section">
 +      <div className="doc-section-title"><p className="eyebrow">SPECIFICATIONS</p><h2>分野を選ぶ</h2></div>
 +      <div className="doc-card-grid">

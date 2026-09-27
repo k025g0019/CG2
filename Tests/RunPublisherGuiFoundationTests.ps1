@@ -1,6 +1,6 @@
 ﻿param(
-    [string]$LauncherPath = (Join-Path $PSScriptRoot "..\x64\Release\ManoLauncher.exe"),
-    [string]$TeamServerPath = (Join-Path $PSScriptRoot "..\x64\Release\ManoTeamServer.exe")
+    [string]$LauncherPath = (Join-Path $PSScriptRoot "..\x64\Release\CG2Launcher.exe"),
+    [string]$TeamServerPath = (Join-Path $PSScriptRoot "..\x64\Release\CG2TeamServer.exe")
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,7 +17,7 @@ function Invoke-Launcher {
 }
 
 try {
-    # publisher-preview/publishはGetManoEngineVersion()、つまりビルドのたびに自動採番される
+    # publisher-preview/publishはGetCG2EngineVersion()、つまりビルドのたびに自動採番される
     # 実際のEngine Versionを使う。固定文字列にすると番号が進むたびにテストが壊れる。
     $engineVersionJson = Get-Content -LiteralPath (Join-Path $workspaceRoot "Engine\Version\engine-version.json") -Raw | ConvertFrom-Json
     $currentEngineVersion = "$($engineVersionJson.major).$($engineVersionJson.minor).$($engineVersionJson.patch)+$($engineVersionJson.build)"
@@ -57,7 +57,7 @@ try {
     Invoke-Launcher @("publisher-server", "--root", $state, "--kind", "distribution", "--action", "start") | Out-Null
     $distributionReady = $false
     for ($i = 0; $i -lt 30 -and -not $distributionReady; ++$i) {
-        try { $distributionReady = (Invoke-WebRequest -UseBasicParsing "$hubUrl/mano-hub.json" -TimeoutSec 1).StatusCode -eq 200 } catch { Start-Sleep -Milliseconds 100 }
+        try { $distributionReady = (Invoke-WebRequest -UseBasicParsing "$hubUrl/cg2-hub.json" -TimeoutSec 1).StatusCode -eq 200 } catch { Start-Sleep -Milliseconds 100 }
     }
     if (-not $distributionReady) { throw "Distribution Server did not become reachable." }
     if ((Invoke-Launcher @("publisher-server", "--root", $state, "--kind", "distribution", "--action", "status")) -notmatch "稼働中") { throw "配布サーバーが稼働中になっていません。" }
@@ -70,13 +70,13 @@ try {
         $teamReady = $status -match "稼働中"
         if (-not $teamReady) { Start-Sleep -Milliseconds 100 }
     }
-    if (-not $teamReady) { throw "ManoTeamServer did not become Running." }
+    if (-not $teamReady) { throw "CG2TeamServer did not become Running." }
     Invoke-Launcher @("publisher-server", "--root", $state, "--kind", "collaboration", "--action", "stop") | Out-Null
 
     # Hub metadataをLockしてCommit最終段を失敗させ、Stable Manifestが旧Versionへ戻ることを確認する。
     $stablePath = Join-Path $hub "update\stable\engine.manifest"
     $stableBefore = [System.IO.File]::ReadAllBytes($stablePath)
-    $hubInfoPath = Join-Path $hub "mano-hub.json"
+    $hubInfoPath = Join-Path $hub "cg2-hub.json"
     $lock = [System.IO.File]::Open($hubInfoPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
     try {
         Invoke-Launcher @("publish-engine", "--release", $release, "--output", $hub, "--version", "0.9.5+161", "--channel", "Stable", "--hub", $hubUrl) -ExpectedExitCode 1 | Out-Null

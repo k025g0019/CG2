@@ -1,5 +1,5 @@
 ﻿param(
-    [string]$LauncherPath = (Join-Path $PSScriptRoot "..\x64\Release\ManoLauncher.exe")
+    [string]$LauncherPath = (Join-Path $PSScriptRoot "..\x64\Release\CG2Launcher.exe")
 )
 
 $ErrorActionPreference = "Stop"
@@ -57,7 +57,7 @@ Write-Utf8Bom (Join-Path $release1 "ProjectSettings\must-not-publish.txt") "proj
 # Assets/ShadersだけはRendererが実行時に読む必須Engine Shaderなので除外対象からは除く。
 Write-Utf8Bom (Join-Path $release1 "Assets\Shaders\Object3d.VS.hlsl") "required-engine-shader"
 Write-Utf8Bom (Join-Path $project "ProjectSettings\ProjectVersion.cg2") @"
-ManoEngineProjectVersion|1
+CG2EngineProjectVersion|1
 RequiredEngineVersion|0.9.4+152
 EngineVersionPolicy|Minimum
 UpdateChannel|Stable
@@ -72,7 +72,7 @@ Invoke-Launcher @("publish-engine", "--release", $release1, "--output", $hub, "-
 if (Test-Path -LiteralPath (Join-Path $hub "engines\0.9.4+152\Assets\must-not-publish.asset")) { throw "Project Asset leaked into Engine package." }
 if (Test-Path -LiteralPath (Join-Path $hub "engines\0.9.4+152\ProjectSettings\must-not-publish.txt")) { throw "Project Settings leaked into Engine package." }
 if (-not (Test-Path -LiteralPath (Join-Path $hub "engines\0.9.4+152\Assets\Shaders\Object3d.VS.hlsl"))) { throw "Required Engine shader was excluded from the package." }
-$invite = Join-Path $testRoot "MyGame.mano-invite"
+$invite = Join-Path $testRoot "MyGame.cg2-invite"
 Invoke-Launcher @("create-invite", "--output", $invite, "--project-id", "my-game", "--project-name", "MyGame", "--hub", "127.0.0.1:$port", "--channel", "Stable", "--required-engine", "0.9.4+152")
 
 $python = Get-Command python -ErrorAction SilentlyContinue
@@ -82,7 +82,7 @@ try {
     $serverReady = $false
     for ($attempt = 0; $attempt -lt 30 -and -not $serverReady; ++$attempt) {
         try {
-            $response = Invoke-WebRequest -UseBasicParsing "$hubUrl/mano-hub.json" -TimeoutSec 1
+            $response = Invoke-WebRequest -UseBasicParsing "$hubUrl/cg2-hub.json" -TimeoutSec 1
             $serverReady = $response.StatusCode -eq 200
         }
         catch { Start-Sleep -Milliseconds 200 }
@@ -97,7 +97,7 @@ try {
     Invoke-Launcher @("verify", "--manifest", (Join-Path $installed "LauncherState\Manifests\0.9.4+152.manifest"), "--root", $installed)
     Invoke-Launcher @("open", "--root", $installed, "--project", $project)
     # 身代わりEngineは数秒後に自分で終了するが、念のため片付けておく。
-    Get-Process -Name "ManoEngine" -ErrorAction SilentlyContinue |
+    Get-Process -Name "CG2Engine" -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -eq (Join-Path $installed "Engines\0.9.4+152\CG2.exe") } |
         Stop-Process -Force -ErrorAction SilentlyContinue
 

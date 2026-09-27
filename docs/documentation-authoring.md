@@ -1,8 +1,8 @@
-﻿# ManoEngine ドキュメント調査・更新規約
+﻿# CG2Engine ドキュメント調査・更新規約
 
 ## 1. この仕様書の目的
 
-この仕様書は、ManoEngine エディタの使用者向けドキュメントサイトを作る前に、エンジンの機能、操作方法、コンポーネント、C++ スクリプト API、制限事項をコードから調査するための指示書である。
+この仕様書は、CG2Engine エディタの使用者向けドキュメントサイトを作る前に、エンジンの機能、操作方法、コンポーネント、C++ スクリプト API、制限事項をコードから調査するための指示書である。
 
 完成サイトの文章そのものではない。調査担当者がコード全体を毎回読み直さなくても、ChatGPT Work などの文書作成担当へ正確な一次情報を渡せる状態を作ることが目的である。
 
@@ -548,7 +548,7 @@ Shader ファイルが存在するだけでは「使用可能」としない。`
 
 ## 15. 3D 物理の調査
 
-Jolt Physics を使っていることだけで機能を断定せず、ManoEngine から設定・実行できる範囲を確認する。
+Jolt Physics を使っていることだけで機能を断定せず、CG2Engine から設定・実行できる範囲を確認する。
 
 ### 15.1 Rigidbody
 
@@ -852,7 +852,7 @@ Terrain は Height、Brush、Texture、Tree、Grass、LOD、Collider、NavMesh �
 
 ## 25. Build と配布の調査
 
-- ManoEngine Editor 自体の Debug / Release Build。
+- CG2Engine Editor 自体の Debug / Release Build。
 - Visual Studio 2022 / 2026 の違い。
 - x64 のみか。
 - 必要 DLL と Asset Folder。
@@ -978,14 +978,14 @@ Script API
 調査結果と一緒に、次の指示を渡す。
 
 ```text
-あなたは ManoEngine 自作ゲームエンジンの使用者向けドキュメントサイトを構成します。
+あなたは CG2Engine 自作ゲームエンジンの使用者向けドキュメントサイトを構成します。
 
 添付した調査結果を唯一の事実基準として使用してください。
-Unity や Unreal の一般仕様から ManoEngine の機能を推測しないでください。
+Unity や Unreal の一般仕様から CG2Engine の機能を推測しないでください。
 「コンポーネントを追加できる」と「Play 中に実際に動く」を区別してください。
 未確認、未実装、既知の不具合を隠さないでください。
 
-対象読者は、ManoEngine の内部コードを知らず、エディタから GameObject、Component、Asset、C++ Script を使ってゲームを作る人です。
+対象読者は、CG2Engine の内部コードを知らず、エディタから GameObject、Component、Asset、C++ Script を使ってゲームを作る人です。
 
 各機能ページには、概要、使用場面、追加場所、手順、必要条件、Inspector 項目、初期値、単位、Play 時の動作、保存、関連 Component、C++ API、コード例、制限、トラブルシューティングを含めてください。
 
@@ -1002,7 +1002,7 @@ Unity や Unreal の一般仕様から ManoEngine の機能を推測しないで
 
 ```text
 はじめに
-├─ ManoEngine でできること
+├─ CG2Engine でできること
 ├─ 必要環境
 ├─ インストールと起動
 └─ 最初の Scene
@@ -1197,7 +1197,7 @@ C++ スクリプト
 
 ### 35.5 物理量
 
-- Mass を kg、Force を N と断定する場合は Jolt と ManoEngine の Scale が現実単位前提であることを確認する。確認できない場合は「エンジン内の質量単位」「力の大きさ」と書く。
+- Mass を kg、Force を N と断定する場合は Jolt と CG2Engine の Scale が現実単位前提であることを確認する。確認できない場合は「エンジン内の質量単位」「力の大きさ」と書く。
 - Velocity は 1 秒あたりの World 移動量か確認する。
 - Angular Velocity と Torque の軸、単位、FixedUpdate 推奨を説明する。
 
@@ -1859,7 +1859,7 @@ Runtime と最小使用例が成立           -> 使用可能または一部使�
 
 ## 54. 親切さの受け入れ条件
 
-最終的な調査結果は、初めて ManoEngine を触る使用者が次を質問せず実行できる粒度にする。
+最終的な調査結果は、初めて CG2Engine を触る使用者が次を質問せず実行できる粒度にする。
 
 - どの GameObject を選べばよいか。
 - どのカテゴリに目的の Component があるか。
@@ -2982,7 +2982,7 @@ if (doorId >= 0) {
 
 1. `CG2.sln`をVisual Studioで開く。
 2. Platformを`x64`にする。
-3. Editor確認はDebugまたはReleaseを選び、`ManoEngine`をStartup Projectにする。
+3. Editor確認はDebugまたはReleaseを選び、`CG2Engine`をStartup Projectにする。
 4. Solution Build後、`x64/Debug/CG2.exe`または`x64/Release/CG2.exe`が作られたことを確認する。
 5. 大量の`.obj`はCompilerの中間Objectであり、実行ファイルの代わりではない。Link成功と`.exe`の存在を別に確認する。
 
@@ -2992,7 +2992,7 @@ if (doorId >= 0) {
 2. 先にSolutionの`x64 / Release`をBuildし、`x64/Release/CG2.exe`を作る。
 3. Editorで`ファイル > ゲームをビルド...`を開く。
 4. `ゲーム名`へ出力EXE名を入力する。`.exe`がなければ自動で付くかを確認する。
-5. `出力先`を設定する。既定は`Builds/ManoEngineGame`。
+5. `出力先`を設定する。既定は`Builds/CG2EngineGame`。
 6. Scene一覧のCheckboxで使用Sceneをすべて有効にする。
 7. 1つのSceneを`起動`Radio Buttonで選ぶ。
 8. `ゲームを書き出す`を押す。
@@ -3658,7 +3658,7 @@ Template選択UIには、最低限次を説明する。
 
 | ページ | 必須内容 |
 | --- | --- |
-| はじめに | ManoEngineで何を作れるか、Editor / Game / Buildの違い、最初に開くScene。 |
+| はじめに | CG2Engineで何を作れるか、Editor / Game / Buildの違い、最初に開くScene。 |
 | Project | Assets、resources、Scenes、Prefabs、Scripts、Shaders、Build対象の扱い。 |
 | Scene | `.scene`の作成、保存、ダブルクリックで開く、Additive、Build Settings。 |
 | Hierarchy | GameObject作成、親子関係、子Transform、Prefab Instance、Active。 |
@@ -3902,7 +3902,7 @@ Troubleshootingには、現象別に確認順を書く。
 ドキュメントはEngine内部Classから始めない。利用者がゲームを作る順番を主導線にする。
 
 1. `CG2.sln`を開き、DebugまたはRelease x64を選ぶ。
-2. ManoEngine Editorを起動し、Projectウィンドウの`Assets/Scenes`を開く。
+2. CG2Engine Editorを起動し、Projectウィンドウの`Assets/Scenes`を開く。
 3. `.scene`をダブルクリックし、Scene View、Hierarchy、Inspectorへ開く。
 4. GameObjectを作り、Add Componentから機能を組み合わせる。
 5. AssetをProjectからSceneまたはInspector参照欄へ割り当てる。
@@ -4629,7 +4629,7 @@ PathHashを付けるため、異なるフォルダーに同名Sceneがあって�
 
 1. File Menuの状態表示またはConsoleで`自動保存に失敗`を確認する。
 2. 状態に`.autosave.tmp`のPathが表示された場合、そのファイルは置換失敗時の復旧候補として残っている。
-3. ManoEngineを終了する前に、元Scene、`.previous.scene`、`.autosave.tmp`の更新日時と内容を確認する。
+3. CG2Engineを終了する前に、元Scene、`.previous.scene`、`.autosave.tmp`の更新日時と内容を確認する。
 4. 元Sceneが壊れている場合は、`Library/AutoSave`の`.previous.scene`を`Assets/Scenes`へ別名コピーしてEditorから読み込む。
 5. 最新内容が一時ファイルにだけある場合は、`.autosave.tmp`を別名の`.scene`として`Assets/Scenes`へ移して読み込む。
 

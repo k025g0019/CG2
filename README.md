@@ -1,6 +1,6 @@
-﻿# ManoEngine エディタ README
+﻿# CG2Engine エディタ README
 
-ManoEngine エディタは、DirectX12、ImGui Docking、ImGuizmo、Jolt Physics を使った Unity 風の簡易ゲームエンジン / エディタです。  
+CG2Engine エディタは、DirectX12、ImGui Docking、ImGuizmo、Jolt Physics を使った Unity 風の簡易ゲームエンジン / エディタです。  
 GameObject を Scene に置き、インスペクターから日本語名のコンポーネントを追加して、描画、入力、物理、保存、Prefab、Console 確認を行えます。
 
 > **現行仕様について:** このREADMEの機能表には初期実装時点の履歴が多く残り、複数選択、Asset Registry、Gamepad、Terrain Collider、Lighting、Script等で現在の実装より古い記述があります。2026-09-26時点の全体仕様、コード構造、処理順は[`docs/engine-internals.md`](docs/engine-internals.md)を正として参照してください。文書全体は[`docs/ReadMe.md`](docs/ReadMe.md)から辿れます。

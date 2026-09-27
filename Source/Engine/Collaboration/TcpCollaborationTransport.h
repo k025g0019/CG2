@@ -12,7 +12,7 @@
 #pragma warning(push)
 #pragma warning(disable : 4820)
 
-namespace ManoCollaboration {
+namespace CG2Collaboration {
 
 // TCP(改行区切りText)による通信経路。LANでもTailscale越しでも同じ実装を使う。
 // 接続先の指定はホスト名・IPv4・IPv6のいずれでも良く、getaddrinfo で解決する。
@@ -45,6 +45,6 @@ private:
 	std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace ManoCollaboration
+}  // namespace CG2Collaboration
 
 #pragma warning(pop)

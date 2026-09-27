@@ -1,5 +1,5 @@
-﻿#ifndef MANOENGINE_SKY_ATMOSPHERE_COMMON_HLSLI
-#define MANOENGINE_SKY_ATMOSPHERE_COMMON_HLSLI
+﻿#ifndef CG2ENGINE_SKY_ATMOSPHERE_COMMON_HLSLI
+#define CG2ENGINE_SKY_ATMOSPHERE_COMMON_HLSLI
 
 static const float3 kRayleighScattering = float3(5.802f, 13.558f, 33.100f) * 0.001f;
 static const float3 kMieScattering = float3(3.996f, 3.996f, 3.996f) * 0.001f;

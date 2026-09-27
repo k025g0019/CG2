@@ -5,8 +5,8 @@
 // 1か所へまとめる。描画パスごとに写経すると実装がずれるため、
 // テクスチャとサンプラーは引数で受け取って共有する。
 //============================================================
-#ifndef MANOENGINE_SHADOW_SAMPLING_HLSLI
-#define MANOENGINE_SHADOW_SAMPLING_HLSLI
+#ifndef CG2ENGINE_SHADOW_SAMPLING_HLSLI
+#define CG2ENGINE_SHADOW_SAMPLING_HLSLI
 
 #include "SoftShadow.hlsli"
 #include "../Common/SceneLightData.hlsli"

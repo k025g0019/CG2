@@ -11,7 +11,7 @@ class FeelKitHaptics;
 // FeelKitHaptics を IHapticBackend へ載せた Backend(仕様書 76 項)
 //================================================================
 // FeelKitHaptics の実体は Editor / Player 側が 1 つだけ持つ。ここは
-// その参照を受け取って ManoEngine の型へ橋渡しするだけにする。
+// その参照を受け取って CG2Engine の型へ橋渡しするだけにする。
 // Device が無い場合も Play を黙って捨てるだけで、ゲームロジックは止めない
 // (仕様書 78 項)。
 

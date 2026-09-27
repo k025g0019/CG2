@@ -769,7 +769,7 @@ std::string EditorNativeScriptAssetManager::MakeBuildScriptText(const std::strin
 	const char* runtimeOption = isDebug ? "/MDd" : "/MD";
 	const char* optimizationOption = isDebug ? "/Od /Zi" : "/O2";
 	const std::string engineDirectoryPath = GetEngineDirectoryPath();
-	const std::string engineVersionText = GetManoEngineDisplayVersion();
+	const std::string engineVersionText = GetCG2EngineDisplayVersion();
 
 	buildScriptText
 		<< "@echo off\r\n"
@@ -785,19 +785,19 @@ std::string EditorNativeScriptAssetManager::MakeBuildScriptText(const std::strin
 		// Engine 配布物は CG2.exe と同じ場所の ScriptApi フォルダーへ入れている。
 		<< "set \"SCRIPT_API_DIR=\"\r\n"
 		<< "for %%D in (\r\n"
-		<< "  \"%MANOENGINE_SCRIPT_API%\"\r\n"
+		<< "  \"%CG2ENGINE_SCRIPT_API%\"\r\n"
 		<< "  \"%PROJECT_ROOT%\\Source\\Engine\\Core\"\r\n"
 		<< "  \"%ENGINE_DIR%\\ScriptApi\"\r\n"
 		<< "  \"%PROJECT_ROOT%\\PortableEngine\\%ENGINE_VERSION%\\ScriptApi\"\r\n"
 		<< "  \"%PROJECT_ROOT%\\PortableEngine\\ScriptApi\"\r\n"
-		<< "  \"%LOCALAPPDATA%\\ManoEngine\\Engines\\%ENGINE_VERSION%\\ScriptApi\"\r\n"
-		<< "  \"%MANOENGINE_INSTALL_ROOT%\\Engines\\%ENGINE_VERSION%\\ScriptApi\"\r\n"
-		<< "  \"C:\\ManoHub\\Engines\\%ENGINE_VERSION%\\ScriptApi\"\r\n"
+		<< "  \"%LOCALAPPDATA%\\CG2Engine\\Engines\\%ENGINE_VERSION%\\ScriptApi\"\r\n"
+		<< "  \"%CG2ENGINE_INSTALL_ROOT%\\Engines\\%ENGINE_VERSION%\\ScriptApi\"\r\n"
+		<< "  \"C:\\CG2Hub\\Engines\\%ENGINE_VERSION%\\ScriptApi\"\r\n"
 		<< ") do if not defined SCRIPT_API_DIR if exist \"%%~D\\EditorNativeScript.h\" set \"SCRIPT_API_DIR=%%~D\"\r\n"
 		<< "\r\n"
 		<< "if not defined SCRIPT_API_DIR (\r\n"
 		<< "  echo [error] EditorNativeScript.h was not found.\r\n"
-		<< "  echo         Set MANOENGINE_SCRIPT_API to the ScriptApi folder of your ManoEngine install.\r\n"
+		<< "  echo         Set CG2ENGINE_SCRIPT_API to the ScriptApi folder of your CG2Engine install.\r\n"
 		<< "  popd\r\n"
 		<< "  exit /b 1\r\n"
 		<< ")\r\n"

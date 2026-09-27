@@ -121,7 +121,7 @@ ProbeCaptureOutput main(PixelShaderInput input)
     float3 outgoingRadiance = float3(0.0f, 0.0f, 0.0f);
 
     // 直接光(拡散のみ)。影は通常描画と同じAtlasから読む。
-    for (int lightIndex = 0; lightIndex < MANO_MAX_SCENE_LIGHTS; lightIndex++)
+    for (int lightIndex = 0; lightIndex < CG2_MAX_SCENE_LIGHTS; lightIndex++)
     {
         DirectionalLightData light = gDirectionalLight.lights[lightIndex];
 

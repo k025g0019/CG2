@@ -34,9 +34,9 @@ Texture2D<float> gCaptureDistance : register(t1);
 
 RWStructuredBuffer<float4> gProbeShBuffer : register(u0);
 
-#define MANOENGINE_PROBE_BAKE_THREAD_COUNT 64
+#define CG2ENGINE_PROBE_BAKE_THREAD_COUNT 64
 
-groupshared float3 gsShAccumulation[MANOENGINE_PROBE_SH_COEFFICIENT_COUNT][MANOENGINE_PROBE_BAKE_THREAD_COUNT];
+groupshared float3 gsShAccumulation[CG2ENGINE_PROBE_SH_COEFFICIENT_COUNT][CG2ENGINE_PROBE_BAKE_THREAD_COUNT];
 
 float3 EvaluateProbeSkyRadiance(float3 direction)
 {
@@ -56,7 +56,7 @@ float3 EvaluateProbeSkyRadiance(float3 direction)
         sunLight.skyEmission);
 }
 
-[numthreads(MANOENGINE_PROBE_BAKE_THREAD_COUNT, 1, 1)]
+[numthreads(CG2ENGINE_PROBE_BAKE_THREAD_COUNT, 1, 1)]
 void main(uint3 groupId : SV_GroupID, uint threadIndex : SV_GroupIndex)
 {
     const int batchSlot = (int)groupId.x;
@@ -64,15 +64,15 @@ void main(uint3 groupId : SV_GroupID, uint threadIndex : SV_GroupIndex)
     const int faceTexelCount = faceSize * faceSize;
     const int totalTexelCount = faceTexelCount * 6;
 
-    float3 shAccumulation[MANOENGINE_PROBE_SH_COEFFICIENT_COUNT];
+    float3 shAccumulation[CG2ENGINE_PROBE_SH_COEFFICIENT_COUNT];
 
     [unroll]
-    for (int clearIndex = 0; clearIndex < MANOENGINE_PROBE_SH_COEFFICIENT_COUNT; clearIndex++)
+    for (int clearIndex = 0; clearIndex < CG2ENGINE_PROBE_SH_COEFFICIENT_COUNT; clearIndex++)
     {
         shAccumulation[clearIndex] = float3(0.0f, 0.0f, 0.0f);
     }
 
-    for (int texelIndex = (int)threadIndex; texelIndex < totalTexelCount; texelIndex += MANOENGINE_PROBE_BAKE_THREAD_COUNT)
+    for (int texelIndex = (int)threadIndex; texelIndex < totalTexelCount; texelIndex += CG2ENGINE_PROBE_BAKE_THREAD_COUNT)
     {
         const int faceIndex = texelIndex / faceTexelCount;
         const int faceLocalIndex = texelIndex - faceIndex * faceTexelCount;
@@ -94,30 +94,30 @@ void main(uint3 groupId : SV_GroupID, uint threadIndex : SV_GroupIndex)
             ? EvaluateProbeSkyRadiance(direction)
             : gCaptureRadiance.Load(int3(atlasTexel, 0)).rgb;
 
-        float shBasis[MANOENGINE_PROBE_SH_COEFFICIENT_COUNT];
+        float shBasis[CG2ENGINE_PROBE_SH_COEFFICIENT_COUNT];
         EvaluateProbeShBasis(direction, shBasis);
 
         [unroll]
-        for (int coefficientIndex = 0; coefficientIndex < MANOENGINE_PROBE_SH_COEFFICIENT_COUNT; coefficientIndex++)
+        for (int coefficientIndex = 0; coefficientIndex < CG2ENGINE_PROBE_SH_COEFFICIENT_COUNT; coefficientIndex++)
         {
             shAccumulation[coefficientIndex] += radiance * shBasis[coefficientIndex] * solidAngle;
         }
     }
 
     [unroll]
-    for (int storeIndex = 0; storeIndex < MANOENGINE_PROBE_SH_COEFFICIENT_COUNT; storeIndex++)
+    for (int storeIndex = 0; storeIndex < CG2ENGINE_PROBE_SH_COEFFICIENT_COUNT; storeIndex++)
     {
         gsShAccumulation[storeIndex][threadIndex] = shAccumulation[storeIndex];
     }
 
     GroupMemoryBarrierWithGroupSync();
 
-    for (uint stride = MANOENGINE_PROBE_BAKE_THREAD_COUNT / 2u; stride > 0u; stride >>= 1u)
+    for (uint stride = CG2ENGINE_PROBE_BAKE_THREAD_COUNT / 2u; stride > 0u; stride >>= 1u)
     {
         if (threadIndex < stride)
         {
             [unroll]
-            for (int reduceIndex = 0; reduceIndex < MANOENGINE_PROBE_SH_COEFFICIENT_COUNT; reduceIndex++)
+            for (int reduceIndex = 0; reduceIndex < CG2ENGINE_PROBE_SH_COEFFICIENT_COUNT; reduceIndex++)
             {
                 gsShAccumulation[reduceIndex][threadIndex] +=
                     gsShAccumulation[reduceIndex][threadIndex + stride];
@@ -133,13 +133,13 @@ void main(uint3 groupId : SV_GroupID, uint threadIndex : SV_GroupIndex)
     }
 
     const int probeIndex = gBaseProbeIndex + batchSlot;
-    const int writeBaseIndex = probeIndex * MANOENGINE_PROBE_SH_COEFFICIENT_COUNT;
+    const int writeBaseIndex = probeIndex * CG2ENGINE_PROBE_SH_COEFFICIENT_COUNT;
     // 毎フレーム全Probeを焼き直せないため、前回値と補間して
     // ちらつきを抑えつつ徐々に収束させる。
     const float hysteresis = saturate(gHysteresis);
 
     [unroll]
-    for (int writeIndex = 0; writeIndex < MANOENGINE_PROBE_SH_COEFFICIENT_COUNT; writeIndex++)
+    for (int writeIndex = 0; writeIndex < CG2ENGINE_PROBE_SH_COEFFICIENT_COUNT; writeIndex++)
     {
         const float3 previousCoefficient = gProbeShBuffer[writeBaseIndex + writeIndex].rgb;
         const float3 bakedCoefficient = gsShAccumulation[writeIndex][0];

@@ -6,7 +6,7 @@
 // 音声認識 Backend 抽象(仕様書 10 項)
 //================================================================
 // Windows Speech API、Whisper 系、ONNX ローカルモデル、外部 API を
-// 差し替えても ManoEngine 側の API は変えない(仕様書 11 項)。
+// 差し替えても CG2Engine 側の API は変えない(仕様書 11 項)。
 
 class ISpeechBackend {
 public:

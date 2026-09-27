@@ -8,7 +8,7 @@
 
 namespace {
 	constexpr const char* kPendingQueuePath = "SaveData/OnlinePendingQueue.cg2";
-	constexpr const char* kPendingQueueHeader = "ManoEngineOnlinePendingQueue|1";
+	constexpr const char* kPendingQueueHeader = "CG2EngineOnlinePendingQueue|1";
 	constexpr float kRetryIntervalSeconds = 8.0f;  // 未送信 Queue を再送する間隔。
 	constexpr int32_t kMaximumRetryCount = 8;      // これを超えた Request は捨てる。
 	constexpr size_t kDebugBodyLimit = 512u;       // Debug Window へ残す本文の長さ。
@@ -904,7 +904,7 @@ bool OnlineService::LoadPendingQueue() {
 		if (isFirstLine) {
 			isFirstLine = false;
 
-			if (line.rfind("ManoEngineOnlinePendingQueue", 0) == 0) {
+			if (line.rfind("CG2EngineOnlinePendingQueue", 0) == 0) {
 				continue;
 			}
 		}

@@ -92,7 +92,7 @@ namespace {
 }
 
 struct OnnxVisionBackend::Impl {
-	Ort::Env environment{ORT_LOGGING_LEVEL_WARNING, "ManoEngineVision"};
+	Ort::Env environment{ORT_LOGGING_LEVEL_WARNING, "CG2EngineVision"};
 	Ort::SessionOptions sessionOptions;
 	Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
 	std::unique_ptr<Ort::Session> session;

@@ -102,7 +102,7 @@ namespace {
 
 	std::string MakeDefaultPlayerInputActionsText() {
 		return
-			"# ManoEngine PlayerInput Actions\r\n"
+			"# CG2Engine PlayerInput Actions\r\n"
 			"# Action|ActionMap|ActionName|ValueType|BindingType|...\r\n"
 			"Action|Player|Move|Vector2|2DVector|W|S|A|D\r\n"
 			"Action|Player|Jump|Button|Key|Space\r\n"

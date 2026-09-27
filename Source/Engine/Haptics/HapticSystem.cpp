@@ -9,7 +9,7 @@
 namespace {
 	constexpr float kDeviceRefreshInterval = 0.08f;  // 同じ強度でも Device へ出し直す間隔(秒)。
 	constexpr float kDeviceLevelEpsilon = 0.02f;     // この差未満の変化は Device へ送らない。
-	constexpr const char* kHapticClipHeader = "ManoEngineHapticClip|1";
+	constexpr const char* kHapticClipHeader = "CG2EngineHapticClip|1";
 
 	float ToNormalized01(float value) {
 		return (std::clamp)(value, 0.0f, 1.0f);
@@ -517,7 +517,7 @@ bool HapticSystem::LoadClip(const std::string& clipAssetPath, HapticClipData& ou
 				line.erase(0, 3);
 			}
 
-			if (line.rfind("ManoEngineHapticClip", 0) == 0) {
+			if (line.rfind("CG2EngineHapticClip", 0) == 0) {
 				continue;
 			}
 		}
@@ -580,7 +580,7 @@ bool HapticSystem::SaveClip(const std::string& clipAssetPath, const HapticClipDa
 		return false;
 	}
 
-	// 他の ManoEngine テキスト Asset と同じく UTF-8 BOM + CRLF で書き出す。
+	// 他の CG2Engine テキスト Asset と同じく UTF-8 BOM + CRLF で書き出す。
 	file.write("\xEF\xBB\xBF", 3);
 	file << kHapticClipHeader << "\r\n";
 	file << "Name|" << clip.name << "\r\n";

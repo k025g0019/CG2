@@ -21,16 +21,16 @@ struct EngineVersion {
 	auto operator<=>(const EngineVersion&) const = default;
 };
 
-EngineVersion GetManoEngineVersion();
-EngineUpdateChannel GetManoEngineUpdateChannel();
+EngineVersion GetCG2EngineVersion();
+EngineUpdateChannel GetCG2EngineUpdateChannel();
 const char* GetEngineUpdateChannelText(EngineUpdateChannel channel);
 bool TryParseEngineUpdateChannel(const std::string& text, EngineUpdateChannel& channel);
-std::string GetManoEngineDisplayVersion();
-std::uint32_t GetManoProjectFormatVersion();
-std::uint32_t GetManoSceneFormatVersion();
-std::uint32_t GetManoPrefabFormatVersion();
-std::uint32_t GetManoScriptApiVersion();
-bool CheckManoEnginePeerCompatibility(
+std::string GetCG2EngineDisplayVersion();
+std::uint32_t GetCG2ProjectFormatVersion();
+std::uint32_t GetCG2SceneFormatVersion();
+std::uint32_t GetCG2PrefabFormatVersion();
+std::uint32_t GetCG2ScriptApiVersion();
+bool CheckCG2EnginePeerCompatibility(
 	const std::string& peerEngineVersion,
 	std::uint32_t peerProjectFormat,
 	std::uint32_t peerScriptApiVersion,

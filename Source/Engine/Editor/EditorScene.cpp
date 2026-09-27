@@ -1252,7 +1252,7 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 		static_cast<std::streamsize>(sizeof(kSceneUtf8Bom)));
 	const bool isPrefab = destinationPath.extension() == ".prefab";
 	file << "FormatVersion|" << (isPrefab ? "Prefab" : "Scene") << "|"
-		 << (isPrefab ? GetManoPrefabFormatVersion() : GetManoSceneFormatVersion()) << "\n";
+		 << (isPrefab ? GetCG2PrefabFormatVersion() : GetCG2SceneFormatVersion()) << "\n";
 
 	file << "SceneUuid|" << sceneUuid_ << "\n";
 	file << "PhysicsSettings|"

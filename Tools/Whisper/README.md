@@ -1,6 +1,6 @@
 ﻿# Whisper Backend の配置
 
-ManoEngine の `SpeechRecognizer` で Backend に `Whisper` を選ぶ場合、
+CG2Engine の `SpeechRecognizer` で Backend に `Whisper` を選ぶ場合、
 公式 [whisper.cpp](https://github.com/ggml-org/whisper.cpp) の Windows 向け `whisper-cli.exe` と、
 その実行に必要な DLL をこの Folder へ配置します。
 

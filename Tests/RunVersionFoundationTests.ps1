@@ -1,5 +1,5 @@
 ﻿param(
-    [string]$LauncherPath = (Join-Path $PSScriptRoot "..\x64\Release\ManoLauncher.exe")
+    [string]$LauncherPath = (Join-Path $PSScriptRoot "..\x64\Release\CG2Launcher.exe")
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,7 +34,7 @@ $engineRoot = Join-Path $testRoot "Installed"
 $project = Join-Path $testRoot "CompatibleProject"
 New-Item -ItemType Directory -Path (Join-Path $project "ProjectSettings") -Force | Out-Null
 Write-Utf8Bom (Join-Path $project "ProjectSettings\ProjectVersion.cg2") @"
-ManoEngineProjectVersion|1
+CG2EngineProjectVersion|1
 RequiredEngineVersion|0.9.4+152
 EngineVersionPolicy|Minimum
 UpdateChannel|Stable
@@ -104,7 +104,7 @@ Invoke-Launcher -Arguments @("repair", "--manifest", $manifest1, "--root", $engi
 Invoke-Launcher -Arguments @("verify", "--manifest", $manifest1, "--root", $engineRoot)
 Invoke-Launcher -Arguments @("open", "--root", $engineRoot, "--project", $project)
 # 身代わりEngine(findstr.exe)は標準入力待ちで残り続けるので、テスト後に片付ける。
-Get-Process -Name "ManoEngine" -ErrorAction SilentlyContinue |
+Get-Process -Name "CG2Engine" -ErrorAction SilentlyContinue |
     Where-Object { $_.Path -eq (Join-Path $engineRoot "Engines\0.9.4+152\CG2.exe") } |
     Stop-Process -Force -ErrorAction SilentlyContinue
 
@@ -117,7 +117,7 @@ New-Item -ItemType Directory -Path (Join-Path $legacyProject "Assets\Scenes") -F
 New-Item -ItemType Directory -Path (Join-Path $legacyProject "ProjectSettings") -Force | Out-Null
 Write-Utf8Bom (Join-Path $legacyProject "Assets\Scenes\Legacy.scene") "SceneUuid|00000000-0000-0000-0000-000000000001`nPhysicsSettings|0|-9.8|0|0.016|1|0|0|0`n"
 Write-Utf8Bom (Join-Path $legacyProject "ProjectSettings\ProjectVersion.cg2") @"
-ManoEngineProjectVersion|1
+CG2EngineProjectVersion|1
 RequiredEngineVersion|0.9.4+152
 EngineVersionPolicy|Minimum
 UpdateChannel|Stable
@@ -132,7 +132,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $legacyProject "Library\MigrationBac
 $futureProject = Join-Path $testRoot "FutureProject"
 New-Item -ItemType Directory -Path (Join-Path $futureProject "ProjectSettings") -Force | Out-Null
 Write-Utf8Bom (Join-Path $futureProject "ProjectSettings\ProjectVersion.cg2") @"
-ManoEngineProjectVersion|1
+CG2EngineProjectVersion|1
 RequiredEngineVersion|0.9.4+152
 EngineVersionPolicy|Minimum
 UpdateChannel|Stable

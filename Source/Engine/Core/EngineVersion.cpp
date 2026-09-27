@@ -40,14 +40,14 @@ bool EngineVersion::TryParse(const std::string& text, EngineVersion& version) {
 	return true;
 }
 
-EngineVersion GetManoEngineVersion() {
-	return {ManoEngineVersionGenerated::kMajor, ManoEngineVersionGenerated::kMinor,
-		ManoEngineVersionGenerated::kPatch, ManoEngineVersionGenerated::kBuild};
+EngineVersion GetCG2EngineVersion() {
+	return {CG2EngineVersionGenerated::kMajor, CG2EngineVersionGenerated::kMinor,
+		CG2EngineVersionGenerated::kPatch, CG2EngineVersionGenerated::kBuild};
 }
 
-EngineUpdateChannel GetManoEngineUpdateChannel() {
+EngineUpdateChannel GetCG2EngineUpdateChannel() {
 	EngineUpdateChannel channel = EngineUpdateChannel::Stable;
-	TryParseEngineUpdateChannel(ManoEngineVersionGenerated::kChannel, channel);
+	TryParseEngineUpdateChannel(CG2EngineVersionGenerated::kChannel, channel);
 	return channel;
 }
 
@@ -67,21 +67,21 @@ bool TryParseEngineUpdateChannel(const std::string& text, EngineUpdateChannel& c
 	return true;
 }
 
-std::string GetManoEngineDisplayVersion() { return GetManoEngineVersion().ToString(); }
-std::uint32_t GetManoProjectFormatVersion() { return ManoEngineVersionGenerated::kProjectFormat; }
-std::uint32_t GetManoSceneFormatVersion() { return ManoEngineVersionGenerated::kSceneFormat; }
-std::uint32_t GetManoPrefabFormatVersion() { return ManoEngineVersionGenerated::kPrefabFormat; }
-std::uint32_t GetManoScriptApiVersion() { return kEditorScriptApiVersion; }
+std::string GetCG2EngineDisplayVersion() { return GetCG2EngineVersion().ToString(); }
+std::uint32_t GetCG2ProjectFormatVersion() { return CG2EngineVersionGenerated::kProjectFormat; }
+std::uint32_t GetCG2SceneFormatVersion() { return CG2EngineVersionGenerated::kSceneFormat; }
+std::uint32_t GetCG2PrefabFormatVersion() { return CG2EngineVersionGenerated::kPrefabFormat; }
+std::uint32_t GetCG2ScriptApiVersion() { return kEditorScriptApiVersion; }
 
-bool CheckManoEnginePeerCompatibility(const std::string& peerEngineVersion,
+bool CheckCG2EnginePeerCompatibility(const std::string& peerEngineVersion,
 	std::uint32_t peerProjectFormat, std::uint32_t peerScriptApiVersion,
 	const std::string& peerChannel, std::uint32_t localProjectFormat,
 	EngineUpdateChannel localChannel, std::string& reason) {
 	reason.clear();
-	if (peerEngineVersion != GetManoEngineDisplayVersion())
-		reason = "Engine Version不一致 (Local " + GetManoEngineDisplayVersion() + " / Peer " + peerEngineVersion + ")";
+	if (peerEngineVersion != GetCG2EngineDisplayVersion())
+		reason = "Engine Version不一致 (Local " + GetCG2EngineDisplayVersion() + " / Peer " + peerEngineVersion + ")";
 	else if (peerProjectFormat != localProjectFormat) reason = "Project Format不一致";
-	else if (peerScriptApiVersion != GetManoScriptApiVersion()) reason = "Script API Version不一致";
+	else if (peerScriptApiVersion != GetCG2ScriptApiVersion()) reason = "Script API Version不一致";
 	else if (peerChannel != GetEngineUpdateChannelText(localChannel)) reason = "Update Channel不一致";
 	return reason.empty();
 }

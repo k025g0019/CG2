@@ -679,7 +679,7 @@ bool WhisperSpeechBackend::Initialize() {
 		return false;
 	}
 
-	impl_->temporaryDirectory = std::filesystem::path(temporaryRoot.data()) / L"ManoEngineWhisper";
+	impl_->temporaryDirectory = std::filesystem::path(temporaryRoot.data()) / L"CG2EngineWhisper";
 	std::error_code directoryError;
 	std::filesystem::create_directories(impl_->temporaryDirectory, directoryError);
 

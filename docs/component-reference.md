@@ -1,4 +1,4 @@
-﻿# ManoEngine Componentリファレンス
+﻿# CG2Engine Componentリファレンス
 
 この文書はComponent全件とInspector Fieldの検索用リファレンスである。
 記載方法と監査規則は`documentation-authoring.md`を参照する。
@@ -1675,7 +1675,7 @@ ConstraintはAnimator、親子Transform、Physics Servoと同じTransformを更�
 
 ### 2D物理Componentの現行扱い
 
-ManoEngineでは2D物理Runtimeを実装対象にしない。次の型はScene互換とInspector dataのため残っているが、新規ゲームで「物理が動くComponent」として案内しない。
+CG2Engineでは2D物理Runtimeを実装対象にしない。次の型はScene互換とInspector dataのため残っているが、新規ゲームで「物理が動くComponent」として案内しない。
 
 | 分類 | Component | 現行扱い |
 | --- | --- | --- |

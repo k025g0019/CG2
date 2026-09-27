@@ -1713,7 +1713,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		const std::string failureMessage = failureText.str();
 		Log(logStream, failureMessage);
 		const std::wstring wideFailureMessage = ConvertString(failureMessage);
-		MessageBoxW(windowHandle, wideFailureMessage.c_str(), L"ManoEngine - Engine Resource Error", MB_OK | MB_ICONERROR);
+		MessageBoxW(windowHandle, wideFailureMessage.c_str(), L"CG2Engine - Engine Resource Error", MB_OK | MB_ICONERROR);
 		RequestInitializationFailure(); // �K�{�V�F�[�_�[�� 1 �ł��������� PSO �쐬�֐i�߂Ȃ��B
 		return;
 	}

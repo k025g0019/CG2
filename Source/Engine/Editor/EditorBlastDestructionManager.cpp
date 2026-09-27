@@ -63,9 +63,9 @@ namespace {
 				error = "NvBlastExtAuthoring.dllがありません。Build/PhysicsSdk/Setup.ps1でAuthoring SDKを生成してください。";
 				return false;
 			}
-			createMesh = reinterpret_cast<CreateAuthoringMeshFunction>(GetProcAddress(handle, "ManoBlastAuthoringCreateMesh"));
-			createSites = reinterpret_cast<CreateSitesGeneratorFunction>(GetProcAddress(handle, "ManoBlastAuthoringCreateVoronoiSitesGenerator"));
-			createTool = reinterpret_cast<CreateFractureToolFunction>(GetProcAddress(handle, "ManoBlastAuthoringCreateFractureTool"));
+			createMesh = reinterpret_cast<CreateAuthoringMeshFunction>(GetProcAddress(handle, "CG2BlastAuthoringCreateMesh"));
+			createSites = reinterpret_cast<CreateSitesGeneratorFunction>(GetProcAddress(handle, "CG2BlastAuthoringCreateVoronoiSitesGenerator"));
+			createTool = reinterpret_cast<CreateFractureToolFunction>(GetProcAddress(handle, "CG2BlastAuthoringCreateFractureTool"));
 			if (createMesh == nullptr || createSites == nullptr || createTool == nullptr) {
 				error = "NvBlastExtAuthoring.dllのBridge APIが一致しません。Physics SDKを再生成してください。";
 				return false;
@@ -348,7 +348,7 @@ bool EditorBlastDestructionManager::LoadCacheManifest(
 		static_cast<uint8_t>(line[1]) == 0xBBU && static_cast<uint8_t>(line[2]) == 0xBFU) {
 		line.erase(0U, 3U);
 	}
-	if (line != "MANO_FRACTURE_CACHE|2|" + cacheKey) {
+	if (line != "CG2_FRACTURE_CACHE|2|" + cacheKey) {
 		error = "Cache versionまたはHashが一致しません。";
 		return false;
 	}
@@ -582,7 +582,7 @@ bool EditorBlastDestructionManager::BakeCache(
 		return false;
 	}
 	manifest.write("\xEF\xBB\xBF", 3);
-	manifest << "MANO_FRACTURE_CACHE|2|" << cacheKey << '\n';
+	manifest << "CG2_FRACTURE_CACHE|2|" << cacheKey << '\n';
 	manifest << std::setprecision(9);
 	for (const CachedChunk& chunk : chunks) {
 		manifest << "Chunk|" << chunk.assetPath << '|' << chunk.localCenter.x << '|'

@@ -1496,12 +1496,12 @@ Vector3 EditorAIManager::MakeGoapDirection(
 	}
 
 	const float distance = DistanceXZ(gameObject.translate, targetGameObject->translate);
-	goap::WorldState startState("ManoEngine_Start");
+	goap::WorldState startState("CG2Engine_Start");
 	startState.setVariable(kGoapHasTarget, true);
 	startState.setVariable(kGoapHasPath, true);
 	startState.setVariable(kGoapInRange, distance <= (std::max)(aiComponent.navStoppingDistance, 0.0f));
 
-	goap::WorldState goalState("ManoEngine_Goal");
+	goap::WorldState goalState("CG2Engine_Goal");
 	goalState.setVariable(kGoapInRange, true);
 
 	std::vector<goap::Action> actions;

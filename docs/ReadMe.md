@@ -1,10 +1,10 @@
-﻿# ManoEngine ドキュメント案内
+﻿# CG2Engine ドキュメント案内
 
 ## 概要
 
 更新基準: 2026-09-26
 
-このFolderは、ManoEngineの利用手順、内部設計、Component、C++ Script APIを6文書に集約する。機能ごとに文書を増やさず、利用者向け内容は`user-guide.md`、実装者向け内容は`engine-internals.md`の章として追加する。
+このFolderは、CG2Engineの利用手順、内部設計、Component、C++ Script APIを6文書に集約する。機能ごとに文書を増やさず、利用者向け内容は`user-guide.md`、実装者向け内容は`engine-internals.md`の章として追加する。
 
 Engine配布、Launcher、Version固定、Migration、環境診断は[user-guide.md](user-guide.md)を参照する。
 

@@ -1,15 +1,15 @@
-name = "manoengine-online"
+name = "cg2engine-online"
 main = "src/index.js"
 compatibility_date = "2025-01-01"
 
 # ------------------------------------------------------------
-# 開発用(既定)。ManoEngine の Project Settings では
+# 開発用(既定)。CG2Engine の Project Settings では
 # Environment = Development のとき Development Base URL を使う。
 # ------------------------------------------------------------
 
 [[d1_databases]]
 binding = "ONLINE_DB"
-database_name = "manoengine-online-dev"
+database_name = "cg2engine-online-dev"
 database_id = "ここに wrangler d1 create で得た ID を入れる"
 
 [[kv_namespaces]]
@@ -18,7 +18,7 @@ id = "ここに wrangler kv namespace create で得た ID を入れる"
 
 [[r2_buckets]]
 binding = "ONLINE_R2"
-bucket_name = "manoengine-online-dev"
+bucket_name = "cg2engine-online-dev"
 
 [vars]
 # 公開してよい値だけを vars へ置く。秘密情報は wrangler secret put を使う。
@@ -30,11 +30,11 @@ DEVELOPMENT_CLIENT_KEY = ""
 # ------------------------------------------------------------
 
 [env.production]
-name = "manoengine-online-production"
+name = "cg2engine-online-production"
 
 [[env.production.d1_databases]]
 binding = "ONLINE_DB"
-database_name = "manoengine-online-prod"
+database_name = "cg2engine-online-prod"
 database_id = "ここに本番用 D1 の ID を入れる"
 
 [[env.production.kv_namespaces]]
@@ -43,7 +43,7 @@ id = "ここに本番用 KV の ID を入れる"
 
 [[env.production.r2_buckets]]
 binding = "ONLINE_R2"
-bucket_name = "manoengine-online-prod"
+bucket_name = "cg2engine-online-prod"
 
 # 秘密情報は次のコマンドで登録する(ファイルへは書かない)。
 #   wrangler secret put PRODUCTION_CLIENT_KEY --env production

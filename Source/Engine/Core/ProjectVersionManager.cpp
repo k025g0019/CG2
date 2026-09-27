@@ -101,12 +101,12 @@ std::filesystem::path ProjectVersionManager::GetMetadataPath(const std::filesyst
 
 ProjectVersionSettings ProjectVersionManager::CreateCurrentDefaults() {
 	ProjectVersionSettings settings{};
-	settings.requiredEngineVersion = GetManoEngineVersion();
-	settings.updateChannel = GetManoEngineUpdateChannel();
-	settings.projectFormatVersion = GetManoProjectFormatVersion();
-	settings.sceneFormatVersion = GetManoSceneFormatVersion();
-	settings.prefabFormatVersion = GetManoPrefabFormatVersion();
-	settings.requiredScriptApiVersion = GetManoScriptApiVersion();
+	settings.requiredEngineVersion = GetCG2EngineVersion();
+	settings.updateChannel = GetCG2EngineUpdateChannel();
+	settings.projectFormatVersion = GetCG2ProjectFormatVersion();
+	settings.sceneFormatVersion = GetCG2SceneFormatVersion();
+	settings.prefabFormatVersion = GetCG2PrefabFormatVersion();
+	settings.requiredScriptApiVersion = GetCG2ScriptApiVersion();
 	return settings;
 }
 
@@ -117,7 +117,7 @@ bool ProjectVersionManager::Load(const std::filesystem::path& projectRoot,
 	if (!file.is_open()) { error = "Project Version Metadataがありません"; return false; }
 	ProjectVersionSettings loaded{};
 	// Version 1初期のMetadataにはこのFieldが無いため、現行APIを既定値として後方互換にする。
-	loaded.requiredScriptApiVersion = GetManoScriptApiVersion();
+	loaded.requiredScriptApiVersion = GetCG2ScriptApiVersion();
 	std::string line;
 	bool recognized = false;
 	while (std::getline(file, line)) {
@@ -145,7 +145,7 @@ bool ProjectVersionManager::Load(const std::filesystem::path& projectRoot,
 bool ProjectVersionManager::Save(const std::filesystem::path& projectRoot,
 	const ProjectVersionSettings& settings, std::string& error) {
 	std::ostringstream text;
-	text << "ManoEngineProjectVersion|1\r\n"
+	text << "CG2EngineProjectVersion|1\r\n"
 		<< "RequiredEngineVersion|" << settings.requiredEngineVersion.ToString() << "\r\n"
 		<< "EngineVersionPolicy|" << (settings.engineVersionPolicy == ProjectEngineVersionPolicy::Pinned ? "Pinned" : "Minimum") << "\r\n"
 		<< "UpdateChannel|" << GetEngineUpdateChannelText(settings.updateChannel) << "\r\n"
@@ -157,26 +157,26 @@ bool ProjectVersionManager::Save(const std::filesystem::path& projectRoot,
 }
 
 ProjectCompatibilityResult ProjectVersionManager::Evaluate(const ProjectVersionSettings& settings) {
-	const EngineVersion current = GetManoEngineVersion();
+	const EngineVersion current = GetCG2EngineVersion();
 	if (settings.engineVersionPolicy == ProjectEngineVersionPolicy::Pinned && settings.requiredEngineVersion != current)
 		return {current < settings.requiredEngineVersion ? ProjectCompatibilityStatus::NeedsEngineUpdate : ProjectCompatibilityStatus::PinnedEngineMismatch,
 			"ProjectはEngine " + settings.requiredEngineVersion.ToString() + "に固定されています。現在: " + current.ToString(), false, false};
 	if (current < settings.requiredEngineVersion)
-		return {ProjectCompatibilityStatus::NeedsEngineUpdate, "このProjectにはManoEngine " + settings.requiredEngineVersion.ToString() + "以上が必要です。現在: " + current.ToString(), false, false};
+		return {ProjectCompatibilityStatus::NeedsEngineUpdate, "このProjectにはCG2Engine " + settings.requiredEngineVersion.ToString() + "以上が必要です。現在: " + current.ToString(), false, false};
 	// Projectの方が新しいScript APIを要求する場合は、このEngineでは開けない。Launcherで新しいEngineへ切り替える。
-	if (settings.requiredScriptApiVersion > GetManoScriptApiVersion())
+	if (settings.requiredScriptApiVersion > GetCG2ScriptApiVersion())
 		return {ProjectCompatibilityStatus::ScriptApiMismatch, "ProjectのScript API " + std::to_string(settings.requiredScriptApiVersion) +
-			"はこのEngineのScript API " + std::to_string(GetManoScriptApiVersion()) + "より新しいため開けません", false, false};
+			"はこのEngineのScript API " + std::to_string(GetCG2ScriptApiVersion()) + "より新しいため開けません", false, false};
 	// Projectの方が古い場合はFormat Versionと同じくMigrationで追従できる。Launcherへ案内して行き止まりにしない。
-	if (settings.requiredScriptApiVersion < GetManoScriptApiVersion())
+	if (settings.requiredScriptApiVersion < GetCG2ScriptApiVersion())
 		return {ProjectCompatibilityStatus::NeedsMigration, "ProjectのScript API " + std::to_string(settings.requiredScriptApiVersion) +
-			"をEngineのScript API " + std::to_string(GetManoScriptApiVersion()) + "へMigrationする必要があります。", true, false};
-	if (settings.projectFormatVersion > GetManoProjectFormatVersion())
+			"をEngineのScript API " + std::to_string(GetCG2ScriptApiVersion()) + "へMigrationする必要があります。", true, false};
+	if (settings.projectFormatVersion > GetCG2ProjectFormatVersion())
 		return {ProjectCompatibilityStatus::ProjectTooNew, "Project Format " + std::to_string(settings.projectFormatVersion) + "はこのEditorでは未対応です。保存を拒否します。", false, false};
-	if (settings.projectFormatVersion < GetManoProjectFormatVersion() ||
-		settings.sceneFormatVersion < GetManoSceneFormatVersion() ||
-		settings.prefabFormatVersion < GetManoPrefabFormatVersion())
-		return {ProjectCompatibilityStatus::NeedsMigration, "Project DataをFormat " + std::to_string(GetManoProjectFormatVersion()) + "へMigrationする必要があります。", true, false};
+	if (settings.projectFormatVersion < GetCG2ProjectFormatVersion() ||
+		settings.sceneFormatVersion < GetCG2SceneFormatVersion() ||
+		settings.prefabFormatVersion < GetCG2PrefabFormatVersion())
+		return {ProjectCompatibilityStatus::NeedsMigration, "Project DataをFormat " + std::to_string(GetCG2ProjectFormatVersion()) + "へMigrationする必要があります。", true, false};
 	return {ProjectCompatibilityStatus::Compatible, "互換性があります", true, true};
 }
 
@@ -190,7 +190,7 @@ bool ProjectVersionManager::MigrateProject(const std::filesystem::path& projectR
 	std::string loadError;
 	const bool hasMetadata = Load(projectRoot, oldSettings, loadError);
 	if (!hasMetadata) oldSettings = {};
-	if (oldSettings.projectFormatVersion > GetManoProjectFormatVersion()) {
+	if (oldSettings.projectFormatVersion > GetCG2ProjectFormatVersion()) {
 		resultMessage = "Migration Failed: Projectの方が新しいため変更しません"; return false;
 	}
 
@@ -222,13 +222,13 @@ bool ProjectVersionManager::MigrateProject(const std::filesystem::path& projectR
 		const bool prefab = path.extension() == ".prefab";
 		const std::uint32_t oldVersion = ReadFormatVersion(path, prefab ? "Prefab" : "Scene");
 		if (oldVersion == UINT32_MAX || !(prefab
-			? MigratePrefab(path, oldVersion, GetManoPrefabFormatVersion(), migrationError)
-			: MigrateScene(path, oldVersion, GetManoSceneFormatVersion(), migrationError))) { succeeded = false; break; }
+			? MigratePrefab(path, oldVersion, GetCG2PrefabFormatVersion(), migrationError)
+			: MigrateScene(path, oldVersion, GetCG2SceneFormatVersion(), migrationError))) { succeeded = false; break; }
 		if (!IsAssetFormatSupported(path, prefab, &migrationError)) { succeeded = false; break; }
 	}
 	ProjectVersionSettings current = CreateCurrentDefaults();
 	current.engineVersionPolicy = hasMetadata ? oldSettings.engineVersionPolicy : ProjectEngineVersionPolicy::Minimum;
-	current.updateChannel = hasMetadata ? oldSettings.updateChannel : GetManoEngineUpdateChannel();
+	current.updateChannel = hasMetadata ? oldSettings.updateChannel : GetCG2EngineUpdateChannel();
 	if (succeeded) succeeded = Save(projectRoot, current, migrationError);
 	if (!succeeded) {
 		for (const auto& [target, backup] : backups) {
@@ -245,7 +245,7 @@ bool ProjectVersionManager::MigrateProject(const std::filesystem::path& projectR
 
 bool ProjectVersionManager::IsAssetFormatSupported(const std::filesystem::path& path, bool prefab, std::string* error) {
 	const std::uint32_t found = ReadFormatVersion(path, prefab ? "Prefab" : "Scene");
-	const std::uint32_t supported = prefab ? GetManoPrefabFormatVersion() : GetManoSceneFormatVersion();
+	const std::uint32_t supported = prefab ? GetCG2PrefabFormatVersion() : GetCG2SceneFormatVersion();
 	if (found == UINT32_MAX || found > supported) {
 		if (error != nullptr) *error = std::string(prefab ? "Prefab" : "Scene") + " Format " +
 			(found == UINT32_MAX ? "Invalid" : std::to_string(found)) + "は未対応です";

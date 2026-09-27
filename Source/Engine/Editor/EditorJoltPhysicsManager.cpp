@@ -3450,7 +3450,7 @@ private:
 			const JPH::Shape* bodyShape = settings.GetShape();
 
 			if (bodyShape != nullptr) {
-				// ManoEngineが生成するConvex ShapeはJolt既定密度1000 kg/m3を使う。
+				// CG2Engineが生成するConvex ShapeはJolt既定密度1000 kg/m3を使う。
 				// Mass Propertiesから体積を戻し、物体全体の実質密度で質量を決める。
 				constexpr float kJoltDefaultShapeDensity = 1000.0f;
 				const JPH::MassProperties shapeMassProperties = bodyShape->GetMassProperties();

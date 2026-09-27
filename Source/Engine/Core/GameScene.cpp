@@ -98,7 +98,7 @@ void GameScene::Initialize(_In_ HINSTANCE instanceHandle) {
 		MessageBoxA(
 			nullptr,
 			gameBuildMessage.c_str(),
-			"ManoEngine Game Build Error",
+			"CG2Engine Game Build Error",
 			MB_OK | MB_ICONERROR);
 		PostQuitMessage(1);
 		return;
@@ -120,7 +120,7 @@ void GameScene::Initialize(_In_ HINSTANCE instanceHandle) {
 			MessageBoxA(
 				nullptr,
 				"起動シーンを読み込めません",
-				"ManoEngine Game Build Error",
+				"CG2Engine Game Build Error",
 				MB_OK | MB_ICONERROR);
 			PostQuitMessage(1);
 			return;

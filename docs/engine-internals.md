@@ -1,4 +1,4 @@
-﻿# ManoEngine 全体内部設計
+﻿# CG2Engine 全体内部設計
 
 更新基準: 2026-09-26
 
@@ -61,7 +61,7 @@ EditorSceneLifecycleManager
 | `Collaboration` | Transport Interface、TCP実装、共通Protocol |
 | `External` / `Speech` / `Vision` / `Haptics` / `Online` | 外部Device・認識・通信の共通状態、Backend Interface、OS/SDK接続 |
 
-`Tools/ManoLauncher`はEngine/Project配布、Version固定、参加コードを扱う別Executable、`Tools/ManoTeamServer`は共同制作の中継とRevision確定を扱う別Executableである。
+`Tools/CG2Launcher`はEngine/Project配布、Version固定、参加コードを扱う別Executable、`Tools/CG2TeamServer`は共同制作の中継とRevision確定を扱う別Executableである。
 
 ## 4. 共有状態と依存注入
 
@@ -252,7 +252,7 @@ UI操作の多くはImGui矩形が確定するDraw中に発生するため、Win
 
 ## 18. 共同制作
 
-共同制作の内部詳細は本書を正とする。Engine本体はScene/Asset/Lock/Presence/TeamItemを扱い、ManoTeamServerはProject識別、Heartbeat、Revision、履歴中継を担当する。Launcherは参加コードと初期Project/Engine取得を担当する。
+共同制作の内部詳細は本書を正とする。Engine本体はScene/Asset/Lock/Presence/TeamItemを扱い、CG2TeamServerはProject識別、Heartbeat、Revision、履歴中継を担当する。Launcherは参加コードと初期Project/Engine取得を担当する。
 
 Play中のLocal Runtime変更は送信せず、Remote編集はStop後まで保留する。Stop時は編集Scene Backupを復元してからRemote変更をRevision順に重ねる。
 
@@ -337,8 +337,8 @@ Game Buildは起動Sceneと遷移可能Scene、参照Asset、Runtime DLL、Shade
 | Native Script | C++ DLL、Runtime API Version 15 |
 | Effect | 独自Effect/VFX/GPU Particle/Effekseer |
 | AI/Navigation | BehaviorTree.CPP/OpenSteer/Recast系依存とEngine側Manager |
-| Project配布 | ManoLauncher、Version固定、Hub、Invite、参加コード |
-| 共同制作 | TCP/LAN/VPN、ManoTeamServer、Protocol 3 |
+| Project配布 | CG2Launcher、Version固定、Hub、Invite、参加コード |
+| 共同制作 | TCP/LAN/VPN、CG2TeamServer、Protocol 3 |
 
 Linux/macOS Editor、Vulkan/Metal Renderer、Web Buildは現行仕様に含まれない。
 
@@ -1467,7 +1467,7 @@ Hubへ公開するProjectはCatalog、Project Manifest、Snapshotを持つ。
 
 ### 20. Inviteと参加コード
 
-`.mano-invite`はProject、Hub、Engine、共同制作接続先を記録するJSON案内Fileで、Passwordや秘密Tokenを保存しない。
+`.cg2-invite`はProject、Hub、Engine、共同制作接続先を記録するJSON案内Fileで、Passwordや秘密Tokenを保存しない。
 
 参加コードはProject ID由来の決定的短縮コードで、LauncherがHub Catalogと照合する。Project IDそのもの、認証Credential、Snapshot内容はコードへ埋め込まない。
 
@@ -1750,7 +1750,7 @@ Light Probe Bake が Shadow Map の直後にあるのは、Bake される間接�
 
 通常のLight Componentは、Sunを含めて1フレーム最大16灯を評価する。候補が16灯を超える場合はSunを優先し、その後はカメラに近い順に選ぶ。Shadow Atlasは従来どおり5×5タイルのため、収まるライトだけが影を描画し、残りは照明を維持したまま影だけを無効化する。
 
-発光マテリアルから生成する簡易Emissive Lightは別枠で最大32灯。CPU側の`kMaxEmissiveLights`とHLSL側の`MANO_MAX_EMISSIVE_LIGHTS`は同じ値を保つ。
+発光マテリアルから生成する簡易Emissive Lightは別枠で最大32灯。CPU側の`kMaxEmissiveLights`とHLSL側の`CG2_MAX_EMISSIVE_LIGHTS`は同じ値を保つ。
 
 #### 2.1 拡散反射は Lambert
 
@@ -2031,8 +2031,8 @@ GPU CullingはFrustum/Hi-Z Computeを使用し、結果を次FrameのGPU Predica
 | 実装 | 主な責務 |
 | --- | --- |
 | `EditorTeamCollaborationManager` | Editor側の接続状態、差分検出、Revision、Lock、Presence、履歴、競合、TeamItem、UI |
-| `CollaborationProtocol.h` | EditorとManoTeamServerが共有するProtocol Version、Message名、上限、Project ID検証 |
-| `ManoTeamServerMain.cpp` | Project単位のRevision確定、Change配信、履歴再送、Heartbeat、最大接続数、状態/PID File |
+| `CollaborationProtocol.h` | EditorとCG2TeamServerが共有するProtocol Version、Message名、上限、Project ID検証 |
+| `CG2TeamServerMain.cpp` | Project単位のRevision確定、Change配信、履歴再送、Heartbeat、最大接続数、状態/PID File |
 | `LauncherExperience` | Project登録、参加コード生成・照合、HubからのProject/Engine取得、Invite処理 |
 | `LauncherGui` | Project公開、参加コード表示・入力、Tailscale Tailnet事前確認と切替、参加後の保存先表示・Explorer起動、Launcher上の導線 |
 | `EditorRuntimeManager` | Play開始前のScene BackupとStop時の復元 |
@@ -2051,7 +2051,7 @@ LauncherでProjectをHubへ公開
   -> Project Snapshotと固定Engine Versionを取得
   -> ProjectSettingsへProject IDと共同制作接続先を保存
   -> Editor起動
-  -> Editor / ManoTeamServer間でHandshake
+  -> Editor / CG2TeamServer間でHandshake
   -> Protocol、Project ID、Engine互換情報を検証
   -> lastSyncedRevision以後の履歴を取得
   -> Scene/Asset Hash差分だけをCatch-up
@@ -2085,11 +2085,11 @@ Project IDは次の場所で同じ値を使う。
 - `ProjectSettings/TeamCollaboration.invite`
 - Launcherの登録Project
 - HubのProject Catalog / Manifest / Snapshot Path
-- ManoTeamServerの`--project-id`
+- CG2TeamServerの`--project-id`
 
 Launcherで新規Projectを作る場合はUUIDをProject IDとして生成する。Project公開時はProject Metadata側のIDを優先し、配布設定に残った過去のIDでManifestを作らない。Invite生成も選択ProjectのIDを優先する。
 
-ManoTeamServerはPID/状態FileへPort、Process ID、Revisionに加えてProject IDを記録する。Editorが同一PortのServerを調べ、現在Projectと異なるIDの古いServerであれば停止して現在IDで再起動する。これにより、過去ProjectのServerが残ってHandshakeだけ失敗し続ける状態を避ける。
+CG2TeamServerはPID/状態FileへPort、Process ID、Revisionに加えてProject IDを記録する。Editorが同一PortのServerを調べ、現在Projectと異なるIDの古いServerであれば停止して現在IDで再起動する。これにより、過去ProjectのServerが残ってHandshakeだけ失敗し続ける状態を避ける。
 
 ### 4. Change EventとRevision
 
@@ -2099,7 +2099,7 @@ Editor上の同期操作は`EditorTeamChangeEvent`へ正規化する。主要な
 | --- | --- |
 | `changeId` | 変更自身の一意ID。再送・Commit照合にも使用 |
 | `baseRevision` | 変更作成時に送信者が基準にしたRevision |
-| `revision` | HostまたはManoTeamServerが確定した全体順序 |
+| `revision` | HostまたはCG2TeamServerが確定した全体順序 |
 | `sceneUuid` / `scenePath` | Sceneの識別 |
 | `objectUuid` | GameObjectの識別 |
 | `componentUuid` | Componentの識別 |
@@ -2203,7 +2203,7 @@ Scene MarkerはTeamItemから毎Frame再構築する。ScenePositionは保存座
 - Scene、Prefab、Asset、Script: Project Assetを選択または外部Editorで開く。
 - History/ChangeEvent: 変更履歴Filterと該当Changeを開く。
 
-ManoEngine内蔵Script Editorは存在しない。ScriptLineは行番号とコード文脈を保持するが、共同カーソル、選択範囲、同じコード範囲の警告、Gutter Icon、厳密な行Jumpは別機能が必要である。
+CG2Engine内蔵Script Editorは存在しない。ScriptLineは行番号とコード文脈を保持するが、共同カーソル、選択範囲、同じコード範囲の警告、Gutter Icon、厳密な行Jumpは別機能が必要である。
 
 ### 11. Lock、Presence、Remote Cursor
 
@@ -2244,12 +2244,12 @@ TeamItem専用Databaseは持たず、Change Log再生で`teamItems_`を再構築
 
 #### 通信形式を変える
 
-EditorとManoTeamServerの双方を更新し、互換性を破る場合は`kCollaborationProtocolVersion`を上げる。旧Buildを暗黙に受け入れず、Handshakeで明確な拒否理由を返す。
+EditorとCG2TeamServerの双方を更新し、互換性を破る場合は`kCollaborationProtocolVersion`を上げる。旧Buildを暗黙に受け入れず、Handshakeで明確な拒否理由を返す。
 
 ### 14. 調査用チェックリスト
 
 1. 接続診断のProtocol、Project ID、Engine Version、Role、Revisionを両端で比較する。
-2. ManoTeamServerの状態Fileに現在Project IDがあるか確認する。
+2. CG2TeamServerの状態Fileに現在Project IDがあるか確認する。
 3. `Unsynced Changes`と`Last Synced Revision`が進んでいるか確認する。
 4. `.team/change-log.jsonl`へ対象`changeId`とTeamItem操作があるか確認する。
 5. Play中の問題はDeferred Queue追加と、Stop後のScene復元・Queue適用の順を確認する。
@@ -2268,9 +2268,9 @@ EditorとManoTeamServerの双方を更新し、互換性を破る場合は`kColl
 - `Source/Engine/Editor/EditorInspectorPanel.cpp`
 - `Source/Engine/Editor/EditorBottomPanel.cpp`
 - `Source/Engine/Collaboration/CollaborationProtocol.h`
-- `Tools/ManoTeamServer/ManoTeamServerMain.cpp`
-- `Tools/ManoLauncher/LauncherExperience.h/.cpp`
-- `Tools/ManoLauncher/LauncherGui.cpp`
+- `Tools/CG2TeamServer/CG2TeamServerMain.cpp`
+- `Tools/CG2Launcher/LauncherExperience.h/.cpp`
+- `Tools/CG2Launcher/LauncherGui.cpp`
 - `docs/user-guide.md`
 - `docs/user-guide.md`
 - `docs/user-guide.md`
@@ -2450,10 +2450,10 @@ Client Key は公開鍵のみ。管理鍵は Worker 側の Secret に置く。
 | Editor Preview（Play 不要） | 実装済み |
 | Debug 表示（Device / 再生中 Clip / 強度 / 残り時間） | 実装済み |
 
-`.haptic` は他の ManoEngine テキスト Asset と同じ `Key|Value` 形式。
+`.haptic` は他の CG2Engine テキスト Asset と同じ `Key|Value` 形式。
 
 ```
-ManoEngineHapticClip|1
+CG2EngineHapticClip|1
 Name|Explosion
 Duration|0.35
 Intensity|0.9
@@ -2623,7 +2623,7 @@ struct OnlineLeaderboardEntry {
 
 ```cpp
 // 起動時に 1 回
-Online::SetPlayerIdentity("player-0001", "Mano");
+Online::SetPlayerIdentity("player-0001", "CG2");
 
 // スコア送信
 Online::SubmitScore("Score", 12500);
@@ -3051,8 +3051,8 @@ Input Action 連携（Action Map / Action 名 / 発火条件 / 検出ラベル /
 | GET | `/daily` | デイリー情報 | D1 |
 | GET | `/match` | 簡易マッチ情報 | D1 |
 
-Engine が自動で付ける Header: `X-ManoEngine-Game-Id` / `X-ManoEngine-Environment` /
-`X-ManoEngine-Client-Key` / `X-ManoEngine-Player-Id`。
+Engine が自動で付ける Header: `X-CG2Engine-Game-Id` / `X-CG2Engine-Environment` /
+`X-CG2Engine-Client-Key` / `X-CG2Engine-Player-Id`。
 
 D1 テーブルは `leaderboard` / `player_data` / `cloud_save` / `game_message` /
 `global_event` / `daily_info`。すべて `environment` 列で開発と本番を分ける。
@@ -3179,12 +3179,12 @@ R2 は `<gameId>/<environment>/<playerId>/<slot>.save`。
 | 88 | `ExternalFeatureError`（code / message） | ✓ | `ExternalFeature.h` |
 | 89 | Console ログ（毎フレーム大量に出さない） | ✓ | 同一文言を 3 秒抑制、1 フレーム 64 行上限、Worker Thread 分は Main Thread で flush |
 | 90 | Component 設定は Scene / Prefab へ保存、認識結果は保存しない | ✓ | `*Extension` 行のみ保存 |
-| 91 | 最終構成 | ✓ | 下記ツリー（ファイル名は ManoEngine の命名へ合わせた） |
+| 91 | 最終構成 | ✓ | 下記ツリー（ファイル名は CG2Engine の命名へ合わせた） |
 
 #### 最終構成（仕様書 91 項）
 
 ```
-ManoEngine
+CG2Engine
 ├ Speech
 │ ├ SpeechRecognizerComponent   … EditorComponentType::SpeechRecognizer
 │ ├ ISpeechBackend              … WindowsSpeechApiBackend / NullSpeechBackend
@@ -3380,7 +3380,7 @@ Model入力Shape、色順、出力LayoutはModelごとに異なる。現在対�
 
 ### 8. Graphics API、GL、GPUとの境界
 
-ManoEngineの描画BackendはDirectX 12であり、OpenGL Backendは使用していない。この外部連携層にもOpenGL Context、GL Texture、GL Bufferは存在しない。
+CG2Engineの描画BackendはDirectX 12であり、OpenGL Backendは使用していない。この外部連携層にもOpenGL Context、GL Texture、GL Bufferは存在しない。
 
 Camera取得と認識の標準経路はCPU BGRA Memoryである。Media Foundation FrameをそのままDirectX 12 Textureとして共有するZero-copy経路や、DirectML/CUDA GPU推論経路は現在の契約に含まれない。ONNX BackendもCPU MemoryInfoを使う。
 

@@ -1,4 +1,4 @@
-﻿# ManoEngine PlayerInput Actions
+﻿# CG2Engine PlayerInput Actions
 # Action|ActionMap|ActionName|ValueType|BindingType|...
 
 Action|Player|Move|Vector2|2DVector|W|S|A|D

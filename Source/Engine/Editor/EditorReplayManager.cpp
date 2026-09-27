@@ -6,7 +6,7 @@
 #include <fstream>
 
 namespace {
-	constexpr char kReplayHeader[] = "ManoEngineREPLAY2";
+	constexpr char kReplayHeader[] = "CG2EngineREPLAY2";
 }
 
 void EditorReplayManager::StartRecording() {

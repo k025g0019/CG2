@@ -1,4 +1,4 @@
-﻿# ManoEngine 利用者ガイド
+﻿# CG2Engine 利用者ガイド
 
 更新基準: 2026-09-26
 
@@ -31,7 +31,7 @@ Project FolderをLauncherへ登録して開く。Projectが要求するEngine Ve
 
 共同制作者から`XXXX-XXXX`形式のコードを受け取った場合は、LauncherのProject画面へ入力する。Launcherは設定済みHubからProject Snapshot、固定Engine、共同制作接続情報を取得する。コードだけではHubを特定できないため、初回は正しいHub設定が必要である。
 
-HubがTailscaleの`*.ts.net`アドレスの場合、Launcherは現在接続中のTailscaleネットワークを確認する。参加先と違う場合は切替確認が表示され、登録済みなら参加先へ自動で切り替わる。未登録の場合はブラウザ認証が開くため、参加先ネットワークを選んで認証し、Launcherの「認証完了」で続行する。Tailscaleの認証情報をManoEngineへ入力する必要はない。
+HubがTailscaleの`*.ts.net`アドレスの場合、Launcherは現在接続中のTailscaleネットワークを確認する。参加先と違う場合は切替確認が表示され、登録済みなら参加先へ自動で切り替わる。未登録の場合はブラウザ認証が開くため、参加先ネットワークを選んで認証し、Launcherの「認証完了」で続行する。Tailscaleの認証情報をCG2Engineへ入力する必要はない。
 
 参加完了時は、最終的な保存先と「保存先をExplorerで開きますか？」が表示される。あとから開く場合はProject一覧で対象を選び、`保存先を開く`を押す。`場所を変更`は既存Projectフォルダーを再登録する操作であり、Explorerを開く操作とは分けている。
 
@@ -267,7 +267,7 @@ Play中の現在HP、生成Object、現在Particle数等は編集設定ではな
 
 ## 実践ワークフロー
 
-このページは、ManoEngine を初めて開いた人が実際に制作・確認・配布まで行うための手順書です。機能一覧ではなく、操作と失敗時の確認先を記載します。
+このページは、CG2Engine を初めて開いた人が実際に制作・確認・配布まで行うための手順書です。機能一覧ではなく、操作と失敗時の確認先を記載します。
 
 ### 1. Scene 上で物理を確認する
 
@@ -402,7 +402,7 @@ GPU破片の飛び方は `GPU破片の運動` で決めます。既定の `爆�
 4. Editorの`TEAM - 共同制作`でProtocol 3、Project ID、Role、Revisionを確認します。両端のProject IDは同じ値でなければなりません。
 5. Scene ViewのRemote Cursor、相手視点への移動、GameObject変更、TeamItemのBadgeと通知を順に確認します。
 
-`Project IDが一致しません`と出る場合は、参加コードそのものではなく、Hubへ公開したProject、Launcher登録、Project Metadata、起動中ManoTeamServerのIDが食い違っています。古いProject用Serverが同じPortに残っていれば対応版Editorが検出して起動し直します。それでも直らない場合は両端の接続診断に表示されたServer/Client IDを比較してください。
+`Project IDが一致しません`と出る場合は、参加コードそのものではなく、Hubへ公開したProject、Launcher登録、Project Metadata、起動中CG2TeamServerのIDが食い違っています。古いProject用Serverが同じPortに残っていれば対応版Editorが検出して起動し直します。それでも直らない場合は両端の接続診断に表示されたServer/Client IDを比較してください。
 
 片方だけPlayした場合、その端末のRuntime変更はStopで元へ戻ります。Playしていない相手の編集はPlay側で保留され、Stop時にPlay開始前Sceneを戻した後で反映されます。Play中に生成されたObjectと、相手がEdit中に追加したObjectを混同しないでください。
 
@@ -1448,7 +1448,7 @@ Temporalの問題はScene ViewとGame ViewのHistoryを別々に確認する。
 - TailscaleではMagicDNS Hostnameが解決できるか。
 - FirewallとServer Process。
 
-`Project IDが一致しません`はコード入力ではなく、Hub公開Project、Launcher登録、Project Metadata、ManoTeamServerのID不一致を示す。
+`Project IDが一致しません`はコード入力ではなく、Hub公開Project、Launcher登録、Project Metadata、CG2TeamServerのID不一致を示す。
 
 ### 19. 参加コードが見つからない
 
@@ -1541,7 +1541,7 @@ ScriptLineは外部Editorを開くが、内蔵Editorの正確な行Scrollはな�
 通常の共同制作者へ直接渡すものは、次の1ファイルだけです。
 
 ```text
-ManoLauncher.exe
+CG2Launcher.exe
 ```
 
 Launcherには既定の配布Hubが組み込まれており、起動時にProject一覧を自動取得します。PowerShell、Manifest URL、DLLコピー、PATH設定、Project ZIPは不要です。別ネットワークから使う場合は、事前にTailscaleへ参加して配布Hubへ到達できる必要があります。
@@ -1557,14 +1557,14 @@ Launcherを起動
 → 共同制作サーバーへ自動接続
 ```
 
-Projectは `%USERPROFILE%\Documents\ManoEngine Projects\<Project名>` に作成します。同名Folderがある場合は上書きせず連番を付けます。取得中は `.joining` Folderを使い、全FileのSizeとSHA-256が一致した後だけ正式Projectへ切り替えます。途中失敗したProjectをEditorで開くことはありません。
+Projectは `%USERPROFILE%\Documents\CG2Engine Projects\<Project名>` に作成します。同名Folderがある場合は上書きせず連番を付けます。取得中は `.joining` Folderを使い、全FileのSizeとSHA-256が一致した後だけ正式Projectへ切り替えます。途中失敗したProjectをEditorで開くことはありません。
 
-`.mano-invite` は手動招待や別Hubへの接続用として引き続き利用できます。新形式Inviteを開いた場合も、Project初期Snapshot取得からEditor起動まで同じ処理を通ります。
+`.cg2-invite` は手動招待や別Hubへの接続用として引き続き利用できます。新形式Inviteを開いた場合も、Project初期Snapshot取得からEditor起動まで同じ処理を通ります。
 
 ### 配布者がProjectを公開する
 
 ```text
-ManoEngine Hub
+CG2Engine Hub
 → 配布者
 → Project ID・Project名・公開アドレス・共同制作ポートを保存
 → 「プロジェクトを公開」
@@ -1578,7 +1578,7 @@ Snapshotには `SnapshotRevision`、`CollaborationId`、`OwnerId` を記録し�
 ### 新規Projectを作る
 
 ```text
-ManoEngine ランチャー
+CG2Engine ランチャー
 → 導入済みEngineを選択
 → 「新規プロジェクト」
 → 空の保存先Folderを選択
@@ -1606,7 +1606,7 @@ LastSyncedRevisionを送信
 Launcherを引数なしで起動するとGUIを表示します。
 
 ```text
-Mano Launcher
+CG2 Launcher
 
 Projects
   MyGame   Engine 0.9.4+152 Stable   Status: Ready
@@ -1646,9 +1646,9 @@ Inviteは漏れても認証情報を奪われない接続案内です。Password
 }
 ```
 
-`hub`は`HTTP/HTTPSで到達可能なMano Hub`です。Tailscale専用の意味はありません。MagicDNS名を推奨し、Raw IPはAdvanced用途に限定します。Schemeを省略したHostはHTTPSを先に試し、その後HTTPを試します。固定Portを使う場合はHostへ含めます。
+`hub`は`HTTP/HTTPSで到達可能なCG2 Hub`です。Tailscale専用の意味はありません。MagicDNS名を推奨し、Raw IPはAdvanced用途に限定します。Schemeを省略したHostはHTTPSを先に試し、その後HTTPを試します。固定Portを使う場合はHostへ含めます。
 
-`engineManifestEndpoint`は通常空にします。Launcherは`/mano-hub.json`からChannelのManifest位置を取得し、取得できない旧Hubでは`/update/stable/engine.manifest`などの規約へフォールバックします。
+`engineManifestEndpoint`は通常空にします。Launcherは`/cg2-hub.json`からChannelのManifest位置を取得し、取得できない旧Hubでは`/update/stable/engine.manifest`などの規約へフォールバックします。
 
 Project Endpointの例:
 
@@ -1665,7 +1665,7 @@ Project Endpointの例:
 ### Install Layout
 
 ```text
-%LOCALAPPDATA%\ManoEngine\
+%LOCALAPPDATA%\CG2Engine\
 ├─ Launcher\
 ├─ Engines\
 │  ├─ 0.9.4+152\
@@ -1695,7 +1695,7 @@ EngineはVersionごとにSide-by-Side導入します。Install/Updateは`Cache/S
 → Build完了後の「公開内容の確認」で差分を確認
 → 「このPC」方式なら配布サーバーを[開始]
 → 初回だけ[招待を作成]
-→ .mano-inviteを共同制作者へ渡す
+→ .cg2-inviteを共同制作者へ渡す
 ```
 
 通常運用でPowerShell、バージョン入力、Manifestの場所入力は不要です。「配布者」画面は`engine-version.json`を正本として、現在のEngineバージョン、Project形式、Script API、各公開先のバージョンを表示します。
@@ -1703,11 +1703,11 @@ EngineはVersionごとにSide-by-Side導入します。Install/Updateは`Cache/S
 「配布者」画面の初回設定:
 
 ```text
-リリース元              C:\kogakuin\ManoEngine\x64\Release
-配布フォルダー          C:\ManoHub
+リリース元              C:\kogakuin\LE1\CG2\x64\Release
+配布フォルダー          C:\CG2Hub
 公開アドレス            http://ms.tailf0bf0a.ts.net:8080
 既定の公開先            安定版 / ベータ版 / 開発版
-共同制作サーバー        ...\ManoTeamServer.exe
+共同制作サーバー        ...\CG2TeamServer.exe
 配布方法                このPC / 外部サーバー
 ```
 
@@ -1722,15 +1722,15 @@ EngineはVersionごとにSide-by-Side導入します。Install/Updateは`Cache/S
 以下のCLIはAutomation/Debug用として残っています。GUIと同じ`PublisherService`を呼び、公開処理を二重実装していません。
 
 ```powershell
-x64\Release\ManoLauncher.exe publish-engine `
-  --release C:\kogakuin\ManoEngine\x64\Release `
-  --output C:\ManoHub `
+x64\Release\CG2Launcher.exe publish-engine `
+  --release C:\kogakuin\LE1\CG2\x64\Release `
+  --output C:\CG2Hub `
   --version 0.9.4+152 `
   --channel Stable `
   --hub http://ms.tailnet-name.ts.net:8080
 
-x64\Release\ManoLauncher.exe create-invite `
-  --output C:\ManoHub\MyGame.mano-invite `
+x64\Release\CG2Launcher.exe create-invite `
+  --output C:\CG2Hub\MyGame.cg2-invite `
   --project-id my-game `
   --project-name MyGame `
   --hub ms.tailnet-name.ts.net:8080 `
@@ -1748,15 +1748,15 @@ Editorはこれを読み、**Team設定側で未設定の項目だけ**を補完
 これにより、LauncherでHostを設定したのにEditorで同じHostを再入力する、という手間が無くなります。
 
 `--hub` は配布用のHTTP Hub、`--collaboration-host` は共同制作の中継Server
-（`ManoTeamServer.exe`）で、**別のもの**です。同じPCで両方動かす場合でもPortは分けます。
+（`CG2TeamServer.exe`）で、**別のもの**です。同じPCで両方動かす場合でもPortは分けます。
 
 Collaboration項目を持たない旧形式のInviteもそのまま読み込めます（項目は任意扱い）。
 
 公開Folderは次の構造になります。
 
 ```text
-ManoHub\
-├─ mano-hub.json
+CG2Hub\
+├─ cg2-hub.json
 ├─ engines\
 │  └─ 0.9.4+152\
 │     ├─ CG2.exe
@@ -1857,11 +1857,11 @@ check-project / migrate / check-peer / env
 - 配布者はLauncherでProjectをHubへ公開した後に参加コードを表示し、参加者はLauncherのProject画面へコードを入力する。
 - Launcherは設定済みHubのProject一覧を取得し、コードが一致したProjectのSnapshot、固定Engine Version、共同制作接続設定を導入してEditorを起動する。
 - 参加コード自体にProject、Engine、認証情報を埋め込まない。Hubに公開されていないProjectへコードだけで参加することはできない。
-- `ProjectSettings/ProjectCollaboration.cg2`、Launcherの登録情報、HubのProject Manifest、`TeamCollaboration.settings`、`TeamCollaboration.invite`、ManoTeamServerの`--project-id`は同じProject IDを指す必要がある。
+- `ProjectSettings/ProjectCollaboration.cg2`、Launcherの登録情報、HubのProject Manifest、`TeamCollaboration.settings`、`TeamCollaboration.invite`、CG2TeamServerの`--project-id`は同じProject IDを指す必要がある。
 - 接続時はProtocol VersionとProject IDを検証する。異なるProject IDを受け入れて同期することはせず、`Project IDが一致しません`として拒否する。
 - 専用Serverの状態FileにはProject IDも記録する。Editorが同じPortに残っている旧Project用Serverを検出した場合は停止して、現在ProjectのIDで起動し直す。
 
-参加コードの生成・照合・Project取得はLauncherの機能である。参加コードUIを配布する場合はLauncherを更新する。接続後のProject ID検証と共同制作同期はEngineおよびManoTeamServerの機能なので、配布物は対応するLauncher・Engine・ManoTeamServerを同じReleaseとして揃える。
+参加コードの生成・照合・Project取得はLauncherの機能である。参加コードUIを配布する場合はLauncherを更新する。接続後のProject ID検証と共同制作同期はEngineおよびCG2TeamServerの機能なので、配布物は対応するLauncher・Engine・CG2TeamServerを同じReleaseとして揃える。
 
 #### 3.3 共有内容と進捗
 
@@ -1970,7 +1970,7 @@ AnimationはPlay再開、Scriptは再Buildが必要である。Model、Texture�
 
 - 自分宛ての担当、メンション、Pingを通知一覧へ追加し、通知から対象TeamItemを開ける。
 - GameObject/Component/Propertyは対象を選択し、Scene座標はScene Cameraを移動し、Asset/Prefab/Scriptは該当Assetを選択する。
-- Scriptは外部Editorで開く。ManoEngine内蔵のScript Editorはないため、コード行への内蔵Gutter表示、選択範囲の共同表示、厳密な行スクロールは未対応である。
+- Scriptは外部Editorで開く。CG2Engine内蔵のScript Editorはないため、コード行への内蔵Gutter表示、選択範囲の共同表示、厳密な行スクロールは未対応である。
 - Propertyへの移動は対象Object/Component選択までで、Inspector内の任意行へ必ず自動Scrollするものではない。
 - TeamItemの同時編集はItem単位で競合を検出し、自分側、相手側、本文の手動Mergeから選ぶ。別IDとして作られた返信同士は独立して同期する。
 
@@ -2042,9 +2042,9 @@ TeamItemはScene/Assetの競合Copyを作らず、Item内Revisionで同一Item�
 - `Source/Engine/Asset/AssetRegistry.h/.cpp`
 - `Source/Engine/Editor/EditorAssetManagerAdapters.h/.cpp`
 - `Source/Engine/Collaboration/CollaborationProtocol.h`
-- `Tools/ManoLauncher/LauncherExperience.h/.cpp`
-- `Tools/ManoLauncher/LauncherGui.cpp`
-- `Tools/ManoTeamServer/ManoTeamServerMain.cpp`
+- `Tools/CG2Launcher/LauncherExperience.h/.cpp`
+- `Tools/CG2Launcher/LauncherGui.cpp`
+- `Tools/CG2TeamServer/CG2TeamServerMain.cpp`
 - `docs/engine-internals.md`
 
 ---
@@ -2055,13 +2055,13 @@ TeamItemはScene/Assetの競合Copyを作らず、Item内Revisionで同一Item�
 
 LAN内で動いている共同制作（Scene/Asset/Script同期、Lock、Presence、Revision、Conflict）を、
 別ネットワーク・遠隔地からも同じ操作感で使うための構成をまとめる。
-**ManoEngine本体はTailscale専用設計ではない。** Tailscaleは単なる到達経路であり、
+**CG2Engine本体はTailscale専用設計ではない。** Tailscaleは単なる到達経路であり、
 Engineから見ると「解決できるHost名とPort」以上の意味を持たない。
 
 ### 全体構成
 
 ```text
-               ManoTeamServer.exe
+               CG2TeamServer.exe
                      │
         ┌────────────┼────────────┐
         │            │            │
@@ -2101,10 +2101,10 @@ WSS / Cloudflare / VPS へ移せる。
 **Tailscaleの `100.x.x.x` を直接書かず、MagicDNS hostname を使うこと。**
 IPは再割り当てで変わり得るが、hostnameは変わらない。
 
-### ManoTeamServer の起動
+### CG2TeamServer の起動
 
 ```bat
-x64\Release\ManoTeamServer.exe --project-id my-game --port 48000 --max-clients 4
+x64\Release\CG2TeamServer.exe --project-id my-game --port 48000 --max-clients 4
 ```
 
 | 引数 | 既定 | 意味 |
@@ -2112,7 +2112,7 @@ x64\Release\ManoTeamServer.exe --project-id my-game --port 48000 --max-clients 4
 | `--project-id` | 必須 | 接続してくるEditorのProject IDと一致させる |
 | `--port` | 48000 | 待ち受けPort |
 | `--max-clients` | 4 | 同時接続数（1〜32） |
-| `--data` | `./ManoTeamServerData` | Revision と Change Log の保存先 |
+| `--data` | `./CG2TeamServerData` | Revision と Change Log の保存先 |
 
 Serverが扱うのは接続受付・Project識別・Presence・Lock状態・Revision・Conflict情報・
 Scene/Asset/Script転送・Change Logである。**Sceneの意味解釈（差分の中身・Merge・
@@ -2133,7 +2133,7 @@ Max Clients : 4   (このPCがHostの時のみ有効)
 ```
 
 保存先は `ProjectSettings/TeamCollaboration.settings`。
-Launcherの `.mano-invite` に `collaborationHost` / `collaborationPort` がある場合、
+Launcherの `.cg2-invite` に `collaborationHost` / `collaborationPort` がある場合、
 `setup-invite` が `ProjectSettings/TeamCollaboration.invite` を置き、Editorは
 **Team設定側で未設定の項目だけ**をそこから補完する（手動設定は上書きしない）。
 IPを手入力することを通常のWorkflowにしない。
@@ -2141,7 +2141,7 @@ IPを手入力することを通常のWorkflowにしない。
 現在はLauncherのProject画面から参加コードでも参加できる。参加コードはProject IDから生成され、
 Launcherが設定済みHubのProject Catalogと照合してProject Snapshot、固定Engine Version、
 共同制作接続設定を取得する。参加コードのUIと照合処理はLauncher側、接続後のProject ID検証は
-EditorとManoTeamServer側の責務である。対応版は3つを同一Releaseとして配布する。
+EditorとCG2TeamServer側の責務である。対応版は3つを同一Releaseとして配布する。
 
 Hub URLがTailscale MagicDNS（`*.ts.net`）の場合、Launcherは参加処理の前に
 `tailscale status --json`から現在のMagicDNS suffixを確認する。参加先と異なる場合は、

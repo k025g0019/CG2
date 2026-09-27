@@ -397,7 +397,7 @@ namespace {
 		}
 
 		if (executableName.empty()) {
-			executableName = L"ManoEngineGame";
+			executableName = L"CG2EngineGame";
 		}
 
 		return std::filesystem::path(executableName + L".exe");
@@ -853,7 +853,7 @@ bool EditorGameBuildManager::ExportReleaseGame(
 	}
 
 	std::filesystem::path outputDirectory = buildSettings.outputDirectory.empty()
-		? std::filesystem::path("Builds/ManoEngineGame")
+		? std::filesystem::path("Builds/CG2EngineGame")
 		: Utf8Path(buildSettings.outputDirectory);
 
 	if (outputDirectory.is_relative()) {
@@ -1016,13 +1016,13 @@ bool EditorGameBuildManager::TryLoadStandaloneManifest(
 		resultMessage = "GameBuild: 起動シーンがありません";
 		return false;
 	}
-	if (!buildSettings.engineVersion.empty() && buildSettings.engineVersion != GetManoEngineDisplayVersion()) {
+	if (!buildSettings.engineVersion.empty() && buildSettings.engineVersion != GetCG2EngineDisplayVersion()) {
 		resultMessage = "GameBuild: Engine Version不一致 (Build " + buildSettings.engineVersion +
-			" / Player " + GetManoEngineDisplayVersion() + ")";
+			" / Player " + GetCG2EngineDisplayVersion() + ")";
 		return false;
 	}
-	if (buildSettings.projectFormatVersion > GetManoProjectFormatVersion() ||
-		(buildSettings.scriptApiVersion != 0U && buildSettings.scriptApiVersion != GetManoScriptApiVersion())) {
+	if (buildSettings.projectFormatVersion > GetCG2ProjectFormatVersion() ||
+		(buildSettings.scriptApiVersion != 0U && buildSettings.scriptApiVersion != GetCG2ScriptApiVersion())) {
 		resultMessage = "GameBuild: Project FormatまたはScript API Versionが非互換です";
 		return false;
 	}
@@ -1041,10 +1041,10 @@ bool EditorGameBuildManager::LoadSettingsFile(
 	}
 
 	EditorGameBuildSettings loadedSettings{};
-	loadedSettings.engineVersion = GetManoEngineDisplayVersion();
-	loadedSettings.engineChannel = GetEngineUpdateChannelText(GetManoEngineUpdateChannel());
-	loadedSettings.projectFormatVersion = GetManoProjectFormatVersion();
-	loadedSettings.scriptApiVersion = GetManoScriptApiVersion();
+	loadedSettings.engineVersion = GetCG2EngineDisplayVersion();
+	loadedSettings.engineChannel = GetEngineUpdateChannelText(GetCG2EngineUpdateChannel());
+	loadedSettings.projectFormatVersion = GetCG2ProjectFormatVersion();
+	loadedSettings.scriptApiVersion = GetCG2ScriptApiVersion();
 	loadedSettings.scenePaths.clear();
 	std::string line;
 	bool isFirstLine = true;
@@ -1126,14 +1126,14 @@ bool EditorGameBuildManager::SaveSettingsFile(
 	file.write(
 		reinterpret_cast<const char*>(kUtf8Bom),
 		static_cast<std::streamsize>(sizeof(kUtf8Bom)));
-	file << "ManoEngineGameBuild|1\r\n";
-	file << "EngineVersion|" << GetManoEngineDisplayVersion() << "\r\n";
+	file << "CG2EngineGameBuild|1\r\n";
+	file << "EngineVersion|" << GetCG2EngineDisplayVersion() << "\r\n";
 	ProjectVersionSettings projectVersion = ProjectVersionManager::CreateCurrentDefaults();
 	std::string projectVersionError;
 	ProjectVersionManager::Load(std::filesystem::current_path(), projectVersion, projectVersionError);
 	file << "EngineChannel|" << GetEngineUpdateChannelText(projectVersion.updateChannel) << "\r\n";
 	file << "ProjectFormatVersion|" << projectVersion.projectFormatVersion << "\r\n";
-	file << "ScriptApiVersion|" << GetManoScriptApiVersion() << "\r\n";
+	file << "ScriptApiVersion|" << GetCG2ScriptApiVersion() << "\r\n";
 	file << "ProductName|" << buildSettings.productName << "\r\n";
 	file << "OutputDirectory|" << buildSettings.outputDirectory << "\r\n";
 	file << "StartupScene|" << buildSettings.startupScenePath << "\r\n";

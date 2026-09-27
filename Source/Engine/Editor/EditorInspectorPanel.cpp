@@ -230,7 +230,7 @@ namespace {
 	std::string BuildInputActionsFileText(const std::vector<InputActionsAssetEntry>& entries) {
 		std::ostringstream fileText;
 		fileText
-			<< "# ManoEngine PlayerInput Actions\r\n"
+			<< "# CG2Engine PlayerInput Actions\r\n"
 			<< "# Action|ActionMap|ActionName|ValueType|BindingType|...\r\n";
 
 		for (const InputActionsAssetEntry& entry : entries) {
@@ -2210,7 +2210,7 @@ namespace {
 
 		std::string MakeDefaultPlayerInputActionsText() {
 			return
-				"# ManoEngine PlayerInput Actions\r\n"
+				"# CG2Engine PlayerInput Actions\r\n"
 				"# Action|ActionMap|ActionName|ValueType|BindingType|...\r\n"
 				"Action|Player|Move|Vector2|2DVector|W|S|A|D\r\n"
 				"Action|Player|Jump|Button|Key|Space\r\n"

@@ -90,7 +90,7 @@ bool WinHttpOnlineBackend::Initialize(const OnlineConfig& config) {
 	}
 
 	HINTERNET sessionHandle = WinHttpOpen(
-		L"ManoEngine/1.0",
+		L"CG2Engine/1.0",
 		WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
 		WINHTTP_NO_PROXY_NAME,
 		WINHTTP_NO_PROXY_BYPASS,
@@ -333,17 +333,17 @@ bool WinHttpOnlineBackend::ExecuteRequest(const OnlineRequest& request, OnlineRe
 
 	// 認証に関わる値はクライアント公開鍵だけを送り、秘密情報は Worker 側が持つ(仕様書 49 項)。
 	std::string headerText = "Content-Type: application/json\r\n";
-	headerText += "X-ManoEngine-Game-Id: " + config.gameId + "\r\n";
-	headerText += "X-ManoEngine-Environment: ";
+	headerText += "X-CG2Engine-Game-Id: " + config.gameId + "\r\n";
+	headerText += "X-CG2Engine-Environment: ";
 	headerText += config.environment == OnlineEnvironment::Production ? "production" : "development";
 	headerText += "\r\n";
 
 	if (!config.clientKey.empty()) {
-		headerText += "X-ManoEngine-Client-Key: " + config.clientKey + "\r\n";
+		headerText += "X-CG2Engine-Client-Key: " + config.clientKey + "\r\n";
 	}
 
 	if (!config.playerId.empty()) {
-		headerText += "X-ManoEngine-Player-Id: " + config.playerId + "\r\n";
+		headerText += "X-CG2Engine-Player-Id: " + config.playerId + "\r\n";
 	}
 
 	const std::wstring wideHeaders = ToWideString(headerText);

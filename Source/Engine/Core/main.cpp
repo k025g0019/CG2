@@ -79,7 +79,7 @@ namespace {
 		if (!ProjectVersionManager::Load(projectRoot, settings, error)) {
 			if (!allowsPrompt || MessageBoxW(nullptr,
 				L"Version Metadataのない旧Projectです。Backupを作成してMigrationしますか？",
-				L"ManoEngine Project Migration", MB_YESNO | MB_ICONWARNING) != IDYES) {
+				L"CG2Engine Project Migration", MB_YESNO | MB_ICONWARNING) != IDYES) {
 				ProjectVersionManager::SetCurrentProjectWriteAllowed(false);
 				return false;
 			}
@@ -96,7 +96,7 @@ namespace {
 			const std::wstring prompt = Utf8ToWide(
 				compatibility.message + "\nBackup後にMigrationを実行しますか？");
 			const int answer = MessageBoxW(nullptr, prompt.c_str(),
-				L"ManoEngine Project Migration", MB_YESNO | MB_ICONWARNING);
+				L"CG2Engine Project Migration", MB_YESNO | MB_ICONWARNING);
 			if (answer == IDYES && ProjectVersionManager::MigrateProject(projectRoot, error)) {
 				ProjectVersionManager::Load(projectRoot, settings, error);
 				compatibility = ProjectVersionManager::Evaluate(settings);
@@ -108,9 +108,9 @@ namespace {
 		ProjectVersionManager::SetCurrentProjectWriteAllowed(compatibility.canSave);
 		if (!compatibility.canOpen || !compatibility.canSave) {
 			const std::wstring prompt = Utf8ToWide(
-				compatibility.message + "\nManoLauncherから必要VersionのInstall/切替を行ってください。");
+				compatibility.message + "\nCG2Launcherから必要VersionのInstall/切替を行ってください。");
 			MessageBoxW(nullptr, prompt.c_str(),
-				L"ManoEngine Version Compatibility", MB_OK | MB_ICONERROR);
+				L"CG2Engine Version Compatibility", MB_OK | MB_ICONERROR);
 			return false;
 		}
 		return true;
@@ -129,7 +129,7 @@ int WINAPI WinMain(
 			std::error_code directoryError;
 			std::filesystem::current_path(std::filesystem::path(wideArguments[index + 1U]), directoryError);
 			if (directoryError) {
-				MessageBoxW(nullptr, L"Project Folderを開けません", L"ManoEngine", MB_OK | MB_ICONERROR);
+				MessageBoxW(nullptr, L"Project Folderを開けません", L"CG2Engine", MB_OK | MB_ICONERROR);
 				return 2;
 			}
 			break;

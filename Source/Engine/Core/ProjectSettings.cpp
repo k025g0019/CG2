@@ -7,7 +7,7 @@
 
 namespace {
 	constexpr const char* kProjectSettingsPath = "ProjectSettings/ProjectSettings.cg2";
-	constexpr const char* kHeaderLine = "ManoEngineProjectSettings|1";
+	constexpr const char* kHeaderLine = "CG2EngineProjectSettings|1";
 
 	int32_t ToInt(const std::string& text, int32_t fallbackValue) {
 		try {
@@ -64,7 +64,7 @@ void ProjectSettings::Load() {
 				line.erase(0, 3);
 			}
 
-			if (line.rfind("ManoEngineProjectSettings", 0) == 0) {
+			if (line.rfind("CG2EngineProjectSettings", 0) == 0) {
 				continue;
 			}
 		}

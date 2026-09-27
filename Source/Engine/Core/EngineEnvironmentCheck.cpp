@@ -108,7 +108,7 @@ EnvironmentCheckReport EngineEnvironmentCheck::Run(const std::filesystem::path& 
 	for (const wchar_t* dll : {L"behaviortree_cpp.dll", L"minitrace.dll", L"NvBlastExtAuthoring.dll",
 		L"NvBlastGlobals.dll", L"PhysXGpu_64.dll", L"tinyxml2.dll"})
 		AddDllCheck(report, engineDirectory, dll, "Engine追加ランタイムDLL", true);
-	AddEnginePathCheck(report, engineDirectory, L"ManoTeamServer.exe", "共同制作Server");
+	AddEnginePathCheck(report, engineDirectory, L"CG2TeamServer.exe", "共同制作Server");
 	AddEnginePathCheck(report, engineDirectory, L"Assets/Shaders", "Engine Shader一式", true);
 	AddEnginePathCheck(report, engineDirectory, L"Assets/Shaders/Object3d.VS.hlsl", "基本描画Shader");
 	AddEnginePathCheck(report, engineDirectory, L"Assets/Shaders/PostProcess/Sharpen.PS.hlsl", "Sharpen Shader");
@@ -116,8 +116,8 @@ EnvironmentCheckReport EngineEnvironmentCheck::Run(const std::filesystem::path& 
 	AddEnginePathCheck(report, engineDirectory, L"Assets/Shaders/FidelityFX", "FidelityFX Shader Library", true);
 	AddEnginePathCheck(report, engineDirectory, L"resources/editorDefault", "Editor標準Resource", true);
 	AddEnginePathCheck(report, engineDirectory, L"resources/editorDefault/uvChecker.png", "Editor標準Texture");
-	report.items.push_back({"スクリプトAPIバージョン", GetManoScriptApiVersion() > 0U, true,
-		std::to_string(GetManoScriptApiVersion())});
+	report.items.push_back({"スクリプトAPIバージョン", GetCG2ScriptApiVersion() > 0U, true,
+		std::to_string(GetCG2ScriptApiVersion())});
 
 	if (mode == EnvironmentCheckMode::EngineDeveloper) {
 		const std::filesystem::path msBuild = FindMSBuild();

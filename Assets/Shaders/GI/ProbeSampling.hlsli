@@ -7,20 +7,20 @@
 //   ・可視性重み: 八面体距離マップのChebyshev不等式で、Probeと
 //                 対象点の間に遮蔽物があるProbeを弾く
 //============================================================
-#ifndef MANOENGINE_PROBE_SAMPLING_HLSLI
-#define MANOENGINE_PROBE_SAMPLING_HLSLI
+#ifndef CG2ENGINE_PROBE_SAMPLING_HLSLI
+#define CG2ENGINE_PROBE_SAMPLING_HLSLI
 
 #include "ProbeCommon.hlsli"
 
 void LoadProbeShCoefficients(
     StructuredBuffer<float4> probeShBuffer,
     int probeIndex,
-    out float3 shCoefficients[MANOENGINE_PROBE_SH_COEFFICIENT_COUNT])
+    out float3 shCoefficients[CG2ENGINE_PROBE_SH_COEFFICIENT_COUNT])
 {
-    const int baseIndex = probeIndex * MANOENGINE_PROBE_SH_COEFFICIENT_COUNT;
+    const int baseIndex = probeIndex * CG2ENGINE_PROBE_SH_COEFFICIENT_COUNT;
 
     [unroll]
-    for (int coefficientIndex = 0; coefficientIndex < MANOENGINE_PROBE_SH_COEFFICIENT_COUNT; coefficientIndex++)
+    for (int coefficientIndex = 0; coefficientIndex < CG2ENGINE_PROBE_SH_COEFFICIENT_COUNT; coefficientIndex++)
     {
         shCoefficients[coefficientIndex] = probeShBuffer[baseIndex + coefficientIndex].rgb;
     }
@@ -37,7 +37,7 @@ float2 SampleProbeVisibilityMoments(
     const int tilesPerRow = max(grid.visibilityTilesPerRow, 1);
     const int tileX = probeIndex % tilesPerRow;
     const int tileY = probeIndex / tilesPerRow;
-    const float tileSize = (float)MANOENGINE_PROBE_VISIBILITY_TILE_SIZE;
+    const float tileSize = (float)CG2ENGINE_PROBE_VISIBILITY_TILE_SIZE;
 
     const float2 texelPosition = octahedralUv * tileSize - 0.5f;
     const float2 baseTexel = floor(texelPosition);
@@ -162,7 +162,7 @@ float3 SampleLightProbeGi(
             continue;
         }
 
-        float3 shCoefficients[MANOENGINE_PROBE_SH_COEFFICIENT_COUNT];
+        float3 shCoefficients[CG2ENGINE_PROBE_SH_COEFFICIENT_COUNT];
         LoadProbeShCoefficients(probeShBuffer, probeIndex, shCoefficients);
         accumulatedIrradiance += EvaluateProbeShIrradiance(shCoefficients, normal) * weight;
         accumulatedWeight += weight;

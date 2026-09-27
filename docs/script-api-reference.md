@@ -1,4 +1,4 @@
-﻿# ManoEngine C++ Script APIリファレンス
+﻿# CG2Engine C++ Script APIリファレンス
 
 この文書はC++ ScriptのLifecycle、型、Wrapper、Runtime API、実装例をまとめた検索用リファレンスである。
 実在する API は `Source/Engine/Core/EditorScriptApi.h` を基準にする。
@@ -1103,15 +1103,15 @@ void StageEventReceiver::OnWaveSpawned(
 
 build batは`cl`へ渡す`/I`を次の順で探し、`EditorNativeScript.h`が実在した最初の場所を使う。
 
-1. 環境変数`MANOENGINE_SCRIPT_API`
+1. 環境変数`CG2ENGINE_SCRIPT_API`
 2. `%PROJECT_ROOT%\Source\Engine\Core`（Engineリポジトリを直接開いている時）
 3. `<Script作成時のCG2.exeのフォルダー>\ScriptApi`
 4. `%PROJECT_ROOT%\PortableEngine\<EngineVersion>\ScriptApi`、`%PROJECT_ROOT%\PortableEngine\ScriptApi`
-5. `%LOCALAPPDATA%\ManoEngine\Engines\<EngineVersion>\ScriptApi`
-6. `%MANOENGINE_INSTALL_ROOT%\Engines\<EngineVersion>\ScriptApi`
-7. `C:\ManoHub\Engines\<EngineVersion>\ScriptApi`
+5. `%LOCALAPPDATA%\CG2Engine\Engines\<EngineVersion>\ScriptApi`
+6. `%CG2ENGINE_INSTALL_ROOT%\Engines\<EngineVersion>\ScriptApi`
+7. `C:\CG2Hub\Engines\<EngineVersion>\ScriptApi`
 
-Engine配布物は`CG2.exe`と同じ場所の`ScriptApi`フォルダーへ`EditorNativeScript.h`と`EditorScriptApi.h`を置く。`ScriptApi`を持たない古いEngineで作ったProjectは、Engineを更新するか、`MANOENGINE_SCRIPT_API`へ`ScriptApi`フォルダーのPathを設定する。Script作成後にEngineを別のVersionへ入れ替えた場合も、候補3が古いPathを指すため他の候補か環境変数で解決する。
+Engine配布物は`CG2.exe`と同じ場所の`ScriptApi`フォルダーへ`EditorNativeScript.h`と`EditorScriptApi.h`を置く。`ScriptApi`を持たない古いEngineで作ったProjectは、Engineを更新するか、`CG2ENGINE_SCRIPT_API`へ`ScriptApi`フォルダーのPathを設定する。Script作成後にEngineを別のVersionへ入れ替えた場合も、候補3が古いPathを指すため他の候補か環境変数で解決する。
 
 なお`.bat`はUTF-8 BOMなしで生成する。BOM付きの`.bat`は`cmd.exe`が1行目を`'@echo'`として解釈できずエラーを出すため、古いEngineで生成した`.bat`にこの症状が出た場合は作り直す。
 

@@ -12,11 +12,11 @@
 
 #pragma comment(lib, "Ws2_32.lib")
 
-namespace ManoCollaboration {
+namespace CG2Collaboration {
 
 namespace {
 	// WSAStartup/WSACleanup をTransport生成数に関わらず1回ずつにする。
-	// Editor内Host と ManoTeamServer のどちらでも同じ実装を使うため、参照数で管理する。
+	// Editor内Host と CG2TeamServer のどちらでも同じ実装を使うため、参照数で管理する。
 	std::mutex g_winsockMutex;
 	std::int32_t g_winsockReferenceCount = 0;
 
@@ -656,4 +656,4 @@ void TcpCollaborationTransport::ResetTransferProgress() {
 	impl_->totalTransferBytes.store(0u, std::memory_order_release);
 }
 
-}  // namespace ManoCollaboration
+}  // namespace CG2Collaboration

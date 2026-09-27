@@ -26,7 +26,7 @@ index dc385c0..c6a4fb7 100644
 -    <Callout title="現行値を優先する" tone="note"><p>過去の評価章や追加時点の件数は履歴です。現在の基準はComponent 287種類、Runtime API 413 Entry、Script Template 26種類、Inspector 1,981 Field / 278 Componentです。</p></Callout>
 -    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">BOUNDARIES</p><h2>対応環境と保存契約</h2></div><div className="two-column-doc"><div><h3>実行環境</h3><p>Windows 64 bit、DirectX 12、Dear ImGui Docking、XAudio2、Jolt Physics、FBX/OBJ Import、C++ DLL Scriptを基準にします。Linux/macOS、Vulkan/Metal、Web Buildは対象外です。</p></div><div><h3>保存と互換</h3><p>ProjectはEngine Version、Project Format、Script API Version、Channelを持ちます。Scene保存は一時File経由で行い、未知行を保持します。Play中の編集Scene保存・通常Loadは保護されます。</p></div></div></section>
 -    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">RUNTIME / RENDERING</p><h2>1 Frameと描画の考え方</h2></div><div className="detail-card-grid"><article><span>RUNTIME</span><h3>Sceneが所有する</h3><p>Play開始時にProject Settings、Component、Script、Physics、Audio、External Systemを順に初期化し、Main ThreadでUpdateとCallbackを実行します。</p></article><article><span>RENDERING</span><h3>PassとHistoryを分ける</h3><p>Scene ViewとGame ViewのCamera、Temporal History、PostProcess、SSR、Bloom、AAを混同せず、Diagnosticsで対象Passを確認します。</p></article><article><span>ASSET</span><h3>UUIDと依存を基準にする</h3><p>PathではなくAsset UUID、Hash、依存索引を基準に移動・Reimport・Hot Reload・手動対応の要否を判断します。</p></article></div></section>
--    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">COLLABORATION</p><h2>共同制作の境界</h2></div><p className="section-intro">共同制作はGameplayのマルチプレイではありません。ManoTeamServer、LAN/VPN、Protocol 3を使ってScene・参照Asset・Revision・TeamItemを同期し、Lock、Conflict、Backup、Trashで復旧可能性を残します。Host MigrationやPlay Session共有は対象外です。</p></section>
+-    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">COLLABORATION</p><h2>共同制作の境界</h2></div><p className="section-intro">共同制作はGameplayのマルチプレイではありません。CG2TeamServer、LAN/VPN、Protocol 3を使ってScene・参照Asset・Revision・TeamItemを同期し、Lock、Conflict、Backup、Trashで復旧可能性を残します。Host MigrationやPlay Session共有は対象外です。</p></section>
 +    <DocHeader eyebrow="CURRENT ENGINE SPEC / 08" title="利用者が使える範囲を確認する。" lead="現行Buildで利用できる環境、Editor機能、Project互換、Component、Script、描画、共同制作の対応範囲を利用者向けに整理します。内部の所有関係や処理順は別の内部仕様ページで説明します。" meta={`ENGINE / ${engineVersion.display} · API VERSION / ${engineVersion.scriptApi} · PROJECT FORMAT / ${engineVersion.projectFormat}`} />
 +    <div className="doc-badge-row"><StatusPill tone="stable">WINDOWS 64 BIT</StatusPill><StatusPill tone="stable">DIRECTX 12</StatusPill><StatusPill tone="partial">CURRENT BUILD</StatusPill></div>
 +    <Callout title="現行値を優先する" tone="note"><p>現在の基準はComponent 287種類、Runtime API 413 Entry、Script Template 26種類、Inspector 1,981 Field / 278 Componentです。過去の評価章や追加時点の件数は履歴として扱います。</p></Callout>
@@ -50,7 +50,7 @@ index 0000000..7cd49d2
 +  ["03", "データ保存・互換性", "Project、Scene、Prefab、Asset Registry、Hash、依存、Backup、Invite、共同制作Change Log。"],
 +  ["04", "Rendering Pipeline", "DirectX 12 Pass、GPU Resource、Barrier、Scene/Game View、Temporal History、Bloom、SMAA、SSR。"],
 +  ["05", "外部連携内部設計", "Speech、Vision、Haptics、OnlineのBackend、Thread、Memory、Device失敗、DirectX/GL境界。"],
-+  ["06", "共同制作内部設計", "ManoTeamServer、認証、Revision、Scene/Asset同期、TeamItem、Lock、Conflict、永続化。"],
++  ["06", "共同制作内部設計", "CG2TeamServer、認証、Revision、Scene/Asset同期、TeamItem、Lock、Conflict、永続化。"],
 +];
 +
 +export default function InternalSpecsPage() {

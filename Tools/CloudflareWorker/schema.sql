@@ -1,4 +1,4 @@
--- ManoEngine Online Services - D1 スキーマ(仕様書 55 項)
+-- CG2Engine Online Services - D1 スキーマ(仕様書 55 項)
 -- 構造化データは D1 に置く。Leaderboard / Player Data / ゲーム内メッセージ / イベント情報。
 -- environment 列で開発用と本番用を必ず分ける(仕様書 52 項)。
 

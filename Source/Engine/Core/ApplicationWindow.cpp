@@ -171,7 +171,7 @@ LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPAR
 			const int answer = MessageBoxW(
 				windowHandle,
 				L"シーンを保存して終了しますか？",
-				L"ManoEngine Editor",
+				L"CG2Engine Editor",
 				MB_YESNOCANCEL | MB_ICONQUESTION | MB_DEFBUTTON1);
 
 			if (answer == IDCANCEL) {
@@ -214,7 +214,7 @@ LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPAR
 			}
 
 			if (!g_editorScene.SaveScene(savePath)) {
-				MessageBoxW(windowHandle, L"シーンの保存に失敗しました。", L"ManoEngine Editor", MB_OK | MB_ICONERROR);
+				MessageBoxW(windowHandle, L"シーンの保存に失敗しました。", L"CG2Engine Editor", MB_OK | MB_ICONERROR);
 				return 0;  // 保存失敗時は閉じない
 			}
 

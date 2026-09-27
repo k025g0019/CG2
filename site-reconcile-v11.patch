@@ -101,7 +101,7 @@ index 0000000..dc385c0
 +    <Callout title="現行値を優先する" tone="note"><p>過去の評価章や追加時点の件数は履歴です。現在の基準はComponent 287種類、Runtime API 413 Entry、Script Template 26種類、Inspector 1,981 Field / 278 Componentです。</p></Callout>
 +    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">BOUNDARIES</p><h2>対応環境と保存契約</h2></div><div className="two-column-doc"><div><h3>実行環境</h3><p>Windows 64 bit、DirectX 12、Dear ImGui Docking、XAudio2、Jolt Physics、FBX/OBJ Import、C++ DLL Scriptを基準にします。Linux/macOS、Vulkan/Metal、Web Buildは対象外です。</p></div><div><h3>保存と互換</h3><p>ProjectはEngine Version、Project Format、Script API Version、Channelを持ちます。Scene保存は一時File経由で行い、未知行を保持します。Play中の編集Scene保存・通常Loadは保護されます。</p></div></div></section>
 +    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">RUNTIME / RENDERING</p><h2>1 Frameと描画の考え方</h2></div><div className="detail-card-grid"><article><span>RUNTIME</span><h3>Sceneが所有する</h3><p>Play開始時にProject Settings、Component、Script、Physics、Audio、External Systemを順に初期化し、Main ThreadでUpdateとCallbackを実行します。</p></article><article><span>RENDERING</span><h3>PassとHistoryを分ける</h3><p>Scene ViewとGame ViewのCamera、Temporal History、PostProcess、SSR、Bloom、AAを混同せず、Diagnosticsで対象Passを確認します。</p></article><article><span>ASSET</span><h3>UUIDと依存を基準にする</h3><p>PathではなくAsset UUID、Hash、依存索引を基準に移動・Reimport・Hot Reload・手動対応の要否を判断します。</p></article></div></section>
-+    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">COLLABORATION</p><h2>共同制作の境界</h2></div><p className="section-intro">共同制作はGameplayのマルチプレイではありません。ManoTeamServer、LAN/VPN、Protocol 3を使ってScene・参照Asset・Revision・TeamItemを同期し、Lock、Conflict、Backup、Trashで復旧可能性を残します。Host MigrationやPlay Session共有は対象外です。</p></section>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">COLLABORATION</p><h2>共同制作の境界</h2></div><p className="section-intro">共同制作はGameplayのマルチプレイではありません。CG2TeamServer、LAN/VPN、Protocol 3を使ってScene・参照Asset・Revision・TeamItemを同期し、Lock、Conflict、Backup、Trashで復旧可能性を残します。Host MigrationやPlay Session共有は対象外です。</p></section>
 +  </DocsShell>;
 +}
 diff --git a/app/docs/external-integration/page.tsx b/app/docs/external-integration/page.tsx
@@ -188,8 +188,8 @@ index 6ae1e8d..55a5782 100644
  ] as const;
  
  export default function UserGuidePage() {
--  return <DocsShell><DocHeader eyebrow="USER GUIDE / 01" title="最初のProjectからBuildまで。" lead="ManoEngineを初めて使う人向けに、Launcher、Scene、Component、Play、Script、Build、共同制作の基本順序をまとめます。" meta="SOURCE REVIEW / 2026.09.25 · USER WORKFLOW" /><div className="doc-badge-row"><StatusPill tone="stable">START HERE</StatusPill><StatusPill tone="partial">PLAY CHECK</StatusPill><StatusPill tone="note">BUILD READY</StatusPill></div>
-+  return <DocsShell><DocHeader eyebrow="USER GUIDE / 01" title="最初のProjectからBuildまで。" lead="ManoEngineを初めて使う人向けに、Launcher、Scene、Component、Play、Script、外部連携、Build、共同制作の基本順序をまとめます。" meta="SOURCE REVIEW / 2026.09.26 · USER WORKFLOW" /><div className="doc-badge-row"><StatusPill tone="stable">START HERE</StatusPill><StatusPill tone="partial">PLAY CHECK</StatusPill><StatusPill tone="note">BUILD READY</StatusPill></div>
+-  return <DocsShell><DocHeader eyebrow="USER GUIDE / 01" title="最初のProjectからBuildまで。" lead="CG2Engineを初めて使う人向けに、Launcher、Scene、Component、Play、Script、Build、共同制作の基本順序をまとめます。" meta="SOURCE REVIEW / 2026.09.25 · USER WORKFLOW" /><div className="doc-badge-row"><StatusPill tone="stable">START HERE</StatusPill><StatusPill tone="partial">PLAY CHECK</StatusPill><StatusPill tone="note">BUILD READY</StatusPill></div>
++  return <DocsShell><DocHeader eyebrow="USER GUIDE / 01" title="最初のProjectからBuildまで。" lead="CG2Engineを初めて使う人向けに、Launcher、Scene、Component、Play、Script、外部連携、Build、共同制作の基本順序をまとめます。" meta="SOURCE REVIEW / 2026.09.26 · USER WORKFLOW" /><div className="doc-badge-row"><StatusPill tone="stable">START HERE</StatusPill><StatusPill tone="partial">PLAY CHECK</StatusPill><StatusPill tone="note">BUILD READY</StatusPill></div>
      <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">WORKFLOW</p><h2>この順番で進める</h2></div><div className="numbered-steps">{guideSteps.map(([number, title, body]) => <article key={title}><span>{number}</span><h3>{title}</h3><p>{body}</p></article>)}</div></section>
      <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">EDITOR MAP</p><h2>画面の役割を分ける</h2></div><div className="detail-card-grid"><article className="detail-card"><h3>Scene / Game View</h3><p>Scene Viewは配置とDebug、Game ViewはCamera Componentからの実行画面です。両者のCameraとTemporal Historyを混同しません。</p></article><article className="detail-card"><h3>Inspector / Project</h3><p>Inspectorは選択Objectの値、ProjectはAsset作成・移動・Reimport・依存確認を扱います。</p></article><article className="detail-card"><h3>Console / Diagnostics</h3><p>ConsoleはErrorや状態Message、DiagnosticsはCPU/GPU、VRAM、Physics、Frame Spikeの切り分けに使います。</p></article></div></section>
 -    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">NEXT</p><h2>目的別に進む</h2></div><div className="link-grid"><Link href="/docs/components">Componentを探す →</Link><Link href="/docs/cpp-scripting">C++ APIを読む →</Link><Link href="/docs/editor-windows">Editor Windowを開く →</Link><Link href="/docs/troubleshooting">症状から直す →</Link></div><Callout title="保存してから終了するもの" tone="note"><p>Scene、Project Settings、Input Action、Animation、Effect、Material、TEAM設定、Native Script Source/DLLは明示的に保存します。Play中のHPや生成Objectは編集設定ではありません。</p></Callout></section>
@@ -238,8 +238,8 @@ index 040bd72..37c4651 100644
                <p className="eyebrow">ドキュメント分類</p>
                <h2>作業の順番に沿って探す。</h2>
              </div>
--            <p>編集、実行、Asset、描画、共同制作まで、ManoEngineを使う時の作業単位で10項目に整理しています。</p>
-+            <p>編集、実行、Asset、描画、外部連携、共同制作まで、ManoEngineを使う時の作業単位で整理しています。</p>
+-            <p>編集、実行、Asset、描画、共同制作まで、CG2Engineを使う時の作業単位で10項目に整理しています。</p>
++            <p>編集、実行、Asset、描画、外部連携、共同制作まで、CG2Engineを使う時の作業単位で整理しています。</p>
            </div>
            <div className="workflow-grid">
              {workflowLinks.map((item, index) => (

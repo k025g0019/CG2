@@ -6,7 +6,7 @@
 // 触覚 Device 抽象(仕様書 75 項)
 //================================================================
 // FeelKit を直接固定せず、この Interface だけを HapticSystem が使う。
-// 別 Device を追加しても ManoEngine 側の API は変えない。
+// 別 Device を追加しても CG2Engine 側の API は変えない。
 
 class IHapticBackend {
 public:

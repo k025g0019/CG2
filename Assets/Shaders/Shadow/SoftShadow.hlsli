@@ -2,8 +2,8 @@
 // 大: SoftShadow 共通
 // 影のサンプリングを少し広げて、硬すぎる影を和らげる。
 //============================================================
-#ifndef MANOENGINE_SOFT_SHADOW_HLSLI
-#define MANOENGINE_SOFT_SHADOW_HLSLI
+#ifndef CG2ENGINE_SOFT_SHADOW_HLSLI
+#define CG2ENGINE_SOFT_SHADOW_HLSLI
 
 static const float2 kSoftShadowKernel[9] = {
 	float2(-1.0f, -1.0f),

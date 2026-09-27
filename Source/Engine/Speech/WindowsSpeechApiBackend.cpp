@@ -14,7 +14,7 @@
 #include <utility>
 
 namespace {
-	constexpr wchar_t kKeywordRuleName[] = L"ManoEngineKeywords";
+	constexpr wchar_t kKeywordRuleName[] = L"CG2EngineKeywords";
 	constexpr ULONG kMaxSpeechAlternatives = 16u;
 
 	std::wstring ToWideString(const std::string& text) {

@@ -51,7 +51,7 @@ namespace {
 
 	std::string MakeDefaultPlayerInputActionsText() {
 		return
-			"# ManoEngine PlayerInput Actions\r\n"
+			"# CG2Engine PlayerInput Actions\r\n"
 			"# Action|ActionMap|ActionName|ValueType|BindingType|...\r\n"
 			"Action|Player|Move|Vector2|2DVector|W|S|A|D\r\n"
 			"Action|Player|Jump|Button|Key|Space\r\n"
@@ -1408,7 +1408,7 @@ namespace {
 		}
 
 		const std::string defaultText =
-			"# ManoEngine Gameplay Data\r\n"
+			"# CG2Engine Gameplay Data\r\n"
 			"# Entry|Key|Type(0=String,1=Int,2=Float,3=Bool,4=AssetPath)|Value\r\n"
 			"Entry|DisplayName|0|New Data\r\n";
 
@@ -1499,7 +1499,7 @@ void EditorMainMenuBar::LoadAutoSaveSettings() {
 
 void EditorMainMenuBar::SaveAutoSaveSettings() const {
 	std::ostringstream settingsText;
-	settingsText << "ManoEngineEditorSettings|1\r\n"
+	settingsText << "CG2EngineEditorSettings|1\r\n"
 	             << "AutoSaveEnabled|" << (isAutoSaveEnabled_ ? 1 : 0) << "\r\n"
 	             << "AutoSaveIntervalSeconds|" << autoSaveIntervalSeconds_ << "\r\n";
 	WriteUtf8BomTextFile(kEditorSettingsPath, settingsText.str());
@@ -1599,8 +1599,8 @@ void EditorMainMenuBar::Draw(
 	static std::string environmentReportText;
 	static char sceneSavePathBuffer[260] = {};  // 名前を付けて保存の入力欄
 	static char sceneLoadPathBuffer[260] = {};  // 読込候補一覧での直接入力欄
-	static char productNameBuffer[128] = "ManoEngineGame";  // 書き出す exe の名前
-	static char outputDirectoryBuffer[260] = "Builds/ManoEngineGame";  // Player の出力先
+	static char productNameBuffer[128] = "CG2EngineGame";  // 書き出す exe の名前
+	static char outputDirectoryBuffer[260] = "Builds/CG2EngineGame";  // Player の出力先
 	static EditorGameBuildSettings gameBuildSettings{};  // Build Settings モーダルの編集状態
 
 	// MainMenuBar が開けないフレームはメニュー描画を行わない
@@ -1953,20 +1953,20 @@ void EditorMainMenuBar::Draw(
 
 	if (ImGui::BeginMenu("ヘルプ")) {
 		if (ImGui::MenuItem("Project / Version情報")) shouldOpenProjectInfoPopup = true;
-		if (ImGui::MenuItem("ManoEngineについて")) shouldOpenAboutPopup = true;
+		if (ImGui::MenuItem("CG2Engineについて")) shouldOpenAboutPopup = true;
 		ImGui::EndMenu();
 	}
 
 	if (shouldOpenAboutPopup) {
-		ImGui::OpenPopup("ManoEngineAboutPopup");
+		ImGui::OpenPopup("CG2EngineAboutPopup");
 		shouldOpenAboutPopup = false;
 	}
-	if (ImGui::BeginPopupModal("ManoEngineAboutPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-		ImGui::Text("ManoEngine %s", GetManoEngineDisplayVersion().c_str());
-		ImGui::Text("Channel: %s", GetEngineUpdateChannelText(GetManoEngineUpdateChannel()));
+	if (ImGui::BeginPopupModal("CG2EngineAboutPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::Text("CG2Engine %s", GetCG2EngineDisplayVersion().c_str());
+		ImGui::Text("Channel: %s", GetEngineUpdateChannelText(GetCG2EngineUpdateChannel()));
 		ImGui::Text("Project / Scene / Prefab Format: %u / %u / %u",
-			GetManoProjectFormatVersion(), GetManoSceneFormatVersion(), GetManoPrefabFormatVersion());
-		ImGui::Text("C++ Script API: %u", GetManoScriptApiVersion());
+			GetCG2ProjectFormatVersion(), GetCG2SceneFormatVersion(), GetCG2PrefabFormatVersion());
+		ImGui::Text("C++ Script API: %u", GetCG2ScriptApiVersion());
 		if (ImGui::Button("閉じる", ImVec2(120.0f, 0.0f))) ImGui::CloseCurrentPopup();
 		ImGui::EndPopup();
 	}
@@ -1983,7 +1983,7 @@ void EditorMainMenuBar::Draw(
 			ProjectVersionManager::Load(std::filesystem::current_path(), projectVersion, projectVersionMessage);
 			hasLoadedProjectVersion = true;
 		}
-		ImGui::Text("Engine: %s", GetManoEngineDisplayVersion().c_str());
+		ImGui::Text("Engine: %s", GetCG2EngineDisplayVersion().c_str());
 		ImGui::Text("Required Engine: %s (%s)", projectVersion.requiredEngineVersion.ToString().c_str(),
 			projectVersion.engineVersionPolicy == ProjectEngineVersionPolicy::Pinned ? "Pinned" : "Minimum");
 		ImGui::Text("Project / Scene / Prefab Format: %u / %u / %u",
@@ -1991,8 +1991,8 @@ void EditorMainMenuBar::Draw(
 		// Project側のScript APIはProjectVersion.cg2へ保存される値で、Engine側と別物である。
 		// 共同制作の参加判定はProject側の値を見るため、ずれていることが分かるよう両方出す。
 		ImGui::Text("Script API: Project %u / Engine %u",
-			projectVersion.requiredScriptApiVersion, GetManoScriptApiVersion());
-		if (projectVersion.requiredScriptApiVersion != GetManoScriptApiVersion()) {
+			projectVersion.requiredScriptApiVersion, GetCG2ScriptApiVersion());
+		if (projectVersion.requiredScriptApiVersion != GetCG2ScriptApiVersion()) {
 			ImGui::TextColored(
 				ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
 				"%s",
@@ -2009,8 +2009,8 @@ void EditorMainMenuBar::Draw(
 			// Engine Versionだけ更新するとScript APIが旧Engineの値のまま残り、
 			// 「両方とも同じVersionなのに不一致」と言われる状態になる。Engine由来の値はまとめて合わせる。
 			if (pinsVersion) {
-				projectVersion.requiredEngineVersion = GetManoEngineVersion();
-				projectVersion.requiredScriptApiVersion = GetManoScriptApiVersion();
+				projectVersion.requiredEngineVersion = GetCG2EngineVersion();
+				projectVersion.requiredScriptApiVersion = GetCG2ScriptApiVersion();
 			}
 		}
 		if (ImGui::Button("Version設定を保存")) {

@@ -7,9 +7,9 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "CG2", "CG2.vcxproj", "{787C
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "DirectXTex", "ThirdParty\DirectXTex\DirectXTex_Desktop_2022.vcxproj", "{371B9FA9-4C90-4AC6-A123-ACED756D6C77}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ManoLauncher", "Tools\ManoLauncher\ManoLauncher.vcxproj", "{54E674D8-B052-4E78-A5FA-6FE229936DB7}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "CG2Launcher", "Tools\CG2Launcher\CG2Launcher.vcxproj", "{54E674D8-B052-4E78-A5FA-6FE229936DB7}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ManoTeamServer", "Tools\ManoTeamServer\ManoTeamServer.vcxproj", "{7B3C2E91-5D48-4A16-9F27-1C4E8A6D3B52}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "CG2TeamServer", "Tools\CG2TeamServer\CG2TeamServer.vcxproj", "{7B3C2E91-5D48-4A16-9F27-1C4E8A6D3B52}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

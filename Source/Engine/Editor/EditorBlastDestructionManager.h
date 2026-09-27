@@ -22,7 +22,7 @@ class EditorScriptManager;
 class EditorDamageManager;
 class EditorEffectManager;
 
-// NVIDIA Blast 1.1.5の構造破壊を、ManoEngineの自動Fracture CacheとJoltへ接続する。
+// NVIDIA Blast 1.1.5の構造破壊を、CG2Engineの自動Fracture CacheとJoltへ接続する。
 // 通常はSource Meshだけを入力にし、直下の子Chunk方式はAdvanced互換としてのみ残す。
 class EditorBlastDestructionManager final {
 public:

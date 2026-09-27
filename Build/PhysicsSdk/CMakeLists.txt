@@ -55,7 +55,7 @@ set(blastAuthoringCommonSource "${blastSdk}/extensions/authoringCommon/source")
 
 # Blast 1.1.5 Authoring was released against PhysX 3.4.  Its public headers
 # forward-declare physx::PxVec3 as a class, which is incompatible with the
-# PxVec3T<float> alias used by the current ManoEngine PhysX runtime.  Keep the
+# PxVec3T<float> alias used by the current CG2Engine PhysX runtime.  Keep the
 # runtime on the current SDK and expose 3.4 headers to this target only.
 set(blastPhysX34 "${CG2_ROOT}/ThirdParty/PhysX-3.4")
 set(blastPhysX34Include "${blastPhysX34}/PhysX_3.4/Include")

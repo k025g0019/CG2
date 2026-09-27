@@ -12,7 +12,7 @@ $sdkRoot = Join-Path $projectRoot 'ThirdParty\PhysicsSdk'
 $blastPhysX34Root = Join-Path $projectRoot 'ThirdParty\PhysX-3.4'
 
 # Blast 1.1.5 Authoringだけはリリース時と同じPhysX 3.4型定義を必要とする。
-# ManoEngine Runtime用の現行PhysXと混ぜるとPxVec3の型衝突が起きるため、配置を先に検証する。
+# CG2Engine Runtime用の現行PhysXと混ぜるとPxVec3の型衝突が起きるため、配置を先に検証する。
 $blastPhysX34Include = Join-Path $blastPhysX34Root 'PhysX_3.4\Include'
 $blastPxSharedInclude = Join-Path $blastPhysX34Root 'PxShared\include'
 if (!(Test-Path -LiteralPath $blastPhysX34Root -PathType Container)) {
@@ -100,4 +100,4 @@ foreach ($buildConfiguration in $Configuration) {
     }
 
 }
-Write-Host 'PhysX CPU/GPU SDK and Blast runtime/authoring SDK are ready for ManoEngine.'
+Write-Host 'PhysX CPU/GPU SDK and Blast runtime/authoring SDK are ready for CG2Engine.'

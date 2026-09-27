@@ -1889,7 +1889,7 @@ bool EditorAssetUtility::SaveRenderTextureAsset(const std::string& path, const E
 	const int32_t width = (std::clamp)(asset.width, 1, 8192);
 	const int32_t height = (std::clamp)(asset.height, 1, 8192);
 	file.write(reinterpret_cast<const char*>(kUtf8Bom), static_cast<std::streamsize>(sizeof(kUtf8Bom)));
-	file << "# ManoEngine RenderTexture\r\n";
+	file << "# CG2Engine RenderTexture\r\n";
 	file << "# Camera の出力先や PostProcess の中間結果として使う描画用 Texture 設定です。\r\n";
 	file << "width=" << width << "\r\n";
 	file << "height=" << height << "\r\n";

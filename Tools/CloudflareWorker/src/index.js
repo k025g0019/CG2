@@ -1,6 +1,6 @@
-// ManoEngine Online Services - Cloudflare Worker 参照実装
+// CG2Engine Online Services - Cloudflare Worker 参照実装
 // ------------------------------------------------------------
-// ManoEngine の OnlineService が呼ぶ Endpoint をそのまま実装している(仕様書 54 項)。
+// CG2Engine の OnlineService が呼ぶ Endpoint をそのまま実装している(仕様書 54 項)。
 // 秘密情報(管理鍵など)は必ずこちら側の Secret に置き、クライアントへ配らない(仕様書 49 項)。
 // クライアントから来た値は無条件に信用せず、必ずこちらで検証する(仕様書 58 項)。
 
@@ -28,7 +28,7 @@ function errorResponse(message, statusCode = 400) {
 
 // 環境は Header を優先し、無い場合は Body / Query を見る。テスト Score が本番へ入らないようにする(仕様書 52 項)。
 function resolveEnvironment(request, payload, url) {
-	const headerEnvironment = request.headers.get('X-ManoEngine-Environment');
+	const headerEnvironment = request.headers.get('X-CG2Engine-Environment');
 	const bodyEnvironment = payload && typeof payload.environment === 'string' ? payload.environment : null;
 	const queryEnvironment = url.searchParams.get('environment');
 	const environment = (headerEnvironment || bodyEnvironment || queryEnvironment || 'development').toLowerCase();
@@ -36,7 +36,7 @@ function resolveEnvironment(request, payload, url) {
 }
 
 function resolveGameId(request, payload, url) {
-	const headerGameId = request.headers.get('X-ManoEngine-Game-Id');
+	const headerGameId = request.headers.get('X-CG2Engine-Game-Id');
 	const bodyGameId = payload && typeof payload.gameId === 'string' ? payload.gameId : null;
 	const queryGameId = url.searchParams.get('gameId');
 	const gameId = headerGameId || bodyGameId || queryGameId || '';
@@ -100,7 +100,7 @@ function verifyClientKey(request, environment, env) {
 		return true;  // 未設定の間は検証しない(開発初期用)。
 	}
 
-	return request.headers.get('X-ManoEngine-Client-Key') === expectedKey;
+	return request.headers.get('X-CG2Engine-Client-Key') === expectedKey;
 }
 
 async function enforceRateLimit(env, gameId, playerId) {
@@ -132,7 +132,7 @@ async function readJsonBody(request) {
 	}
 }
 
-// ManoEngine 側は { gameId, playerId, playerName, environment, payload } の形で送る。
+// CG2Engine 側は { gameId, playerId, playerName, environment, payload } の形で送る。
 function extractPayload(bodyObject) {
 	if (!bodyObject || typeof bodyObject !== 'object') {
 		return {};
@@ -235,7 +235,7 @@ async function handleLeaderboardTop(request, url, env) {
 async function handlePlayerGet(request, url, env) {
 	const environment = resolveEnvironment(request, null, url);
 	const gameId = resolveGameId(request, null, url);
-	const playerId = url.searchParams.get('playerId') || request.headers.get('X-ManoEngine-Player-Id') || '';
+	const playerId = url.searchParams.get('playerId') || request.headers.get('X-CG2Engine-Player-Id') || '';
 
 	if (gameId.length === 0 || !isValidPlayerId(playerId)) {
 		return errorResponse('gameId または playerId が不正です。');
@@ -318,7 +318,7 @@ async function handlePlayerPost(request, url, env) {
 async function handleSaveGet(request, url, env) {
 	const environment = resolveEnvironment(request, null, url);
 	const gameId = resolveGameId(request, null, url);
-	const playerId = url.searchParams.get('playerId') || request.headers.get('X-ManoEngine-Player-Id') || '';
+	const playerId = url.searchParams.get('playerId') || request.headers.get('X-CG2Engine-Player-Id') || '';
 	const slot = url.searchParams.get('slot') || 'default';
 
 	if (gameId.length === 0 || !isValidPlayerId(playerId)) {
@@ -445,7 +445,7 @@ async function handleSharedPost(request, url, env) {
 	}
 
 	// 共有データの書き込みは管理鍵を持つ Request だけに許す。
-	if (env.ADMIN_KEY && request.headers.get('X-ManoEngine-Admin-Key') !== env.ADMIN_KEY) {
+	if (env.ADMIN_KEY && request.headers.get('X-CG2Engine-Admin-Key') !== env.ADMIN_KEY) {
 		return errorResponse('共有データの書き込みには管理鍵が必要です。', 403);
 	}
 
@@ -554,7 +554,7 @@ export default {
 
 		try {
 			if (path === '/health') {
-				return jsonResponse({ success: true, service: 'ManoEngine Online', time: new Date().toISOString() });
+				return jsonResponse({ success: true, service: 'CG2Engine Online', time: new Date().toISOString() });
 			}
 
 			if (path === '/leaderboard/submit' && request.method === 'POST') {

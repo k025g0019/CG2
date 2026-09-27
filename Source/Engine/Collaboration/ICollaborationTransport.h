@@ -7,9 +7,9 @@
 #pragma warning(push)
 #pragma warning(disable : 4820)
 
-namespace ManoCollaboration {
+namespace CG2Collaboration {
 
-// 共同制作の通信経路。ManoEngine本体から見ると「MessageをTextで送受信する箱」でしかない。
+// 共同制作の通信経路。CG2Engine本体から見ると「MessageをTextで送受信する箱」でしかない。
 // LAN / Tailscale / 将来のWebSocket(WSS) / Cloud Backend は、この実装差し替えだけで対応する。
 // Scene同期・Lock・Conflict等の上位処理へ `if (tailscale)` のような分岐を持ち込まないこと。
 //
@@ -20,7 +20,7 @@ namespace ManoCollaboration {
 //       └─ Tailscale  (MagicDNS hostname など。経路が違うだけで実装は同じ)
 //
 // Tailscale固有のAPI・Node Key・Tailnet管理はここにも上位にも入れない。
-// ManoEngineから見れば「到達できるHost名とPort」以上の意味を持たない。
+// CG2Engineから見れば「到達できるHost名とPort」以上の意味を持たない。
 
 enum class TransportState : std::int32_t {
 	Disconnected = 0,
@@ -93,6 +93,6 @@ public:
 	virtual void ResetTransferProgress() = 0;
 };
 
-}  // namespace ManoCollaboration
+}  // namespace CG2Collaboration
 
 #pragma warning(pop)

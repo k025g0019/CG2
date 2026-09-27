@@ -21,7 +21,7 @@
 // Effekseer Runtime
 //================================================================
 
-// Effekseer 1.70e の .efk / .efkefc を ManoEngine の DirectX12 描画へ接続する。
+// Effekseer 1.70e の .efk / .efkefc を CG2Engine の DirectX12 描画へ接続する。
 // 内蔵 GPU Particle とは別系統にし、公式 Runtime の Sprite / Ribbon / Ring / Track / Model を保持する。
 class EditorEffekseerManager {
 public:
@@ -77,7 +77,7 @@ private:
 	Effekseer::Backend::GraphicsDeviceRef graphicsDevice_;  // Effekseer が D3D12 Device を扱うラッパー。
 	EffekseerRenderer::RendererRef renderer_;  // Sprite / Model を現在の RenderTarget へ描く Renderer。
 	Effekseer::RefPtr<EffekseerRenderer::SingleFrameMemoryPool> memoryPool_;  // 1 フレーム内の定数Bufferを再利用するPool。
-	Effekseer::RefPtr<EffekseerRenderer::CommandList> effekseerCommandList_;  // ManoEngine の CommandList を Effekseer へ渡すアダプタ。
+	Effekseer::RefPtr<EffekseerRenderer::CommandList> effekseerCommandList_;  // CG2Engine の CommandList を Effekseer へ渡すアダプタ。
 	Effekseer::ManagerRef manager_;  // Effect の読み込み、再生、更新、停止を管理する本体。
 	std::unordered_map<std::string, Effekseer::EffectRef> effectCache_;  // 同じ Effect Asset の二重読み込みを防ぐ。
 	std::unordered_map<uint64_t, EffectInstance> instances_;  // Component ごとの再生状態。

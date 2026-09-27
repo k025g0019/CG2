@@ -614,8 +614,8 @@ index d0b79c1..8223ba0 100644
  
 +      <section className="doc-section">
 +        <div className="doc-section-title"><p className="eyebrow">LAUNCHER SETUP</p><h2>Engineを手作業で組み立てない</h2></div>
-+        <p className="section-intro">新しいメンバーはManoLauncherからInstall、Verify、Project選択、Openの順に進みます。更新は別Version Folderへ検証済みFileを配置してから切り替えるため、起動中のEditorやProject Dataを上書きしません。</p>
-+        <CodeBlock code={`ManoLauncher.exe install --manifest-url <URL> --root C:\\ManoEngines --project C:\\GameProject\nManoLauncher.exe verify --manifest-url <URL> --root C:\\ManoEngines\nManoLauncher.exe open --root C:\\ManoEngines --project C:\\GameProject`} />
++        <p className="section-intro">新しいメンバーはCG2LauncherからInstall、Verify、Project選択、Openの順に進みます。更新は別Version Folderへ検証済みFileを配置してから切り替えるため、起動中のEditorやProject Dataを上書きしません。</p>
++        <CodeBlock code={`CG2Launcher.exe install --manifest-url <URL> --root C:\\CG2Engines --project C:\\GameProject\nCG2Launcher.exe verify --manifest-url <URL> --root C:\\CG2Engines\nCG2Launcher.exe open --root C:\\CG2Engines --project C:\\GameProject`} />
 +      </section>
 +
        <section className="doc-section">
@@ -764,9 +764,9 @@ index e1aa0ab..21893ea 100644
    return (
      <DocsShell>
        <DocHeader
--        eyebrow="MANOENGINE DOCUMENTATION"
-+        eyebrow="ManoEngine DOCUMENTATION"
-         title="使い方から引ける、ManoEngineのリファレンス。"
+-        eyebrow="CG2ENGINE DOCUMENTATION"
++        eyebrow="CG2Engine DOCUMENTATION"
+         title="使い方から引ける、CG2Engineのリファレンス。"
 -        lead="初めてSceneを作る人にも、C++から物理APIを呼ぶ人にも。実際のエディタ操作とRuntimeの動作を分け、Asset、Lighting、共同制作の確認方法まで記載します。"
 -        meta="LAST REVIEWED / 2026.09.11 · API VERSION / 8"
 +        lead="初めてSceneを作る人にも、C++から物理APIを呼ぶ人にも。実際のエディタ操作とRuntimeの動作を分け、必要なComponentと確認方法まで記載します。"
@@ -775,8 +775,8 @@ index e1aa0ab..21893ea 100644
  
        <section className="doc-quickstart">
          <div>
--          <span className="doc-step-label">NEW TO MANOENGINE?</span>
-+          <span className="doc-step-label">NEW TO ManoEngine?</span>
+-          <span className="doc-step-label">NEW TO CG2ENGINE?</span>
++          <span className="doc-step-label">NEW TO CG2Engine?</span>
            <h2>10分で最初のSceneへ。</h2>
            <p>エディタを起動し、GameObjectを置き、Componentを確認してPlayするまでを順番に進めます。</p>
          </div>
@@ -826,9 +826,9 @@ index 04ee1de..3bf0de2 100644
 +      </section>
 +
 +      <section className="doc-section" id="server-transport">
-+        <div className="doc-section-title"><p className="eyebrow">MANOTEAMSERVER / TAILSCALE</p><h2>遠隔接続はServer経路を使う</h2></div>
++        <div className="doc-section-title"><p className="eyebrow">CG2TEAMSERVER / TAILSCALE</p><h2>遠隔接続はServer経路を使う</h2></div>
 +        <div className="two-column-doc">
-+          <div><h3>Transport</h3><p>ManoTeamServerはEditor間のSnapshot、Revision、履歴再送を中継します。LANとTailscaleは同じTransport抽象化で扱い、Engineは到達可能なHostとPortとして接続します。</p></div>
++          <div><h3>Transport</h3><p>CG2TeamServerはEditor間のSnapshot、Revision、履歴再送を中継します。LANとTailscaleは同じTransport抽象化で扱い、Engineは到達可能なHostとPortとして接続します。</p></div>
 +          <div><h3>MagicDNS</h3><p>Tailscaleでは<code>*.ts.net</code>のMagicDNS Hostnameを使います。<code>100.x.x.x</code>の直接入力やNode Keyの保存は行いません。Launcherが参加先Tailnetを確認し、必要なら切替確認を表示します。</p></div>
 +        </div>
 +        <Callout title="接続前に一致させる値" tone="note"><p><code>Project ID</code>、<code>CollaborationId</code>、<code>Engine Version</code>、<code>Project Format</code>、<code>Script API Version</code>、<code>Protocol 3</code>を両端で確認します。</p></Callout>
@@ -899,7 +899,7 @@ index 0000000..6ae1e8d
 +] as const;
 +
 +export default function UserGuidePage() {
-+  return <DocsShell><DocHeader eyebrow="USER GUIDE / 01" title="最初のProjectからBuildまで。" lead="ManoEngineを初めて使う人向けに、Launcher、Scene、Component、Play、Script、Build、共同制作の基本順序をまとめます。" meta="SOURCE REVIEW / 2026.09.25 · USER WORKFLOW" /><div className="doc-badge-row"><StatusPill tone="stable">START HERE</StatusPill><StatusPill tone="partial">PLAY CHECK</StatusPill><StatusPill tone="note">BUILD READY</StatusPill></div>
++  return <DocsShell><DocHeader eyebrow="USER GUIDE / 01" title="最初のProjectからBuildまで。" lead="CG2Engineを初めて使う人向けに、Launcher、Scene、Component、Play、Script、Build、共同制作の基本順序をまとめます。" meta="SOURCE REVIEW / 2026.09.25 · USER WORKFLOW" /><div className="doc-badge-row"><StatusPill tone="stable">START HERE</StatusPill><StatusPill tone="partial">PLAY CHECK</StatusPill><StatusPill tone="note">BUILD READY</StatusPill></div>
 +    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">WORKFLOW</p><h2>この順番で進める</h2></div><div className="numbered-steps">{guideSteps.map(([number, title, body]) => <article key={title}><span>{number}</span><h3>{title}</h3><p>{body}</p></article>)}</div></section>
 +    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">EDITOR MAP</p><h2>画面の役割を分ける</h2></div><div className="detail-card-grid"><article className="detail-card"><h3>Scene / Game View</h3><p>Scene Viewは配置とDebug、Game ViewはCamera Componentからの実行画面です。両者のCameraとTemporal Historyを混同しません。</p></article><article className="detail-card"><h3>Inspector / Project</h3><p>Inspectorは選択Objectの値、ProjectはAsset作成・移動・Reimport・依存確認を扱います。</p></article><article className="detail-card"><h3>Console / Diagnostics</h3><p>ConsoleはErrorや状態Message、DiagnosticsはCPU/GPU、VRAM、Physics、Frame Spikeの切り分けに使います。</p></article></div></section>
 +    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">NEXT</p><h2>目的別に進む</h2></div><div className="link-grid"><Link href="/docs/components">Componentを探す →</Link><Link href="/docs/cpp-scripting">C++ APIを読む →</Link><Link href="/docs/editor-windows">Editor Windowを開く →</Link><Link href="/docs/troubleshooting">症状から直す →</Link></div><Callout title="保存してから終了するもの" tone="note"><p>Scene、Project Settings、Input Action、Animation、Effect、Material、TEAM設定、Native Script Source/DLLは明示的に保存します。Play中のHPや生成Objectは編集設定ではありません。</p></Callout></section>
@@ -974,8 +974,8 @@ index 2fc1293..040bd72 100644
        <main id="main-content">
          <section className="hero shell">
            <div className="hero-copy">
--            <p className="eyebrow">MANOENGINE 公式ドキュメント</p>
-+            <p className="eyebrow">ManoEngine GAME ENGINE 公式ドキュメント</p>
+-            <p className="eyebrow">CG2ENGINE 公式ドキュメント</p>
++            <p className="eyebrow">CG2Engine GAME ENGINE 公式ドキュメント</p>
              <h1>
                <span className="title-line">
                  <span className="title-segment">ゲーム制作に</span>
@@ -992,8 +992,8 @@ index 2fc1293..040bd72 100644
                <p className="eyebrow">ドキュメント分類</p>
                <h2>作業の順番に沿って探す。</h2>
              </div>
--            <p>曖昧な「機能」「API」という分け方をやめ、ManoEngineを使う時の作業単位で10カテゴリに整理しています。</p>
-+            <p>編集、実行、Asset、描画、共同制作まで、ManoEngineを使う時の作業単位で10項目に整理しています。</p>
+-            <p>曖昧な「機能」「API」という分け方をやめ、CG2Engineを使う時の作業単位で10カテゴリに整理しています。</p>
++            <p>編集、実行、Asset、描画、共同制作まで、CG2Engineを使う時の作業単位で10項目に整理しています。</p>
            </div>
            <div className="workflow-grid">
              {workflowLinks.map((item, index) => (
@@ -1263,11 +1263,11 @@ index 23cd4ef..adda633 100644
      <header className="site-header">
        <a className="skip-link" href="#main-content">本文へ移動</a>
        <div className="shell header-inner">
--        <Link className="brand" href="/" aria-label="ManoEngine トップ">
+-        <Link className="brand" href="/" aria-label="CG2Engine トップ">
 -          <span className="brand-mark">ME</span>
--          <span className="brand-sub">MANOENGINE</span>
-+        <Link className="brand" href="/" aria-label="ManoEngine Game Engine トップ">
-+          <span className="brand-mark">ManoEngine</span>
+-          <span className="brand-sub">CG2ENGINE</span>
++        <Link className="brand" href="/" aria-label="CG2Engine Game Engine トップ">
++          <span className="brand-mark">CG2Engine</span>
 +          <span className="brand-sub">GAME ENGINE</span>
          </Link>
          <nav className="desktop-nav" aria-label="メインナビゲーション">
@@ -1277,11 +1277,11 @@ index 23cd4ef..adda633 100644
          <div>
            <Link className="brand footer-brand" href="/">
 -            <span className="brand-mark">ME</span>
--            <span className="brand-sub">MANOENGINE</span>
-+            <span className="brand-mark">ManoEngine</span>
+-            <span className="brand-sub">CG2ENGINE</span>
++            <span className="brand-mark">CG2Engine</span>
 +            <span className="brand-sub">GAME ENGINE</span>
            </Link>
-           <p>シーンを組み、C++で動かす。ManoEngine使用者向け公式リファレンス。</p>
+           <p>シーンを組み、C++で動かす。CG2Engine使用者向け公式リファレンス。</p>
          </div>
 @@ -45,12 +46,12 @@ export function SiteFooter() {
            {docNavigation.map((item) => <Link href={item.href} key={item.href}>{item.label}</Link>)}
@@ -1294,8 +1294,8 @@ index 23cd4ef..adda633 100644
            <span>WINDOWS / DIRECTX 12</span>
          </div>
        </div>
--      <div className="shell footer-bottom">MANOENGINE DOCUMENTATION <span>BUILD THE FEEL.</span></div>
-+      <div className="shell footer-bottom">ManoEngine ENGINE DOCUMENTATION <span>BUILD THE FEEL.</span></div>
+-      <div className="shell footer-bottom">CG2ENGINE DOCUMENTATION <span>BUILD THE FEEL.</span></div>
++      <div className="shell footer-bottom">CG2Engine ENGINE DOCUMENTATION <span>BUILD THE FEEL.</span></div>
      </footer>
    );
  }
@@ -1312,8 +1312,8 @@ index 23cd4ef..adda633 100644
  export function CodeBlock({ code, label = "C++" }: { code: string; label?: string }) {
    return (
      <div className="code-block">
--      <div className="code-toolbar"><span>{label}</span><span>MANOENGINE SCRIPT</span></div>
-+      <div className="code-toolbar"><span>{label}</span><span>ManoEngine SCRIPT</span></div>
+-      <div className="code-toolbar"><span>{label}</span><span>CG2ENGINE SCRIPT</span></div>
++      <div className="code-toolbar"><span>{label}</span><span>CG2Engine SCRIPT</span></div>
        <pre><code>{code}</code></pre>
      </div>
    );
@@ -1350,7 +1350,7 @@ index 993bb72..6829a6d 100644
 -    const response = await render(pathname);
 -    assert.equal(response.status, 200);
 -    const html = await response.text();
--    assert.match(html, /ManoEngine/);
+-    assert.match(html, /CG2Engine/);
 -  }
 -});
 -

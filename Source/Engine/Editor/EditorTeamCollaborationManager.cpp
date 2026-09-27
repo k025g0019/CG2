@@ -48,18 +48,18 @@ namespace {
 	constexpr const char* kTeamIncomingSnapshotPath = ".team/live/incoming.scene";
 	constexpr const char* kTeamLiveFragmentSnapshotPath = ".team/live/fragment.scene";
 	constexpr const char* kTeamAssetUuidRegistryPath = ".team/asset-uuids.txt";
-	constexpr const char* kDedicatedServerPidPath = ".team/mano-team-server.pid";
-	constexpr const char* kDedicatedServerStatusPath = ".team/mano-team-server.status";
+	constexpr const char* kDedicatedServerPidPath = ".team/cg2-team-server.pid";
+	constexpr const char* kDedicatedServerStatusPath = ".team/cg2-team-server.status";
 
 	// 共同制作ServerをLauncherからEditorへ移した以前の版は、PIDをLocalAppDataへ保存していた。
-	// 移行前に開始したServerもEditorから停止できないと、ManoTeamServer.exeがロックされたままになる。
+	// 移行前に開始したServerもEditorから停止できないと、CG2TeamServer.exeがロックされたままになる。
 	std::filesystem::path LegacyDedicatedServerPidPath() {
 		wchar_t localAppData[32768]{};
 		const DWORD length = GetEnvironmentVariableW(
 			L"LOCALAPPDATA", localAppData, static_cast<DWORD>(std::size(localAppData)));
 		if (length == 0u || length >= static_cast<DWORD>(std::size(localAppData))) return {};
 		return std::filesystem::path(localAppData) /
-			L"ManoEngine" / L"LauncherState" / L"collaboration-server.pid";
+			L"CG2Engine" / L"LauncherState" / L"collaboration-server.pid";
 	}
 
 	std::wstring ToWideText(const std::string& value) {
@@ -76,7 +76,7 @@ namespace {
 	std::filesystem::path FindDedicatedServerExecutable() {
 		wchar_t modulePath[32768]{};
 		if (GetModuleFileNameW(nullptr, modulePath, static_cast<DWORD>(std::size(modulePath))) == 0u) return {};
-		return std::filesystem::path(modulePath).parent_path() / "ManoTeamServer.exe";
+		return std::filesystem::path(modulePath).parent_path() / "CG2TeamServer.exe";
 	}
 
 	std::uint32_t ReadProcessIdFile(const std::filesystem::path& path) {
@@ -130,7 +130,7 @@ namespace {
 			return status;
 		}
 		status.projectId = values[4];
-		status.hasIdentity = ManoCollaboration::IsValidProjectId(status.projectId);
+		status.hasIdentity = CG2Collaboration::IsValidProjectId(status.projectId);
 		return status;
 	}
 
@@ -141,7 +141,7 @@ namespace {
 		wchar_t processPath[32768]{};
 		DWORD processPathLength = static_cast<DWORD>(std::size(processPath));
 		const bool matches = QueryFullProcessImageNameW(process, 0u, processPath, &processPathLength) != FALSE &&
-			_wcsicmp(std::filesystem::path(processPath).filename().c_str(), L"ManoTeamServer.exe") == 0;
+			_wcsicmp(std::filesystem::path(processPath).filename().c_str(), L"CG2TeamServer.exe") == 0;
 		CloseHandle(process);
 		return matches;
 	}
@@ -195,7 +195,7 @@ namespace {
 	}
 
 	std::wstring DedicatedServerTaskName(const std::string& projectId) {
-		return L"ManoEngine Team Server " + ToWideText(projectId);
+		return L"CG2Engine Team Server " + ToWideText(projectId);
 	}
 	constexpr float kSnapshotIntervalSeconds = 0.75f;
 	constexpr float kAssetScanIntervalSeconds = 2.0f;
@@ -1016,9 +1016,9 @@ namespace {
 
 	std::string SerializeCompatibilityMessage(const ProjectVersionSettings& projectSettings) {
 		return "{\"type\":\"compatibility\",\"engineVersion\":\"" +
-			EscapeJsonText(GetManoEngineDisplayVersion()) + "\",\"projectFormat\":" +
+			EscapeJsonText(GetCG2EngineDisplayVersion()) + "\",\"projectFormat\":" +
 			std::to_string(projectSettings.projectFormatVersion) + ",\"scriptApi\":" +
-			std::to_string(GetManoScriptApiVersion()) + ",\"channel\":\"" +
+			std::to_string(GetCG2ScriptApiVersion()) + ",\"channel\":\"" +
 			GetEngineUpdateChannelText(projectSettings.updateChannel) + "\"}";
 	}
 
@@ -1037,11 +1037,11 @@ namespace {
 		const std::string& projectId,
 		const std::string& userId,
 		const std::string& userName) {
-		return std::string("{\"type\":\"") + ManoCollaboration::MessageType::kHandshake +
-			"\",\"protocol\":" + std::to_string(ManoCollaboration::kCollaborationProtocolVersion) +
-			",\"engineVersion\":\"" + EscapeJsonText(GetManoEngineDisplayVersion()) +
+		return std::string("{\"type\":\"") + CG2Collaboration::MessageType::kHandshake +
+			"\",\"protocol\":" + std::to_string(CG2Collaboration::kCollaborationProtocolVersion) +
+			",\"engineVersion\":\"" + EscapeJsonText(GetCG2EngineDisplayVersion()) +
 			"\",\"projectFormat\":" + std::to_string(projectSettings.projectFormatVersion) +
-			",\"scriptApi\":" + std::to_string(GetManoScriptApiVersion()) +
+			",\"scriptApi\":" + std::to_string(GetCG2ScriptApiVersion()) +
 			",\"channel\":\"" + GetEngineUpdateChannelText(projectSettings.updateChannel) +
 			"\",\"projectId\":\"" + EscapeJsonText(projectId) +
 			"\",\"userId\":\"" + EscapeJsonText(userId) +
@@ -1049,33 +1049,33 @@ namespace {
 	}
 
 	std::string SerializeHandshakeAcceptedMessage(std::uint64_t serverRevision) {
-		return std::string("{\"type\":\"") + ManoCollaboration::MessageType::kHandshakeAccepted +
-			"\",\"protocol\":" + std::to_string(ManoCollaboration::kCollaborationProtocolVersion) +
+		return std::string("{\"type\":\"") + CG2Collaboration::MessageType::kHandshakeAccepted +
+			"\",\"protocol\":" + std::to_string(CG2Collaboration::kCollaborationProtocolVersion) +
 			",\"revision\":" + std::to_string(serverRevision) + "}";
 	}
 
 	std::string SerializeHandshakeRejectedMessage(const std::string& reason) {
-		return std::string("{\"type\":\"") + ManoCollaboration::MessageType::kHandshakeRejected +
-			"\",\"protocol\":" + std::to_string(ManoCollaboration::kCollaborationProtocolVersion) +
+		return std::string("{\"type\":\"") + CG2Collaboration::MessageType::kHandshakeRejected +
+			"\",\"protocol\":" + std::to_string(CG2Collaboration::kCollaborationProtocolVersion) +
 			",\"reason\":\"" + EscapeJsonText(reason) + "\"}";
 	}
 
 	std::string SerializeHistoryRequestMessage(
 		const std::string& userId,
 		std::uint64_t afterRevision) {
-		return std::string("{\"type\":\"") + ManoCollaboration::MessageType::kHistoryRequest +
+		return std::string("{\"type\":\"") + CG2Collaboration::MessageType::kHistoryRequest +
 			"\",\"userId\":\"" + EscapeJsonText(userId) +
 			"\",\"afterRevision\":" + std::to_string(afterRevision) + "}";
 	}
 
 	std::string SerializeHeartbeatMessage(const std::string& userId, std::uint64_t sentUnixMilliseconds) {
-		return std::string("{\"type\":\"") + ManoCollaboration::MessageType::kHeartbeat +
+		return std::string("{\"type\":\"") + CG2Collaboration::MessageType::kHeartbeat +
 			"\",\"userId\":\"" + EscapeJsonText(userId) +
 			"\",\"sentAt\":" + std::to_string(sentUnixMilliseconds) + "}";
 	}
 
 	std::string SerializeHeartbeatAckMessage(const std::string& userId, std::uint64_t sentUnixMilliseconds) {
-		return std::string("{\"type\":\"") + ManoCollaboration::MessageType::kHeartbeatAck +
+		return std::string("{\"type\":\"") + CG2Collaboration::MessageType::kHeartbeatAck +
 			"\",\"userId\":\"" + EscapeJsonText(userId) +
 			"\",\"sentAt\":" + std::to_string(sentUnixMilliseconds) + "}";
 	}
@@ -1301,7 +1301,7 @@ namespace {
 struct EditorTeamCollaborationManager::NetworkState {
 	// 通信経路の実体。LAN / Tailscale の違いはこの中だけに閉じる。
 	// 将来WebSocket等へ差し替える場合も、ここへ別実装を入れるだけで済む。
-	std::unique_ptr<ManoCollaboration::ICollaborationTransport> transport;
+	std::unique_ptr<CG2Collaboration::ICollaborationTransport> transport;
 	std::mutex queueMutex;
 	std::mutex errorMutex;
 	std::mutex transferLabelMutex;
@@ -1420,8 +1420,8 @@ void EditorTeamCollaborationManager::Update(float deltaTime, bool isPlaying) {
 		handshakeAccepted_ = false;
 	}
 	const bool transportLinkUp = networkState_->transport != nullptr &&
-		(networkState_->transport->GetState() == ManoCollaboration::TransportState::Connected ||
-		 networkState_->transport->GetState() == ManoCollaboration::TransportState::Listening);
+		(networkState_->transport->GetState() == CG2Collaboration::TransportState::Connected ||
+		 networkState_->transport->GetState() == CG2Collaboration::TransportState::Listening);
 
 	// 通信状態とProject保存を分離する。Hostが停止中でもScene/Asset/Script差分を
 	// Offline ChangeLogへ積み、再接続時の3-way比較に使えるようにする。
@@ -1601,7 +1601,7 @@ bool EditorTeamCollaborationManager::IsDedicatedServerRunning() const {
 }
 
 bool EditorTeamCollaborationManager::StartDedicatedServer() {
-	if (!ManoCollaboration::IsValidProjectId(projectIdBuffer_.data())) {
+	if (!CG2Collaboration::IsValidProjectId(projectIdBuffer_.data())) {
 		lastError_ = "専用Serverを開始するには有効なProject IDが必要です";
 		return false;
 	}
@@ -1623,7 +1623,7 @@ bool EditorTeamCollaborationManager::StartDedicatedServer() {
 	}
 	const std::filesystem::path executable = FindDedicatedServerExecutable();
 	if (!std::filesystem::is_regular_file(executable)) {
-		lastError_ = "ManoTeamServer.exeがありません: " + executable.generic_string();
+		lastError_ = "CG2TeamServer.exeがありません: " + executable.generic_string();
 		return false;
 	}
 	std::error_code directoryError;
@@ -1643,7 +1643,7 @@ bool EditorTeamCollaborationManager::StartDedicatedServer() {
 	if (CreateProcessW(executable.c_str(), commandLine.data(), nullptr, nullptr, FALSE,
 			CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP, nullptr, executable.parent_path().c_str(),
 			&startupInfo, &processInfo) == FALSE) {
-		lastError_ = "ManoTeamServerを開始できません (Windows Error " + std::to_string(GetLastError()) + ")";
+		lastError_ = "CG2TeamServerを開始できません (Windows Error " + std::to_string(GetLastError()) + ")";
 		return false;
 	}
 	// Listen失敗（特に古いServerが同じPortを占有）を開始成功として扱わない。
@@ -1654,7 +1654,7 @@ bool EditorTeamCollaborationManager::StartDedicatedServer() {
 		GetExitCodeProcess(processInfo.hProcess, &exitCode);
 		CloseHandle(processInfo.hThread);
 		CloseHandle(processInfo.hProcess);
-		lastError_ = "専用ManoTeamServerを開始できません。Port " + std::to_string(port_) +
+		lastError_ = "専用CG2TeamServerを開始できません。Port " + std::to_string(port_) +
 			" を旧Serverが使用していないか確認してください (終了コード " +
 			std::to_string(exitCode) + ")";
 		return false;
@@ -1664,7 +1664,7 @@ bool EditorTeamCollaborationManager::StartDedicatedServer() {
 	CloseHandle(processInfo.hProcess);
 	WriteUtf8BomTextFile(kDedicatedServerPidPath, std::to_string(dedicatedServerProcessId_) + "\r\n");
 	lastError_.clear();
-	AddConsoleMessage("Team: 専用ManoTeamServerを開始しました (Port " + std::to_string(port_) + ")");
+	AddConsoleMessage("Team: 専用CG2TeamServerを開始しました (Port " + std::to_string(port_) + ")");
 	return true;
 }
 
@@ -1681,7 +1681,7 @@ bool EditorTeamCollaborationManager::StopDedicatedServer() {
 			PROCESS_TERMINATE | SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
 		if (process == nullptr || TerminateProcess(process, 0u) == FALSE) {
 			if (process != nullptr) CloseHandle(process);
-			lastError_ = "専用ManoTeamServerを停止できません (PID " + std::to_string(processId) + ")";
+			lastError_ = "専用CG2TeamServerを停止できません (PID " + std::to_string(processId) + ")";
 			return false;
 		}
 		WaitForSingleObject(process, 3000u);
@@ -1694,7 +1694,7 @@ bool EditorTeamCollaborationManager::StopDedicatedServer() {
 	const std::filesystem::path legacyPidPath = LegacyDedicatedServerPidPath();
 	if (!legacyPidPath.empty()) std::filesystem::remove(legacyPidPath, removeError);
 	lastError_.clear();
-	AddConsoleMessage("Team: 専用ManoTeamServerを停止しました");
+	AddConsoleMessage("Team: 専用CG2TeamServerを停止しました");
 	return true;
 }
 
@@ -1703,7 +1703,7 @@ bool EditorTeamCollaborationManager::RestartDedicatedServer() {
 }
 
 bool EditorTeamCollaborationManager::IsDedicatedServerAutoStartAtLogonEnabled() const {
-	if (!ManoCollaboration::IsValidProjectId(projectIdBuffer_.data())) return false;
+	if (!CG2Collaboration::IsValidProjectId(projectIdBuffer_.data())) return false;
 	DWORD exitCode = 1u;
 	return RunScheduledTaskCommand(
 		L"/Query /TN \"" + DedicatedServerTaskName(projectIdBuffer_.data()) + L"\"",
@@ -1711,7 +1711,7 @@ bool EditorTeamCollaborationManager::IsDedicatedServerAutoStartAtLogonEnabled() 
 }
 
 bool EditorTeamCollaborationManager::SetDedicatedServerAutoStartAtLogon(bool enabled) {
-	if (!ManoCollaboration::IsValidProjectId(projectIdBuffer_.data())) {
+	if (!CG2Collaboration::IsValidProjectId(projectIdBuffer_.data())) {
 		lastError_ = "ログオン時自動起動には有効なProject IDが必要です";
 		return false;
 	}
@@ -1725,7 +1725,7 @@ bool EditorTeamCollaborationManager::SetDedicatedServerAutoStartAtLogon(bool ena
 	}
 	const std::filesystem::path executable = FindDedicatedServerExecutable();
 	if (!std::filesystem::is_regular_file(executable)) {
-		lastError_ = "ManoTeamServer.exeがありません: " + executable.generic_string();
+		lastError_ = "CG2TeamServer.exeがありません: " + executable.generic_string();
 		return false;
 	}
 	const std::filesystem::path dataPath = std::filesystem::absolute(".team/server");
@@ -2190,7 +2190,7 @@ void EditorTeamCollaborationManager::LoadSettings() {
 		}
 	}
 
-	// Launcherが .mano-invite から書き出したCollaboration設定を取り込む。
+	// Launcherが .cg2-invite から書き出したCollaboration設定を取り込む。
 	// 利用者が画面で変更できる項目(接続先Host・ポート等)は、既にある設定を優先する。
 	// Project IDは読み取り専用で直せないため、新しいInviteの値を必ず採用する。
 	std::ifstream inviteFile("ProjectSettings/TeamCollaboration.invite", std::ios::binary);
@@ -2793,28 +2793,28 @@ void EditorTeamCollaborationManager::ProcessIncomingMessages() {
 		if (!targetUserId.empty() && targetUserId != userId_) {
 			continue;
 		}
-		if (messageType == ManoCollaboration::MessageType::kHistoryBegin) {
+		if (messageType == CG2Collaboration::MessageType::kHistoryBegin) {
 			historySyncInProgress_ = true;
 			serverRevision_ = ReadJsonUnsigned(message, "serverRevision");
 			networkState_->status.store(EditorTeamConnectionStatus::Synchronizing, std::memory_order_release);
 			continue;
 		}
-		if (messageType == ManoCollaboration::MessageType::kHistoryEnd) {
+		if (messageType == CG2Collaboration::MessageType::kHistoryEnd) {
 			CompleteHistorySynchronization(ReadJsonUnsigned(message, "serverRevision"));
 			continue;
 		}
 
 		// Protocol / Project ID を含む新しいHandshake。旧Buildのcompatibilityとは別種別のため、
 		// 互換性の無い相手でも「拒否理由」だけは相手へ届く。
-		if (messageType == ManoCollaboration::MessageType::kHandshake) {
+		if (messageType == CG2Collaboration::MessageType::kHandshake) {
 			ProcessHandshakeMessage(message);
 			continue;
 		}
-		if (messageType == ManoCollaboration::MessageType::kHandshakeAccepted) {
+		if (messageType == CG2Collaboration::MessageType::kHandshakeAccepted) {
 			ProcessHandshakeResult(message, true);
 			continue;
 		}
-		if (messageType == ManoCollaboration::MessageType::kHandshakeRejected) {
+		if (messageType == CG2Collaboration::MessageType::kHandshakeRejected) {
 			ProcessHandshakeResult(message, false);
 			continue;
 		}
@@ -2837,16 +2837,16 @@ void EditorTeamCollaborationManager::ProcessIncomingMessages() {
 				continue;
 			}
 		}
-		if (messageType == ManoCollaboration::MessageType::kHeartbeat) {
+		if (messageType == CG2Collaboration::MessageType::kHeartbeat) {
 			ProcessHeartbeatMessage(message, false);
 			continue;
 		}
-		if (messageType == ManoCollaboration::MessageType::kHeartbeatAck) {
+		if (messageType == CG2Collaboration::MessageType::kHeartbeatAck) {
 			ProcessHeartbeatMessage(message, true);
 			continue;
 		}
 		// Serverが「Clientが消えた」と判断した通知。そのUserのLockを解放する。
-		if (messageType == ManoCollaboration::MessageType::kPeerLeft) {
+		if (messageType == CG2Collaboration::MessageType::kPeerLeft) {
 			ReleaseLocksOwnedBy(ReadJsonString(message, "userId"));
 			continue;
 		}
@@ -3109,7 +3109,7 @@ void EditorTeamCollaborationManager::ProcessCompatibilityMessage(
 	const std::string peerChannel = ReadJsonString(message, "channel");
 	const std::uint64_t peerProjectFormat = ReadJsonUnsigned(message, "projectFormat");
 	const std::uint64_t peerScriptApi = ReadJsonUnsigned(message, "scriptApi");
-	CheckManoEnginePeerCompatibility(
+	CheckCG2EnginePeerCompatibility(
 		peerEngine,
 		static_cast<std::uint32_t>(peerProjectFormat),
 		static_cast<std::uint32_t>(peerScriptApi),
@@ -3161,10 +3161,10 @@ void EditorTeamCollaborationManager::ProcessHandshakeMessage(const std::string& 
 		return;
 	}
 
-	if (peerProtocol != ManoCollaboration::kCollaborationProtocolVersion) {
+	if (peerProtocol != CG2Collaboration::kCollaborationProtocolVersion) {
 		const std::string reason =
 			"共同制作Protocolが一致しません。Server: " +
-			std::to_string(ManoCollaboration::kCollaborationProtocolVersion) +
+			std::to_string(CG2Collaboration::kCollaborationProtocolVersion) +
 			" / Client: " + std::to_string(peerProtocol);
 		QueueOutgoingMessage(SetTargetUserId(
 			SerializeHandshakeRejectedMessage(reason), peerUserId));
@@ -3197,7 +3197,7 @@ void EditorTeamCollaborationManager::ProcessHandshakeMessage(const std::string& 
 		return;
 	}
 
-	CheckManoEnginePeerCompatibility(
+	CheckCG2EnginePeerCompatibility(
 		ReadJsonString(message, "engineVersion"),
 		static_cast<std::uint32_t>(ReadJsonUnsigned(message, "projectFormat")),
 		static_cast<std::uint32_t>(ReadJsonUnsigned(message, "scriptApi")),
@@ -3316,10 +3316,10 @@ void EditorTeamCollaborationManager::UpdateHeartbeat(float deltaTime) {
 		return;
 	}
 
-	const ManoCollaboration::TransportState transportState = networkState_->transport->GetState();
+	const CG2Collaboration::TransportState transportState = networkState_->transport->GetState();
 	const bool isLinkUp =
-		transportState == ManoCollaboration::TransportState::Connected ||
-		transportState == ManoCollaboration::TransportState::Listening;
+		transportState == CG2Collaboration::TransportState::Connected ||
+		transportState == CG2Collaboration::TransportState::Listening;
 
 	if (!isLinkUp) {
 		heartbeatElapsedSeconds_ = 0.0f;
@@ -3331,7 +3331,7 @@ void EditorTeamCollaborationManager::UpdateHeartbeat(float deltaTime) {
 	if (!isHost_) {
 		heartbeatElapsedSeconds_ += deltaTime;
 
-		if (heartbeatElapsedSeconds_ >= ManoCollaboration::kHeartbeatIntervalSeconds) {
+		if (heartbeatElapsedSeconds_ >= CG2Collaboration::kHeartbeatIntervalSeconds) {
 			heartbeatElapsedSeconds_ = 0.0f;
 			heartbeatSentUnixMilliseconds_ = GetCurrentUnixTimestampMilliseconds();
 			QueueOutgoingMessage(SerializeHeartbeatMessage(userId_, heartbeatSentUnixMilliseconds_));
@@ -3344,8 +3344,8 @@ void EditorTeamCollaborationManager::UpdateHeartbeat(float deltaTime) {
 		heartbeatSilenceSeconds_ += deltaTime;
 
 		if (heartbeatSilenceSeconds_ >
-			ManoCollaboration::kHeartbeatTimeoutSeconds +
-				ManoCollaboration::kLockReleaseGracePeriodSeconds) {
+			CG2Collaboration::kHeartbeatTimeoutSeconds +
+				CG2Collaboration::kLockReleaseGracePeriodSeconds) {
 			heartbeatSilenceSeconds_ = 0.0f;
 
 			// Host側は、消えたClientのLockを解放して他の人が編集できるようにする。
@@ -4670,7 +4670,7 @@ void EditorTeamCollaborationManager::QueueOutgoingMessage(
 	}
 
 	// Transportは改行区切りでMessageを区切るため、ここで終端を付ける。
-	ManoCollaboration::TransportMessage transportMessage{};
+	CG2Collaboration::TransportMessage transportMessage{};
 	transportMessage.text = message;
 
 	if (transportMessage.text.empty() || transportMessage.text.back() != '\n') {
@@ -4805,9 +4805,9 @@ void EditorTeamCollaborationManager::StartNetworkThread(bool startsAsServer) {
 
 	// 通信経路はTransportへ委譲する。LANでもTailscale越しでも同じ実装を使うため、
 	// ここから下のScene同期・Lock・Conflict処理は接続方式を一切意識しない。
-	networkState_->transport = std::make_unique<ManoCollaboration::TcpCollaborationTransport>();
+	networkState_->transport = std::make_unique<CG2Collaboration::TcpCollaborationTransport>();
 
-	ManoCollaboration::TransportConfig transportConfig{};
+	CG2Collaboration::TransportConfig transportConfig{};
 	transportConfig.maximumClientCount = maximumClientCount_;
 	transportConfig.maximumReceiveBufferBytes = kMaximumNetworkBufferBytes;
 
@@ -4818,7 +4818,7 @@ void EditorTeamCollaborationManager::StartNetworkThread(bool startsAsServer) {
 		hasStarted = networkState_->transport->Listen(port_, transportConfig, transportError);
 	}
 	else {
-		ManoCollaboration::TransportEndpoint endpoint{};
+		CG2Collaboration::TransportEndpoint endpoint{};
 		// Host名でもIPv4/IPv6でもよい。Tailscale MagicDNS hostname はここへそのまま渡る。
 		endpoint.host = hostAddressBuffer_.data();
 		endpoint.port = port_;
@@ -4843,7 +4843,7 @@ void EditorTeamCollaborationManager::SynchronizeTransportStatus() {
 		return;
 	}
 
-	const ManoCollaboration::TransportState transportState = networkState_->transport->GetState();
+	const CG2Collaboration::TransportState transportState = networkState_->transport->GetState();
 	networkState_->memberCount.store(
 		networkState_->transport->GetPeerCount(), std::memory_order_release);
 
@@ -4859,7 +4859,7 @@ void EditorTeamCollaborationManager::SynchronizeTransportStatus() {
 	// Handshake拒否やConflictは上位が決めた状態なので、Transportの都合で上書きしない。
 	if (previousStatus == EditorTeamConnectionStatus::Incompatible ||
 		previousStatus == EditorTeamConnectionStatus::Conflict) {
-		if (transportState == ManoCollaboration::TransportState::Disconnected) {
+		if (transportState == CG2Collaboration::TransportState::Disconnected) {
 			networkState_->status.store(
 				EditorTeamConnectionStatus::Disconnected, std::memory_order_release);
 		}
@@ -4870,23 +4870,23 @@ void EditorTeamCollaborationManager::SynchronizeTransportStatus() {
 	EditorTeamConnectionStatus nextStatus = previousStatus;
 
 	switch (transportState) {
-	case ManoCollaboration::TransportState::Disconnected:
+	case CG2Collaboration::TransportState::Disconnected:
 		nextStatus = EditorTeamConnectionStatus::Offline;
 		break;
-	case ManoCollaboration::TransportState::Connecting:
+	case CG2Collaboration::TransportState::Connecting:
 		nextStatus = EditorTeamConnectionStatus::Connecting;
 		break;
-	case ManoCollaboration::TransportState::Reconnecting:
+	case CG2Collaboration::TransportState::Reconnecting:
 		nextStatus = EditorTeamConnectionStatus::Reconnecting;
 		break;
-	case ManoCollaboration::TransportState::Error:
+	case CG2Collaboration::TransportState::Error:
 		nextStatus = EditorTeamConnectionStatus::Disconnected;
 		break;
-	case ManoCollaboration::TransportState::Listening:
+	case CG2Collaboration::TransportState::Listening:
 		// Serverは相手が居なくてもOnline扱い(待ち受け成功)。
 		nextStatus = EditorTeamConnectionStatus::Online;
 		break;
-	case ManoCollaboration::TransportState::Connected:
+	case CG2Collaboration::TransportState::Connected:
 		// Handshakeが通るまではSynchronizing表示のままにし、
 		// 互換性未確認の状態をOnlineと誤解させない。
 		nextStatus = handshakeAccepted_ && !historySyncInProgress_
@@ -4899,8 +4899,8 @@ void EditorTeamCollaborationManager::SynchronizeTransportStatus() {
 
 	// 切断されたらHandshakeをやり直す。再接続後は改めて互換性とProjectを確認する。
 	const bool lostConnection =
-		transportState == ManoCollaboration::TransportState::Reconnecting ||
-		transportState == ManoCollaboration::TransportState::Connecting;
+		transportState == CG2Collaboration::TransportState::Reconnecting ||
+		transportState == CG2Collaboration::TransportState::Connecting;
 
 	if (lostConnection && handshakeAccepted_) {
 		handshakeAccepted_ = false;
@@ -4988,8 +4988,8 @@ void EditorTeamCollaborationManager::Draw(bool* isWindowVisible) {
 			ImGui::TextDisabled("遅延     (未計測)");
 		}
 
-		ImGui::Text("Protocol %u", ManoCollaboration::kCollaborationProtocolVersion);
-		ImGui::Text("Engine   %s", GetManoEngineDisplayVersion().c_str());
+		ImGui::Text("Protocol %u", CG2Collaboration::kCollaborationProtocolVersion);
+		ImGui::Text("Engine   %s", GetCG2EngineDisplayVersion().c_str());
 		ImGui::Text("Project  %s", projectIdBuffer_.data());
 		ImGui::Text("役割     %s", isHost_ ? "Host(主催)" : "Client(参加)");
 		ImGui::Text("接続人数 %d", networkState_->memberCount.load(std::memory_order_acquire));
@@ -5016,11 +5016,11 @@ void EditorTeamCollaborationManager::Draw(bool* isWindowVisible) {
 	std::string displayedVersionError;
 	ProjectVersionManager::Load(
 		std::filesystem::current_path(), displayedProjectSettings, displayedVersionError);
-	ImGui::Text("Engine %s", GetManoEngineDisplayVersion().c_str());
+	ImGui::Text("Engine %s", GetCG2EngineDisplayVersion().c_str());
 	ImGui::SameLine();
 	ImGui::Text("/ Project Format %u", displayedProjectSettings.projectFormatVersion);
 	ImGui::SameLine();
-	ImGui::Text("/ Script API %u", GetManoScriptApiVersion());
+	ImGui::Text("/ Script API %u", GetCG2ScriptApiVersion());
 	ImGui::SameLine();
 	ImGui::Text("/ Channel %s", GetEngineUpdateChannelText(displayedProjectSettings.updateChannel));
 	ImGui::Text("Revision: %llu", static_cast<unsigned long long>(currentRevision_));
@@ -5719,7 +5719,7 @@ void EditorTeamCollaborationManager::Draw(bool* isWindowVisible) {
 				ImVec4(1.0f, 0.45f, 0.35f, 1.0f),
 				"Project IDがありません。Hostから受け取ったProject ZIP／招待を読み込んでください");
 		}
-		else if (!ManoCollaboration::IsValidProjectId(projectIdText)) {
+		else if (!CG2Collaboration::IsValidProjectId(projectIdText)) {
 			ImGui::TextColored(
 				ImVec4(1.0f, 0.45f, 0.35f, 1.0f),
 				"Project IDに使えない文字があります(英数字と - _ . のみ、64文字以内)");
@@ -5821,7 +5821,7 @@ void EditorTeamCollaborationManager::Draw(bool* isWindowVisible) {
 		SaveSettings();
 	}
 
-	ImGui::SeparatorText("専用ManoTeamServer");
+	ImGui::SeparatorText("専用CG2TeamServer");
 	ImGui::TextDisabled("Editorを閉じても共同制作を続ける場合に使用します。同じポートでEditor Hostとは同時起動できません。");
 	ImGui::Text("状態: %s", IsDedicatedServerRunning() ? "稼働中" : "停止中");
 	if (ImGui::Button("専用Server開始")) {

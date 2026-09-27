@@ -5,13 +5,13 @@
 // Bake側(Compute)と実行時参照側(Object3d.PS)の両方から使うため、
 // リソース宣言は持たず、必要なものは引数で受け取る。
 //============================================================
-#ifndef MANOENGINE_PROBE_COMMON_HLSLI
-#define MANOENGINE_PROBE_COMMON_HLSLI
+#ifndef CG2ENGINE_PROBE_COMMON_HLSLI
+#define CG2ENGINE_PROBE_COMMON_HLSLI
 
 // SH L2 = 9係数。C++側の kProbeShCoefficientCount と一致させる。
-#define MANOENGINE_PROBE_SH_COEFFICIENT_COUNT 9
+#define CG2ENGINE_PROBE_SH_COEFFICIENT_COUNT 9
 // 1Probeあたりの八面体可視性マップの1辺。C++側の kProbeVisibilityTileSize と一致させる。
-#define MANOENGINE_PROBE_VISIBILITY_TILE_SIZE 16
+#define CG2ENGINE_PROBE_VISIBILITY_TILE_SIZE 16
 
 static const float kProbePi = 3.14159265359f;
 
@@ -145,7 +145,7 @@ float GetProbeCubeTexelSolidAngle(float2 faceUv, float faceSize)
 //------------------------------------------------------------
 // SH L2 基底
 //------------------------------------------------------------
-void EvaluateProbeShBasis(float3 direction, out float shBasis[MANOENGINE_PROBE_SH_COEFFICIENT_COUNT])
+void EvaluateProbeShBasis(float3 direction, out float shBasis[CG2ENGINE_PROBE_SH_COEFFICIENT_COUNT])
 {
     const float x = direction.x;
     const float y = direction.y;
@@ -166,10 +166,10 @@ void EvaluateProbeShBasis(float3 direction, out float shBasis[MANOENGINE_PROBE_S
 // Ramamoorthi-Hanrahan のコサインローブ畳み込み係数 (pi, 2pi/3, pi/4) を
 // piで割った値を使い、既存のIrradiance Cubeと同じ「E/pi」の尺度で返す。
 float3 EvaluateProbeShIrradiance(
-    float3 shCoefficients[MANOENGINE_PROBE_SH_COEFFICIENT_COUNT],
+    float3 shCoefficients[CG2ENGINE_PROBE_SH_COEFFICIENT_COUNT],
     float3 normal)
 {
-    float shBasis[MANOENGINE_PROBE_SH_COEFFICIENT_COUNT];
+    float shBasis[CG2ENGINE_PROBE_SH_COEFFICIENT_COUNT];
     EvaluateProbeShBasis(normal, shBasis);
 
     const float bandWeight0 = 1.0f;

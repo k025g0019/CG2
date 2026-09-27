@@ -64,9 +64,10 @@ namespace {
 				return false;
 			}
 			// Bridge の Export 名は CG2 系だが、旧名(Mano系)で生成済みのSDKもそのまま使えるようにする。
-			const auto resolve = [handle](const char* current, const char* legacy) {
-				FARPROC address = GetProcAddress(handle, current);
-				return address != nullptr ? address : GetProcAddress(handle, legacy);
+			const HMODULE module = handle;
+			const auto resolve = [module](const char* current, const char* legacy) -> FARPROC {
+				FARPROC address = GetProcAddress(module, current);
+				return address != nullptr ? address : GetProcAddress(module, legacy);
 			};
 			createMesh = reinterpret_cast<CreateAuthoringMeshFunction>(
 				resolve("CG2BlastAuthoringCreateMesh", "ManoBlastAuthoringCreateMesh"));

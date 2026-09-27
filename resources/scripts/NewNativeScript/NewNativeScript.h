@@ -8,16 +8,16 @@
 // NewNativeScript - GameObject へ追加する C++ Component
 //================================================================
 
-class NewNativeScript final : public EditorNativeScript {
+class NewNativeScript final : public Script {
 public:
 	NewNativeScript();  // 公開変数と Input Action 関数を登録する。
 
-	void Start(int32_t gameObjectId) override;
-	void Update(int32_t gameObjectId, float deltaTime) override;
-	void FixedUpdate(int32_t gameObjectId, float fixedDeltaTime) override;
+	void Start() override;
+	void Update(float deltaTime) override;
+	void FixedUpdate(float fixedDeltaTime) override;
 	void OnCollisionEnter(const EditorScriptPhysicsEvent& physicsEvent) override;
 	void OnTriggerEnter(const EditorScriptPhysicsEvent& physicsEvent) override;
-	void Stop(int32_t gameObjectId) override;
+	void Stop() override;
 
 private:
 	float moveSpeed_ = 3.0f;  // Inspector から編集する移動速度。

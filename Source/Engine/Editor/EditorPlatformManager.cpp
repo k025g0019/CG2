@@ -4,10 +4,184 @@
 #include <onnxruntime_cxx_api.h>
 #include <xaudio2.h>
 #include <xaudio2fx.h>
+#include "EditorProfilerManager.h"
 #include "EditorSharedState.h"
 using namespace EditorSharedState;
 
 namespace {
+	//================================================================
+	// ImGui 動的 Font Texture 用 Descriptor
+	//================================================================
+
+	constexpr uint32_t kImGuiSrvDescriptorFirstIndex = 123u;
+	constexpr uint32_t kImGuiSrvDescriptorCount = 37u;
+
+	struct ImGuiSrvDescriptorAllocator {
+		ID3D12DescriptorHeap* descriptorHeap = nullptr;
+		UINT descriptorSize = 0u;
+		std::array<bool, kImGuiSrvDescriptorCount> isDescriptorUsed{};
+	};
+
+	ImGuiSrvDescriptorAllocator g_imguiSrvDescriptorAllocator{};
+
+	float GetEditorUiScale(HWND windowHandle) {
+		const UINT windowDpi = windowHandle != nullptr ? GetDpiForWindow(windowHandle) : 96u;
+		const float dpiScale = static_cast<float>((std::max)(windowDpi, 96u)) / 96.0f;
+		return (std::clamp)(dpiScale, 1.0f, 2.0f);
+	}
+
+	void ApplyEditorVisualTheme(float uiScale) {
+		ImGui::StyleColorsDark();
+		ImGuiStyle& style = ImGui::GetStyle();
+		style.WindowPadding = ImVec2(10.0f, 9.0f);
+		style.FramePadding = ImVec2(8.0f, 5.0f);
+		style.CellPadding = ImVec2(7.0f, 5.0f);
+		style.ItemSpacing = ImVec2(8.0f, 6.0f);
+		style.ItemInnerSpacing = ImVec2(6.0f, 5.0f);
+		style.TouchExtraPadding = ImVec2(0.0f, 0.0f);
+		style.IndentSpacing = 18.0f;
+		style.ScrollbarSize = 14.0f;
+		style.GrabMinSize = 12.0f;
+		style.WindowBorderSize = 1.0f;
+		style.ChildBorderSize = 1.0f;
+		style.PopupBorderSize = 1.0f;
+		style.FrameBorderSize = 1.0f;
+		style.TabBorderSize = 0.0f;
+		style.TabBarBorderSize = 1.0f;
+		style.WindowRounding = 5.0f;
+		style.ChildRounding = 4.0f;
+		style.FrameRounding = 3.0f;
+		style.PopupRounding = 4.0f;
+		style.ScrollbarRounding = 8.0f;
+		style.GrabRounding = 3.0f;
+		style.TabRounding = 4.0f;
+		style.SeparatorTextBorderSize = 1.0f;
+		style.SeparatorTextAlign = ImVec2(0.0f, 0.5f);
+		style.SeparatorTextPadding = ImVec2(12.0f, 4.0f);
+		style.DockingSeparatorSize = 2.0f;
+		style.DisabledAlpha = 0.48f;
+
+		ImVec4* colors = style.Colors;
+		colors[ImGuiCol_Text] = ImVec4(0.90f, 0.92f, 0.94f, 1.0f);
+		colors[ImGuiCol_TextDisabled] = ImVec4(0.48f, 0.53f, 0.58f, 1.0f);
+		colors[ImGuiCol_WindowBg] = ImVec4(0.055f, 0.067f, 0.080f, 1.0f);
+		colors[ImGuiCol_ChildBg] = ImVec4(0.065f, 0.078f, 0.092f, 1.0f);
+		colors[ImGuiCol_PopupBg] = ImVec4(0.070f, 0.083f, 0.098f, 0.98f);
+		colors[ImGuiCol_Border] = ImVec4(0.18f, 0.22f, 0.26f, 0.90f);
+		colors[ImGuiCol_BorderShadow] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+		colors[ImGuiCol_FrameBg] = ImVec4(0.095f, 0.125f, 0.155f, 1.0f);
+		colors[ImGuiCol_FrameBgHovered] = ImVec4(0.13f, 0.19f, 0.24f, 1.0f);
+		colors[ImGuiCol_FrameBgActive] = ImVec4(0.16f, 0.25f, 0.31f, 1.0f);
+		colors[ImGuiCol_TitleBg] = ImVec4(0.045f, 0.055f, 0.067f, 1.0f);
+		colors[ImGuiCol_TitleBgActive] = ImVec4(0.075f, 0.105f, 0.13f, 1.0f);
+		colors[ImGuiCol_MenuBarBg] = ImVec4(0.045f, 0.055f, 0.067f, 1.0f);
+		colors[ImGuiCol_ScrollbarBg] = ImVec4(0.035f, 0.043f, 0.052f, 0.70f);
+		colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.22f, 0.28f, 0.33f, 1.0f);
+		colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.29f, 0.37f, 0.43f, 1.0f);
+		colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.34f, 0.48f, 0.55f, 1.0f);
+		colors[ImGuiCol_CheckMark] = ImVec4(0.28f, 0.78f, 0.78f, 1.0f);
+		colors[ImGuiCol_SliderGrab] = ImVec4(0.24f, 0.67f, 0.69f, 1.0f);
+		colors[ImGuiCol_SliderGrabActive] = ImVec4(0.34f, 0.86f, 0.82f, 1.0f);
+		colors[ImGuiCol_Button] = ImVec4(0.11f, 0.27f, 0.31f, 1.0f);
+		colors[ImGuiCol_ButtonHovered] = ImVec4(0.15f, 0.40f, 0.43f, 1.0f);
+		colors[ImGuiCol_ButtonActive] = ImVec4(0.18f, 0.51f, 0.52f, 1.0f);
+		colors[ImGuiCol_Header] = ImVec4(0.10f, 0.25f, 0.29f, 0.90f);
+		colors[ImGuiCol_HeaderHovered] = ImVec4(0.14f, 0.39f, 0.42f, 1.0f);
+		colors[ImGuiCol_HeaderActive] = ImVec4(0.18f, 0.50f, 0.50f, 1.0f);
+		colors[ImGuiCol_Separator] = ImVec4(0.17f, 0.22f, 0.26f, 1.0f);
+		colors[ImGuiCol_SeparatorHovered] = ImVec4(0.22f, 0.58f, 0.60f, 1.0f);
+		colors[ImGuiCol_SeparatorActive] = ImVec4(0.28f, 0.74f, 0.73f, 1.0f);
+		colors[ImGuiCol_ResizeGrip] = ImVec4(0.18f, 0.48f, 0.50f, 0.30f);
+		colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.24f, 0.66f, 0.66f, 0.70f);
+		colors[ImGuiCol_ResizeGripActive] = ImVec4(0.28f, 0.78f, 0.75f, 1.0f);
+		colors[ImGuiCol_Tab] = ImVec4(0.075f, 0.105f, 0.13f, 1.0f);
+		colors[ImGuiCol_TabHovered] = ImVec4(0.15f, 0.39f, 0.42f, 1.0f);
+		colors[ImGuiCol_TabSelected] = ImVec4(0.11f, 0.31f, 0.35f, 1.0f);
+		colors[ImGuiCol_TabDimmed] = ImVec4(0.055f, 0.067f, 0.080f, 1.0f);
+		colors[ImGuiCol_TabDimmedSelected] = ImVec4(0.085f, 0.18f, 0.21f, 1.0f);
+		colors[ImGuiCol_DockingPreview] = ImVec4(0.20f, 0.72f, 0.72f, 0.55f);
+		colors[ImGuiCol_DockingEmptyBg] = ImVec4(0.035f, 0.043f, 0.052f, 1.0f);
+		colors[ImGuiCol_TableHeaderBg] = ImVec4(0.085f, 0.12f, 0.145f, 1.0f);
+		colors[ImGuiCol_TableBorderStrong] = ImVec4(0.18f, 0.23f, 0.27f, 1.0f);
+		colors[ImGuiCol_TableBorderLight] = ImVec4(0.12f, 0.15f, 0.18f, 1.0f);
+		colors[ImGuiCol_TableRowBgAlt] = ImVec4(0.10f, 0.13f, 0.15f, 0.38f);
+		colors[ImGuiCol_TextSelectedBg] = ImVec4(0.18f, 0.55f, 0.56f, 0.45f);
+		colors[ImGuiCol_NavCursor] = ImVec4(0.35f, 0.88f, 0.84f, 1.0f);
+
+		style.ScaleAllSizes(uiScale);
+	}
+
+	void AllocateImGuiSrvDescriptor(
+		ImGui_ImplDX12_InitInfo* initInfo,
+		D3D12_CPU_DESCRIPTOR_HANDLE* cpuDescriptorHandle,
+		D3D12_GPU_DESCRIPTOR_HANDLE* gpuDescriptorHandle) {
+		if (initInfo == nullptr || cpuDescriptorHandle == nullptr || gpuDescriptorHandle == nullptr) {
+			return;
+		}
+
+		auto* allocator = static_cast<ImGuiSrvDescriptorAllocator*>(initInfo->UserData);
+		if (allocator == nullptr || allocator->descriptorHeap == nullptr || allocator->descriptorSize == 0u) {
+			return;
+		}
+
+		for (uint32_t descriptorOffset = 0u;
+			descriptorOffset < kImGuiSrvDescriptorCount;
+			descriptorOffset++) {
+			if (allocator->isDescriptorUsed[descriptorOffset]) {
+				continue;
+			}
+
+			allocator->isDescriptorUsed[descriptorOffset] = true;
+			const uint32_t descriptorIndex = kImGuiSrvDescriptorFirstIndex + descriptorOffset;
+			*cpuDescriptorHandle = GetCPUDescriptorHandle(
+				allocator->descriptorHeap,
+				allocator->descriptorSize,
+				descriptorIndex);
+			*gpuDescriptorHandle = GetGPUDescriptorHandle(
+				allocator->descriptorHeap,
+				allocator->descriptorSize,
+				descriptorIndex);
+			return;
+		}
+
+		assert(false && "ImGui SRV descriptor range is exhausted.");
+	}
+
+	void ReleaseImGuiSrvDescriptor(
+		ImGui_ImplDX12_InitInfo* initInfo,
+		D3D12_CPU_DESCRIPTOR_HANDLE cpuDescriptorHandle,
+		D3D12_GPU_DESCRIPTOR_HANDLE) {
+		if (initInfo == nullptr) {
+			return;
+		}
+
+		auto* allocator = static_cast<ImGuiSrvDescriptorAllocator*>(initInfo->UserData);
+		if (allocator == nullptr || allocator->descriptorHeap == nullptr || allocator->descriptorSize == 0u) {
+			return;
+		}
+
+		const D3D12_CPU_DESCRIPTOR_HANDLE firstDescriptorHandle = GetCPUDescriptorHandle(
+			allocator->descriptorHeap,
+			allocator->descriptorSize,
+			kImGuiSrvDescriptorFirstIndex);
+		if (cpuDescriptorHandle.ptr < firstDescriptorHandle.ptr) {
+			return;
+		}
+
+		const SIZE_T descriptorByteOffset = cpuDescriptorHandle.ptr - firstDescriptorHandle.ptr;
+		if (descriptorByteOffset % static_cast<SIZE_T>(allocator->descriptorSize) != 0u) {
+			return;
+		}
+
+		const SIZE_T descriptorOffset =
+			descriptorByteOffset / static_cast<SIZE_T>(allocator->descriptorSize);
+		if (descriptorOffset >= static_cast<SIZE_T>(kImGuiSrvDescriptorCount)) {
+			return;
+		}
+
+		allocator->isDescriptorUsed[static_cast<size_t>(descriptorOffset)] = false;
+	}
+
 	//================================================================
 	// 初期化失敗時の終亁E��汁E
 	//================================================================
@@ -47,6 +221,20 @@ namespace {
 		// 四角形は 2 枚�E三角形に刁E��て追加する、E
 		AddPrimitiveTriangle(vertices, a, b, c);
 		AddPrimitiveTriangle(vertices, c, b, d);
+	}
+
+	std::vector<VertexData> CreatePlaneVertices() {
+		std::vector<VertexData> vertices;
+		vertices.reserve(6u);
+
+		AddPrimitiveQuad(
+			vertices,
+			MakePrimitiveVertex(-0.5f, 0.0f, -0.5f, 0.0f, 1.0f, {0.0f, 1.0f, 0.0f}),
+			MakePrimitiveVertex(-0.5f, 0.0f, 0.5f, 0.0f, 0.0f, {0.0f, 1.0f, 0.0f}),
+			MakePrimitiveVertex(0.5f, 0.0f, -0.5f, 1.0f, 1.0f, {0.0f, 1.0f, 0.0f}),
+			MakePrimitiveVertex(0.5f, 0.0f, 0.5f, 1.0f, 0.0f, {0.0f, 1.0f, 0.0f}));
+
+		return vertices;
 	}
 
 	std::vector<VertexData> CreateBoxVertices(const Vector3& halfSize) {
@@ -298,7 +486,12 @@ namespace {
 
 		switch (meshType) {
 		case EditorModelMeshType::Plane:
-			return fallbackPlaneModelData;
+			if (!fallbackPlaneModelData.vertices.empty()) {
+				return fallbackPlaneModelData;
+			}
+
+			modelData.vertices = CreatePlaneVertices();
+			break;
 		case EditorModelMeshType::Cube:
 			modelData.vertices = CreateBoxVertices(Vector3{0.5f, 0.5f, 0.5f});
 			break;
@@ -508,28 +701,11 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		return;
 	}
 
-	SoundData soundData = SoundLoadWave("resources/sound/maou_19_12345.wav");
-	// soundData は起動確認用 wav の PCM チE�Eタとフォーマット情報、E
-	IXAudio2SourceVoice* sourceVoice = nullptr; // sourceVoice は soundData を�E生キューへ積�E Voice、E
-	hr = xAudio2->CreateSourceVoice(&sourceVoice, &soundData.wfex);
-	assert(SUCCEEDED(hr));
-
-	// sourceVoice 作�E失敗時は読み込んだ wav と Voice を解放して終亁E��る、E
-	if (FAILED(hr) || sourceVoice == nullptr) {
-		SoundUnload(&soundData);
-		masterVoice->DestroyVoice();
-		xAudio2->Release();
-		RequestInitializationFailure();
-		return;
-	}
-
-	// soundBuffer は sourceVoice に渡す�E生データの篁E��と終端フラグ、E
-	XAUDIO2_BUFFER soundBuffer{};
-	soundBuffer.pAudioData = soundData.pBuffer;
-	soundBuffer.AudioBytes = soundData.bufferSize;
-	soundBuffer.Flags = XAUDIO2_END_OF_STREAM;
-	hr = sourceVoice->SubmitSourceBuffer(&soundBuffer);
-	assert(SUCCEEDED(hr));
+	// 空の Project でも Editor を開けるよう、起動確認用の WAV は再生しない。
+	// Project が必要とする音声は Audio Component / Runtime 側で個別に読み込む。
+	// Finalize の既存解放処理と所有関係を揃えるため、未使用の状態だけ保持する。
+	SoundData soundData{};
+	IXAudio2SourceVoice* sourceVoice = nullptr;
 
 	//================================================================
 	// DirectX12 の初期匁E
@@ -588,10 +764,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 #ifdef _DEBUG
 	ComPtr<ID3D12InfoQueue> infoQueue; // infoQueue は DirectX12 の重大エラーをデバッガ停止に変えるため�E診断キュー、E
 	if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(infoQueue.GetAddressOf())))) {
-		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, true);
-		// 破損�Eエラー・警告をそ�E場で止め、原因箁E��を追ぁE��すくする、E
-		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, true);
-		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, true);
+		// Keep Debug Layer messages in the Visual Studio output without raising 0x0000087A exceptions.
+		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, FALSE);
+		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, FALSE);
+		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, FALSE);
 
 		// denyIds は既知のノイズ警告を Debug 出力から除外するため�E ID 一覧、E
 		D3D12_MESSAGE_ID denyIds[] = {
@@ -620,6 +796,50 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	// CommandQueue がなぁE��描画命令めEGPU に送れなぁE��め終亁E��る、E
 	if (FAILED(hr) || commandQueue == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
+	D3D12_QUERY_HEAP_DESC renderTimestampQueryHeapDesc{};
+	renderTimestampQueryHeapDesc.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+	renderTimestampQueryHeapDesc.Count = kEditorProfilerTimestampQueryCapacity;
+	ComPtr<ID3D12QueryHeap> renderTimestampQueryHeap;
+	hr = device->CreateQueryHeap(
+		&renderTimestampQueryHeapDesc,
+		IID_PPV_ARGS(renderTimestampQueryHeap.GetAddressOf()));
+
+	std::uint64_t renderTimestampFrequency = 0u;
+
+	if (SUCCEEDED(hr)) {
+		hr = commandQueue->GetTimestampFrequency(&renderTimestampFrequency);
+	}
+
+	D3D12_HEAP_PROPERTIES renderTimestampReadbackHeapProperties{};
+	renderTimestampReadbackHeapProperties.Type = D3D12_HEAP_TYPE_READBACK;
+	D3D12_RESOURCE_DESC renderTimestampReadbackDesc{};
+	renderTimestampReadbackDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+	renderTimestampReadbackDesc.Width =
+		sizeof(std::uint64_t) * static_cast<std::uint64_t>(kEditorProfilerTimestampQueryCapacity);
+	renderTimestampReadbackDesc.Height = 1u;
+	renderTimestampReadbackDesc.DepthOrArraySize = 1u;
+	renderTimestampReadbackDesc.MipLevels = 1u;
+	renderTimestampReadbackDesc.SampleDesc.Count = 1u;
+	renderTimestampReadbackDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+	ComPtr<ID3D12Resource> renderTimestampReadback;
+
+	if (SUCCEEDED(hr)) {
+		hr = device->CreateCommittedResource(
+			&renderTimestampReadbackHeapProperties,
+			D3D12_HEAP_FLAG_NONE,
+			&renderTimestampReadbackDesc,
+			D3D12_RESOURCE_STATE_COPY_DEST,
+			nullptr,
+			IID_PPV_ARGS(renderTimestampReadback.GetAddressOf()));
+	}
+
+	if (FAILED(hr) || renderTimestampQueryHeap == nullptr ||
+		renderTimestampReadback == nullptr || renderTimestampFrequency == 0u) {
+		Log(logStream, std::format("Render profiler resource creation failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
 		RequestInitializationFailure();
 		return;
 	}
@@ -686,7 +906,11 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	// srvDescriptorHeap は Texture SRV と ImGui 用 SRV めEShader から参�Eする Heap、E
 	ID3D12DescriptorHeap* srvDescriptorHeap =
-		CreateDescriptorHeap(device.Get(), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1024, true);
+		CreateDescriptorHeap(
+			device.Get(),
+			D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+			kRuntimeSrvDescriptorHeapCapacity,
+			true);
 
 	// dsvDescriptorHeap は DepthStencil を参照する Heap、E
 	ID3D12DescriptorHeap* dsvDescriptorHeap =
@@ -726,7 +950,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = dsvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
 	// dsvHandle は DepthStencilView を作�Eする CPU 側ハンドル、E
 
-	auto createDepthStencilResource = [&](uint32_t width, uint32_t height) -> ID3D12Resource* {
+	auto createDepthStencilResource = [&device, &depthClearValue](
+			uint32_t width,
+			uint32_t height,
+			D3D12_RESOURCE_STATES initialState) -> ID3D12Resource* {
 		// depthStencilResourceDesc は SceneView と同じサイズの Depth バッファ設定、E
 		D3D12_RESOURCE_DESC depthStencilResourceDesc{};
 		depthStencilResourceDesc.Width = width;
@@ -747,7 +974,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			&depthStencilHeapProperties,
 			D3D12_HEAP_FLAG_NONE,
 			&depthStencilResourceDesc,
-			D3D12_RESOURCE_STATE_DEPTH_WRITE,
+			initialState,
 			&depthClearValue,
 			IID_PPV_ARGS(&newDepthStencilResource));
 		assert(SUCCEEDED(createDepthResult));
@@ -755,9 +982,16 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		return newDepthStencilResource;
 	};
 
-	ID3D12Resource* depthStencilResource = createDepthStencilResource(renderWidth, renderHeight);
+	ID3D12Resource* depthStencilResource = createDepthStencilResource(
+		renderWidth,
+		renderHeight,
+		D3D12_RESOURCE_STATE_DEPTH_WRITE);
 	// depthStencilResource は現在の描画サイズに合わせた Depth バッファ、E
 	device->CreateDepthStencilView(depthStencilResource, &dsvDesc, dsvHandle);
+	ID3D12Resource* opaqueDepthCopyResource = createDepthStencilResource(
+		renderWidth,
+		renderHeight,
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
 	D3D12_CPU_DESCRIPTOR_HANDLE depthSrvHandleCPU = GetCPUDescriptorHandle(
 		srvDescriptorHeap,
@@ -773,6 +1007,18 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	depthSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 	depthSrvDesc.Texture2D.MipLevels = 1;
 	device->CreateShaderResourceView(depthStencilResource, &depthSrvDesc, depthSrvHandleCPU);
+	D3D12_CPU_DESCRIPTOR_HANDLE opaqueDepthCopySrvHandleCPU = GetCPUDescriptorHandle(
+		srvDescriptorHeap,
+		device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV),
+		kRuntimeOpaqueDepthCopySrvDescriptorIndex);
+	D3D12_GPU_DESCRIPTOR_HANDLE opaqueDepthCopySrvHandleGPU = GetGPUDescriptorHandle(
+		srvDescriptorHeap,
+		device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV),
+		kRuntimeOpaqueDepthCopySrvDescriptorIndex);
+	device->CreateShaderResourceView(
+		opaqueDepthCopyResource,
+		&depthSrvDesc,
+		opaqueDepthCopySrvHandleCPU);
 
 	D3D12_CLEAR_VALUE shadowClearValue{};
 	shadowClearValue.Format = DXGI_FORMAT_D32_FLOAT;
@@ -863,14 +1109,17 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	UINT srvSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
 	// HDR RT (full resolution, R16G16B16A16_FLOAT) ? RTV index 2
-	ID3D12Resource* hdrRenderTarget = createRenderTargetResource(renderWidth, renderHeight, DXGI_FORMAT_R16G16B16A16_FLOAT);
+	ID3D12Resource* hdrRenderTarget = createRenderTargetResource(renderWidth, renderHeight,
+	                                                             DXGI_FORMAT_R16G16B16A16_FLOAT);
 	D3D12_CPU_DESCRIPTOR_HANDLE hdrRtvHandle = GetCPUDescriptorHandle(rtvDescriptorHeap, rtvSize, 2);
 	D3D12_RENDER_TARGET_VIEW_DESC hdrRtvDesc{};
 	hdrRtvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 	hdrRtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
 	device->CreateRenderTargetView(hdrRenderTarget, &hdrRtvDesc, hdrRtvHandle);
-	D3D12_CPU_DESCRIPTOR_HANDLE hdrSrvHandleCPU = GetCPUDescriptorHandle(srvDescriptorHeap, srvSize, kRuntimeHdrSrvDescriptorIndex);
-	D3D12_GPU_DESCRIPTOR_HANDLE hdrSrvHandleGPU = GetGPUDescriptorHandle(srvDescriptorHeap, srvSize, kRuntimeHdrSrvDescriptorIndex);
+	D3D12_CPU_DESCRIPTOR_HANDLE hdrSrvHandleCPU = GetCPUDescriptorHandle(
+		srvDescriptorHeap, srvSize, kRuntimeHdrSrvDescriptorIndex);
+	D3D12_GPU_DESCRIPTOR_HANDLE hdrSrvHandleGPU = GetGPUDescriptorHandle(
+		srvDescriptorHeap, srvSize, kRuntimeHdrSrvDescriptorIndex);
 	D3D12_SHADER_RESOURCE_VIEW_DESC hdrSrvDesc{};
 	hdrSrvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 	hdrSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -896,7 +1145,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	}
 
 	// ToneMap ��� LDR RT �́AFXAA ���ŏI BackBuffer �֏o���O�ɓǂޒ��� RenderTexture�B
-	ID3D12Resource* postProcessRenderTarget = createRenderTargetResource(renderWidth, renderHeight, DXGI_FORMAT_R8G8B8A8_UNORM);
+	ID3D12Resource* postProcessRenderTarget = createRenderTargetResource(
+		renderWidth, renderHeight, DXGI_FORMAT_R8G8B8A8_UNORM);
 	D3D12_CPU_DESCRIPTOR_HANDLE postProcessRtvHandle = GetCPUDescriptorHandle(rtvDescriptorHeap, rtvSize, 5u);
 	D3D12_RENDER_TARGET_VIEW_DESC postProcessRtvDesc{};
 	postProcessRtvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -995,6 +1245,51 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		kRuntimePlanarReflectionSrvDescriptorIndex);
 	device->CreateShaderResourceView(planarReflectionRenderTarget, &hdrSrvDesc, planarReflectionSrvHandleCPU);
 
+	//================================================================
+	// Weighted Blended OIT Render Targets
+	//================================================================
+
+	ID3D12Resource* oitAccumulationRenderTarget = createRenderTargetResource(
+		renderWidth,
+		renderHeight,
+		DXGI_FORMAT_R16G16B16A16_FLOAT);
+	ID3D12Resource* oitRevealageRenderTarget = createRenderTargetResource(
+		renderWidth,
+		renderHeight,
+		DXGI_FORMAT_R16_FLOAT);
+	D3D12_CPU_DESCRIPTOR_HANDLE oitRtvHandles[2] = {
+		GetCPUDescriptorHandle(rtvDescriptorHeap, rtvSize, 12u),
+		GetCPUDescriptorHandle(rtvDescriptorHeap, rtvSize, 13u)};
+	D3D12_RENDER_TARGET_VIEW_DESC oitAccumulationRtvDesc{};
+	oitAccumulationRtvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+	oitAccumulationRtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+	D3D12_RENDER_TARGET_VIEW_DESC oitRevealageRtvDesc = oitAccumulationRtvDesc;
+	oitRevealageRtvDesc.Format = DXGI_FORMAT_R16_FLOAT;
+	device->CreateRenderTargetView(
+		oitAccumulationRenderTarget, &oitAccumulationRtvDesc, oitRtvHandles[0]);
+	device->CreateRenderTargetView(
+		oitRevealageRenderTarget, &oitRevealageRtvDesc, oitRtvHandles[1]);
+
+	D3D12_CPU_DESCRIPTOR_HANDLE oitSrvHandlesCPU[2] = {
+		GetCPUDescriptorHandle(srvDescriptorHeap, srvSize, kRuntimeOitAccumulationSrvDescriptorIndex),
+		GetCPUDescriptorHandle(srvDescriptorHeap, srvSize, kRuntimeOitRevealageSrvDescriptorIndex)};
+	D3D12_GPU_DESCRIPTOR_HANDLE oitSrvHandlesGPU[2] = {
+		GetGPUDescriptorHandle(srvDescriptorHeap, srvSize, kRuntimeOitAccumulationSrvDescriptorIndex),
+		GetGPUDescriptorHandle(srvDescriptorHeap, srvSize, kRuntimeOitRevealageSrvDescriptorIndex)};
+	D3D12_SHADER_RESOURCE_VIEW_DESC oitAccumulationSrvDesc = hdrSrvDesc;
+	D3D12_SHADER_RESOURCE_VIEW_DESC oitRevealageSrvDesc = hdrSrvDesc;
+	oitRevealageSrvDesc.Format = DXGI_FORMAT_R16_FLOAT;
+	device->CreateShaderResourceView(
+		oitAccumulationRenderTarget, &oitAccumulationSrvDesc, oitSrvHandlesCPU[0]);
+	device->CreateShaderResourceView(
+		oitRevealageRenderTarget, &oitRevealageSrvDesc, oitSrvHandlesCPU[1]);
+	const D3D12_CPU_DESCRIPTOR_HANDLE oitDuplicateRevealageSrvHandle = GetCPUDescriptorHandle(
+		srvDescriptorHeap,
+		srvSize,
+		kRuntimeOitRevealageDuplicateSrvDescriptorIndex);
+	device->CreateShaderResourceView(
+		oitRevealageRenderTarget, &oitRevealageSrvDesc, oitDuplicateRevealageSrvHandle);
+
 	ComPtr<IDxcUtils> dxcUtils; // dxcUtils は HLSL ファイル読み込みと IncludeHandler 作�Eに使ぁEDXC 補助、E
 	ComPtr<IDxcCompiler3> dxcCompiler; // dxcCompiler は HLSL めEDXIL へコンパイルする DXC コンパイラ、E
 	ComPtr<IDxcIncludeHandler> includeHandler; // includeHandler は shader の #include を解決するための標準ハンドラ、E
@@ -1006,44 +1301,82 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	assert(SUCCEEDED(hr));
 
 	// vertexShaderBlob は VS main のコンパイル済みバイトコード、E
+	// 途中の1件で打ち切らず全Shaderを検査し、失敗一覧を最後にまとめて通知する。
+	g_shaderCompilationFailures.clear();
 	ComPtr<IDxcBlob> vertexShaderBlob = CompileShader(
 		L"Assets/Shaders/Object3d.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
+	ComPtr<IDxcBlob> batchedVertexShaderBlob = CompileShader(
+		L"Assets/Shaders/Instancing/BatchedObject.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(), logStream);
 
 	// pixelShaderBlob は PS main のコンパイル済みバイトコード、E
 	ComPtr<IDxcBlob> pixelShaderBlob = CompileShader(
 		L"Assets/Shaders/Object3d.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
+	ComPtr<IDxcBlob> oceanSurfacePixelShaderBlob = CompileShader(
+		L"Assets/Shaders/Water/OceanSurface.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> oceanTessellationVertexShaderBlob = CompileShader(
+		L"Assets/Shaders/Water/OceanTessellation.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> oceanTessellationHullShaderBlob = CompileShader(
+		L"Assets/Shaders/Water/OceanTessellation.HS.hlsl", L"hs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> oceanTessellationDomainShaderBlob = CompileShader(
+		L"Assets/Shaders/Water/OceanTessellation.DS.hlsl", L"ds_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
 
 	ComPtr<IDxcBlob> objectReflectionMaskPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/Object3dReflectionMask.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Object3dReflectionMask.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> gBufferVertexShaderBlob = CompileShader(
 		L"Assets/Shaders/GBuffer/GBuffer.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
+	ComPtr<IDxcBlob> batchedGBufferVertexShaderBlob = CompileShader(
+		L"Assets/Shaders/Instancing/BatchedGBuffer.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(), logStream);
 	ComPtr<IDxcBlob> gBufferPixelShaderBlob = CompileShader(
 		L"Assets/Shaders/GBuffer/GBuffer.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
 
-	Log(std::string("Object3d VS size=") + std::to_string(vertexShaderBlob != nullptr ? vertexShaderBlob->GetBufferSize() : 0ull) +
-	    " PS size=" + std::to_string(pixelShaderBlob != nullptr ? pixelShaderBlob->GetBufferSize() : 0ull));
+	Log(std::string("Object3d VS size=") + std::to_string(vertexShaderBlob != nullptr
+		                                                      ? vertexShaderBlob->GetBufferSize()
+		                                                      : 0ull) +
+		" PS size=" + std::to_string(pixelShaderBlob != nullptr ? pixelShaderBlob->GetBufferSize() : 0ull));
 
 	ComPtr<IDxcBlob> shadowVertexShaderBlob = CompileShader(
 		L"Assets/Shaders/ShadowDepth.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
+	ComPtr<IDxcBlob> batchedShadowVertexShaderBlob = CompileShader(
+		L"Assets/Shaders/Instancing/BatchedShadow.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(), logStream);
+	ComPtr<IDxcBlob> alphaCutoutShadowPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/Shadow/AlphaCutoutShadowDepth.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
 
 	// Post-process shader compilation
 	ComPtr<IDxcBlob> fullscreenVertexShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/FullScreen.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/FullScreen.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> toneMappingPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/ToneMapping.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/ToneMapping.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> bloomExtractPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/BloomExtract.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/BloomExtract.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> bloomBlurPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/BloomBlur.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/BloomBlur.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> fxaaPixelShaderBlob = CompileShader(
 		L"Assets/Shaders/PostProcess/FXAA.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
@@ -1052,111 +1385,257 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		L"Assets/Shaders/AO/GTAO.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> ssaoBlurPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/Shadow/ContactShadow.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Shadow/ContactShadow.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> ssgiPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/PostProcess/SSGI.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> volumetricLightShaftPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/PostProcess/VolumetricLightShaft.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> ssgiTemporalPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/PostProcess/SsgiTemporal.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> ssgiUpsamplePixelShaderBlob = CompileShader(
+		L"Assets/Shaders/PostProcess/SsgiUpsample.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> probeCaptureVertexShaderBlob = CompileShader(
+		L"Assets/Shaders/GI/ProbeCapture.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> probeCapturePixelShaderBlob = CompileShader(
+		L"Assets/Shaders/GI/ProbeCapture.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> probeShProjectionComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/GI/ProbeShProjection.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> probeVisibilityComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/GI/ProbeVisibility.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> skyboxPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/Skybox.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/Skybox.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> planarReflectionPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/Reflection/PlanarReflection.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Reflection/PlanarReflection.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> sharpenPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/Sharpen.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/Sharpen.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> finalCompositePixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/FinalComposite.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/FinalComposite.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> passthroughPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/Passthrough.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/Passthrough.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> depthOfFieldPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/DepthOfField.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/DepthOfField.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> motionBlurPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/MotionBlur.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/MotionBlur.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> weightedOitPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/Transparency/WeightedOIT.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> weightedOitCompositePixelShaderBlob = CompileShader(
+		L"Assets/Shaders/Transparency/WeightedOITComposite.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> refractiveSurfacePixelShaderBlob = CompileShader(
+		L"Assets/Shaders/Transparency/RefractiveSurface.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> underwaterCausticsPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/Water/UnderwaterCaustics.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> skinnedMotionVectorVertexShaderBlob = CompileShader(
+		L"Assets/Shaders/Temporal/SkinnedMotionVector.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> bloomPrefilterPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/Bloom/BloomPrefilter.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/Bloom/BloomPrefilter.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> bloomDownsamplePixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/Bloom/BloomDownsample.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/Bloom/BloomDownsample.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> bloomUpsamplePixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/Bloom/BloomUpsample.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/Bloom/BloomUpsample.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> smaaEdgePixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/SMAA/SMAAEdgeDetection.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/SMAA/SMAAEdgeDetection.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> smaaWeightPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/SMAA/SMAABlendWeight.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/SMAA/SMAABlendWeight.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> smaaNeighborhoodPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/SMAA/SMAANeighborhoodBlend.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/SMAA/SMAANeighborhoodBlend.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> glarePixelShaderBlob = CompileShader(
 		L"Assets/Shaders/PostProcess/Glare.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> filterPixelShaderBlob = CompileShader(
-		L"Assets/Shaders/PostProcess/Filter.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/PostProcess/Filter.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> autoExposurePixelShaderBlob = CompileShader(
+		L"Assets/Shaders/PostProcess/AutoExposure.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> histogramExposureComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Compute/HistogramExposure.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> depthPyramidComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Depth/DepthPyramid.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Depth/DepthPyramid.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> depthDownsampleComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Depth/DepthDownsample.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Depth/DepthDownsample.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> reconstructNormalComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Depth/ReconstructNormal.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Depth/ReconstructNormal.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> cameraVelocityComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Temporal/CameraVelocity.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Temporal/CameraVelocity.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> velocityDilateComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Temporal/VelocityDilate.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Temporal/VelocityDilate.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> disocclusionMaskComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Temporal/DisocclusionMask.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Temporal/DisocclusionMask.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> reactiveMaskComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Temporal/ReactiveMask.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Temporal/ReactiveMask.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> ssrTraceComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Reflection/SSRTrace.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Reflection/SSRTrace.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> ssrResolveComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Reflection/SSRResolve.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Reflection/SSRResolve.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> ssrTemporalResolveComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Reflection/SSRTemporalResolve.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Reflection/SSRTemporalResolve.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> ssrDenoiseComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Reflection/SSRDenoise.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Reflection/SSRDenoise.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> ssrCompositeComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Reflection/SSRComposite.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Reflection/SSRComposite.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> temporalResolveComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Temporal/TemporalResolve.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Temporal/TemporalResolve.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> copyDepthComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Temporal/CopyDepth.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Temporal/CopyDepth.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> frustumCullingComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Culling/FrustumCulling.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Culling/FrustumCulling.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> occlusionCullingComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Culling/OcclusionCulling.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Culling/OcclusionCulling.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> buildIndirectArgsComputeShaderBlob = CompileShader(
-		L"Assets/Shaders/Culling/BuildIndirectArgs.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Assets/Shaders/Culling/BuildIndirectArgs.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> particleClearComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Particle/ParticleClear.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> particleUpdateComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Particle/ParticleUpdate.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> particleSpawnComputeShaderBlob = CompileShader(
+		L"Assets/Shaders/Particle/ParticleSpawn.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> particleVertexShaderBlob = CompileShader(
+		L"Assets/Shaders/Particle/Particle.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> particlePixelShaderBlob = CompileShader(
+		L"Assets/Shaders/Particle/Particle.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> particleModelVertexShaderBlob = CompileShader(
+		L"Assets/Shaders/Particle/ParticleModel.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> particleModelPixelShaderBlob = CompileShader(
+		L"Assets/Shaders/Particle/ParticleModel.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> vfxPrimitiveVertexShaderBlob = CompileShader(
+		L"Assets/Shaders/Effect/EffectPrimitive.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> vfxPrimitivePixelShaderBlob = CompileShader(
+		L"Assets/Shaders/Effect/EffectPrimitive.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> oceanFftUpdateSpectrumShaderBlob = CompileShader(
+		L"Assets/Shaders/Water/OceanFFT_UpdateSpectrum.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> oceanFftRowShaderBlob = CompileShader(
+		L"Assets/Shaders/Water/OceanFFT_Row.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> oceanFftTransposeShaderBlob = CompileShader(
+		L"Assets/Shaders/Water/OceanFFT_Transpose.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
+		logStream);
+	ComPtr<IDxcBlob> oceanFftFinalizeShaderBlob = CompileShader(
+		L"Assets/Shaders/Water/OceanFFT_Finalize.CS.hlsl", L"cs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(),
 		logStream);
 
 	if (vertexShaderBlob == nullptr ||
+		batchedVertexShaderBlob == nullptr ||
 		pixelShaderBlob == nullptr ||
 		objectReflectionMaskPixelShaderBlob == nullptr ||
 		gBufferVertexShaderBlob == nullptr ||
+		batchedGBufferVertexShaderBlob == nullptr ||
 		gBufferPixelShaderBlob == nullptr ||
 		shadowVertexShaderBlob == nullptr ||
+		batchedShadowVertexShaderBlob == nullptr ||
+		alphaCutoutShadowPixelShaderBlob == nullptr ||
 		fullscreenVertexShaderBlob == nullptr ||
 		toneMappingPixelShaderBlob == nullptr ||
 		bloomExtractPixelShaderBlob == nullptr ||
@@ -1164,6 +1643,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		fxaaPixelShaderBlob == nullptr ||
 		ssaoPixelShaderBlob == nullptr ||
 		ssaoBlurPixelShaderBlob == nullptr ||
+		ssgiPixelShaderBlob == nullptr ||
 		skyboxPixelShaderBlob == nullptr ||
 		planarReflectionPixelShaderBlob == nullptr ||
 		sharpenPixelShaderBlob == nullptr ||
@@ -1171,6 +1651,11 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		passthroughPixelShaderBlob == nullptr ||
 		depthOfFieldPixelShaderBlob == nullptr ||
 		motionBlurPixelShaderBlob == nullptr ||
+		weightedOitPixelShaderBlob == nullptr ||
+		weightedOitCompositePixelShaderBlob == nullptr ||
+		refractiveSurfacePixelShaderBlob == nullptr ||
+		underwaterCausticsPixelShaderBlob == nullptr ||
+		skinnedMotionVectorVertexShaderBlob == nullptr ||
 		bloomPrefilterPixelShaderBlob == nullptr ||
 		bloomDownsamplePixelShaderBlob == nullptr ||
 		bloomUpsamplePixelShaderBlob == nullptr ||
@@ -1179,6 +1664,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		smaaNeighborhoodPixelShaderBlob == nullptr ||
 		glarePixelShaderBlob == nullptr ||
 		filterPixelShaderBlob == nullptr ||
+		autoExposurePixelShaderBlob == nullptr ||
 		depthPyramidComputeShaderBlob == nullptr ||
 		depthDownsampleComputeShaderBlob == nullptr ||
 		reconstructNormalComputeShaderBlob == nullptr ||
@@ -1195,8 +1681,40 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		copyDepthComputeShaderBlob == nullptr ||
 		frustumCullingComputeShaderBlob == nullptr ||
 		occlusionCullingComputeShaderBlob == nullptr ||
-		buildIndirectArgsComputeShaderBlob == nullptr) {
-		RequestInitializationFailure();  // �K�{�V�F�[�_�[�� 1 �ł��������� PSO �쐬�֐i�߂Ȃ��B
+		buildIndirectArgsComputeShaderBlob == nullptr ||
+		particleClearComputeShaderBlob == nullptr ||
+		particleUpdateComputeShaderBlob == nullptr ||
+		particleSpawnComputeShaderBlob == nullptr ||
+		particleVertexShaderBlob == nullptr ||
+		particlePixelShaderBlob == nullptr ||
+		particleModelVertexShaderBlob == nullptr ||
+		particleModelPixelShaderBlob == nullptr ||
+		vfxPrimitiveVertexShaderBlob == nullptr ||
+		vfxPrimitivePixelShaderBlob == nullptr ||
+		oceanFftUpdateSpectrumShaderBlob == nullptr ||
+		oceanFftRowShaderBlob == nullptr ||
+		oceanFftTransposeShaderBlob == nullptr ||
+		oceanFftFinalizeShaderBlob == nullptr) {
+		std::ostringstream failureText;
+		failureText << "Engine同梱Shaderの検査で " << g_shaderCompilationFailures.size()
+			<< " 件失敗しました。\n\n";
+		constexpr std::size_t kDisplayedFailureCount = 12U;
+		for (std::size_t index = 0U;
+			index < (std::min)(g_shaderCompilationFailures.size(), kDisplayedFailureCount);
+			++index) {
+			std::string item = g_shaderCompilationFailures[index];
+			if (item.size() > 500U) item.resize(500U);
+			failureText << "- " << item << '\n';
+		}
+		if (g_shaderCompilationFailures.size() > kDisplayedFailureCount) {
+			failureText << "\nほか " << (g_shaderCompilationFailures.size() - kDisplayedFailureCount) << " 件";
+		}
+		failureText << "\n\nこのEngineは配布内容が不完全です。Launcherの修復を実行してください。";
+		const std::string failureMessage = failureText.str();
+		Log(logStream, failureMessage);
+		const std::wstring wideFailureMessage = ConvertString(failureMessage);
+		MessageBoxW(windowHandle, wideFailureMessage.c_str(), L"CG2Engine - Engine Resource Error", MB_OK | MB_ICONERROR);
+		RequestInitializationFailure(); // �K�{�V�F�[�_�[�� 1 �ł��������� PSO �쐬�֐i�߂Ȃ��B
 		return;
 	}
 
@@ -1246,6 +1764,18 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	iblBrdfLutRange[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
 	iblBrdfLutRange[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
+	D3D12_DESCRIPTOR_RANGE waterSceneColorRange[1] = {};
+	waterSceneColorRange[0].BaseShaderRegister = 18u;
+	waterSceneColorRange[0].NumDescriptors = 1u;
+	waterSceneColorRange[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	waterSceneColorRange[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_DESCRIPTOR_RANGE waterSceneDepthRange[1] = {};
+	waterSceneDepthRange[0].BaseShaderRegister = 19u;
+	waterSceneDepthRange[0].NumDescriptors = 1u;
+	waterSceneDepthRange[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	waterSceneDepthRange[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
 	// t7-t13 は Normal / Metallic / Roughness / AO / Emission / Height / Opacity の順で使う。
 	D3D12_DESCRIPTOR_RANGE materialMapDescriptorRanges[7][1] = {};
 	for (int32_t materialMapIndex = 0; materialMapIndex < 7; materialMapIndex++) {
@@ -1261,8 +1791,20 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	D3D12_ROOT_SIGNATURE_DESC descriptionRootSignature{};
 	descriptionRootSignature.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
-	// 0-10 は既存描画、11-17 は PBR Material Map の個別 SRV。
-	D3D12_ROOT_PARAMETER rootParameters[18] = {};
+	// 0-10 は既存描画、11-17 は PBR Map、18-19 は Ocean FFT、20-21 は現在 / 前 Bone 行列。
+	// 22-23 は水面専用パスが読む不透明 Scene Color / Depth、24 は Viewport ごとの水面復元定数。
+	// 水面SSRでWorldを画面へ戻すため、逆行列20値にView軸と投影倍率12値を加える。
+	// t20 = Light Probe の SH 係数、t21 = 八面体の可視性アトラス。
+	// Root Signature は 64 DWORD 上限に対して既に 63 使っているため、
+	// 2つのSRVを1つのDescriptor Table(1 DWORD)へまとめて丁度 64 に収める。
+	D3D12_DESCRIPTOR_RANGE lightProbeDescriptorRange[1] = {};
+	lightProbeDescriptorRange[0].BaseShaderRegister = 20u;
+	lightProbeDescriptorRange[0].NumDescriptors = 2u;
+	lightProbeDescriptorRange[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	lightProbeDescriptorRange[0].OffsetInDescriptorsFromTableStart =
+		D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_ROOT_PARAMETER rootParameters[27] = {};
 
 	rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 	rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -1322,11 +1864,64 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	for (int32_t materialMapIndex = 0; materialMapIndex < 7; materialMapIndex++) {
 		const int32_t rootParameterIndex = 11 + materialMapIndex;
 		rootParameters[rootParameterIndex].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-		rootParameters[rootParameterIndex].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+		rootParameters[rootParameterIndex].ShaderVisibility = materialMapIndex == 5
+			? D3D12_SHADER_VISIBILITY_ALL
+			: D3D12_SHADER_VISIBILITY_PIXEL;
 		rootParameters[rootParameterIndex].DescriptorTable.pDescriptorRanges =
 			materialMapDescriptorRanges[materialMapIndex];
 		rootParameters[rootParameterIndex].DescriptorTable.NumDescriptorRanges = 1;
 	}
+
+	rootParameters[18].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+	// FFT変位はVSの輪郭生成とPSの連続面シェーディングで共有する。
+	rootParameters[18].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+	rootParameters[18].Descriptor.ShaderRegister = 14u;
+	rootParameters[18].Descriptor.RegisterSpace = 0u;
+
+	rootParameters[19].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+	rootParameters[19].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+	rootParameters[19].Descriptor.ShaderRegister = 15u;
+	rootParameters[19].Descriptor.RegisterSpace = 0u;
+
+	rootParameters[20].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+	rootParameters[20].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+	rootParameters[20].Descriptor.ShaderRegister = 16u;
+	rootParameters[20].Descriptor.RegisterSpace = 0u;
+
+	rootParameters[21].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+	rootParameters[21].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+	rootParameters[21].Descriptor.ShaderRegister = 17u;
+	rootParameters[21].Descriptor.RegisterSpace = 0u;
+
+	rootParameters[22].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	rootParameters[22].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	rootParameters[22].DescriptorTable.pDescriptorRanges = waterSceneColorRange;
+	rootParameters[22].DescriptorTable.NumDescriptorRanges = _countof(waterSceneColorRange);
+
+	rootParameters[23].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	rootParameters[23].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	rootParameters[23].DescriptorTable.pDescriptorRanges = waterSceneDepthRange;
+	rootParameters[23].DescriptorTable.NumDescriptorRanges = _countof(waterSceneDepthRange);
+
+	rootParameters[24].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+	// 通常描画はPSのWaterView、影描画はVSのShadowViewProjectionとして使う。
+	// 同じRoot Constantsをパスごとに記録し、共有Upload Bufferの上書きを避ける。
+	rootParameters[24].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+	rootParameters[24].Constants.ShaderRegister = 3u;
+	rootParameters[24].Constants.RegisterSpace = 0u;
+	rootParameters[24].Constants.Num32BitValues = 29u;
+
+	// Hardware TessellationはVS用b0と同じTransformをHS/DSから読む。
+	// Pixel用b0とRegisterを重ねないため、同じResourceを独立したb4へ束縛する。
+	rootParameters[25].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+	rootParameters[25].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+	rootParameters[25].Descriptor.ShaderRegister = 4u;
+	rootParameters[25].Descriptor.RegisterSpace = 0u;
+
+	rootParameters[26].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	rootParameters[26].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	rootParameters[26].DescriptorTable.pDescriptorRanges = lightProbeDescriptorRange;
+	rootParameters[26].DescriptorTable.NumDescriptorRanges = _countof(lightProbeDescriptorRange);
 
 	descriptionRootSignature.pParameters = rootParameters;
 	descriptionRootSignature.NumParameters = _countof(rootParameters);
@@ -1339,7 +1934,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	staticSamplers[0].ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
 	staticSamplers[0].MaxLOD = D3D12_FLOAT32_MAX;
 	staticSamplers[0].ShaderRegister = 0;
-	staticSamplers[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	staticSamplers[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 	staticSamplers[1].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
 	staticSamplers[1].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
 	staticSamplers[1].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
@@ -1410,12 +2005,13 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	sphereMaterialData->materialPadding2 = 0.0f;
 	sphereMaterialData->uvTransform = MakeIdentity4x4();
 
-	ID3D12Resource* directionalLightResource = CreateBufferResource(device.Get(), sizeof(DirectionalLight) * kMaxShadowLights);
+	ID3D12Resource* directionalLightResource = CreateBufferResource(device.Get(),
+	                                                                sizeof(DirectionalLight) * kMaxSceneLights);
 	// directionalLightResource は PixelShader に渡す平行�E源定数バッファ、E
 	DirectionalLight* directionalLightData = nullptr;
 	// directionalLightData は Inspector から色・向き・強さを書き換える mapped ポインタ、E
 	directionalLightResource->Map(0, nullptr, reinterpret_cast<void**>(&directionalLightData));
-	for (uint32_t i = 0; i < kMaxShadowLights; i++) {
+	for (uint32_t i = 0; i < kMaxSceneLights; i++) {
 		directionalLightData[i].color = {0.0f, 0.0f, 0.0f, 1.0f};
 		directionalLightData[i].direction = {0.0f, -1.0f, 0.0f};
 		directionalLightData[i].intensity = 0.0f;
@@ -1443,6 +2039,13 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		directionalLightData[i].shadowTileUvBiasX = 0.0f;
 		directionalLightData[i].shadowTileUvBiasY = 0.0f;
 		directionalLightData[i].shadowEnabled = -1.0f;
+		directionalLightData[i].shadowCascadeSplits = {};
+		directionalLightData[i].shadowCascadeCount = 0.0f;
+		directionalLightData[i].shadowCascadePadding0 = 0.0f;
+		directionalLightData[i].shadowCascadePadding1 = 0.0f;
+		directionalLightData[i].shadowCascadePadding2 = 0.0f;
+		directionalLightData[i].shadowCascadeVP.fill({});
+		directionalLightData[i].shadowCascadeAtlas.fill({});
 	}
 
 	ID3D12Resource* emissiveLightResource = CreateBufferResource(device.Get(), sizeof(EmissiveLightArray));
@@ -1460,6 +2063,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	spriteTransformationMatrixResource->Map(
 		0, nullptr, reinterpret_cast<void**>(&spriteTransformationMatrixData));
 	spriteTransformationMatrixData->WVP = MakeIdentity4x4();
+	spriteTransformationMatrixData->previousWVP = MakeIdentity4x4();
+	spriteTransformationMatrixData->oceanRenderParams = {};
+	spriteTransformationMatrixData->temporalParams = {};
 	spriteTransformationMatrixData->World = MakeIdentity4x4();
 	spriteTransformationMatrixData->lightWVP = MakeIdentity4x4();
 
@@ -1472,8 +2078,43 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	sphereTransformationMatrixResource->Map(
 		0, nullptr, reinterpret_cast<void**>(&sphereTransformationMatrixData));
 	sphereTransformationMatrixData->WVP = MakeIdentity4x4();
+	sphereTransformationMatrixData->previousWVP = MakeIdentity4x4();
+	sphereTransformationMatrixData->oceanRenderParams = {};
+	sphereTransformationMatrixData->temporalParams = {};
 	sphereTransformationMatrixData->World = MakeIdentity4x4();
 	sphereTransformationMatrixData->lightWVP = MakeIdentity4x4();
+
+	ID3D12Resource* identitySkinMatrixResource = CreateBufferResource(
+		device.Get(), sizeof(Matrix4x4));
+	Matrix4x4* identitySkinMatrixData = nullptr;
+
+	if (identitySkinMatrixResource == nullptr ||
+		FAILED(identitySkinMatrixResource->Map(
+			0,
+			nullptr,
+			reinterpret_cast<void**>(&identitySkinMatrixData))) ||
+		identitySkinMatrixData == nullptr) {
+		Log(logStream, "Identity skin matrix buffer creation failed.");
+		RequestInitializationFailure();
+		return;
+	}
+
+	*identitySkinMatrixData = MakeIdentity4x4();
+
+	ID3D12Resource* batchInstanceResource = CreateBufferResource(
+		device.Get(),
+		sizeof(EditorBatchInstanceData) * kEditorBatchInstanceCapacity);
+	EditorBatchInstanceData* batchInstanceData = nullptr;
+	if (batchInstanceResource == nullptr ||
+		FAILED(batchInstanceResource->Map(
+			0,
+			nullptr,
+			reinterpret_cast<void**>(&batchInstanceData))) ||
+		batchInstanceData == nullptr) {
+		Log(logStream, "Batch instance buffer creation failed.");
+		RequestInitializationFailure();
+		return;
+	}
 	Log(logStream, "Init Stage: material and transform buffers completed");
 
 	// RootSignature は Shader がどの Resource をどのスロチE��で読むかを固定する、E
@@ -1503,8 +2144,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	Log(logStream, "Init Stage: object root signature created");
 
-	// inputElementDescs は VertexData の position / texcoord / normal めEShader 入力に対応させる、E
-	D3D12_INPUT_ELEMENT_DESC inputElementDescs[3] = {};
+	// inputElementDescs は静的 Mesh と Skinned Mesh で同じ VertexData を共有する。
+	D3D12_INPUT_ELEMENT_DESC inputElementDescs[5] = {};
 	inputElementDescs[0].SemanticName = "POSITION";
 	inputElementDescs[0].SemanticIndex = 0;
 	inputElementDescs[0].Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
@@ -1517,6 +2158,14 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	inputElementDescs[2].SemanticIndex = 0;
 	inputElementDescs[2].Format = DXGI_FORMAT_R32G32B32_FLOAT;
 	inputElementDescs[2].AlignedByteOffset = D3D12_APPEND_ALIGNED_ELEMENT;
+	inputElementDescs[3].SemanticName = "BLENDINDICES";
+	inputElementDescs[3].SemanticIndex = 0;
+	inputElementDescs[3].Format = DXGI_FORMAT_R32G32B32A32_UINT;
+	inputElementDescs[3].AlignedByteOffset = D3D12_APPEND_ALIGNED_ELEMENT;
+	inputElementDescs[4].SemanticName = "BLENDWEIGHT";
+	inputElementDescs[4].SemanticIndex = 0;
+	inputElementDescs[4].Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+	inputElementDescs[4].AlignedByteOffset = D3D12_APPEND_ALIGNED_ELEMENT;
 
 	// blendDesc は RenderTarget へ色を書き込む方法。現状は不透�E描画の標準設定、E
 	D3D12_BLEND_DESC blendDesc{};
@@ -1663,6 +2312,46 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	Log(logStream, "Init Stage: cull none pso created");
 
+	// 静的Modelの自動Batch用。Root Parameter 20(t16)をBone行列ではなく
+	// EditorBatchInstanceDataとして読み、同一Mesh/Materialを1 Drawへまとめる。
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC batchedPipelineStateDesc = graphicsPipelineStateDesc;
+	batchedPipelineStateDesc.VS = {
+		batchedVertexShaderBlob->GetBufferPointer(),
+		batchedVertexShaderBlob->GetBufferSize()
+	};
+	ComPtr<ID3D12PipelineState> batchedGraphicsPipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&batchedPipelineStateDesc,
+		IID_PPV_ARGS(batchedGraphicsPipelineState.GetAddressOf()));
+	if (FAILED(hr) || batchedGraphicsPipelineState == nullptr) {
+		Log(logStream, "Batched Object3d PSO Create failed.");
+		RequestInitializationFailure();
+		return;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC batchedCullFrontPipelineStateDesc = batchedPipelineStateDesc;
+	batchedCullFrontPipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_FRONT;
+	batchedCullFrontPipelineStateDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+	ComPtr<ID3D12PipelineState> batchedCullFrontPipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&batchedCullFrontPipelineStateDesc,
+		IID_PPV_ARGS(batchedCullFrontPipelineState.GetAddressOf()));
+	if (FAILED(hr) || batchedCullFrontPipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC batchedCullNonePipelineStateDesc = batchedPipelineStateDesc;
+	batchedCullNonePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	ComPtr<ID3D12PipelineState> batchedCullNonePipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&batchedCullNonePipelineStateDesc,
+		IID_PPV_ARGS(batchedCullNonePipelineState.GetAddressOf()));
+	if (FAILED(hr) || batchedCullNonePipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
 	// 半透明は Source Alpha で HDR 色を合成し、背後を隠さないよう Depth 書き込みを止める。
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC transparentPipelineStateDesc = graphicsPipelineStateDesc;
 	transparentPipelineStateDesc.BlendState.RenderTarget[0].BlendEnable = TRUE;
@@ -1701,6 +2390,158 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	Log(logStream, "Init Stage: transparent pso created");
 
+	// 水面はコピー済みの不透明DepthをShaderで読み、元Depthへ水面自身の深度を書き込む。
+	// 手前の波が奥の波・Foamに上書きされないよう、通常のDepth Testを有効にする。
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC waterSurfacePipelineStateDesc = graphicsPipelineStateDesc;
+	waterSurfacePipelineStateDesc.PS = {
+		oceanSurfacePixelShaderBlob->GetBufferPointer(),
+		oceanSurfacePixelShaderBlob->GetBufferSize()};
+	waterSurfacePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	waterSurfacePipelineStateDesc.DepthStencilState.DepthEnable = TRUE;
+	waterSurfacePipelineStateDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+	// Tessellation Patch の共有辺や両面描画の同一深度Fragmentを再描画しない。
+	// LESS_EQUALでは同じ水面を二重に評価し、法線量に応じた発光線として見えていた。
+	waterSurfacePipelineStateDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+	waterSurfacePipelineStateDesc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
+
+	ComPtr<ID3D12PipelineState> waterSurfacePipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&waterSurfacePipelineStateDesc,
+		IID_PPV_ARGS(waterSurfacePipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || waterSurfacePipelineState == nullptr) {
+		Log(logStream, std::format("Water surface PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	Log(logStream, "Init Stage: water surface pso created");
+
+	// Ocean専用のHardware Tessellation。辺の画面Pixel長からHSが分割係数を決め、
+	// DSが細分化後の各頂点で既存FFT変位を再評価する。
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC waterTessellationPipelineStateDesc =
+		waterSurfacePipelineStateDesc;
+	waterTessellationPipelineStateDesc.VS = {
+		oceanTessellationVertexShaderBlob->GetBufferPointer(),
+		oceanTessellationVertexShaderBlob->GetBufferSize()};
+	waterTessellationPipelineStateDesc.HS = {
+		oceanTessellationHullShaderBlob->GetBufferPointer(),
+		oceanTessellationHullShaderBlob->GetBufferSize()};
+	waterTessellationPipelineStateDesc.DS = {
+		oceanTessellationDomainShaderBlob->GetBufferPointer(),
+		oceanTessellationDomainShaderBlob->GetBufferSize()};
+	waterTessellationPipelineStateDesc.PrimitiveTopologyType =
+		D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH;
+
+	ComPtr<ID3D12PipelineState> waterTessellationPipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&waterTessellationPipelineStateDesc,
+		IID_PPV_ARGS(waterTessellationPipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || waterTessellationPipelineState == nullptr) {
+		Log(logStream, std::format(
+			"Water tessellation PSO Create failed. hr=0x{:08X}",
+			static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	Log(logStream, "Init Stage: water tessellation pso created");
+
+	// Transmission材質はScene Color / Depthを読み、屈折込みの完成色を直接HDRへ書く。
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC refractiveSurfacePipelineStateDesc =
+		waterSurfacePipelineStateDesc;
+	refractiveSurfacePipelineStateDesc.PS = {
+		refractiveSurfacePixelShaderBlob->GetBufferPointer(),
+		refractiveSurfacePixelShaderBlob->GetBufferSize()};
+	refractiveSurfacePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
+
+	ComPtr<ID3D12PipelineState> refractiveSurfacePipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&refractiveSurfacePipelineStateDesc,
+		IID_PPV_ARGS(refractiveSurfacePipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || refractiveSurfacePipelineState == nullptr) {
+		Log(logStream, std::format("Refractive surface PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC refractiveSurfaceCullNonePipelineStateDesc =
+		refractiveSurfacePipelineStateDesc;
+	refractiveSurfaceCullNonePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	ComPtr<ID3D12PipelineState> refractiveSurfaceCullNonePipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&refractiveSurfaceCullNonePipelineStateDesc,
+		IID_PPV_ARGS(refractiveSurfaceCullNonePipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || refractiveSurfaceCullNonePipelineState == nullptr) {
+		Log(logStream, std::format("Refractive CullNone PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	Log(logStream, "Init Stage: refractive surface pso created");
+
+	// Weighted Blended OIT は描画順に依存せず、色の重み付き総和と透過率を同時出力する。
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC weightedOitPipelineStateDesc = graphicsPipelineStateDesc;
+	weightedOitPipelineStateDesc.PS = {
+		weightedOitPixelShaderBlob->GetBufferPointer(),
+		weightedOitPixelShaderBlob->GetBufferSize()};
+	weightedOitPipelineStateDesc.NumRenderTargets = 2;
+	weightedOitPipelineStateDesc.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+	weightedOitPipelineStateDesc.RTVFormats[1] = DXGI_FORMAT_R16_FLOAT;
+	weightedOitPipelineStateDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+	weightedOitPipelineStateDesc.BlendState.IndependentBlendEnable = TRUE;
+
+	D3D12_RENDER_TARGET_BLEND_DESC& accumulationBlend =
+		weightedOitPipelineStateDesc.BlendState.RenderTarget[0];
+	accumulationBlend.BlendEnable = TRUE;
+	accumulationBlend.SrcBlend = D3D12_BLEND_ONE;
+	accumulationBlend.DestBlend = D3D12_BLEND_ONE;
+	accumulationBlend.BlendOp = D3D12_BLEND_OP_ADD;
+	accumulationBlend.SrcBlendAlpha = D3D12_BLEND_ONE;
+	accumulationBlend.DestBlendAlpha = D3D12_BLEND_ONE;
+	accumulationBlend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+	accumulationBlend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+	D3D12_RENDER_TARGET_BLEND_DESC& revealageBlend =
+		weightedOitPipelineStateDesc.BlendState.RenderTarget[1];
+	revealageBlend.BlendEnable = TRUE;
+	revealageBlend.SrcBlend = D3D12_BLEND_ZERO;
+	revealageBlend.DestBlend = D3D12_BLEND_INV_SRC_COLOR;
+	revealageBlend.BlendOp = D3D12_BLEND_OP_ADD;
+	revealageBlend.SrcBlendAlpha = D3D12_BLEND_ZERO;
+	revealageBlend.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+	revealageBlend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+	revealageBlend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_RED;
+
+	ComPtr<ID3D12PipelineState> weightedOitPipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&weightedOitPipelineStateDesc,
+		IID_PPV_ARGS(weightedOitPipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || weightedOitPipelineState == nullptr) {
+		Log(logStream, std::format("Weighted OIT PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC weightedOitCullNonePipelineStateDesc = weightedOitPipelineStateDesc;
+	weightedOitCullNonePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	ComPtr<ID3D12PipelineState> weightedOitCullNonePipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&weightedOitCullNonePipelineStateDesc,
+		IID_PPV_ARGS(weightedOitCullNonePipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || weightedOitCullNonePipelineState == nullptr) {
+		Log(logStream, std::format("Weighted OIT CullNone PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	Log(logStream, "Init Stage: weighted oit pso created");
+
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC shadowPipelineStateDesc{};
 	shadowPipelineStateDesc.pRootSignature = rootSignature.Get();
 	shadowPipelineStateDesc.InputLayout.pInputElementDescs = inputElementDescs;
@@ -1738,6 +2579,82 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	Log(logStream, "Init Stage: shadow pso created");
 
+	// 両面材質は裏面も影へ残す。通常材質と Masked 材質で PixelShader の有無だけを分ける。
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC shadowCullNonePipelineStateDesc = shadowPipelineStateDesc;
+	shadowCullNonePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+
+	ComPtr<ID3D12PipelineState> shadowCullNonePipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&shadowCullNonePipelineStateDesc,
+		IID_PPV_ARGS(shadowCullNonePipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || shadowCullNonePipelineState == nullptr) {
+		Log(logStream, std::format("Shadow CullNone PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC batchedShadowPipelineStateDesc = shadowPipelineStateDesc;
+	batchedShadowPipelineStateDesc.VS = {
+		batchedShadowVertexShaderBlob->GetBufferPointer(),
+		batchedShadowVertexShaderBlob->GetBufferSize()
+	};
+	ComPtr<ID3D12PipelineState> batchedShadowPipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&batchedShadowPipelineStateDesc,
+		IID_PPV_ARGS(batchedShadowPipelineState.GetAddressOf()));
+	if (FAILED(hr) || batchedShadowPipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC batchedShadowCullNonePipelineStateDesc = batchedShadowPipelineStateDesc;
+	batchedShadowCullNonePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	ComPtr<ID3D12PipelineState> batchedShadowCullNonePipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&batchedShadowCullNonePipelineStateDesc,
+		IID_PPV_ARGS(batchedShadowCullNonePipelineState.GetAddressOf()));
+	if (FAILED(hr) || batchedShadowCullNonePipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC alphaCutoutShadowPipelineStateDesc = shadowPipelineStateDesc;
+	alphaCutoutShadowPipelineStateDesc.PS = {
+		alphaCutoutShadowPixelShaderBlob->GetBufferPointer(),
+		alphaCutoutShadowPixelShaderBlob->GetBufferSize()
+	};
+
+	ComPtr<ID3D12PipelineState> alphaCutoutShadowPipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&alphaCutoutShadowPipelineStateDesc,
+		IID_PPV_ARGS(alphaCutoutShadowPipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || alphaCutoutShadowPipelineState == nullptr) {
+		Log(logStream, std::format("Alpha cutout shadow PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC alphaCutoutShadowCullNonePipelineStateDesc =
+		alphaCutoutShadowPipelineStateDesc;
+	alphaCutoutShadowCullNonePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+
+	ComPtr<ID3D12PipelineState> alphaCutoutShadowCullNonePipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&alphaCutoutShadowCullNonePipelineStateDesc,
+		IID_PPV_ARGS(alphaCutoutShadowCullNonePipelineState.GetAddressOf()));
+
+	if (FAILED(hr) || alphaCutoutShadowCullNonePipelineState == nullptr) {
+		Log(
+			logStream,
+			std::format("Alpha cutout shadow CullNone PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	Log(logStream, "Init Stage: alpha cutout shadow pso created");
+
 	//================================================================
 	// Post-process RootSignature and PipelineStates
 	//================================================================
@@ -1761,7 +2678,25 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	postProcessDescriptorRange2[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
 	postProcessDescriptorRange2[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-	D3D12_ROOT_PARAMETER postProcessRootParameters[4] = {};
+	D3D12_DESCRIPTOR_RANGE postProcessDescriptorRange5[1] = {};
+	postProcessDescriptorRange5[0].BaseShaderRegister = 5u;
+	postProcessDescriptorRange5[0].NumDescriptors = 1u;
+	postProcessDescriptorRange5[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	postProcessDescriptorRange5[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_DESCRIPTOR_RANGE postProcessDescriptorRange6[1] = {};
+	postProcessDescriptorRange6[0].BaseShaderRegister = 6u;
+	postProcessDescriptorRange6[0].NumDescriptors = 1u;
+	postProcessDescriptorRange6[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	postProcessDescriptorRange6[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_DESCRIPTOR_RANGE postProcessDescriptorRange7[1] = {};
+	postProcessDescriptorRange7[0].BaseShaderRegister = 7u;
+	postProcessDescriptorRange7[0].NumDescriptors = 1u;
+	postProcessDescriptorRange7[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	postProcessDescriptorRange7[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_ROOT_PARAMETER postProcessRootParameters[8] = {};
 	postProcessRootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
 	postProcessRootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	postProcessRootParameters[0].DescriptorTable.pDescriptorRanges = postProcessDescriptorRange0;
@@ -1775,12 +2710,36 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	postProcessRootParameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
 	postProcessRootParameters[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	postProcessRootParameters[2].Constants.ShaderRegister = 0;
-	postProcessRootParameters[2].Constants.Num32BitValues = 40;
+	postProcessRootParameters[2].Constants.Num32BitValues = 48;
 
 	postProcessRootParameters[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
 	postProcessRootParameters[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	postProcessRootParameters[3].DescriptorTable.pDescriptorRanges = postProcessDescriptorRange2;
 	postProcessRootParameters[3].DescriptorTable.NumDescriptorRanges = _countof(postProcessDescriptorRange2);
+
+	// t4 は Underwater が描画と同じ FFT 変位を参照するための Root SRV。
+	postProcessRootParameters[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+	postProcessRootParameters[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	postProcessRootParameters[4].Descriptor.ShaderRegister = 4u;
+	postProcessRootParameters[4].Descriptor.RegisterSpace = 0u;
+
+	// t5 は FinalComposite が参照する 1x1 の自動露出履歴。
+	postProcessRootParameters[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	postProcessRootParameters[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	postProcessRootParameters[5].DescriptorTable.pDescriptorRanges = postProcessDescriptorRange5;
+	postProcessRootParameters[5].DescriptorTable.NumDescriptorRanges = _countof(postProcessDescriptorRange5);
+
+	// t6 は FinalComposite が参照する 2D strip Color Grading LUT。
+	postProcessRootParameters[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	postProcessRootParameters[6].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	postProcessRootParameters[6].DescriptorTable.pDescriptorRanges = postProcessDescriptorRange6;
+	postProcessRootParameters[6].DescriptorTable.NumDescriptorRanges = _countof(postProcessDescriptorRange6);
+
+	// t7 は FinalComposite の遠景Heat Shimmerが近景を除外するためのScene Depth。
+	postProcessRootParameters[7].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	postProcessRootParameters[7].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	postProcessRootParameters[7].DescriptorTable.pDescriptorRanges = postProcessDescriptorRange7;
+	postProcessRootParameters[7].DescriptorTable.NumDescriptorRanges = _countof(postProcessDescriptorRange7);
 
 	D3D12_STATIC_SAMPLER_DESC postProcessSampler{};
 	postProcessSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -1804,12 +2763,21 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	hr = D3D12SerializeRootSignature(
 		&postProcessRootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1,
 		postProcessSignatureBlob.GetAddressOf(), postProcessErrorBlob.GetAddressOf());
-	if (FAILED(hr)) {
+	if (FAILED(hr) || postProcessSignatureBlob == nullptr) {
+		Log(logStream, std::format(
+			"PostProcess RootSignature serialize failed. hr=0x{:08X}",
+			static_cast<uint32_t>(hr)));
+
 		if (postProcessErrorBlob != nullptr) {
-			Log(reinterpret_cast<char*>(postProcessErrorBlob->GetBufferPointer()));
+			const auto* errorMessage = reinterpret_cast<const char*>(postProcessErrorBlob->GetBufferPointer());
+			Log(logStream, std::string(errorMessage, postProcessErrorBlob->GetBufferSize()));
 		}
-		assert(false);
+
+		RequestInitializationFailure();
+		return;
 	}
+
+	Log(logStream, "Init Stage: post-process root signature serialized");
 
 	ComPtr<ID3D12RootSignature> postProcessRootSignature;
 	hr = device->CreateRootSignature(
@@ -1822,8 +2790,12 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		return;
 	}
 
+	Log(logStream, "Init Stage: post-process root signature created");
+
 	// Post-process PSOs share common state (no depth, no culling, no vertex buffer)
-	auto CreatePostProcessPSO = [&](const char* psoName, IDxcBlob* psBlob, DXGI_FORMAT rtvFormat) -> ComPtr<ID3D12PipelineState> {
+	auto CreatePostProcessPSO = [&](const char* psoName, IDxcBlob* psBlob,
+	                                DXGI_FORMAT rtvFormat,
+	                                bool additiveBlend = false) -> ComPtr<ID3D12PipelineState> {
 		if (psBlob == nullptr || fullscreenVertexShaderBlob == nullptr) {
 			Log(std::string("CreatePostProcessPSO skipped: ") + psoName + " shader blob is null");
 			return nullptr;
@@ -1831,13 +2803,13 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 		D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
 		desc.pRootSignature = postProcessRootSignature.Get();
-		desc.VS = { fullscreenVertexShaderBlob->GetBufferPointer(), fullscreenVertexShaderBlob->GetBufferSize() };
-		desc.PS = { psBlob->GetBufferPointer(), psBlob->GetBufferSize() };
+		desc.VS = {fullscreenVertexShaderBlob->GetBufferPointer(), fullscreenVertexShaderBlob->GetBufferSize()};
+		desc.PS = {psBlob->GetBufferPointer(), psBlob->GetBufferSize()};
 		D3D12_BLEND_DESC blendDesc{};
-		blendDesc.RenderTarget[0].BlendEnable = FALSE;
+		blendDesc.RenderTarget[0].BlendEnable = additiveBlend ? TRUE : FALSE;
 		blendDesc.RenderTarget[0].LogicOpEnable = FALSE;
 		blendDesc.RenderTarget[0].SrcBlend = D3D12_BLEND_ONE;
-		blendDesc.RenderTarget[0].DestBlend = D3D12_BLEND_ZERO;
+		blendDesc.RenderTarget[0].DestBlend = additiveBlend ? D3D12_BLEND_ONE : D3D12_BLEND_ZERO;
 		blendDesc.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
 		blendDesc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
 		blendDesc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
@@ -1872,6 +2844,28 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 		if (FAILED(h) || pso == nullptr) {
 			Log(logStream, std::format("{} PSO Create failed. hr=0x{:08X}", psoName, static_cast<uint32_t>(h)));
+
+#ifdef _DEBUG
+			if (infoQueue != nullptr) {
+				const UINT64 messageCount = infoQueue->GetNumStoredMessages();
+				const UINT64 firstMessageIndex = messageCount > 8u ? messageCount - 8u : 0u;
+
+				for (UINT64 messageIndex = firstMessageIndex; messageIndex < messageCount; messageIndex++) {
+					SIZE_T messageLength = 0u;
+					infoQueue->GetMessage(messageIndex, nullptr, &messageLength);
+					std::vector<uint8_t> messageStorage(messageLength);
+					auto* message = reinterpret_cast<D3D12_MESSAGE*>(messageStorage.data());
+
+					if (SUCCEEDED(infoQueue->GetMessage(messageIndex, message, &messageLength)) &&
+						message->pDescription != nullptr) {
+						Log(logStream, std::string("D3D12: ") + message->pDescription);
+					}
+				}
+			}
+#endif
+		}
+		else {
+			Log(logStream, std::format("Init Stage: {} pso created", psoName));
 		}
 
 		return pso;
@@ -1880,8 +2874,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	ComPtr<ID3D12PipelineState> toneMappingPipelineState = CreatePostProcessPSO(
 		"ToneMapping", toneMappingPixelShaderBlob.Get(), DXGI_FORMAT_R8G8B8A8_UNORM);
 	Log(std::string("ToneMap VS size=") + std::to_string(fullscreenVertexShaderBlob->GetBufferSize()) +
-	     " PS size=" + std::to_string(toneMappingPixelShaderBlob->GetBufferSize()) +
-	     " PSO=" + std::string(toneMappingPipelineState ? "non-null" : "NULL"));
+		" PS size=" + std::to_string(toneMappingPixelShaderBlob->GetBufferSize()) +
+		" PSO=" + std::string(toneMappingPipelineState ? "non-null" : "NULL"));
 	if (toneMappingPipelineState == nullptr) {
 		RequestInitializationFailure();
 		return;
@@ -1972,12 +2966,27 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		return;
 	}
 
+	ComPtr<ID3D12PipelineState> weightedOitCompositePipelineState = CreatePostProcessPSO(
+		"WeightedOITComposite", weightedOitCompositePixelShaderBlob.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
+	if (weightedOitCompositePipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
+	ComPtr<ID3D12PipelineState> underwaterCausticsPipelineState = CreatePostProcessPSO(
+		"UnderwaterCaustics", underwaterCausticsPixelShaderBlob.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
+	if (underwaterCausticsPipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
 	const bool isGBufferInitialized = g_gBufferManager.Initialize(
 		device.Get(),
 		srvDescriptorHeap,
 		srvSize,
 		rootSignature.Get(),
 		gBufferVertexShaderBlob.Get(),
+		batchedGBufferVertexShaderBlob.Get(),
 		gBufferPixelShaderBlob.Get(),
 		inputElementDescs,
 		_countof(inputElementDescs),
@@ -1989,6 +2998,23 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		RequestInitializationFailure();
 		return;
 	}
+
+	// Light Probe GI は任意機能なので、初期化に失敗しても描画自体は続行する。
+	const bool isLightProbeInitialized = g_lightProbeManager.Initialize(
+		device.Get(),
+		srvDescriptorHeap,
+		srvSize,
+		rootSignature.Get(),
+		probeCaptureVertexShaderBlob.Get(),
+		probeCapturePixelShaderBlob.Get(),
+		probeShProjectionComputeShaderBlob.Get(),
+		probeVisibilityComputeShaderBlob.Get(),
+		inputElementDescs,
+		_countof(inputElementDescs));
+
+	Log(logStream, isLightProbeInitialized
+		? "Init Stage: light probe manager initialized"
+		: "Light probe manager initialization failed (GI disabled)");
 
 	const bool isDepthHierarchyInitialized = g_depthHierarchyManager.Initialize(
 		device.Get(),
@@ -2043,6 +3069,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			smaaNeighborhoodPixelShaderBlob.Get(),
 			glarePixelShaderBlob.Get(),
 			filterPixelShaderBlob.Get(),
+			autoExposurePixelShaderBlob.Get(),
 		};
 	const bool isPostProcessQualityInitialized = g_postProcessQualityManager.Initialize(
 		device.Get(),
@@ -2050,6 +3077,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		srvSize,
 		fullscreenVertexShaderBlob.Get(),
 		postProcessQualityShaderBlobs,
+		histogramExposureComputeShaderBlob.Get(),
 		renderWidth,
 		renderHeight);
 
@@ -2073,8 +3101,62 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		return;
 	}
 
+	const bool isGpuParticleInitialized = g_gpuParticleManager.Initialize(
+		device.Get(),
+		particleClearComputeShaderBlob.Get(),
+		particleUpdateComputeShaderBlob.Get(),
+		particleSpawnComputeShaderBlob.Get(),
+		particleVertexShaderBlob.Get(),
+		particlePixelShaderBlob.Get(),
+		particleModelVertexShaderBlob.Get(),
+		particleModelPixelShaderBlob.Get(),
+		DXGI_FORMAT_R16G16B16A16_FLOAT,
+		DXGI_FORMAT_D24_UNORM_S8_UINT);
+
+	if (!isGpuParticleInitialized) {
+		Log(logStream, "GPU particle initialization failed");
+		RequestInitializationFailure();
+		return;
+	}
+
+	const bool isVfxRendererInitialized = g_vfxRenderer.Initialize(
+		device.Get(),
+		vfxPrimitiveVertexShaderBlob.Get(),
+		vfxPrimitivePixelShaderBlob.Get(),
+		DXGI_FORMAT_R16G16B16A16_FLOAT,
+		DXGI_FORMAT_D24_UNORM_S8_UINT);
+
+	if (!isVfxRendererInitialized) {
+		Log(logStream, "VFX renderer initialization failed");
+		RequestInitializationFailure();
+		return;
+	}
+
+	const bool isEffekseerInitialized = g_editorRuntimeManager.GetEffekseerManager().InitializeGraphics(
+		device.Get(),
+		commandQueue.Get(),
+		kRuntimeSwapChainBufferCount,
+		DXGI_FORMAT_R16G16B16A16_FLOAT,
+		DXGI_FORMAT_D24_UNORM_S8_UINT);
+
+	if (!isEffekseerInitialized) {
+		Log(logStream, "Effekseer DX12 initialization failed");
+		RequestInitializationFailure();
+		return;
+	}
+
 	ModelData modelData = LoadObjFile("resources", "plane.obj");
 	// modelData は旧プレビューと既定アセチE��用に読み込む plane.obj の頂点チE�Eタ、E
+	if (modelData.vertices.empty()) {
+		Log(logStream, "resources/plane.obj is missing or invalid; using the procedural plane.");
+		modelData.vertices = CreatePlaneVertices();
+	}
+
+	if (modelData.material.textureFilePath.empty() ||
+		!std::filesystem::exists(ResolveEngineOrProjectFilePath(modelData.material.textureFilePath))) {
+		modelData.material.textureFilePath = "resources/editorDefault/uvChecker.png";
+	}
+
 	constexpr uint32_t kSubdivision = 64; // kSubdivision は旧琁E�Eレビューを作る緯度・経度刁E��数、E
 	constexpr float kLonEvery = 2.0f * std::numbers::pi_v<float> / static_cast<float>(kSubdivision);
 	// kLonEvery / kLatEvery は琁E��チE��ュ 1 セグメントあたりの角度、E
@@ -2180,9 +3262,34 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	ID3D12Resource* vertexResource = CreateBufferResource(device.Get(), sizeof(VertexData) * vertices.size());
 	// vertexResource は旧琁E�Eレビューの頂点めEGPU へ渡ぁEUpload Buffer、E
+	if (vertexResource == nullptr) {
+		Log(logStream, "Sphere vertex buffer creation failed.");
+		RequestInitializationFailure();
+		return;
+	}
+
+	const bool isOceanFftInitialized = g_oceanFftManager.Initialize(
+		device.Get(),
+		oceanFftUpdateSpectrumShaderBlob.Get(),
+		oceanFftRowShaderBlob.Get(),
+		oceanFftTransposeShaderBlob.Get(),
+		oceanFftFinalizeShaderBlob.Get());
+
+	if (!isOceanFftInitialized) {
+		Log(logStream, "Ocean FFT initialization failed");
+		RequestInitializationFailure();
+		return;
+	}
+
 	VertexData* mappedVertexData = nullptr; // mappedVertexData は vertexResource に CPU から頂点を書き込むためのポインタ、E
 	hr = vertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedVertexData));
-	assert(SUCCEEDED(hr));
+	if (FAILED(hr) || mappedVertexData == nullptr) {
+		Log(logStream, std::format("Sphere vertex buffer Map failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		vertexResource->Release();
+		RequestInitializationFailure();
+		return;
+	}
+
 	std::memcpy(mappedVertexData, vertices.data(), sizeof(VertexData) * vertices.size());
 
 	// vertexBufferView は旧琁E�Eレビューの頂点 Buffer めEDraw に渡す情報、E
@@ -2194,11 +3301,22 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	// modelVertexResource は plane.obj の頂点めEGPU へ渡ぁEUpload Buffer、E
 	ID3D12Resource* modelVertexResource = CreateBufferResource(device.Get(),
 	                                                           sizeof(VertexData) * modelData.vertices.size());
+	if (modelVertexResource == nullptr) {
+		Log(logStream, "Plane vertex buffer creation failed.");
+		RequestInitializationFailure();
+		return;
+	}
 
 	VertexData* mappedModelVertexData = nullptr;
 	// mappedModelVertexData は modelVertexResource に CPU から頂点を書き込むためのポインタ、E
 	hr = modelVertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedModelVertexData));
-	assert(SUCCEEDED(hr));
+	if (FAILED(hr) || mappedModelVertexData == nullptr) {
+		Log(logStream, std::format("Plane vertex buffer Map failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		modelVertexResource->Release();
+		RequestInitializationFailure();
+		return;
+	}
+
 	std::memcpy(mappedModelVertexData, modelData.vertices.data(), sizeof(VertexData) * modelData.vertices.size());
 
 	// modelVertexBufferView は plane.obj の頂点 Buffer めEDraw に渡す情報、E
@@ -2300,11 +3418,20 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	// textureFilePaths は起動時に GPU へアチE�Eロードする標準テクスチャ一覧、E
 	std::wstring textureFilePaths[] = {
-		L"resources/uvChecker.png",
-		L"resources/monsterBall.png",
+		L"resources/editorDefault/uvChecker.png",
+		L"resources/editorDefault/monsterBall.png",
 		ConvertString(modelData.material.textureFilePath),
-		L"resources/ball.png",
+		L"resources/editorDefault/ball.png",
 	};
+	const std::wstring fallbackTextureFilePath = L"resources/editorDefault/uvChecker.png";
+	for (std::wstring& textureFilePath : textureFilePaths) {
+		if (textureFilePath.empty() || !std::filesystem::exists(ResolveEngineOrProjectFilePath(textureFilePath))) {
+			Log(logStream, std::format(
+				"Texture '{}' is missing; using resources/editorDefault/uvChecker.png.",
+				ConvertString(textureFilePath)));
+			textureFilePath = fallbackTextureFilePath;
+		}
+	}
 
 	std::string textureFilePathStrings[_countof(textureFilePaths)];
 	// textureFilePathStrings は Project パネルで扱ぁE��すい UTF-8 版パス、E
@@ -2326,8 +3453,23 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	ID3D12Resource* textureResources[_countof(textureFilePaths)] = {nullptr};
 	for (uint32_t textureIndex = 0; textureIndex < _countof(textureFilePaths); ++textureIndex) {
 		mipImages[textureIndex] = LoadTexture(textureFilePaths[textureIndex]);
+		if (mipImages[textureIndex].GetImageCount() == 0u) {
+			Log(logStream, std::format(
+				"Texture load failed: {}",
+				ConvertString(textureFilePaths[textureIndex])));
+			RequestInitializationFailure();
+			return;
+		}
+
 		textureMetadatas[textureIndex] = mipImages[textureIndex].GetMetadata();
 		textureResources[textureIndex] = CreateTextureResource(device.Get(), textureMetadatas[textureIndex]);
+		if (textureResources[textureIndex] == nullptr) {
+			Log(logStream, std::format(
+				"Texture resource creation failed: {}",
+				ConvertString(textureFilePaths[textureIndex])));
+			RequestInitializationFailure();
+			return;
+		}
 	}
 
 	// cameraMatrix はエチE��ターカメラ Transform から作るワールド行�E、E
@@ -2427,6 +3569,11 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			depthStencilResource = nullptr;
 		}
 
+		if (opaqueDepthCopyResource != nullptr) {
+			opaqueDepthCopyResource->Release();
+			opaqueDepthCopyResource = nullptr;
+		}
+
 		renderWidth = width; // renderWidth / renderHeight は新しい SwapChain サイズ、E
 		renderHeight = height;
 
@@ -2447,9 +3594,20 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			device->CreateRenderTargetView(swapChainResources[bufferIndex], &rtvDesc, rtvHandles[bufferIndex]);
 		}
 
-		depthStencilResource = createDepthStencilResource(renderWidth, renderHeight);
+		depthStencilResource = createDepthStencilResource(
+			renderWidth,
+			renderHeight,
+			D3D12_RESOURCE_STATE_DEPTH_WRITE);
+		opaqueDepthCopyResource = createDepthStencilResource(
+			renderWidth,
+			renderHeight,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 		// DepthStencil も新しい renderWidth / renderHeight に合わせて再生成する、E
 		device->CreateDepthStencilView(depthStencilResource, &dsvDesc, dsvHandle);
+		device->CreateShaderResourceView(
+			opaqueDepthCopyResource,
+			&depthSrvDesc,
+			opaqueDepthCopySrvHandleCPU);
 	};
 
 	hr = commandAllocator->Reset(); // チE��スチャアチE�Eロード用に CommandAllocator と CommandList を記録可能状態へ戻す、E
@@ -2463,6 +3621,13 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		// UploadTextureData は textureResources に mipImages をコピ�Eする命令めECommandList へ積�E、E
 		intermediateResources[textureIndex] = UploadTextureData(
 			device.Get(), commandList.Get(), textureResources[textureIndex], mipImages[textureIndex]);
+		if (intermediateResources[textureIndex] == nullptr) {
+			Log(logStream, std::format(
+				"Texture upload failed: {}",
+				ConvertString(textureFilePaths[textureIndex])));
+			RequestInitializationFailure();
+			return;
+		}
 	}
 
 	UINT srvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -2535,12 +3700,18 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		srvDescriptorHeap, srvDescriptorSize, kRuntimeIblBrdfLutSrvDescriptorIndex);
 	D3D12_GPU_DESCRIPTOR_HANDLE iblBrdfLutSrvHandleGPU = GetGPUDescriptorHandle(
 		srvDescriptorHeap, srvDescriptorSize, kRuntimeIblBrdfLutSrvDescriptorIndex);
+	D3D12_CPU_DESCRIPTOR_HANDLE colorGradingLutSrvHandleCPU = GetCPUDescriptorHandle(
+		srvDescriptorHeap, srvDescriptorSize, kRuntimeColorGradingLutSrvDescriptorIndex);
+	D3D12_GPU_DESCRIPTOR_HANDLE colorGradingLutSrvHandleGPU = GetGPUDescriptorHandle(
+		srvDescriptorHeap, srvDescriptorSize, kRuntimeColorGradingLutSrvDescriptorIndex);
 
 	ID3D12Resource* iblIrradianceCube = nullptr;
 	ID3D12Resource* iblPrefilterCube = nullptr;
 	ID3D12Resource* iblEnvironmentCube = nullptr;
 	ID3D12Resource* iblBrdfLut = nullptr;
+	ID3D12Resource* colorGradingLut = nullptr;
 	uint32_t iblPrefilterMipCount = 0;
+	std::vector<ID3D12Resource*> iblUploadResources;
 
 	std::wstring iblDir = L"Assets/Textures/IBL/Studio/";
 	std::wstring iblFiles[] = {
@@ -2551,8 +3722,11 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	};
 
 	// DDS が存在すれば読み込む
-	auto loadIblCube = [&](const std::wstring& path, ID3D12Resource*& outRes, D3D12_CPU_DESCRIPTOR_HANDLE srvCPU, uint32_t* mipCount) {
-		if (!std::filesystem::exists(path)) return;
+	auto loadIblCube = [&](const std::wstring& path, ID3D12Resource*& outRes, D3D12_CPU_DESCRIPTOR_HANDLE srvCPU,
+	                       uint32_t* mipCount) {
+		if (!std::filesystem::exists(ResolveEngineOrProjectFilePath(path))) {
+			return;
+		}
 		DirectX::ScratchImage img = LoadTexture(path);
 		const auto& meta = img.GetMetadata();
 		outRes = CreateTextureResource(device.Get(), meta);
@@ -2562,21 +3736,36 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 		bool isCube = (meta.arraySize >= 6);
 		srv.ViewDimension = isCube ? D3D12_SRV_DIMENSION_TEXTURECUBE : D3D12_SRV_DIMENSION_TEXTURE2D;
-		if (isCube) srv.TextureCube.MipLevels = static_cast<UINT>(meta.mipLevels);
-		else srv.Texture2D.MipLevels = static_cast<UINT>(meta.mipLevels);
+		if (isCube) {
+			srv.TextureCube.MipLevels = static_cast<UINT>(meta.mipLevels);
+		}
+		else {
+			srv.Texture2D.MipLevels = static_cast<UINT>(meta.mipLevels);
+		}
 		device->CreateShaderResourceView(outRes, &srv, srvCPU);
-		if (mipCount) *mipCount = static_cast<uint32_t>(meta.mipLevels);
+		if (mipCount) {
+			*mipCount = static_cast<uint32_t>(meta.mipLevels);
+		}
 	};
 
-	auto makePlaceholder = [&](uint32_t w, uint32_t h, uint32_t arraySize, DXGI_FORMAT fmt, bool isCube, ID3D12Resource*& outRes, D3D12_CPU_DESCRIPTOR_HANDLE srvCPU) {
+	auto makePlaceholder = [&](uint32_t w, uint32_t h, uint32_t arraySize, DXGI_FORMAT fmt, bool isCube,
+	                           ID3D12Resource*& outRes, D3D12_CPU_DESCRIPTOR_HANDLE srvCPU) {
 		D3D12_RESOURCE_DESC d{};
 		d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-		d.Width = w; d.Height = h; d.MipLevels = 1;
+		d.Width = w;
+		d.Height = h;
+		d.MipLevels = 1;
 		d.DepthOrArraySize = static_cast<UINT16>(arraySize);
-		d.Format = fmt; d.SampleDesc.Count = 1;
-		D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
-		HRESULT hr = device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&outRes));
-		if (FAILED(hr) || !outRes) { outRes = nullptr; return; }
+		d.Format = fmt;
+		d.SampleDesc.Count = 1;
+		D3D12_HEAP_PROPERTIES hp{};
+		hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+		HRESULT hr = device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST,
+		                                             nullptr, IID_PPV_ARGS(&outRes));
+		if (FAILED(hr) || !outRes) {
+			outRes = nullptr;
+			return;
+		}
 		uint32_t bytesPerPixel = (fmt == DXGI_FORMAT_R16G16_FLOAT) ? 4 : 8;
 		uint32_t pitch = w * bytesPerPixel;
 		uint32_t sliceSize = pitch * h;
@@ -2584,23 +3773,26 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		std::vector<uint8_t> data(totalSize);
 		// Fill with neutral gray: (0.5,0.5,0.5,1.0) for RGBA or (1.0,0.0) for RG
 		if (fmt == DXGI_FORMAT_R16G16_FLOAT) {
-			const uint16_t half1 = 0x3C00; // 1.0 in half-float
-			const uint16_t half0 = 0x0000; // 0.0 in half-float
+			constexpr uint16_t half1 = 0x3C00; // 1.0 in half-float
+			constexpr uint16_t half0 = 0x0000; // 0.0 in half-float
 			uint8_t pix[4];
 			memcpy(pix + 0, &half1, 2);
 			memcpy(pix + 2, &half0, 2);
-			for (size_t j = 0; j < totalSize; j += 4)
+			for (size_t j = 0; j < totalSize; j += 4) {
 				memcpy(&data[j], pix, 4);
-		} else {
-			const uint16_t half05 = 0x3800; // 0.5 in half-float
-			const uint16_t half1  = 0x3C00; // 1.0 in half-float
+			}
+		}
+		else {
+			constexpr uint16_t half05 = 0x3800; // 0.5 in half-float
+			constexpr uint16_t half1 = 0x3C00; // 1.0 in half-float
 			uint8_t pix[8];
 			memcpy(pix + 0, &half05, 2);
 			memcpy(pix + 2, &half05, 2);
 			memcpy(pix + 4, &half05, 2);
 			memcpy(pix + 6, &half1, 2);
-			for (size_t j = 0; j < totalSize; j += 8)
+			for (size_t j = 0; j < totalSize; j += 8) {
 				memcpy(&data[j], pix, 8);
+			}
 		}
 		UINT subResourceCount = arraySize;
 		std::vector<D3D12_SUBRESOURCE_DATA> srd(subResourceCount);
@@ -2611,7 +3803,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		}
 		UINT64 uploadBufferSize = GetRequiredIntermediateSize(outRes, 0, subResourceCount);
 		ID3D12Resource* uploadHeap = nullptr;
-		D3D12_HEAP_PROPERTIES uploadHp{}; uploadHp.Type = D3D12_HEAP_TYPE_UPLOAD;
+		D3D12_HEAP_PROPERTIES uploadHp{};
+		uploadHp.Type = D3D12_HEAP_TYPE_UPLOAD;
 		D3D12_RESOURCE_DESC bufDesc{};
 		bufDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
 		bufDesc.Width = uploadBufferSize;
@@ -2620,7 +3813,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		bufDesc.MipLevels = 1;
 		bufDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 		bufDesc.SampleDesc.Count = 1;
-		if (SUCCEEDED(device->CreateCommittedResource(&uploadHp, D3D12_HEAP_FLAG_NONE, &bufDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&uploadHeap))) && uploadHeap) {
+		if (SUCCEEDED(
+			device->CreateCommittedResource(&uploadHp, D3D12_HEAP_FLAG_NONE, &bufDesc, D3D12_RESOURCE_STATE_GENERIC_READ
+				, nullptr, IID_PPV_ARGS(&uploadHeap))) && uploadHeap) {
 			UpdateSubresources(commandList.Get(), outRes, uploadHeap, 0, 0, subResourceCount, srd.data());
 			D3D12_RESOURCE_BARRIER barrier{};
 			barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -2634,40 +3829,507 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		srv.Format = fmt;
 		srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 		srv.ViewDimension = isCube ? D3D12_SRV_DIMENSION_TEXTURECUBE : D3D12_SRV_DIMENSION_TEXTURE2D;
-		if (isCube) srv.TextureCube.MipLevels = 1;
-		else srv.Texture2D.MipLevels = 1;
+		if (isCube) {
+			srv.TextureCube.MipLevels = 1;
+		}
+		else {
+			srv.Texture2D.MipLevels = 1;
+		}
 		device->CreateShaderResourceView(outRes, &srv, srvCPU);
 	};
 
+	//================================================================
+	// 外部 IBL が無い時も灰色 Texture ではなく、空と太陽を持つ HDR Cube を生成する
+	//================================================================
+
+	const auto saturateValue = [](float value) {
+		return (std::clamp)(value, 0.0f, 1.0f);
+	};
+	const auto normalizeDirection = [](const Vector3& value) {
+		const float length = std::sqrt(
+			value.x * value.x + value.y * value.y + value.z * value.z);
+		const float inverseLength = 1.0f / (std::max)(length, 0.000001f);
+		return Vector3{
+			value.x * inverseLength,
+			value.y * inverseLength,
+			value.z * inverseLength};
+	};
+	const auto makeCubeDirection = [&normalizeDirection](
+			uint32_t faceIndex,
+			float coordinateX,
+			float coordinateY) {
+		Vector3 direction{};
+
+		switch (faceIndex) {
+		case 0u:
+			direction = {1.0f, -coordinateY, -coordinateX};
+			break;
+		case 1u:
+			direction = {-1.0f, -coordinateY, coordinateX};
+			break;
+		case 2u:
+			direction = {coordinateX, 1.0f, coordinateY};
+			break;
+		case 3u:
+			direction = {coordinateX, -1.0f, -coordinateY};
+			break;
+		case 4u:
+			direction = {coordinateX, -coordinateY, 1.0f};
+			break;
+		default:
+			direction = {-coordinateX, -coordinateY, -1.0f};
+			break;
+		}
+
+		return normalizeDirection(direction);
+	};
+	const Vector3 proceduralSunDirection = normalizeDirection({0.35f, 0.72f, -0.60f});
+	const auto evaluateProceduralSky = [
+		&proceduralSunDirection,
+		&saturateValue](const Vector3& direction, float roughness, bool isIrradiance) {
+		const float upperHemisphere = saturateValue(direction.y * 0.5f + 0.5f);
+		const float zenithBlend = std::pow(upperHemisphere, 0.42f);
+		const float horizonBand = std::exp(-std::abs(direction.y) * 5.0f);
+		const Vector3 groundColor{0.035f, 0.045f, 0.055f};
+		const Vector3 horizonColor{0.30f, 0.48f, 0.72f};
+		const Vector3 zenithColor{0.025f, 0.12f, 0.34f};
+		Vector3 skyColor{
+			groundColor.x + (zenithColor.x - groundColor.x) * zenithBlend,
+			groundColor.y + (zenithColor.y - groundColor.y) * zenithBlend,
+			groundColor.z + (zenithColor.z - groundColor.z) * zenithBlend};
+		skyColor.x += horizonColor.x * horizonBand;
+		skyColor.y += horizonColor.y * horizonBand;
+		skyColor.z += horizonColor.z * horizonBand;
+
+		const float sunDot = saturateValue(
+			direction.x * proceduralSunDirection.x +
+			direction.y * proceduralSunDirection.y +
+			direction.z * proceduralSunDirection.z);
+		const float sunExponent = 384.0f + roughness * -372.0f;
+		const float sunDisk = std::pow(sunDot, (std::max)(sunExponent, 12.0f));
+		const float sunEnergy = isIrradiance ? 0.15f : (12.0f * (1.0f - roughness) + 0.35f);
+		skyColor.x += sunDisk * sunEnergy;
+		skyColor.y += sunDisk * sunEnergy * 0.82f;
+		skyColor.z += sunDisk * sunEnergy * 0.58f;
+
+		const Vector3 averageSky{0.16f, 0.25f, 0.38f};
+		const float blurWeight = isIrradiance
+			? 0.72f
+			: std::pow(saturateValue(roughness), 1.35f);
+		skyColor.x += (averageSky.x - skyColor.x) * blurWeight;
+		skyColor.y += (averageSky.y - skyColor.y) * blurWeight;
+		skyColor.z += (averageSky.z - skyColor.z) * blurWeight;
+
+		return skyColor;
+	};
+
+	auto createProceduralCube = [
+		&](uint32_t baseSize,
+			uint32_t mipCount,
+			bool isIrradiance,
+			ID3D12Resource*& outputResource,
+			D3D12_CPU_DESCRIPTOR_HANDLE srvHandle) {
+		D3D12_RESOURCE_DESC resourceDescription{};
+		resourceDescription.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		resourceDescription.Width = baseSize;
+		resourceDescription.Height = baseSize;
+		resourceDescription.DepthOrArraySize = 6u;
+		resourceDescription.MipLevels = static_cast<UINT16>(mipCount);
+		resourceDescription.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+		resourceDescription.SampleDesc.Count = 1u;
+
+		D3D12_HEAP_PROPERTIES heapProperties{};
+		heapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
+		const HRESULT createResult = device->CreateCommittedResource(
+			&heapProperties,
+			D3D12_HEAP_FLAG_NONE,
+			&resourceDescription,
+			D3D12_RESOURCE_STATE_COPY_DEST,
+			nullptr,
+			IID_PPV_ARGS(&outputResource));
+
+		if (FAILED(createResult) || outputResource == nullptr) {
+			outputResource = nullptr;
+			return false;
+		}
+
+		const uint32_t subresourceCount = mipCount * 6u;
+		std::vector<std::vector<float>> pixelStorage(subresourceCount);
+		std::vector<D3D12_SUBRESOURCE_DATA> subresources(subresourceCount);
+
+		for (uint32_t faceIndex = 0u; faceIndex < 6u; faceIndex++) {
+			for (uint32_t mipIndex = 0u; mipIndex < mipCount; mipIndex++) {
+				const uint32_t mipSize = (std::max)(baseSize >> mipIndex, 1u);
+				const uint32_t subresourceIndex = D3D12CalcSubresource(
+					mipIndex,
+					faceIndex,
+					0u,
+					mipCount,
+					6u);
+				std::vector<float>& pixels = pixelStorage[subresourceIndex];
+				pixels.resize(static_cast<size_t>(mipSize) * static_cast<size_t>(mipSize) * 4u);
+				const float roughness = mipCount > 1u
+					? static_cast<float>(mipIndex) / static_cast<float>(mipCount - 1u)
+					: 1.0f;
+
+				for (uint32_t pixelY = 0u; pixelY < mipSize; pixelY++) {
+					for (uint32_t pixelX = 0u; pixelX < mipSize; pixelX++) {
+						const float coordinateX =
+							(static_cast<float>(pixelX) + 0.5f) * 2.0f /
+							static_cast<float>(mipSize) - 1.0f;
+						const float coordinateY =
+							(static_cast<float>(pixelY) + 0.5f) * 2.0f /
+							static_cast<float>(mipSize) - 1.0f;
+						const Vector3 direction = makeCubeDirection(
+							faceIndex,
+							coordinateX,
+							coordinateY);
+						const Vector3 color = evaluateProceduralSky(
+							direction,
+							roughness,
+							isIrradiance);
+						const size_t pixelOffset =
+							(static_cast<size_t>(pixelY) * static_cast<size_t>(mipSize) + pixelX) * 4u;
+						pixels[pixelOffset + 0u] = color.x;
+						pixels[pixelOffset + 1u] = color.y;
+						pixels[pixelOffset + 2u] = color.z;
+						pixels[pixelOffset + 3u] = 1.0f;
+					}
+				}
+
+				D3D12_SUBRESOURCE_DATA& subresource = subresources[subresourceIndex];
+				subresource.pData = pixels.data();
+				subresource.RowPitch = static_cast<LONG_PTR>(mipSize) * 4 * sizeof(float);
+				subresource.SlicePitch = subresource.RowPitch * static_cast<LONG_PTR>(mipSize);
+			}
+		}
+
+		const UINT64 uploadBufferSize = GetRequiredIntermediateSize(
+			outputResource,
+			0u,
+			subresourceCount);
+		ID3D12Resource* uploadResource = nullptr;
+		D3D12_HEAP_PROPERTIES uploadHeapProperties{};
+		uploadHeapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
+		D3D12_RESOURCE_DESC uploadDescription{};
+		uploadDescription.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+		uploadDescription.Width = uploadBufferSize;
+		uploadDescription.Height = 1u;
+		uploadDescription.DepthOrArraySize = 1u;
+		uploadDescription.MipLevels = 1u;
+		uploadDescription.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+		uploadDescription.SampleDesc.Count = 1u;
+		const HRESULT uploadResult = device->CreateCommittedResource(
+			&uploadHeapProperties,
+			D3D12_HEAP_FLAG_NONE,
+			&uploadDescription,
+			D3D12_RESOURCE_STATE_GENERIC_READ,
+			nullptr,
+			IID_PPV_ARGS(&uploadResource));
+
+		if (FAILED(uploadResult) || uploadResource == nullptr) {
+			outputResource->Release();
+			outputResource = nullptr;
+			return false;
+		}
+
+		UpdateSubresources(
+			commandList.Get(),
+			outputResource,
+			uploadResource,
+			0u,
+			0u,
+			subresourceCount,
+			subresources.data());
+		iblUploadResources.push_back(uploadResource);
+
+		D3D12_RESOURCE_BARRIER barrier{};
+		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		barrier.Transition.pResource = outputResource;
+		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		commandList->ResourceBarrier(1u, &barrier);
+
+		D3D12_SHADER_RESOURCE_VIEW_DESC srvDescription{};
+		srvDescription.Format = resourceDescription.Format;
+		srvDescription.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		srvDescription.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+		srvDescription.TextureCube.MipLevels = mipCount;
+		device->CreateShaderResourceView(outputResource, &srvDescription, srvHandle);
+		return true;
+	};
+
+	auto createProceduralBrdfLut = [&](ID3D12Resource*& outputResource, D3D12_CPU_DESCRIPTOR_HANDLE srvHandle) {
+		constexpr uint32_t kLutSize = 256u;
+		std::vector<float> lutPixels(static_cast<size_t>(kLutSize) * kLutSize * 2u);
+
+		for (uint32_t pixelY = 0u; pixelY < kLutSize; pixelY++) {
+			const float roughness = (static_cast<float>(pixelY) + 0.5f) / static_cast<float>(kLutSize);
+
+			for (uint32_t pixelX = 0u; pixelX < kLutSize; pixelX++) {
+				const float normalDotView =
+					(static_cast<float>(pixelX) + 0.5f) / static_cast<float>(kLutSize);
+				const float responseX = roughness * -1.0f + 1.0f;
+				const float responseY = roughness * -0.0275f + 0.0425f;
+				const float responseZ = roughness * -0.572f + 1.04f;
+				const float responseW = roughness * 0.022f - 0.04f;
+				const float approximation =
+					(std::min)(responseX * responseX, std::exp2(-9.28f * normalDotView)) *
+					responseX + responseY;
+				const size_t pixelOffset =
+					(static_cast<size_t>(pixelY) * kLutSize + pixelX) * 2u;
+				lutPixels[pixelOffset + 0u] = -1.04f * approximation + responseZ;
+				lutPixels[pixelOffset + 1u] = 1.04f * approximation + responseW;
+			}
+		}
+
+		D3D12_RESOURCE_DESC resourceDescription{};
+		resourceDescription.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		resourceDescription.Width = kLutSize;
+		resourceDescription.Height = kLutSize;
+		resourceDescription.DepthOrArraySize = 1u;
+		resourceDescription.MipLevels = 1u;
+		resourceDescription.Format = DXGI_FORMAT_R32G32_FLOAT;
+		resourceDescription.SampleDesc.Count = 1u;
+		D3D12_HEAP_PROPERTIES heapProperties{};
+		heapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+		if (FAILED(device->CreateCommittedResource(
+			&heapProperties,
+			D3D12_HEAP_FLAG_NONE,
+			&resourceDescription,
+			D3D12_RESOURCE_STATE_COPY_DEST,
+			nullptr,
+			IID_PPV_ARGS(&outputResource))) || outputResource == nullptr) {
+			outputResource = nullptr;
+			return false;
+		}
+
+		D3D12_SUBRESOURCE_DATA subresource{};
+		subresource.pData = lutPixels.data();
+		subresource.RowPitch = static_cast<LONG_PTR>(kLutSize) * 2 * sizeof(float);
+		subresource.SlicePitch = subresource.RowPitch * static_cast<LONG_PTR>(kLutSize);
+		const UINT64 uploadBufferSize = GetRequiredIntermediateSize(outputResource, 0u, 1u);
+		D3D12_HEAP_PROPERTIES uploadHeapProperties{};
+		uploadHeapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
+		D3D12_RESOURCE_DESC uploadDescription{};
+		uploadDescription.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+		uploadDescription.Width = uploadBufferSize;
+		uploadDescription.Height = 1u;
+		uploadDescription.DepthOrArraySize = 1u;
+		uploadDescription.MipLevels = 1u;
+		uploadDescription.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+		uploadDescription.SampleDesc.Count = 1u;
+		ID3D12Resource* uploadResource = nullptr;
+
+		if (FAILED(device->CreateCommittedResource(
+			&uploadHeapProperties,
+			D3D12_HEAP_FLAG_NONE,
+			&uploadDescription,
+			D3D12_RESOURCE_STATE_GENERIC_READ,
+			nullptr,
+			IID_PPV_ARGS(&uploadResource))) || uploadResource == nullptr) {
+			outputResource->Release();
+			outputResource = nullptr;
+			return false;
+		}
+
+		UpdateSubresources(commandList.Get(), outputResource, uploadResource, 0u, 0u, 1u, &subresource);
+		iblUploadResources.push_back(uploadResource);
+		D3D12_RESOURCE_BARRIER barrier{};
+		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		barrier.Transition.pResource = outputResource;
+		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		commandList->ResourceBarrier(1u, &barrier);
+		D3D12_SHADER_RESOURCE_VIEW_DESC srvDescription{};
+		srvDescription.Format = resourceDescription.Format;
+		srvDescription.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		srvDescription.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		srvDescription.Texture2D.MipLevels = 1u;
+		device->CreateShaderResourceView(outputResource, &srvDescription, srvHandle);
+		return true;
+	};
+
+	auto createIdentityColorGradingLut = [&] (
+		ID3D12Resource*& outputResource,
+		D3D12_CPU_DESCRIPTOR_HANDLE srvHandle) {
+		constexpr uint32_t kColorLutSize = 32u;
+		constexpr uint32_t kColorLutWidth = kColorLutSize * kColorLutSize;
+		constexpr uint32_t kColorLutHeight = kColorLutSize;
+		constexpr uint32_t kColorChannelCount = 4u;
+		std::vector<float> lutPixels(
+			static_cast<size_t>(kColorLutWidth) *
+			static_cast<size_t>(kColorLutHeight) *
+			static_cast<size_t>(kColorChannelCount));
+
+		for (uint32_t blueIndex = 0u; blueIndex < kColorLutSize; blueIndex++) {
+			for (uint32_t greenIndex = 0u; greenIndex < kColorLutSize; greenIndex++) {
+				for (uint32_t redIndex = 0u; redIndex < kColorLutSize; redIndex++) {
+					const uint32_t textureX = blueIndex * kColorLutSize + redIndex;
+					const size_t pixelOffset =
+						(static_cast<size_t>(greenIndex) * static_cast<size_t>(kColorLutWidth) +
+							static_cast<size_t>(textureX)) *
+						static_cast<size_t>(kColorChannelCount);
+					const float inverseLastIndex = 1.0f / static_cast<float>(kColorLutSize - 1u);
+					lutPixels[pixelOffset + 0u] = static_cast<float>(redIndex) * inverseLastIndex;
+					lutPixels[pixelOffset + 1u] = static_cast<float>(greenIndex) * inverseLastIndex;
+					lutPixels[pixelOffset + 2u] = static_cast<float>(blueIndex) * inverseLastIndex;
+					lutPixels[pixelOffset + 3u] = 1.0f;
+				}
+			}
+		}
+
+		D3D12_RESOURCE_DESC resourceDescription{};
+		resourceDescription.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		resourceDescription.Width = static_cast<UINT64>(kColorLutWidth);
+		resourceDescription.Height = kColorLutHeight;
+		resourceDescription.DepthOrArraySize = 1u;
+		resourceDescription.MipLevels = 1u;
+		resourceDescription.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+		resourceDescription.SampleDesc.Count = 1u;
+
+		D3D12_HEAP_PROPERTIES heapProperties{};
+		heapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+		if (FAILED(device->CreateCommittedResource(
+			&heapProperties,
+			D3D12_HEAP_FLAG_NONE,
+			&resourceDescription,
+			D3D12_RESOURCE_STATE_COPY_DEST,
+			nullptr,
+			IID_PPV_ARGS(&outputResource))) || outputResource == nullptr) {
+			outputResource = nullptr;
+			return false;
+		}
+
+		D3D12_SUBRESOURCE_DATA subresource{};
+		subresource.pData = lutPixels.data();
+		subresource.RowPitch =
+			static_cast<LONG_PTR>(kColorLutWidth) *
+			static_cast<LONG_PTR>(kColorChannelCount) *
+			static_cast<LONG_PTR>(sizeof(float));
+		subresource.SlicePitch =
+			subresource.RowPitch * static_cast<LONG_PTR>(kColorLutHeight);
+
+		const UINT64 uploadBufferSize = GetRequiredIntermediateSize(outputResource, 0u, 1u);
+		D3D12_HEAP_PROPERTIES uploadHeapProperties{};
+		uploadHeapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
+		D3D12_RESOURCE_DESC uploadDescription{};
+		uploadDescription.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+		uploadDescription.Width = uploadBufferSize;
+		uploadDescription.Height = 1u;
+		uploadDescription.DepthOrArraySize = 1u;
+		uploadDescription.MipLevels = 1u;
+		uploadDescription.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+		uploadDescription.SampleDesc.Count = 1u;
+		ID3D12Resource* uploadResource = nullptr;
+
+		if (FAILED(device->CreateCommittedResource(
+			&uploadHeapProperties,
+			D3D12_HEAP_FLAG_NONE,
+			&uploadDescription,
+			D3D12_RESOURCE_STATE_GENERIC_READ,
+			nullptr,
+			IID_PPV_ARGS(&uploadResource))) || uploadResource == nullptr) {
+			outputResource->Release();
+			outputResource = nullptr;
+			return false;
+		}
+
+		UpdateSubresources(commandList.Get(), outputResource, uploadResource, 0u, 0u, 1u, &subresource);
+		iblUploadResources.push_back(uploadResource);
+
+		D3D12_RESOURCE_BARRIER barrier{};
+		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		barrier.Transition.pResource = outputResource;
+		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		commandList->ResourceBarrier(1u, &barrier);
+
+		D3D12_SHADER_RESOURCE_VIEW_DESC srvDescription{};
+		srvDescription.Format = resourceDescription.Format;
+		srvDescription.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		srvDescription.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		srvDescription.Texture2D.MipLevels = 1u;
+		device->CreateShaderResourceView(outputResource, &srvDescription, srvHandle);
+		return true;
+	};
+
 	loadIblCube(iblFiles[0], iblIrradianceCube, iblIrradianceSrvHandleCPU, nullptr);
-	if (iblIrradianceCube == nullptr) makePlaceholder(2, 2, 6, DXGI_FORMAT_R16G16B16A16_FLOAT, true, iblIrradianceCube, iblIrradianceSrvHandleCPU);
+	if (iblIrradianceCube == nullptr) {
+		createProceduralCube(32u, 1u, true, iblIrradianceCube, iblIrradianceSrvHandleCPU);
+	}
 
 	loadIblCube(iblFiles[1], iblPrefilterCube, iblPrefilterSrvHandleCPU, &iblPrefilterMipCount);
-	if (iblPrefilterCube == nullptr) makePlaceholder(2, 2, 6, DXGI_FORMAT_R16G16B16A16_FLOAT, true, iblPrefilterCube, iblPrefilterSrvHandleCPU);
+	if (iblPrefilterCube == nullptr) {
+		iblPrefilterMipCount = 8u;
+		createProceduralCube(
+			128u,
+			iblPrefilterMipCount,
+			false,
+			iblPrefilterCube,
+			iblPrefilterSrvHandleCPU);
+	}
 
 	loadIblCube(iblFiles[2], iblEnvironmentCube, iblEnvironmentSrvHandleCPU, nullptr);
 	g_iblEnvironmentCubeLoaded = iblEnvironmentCube != nullptr;
-	if (iblEnvironmentCube == nullptr) makePlaceholder(2, 2, 6, DXGI_FORMAT_R16G16B16A16_FLOAT, true, iblEnvironmentCube, iblEnvironmentSrvHandleCPU);
+	if (iblEnvironmentCube == nullptr) {
+		createProceduralCube(128u, 1u, false, iblEnvironmentCube, iblEnvironmentSrvHandleCPU);
+	}
+	g_iblEnvironmentCubeLoaded = iblEnvironmentCube != nullptr;
 
 	loadIblCube(iblFiles[3], iblBrdfLut, iblBrdfLutSrvHandleCPU, nullptr);
-	if (iblBrdfLut == nullptr) makePlaceholder(2, 2, 1, DXGI_FORMAT_R16G16_FLOAT, false, iblBrdfLut, iblBrdfLutSrvHandleCPU);
+	if (iblBrdfLut == nullptr) {
+		createProceduralBrdfLut(iblBrdfLut, iblBrdfLutSrvHandleCPU);
+	}
+
+	if (!createIdentityColorGradingLut(colorGradingLut, colorGradingLutSrvHandleCPU)) {
+		Log(logStream, "Identity Color Grading LUT creation failed.");
+		RequestInitializationFailure();
+		return;
+	}
 
 	// IBL Upload を実行・同期（DDS があってもプレースホルダーでも Upload が発生している）
 	{
 		hr = commandList->Close();
-		assert(SUCCEEDED(hr));
-		ID3D12CommandList* uploadLists[] = { commandList.Get() };
+		if (FAILED(hr)) {
+			Log(logStream, std::format("IBL CommandList Close failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+			RequestInitializationFailure();
+			return;
+		}
+
+		ID3D12CommandList* uploadLists[] = {commandList.Get()};
 		commandQueue->ExecuteCommandLists(1, uploadLists);
 		fenceValue++;
 		hr = commandQueue->Signal(fence.Get(), fenceValue);
-		assert(SUCCEEDED(hr));
+		if (FAILED(hr)) {
+			Log(logStream, std::format("IBL CommandQueue Signal failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+			RequestInitializationFailure();
+			return;
+		}
+
 		if (fence->GetCompletedValue() < fenceValue) {
 			hr = fence->SetEventOnCompletion(fenceValue, fenceEvent);
-			assert(SUCCEEDED(hr));
+			if (FAILED(hr)) {
+				Log(logStream, std::format("IBL Fence SetEventOnCompletion failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+				RequestInitializationFailure();
+				return;
+			}
+
 			WaitForSingleObject(fenceEvent, INFINITE);
 		}
-		commandAllocator->Reset();
-		commandList->Reset(commandAllocator.Get(), nullptr);
+
+		for (ID3D12Resource* uploadResource : iblUploadResources) {
+			if (uploadResource != nullptr) {
+				uploadResource->Release();
+			}
+		}
+		iblUploadResources.clear();
+		// The renderer owns the next Reset. Keep the initialization command list closed here.
 	}
 
 #ifdef USE_IMGUI
@@ -2677,25 +4339,275 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	ImGuiIO& io = ImGui::GetIO(); // io は Docking 有効化や Font 設定を行う ImGui の入出力設定、E
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable; // DockingEnable でウィンドウのドラチE��移動�Eドッキングを許可する、E
+	io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // タブをメイン Window 外へ出した時、個別の OS Window として表示する。
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+	// Game ViewのUI(Button/Toggle/Slider)をGamepadの十字キー・スティックで選択できるようにする。
+	// Editor側のWindow操作も同じ経路で動くが、入力はImGuiのNav処理内で完結する。
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
 	io.ConfigDockingWithShift = false; // Shift なしで Docking できるようにして Unity 風の操作感にする、E
-	ImGui::StyleColorsDark(); // 既孁EUI と合わせて Dark Style を基準にする、E
+	io.ConfigViewportsNoTaskBarIcon = true; // 分離した Editor タブをタスクバーへ個別に並べない。
+	io.ConfigWindowsMoveFromTitleBarOnly = true;
+	const float editorUiScale = GetEditorUiScale(windowHandle);
+	ApplyEditorVisualTheme(editorUiScale);
 	ImGui_ImplWin32_Init(windowHandle); // Win32 backend は HWND からマウス・キーボ�Eド�E力を受け取る、E
 
-	// DX12 backend は SRV Heap 0 番めEImGui Font Texture 用に使ぁE��E
-	ImGui_ImplDX12_Init(
-		device.Get(),
-		static_cast<int>(swapChainDesc.BufferCount),
-		rtvDesc.Format,
-		srvDescriptorHeap,
-		GetCPUDescriptorHandle(srvDescriptorHeap, srvDescriptorSize, 0),
-		GetGPUDescriptorHandle(srvDescriptorHeap, srvDescriptorSize, 0));
+	// 動的 Font Atlas が文字サイズごとの Glyph Texture を更新できるよう、複数 SRV 対応 API を使う。
+	g_imguiSrvDescriptorAllocator.descriptorHeap = srvDescriptorHeap;
+	g_imguiSrvDescriptorAllocator.descriptorSize = srvDescriptorSize;
+	g_imguiSrvDescriptorAllocator.isDescriptorUsed.fill(false);
 
-	// meiryo.ttc があれ�E日本誁EUI が文字化けしなぁE��ぁE��読み込む、E
-	if (std::filesystem::exists("C:/Windows/Fonts/meiryo.ttc")) {
-		io.Fonts->AddFontFromFileTTF(
-			"C:/Windows/Fonts/meiryo.ttc", 16.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
+	ImGui_ImplDX12_InitInfo imguiDx12InitInfo{};
+	imguiDx12InitInfo.Device = device.Get();
+	imguiDx12InitInfo.CommandQueue = commandQueue.Get();
+	imguiDx12InitInfo.NumFramesInFlight = static_cast<int>(swapChainDesc.BufferCount);
+	imguiDx12InitInfo.RTVFormat = rtvDesc.Format;
+	imguiDx12InitInfo.DSVFormat = DXGI_FORMAT_UNKNOWN;
+	imguiDx12InitInfo.UserData = &g_imguiSrvDescriptorAllocator;
+	imguiDx12InitInfo.SrvDescriptorHeap = srvDescriptorHeap;
+	imguiDx12InitInfo.SrvDescriptorAllocFn = AllocateImGuiSrvDescriptor;
+	imguiDx12InitInfo.SrvDescriptorFreeFn = ReleaseImGuiSrvDescriptor;
+
+	if (!ImGui_ImplDX12_Init(&imguiDx12InitInfo)) {
+		RequestInitializationFailure();
+		return;
 	}
 
+	// SSGI は専用の半解像度RTへ書くので上書き。加算は最後のUpsampleで行う。
+	ComPtr<ID3D12PipelineState> ssgiPipelineState = CreatePostProcessPSO(
+		"SSGI", ssgiPixelShaderBlob.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT, false);
+	if (ssgiPipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
+	ComPtr<ID3D12PipelineState> ssgiTemporalPipelineState = CreatePostProcessPSO(
+		"SsgiTemporal", ssgiTemporalPixelShaderBlob.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT, false);
+	if (ssgiTemporalPipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
+	ComPtr<ID3D12PipelineState> ssgiUpsamplePipelineState = CreatePostProcessPSO(
+		"SsgiUpsample", ssgiUpsamplePixelShaderBlob.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT, true);
+	if (ssgiUpsamplePipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
+	//================================================================
+	// Volumetric Light Shaft (Sun Beams): 専用の小さなRootSignature。
+	// 既存のpostProcessRootSignatureは32bit定数が48値しかなく、Cascaded
+	// Shadowを見るのに必要なデータ量に足りないため、共有シグネチャを
+	// 太らせて他パスへ影響させるより、独立させたほうが安全。
+	//================================================================
+	D3D12_DESCRIPTOR_RANGE volumetricDepthRange[1] = {};
+	volumetricDepthRange[0].BaseShaderRegister = 0u;
+	volumetricDepthRange[0].NumDescriptors = 1u;
+	volumetricDepthRange[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	volumetricDepthRange[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_DESCRIPTOR_RANGE volumetricShadowRange[1] = {};
+	volumetricShadowRange[0].BaseShaderRegister = 1u;
+	volumetricShadowRange[0].NumDescriptors = 1u;
+	volumetricShadowRange[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	volumetricShadowRange[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_ROOT_PARAMETER volumetricRootParameters[4] = {};
+	volumetricRootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	volumetricRootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	volumetricRootParameters[0].DescriptorTable.pDescriptorRanges = volumetricDepthRange;
+	volumetricRootParameters[0].DescriptorTable.NumDescriptorRanges = _countof(volumetricDepthRange);
+
+	volumetricRootParameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	volumetricRootParameters[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	volumetricRootParameters[1].DescriptorTable.pDescriptorRanges = volumetricShadowRange;
+	volumetricRootParameters[1].DescriptorTable.NumDescriptorRanges = _countof(volumetricShadowRange);
+
+	// b0: Sunの情報一式(色・強さ・Cascaded ShadowVP・Atlas UV・volumetric設定)。
+	// 既存のdirectionalLightResourceをそのまま束縛するだけで、追加の
+	// アップロード処理を持たない。
+	volumetricRootParameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+	volumetricRootParameters[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	volumetricRootParameters[2].Descriptor.ShaderRegister = 0u;
+	volumetricRootParameters[2].Descriptor.RegisterSpace = 0u;
+
+	// b1: 画面 <-> ワールド復元用の行列とビューポート情報。
+	volumetricRootParameters[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+	volumetricRootParameters[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	volumetricRootParameters[3].Constants.ShaderRegister = 1u;
+	volumetricRootParameters[3].Constants.Num32BitValues = 24u;
+
+	D3D12_STATIC_SAMPLER_DESC volumetricSamplers[2] = {};
+	volumetricSamplers[0].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+	volumetricSamplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	volumetricSamplers[0].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	volumetricSamplers[0].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	volumetricSamplers[0].ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+	volumetricSamplers[0].MaxLOD = D3D12_FLOAT32_MAX;
+	volumetricSamplers[0].ShaderRegister = 0u;
+	volumetricSamplers[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	volumetricSamplers[1].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+	volumetricSamplers[1].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	volumetricSamplers[1].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	volumetricSamplers[1].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	volumetricSamplers[1].ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+	volumetricSamplers[1].MaxLOD = D3D12_FLOAT32_MAX;
+	volumetricSamplers[1].ShaderRegister = 1u;
+	volumetricSamplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	D3D12_ROOT_SIGNATURE_DESC volumetricRootSignatureDesc{};
+	volumetricRootSignatureDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+	volumetricRootSignatureDesc.pParameters = volumetricRootParameters;
+	volumetricRootSignatureDesc.NumParameters = _countof(volumetricRootParameters);
+	volumetricRootSignatureDesc.pStaticSamplers = volumetricSamplers;
+	volumetricRootSignatureDesc.NumStaticSamplers = _countof(volumetricSamplers);
+
+	ComPtr<ID3DBlob> volumetricSignatureBlob;
+	ComPtr<ID3DBlob> volumetricErrorBlob;
+	hr = D3D12SerializeRootSignature(
+		&volumetricRootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1,
+		volumetricSignatureBlob.GetAddressOf(), volumetricErrorBlob.GetAddressOf());
+	if (FAILED(hr) || volumetricSignatureBlob == nullptr) {
+		Log(logStream, std::format(
+			"VolumetricLightShaft RootSignature serialize failed. hr=0x{:08X}",
+			static_cast<uint32_t>(hr)));
+
+		if (volumetricErrorBlob != nullptr) {
+			const auto* errorMessage = reinterpret_cast<const char*>(volumetricErrorBlob->GetBufferPointer());
+			Log(logStream, std::string(errorMessage, volumetricErrorBlob->GetBufferSize()));
+		}
+
+		RequestInitializationFailure();
+		return;
+	}
+
+	ComPtr<ID3D12RootSignature> volumetricLightShaftRootSignature;
+	hr = device->CreateRootSignature(
+		0, volumetricSignatureBlob->GetBufferPointer(), volumetricSignatureBlob->GetBufferSize(),
+		IID_PPV_ARGS(volumetricLightShaftRootSignature.GetAddressOf()));
+
+	if (FAILED(hr) || volumetricLightShaftRootSignature == nullptr) {
+		Log(logStream, std::format(
+			"VolumetricLightShaft RootSignature Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	ComPtr<ID3D12PipelineState> volumetricLightShaftPipelineState;
+
+	if (volumetricLightShaftPixelShaderBlob != nullptr && fullscreenVertexShaderBlob != nullptr) {
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC volumetricDesc{};
+		volumetricDesc.pRootSignature = volumetricLightShaftRootSignature.Get();
+		volumetricDesc.VS = {
+			fullscreenVertexShaderBlob->GetBufferPointer(), fullscreenVertexShaderBlob->GetBufferSize()};
+		volumetricDesc.PS = {
+			volumetricLightShaftPixelShaderBlob->GetBufferPointer(),
+			volumetricLightShaftPixelShaderBlob->GetBufferSize()};
+		D3D12_BLEND_DESC volumetricBlendDesc{};
+		// God Ray はHDRシーンへ加算合成する光なので、常に加算ブレンド。
+		volumetricBlendDesc.RenderTarget[0].BlendEnable = TRUE;
+		volumetricBlendDesc.RenderTarget[0].SrcBlend = D3D12_BLEND_ONE;
+		volumetricBlendDesc.RenderTarget[0].DestBlend = D3D12_BLEND_ONE;
+		volumetricBlendDesc.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+		volumetricBlendDesc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+		volumetricBlendDesc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
+		volumetricBlendDesc.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+		volumetricBlendDesc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+		volumetricDesc.BlendState = volumetricBlendDesc;
+		D3D12_RASTERIZER_DESC volumetricRasterDesc{};
+		volumetricRasterDesc.FillMode = D3D12_FILL_MODE_SOLID;
+		volumetricRasterDesc.CullMode = D3D12_CULL_MODE_NONE;
+		volumetricRasterDesc.DepthClipEnable = TRUE;
+		volumetricDesc.RasterizerState = volumetricRasterDesc;
+		D3D12_DEPTH_STENCIL_DESC volumetricDsDesc{};
+		volumetricDsDesc.DepthEnable = FALSE;
+		volumetricDsDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+		volumetricDsDesc.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+		volumetricDsDesc.StencilEnable = FALSE;
+		volumetricDesc.DepthStencilState = volumetricDsDesc;
+		volumetricDesc.DSVFormat = DXGI_FORMAT_UNKNOWN;
+		volumetricDesc.NumRenderTargets = 1;
+		volumetricDesc.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+
+		for (int i = 1; i < 8; ++i) {
+			volumetricDesc.RTVFormats[i] = DXGI_FORMAT_UNKNOWN;
+		}
+
+		volumetricDesc.SampleDesc.Count = 1;
+		volumetricDesc.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
+		volumetricDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+		volumetricDesc.InputLayout.pInputElementDescs = nullptr;
+		volumetricDesc.InputLayout.NumElements = 0;
+		hr = device->CreateGraphicsPipelineState(
+			&volumetricDesc, IID_PPV_ARGS(volumetricLightShaftPipelineState.GetAddressOf()));
+
+		if (FAILED(hr) || volumetricLightShaftPipelineState == nullptr) {
+			Log(logStream, std::format(
+				"VolumetricLightShaft PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+			volumetricLightShaftPipelineState = nullptr;
+		}
+	}
+	else {
+		Log(std::string("VolumetricLightShaft PSO skipped: shader blob is null"));
+	}
+
+	// 日本語UIはDPIに合わせたGlyphを構築し、拡大表示時の文字の粗さを防ぐ。
+	const float editorFontSize = 16.0f * editorUiScale;
+	ImFontConfig editorFontConfig{};
+	editorFontConfig.OversampleH = 0;
+	editorFontConfig.OversampleV = 0;
+	editorFontConfig.PixelSnapH = false;
+	ImFont* editorFont = nullptr;
+	const std::array<const char*, 3u> editorFontCandidates = {
+		"C:/Windows/Fonts/YuGothM.ttc",
+		"C:/Windows/Fonts/meiryo.ttc",
+		"C:/Windows/Fonts/msgothic.ttc"};
+
+	for (const char* editorFontPath : editorFontCandidates) {
+		if (!std::filesystem::exists(editorFontPath)) {
+			continue;
+		}
+
+		editorFont = io.Fonts->AddFontFromFileTTF(
+			editorFontPath,
+			editorFontSize,
+			&editorFontConfig,
+			io.Fonts->GetGlyphRangesJapanese());
+		break;
+	}
+
+	if (editorFont == nullptr) {
+		editorFont = io.Fonts->AddFontDefault();
+	}
+
+	io.FontDefault = editorFont;
+
+	// Text/TextMeshProUGUIのtextFontIndexが選ぶFont候補。0番はeditorFontと同じ既定Font。
+	// 見つからない候補はnullptrのままにし、描画側でeditorFontへFallbackする。
+	EditorSharedState::g_uiFontVariants[0] = editorFont;
+	const std::array<std::pair<int32_t, const char*>, 4u> uiFontVariantCandidates = {{
+		{1, "C:/Windows/Fonts/meiryo.ttc"},
+		{2, "C:/Windows/Fonts/msgothic.ttc"},
+		{3, "C:/Windows/Fonts/msmincho.ttc"},
+		{4, "C:/Windows/Fonts/YuGothB.ttc"}}};
+
+	for (const auto& [variantIndex, variantPath] : uiFontVariantCandidates) {
+		if (!std::filesystem::exists(variantPath)) {
+			continue;
+		}
+
+		ImFontConfig variantFontConfig{};
+		variantFontConfig.OversampleH = 0;
+		variantFontConfig.OversampleV = 0;
+		variantFontConfig.PixelSnapH = false;
+		EditorSharedState::g_uiFontVariants[static_cast<size_t>(variantIndex)] = io.Fonts->AddFontFromFileTTF(
+			variantPath,
+			editorFontSize,
+			&variantFontConfig,
+			io.Fonts->GetGlyphRangesJapanese());
+	}
+
+	// 16px は Editor UI の基準値。Game View の Text は要求サイズで動的に再ラスタライズされる。
 	io.Fonts->Build(); // Font Atlas をここで構築し、最初�Eフレームで日本語フォントを使える状態にする、E
 #endif
 
@@ -2719,6 +4631,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_commandQueue = commandQueue;
 	g_commandAllocator = commandAllocator;
 	g_commandList = commandList;
+	g_renderTimestampQueryHeap = renderTimestampQueryHeap;
+	g_renderTimestampReadback = renderTimestampReadback;
+	g_renderTimestampFrequency = renderTimestampFrequency;
 	g_swapChain = swapChain;
 	g_swapChainDesc = swapChainDesc;
 	g_rtvDescriptorHeap = rtvDescriptorHeap;
@@ -2736,6 +4651,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_depthStencilResource = depthStencilResource;
 	g_depthSrvHandleCPU = depthSrvHandleCPU;
 	g_depthSrvHandleGPU = depthSrvHandleGPU;
+	g_opaqueDepthCopyResource = opaqueDepthCopyResource;
+	g_opaqueDepthCopySrvHandleCPU = opaqueDepthCopySrvHandleCPU;
+	g_opaqueDepthCopySrvHandleGPU = opaqueDepthCopySrvHandleGPU;
 	g_shadowMapResource = shadowMapResource;
 	g_shadowMapSrvCpuHandle = shadowMapSrvCpuHandle;
 	g_shadowMapSrvGpuHandle = shadowMapSrvGpuHandle;
@@ -2773,6 +4691,15 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_planarReflectionRtvHandle = planarReflectionRtvHandle;
 	g_planarReflectionSrvHandleCPU = planarReflectionSrvHandleCPU;
 	g_planarReflectionSrvHandleGPU = planarReflectionSrvHandleGPU;
+	g_oitAccumulationRenderTarget = oitAccumulationRenderTarget;
+	g_oitRevealageRenderTarget = oitRevealageRenderTarget;
+
+	for (uint32_t oitTargetIndex = 0u; oitTargetIndex < 2u; ++oitTargetIndex) {
+		g_oitRtvHandles[oitTargetIndex] = oitRtvHandles[oitTargetIndex];
+		g_oitSrvHandlesCPU[oitTargetIndex] = oitSrvHandlesCPU[oitTargetIndex];
+		g_oitSrvHandlesGPU[oitTargetIndex] = oitSrvHandlesGPU[oitTargetIndex];
+	}
+
 	g_dxcUtils = dxcUtils;
 	g_dxcCompiler = dxcCompiler;
 	g_includeHandler = includeHandler;
@@ -2780,6 +4707,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_pixelShaderBlob = pixelShaderBlob;
 	g_objectReflectionMaskPixelShaderBlob = objectReflectionMaskPixelShaderBlob;
 	g_shadowVertexShaderBlob = shadowVertexShaderBlob;
+	g_alphaCutoutShadowPixelShaderBlob = alphaCutoutShadowPixelShaderBlob;
 	g_fullscreenVertexShaderBlob = fullscreenVertexShaderBlob;
 	g_toneMappingPixelShaderBlob = toneMappingPixelShaderBlob;
 	g_bloomExtractPixelShaderBlob = bloomExtractPixelShaderBlob;
@@ -2787,6 +4715,14 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_fxaaPixelShaderBlob = fxaaPixelShaderBlob;
 	g_ssaoPixelShaderBlob = ssaoPixelShaderBlob;
 	g_ssaoBlurPixelShaderBlob = ssaoBlurPixelShaderBlob;
+	g_ssgiPixelShaderBlob = ssgiPixelShaderBlob;
+	g_ssgiTemporalPixelShaderBlob = ssgiTemporalPixelShaderBlob;
+	g_ssgiUpsamplePixelShaderBlob = ssgiUpsamplePixelShaderBlob;
+	g_volumetricLightShaftPixelShaderBlob = volumetricLightShaftPixelShaderBlob;
+	g_probeCaptureVertexShaderBlob = probeCaptureVertexShaderBlob;
+	g_probeCapturePixelShaderBlob = probeCapturePixelShaderBlob;
+	g_probeShProjectionComputeShaderBlob = probeShProjectionComputeShaderBlob;
+	g_probeVisibilityComputeShaderBlob = probeVisibilityComputeShaderBlob;
 	g_skyboxPixelShaderBlob = skyboxPixelShaderBlob;
 	g_planarReflectionPixelShaderBlob = planarReflectionPixelShaderBlob;
 	g_sharpenPixelShaderBlob = sharpenPixelShaderBlob;
@@ -2794,6 +4730,11 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_passthroughPixelShaderBlob = passthroughPixelShaderBlob;
 	g_depthOfFieldPixelShaderBlob = depthOfFieldPixelShaderBlob;
 	g_motionBlurPixelShaderBlob = motionBlurPixelShaderBlob;
+	g_weightedOitPixelShaderBlob = weightedOitPixelShaderBlob;
+	g_weightedOitCompositePixelShaderBlob = weightedOitCompositePixelShaderBlob;
+	g_refractiveSurfacePixelShaderBlob = refractiveSurfacePixelShaderBlob;
+	g_underwaterCausticsPixelShaderBlob = underwaterCausticsPixelShaderBlob;
+	g_skinnedMotionVectorVertexShaderBlob = skinnedMotionVectorVertexShaderBlob;
 	g_signatureBlob = signatureBlob;
 	g_errorBlob = errorBlob;
 	g_rootSignature = rootSignature;
@@ -2805,7 +4746,21 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_cullNonePipelineState = cullNonePipelineState;
 	g_transparentPipelineState = transparentPipelineState;
 	g_transparentCullNonePipelineState = transparentCullNonePipelineState;
+	g_weightedOitPipelineState = weightedOitPipelineState;
+	g_weightedOitCullNonePipelineState = weightedOitCullNonePipelineState;
+	g_waterSurfacePipelineState = waterSurfacePipelineState;
+	g_waterTessellationPipelineState = waterTessellationPipelineState;
+	g_refractiveSurfacePipelineState = refractiveSurfacePipelineState;
+	g_refractiveSurfaceCullNonePipelineState = refractiveSurfaceCullNonePipelineState;
 	g_shadowPipelineState = shadowPipelineState;
+	g_shadowCullNonePipelineState = shadowCullNonePipelineState;
+	g_alphaCutoutShadowPipelineState = alphaCutoutShadowPipelineState;
+	g_alphaCutoutShadowCullNonePipelineState = alphaCutoutShadowCullNonePipelineState;
+	g_batchedGraphicsPipelineState = batchedGraphicsPipelineState;
+	g_batchedCullFrontPipelineState = batchedCullFrontPipelineState;
+	g_batchedCullNonePipelineState = batchedCullNonePipelineState;
+	g_batchedShadowPipelineState = batchedShadowPipelineState;
+	g_batchedShadowCullNonePipelineState = batchedShadowCullNonePipelineState;
 	g_postProcessRootSignature = postProcessRootSignature;
 	g_toneMappingPipelineState = toneMappingPipelineState;
 	g_bloomExtractPipelineState = bloomExtractPipelineState;
@@ -2813,6 +4768,11 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_fxaaPipelineState = fxaaPipelineState;
 	g_ssaoPipelineState = ssaoPipelineState;
 	g_ssaoBlurPipelineState = ssaoBlurPipelineState;
+	g_ssgiPipelineState = ssgiPipelineState;
+	g_ssgiTemporalPipelineState = ssgiTemporalPipelineState;
+	g_ssgiUpsamplePipelineState = ssgiUpsamplePipelineState;
+	g_volumetricLightShaftRootSignature = volumetricLightShaftRootSignature;
+	g_volumetricLightShaftPipelineState = volumetricLightShaftPipelineState;
 	g_skyboxPipelineState = skyboxPipelineState;
 	g_planarReflectionPipelineState = planarReflectionPipelineState;
 	g_sharpenPipelineState = sharpenPipelineState;
@@ -2820,10 +4780,13 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_passthroughPipelineState = passthroughPipelineState;
 	g_depthOfFieldPipelineState = depthOfFieldPipelineState;
 	g_motionBlurPipelineState = motionBlurPipelineState;
+	g_weightedOitCompositePipelineState = weightedOitCompositePipelineState;
+	g_underwaterCausticsPipelineState = underwaterCausticsPipelineState;
 	g_iblIrradianceCube = iblIrradianceCube;
 	g_iblPrefilterCube = iblPrefilterCube;
 	g_iblEnvironmentCube = iblEnvironmentCube;
 	g_iblBRDFLUT = iblBrdfLut;
+	g_colorGradingLut = colorGradingLut;
 	g_iblIrradianceSrvHandleCPU = iblIrradianceSrvHandleCPU;
 	g_iblIrradianceSrvHandleGPU = iblIrradianceSrvHandleGPU;
 	g_iblPrefilterSrvHandleCPU = iblPrefilterSrvHandleCPU;
@@ -2832,6 +4795,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_iblEnvironmentSrvHandleGPU = iblEnvironmentSrvHandleGPU;
 	g_iblBrdfLutSrvHandleCPU = iblBrdfLutSrvHandleCPU;
 	g_iblBrdfLutSrvHandleGPU = iblBrdfLutSrvHandleGPU;
+	g_colorGradingLutSrvHandleCPU = colorGradingLutSrvHandleCPU;
+	g_colorGradingLutSrvHandleGPU = colorGradingLutSrvHandleGPU;
 	g_iblPrefilterMipCount = iblPrefilterMipCount;
 	g_spriteMaterialResource = spriteMaterialResource;
 	g_spriteMaterialData = spriteMaterialData;
@@ -2845,6 +4810,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_spriteTransformationMatrixData = spriteTransformationMatrixData;
 	g_sphereTransformationMatrixResource = sphereTransformationMatrixResource;
 	g_sphereTransformationMatrixData = sphereTransformationMatrixData;
+	g_identitySkinMatrixResource = identitySkinMatrixResource;
+	g_identitySkinMatrixData = identitySkinMatrixData;
+	g_batchInstanceResource = batchInstanceResource;
+	g_batchInstanceData = batchInstanceData;
 	g_modelData = std::move(modelData);
 	for (size_t meshTypeIndex = 0; meshTypeIndex < kEditorModelMeshTypeCount; meshTypeIndex++) {
 		g_editorPrimitiveModelData[meshTypeIndex] = std::move(primitiveModelData[meshTypeIndex]);
@@ -2997,6 +4966,7 @@ int EditorPlatformManager::Finalize() {
 	auto& dsvHandle = g_dsvHandle;
 	auto& shadowDsvHandle = g_shadowDsvHandle;
 	auto& depthStencilResource = g_depthStencilResource;
+	auto& opaqueDepthCopyResource = g_opaqueDepthCopyResource;
 	auto& shadowMapResource = g_shadowMapResource;
 	auto& shadowMapSrvCpuHandle = g_shadowMapSrvCpuHandle;
 	auto& shadowMapSrvGpuHandle = g_shadowMapSrvGpuHandle;
@@ -3024,6 +4994,10 @@ int EditorPlatformManager::Finalize() {
 	auto& spriteTransformationMatrixData = g_spriteTransformationMatrixData;
 	auto& sphereTransformationMatrixResource = g_sphereTransformationMatrixResource;
 	auto& sphereTransformationMatrixData = g_sphereTransformationMatrixData;
+	auto& identitySkinMatrixResource = g_identitySkinMatrixResource;
+	auto& identitySkinMatrixData = g_identitySkinMatrixData;
+	auto& batchInstanceResource = g_batchInstanceResource;
+	auto& batchInstanceData = g_batchInstanceData;
 	auto& modelData = g_modelData;
 	auto& editorPrimitiveVertexResources = g_editorPrimitiveVertexResources;
 	auto& vertices = g_vertices;
@@ -3177,6 +5151,16 @@ int EditorPlatformManager::Finalize() {
 	directionalLightResource->Release();
 	spriteTransformationMatrixResource->Release();
 	sphereTransformationMatrixResource->Release();
+	if (identitySkinMatrixResource != nullptr) {
+		identitySkinMatrixResource->Release();
+		identitySkinMatrixResource = nullptr;
+		identitySkinMatrixData = nullptr;
+	}
+	if (batchInstanceResource != nullptr) {
+		batchInstanceResource->Release();
+		batchInstanceResource = nullptr;
+		batchInstanceData = nullptr;
+	}
 	spriteIndexResource->Release();
 	spriteVertexResource->Release();
 	for (ID3D12Resource* primitiveVertexResource : editorPrimitiveVertexResources) {
@@ -3186,11 +5170,16 @@ int EditorPlatformManager::Finalize() {
 	}
 	modelVertexResource->Release();
 	vertexResource->Release();
+	g_editorRuntimeManager.GetEffekseerManager().FinalizeGraphics();
 	g_gpuCullingManager.Finalize();
+	g_oceanFftManager.Finalize();
+	g_gpuParticleManager.Finalize();
+	g_vfxRenderer.Finalize();
 	g_postProcessQualityManager.Finalize();
 	g_temporalRenderingManager.Finalize();
 	g_depthHierarchyManager.Finalize();
 	g_gBufferManager.Finalize();
+	g_lightProbeManager.Finalize();
 	srvDescriptorHeap->Release();
 	dsvDescriptorHeap->Release();
 	rtvDescriptorHeap->Release();
@@ -3226,21 +5215,60 @@ int EditorPlatformManager::Finalize() {
 		g_planarReflectionRenderTarget->Release();
 		g_planarReflectionRenderTarget = nullptr;
 	}
+
+	if (g_oitAccumulationRenderTarget != nullptr) {
+		g_oitAccumulationRenderTarget->Release();
+		g_oitAccumulationRenderTarget = nullptr;
+	}
+
+	if (g_oitRevealageRenderTarget != nullptr) {
+		g_oitRevealageRenderTarget->Release();
+		g_oitRevealageRenderTarget = nullptr;
+	}
 	if (g_environmentTextureUploadResource != nullptr) {
 		g_environmentTextureUploadResource->Release();
 		g_environmentTextureUploadResource = nullptr;
 	}
-if (g_environmentTextureResource != nullptr) {
+	if (g_environmentTextureResource != nullptr) {
 		g_environmentTextureResource->Release();
 		g_environmentTextureResource = nullptr;
 	}
-	if (g_iblIrradianceCube != nullptr) { g_iblIrradianceCube->Release(); g_iblIrradianceCube = nullptr; }
-	if (g_iblPrefilterCube != nullptr) { g_iblPrefilterCube->Release(); g_iblPrefilterCube = nullptr; }
-	if (g_iblEnvironmentCube != nullptr) { g_iblEnvironmentCube->Release(); g_iblEnvironmentCube = nullptr; }
-	if (g_iblBRDFLUT != nullptr) { g_iblBRDFLUT->Release(); g_iblBRDFLUT = nullptr; }
+	if (g_iblIrradianceCube != nullptr) {
+		g_iblIrradianceCube->Release();
+		g_iblIrradianceCube = nullptr;
+	}
+	if (g_iblPrefilterCube != nullptr) {
+		g_iblPrefilterCube->Release();
+		g_iblPrefilterCube = nullptr;
+	}
+	if (g_iblEnvironmentCube != nullptr) {
+		g_iblEnvironmentCube->Release();
+		g_iblEnvironmentCube = nullptr;
+	}
+	if (g_iblBRDFLUT != nullptr) {
+		g_iblBRDFLUT->Release();
+		g_iblBRDFLUT = nullptr;
+	}
+	if (g_colorGradingLut != nullptr) {
+		g_colorGradingLut->Release();
+		g_colorGradingLut = nullptr;
+	}
+	if (g_customColorGradingLutUploadResource != nullptr) {
+		g_customColorGradingLutUploadResource->Release();
+		g_customColorGradingLutUploadResource = nullptr;
+	}
+	if (g_customColorGradingLutResource != nullptr) {
+		g_customColorGradingLutResource->Release();
+		g_customColorGradingLutResource = nullptr;
+	}
+	g_loadedColorGradingLutAssetPath.clear();
 	if (hdrRenderTarget != nullptr) {
 		hdrRenderTarget->Release();
 		hdrRenderTarget = nullptr;
+	}
+	if (opaqueDepthCopyResource != nullptr) {
+		opaqueDepthCopyResource->Release();
+		opaqueDepthCopyResource = nullptr;
 	}
 	depthStencilResource->Release();
 	swapChainResources[0]->Release();

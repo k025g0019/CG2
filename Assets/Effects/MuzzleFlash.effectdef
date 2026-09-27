@@ -1,0 +1,58 @@
+{
+	"id": "MuzzleFlash",
+	"maxConcurrentInstances": 24,
+	"lod": [
+		{ "distance": 40.0, "spawnMultiplier": 1.0 },
+		{ "distance": 100.0, "spawnMultiplier": 0.5 },
+		{ "distance": 220.0, "spawnMultiplier": 0.0 }
+	],
+	"nodes": [
+		{
+			"name": "Flash",
+			"nodeType": "Billboard",
+			"texture": "Assets/Effects/Textures/spark.png",
+			"blendMode": "Additive",
+			"billboardMode": "CameraFacing",
+			"direction": { "x": 0.0, "y": 1.0, "z": 0.0 },
+			"emissionRate": 0.0,
+			"burstCount": 3,
+			"maxCount": 16,
+			"lifetime": 0.08,
+			"lifetimeRandomness": 0.2,
+			"speed": 0.0,
+			"sizeStart": 0.6,
+			"sizeEnd": 0.1,
+			"sizeRandomness": 0.3,
+			"rotationSpeed": 0.0,
+			"colorStart": { "x": 1.0, "y": 0.85, "z": 0.5 },
+			"colorEnd": { "x": 1.0, "y": 0.4, "z": 0.1 },
+			"alphaStart": 1.0,
+			"alphaEnd": 0.0
+		},
+		{
+			"name": "Sparks",
+			"nodeType": "Billboard",
+			"texture": "Assets/Effects/Textures/spark.png",
+			"blendMode": "Additive",
+			"billboardMode": "Directional",
+			"direction": { "x": 0.0, "y": 0.2, "z": 1.0 },
+			"emissionRate": 0.0,
+			"burstCount": 6,
+			"maxCount": 32,
+			"lifetime": 0.25,
+			"lifetimeRandomness": 0.3,
+			"speed": 6.0,
+			"speedRandomness": 0.5,
+			"gravity": 4.0,
+			"drag": 1.5,
+			"sizeStart": 0.12,
+			"sizeEnd": 0.02,
+			"stretchScale": 2.5,
+			"shapeRadius": 0.05,
+			"colorStart": { "x": 1.0, "y": 0.8, "z": 0.4 },
+			"colorEnd": { "x": 1.0, "y": 0.3, "z": 0.05 },
+			"alphaStart": 1.0,
+			"alphaEnd": 0.0
+		}
+	]
+}

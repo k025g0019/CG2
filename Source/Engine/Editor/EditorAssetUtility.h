@@ -16,7 +16,11 @@ public:
 	static int32_t GetTextureIndex(const std::vector<std::string>& textureFilePaths, const std::string& path);  // テクスチャパス配列内の一致位置を返す
 	static EditorModelMeshType GetModelMeshType(const std::string& path);  // FBX / OBJ のファイル名から基本形メッシュ種別を返す
 	static bool IsBuiltInPrimitiveAssetPath(const std::string& path);  // 内部基本形として扱う resources 内モデルかを返す
+	static const ModelData* GetModelAssetData(const std::string& path, bool includeAnimation);  // キャッシュを値コピーせず参照し、必要な場合だけ FBX Animation も読む
+	static const ModelData* GetSharedModelAssetData(const std::string& path, bool includeAnimation);  // 毎フレームのファイル確認を抑えた共有参照を返す
+	static void InvalidateModelAssetCache(const std::string& path);  // 共同制作などで外部更新されたモデルを次回参照時に必ず再読込する
 	static bool LoadModelAsset(const std::string& path, ModelData& modelData);  // OBJ / FBX から描画と物理で使う三角形頂点列を読み込む
+	static bool GetModelColliderBounds(const std::string& path, Vector3& colliderCenter, Vector3& colliderSize);  // モデル頂点から当たり判定用の中心とサイズを求める
 	static bool IsRenderTextureAssetPath(const std::string& path);  // .rendertexture アセットかを判定する
 	static EditorRenderTextureAsset MakeDefaultRenderTextureAsset();  // 新規 RenderTexture の標準設定を作る
 	static bool LoadRenderTextureAsset(const std::string& path, EditorRenderTextureAsset& asset);  // .rendertexture を読み込む

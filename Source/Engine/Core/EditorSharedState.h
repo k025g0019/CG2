@@ -3,6 +3,7 @@
 #pragma warning(push, 0)
 #include <Windows.h>
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <chrono>
 #include <cmath>
@@ -49,7 +50,11 @@
 #include "EditorRuntimeManager.h"
 #include "EditorDepthHierarchyManager.h"
 #include "EditorGpuCullingManager.h"
+#include "EditorOceanFftManager.h"
+#include "EditorGpuParticleManager.h"
+#include "EditorVfxRenderer.h"
 #include "EditorGBufferManager.h"
+#include "EditorLightProbeManager.h"
 #include "EditorPostProcessQualityManager.h"
 #include "EditorTemporalRenderingManager.h"
 #include "EditorScene.h"
@@ -117,6 +122,30 @@ namespace EditorSharedState {
 
 	inline SoundData SoundLoadWave(const char* filePath); // WAV �ǂݍ��݂Ɖ���Ɏg�� helper �錾�B
 	inline void SoundUnload(SoundData* soundData);
+	// 起動時Shaderを最後まで検査し、失敗した全Pathを1回の画面表示へまとめる。
+	inline std::vector<std::string> g_shaderCompilationFailures;
+
+	inline std::filesystem::path GetEngineDirectory() {
+		std::wstring executablePath(32768U, L'\0');
+		const DWORD length = GetModuleFileNameW(nullptr, executablePath.data(), static_cast<DWORD>(executablePath.size()));
+		if (length == 0U || length >= executablePath.size()) return {};
+		executablePath.resize(length);
+		return std::filesystem::path(executablePath).parent_path();
+	}
+
+	// ProjectとEngineを別Folderへ置く配布版では、相対PathをまずProject側で探し、
+	// Projectに無い内蔵ResourceだけCG2.exeと同じFolderから解決する。
+	inline std::filesystem::path ResolveEngineOrProjectFilePath(const std::filesystem::path& requestedPath) {
+		if (requestedPath.empty() || requestedPath.is_absolute()) return requestedPath;
+		std::error_code fileError;
+		if (std::filesystem::exists(requestedPath, fileError) && !fileError) return requestedPath;
+
+		const std::filesystem::path engineDirectory = GetEngineDirectory();
+		if (engineDirectory.empty()) return requestedPath;
+		const std::filesystem::path enginePath = engineDirectory / requestedPath;
+		fileError.clear();
+		return std::filesystem::exists(enginePath, fileError) && !fileError ? enginePath : requestedPath;
+	}
 
 	inline D3D12_CPU_DESCRIPTOR_HANDLE GetCPUDescriptorHandle(
 		ID3D12DescriptorHeap* descriptorHeap, UINT descriptorSize, UINT index) {
@@ -134,32 +163,77 @@ namespace EditorSharedState {
 		return handle;
 	}
 
-	inline DirectX::ScratchImage LoadTexture(const std::wstring& filePath) {
+	// forceSrgb/generateMipmaps/maxSizeはTexture Import Settings用の拡張引数。
+	// 既定値(true/true/0)は変更前と同じ挙動になるため、既存の全呼び出し元は無変更で動く。
+	inline DirectX::ScratchImage LoadTexture(
+		const std::wstring& filePath,
+		bool forceSrgb = true,
+		bool generateMipmaps = true,
+		int32_t maxSize = 0) {
+		DirectX::ScratchImage emptyImage{};
+		const std::filesystem::path resolvedFilePath = ResolveEngineOrProjectFilePath(filePath);
+		if (filePath.empty() || !std::filesystem::exists(resolvedFilePath)) {
+			return emptyImage;
+		}
+
 		// metadata �͓ǂݍ��񂾉摜�̕��E�����E�`�����󂯎��B
 		DirectX::TexMetadata metadata{};
 
 		// image �� WIC / HDR / DDS ����ǂݍ��񂾌��摜�f�[�^�B
 		DirectX::ScratchImage image{};
 
-		std::filesystem::path path(filePath);
+		std::filesystem::path path(resolvedFilePath);
 		std::wstring extension = path.extension().wstring();
 		std::transform(extension.begin(), extension.end(), extension.begin(), towlower);
 
 		HRESULT hr = E_FAIL;
 		bool useSrgbMipFilter = true;
 		if (extension == L".hdr") {
-			hr = DirectX::LoadFromHDRFile(filePath.c_str(), &metadata, image);
+			hr = DirectX::LoadFromHDRFile(resolvedFilePath.c_str(), &metadata, image);
 			useSrgbMipFilter = false;
 		}
 		else if (extension == L".dds") {
-			hr = DirectX::LoadFromDDSFile(filePath.c_str(), DirectX::DDS_FLAGS_NONE, &metadata, image);
+			hr = DirectX::LoadFromDDSFile(resolvedFilePath.c_str(), DirectX::DDS_FLAGS_NONE, &metadata, image);
 			useSrgbMipFilter = false;
 		}
 		else {
-			hr = DirectX::LoadFromWICFile(filePath.c_str(), DirectX::WIC_FLAGS_FORCE_SRGB, &metadata, image);
-			useSrgbMipFilter = true;
+			hr = DirectX::LoadFromWICFile(
+				resolvedFilePath.c_str(),
+				forceSrgb ? DirectX::WIC_FLAGS_FORCE_SRGB : DirectX::WIC_FLAGS_FORCE_LINEAR,
+				&metadata,
+				image);
+			useSrgbMipFilter = forceSrgb;
 		}
-		assert(SUCCEEDED(hr));
+		if (FAILED(hr) || image.GetImageCount() == 0u || image.GetImages() == nullptr) {
+			return emptyImage;
+		}
+
+		// maxSizeが指定されていれば、Mipmap生成前に長辺がその値を超えないようDownscaleする。
+		if (maxSize > 0 &&
+			(metadata.width > static_cast<size_t>(maxSize) || metadata.height > static_cast<size_t>(maxSize))) {
+			const float widthScale = static_cast<float>(maxSize) / static_cast<float>(metadata.width);
+			const float heightScale = static_cast<float>(maxSize) / static_cast<float>(metadata.height);
+			const float resizeScale = (std::min)(widthScale, heightScale);
+			const size_t resizedWidth = (std::max)(static_cast<size_t>(static_cast<float>(metadata.width) * resizeScale), size_t{1});
+			const size_t resizedHeight = (std::max)(static_cast<size_t>(static_cast<float>(metadata.height) * resizeScale), size_t{1});
+
+			DirectX::ScratchImage resizedImage{};
+			if (SUCCEEDED(DirectX::Resize(
+					image.GetImages(),
+					image.GetImageCount(),
+					image.GetMetadata(),
+					resizedWidth,
+					resizedHeight,
+					DirectX::TEX_FILTER_DEFAULT,
+					resizedImage))) {
+				image = std::move(resizedImage);
+				metadata = image.GetMetadata();
+			}
+		}
+
+		if (!generateMipmaps) {
+			return image;
+		}
 
 		// mipImages �� GPU �T���v�����O�p�� mipmap ��ǉ������摜�f�[�^�B
 		DirectX::ScratchImage mipImages{};
@@ -174,12 +248,23 @@ namespace EditorSharedState {
 			mipFilter,
 			0,
 			mipImages);
-		assert(SUCCEEDED(hr));
+		if (FAILED(hr)) {
+			return image;
+		}
 
 		return mipImages;
 	}
 
 	inline ID3D12Resource* CreateTextureResource(ID3D12Device* device, const DirectX::TexMetadata& metadata) {
+		if (device == nullptr ||
+			metadata.width == 0u ||
+			metadata.height == 0u ||
+			metadata.mipLevels == 0u ||
+			metadata.arraySize == 0u ||
+			metadata.format == DXGI_FORMAT_UNKNOWN) {
+			return nullptr;
+		}
+
 		// resourceDesc �� metadata �ɍ��킹�� 2D Texture Resource �̐ݒ�B
 		D3D12_RESOURCE_DESC resourceDesc{};
 		resourceDesc.Width = static_cast<UINT>(metadata.width);
@@ -204,7 +289,9 @@ namespace EditorSharedState {
 			D3D12_RESOURCE_STATE_COPY_DEST,
 			nullptr,
 			IID_PPV_ARGS(&resource));
-		assert(SUCCEEDED(hr));
+		if (FAILED(hr)) {
+			return nullptr;
+		}
 
 		return resource;
 	}
@@ -214,6 +301,14 @@ namespace EditorSharedState {
 		ID3D12GraphicsCommandList* commandList,
 		ID3D12Resource* texture,
 		const DirectX::ScratchImage& mipImages) {
+		if (device == nullptr ||
+			commandList == nullptr ||
+			texture == nullptr ||
+			mipImages.GetImageCount() == 0u ||
+			mipImages.GetImages() == nullptr) {
+			return nullptr;
+		}
+
 		std::vector<D3D12_SUBRESOURCE_DATA> subresources; // subresources �� mipmap �e�i�� UpdateSubresources �ɓn�����߂̔z��B
 		subresources.reserve(mipImages.GetImageCount());
 
@@ -231,9 +326,12 @@ namespace EditorSharedState {
 		// intermediateSize �͑S mip �� GPU Texture �փR�s�[���邽�߂ɕK�v�� UploadBuffer �T�C�Y�B
 		ID3D12Resource* intermediateResource = CreateBufferResource(device, intermediateSize);
 		// intermediateResource �� texture �փR�s�[���邽�߂̈ꎞ UploadBuffer�B
+		if (intermediateResource == nullptr) {
+			return nullptr;
+		}
 
 		// UpdateSubresources �� UploadBuffer ���� Default Heap Texture �փR�s�[���߂�ςށB
-		UpdateSubresources(
+		const UINT64 uploadedSize = UpdateSubresources(
 			commandList,
 			texture,
 			intermediateResource,
@@ -241,6 +339,10 @@ namespace EditorSharedState {
 			0,
 			static_cast<UINT>(subresources.size()),
 			subresources.data());
+		if (uploadedSize == 0u) {
+			intermediateResource->Release();
+			return nullptr;
+		}
 
 		// barrier �� Texture ���R�s�[���Ԃ��� Shader �ǂݎ���Ԃ֕ς��閽�߁B
 		D3D12_RESOURCE_BARRIER barrier{};
@@ -255,6 +357,10 @@ namespace EditorSharedState {
 	}
 
 	inline ID3D12Resource* CreateBufferResource(ID3D12Device* device, size_t sizeInBytes) {
+		if (device == nullptr || sizeInBytes == 0u) {
+			return nullptr;
+		}
+
 		// uploadHeapProperties �� CPU ���� Map ���ď������߂� Upload Heap �w��B
 		D3D12_HEAP_PROPERTIES uploadHeapProperties{};
 		uploadHeapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
@@ -279,7 +385,9 @@ namespace EditorSharedState {
 			D3D12_RESOURCE_STATE_GENERIC_READ,
 			nullptr,
 			IID_PPV_ARGS(&resource));
-		assert(SUCCEEDED(hr));
+		if (FAILED(hr)) {
+			return nullptr;
+		}
 
 		return resource;
 	}
@@ -291,13 +399,17 @@ namespace EditorSharedState {
 		IDxcCompiler3* dxcCompiler,
 		IDxcIncludeHandler* includeHandler,
 		std::ofstream& logStream) {
+		const std::filesystem::path resolvedFilePath = ResolveEngineOrProjectFilePath(filePath);
+		const std::wstring resolvedFilePathText = resolvedFilePath.wstring();
 		Log(logStream, std::format("Begin CompileShader, path:{}, profile:{}",
-		                           ConvertString(filePath), ConvertString(std::wstring{profile})));
+		                           ConvertString(resolvedFilePathText), ConvertString(std::wstring{profile})));
 
 		ComPtr<IDxcBlobEncoding> shaderSourceSource;
-		HRESULT hr = dxcUtils->LoadFile(filePath.c_str(), nullptr, shaderSourceSource.GetAddressOf());
+		HRESULT hr = dxcUtils->LoadFile(resolvedFilePathText.c_str(), nullptr, shaderSourceSource.GetAddressOf());
 		if (FAILED(hr) || shaderSourceSource == nullptr) {
-			Log(logStream, std::format("Failed to load shader file: {}", ConvertString(filePath)));
+			const std::string message = std::format("Failed to load shader file: {}", ConvertString(resolvedFilePathText));
+			Log(logStream, message);
+			g_shaderCompilationFailures.push_back(message);
 			return nullptr;
 		}
 		
@@ -319,9 +431,19 @@ namespace EditorSharedState {
 		includeDirectories.push_back(L"ThirdParty/Shader/NoiseShader-3.0.1/Packages/jp.keijiro.noiseshader/Shader");
 		includeDirectories.push_back(L"ThirdParty/Shader/FidelityFX-SDK-v1.1.4/bin/shaders");
 		includeDirectories.push_back(L"ThirdParty/Shader/FidelityFX-SDK-v1.1.4/sdk/include");
+		const std::filesystem::path engineDirectory = GetEngineDirectory();
+		includeDirectories.push_back((engineDirectory / L"Assets/Shaders").wstring());
+		includeDirectories.push_back((engineDirectory / L"Assets/Shaders/lygia").wstring());
+		includeDirectories.push_back((engineDirectory / L"Assets/Shaders/FidelityFX").wstring());
+		includeDirectories.push_back((engineDirectory / L"ThirdParty/Shader").wstring());
+		includeDirectories.push_back((engineDirectory / L"ThirdParty/Shader/lygia").wstring());
+		includeDirectories.push_back((engineDirectory / L"ThirdParty/Shader/NoiseShader-3.0.1").wstring());
+		includeDirectories.push_back((engineDirectory / L"ThirdParty/Shader/NoiseShader-3.0.1/Packages/jp.keijiro.noiseshader/Shader").wstring());
+		includeDirectories.push_back((engineDirectory / L"ThirdParty/Shader/FidelityFX-SDK-v1.1.4/bin/shaders").wstring());
+		includeDirectories.push_back((engineDirectory / L"ThirdParty/Shader/FidelityFX-SDK-v1.1.4/sdk/include").wstring());
 
 		std::vector<LPCWSTR> arguments{};
-		arguments.push_back(filePath.c_str());
+		arguments.push_back(resolvedFilePathText.c_str());
 		arguments.push_back(L"-E");
 		arguments.push_back(L"main");
 		arguments.push_back(L"-T");
@@ -353,8 +475,13 @@ namespace EditorSharedState {
 		shaderResult->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(shaderError.GetAddressOf()), nullptr);
 		if (shaderError != nullptr && shaderError->GetStringLength() != 0) {
 			Log(shaderError->GetStringPointer());
-			Log(logStream, std::format("Compile Error, path:{}, profile:{}",
-			                           ConvertString(filePath), ConvertString(std::wstring{profile})));
+			Log(logStream, shaderError->GetStringPointer());
+			if (FAILED(compileStatus)) {
+				Log(logStream, std::format("Compile Error, path:{}, profile:{}",
+				                           ConvertString(filePath), ConvertString(std::wstring{profile})));
+				g_shaderCompilationFailures.push_back(
+					ConvertString(filePath) + ": " + std::string(shaderError->GetStringPointer(), shaderError->GetStringLength()));
+			}
 		}
 
 		if (FAILED(compileStatus)) {
@@ -376,7 +503,10 @@ namespace EditorSharedState {
 		MaterialData materialData{};
 
 		std::ifstream file(directoryPath + "/" + filename); // file �� directoryPath/filename �� .mtl �t�@�C���B
-		assert(file.is_open());
+		if (!file.is_open()) {
+			Log(std::format("Material file is missing: {}/{}", directoryPath, filename));
+			return materialData;
+		}
 
 		std::string line; // line �� .mtl �� 1 �s���ǂނ��߂̕�����B
 		while (std::getline(file, line)) {
@@ -400,8 +530,12 @@ namespace EditorSharedState {
 		// modelData �� OBJ �̒��_�z��� Material �����܂Ƃ߂ĕԂ��B
 		ModelData modelData{};
 
-		std::ifstream file(directoryPath + "/" + filename); // file �� directoryPath/filename �� .obj �t�@�C���B
-		assert(file.is_open());
+		const std::filesystem::path resolvedModelPath =
+			ResolveEngineOrProjectFilePath(std::filesystem::path(directoryPath) / filename);
+		std::ifstream file(resolvedModelPath); // Projectに無い内蔵OBJはEngine側から読む。
+		if (!file.is_open()) {
+			return modelData;
+		}
 
 		std::vector<Vector4> positions; // positions / texcoords / normals �� OBJ �� v / vt / vn ���ꎞ�ۑ�����z��B
 		std::vector<Vector2> texcoords;
@@ -470,7 +604,7 @@ namespace EditorSharedState {
 				std::string materialFilename; // materialFilename �� OBJ ���Q�Ƃ��� .mtl �t�@�C�����B
 				lineStream >> materialFilename;
 
-				modelData.material = LoadMaterialTemplateFile(directoryPath, materialFilename);
+				modelData.material = LoadMaterialTemplateFile(resolvedModelPath.parent_path().string(), materialFilename);
 				// .mtl ��ǂݍ��݁ATexture �p�X�� modelData �ɕێ�����B
 			}
 		}
@@ -482,36 +616,101 @@ namespace EditorSharedState {
 		// soundData �� WAV ����ǂݎ�����`������ PCM �o�b�t�@��Ԃ��B
 		SoundData soundData{};
 
-		std::ifstream file(filePath, std::ios_base::binary); // file �� WAV ���o�C�i���Ƃ��ēǂޓ��� stream�B
-		assert(file.is_open());
+		if (filePath == nullptr) {
+			return soundData;
+		}
+
+		const std::filesystem::path resolvedSoundPath = ResolveEngineOrProjectFilePath(filePath);
+		std::ifstream file(resolvedSoundPath, std::ios_base::binary); // 内蔵SoundはEngine側へFallbackする。
+		if (!file.is_open()) {
+			return soundData;
+		}
 
 		// riff �� WAV �t�@�C���擪�� RIFF/WAVE �w�b�_�B
 		RiffHeader riff{};
 		file.read(reinterpret_cast<char*>(&riff), sizeof(riff));
-		assert(std::strncmp(riff.chunk.id, "RIFF", 4) == 0);
-		assert(std::strncmp(riff.type, "WAVE", 4) == 0);
+		if (!file ||
+			std::strncmp(riff.chunk.id, "RIFF", 4) != 0 ||
+			std::strncmp(riff.type, "WAVE", 4) != 0) {
+			return soundData;
+		}
 
 		// format �� "fmt " �`�����N�BXAudio2 �� SourceVoice �쐬�Ɏg���B
 		FormatChunk format{};
-		file.read(reinterpret_cast<char*>(&format), sizeof(ChunkHeader));
-		assert(std::strncmp(format.chunk.id, "fmt ", 4) == 0);
-		assert(format.chunk.size >= 0);
-		assert(static_cast<size_t>(format.chunk.size) <= sizeof(format.format));
-		file.read(reinterpret_cast<char*>(&format.format), format.chunk.size);
+		bool hasFormatChunk = false;
+		ChunkHeader chunk{};
+		while (file.read(reinterpret_cast<char*>(&chunk), sizeof(chunk))) {
+			if (chunk.size < 0) {
+				return soundData;
+			}
+
+			if (std::strncmp(chunk.id, "fmt ", 4) == 0) {
+				format.chunk = chunk;
+				const size_t formatReadSize =
+					(std::min)(static_cast<size_t>(chunk.size), sizeof(format.format));
+				file.read(reinterpret_cast<char*>(&format.format), static_cast<std::streamsize>(formatReadSize));
+				if (!file) {
+					return soundData;
+				}
+
+				if (static_cast<size_t>(chunk.size) > formatReadSize) {
+					file.seekg(
+						static_cast<std::streamoff>(static_cast<size_t>(chunk.size) - formatReadSize),
+						std::ios_base::cur);
+					if (!file) {
+						return soundData;
+					}
+				}
+
+				hasFormatChunk = true;
+				break;
+			}
+
+			file.seekg(static_cast<std::streamoff>(chunk.size), std::ios_base::cur);
+			if (!file) {
+				return soundData;
+			}
+		}
+
+		if (!hasFormatChunk ||
+			format.format.nChannels == 0u ||
+			format.format.nSamplesPerSec == 0u ||
+			format.format.nBlockAlign == 0u ||
+			format.format.wBitsPerSample == 0u ||
+			format.format.nAvgBytesPerSec == 0u) {
+			return soundData;
+		}
 
 		// data �� PCM �{�̂����� "data" �`�����N��T�����߂̃w�b�_�B
 		ChunkHeader data{};
-		file.read(reinterpret_cast<char*>(&data), sizeof(data));
-		while (std::strncmp(data.id, "data", 4) != 0) {
-			file.seekg(data.size, std::ios_base::cur); // data �ȊO�̃`�����N�̓T�C�Y�������ǂݔ�΂��Ď��̃`�����N������B
-			file.read(reinterpret_cast<char*>(&data), sizeof(data));
+		bool hasDataChunk = false;
+		while (file.read(reinterpret_cast<char*>(&data), sizeof(data))) {
+			if (data.size < 0) {
+				return soundData;
+			}
+
+			if (std::strncmp(data.id, "data", 4) == 0) {
+				hasDataChunk = true;
+				break;
+			}
+
+			file.seekg(static_cast<std::streamoff>(data.size), std::ios_base::cur); // data �ȊO�̃`�����N�̓T�C�Y�������ǂݔ�΂��Ď��̃`�����N������B
+			if (!file) {
+				return soundData;
+			}
 		}
 
-		assert(data.size >= 0);
+		if (!hasDataChunk || data.size <= 0) {
+			return soundData;
+		}
 
 		uint32_t dataSize = static_cast<uint32_t>(data.size); // dataSize �� PCM �o�b�t�@�̃o�C�g���B
-		auto pBuffer = new char[dataSize]; // pBuffer �� XAudio2 �ɓn�� PCM �f�[�^�BSoundUnload �ŉ������B
-		file.read(pBuffer, dataSize);
+		auto pBuffer = new char[static_cast<size_t>(dataSize)]; // pBuffer �� XAudio2 �ɓn�� PCM �f�[�^�BSoundUnload �ŉ������B
+		file.read(pBuffer, static_cast<std::streamsize>(dataSize));
+		if (!file) {
+			delete[] pBuffer;
+			return soundData;
+		}
 
 		soundData.wfex = format.format; // �ǂݍ��񂾌`������ PCM �o�b�t�@�� SoundData �ɋl�߂�B
 		soundData.pBuffer = reinterpret_cast<BYTE*>(pBuffer);
@@ -520,10 +719,14 @@ namespace EditorSharedState {
 	}
 
 	inline void SoundUnload(SoundData* soundData) {
-		assert(soundData != nullptr); // soundData->pBuffer �� SoundLoadWave �� new[] ���� PCM �o�b�t�@�B
+		if (soundData == nullptr) {
+			return;
+		}
+
 		delete[] soundData->pBuffer;
 		soundData->pBuffer = nullptr;
 		soundData->bufferSize = 0u;
+		soundData->wfex = {};
 	}
 }
 
@@ -534,10 +737,17 @@ namespace EditorSharedState {
 	constexpr uint32_t kRuntimeTextureCount = 4; // kRuntimeTextureCount �͋N�����ɌŒ�Ŋm�ۂ���W�� Texture ���B
 	constexpr uint32_t kRuntimeSwapChainBufferCount = 2; // kRuntimeSwapChainBufferCount �� SwapChain �� back buffer ���B
 	constexpr uint32_t kRuntimeSpriteIndexCount = 6; // kRuntimeSpriteIndexCount �� Sprite �l�p�`�� 2 �O�p�`�ŕ`�� index ���B
-	constexpr uint32_t kRuntimeShadowMapSize = 4096; // shadow atlas size (4 lights x 2048 each)
+	constexpr uint32_t kRuntimeShadowMapSize = 5120; // 5x5 atlas。Sun CSM とPoint Lightのキューブ影(6面)を同居させる。
+	// 画像SRVを置く共通Descriptor Heapの総容量。普通のGame Engineと同じ桁へ合わせている。
+	// D3D12の保証上限は1,000,000で、1個32B程度のため65536でも約2MB。足りなければここだけ増やす。
+	constexpr uint32_t kRuntimeSrvDescriptorHeapCapacity = 65536;
+	// 0からこの数までは描画機能・View別Temporal履歴・動的Fontの予約。これ以降を画像SRVへ使う。
+	constexpr uint32_t kRuntimeReservedSrvDescriptorCount = 205;
 	constexpr uint32_t kRuntimeShadowSrvDescriptorIndex = 15;
-	constexpr uint32_t kMaxShadowLights = 4;
-	constexpr uint32_t kShadowAtlasTiles = 2; // 2x2 grid
+	// 1フレームで評価する通常ライト数。影の枚数は別途Shadow Atlas容量で制限する。
+	constexpr uint32_t kMaxSceneLights = 16;
+	constexpr uint32_t kShadowAtlasTiles = 5; // 5x5 grid = 25 タイル。各タイルは 1024x1024。
+	// タイル予算: Sun cascade 4 + Point Light最大3灯 x 6面 = 22。25タイルなら収まる。
 	constexpr uint32_t kRuntimeHdrSrvDescriptorIndex = 16; // HDR RT �� SRV �� DescriptorHeap �� 16 �ԖځB
 	constexpr uint32_t kRuntimeBloomSrvDescriptorIndexA = 17; // Bloom A �� SRV �� 17 �ԖځB
 	constexpr uint32_t kRuntimeBloomSrvDescriptorIndexB = 18; // Bloom B �� SRV �� 18 �ԖځB
@@ -550,13 +760,26 @@ namespace EditorSharedState {
 	constexpr uint32_t kRuntimeIblPrefilterSrvDescriptorIndex = 25; // IBL ���O�t�B���^�[�ς� cube �� SRV�B
 	constexpr uint32_t kRuntimeIblEnvironmentSrvDescriptorIndex = 26; // IBL �� cube �� SRV�B
 	constexpr uint32_t kRuntimeIblBrdfLutSrvDescriptorIndex = 27; // IBL BRDF LUT �� SRV�B
+	constexpr uint32_t kRuntimeColorGradingLutSrvDescriptorIndex = 113u;
 	constexpr uint32_t kRuntimeMaterialMaskSrvDescriptorIndex = 28; // Object3d �̋��ʗ� / �e���}�X�N SRV�B
 	constexpr uint32_t kRuntimePlanarReflectionSrvDescriptorIndex = 29; // ���ʔ��˗p�ɕʃJ�����ŕ`���� HDR RT �� SRV�B
 	constexpr uint32_t kRuntimeEnvironmentSrvDescriptorIndex = 30; // ���摜 / HDRI �� SRV�B
 	constexpr uint32_t kRuntimeDepthPyramidDescriptorStartIndex = 31u; // 深度ピラミッドは SRV/UAV を交互に 31～54 番へ配置する。
 	constexpr uint32_t kRuntimeReconstructedNormalSrvDescriptorIndex = 55u; // 深度から再構築したワールド法線の SRV。
 	constexpr uint32_t kRuntimeReconstructedNormalUavDescriptorIndex = 56u; // ワールド法線を書き込む UAV。
-	constexpr uint32_t kRuntimeRtvCount = 12; // RTV Heap �T�C�Y: swap2 + HDR + bloom2 + post + SSAO2 + HDR���� + �ގ��}�X�N + ���ʔ���
+	// Light Probe GI は 57-62 番を使う。SRV(57,58)とUAV(59,60)とキャプチャ(61,62)は
+	// それぞれ連続していないとDescriptor Tableで束ねられないので、順番を変えないこと。
+	constexpr uint32_t kRuntimeLightProbeDescriptorStartIndex = 57u;
+	constexpr uint32_t kRuntimeLightProbeDescriptorCount = 6u;
+	// SSGI の半解像度RT。63 = 現在フレーム、64/65 = 履歴のピンポン。
+	constexpr uint32_t kRuntimeSsgiSrvDescriptorIndex = 63u;
+	constexpr uint32_t kRuntimeSsgiHistorySrvDescriptorIndexA = 64u;
+	constexpr uint32_t kRuntimeSsgiHistorySrvDescriptorIndexB = 65u;
+	constexpr uint32_t kRuntimeOitAccumulationSrvDescriptorIndex = 120u;
+	constexpr uint32_t kRuntimeOitRevealageSrvDescriptorIndex = 121u;
+	constexpr uint32_t kRuntimeOitRevealageDuplicateSrvDescriptorIndex = 122u;
+	constexpr uint32_t kRuntimeOpaqueDepthCopySrvDescriptorIndex = 114u;
+	constexpr uint32_t kRuntimeRtvCount = 17; // +3: SSGI 半解像度(現在フレーム + 履歴2枚) // swap2 + HDR/Bloom/Post/SSAO/Composite/Mask/Planar + OIT 2枚
 	inline HINSTANCE g_instanceHandle = nullptr; // g_instanceHandle �� Win32 Window �� DirectInput �������Ɏg���A�v�����́B
 	inline int g_exitCode = 0; // g_exitCode �� WinMain �֕Ԃ��I���R�[�h�B
 	inline bool g_isInitialized = false; // g_isInitialized �� PlatformManager �̏�������������������\���t���O�B
@@ -571,6 +794,9 @@ namespace EditorSharedState {
 	inline IDirectInputDevice8* g_keyboardDevice = nullptr; // g_keyboardDevice �� DIK_* �̉�����Ԃ�ǂޓ��̓f�o�C�X�B
 	inline IDirectInputDevice8* g_mouseDevice = nullptr; // g_mouseDevice �̓}�E�X�̑��Έړ��ʁE�{�^����Ԃ�ǂޓ��̓f�o�C�X�B
 	inline DIMOUSESTATE g_mouseState{}; // g_mouseState �̓}�E�X�̊e���ړ��ʂƃ{�^��������ԁB
+	inline DIMOUSESTATE g_preMouseState{};  // Scriptの押した瞬間・離した瞬間判定に使う前フレーム状態。
+	inline bool g_runtimeCursorLocked = false;  // Play中のCameraまたはScriptがカーソル固定を要求している。
+	inline bool g_runtimeCursorVisible = true;  // Win32 ShowCursorの現在要求値。
 
 	// g_key �͍��t���[���� 256 �L�[������ԁB
 	inline BYTE g_key[256] = {};
@@ -594,6 +820,9 @@ namespace EditorSharedState {
 	inline ComPtr<ID3D12CommandQueue> g_commandQueue; // g_commandQueue / Allocator / List �� GPU �֕`�施�߂𑗂邽�߂̈ꎮ�B
 	inline ComPtr<ID3D12CommandAllocator> g_commandAllocator;
 	inline ComPtr<ID3D12GraphicsCommandList> g_commandList;
+	inline ComPtr<ID3D12QueryHeap> g_renderTimestampQueryHeap;
+	inline ComPtr<ID3D12Resource> g_renderTimestampReadback;
+	inline std::uint64_t g_renderTimestampFrequency = 0u;
 
 	inline ComPtr<IDXGISwapChain4> g_swapChain; // g_swapChain �� Window �ɕ\������ back buffer ��B
 
@@ -621,6 +850,9 @@ namespace EditorSharedState {
 	inline ID3D12Resource* g_depthStencilResource = nullptr; // g_depthStencilResource �� 3D �`��̑O��֌W�𔻒肷�� Depth �o�b�t�@�B
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_depthSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_depthSrvHandleGPU{};
+	inline ID3D12Resource* g_opaqueDepthCopyResource = nullptr;
+	inline D3D12_CPU_DESCRIPTOR_HANDLE g_opaqueDepthCopySrvHandleCPU{};
+	inline D3D12_GPU_DESCRIPTOR_HANDLE g_opaqueDepthCopySrvHandleGPU{};
 	inline ID3D12Resource* g_shadowMapResource = nullptr; // ���s�������猩���[�x���������މe�p DepthTexture�B
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_shadowMapSrvCpuHandle{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_shadowMapSrvGpuHandle{};
@@ -641,6 +873,19 @@ namespace EditorSharedState {
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_postProcessSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_postProcessSrvHandleGPU{};
 	inline ID3D12Resource* g_ssaoRenderTargets[2] = {};
+	// SSGI は半解像度で解き、Temporal で均してからフル解像度へ加算する。
+	inline ID3D12Resource* g_ssgiRenderTarget = nullptr;
+	inline D3D12_CPU_DESCRIPTOR_HANDLE g_ssgiRtvHandle{};
+	inline D3D12_CPU_DESCRIPTOR_HANDLE g_ssgiSrvHandleCPU{};
+	inline D3D12_GPU_DESCRIPTOR_HANDLE g_ssgiSrvHandleGPU{};
+	inline ID3D12Resource* g_ssgiHistoryRenderTargets[2] = {};
+	inline D3D12_CPU_DESCRIPTOR_HANDLE g_ssgiHistoryRtvHandles[2]{};
+	inline D3D12_CPU_DESCRIPTOR_HANDLE g_ssgiHistorySrvHandlesCPU[2]{};
+	inline D3D12_GPU_DESCRIPTOR_HANDLE g_ssgiHistorySrvHandlesGPU[2]{};
+	inline uint32_t g_ssgiHistoryWriteIndex = 0u;
+	inline bool g_isSsgiHistoryValid = false;
+	inline uint32_t g_ssgiRenderWidth = 0u;
+	inline uint32_t g_ssgiRenderHeight = 0u;
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_ssaoRtvHandles[2]{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_ssaoSrvHandlesCPU[2]{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_ssaoSrvHandlesGPU[2]{};
@@ -657,9 +902,33 @@ namespace EditorSharedState {
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_planarReflectionRtvHandle{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_planarReflectionSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_planarReflectionSrvHandleGPU{};
+	inline ID3D12Resource* g_oitAccumulationRenderTarget = nullptr;
+	inline ID3D12Resource* g_oitRevealageRenderTarget = nullptr;
+	inline D3D12_CPU_DESCRIPTOR_HANDLE g_oitRtvHandles[2]{};
+	inline D3D12_CPU_DESCRIPTOR_HANDLE g_oitSrvHandlesCPU[2]{};
+	inline D3D12_GPU_DESCRIPTOR_HANDLE g_oitSrvHandlesGPU[2]{};
 
 	inline uint32_t g_renderWidth = 1u; // g_renderWidth / Height �� SwapChain �� DepthStencil �̌��݃T�C�Y�B
 	inline uint32_t g_renderHeight = 1u;
+
+	struct EditorRenderProfile {
+		float frameMilliseconds = 0.0f;
+		float frameRate = 0.0f;
+		float gpuFrameMilliseconds = 0.0f;
+		std::uint64_t localVideoMemoryUsage = 0u;
+		std::uint64_t localVideoMemoryBudget = 0u;
+		uint32_t sceneObjectCount = 0u;
+		uint32_t instanceCount = 0u;
+	};
+
+	inline EditorRenderProfile g_renderProfile{};
+
+	// 物理Body生成の失敗はConsoleへ出しても他のLogに埋もれて追えないため、
+	// 直近の失敗内容と件数をここへ保持し、Log監視(RuntimeLog)から参照できるようにする。
+	// Bodyが作られないObjectはRay/ShapeCastに一切引っかからない(弾がすり抜ける)ので、
+	// 「気づけないまま放置される」ことが一番の問題になる。
+	inline std::string g_lastPhysicsBodyFailure = "-";
+	inline uint32_t g_physicsBodyFailureCount = 0u;
 
 	inline ComPtr<IDxcUtils> g_dxcUtils; // g_dxc* �� HLSL �̓ǂݍ��݁E�R���p�C���Einclude �����Ɏg�� DXC �I�u�W�F�N�g�B
 	inline ComPtr<IDxcCompiler3> g_dxcCompiler;
@@ -669,6 +938,7 @@ namespace EditorSharedState {
 	inline ComPtr<IDxcBlob> g_pixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_objectReflectionMaskPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_shadowVertexShaderBlob;
+	inline ComPtr<IDxcBlob> g_alphaCutoutShadowPixelShaderBlob;
 
 	// Post-process shader blobs
 	inline ComPtr<IDxcBlob> g_fullscreenVertexShaderBlob;
@@ -678,6 +948,15 @@ namespace EditorSharedState {
 	inline ComPtr<IDxcBlob> g_fxaaPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_ssaoPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_ssaoBlurPixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_ssgiPixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_ssgiTemporalPixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_ssgiUpsamplePixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_volumetricLightShaftPixelShaderBlob;
+	// Light Probe GI: Probe位置からのキャプチャとSH/可視性のBake。
+	inline ComPtr<IDxcBlob> g_probeCaptureVertexShaderBlob;
+	inline ComPtr<IDxcBlob> g_probeCapturePixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_probeShProjectionComputeShaderBlob;
+	inline ComPtr<IDxcBlob> g_probeVisibilityComputeShaderBlob;
 	inline ComPtr<IDxcBlob> g_skyboxPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_planarReflectionPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_sharpenPixelShaderBlob;
@@ -685,6 +964,11 @@ namespace EditorSharedState {
 	inline ComPtr<IDxcBlob> g_depthOfFieldPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_motionBlurPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_passthroughPixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_weightedOitPixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_weightedOitCompositePixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_refractiveSurfacePixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_underwaterCausticsPixelShaderBlob;
+	inline ComPtr<IDxcBlob> g_skinnedMotionVectorVertexShaderBlob;
 
 
 	inline ComPtr<ID3DBlob> g_signatureBlob; // g_signatureBlob / g_errorBlob �� RootSignature �V���A���C�Y���ʂƎ��s���O�B
@@ -700,7 +984,21 @@ namespace EditorSharedState {
 	inline ComPtr<ID3D12PipelineState> g_cullNonePipelineState;
 	inline ComPtr<ID3D12PipelineState> g_transparentPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_transparentCullNonePipelineState;
+	inline ComPtr<ID3D12PipelineState> g_weightedOitPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_weightedOitCullNonePipelineState;
+	inline ComPtr<ID3D12PipelineState> g_waterSurfacePipelineState;  // Opaque Color / Depth を読む水面専用パス
+	inline ComPtr<ID3D12PipelineState> g_waterTessellationPipelineState;  // 画面Pixel密度からOceanをGPU細分化する専用パス
+	inline ComPtr<ID3D12PipelineState> g_refractiveSurfacePipelineState;
+	inline ComPtr<ID3D12PipelineState> g_refractiveSurfaceCullNonePipelineState;
 	inline ComPtr<ID3D12PipelineState> g_shadowPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_shadowCullNonePipelineState;
+	inline ComPtr<ID3D12PipelineState> g_alphaCutoutShadowPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_alphaCutoutShadowCullNonePipelineState;
+	inline ComPtr<ID3D12PipelineState> g_batchedGraphicsPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_batchedCullFrontPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_batchedCullNonePipelineState;
+	inline ComPtr<ID3D12PipelineState> g_batchedShadowPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_batchedShadowCullNonePipelineState;
 
 	// Post-process root signature and pipeline states
 	inline ComPtr<ID3D12RootSignature> g_postProcessRootSignature;
@@ -710,6 +1008,13 @@ namespace EditorSharedState {
 	inline ComPtr<ID3D12PipelineState> g_fxaaPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_ssaoPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_ssaoBlurPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_ssgiPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_ssgiTemporalPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_ssgiUpsamplePipelineState;
+	// Volumetric Light Shaft(Sun Beams)専用。48値制約のあるpostProcessRootSignatureでは
+	// Cascaded ShadowVPを渡すデータ量に足りないため、独立したRootSignatureを持つ。
+	inline ComPtr<ID3D12RootSignature> g_volumetricLightShaftRootSignature;
+	inline ComPtr<ID3D12PipelineState> g_volumetricLightShaftPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_skyboxPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_planarReflectionPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_sharpenPipelineState;
@@ -717,9 +1022,15 @@ namespace EditorSharedState {
 	inline ComPtr<ID3D12PipelineState> g_depthOfFieldPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_motionBlurPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_passthroughPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_weightedOitCompositePipelineState;
+	inline ComPtr<ID3D12PipelineState> g_underwaterCausticsPipelineState;
 	inline EditorDepthHierarchyManager g_depthHierarchyManager;
 	inline EditorGBufferManager g_gBufferManager;
+	inline EditorLightProbeManager g_lightProbeManager;
 	inline EditorGpuCullingManager g_gpuCullingManager;
+	inline EditorOceanFftManager g_oceanFftManager;
+	inline EditorGpuParticleManager g_gpuParticleManager;
+	inline EditorVfxRenderer g_vfxRenderer;  // Stage1 VFX(Billboard/Flipbook/Ribbon/Ring)専用の最小GPU描画担当。
 	inline EditorPostProcessQualityManager g_postProcessQualityManager;
 	inline EditorTemporalRenderingManager g_temporalRenderingManager;
 	// IBL uses existing root signature with added descriptor ranges
@@ -745,6 +1056,11 @@ namespace EditorSharedState {
 	inline TransformationMatrix* g_spriteTransformationMatrixData = nullptr;
 	inline ID3D12Resource* g_sphereTransformationMatrixResource = nullptr;
 	inline TransformationMatrix* g_sphereTransformationMatrixData = nullptr;
+	inline ID3D12Resource* g_identitySkinMatrixResource = nullptr;  // 非 Skin 頂点でも t16 / t17 を常に有効な SRV にする
+	inline Matrix4x4* g_identitySkinMatrixData = nullptr;
+	constexpr uint32_t kEditorBatchInstanceCapacity = 65536u;
+	inline ID3D12Resource* g_batchInstanceResource = nullptr;
+	inline EditorBatchInstanceData* g_batchInstanceData = nullptr;
 
 	// g_modelData �͋N�����ɓǂݍ��ފ��� OBJ ���f���B
 	inline ModelData g_modelData{};
@@ -799,8 +1115,25 @@ namespace EditorSharedState {
 	inline float g_editorGameWidth = 0.0f;
 	inline float g_editorGameHeight = 0.0f;
 
+	// g_editorRenderOriginX / Y は ImGui 座標から back buffer 座標へ直すための原点。
+	// ViewportsEnable が有効な間、ImGui の画面座標はデスクトップ基準になり、
+	// Window の枠とタイトルバーの分だけ back buffer 座標より大きくなる。
+	// この差を引かずに D3D12 の viewport へ渡すと、3D だけが右下へずれて描かれる。
+	inline float g_editorRenderOriginX = 0.0f;
+	inline float g_editorRenderOriginY = 0.0f;
+
 	inline bool g_isSceneViewVisible = false; // g_isSceneViewVisible �� SceneView �֕`�悷���`�����t���[���L�����ǂ����B
 	inline bool g_isGameViewVisible = false; // g_isGameViewVisible �� GameView �֕`�悷���`���L�����ǂ����B
+	inline bool g_isAnimationWindowVisible = false;  // true なら Docking 可能な Animation Window を表示する。
+	inline bool g_isSplineEditorVisible = false;  // trueなら汎用Spline Editorを表示する。
+	inline bool g_isGameplayTimelineWindowVisible = false;  // trueなら汎用Event Timelineを表示する。
+	inline bool g_isStateGraphWindowVisible = false;  // trueなら汎用Threshold State Graphを表示する。
+	inline bool g_isDiagnosticsWindowVisible = false;  // trueならProfilerとScene Validatorを表示する。
+	inline bool g_isLogMonitorWindowVisible = false;  // trueなら汎用ログ・監視Windowを表示する。
+	inline bool g_isTeamCollaborationWindowVisible = false;  // trueなら共同制作Server、接続、競合画面を表示する。
+	inline bool g_isExternalFeatureWindowVisible = false;  // trueなら音声認識/画像認識/オンライン/HapticsのDebug Windowを表示する。
+	inline bool g_isHookWireDebugWindowVisible = false;  // trueならHook構成とRuntime Wireの検査Windowを表示する。
+	inline bool g_isHookWireSceneGizmoVisible = true;  // trueならSceneViewへHook→力伝達先の線とAnchorを重ねる。
 	inline bool g_isGameViewUsingSceneCamera = true; // true �Ȃ� Camera Component ���Ȃ����� Scene �J�������p���Ă���B
 
 	// g_viewport / g_scissorRect �� DirectX �� SceneView �������֕`�����߂̋�`�B
@@ -817,6 +1150,17 @@ namespace EditorSharedState {
 	inline Matrix4x4 g_gameViewMatrix{};
 	inline Matrix4x4 g_gameProjectionMatrix{};
 	inline Vector3 g_gameCameraPosition{};  // GameView �� PBR ���ˌv�Z�Ɏg�� Camera Component �̃��[���h�ʒu�B
+	inline bool g_runtimeGameCameraOverrideActive = false;  // CameraBlendがGame View姿勢を上書きしている間true。
+	inline Transforms g_runtimeGameCameraOverrideTransform{};  // CameraBlendが計算したWorld姿勢。
+	inline Vector3 g_runtimeGameCameraPositionOffset{};  // CameraShakeが加えるWorld位置差分。
+	inline Vector3 g_runtimeGameCameraRotationOffset{};  // CameraShakeが加える回転差分rad。
+
+#ifdef USE_IMGUI
+	// Text/TextMeshProUGUIのtextFontIndexが選ぶFont候補。0番は既定Font(io.FontDefault)と同じものを指す。
+	// EditorPlatformManager.cpp の初期化でAddFontFromFileTTFした結果をここへ格納する。
+	inline constexpr int32_t kUiFontVariantCount = 5;
+	inline std::array<ImFont*, kUiFontVariantCount> g_uiFontVariants{};
+#endif
 
 	// g_spriteProjectionMatrix �� Sprite ����ʍ��W�ŕ\�����邽�߂̐��ˉe�s��B
 	inline Matrix4x4 g_spriteProjectionMatrix{};
@@ -874,6 +1218,10 @@ namespace EditorSharedState {
 	inline ID3D12Resource* g_iblIrradianceCube = nullptr;
 	inline ID3D12Resource* g_iblPrefilterCube = nullptr;
 	inline ID3D12Resource* g_iblBRDFLUT = nullptr;
+	inline ID3D12Resource* g_colorGradingLut = nullptr;
+	inline ID3D12Resource* g_customColorGradingLutResource = nullptr;
+	inline ID3D12Resource* g_customColorGradingLutUploadResource = nullptr;
+	inline std::string g_loadedColorGradingLutAssetPath;
 	inline bool g_iblEnvironmentCubeLoaded = false;  // EnvironmentMapEffect 用の実キューブマップが読み込めたか。
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_iblIrradianceSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_iblIrradianceSrvHandleGPU{};
@@ -883,6 +1231,8 @@ namespace EditorSharedState {
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_iblEnvironmentSrvHandleGPU{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_iblBrdfLutSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_iblBrdfLutSrvHandleGPU{};
+	inline D3D12_CPU_DESCRIPTOR_HANDLE g_colorGradingLutSrvHandleCPU{};
+	inline D3D12_GPU_DESCRIPTOR_HANDLE g_colorGradingLutSrvHandleGPU{};
 	inline uint32_t g_iblPrefilterMipCount = 0;
 
 	// g_editorRuntimeManager �� Play ���� Input / Physics ���X�V���� Runtime�B
@@ -901,6 +1251,89 @@ namespace EditorSharedState {
 	inline std::string g_currentScenePath; // g_currentScenePath �͍��J���Ă��� .scene �̕ۑ���B���ۑ��V�[���ł͋󕶎��B
 
 	// g_hierarchyFilter / g_assetFilter �͊e�������̓��̓o�b�t�@�B
+	inline bool g_isStandaloneGame = false;  // 書き出した Player として起動中なら true。
+	inline std::vector<std::string> g_gameBuildScenePaths;  // Player に含めた遷移可能 Scene 一覧。
+
+	inline bool g_isPvShootModeActive = false;  // PV撮影モード中はGameViewだけを全画面表示し、他Windowを隠す。
+	inline float g_pvShootManualTimeScale = 1.0f;  // PV撮影モード中にRuntimeへ乗算する再生速度。1で通常速度。
+
+	inline RECT GetRuntimeCursorClipRect() {
+		RECT cursorClipRect{};
+
+		if (g_isGameViewVisible && g_editorGameWidth > 1.0f && g_editorGameHeight > 1.0f) {
+			cursorClipRect.left = static_cast<LONG>(g_editorGameX);
+			cursorClipRect.top = static_cast<LONG>(g_editorGameY);
+			cursorClipRect.right = static_cast<LONG>(g_editorGameX + g_editorGameWidth);
+			cursorClipRect.bottom = static_cast<LONG>(g_editorGameY + g_editorGameHeight);
+			return cursorClipRect;
+		}
+
+		if (g_windowHandle != nullptr) {
+			GetClientRect(g_windowHandle, &cursorClipRect);
+			POINT clientOrigin{cursorClipRect.left, cursorClipRect.top};
+			POINT clientEnd{cursorClipRect.right, cursorClipRect.bottom};
+			ClientToScreen(g_windowHandle, &clientOrigin);
+			ClientToScreen(g_windowHandle, &clientEnd);
+			cursorClipRect = {clientOrigin.x, clientOrigin.y, clientEnd.x, clientEnd.y};
+		}
+
+		return cursorClipRect;
+	}
+
+	inline void ApplyRuntimeCursorLock(bool isLocked) {
+		const bool wasLocked = g_runtimeCursorLocked;
+		g_runtimeCursorLocked = isLocked;
+
+		// Editor内でPlayしているだけの時にOSカーソルを実際にClipCursor/SetCursorPosすると、
+		// GameView外(SceneView、Inspector、他Window)へマウスが一切出せなくなり、
+		// 「視点操作を常時ONにしたScene」でギズモやWindow切り替えが完全に触れなくなる。
+		// これは書き出し済みPlayer(g_isStandaloneGame)でだけ意味のある拘束なので、
+		// Editor実行中はIsCursorLocked()が返す要求状態だけ更新し、実際のOS拘束は行わない。
+		if (!g_isStandaloneGame) {
+			return;
+		}
+
+		if (!isLocked) {
+			ClipCursor(nullptr);
+			return;
+		}
+
+		const RECT cursorClipRect = GetRuntimeCursorClipRect();
+		ClipCursor(&cursorClipRect);
+
+		// Lock開始時だけ中央へ戻す。毎フレーム呼ぶ関数なので、ここをwasLocked判定なしに
+		// 呼び続けると、実カーソルが視点操作で動いた直後に強制的に中央へ引き戻され続け、
+		// 「中央のカーソル」と「動かした先で点滅するカーソル」の二重表示に見えていた。
+		if (!wasLocked) {
+			SetCursorPos(
+				(cursorClipRect.left + cursorClipRect.right) / 2,
+				(cursorClipRect.top + cursorClipRect.bottom) / 2);
+		}
+	}
+
+	inline void ApplyRuntimeCursorVisibility(bool isVisible) {
+		if (g_runtimeCursorVisible == isVisible) {
+			return;
+		}
+
+		g_runtimeCursorVisible = isVisible;
+
+		// ロックと同じ理由。Editor内Playでカーソルを消すと、GameView外のWindowを
+		// マウスで探すことすらできなくなるため、書き出し済みPlayerでだけ実際に隠す。
+		if (!g_isStandaloneGame) {
+			return;
+		}
+
+		if (isVisible) {
+			while (ShowCursor(TRUE) < 0) {
+			}
+		}
+		else {
+			while (ShowCursor(FALSE) >= 0) {
+			}
+		}
+	}
+
 	inline char g_hierarchyFilter[128] = {};
 	inline char g_assetFilter[128] = {};
 
@@ -1031,6 +1464,32 @@ namespace EditorSharedState {
 		return resource;
 	}
 
+	inline ID3D12Resource* CreateRuntimeOpaqueDepthCopyResource(uint32_t width, uint32_t height) {
+		D3D12_HEAP_PROPERTIES heapProperties{};
+		heapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+		D3D12_RESOURCE_DESC resourceDesc{};
+		resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		resourceDesc.Width = width;
+		resourceDesc.Height = height;
+		resourceDesc.DepthOrArraySize = 1;
+		resourceDesc.MipLevels = 1;
+		resourceDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+		resourceDesc.SampleDesc.Count = 1;
+		resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+		ID3D12Resource* resource = nullptr;
+		const HRESULT createResult = g_device->CreateCommittedResource(
+			&heapProperties,
+			D3D12_HEAP_FLAG_NONE,
+			&resourceDesc,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+			&g_depthClearValue,
+			IID_PPV_ARGS(&resource));
+		assert(SUCCEEDED(createResult));
+		return resource;
+	}
+
 	inline void WaitForGpu() {
 		g_fenceValue++; // g_fenceValue ��i�߂āA���̃t���[���ő҂� GPU �����ԍ������B
 		HRESULT signalResult = g_commandQueue->Signal(g_fence.Get(), g_fenceValue);
@@ -1087,6 +1546,11 @@ namespace EditorSharedState {
 			g_depthStencilResource = nullptr;
 		}
 
+		if (g_opaqueDepthCopyResource != nullptr) {
+			g_opaqueDepthCopyResource->Release();
+			g_opaqueDepthCopyResource = nullptr;
+		}
+
 		g_renderWidth = width; // g_renderWidth / Height �͐V������� back buffer �T�C�Y�B
 		g_renderHeight = height;
 
@@ -1110,6 +1574,7 @@ namespace EditorSharedState {
 		}
 
 		g_depthStencilResource = CreateRuntimeDepthStencilResource(g_renderWidth, g_renderHeight);
+		g_opaqueDepthCopyResource = CreateRuntimeOpaqueDepthCopyResource(g_renderWidth, g_renderHeight);
 		// DepthStencil ���V�����`��T�C�Y�ɍ��킹�čč쐬����B
 		g_device->CreateDepthStencilView(g_depthStencilResource, &g_dsvDesc, g_dsvHandle);
 
@@ -1122,6 +1587,19 @@ namespace EditorSharedState {
 			g_depthSrvHandleCPU = GetCPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeDepthSrvDescriptorIndex);
 			g_depthSrvHandleGPU = GetGPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeDepthSrvDescriptorIndex);
 			g_device->CreateShaderResourceView(g_depthStencilResource, &depthSrvDesc, g_depthSrvHandleCPU);
+
+			g_opaqueDepthCopySrvHandleCPU = GetCPUDescriptorHandle(
+				g_srvDescriptorHeap,
+				g_srvDescriptorSize,
+				kRuntimeOpaqueDepthCopySrvDescriptorIndex);
+			g_opaqueDepthCopySrvHandleGPU = GetGPUDescriptorHandle(
+				g_srvDescriptorHeap,
+				g_srvDescriptorSize,
+				kRuntimeOpaqueDepthCopySrvDescriptorIndex);
+			g_device->CreateShaderResourceView(
+				g_opaqueDepthCopyResource,
+				&depthSrvDesc,
+				g_opaqueDepthCopySrvHandleCPU);
 		}
 
 		// HDR RT �� Bloom RTs ���č쐬����
@@ -1185,6 +1663,22 @@ namespace EditorSharedState {
 				GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 6u + i));
 		}
 
+		// SSGI は半解像度。ノイズは後段のTemporalで均す。
+		g_ssgiRenderWidth = (std::max)(1u, g_renderWidth / 2u);
+		g_ssgiRenderHeight = (std::max)(1u, g_renderHeight / 2u);
+		recreateRenderTarget(g_ssgiRenderTarget, g_ssgiRenderWidth, g_ssgiRenderHeight,
+			DXGI_FORMAT_R16G16B16A16_FLOAT,
+			GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 14u));
+
+		for (uint32_t i = 0; i < 2; i++) {
+			recreateRenderTarget(g_ssgiHistoryRenderTargets[i], g_ssgiRenderWidth, g_ssgiRenderHeight,
+				DXGI_FORMAT_R16G16B16A16_FLOAT,
+				GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 15u + i));
+		}
+
+		// 解像度が変わると履歴の位置が合わないので作り直す。
+		g_isSsgiHistoryValid = false;
+
 		recreateRenderTarget(g_hdrCompositeRenderTarget, g_renderWidth, g_renderHeight,
 			DXGI_FORMAT_R16G16B16A16_FLOAT,
 			GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 8u));
@@ -1197,6 +1691,14 @@ namespace EditorSharedState {
 		recreateRenderTarget(g_planarReflectionRenderTarget, g_renderWidth, g_renderHeight,
 			DXGI_FORMAT_R16G16B16A16_FLOAT,
 			GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 11u));
+
+		// Weighted Blended OIT は色の重み付き総和と透過率を別々に保持する。
+		recreateRenderTarget(g_oitAccumulationRenderTarget, g_renderWidth, g_renderHeight,
+			DXGI_FORMAT_R16G16B16A16_FLOAT,
+			GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 12u));
+		recreateRenderTarget(g_oitRevealageRenderTarget, g_renderWidth, g_renderHeight,
+			DXGI_FORMAT_R16_FLOAT,
+			GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 13u));
 
 		// HDR SRV
 		{
@@ -1255,6 +1757,34 @@ namespace EditorSharedState {
 			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 			srvDesc.Texture2D.MipLevels = 1;
+			g_ssgiRtvHandle = GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 14u);
+			g_ssgiSrvHandleCPU = GetCPUDescriptorHandle(
+				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeSsgiSrvDescriptorIndex);
+			g_ssgiSrvHandleGPU = GetGPUDescriptorHandle(
+				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeSsgiSrvDescriptorIndex);
+			g_device->CreateShaderResourceView(g_ssgiRenderTarget, &srvDesc, g_ssgiSrvHandleCPU);
+
+			for (uint32_t i = 0; i < 2; i++) {
+				const uint32_t srvIndex = (i == 0u)
+					? kRuntimeSsgiHistorySrvDescriptorIndexA
+					: kRuntimeSsgiHistorySrvDescriptorIndexB;
+				g_ssgiHistoryRtvHandles[i] =
+					GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 15u + i);
+				g_ssgiHistorySrvHandlesCPU[i] =
+					GetCPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, srvIndex);
+				g_ssgiHistorySrvHandlesGPU[i] =
+					GetGPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, srvIndex);
+				g_device->CreateShaderResourceView(
+					g_ssgiHistoryRenderTargets[i], &srvDesc, g_ssgiHistorySrvHandlesCPU[i]);
+			}
+		}
+
+		{
+			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+			srvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MipLevels = 1;
 			g_hdrCompositeRtvHandle = GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 8u);
 			g_hdrCompositeSrvHandleCPU = GetCPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeHdrCompositeSrvDescriptorIndex);
 			g_hdrCompositeSrvHandleGPU = GetGPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeHdrCompositeSrvDescriptorIndex);
@@ -1290,6 +1820,40 @@ namespace EditorSharedState {
 			g_planarReflectionSrvHandleGPU = GetGPUDescriptorHandle(
 				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimePlanarReflectionSrvDescriptorIndex);
 			g_device->CreateShaderResourceView(g_planarReflectionRenderTarget, &srvDesc, g_planarReflectionSrvHandleCPU);
+		}
+
+		// OIT の revealage は PostProcess RootSignature の t2/t3 連続テーブルへ載せる。
+		{
+			D3D12_SHADER_RESOURCE_VIEW_DESC accumulationSrvDesc{};
+			accumulationSrvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+			accumulationSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			accumulationSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			accumulationSrvDesc.Texture2D.MipLevels = 1;
+
+			D3D12_SHADER_RESOURCE_VIEW_DESC revealageSrvDesc = accumulationSrvDesc;
+			revealageSrvDesc.Format = DXGI_FORMAT_R16_FLOAT;
+
+			g_oitRtvHandles[0] = GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 12u);
+			g_oitRtvHandles[1] = GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 13u);
+
+			g_oitSrvHandlesCPU[0] = GetCPUDescriptorHandle(
+				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeOitAccumulationSrvDescriptorIndex);
+			g_oitSrvHandlesGPU[0] = GetGPUDescriptorHandle(
+				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeOitAccumulationSrvDescriptorIndex);
+			g_oitSrvHandlesCPU[1] = GetCPUDescriptorHandle(
+				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeOitRevealageSrvDescriptorIndex);
+			g_oitSrvHandlesGPU[1] = GetGPUDescriptorHandle(
+				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeOitRevealageSrvDescriptorIndex);
+
+			g_device->CreateShaderResourceView(
+				g_oitAccumulationRenderTarget, &accumulationSrvDesc, g_oitSrvHandlesCPU[0]);
+			g_device->CreateShaderResourceView(
+				g_oitRevealageRenderTarget, &revealageSrvDesc, g_oitSrvHandlesCPU[1]);
+
+			const D3D12_CPU_DESCRIPTOR_HANDLE duplicateRevealageHandle = GetCPUDescriptorHandle(
+				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeOitRevealageDuplicateSrvDescriptorIndex);
+			g_device->CreateShaderResourceView(
+				g_oitRevealageRenderTarget, &revealageSrvDesc, duplicateRevealageHandle);
 		}
 
 		// 深度依存の Compute Texture も Scene 描画サイズへ追従させる。

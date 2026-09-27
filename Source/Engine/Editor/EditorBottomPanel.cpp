@@ -3,20 +3,44 @@
 #include "EditorBottomPanel.h"
 
 #include "EditorAssetUtility.h"
+#include "EditorRuntimeManager.h"
 #include "EditorSharedState.h"
+#include "EditorTeamCollaborationManager.h"
+#include "Source/Engine/Animation/PropertyAnimationClip.h"
+#include "Source/Engine/Asset/AssetImportSettings.h"
+#include "Source/Engine/Asset/AssetManager.h"
+#include "Source/Engine/Asset/AssetRegistry.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 using namespace EditorSharedState;
 
 namespace {
 	constexpr unsigned char kUtf8Bom[] = {0xEFu, 0xBBu, 0xBFu};  // 作成アセットは UTF-8 BOM 付きで保存する。
+	constexpr char kDefaultSceneDirectory[] = "Assets/Scenes";  // Unity と同じく Scene Asset をまとめる標準フォルダー。
+	constexpr std::chrono::milliseconds kProjectAssetRefreshInterval{1000};  // 外部ツールによる追加も最大 1 秒で Project へ反映する。
+	std::vector<std::string> cachedProjectAssetPaths;  // 毎フレームの Assets / resources 全走査を避ける索引。
+	std::unordered_map<std::string, std::string> cachedProjectAssetFileNames;
+	std::unordered_map<std::string, std::string> cachedProjectAssetParentPaths;
+	std::unordered_map<std::string, std::vector<std::filesystem::path>> cachedProjectChildDirectories;
+	std::unordered_set<std::string> cachedProjectDirectories;
+	std::chrono::steady_clock::time_point nextProjectAssetRefreshTime{};
+	bool isProjectAssetCacheDirty = true;
+
+	void InvalidateProjectAssetCache() {
+		isProjectAssetCacheDirty = true;
+	}
 
 	void SyncSelectionToScene() {
 		// 現在の GameObject 選択を SceneView の旧選択番号へ同期する。
@@ -70,16 +94,115 @@ namespace {
 			EditorAssetUtility::HasExtension(assetPath, ".json") ||
 			EditorAssetUtility::HasExtension(assetPath, ".scene") ||
 			EditorAssetUtility::HasExtension(assetPath, ".prefab") ||
-			EditorAssetUtility::HasExtension(assetPath, ".inputactions");
+			EditorAssetUtility::HasExtension(assetPath, ".inputactions") ||
+			EditorAssetUtility::HasExtension(assetPath, ".animgraph") ||
+			EditorAssetUtility::HasExtension(assetPath, ".animclip") ||
+			EditorAssetUtility::HasExtension(assetPath, ".effect");
 	}
 
 	std::string MakeDefaultPlayerInputActionsText() {
 		return
-			"# CG2 PlayerInput Actions\r\n"
+			"# CG2Engine PlayerInput Actions\r\n"
 			"# Action|ActionMap|ActionName|ValueType|BindingType|...\r\n"
 			"Action|Player|Move|Vector2|2DVector|W|S|A|D\r\n"
 			"Action|Player|Jump|Button|Key|Space\r\n"
 			"Action|Player|Fire|Button|Mouse|LeftButton\r\n";
+	}
+
+	std::string MakeDefaultAnimationGraphText() {
+		// FBX の Clip 番号はモデルごとに異なるため、作成直後は Clip 0 だけで安全に再生できる構成にする。
+		return
+			"{\r\n"
+			"  \"entryState\": 0,\r\n"
+			"  \"parameters\": [\r\n"
+			"    { \"name\": \"MoveX\", \"type\": \"Float\", \"float\": 0.0 },\r\n"
+			"    { \"name\": \"MoveY\", \"type\": \"Float\", \"float\": 0.0 },\r\n"
+			"    { \"name\": \"Speed\", \"type\": \"Float\", \"float\": 0.0 }\r\n"
+			"  ],\r\n"
+			"  \"states\": [\r\n"
+			"    {\r\n"
+			"      \"name\": \"Locomotion\",\r\n"
+			"      \"blendType\": \"Blend2DDirectional\",\r\n"
+			"      \"parameterX\": \"MoveX\",\r\n"
+			"      \"parameterY\": \"MoveY\",\r\n"
+			"      \"loop\": true,\r\n"
+			"      \"samples\": [\r\n"
+			"        { \"clip\": 0, \"x\": 0.0, \"y\": 0.0, \"speed\": 1.0 },\r\n"
+			"        { \"clip\": 0, \"x\": 0.0, \"y\": 1.0, \"speed\": 1.0 },\r\n"
+			"        { \"clip\": 0, \"x\": 0.0, \"y\": -1.0, \"speed\": 1.0 },\r\n"
+			"        { \"clip\": 0, \"x\": -1.0, \"y\": 0.0, \"speed\": 1.0 },\r\n"
+			"        { \"clip\": 0, \"x\": 1.0, \"y\": 0.0, \"speed\": 1.0 }\r\n"
+			"      ]\r\n"
+			"    }\r\n"
+			"  ],\r\n"
+			"  \"transitions\": [],\r\n"
+			"  \"events\": []\r\n"
+			"}\r\n";
+	}
+
+	std::string MakeDefaultEffectAssetText() {
+		return
+			"{\r\n"
+			"  \"renderAsset\": \"resources/editorDefault/en.fbx\",\r\n"
+			"  \"playOnAwake\": true,\r\n"
+			"  \"looping\": true,\r\n"
+			"  \"duration\": 2.0,\r\n"
+			"  \"startDelay\": 0.0,\r\n"
+			"  \"emissionRate\": 10.0,\r\n"
+			"  \"burstCount\": 0,\r\n"
+			"  \"maxCount\": 256,\r\n"
+			"  \"lifetime\": 1.0,\r\n"
+			"  \"speed\": 1.0,\r\n"
+			"  \"startSize\": 0.2,\r\n"
+			"  \"endSize\": 0.0,\r\n"
+			"  \"shape\": 1,\r\n"
+			"  \"shapeRadius\": 0.5,\r\n"
+			"  \"shapeAngle\": 25.0,\r\n"
+			"  \"simulationSpace\": 0,\r\n"
+			"  \"gravity\": 0.0,\r\n"
+			"  \"drag\": 0.0,\r\n"
+			"  \"rotationSpeed\": 0.0,\r\n"
+			"  \"speedRandomness\": 0.15,\r\n"
+			"  \"lifetimeRandomness\": 0.1,\r\n"
+			"  \"sizeRandomness\": 0.1,\r\n"
+			"  \"startAlpha\": 1.0,\r\n"
+			"  \"endAlpha\": 0.0,\r\n"
+			"  \"emissionStrength\": 1.0,\r\n"
+			"  \"endSpeedMultiplier\": 0.35,\r\n"
+			"  \"noiseStrength\": 0.0,\r\n"
+			"  \"noiseFrequency\": 1.0,\r\n"
+			"  \"collision\": false,\r\n"
+			"  \"collisionBounce\": 0.35,\r\n"
+			"  \"collisionFriction\": 0.2,\r\n"
+			"  \"prewarm\": false,\r\n"
+			"  \"startColor\": { \"x\": 1.0, \"y\": 0.8, \"z\": 0.2 },\r\n"
+			"  \"endColor\": { \"x\": 1.0, \"y\": 0.1, \"z\": 0.0 },\r\n"
+			"  \"direction\": { \"x\": 0.0, \"y\": 1.0, \"z\": 0.0 },\r\n"
+			"  \"boxSize\": { \"x\": 1.0, \"y\": 1.0, \"z\": 1.0 }\r\n"
+			"}\r\n";
+	}
+
+	std::string MakeDefaultPropertyAnimationClipText() {
+		// Additive の位置カーブなので、作成直後にどの GameObject へ付けても元配置を壊さず上下動を確認できる。
+		return
+			"{\r\n"
+			"  \"name\": \"NewAnimationClip\",\r\n"
+			"  \"duration\": 2.0,\r\n"
+			"  \"sampleRate\": 30.0,\r\n"
+			"  \"loop\": true,\r\n"
+			"  \"tracks\": [\r\n"
+			"    {\r\n"
+			"      \"property\": \"Transform.LocalPositionY\",\r\n"
+			"      \"writeMode\": \"Additive\",\r\n"
+			"      \"keys\": [\r\n"
+			"        { \"time\": 0.0, \"value\": 0.0, \"outTangent\": 2.0, \"interpolation\": \"CubicHermite\" },\r\n"
+			"        { \"time\": 1.0, \"value\": 1.0, \"inTangent\": 0.0, \"outTangent\": 0.0, \"interpolation\": \"CubicHermite\" },\r\n"
+			"        { \"time\": 2.0, \"value\": 0.0, \"inTangent\": -2.0, \"interpolation\": \"CubicHermite\" }\r\n"
+			"      ]\r\n"
+			"    }\r\n"
+			"  ],\r\n"
+			"  \"events\": []\r\n"
+			"}\r\n";
 	}
 
 	std::string GetProjectAssetCreateDirectory(const std::string& selectedAssetPath) {
@@ -103,6 +226,27 @@ namespace {
 		return "Assets";
 	}
 
+	std::string GetSceneAssetCreateDirectory(const std::string& selectedAssetPath) {
+		// Scene は Assets/Scenes 配下へ集約し、選択中のサブフォルダーだけは維持する。
+		if (!selectedAssetPath.empty() &&
+			(selectedAssetPath == kDefaultSceneDirectory ||
+			 selectedAssetPath.rfind(std::string(kDefaultSceneDirectory) + "/", 0) == 0)) {
+			const std::filesystem::path selectedPath(selectedAssetPath);
+
+			if (std::filesystem::is_directory(selectedPath)) {
+				return selectedPath.generic_string();
+			}
+
+			const std::filesystem::path parentPath = selectedPath.parent_path();
+
+			if (!parentPath.empty()) {
+				return parentPath.generic_string();
+			}
+		}
+
+		return kDefaultSceneDirectory;
+	}
+
 	std::string MakeUniqueInputActionsAssetPath(const std::string& directoryPath) {
 		const std::filesystem::path baseDirectoryPath(directoryPath);
 		const std::string baseName = "InGameInputAction";
@@ -120,6 +264,29 @@ namespace {
 		}
 
 		return (baseDirectoryPath / "InGameInputAction.inputactions").generic_string();
+	}
+
+	std::string MakeUniqueTextAssetPath(
+		const std::string& directoryPath,
+		const std::string& baseName,
+		const std::string& extension) {
+		const std::filesystem::path baseDirectoryPath(directoryPath);
+
+		for (int32_t fileIndex = 0; fileIndex < 1000; ++fileIndex) {
+			std::string candidateName = baseName;
+
+			if (fileIndex > 0) {
+				candidateName += std::to_string(fileIndex);
+			}
+
+			const std::filesystem::path candidatePath = baseDirectoryPath / (candidateName + extension);
+
+			if (!std::filesystem::exists(candidatePath)) {
+				return candidatePath.generic_string();
+			}
+		}
+
+		return (baseDirectoryPath / (baseName + extension)).generic_string();
 	}
 
 	std::string MakeUniqueFolderPath(const std::string& directoryPath, const std::string& baseFolderName) {
@@ -147,11 +314,45 @@ namespace {
 
 		file.write(reinterpret_cast<const char*>(kUtf8Bom), static_cast<std::streamsize>(sizeof(kUtf8Bom)));
 		file.write(fileText.data(), static_cast<std::streamsize>(fileText.size()));
-		return file.good();
+		const bool isWritten = file.good();
+
+		if (isWritten) {
+			InvalidateProjectAssetCache();
+		}
+
+		return isWritten;
+	}
+
+	bool CreateSceneAsset(
+		const std::string& createDirectoryPath,
+		std::string& selectedAssetPath,
+		std::vector<std::string>& consoleMessages) {
+		std::filesystem::create_directories(createDirectoryPath);
+		const std::string scenePath = MakeUniqueTextAssetPath(
+			createDirectoryPath,
+			"NewScene",
+			".scene");
+		EditorScene newScene;
+		newScene.InitializeDefaultScene();
+
+		if (!newScene.SaveScene(scenePath)) {
+			consoleMessages.push_back("Asset: Scene の作成に失敗 " + scenePath);
+			return false;
+		}
+
+		InvalidateProjectAssetCache();
+		selectedAssetPath = scenePath;
+		g_selectedAssetPath = scenePath;
+		consoleMessages.push_back("Asset: Scene を作成 " + scenePath);
+		return true;
 	}
 
 	bool LoadSceneFromAssetPath(const std::string& assetPath, std::vector<std::string>& consoleMessages) {
 		// .scene のダブルクリックは外部アプリではなく、エディタ内の現在シーン読み込みとして扱う。
+		if (g_editorRuntimeManager.IsPlaying()) {
+			g_editorRuntimeManager.TogglePlay();
+		}
+
 		if (!g_editorScene.LoadScene(assetPath)) {
 			consoleMessages.push_back("Asset: シーン読込に失敗 " + assetPath);
 			return false;
@@ -165,10 +366,38 @@ namespace {
 		return true;
 	}
 
+	bool InstantiatePrefabFromAssetPath(
+		const std::string& assetPath,
+		std::vector<std::string>& consoleMessages) {
+		if (g_editorRuntimeManager.IsPlaying()) {
+			consoleMessages.push_back("Asset: Play中はPrefabをSceneへ配置できません");
+			return false;
+		}
+
+		g_editorScene.PushUndo();
+		const int32_t prefabRootId = g_editorScene.InstantiatePrefab(assetPath);
+
+		if (prefabRootId < 0) {
+			consoleMessages.push_back("Asset: Prefab生成に失敗 " + assetPath);
+			return false;
+		}
+
+		g_selectedAssetPath = assetPath;
+		SelectGameObject(prefabRootId);
+		RefreshSceneObjects();
+		consoleMessages.push_back("Asset: PrefabをSceneへ生成 " + assetPath);
+		return true;
+	}
+
 	void OpenAssetWithShell(const std::string& assetPath, std::vector<std::string>& consoleMessages) {
-		// .scene はエディタ内で開き、それ以外は OS 既定アプリへ引き渡す。
+		// SceneとPrefabはエディタ操作として処理し、それ以外だけOS既定アプリへ渡す。
 		if (EditorAssetUtility::HasExtension(assetPath, ".scene")) {
 			LoadSceneFromAssetPath(assetPath, consoleMessages);
+			return;
+		}
+
+		if (EditorAssetUtility::HasExtension(assetPath, ".prefab")) {
+			InstantiatePrefabFromAssetPath(assetPath, consoleMessages);
 			return;
 		}
 
@@ -187,16 +416,12 @@ namespace {
 		consoleMessages.push_back("Asset: 開く " + assetPath);
 	}
 
-	void DeleteSelectedAsset(std::string& selectedAssetPath, std::vector<std::string>& consoleMessages) {
-		// Project の選択ファイルを Delete で消し、削除後は Inspector 選択も空に戻す。
-		if (selectedAssetPath.empty()) {
-			return;
-		}
-
-		const std::string deletingAssetPath = selectedAssetPath;
+	void PerformAssetDeletion(const std::string& deletingAssetPath, std::string& selectedAssetPath, std::vector<std::string>& consoleMessages) {
 		if (!std::filesystem::exists(deletingAssetPath)) {
 			consoleMessages.push_back("Asset: 削除対象が見つかりません " + deletingAssetPath);
-			selectedAssetPath.clear();
+			if (selectedAssetPath == deletingAssetPath) {
+				selectedAssetPath.clear();
+			}
 			if (g_selectedAssetPath == deletingAssetPath) {
 				g_selectedAssetPath.clear();
 			}
@@ -215,15 +440,474 @@ namespace {
 			g_currentScenePath.clear();
 		}
 
+		// Project上の削除は今までModel/Texture/Audio/VFX Cacheへ何も伝えていなかった。
+		// Cache済みAssetを削除すると、次に参照されるまで消したはずの内容が残り続ける。
+		AssetManager::Get().Unload(deletingAssetPath);
+
 		consoleMessages.push_back("Asset: 削除 " + deletingAssetPath);
-		selectedAssetPath.clear();
+		InvalidateProjectAssetCache();
+		if (selectedAssetPath == deletingAssetPath) {
+			selectedAssetPath.clear();
+		}
 		if (g_selectedAssetPath == deletingAssetPath) {
 			g_selectedAssetPath.clear();
 		}
 	}
 
-	std::vector<std::string> CollectProjectAssetPaths() {
+	// Project WindowからのReimport要求を1箇所へ集約する経路。
+	// Path -> AssetType判定 -> AssetManager::NotifyFileChanged(既存Hot Reload経路をそのまま再利用) ->
+	// 結果をAssetImportSettingsStoreへ反映、までをここでまとめて行う。Asset種別ごとに
+	// バラバラの再読込処理をUIから直接呼ばないための唯一の入口にする。
+	bool RequestAssetReimport(const std::string& path, std::vector<std::string>& consoleMessages) {
+		const AssetType assetType = AssetManager::Get().DetermineAssetType(path);
+
+		if (!std::filesystem::exists(path)) {
+			const AssetRecord* missingRecord = AssetRegistry::Get().FindByPath(path);
+			if (missingRecord != nullptr) {
+				AssetImportSettingsStore::Get().MarkMissingSource(missingRecord->id);
+			}
+			consoleMessages.push_back(
+				"Reimport FAILED Path=" + path +
+				" Importer=" + ToString(assetType) +
+				" Reason=Source Fileが見つかりません");
+			return false;
+		}
+
+		if (AssetRegistry::Get().FindByPath(path) == nullptr) {
+			// Reimport要求時点でRegistry未登録なら、ここで新規登録してから続ける。
+			AssetRegistry::Get().NotifyAssetAdded(path);
+		}
+
+		const AssetRecord* record = AssetRegistry::Get().FindByPath(path);
+		if (record == nullptr) {
+			consoleMessages.push_back(
+				"Reimport FAILED Path=" + path + " Reason=AssetRegistryへの登録に失敗しました");
+			return false;
+		}
+
+		const AssetId assetId = record->id;
+		AssetImportSettingsStore::Get().GetOrCreate(assetId, assetType);
+
+		const std::string sourceHash = AssetManager::Get().GetHash(path);
+		const AssetNotifyResult result = AssetManager::Get().NotifyFileChanged(path);
+
+		if (result.result == AssetReloadResult::Applied) {
+			AssetImportSettingsStore::Get().MarkImported(assetId, sourceHash);
+			// Reimportで中身が変われば参照先も変わり得るため、この Asset の依存だけ取り直す。
+			AssetRegistry::Get().RefreshDependencies(path);
+			consoleMessages.push_back(
+				"Reimport OK Path=" + path + " AssetId=" + assetId + " Importer=" + ToString(assetType));
+			return true;
+		}
+
+		if (result.result == AssetReloadResult::RequiresManualAction) {
+			AssetImportSettingsStore::Get().MarkNeedsReimport(assetId);
+		}
+		else {
+			AssetImportSettingsStore::Get().MarkFailed(assetId, result.reason);
+		}
+
+		consoleMessages.push_back(
+			"Reimport FAILED Path=" + path +
+			" AssetId=" + assetId +
+			" Importer=" + ToString(assetType) +
+			" Reason=" + result.reason);
+		return false;
+	}
+
+	// 選択Assetの前方依存(参照しているAsset)と逆依存(参照されているAsset)を一覧する。
+	// AssetIdベースのため、Move/Rename後も関係は保たれる。解決できないPathはMissingとして赤字で出す。
+	void DrawAssetDependencyPanel(const std::string& selectedAssetPath, std::vector<std::string>& consoleMessages) {
+		if (selectedAssetPath.empty()) {
+			return;
+		}
+
+		std::error_code fileExistsError;
+		if (!std::filesystem::is_regular_file(selectedAssetPath, fileExistsError)) {
+			return;
+		}
+
+		const AssetRecord* record = AssetRegistry::Get().FindByPath(selectedAssetPath);
+		if (record == nullptr) {
+			record = AssetRegistry::Get().NotifyAssetAdded(selectedAssetPath);
+		}
+		if (record == nullptr) {
+			return;
+		}
+
+		if (!ImGui::CollapsingHeader("依存関係")) {
+			return;
+		}
+
+		const AssetId assetId = record->id;
+
+		if (ImGui::Button("依存関係を再取得")) {
+			AssetRegistry::Get().RefreshDependencies(selectedAssetPath);
+			consoleMessages.push_back("Dependency: 依存関係を再取得しました " + selectedAssetPath);
+		}
+
+		const std::vector<AssetDependencyLink> forwardDependencies =
+			AssetRegistry::Get().GetForwardDependencies(assetId);
+		ImGui::Text("参照しているAsset: %zu 件", forwardDependencies.size());
+
+		for (const AssetDependencyLink& link : forwardDependencies) {
+			if (link.id.empty()) {
+				ImGui::TextColored(
+					ImVec4(1.0f, 0.4f, 0.35f, 1.0f),
+					"  [Missing] %s",
+					link.path.c_str());
+			}
+			else {
+				ImGui::TextDisabled("  %s", link.path.c_str());
+			}
+		}
+
+		const std::vector<AssetId> reverseDependencies =
+			AssetRegistry::Get().GetReverseDependencies(assetId);
+		ImGui::Text("このAssetを参照しているAsset: %zu 件", reverseDependencies.size());
+
+		for (const AssetId& dependentId : reverseDependencies) {
+			const AssetRecord* dependentRecord = AssetRegistry::Get().FindById(dependentId);
+			ImGui::TextDisabled("  %s", dependentRecord != nullptr ? dependentRecord->path.c_str() : dependentId.c_str());
+		}
+
+		if (reverseDependencies.empty()) {
+			ImGui::TextDisabled("  (どのAssetからも参照されていません)");
+		}
+	}
+
+	const char* GetAssetImportStateLabel(AssetImportState state) {
+		switch (state) {
+		case AssetImportState::Imported: return "Imported";
+		case AssetImportState::NeedsReimport: return "Needs Reimport";
+		case AssetImportState::Importing: return "Importing";
+		case AssetImportState::Failed: return "Failed";
+		case AssetImportState::MissingSource: return "Missing Source";
+		case AssetImportState::Unsupported:
+		default:
+			return "Unsupported";
+		}
+	}
+
+	// Project Windowの選択AssetがModel/Texture/Audio/Animationの場合だけ、既存パネルの下に
+	// 小さなImport Settings領域を出す。新しいWindowは追加しない。設定変更は即時Reimportせず、
+	// Apply(保存)とReimport(実際の再読込)を分ける。
+	void DrawAssetImportSettingsPanel(const std::string& selectedAssetPath, std::vector<std::string>& consoleMessages) {
+		if (selectedAssetPath.empty()) {
+			return;
+		}
+
+		std::error_code fileExistsError;
+		if (!std::filesystem::is_regular_file(selectedAssetPath, fileExistsError)) {
+			return;
+		}
+
+		const AssetType assetType = AssetManager::Get().DetermineAssetType(selectedAssetPath);
+		if (assetType != AssetType::Model &&
+			assetType != AssetType::Texture &&
+			assetType != AssetType::Audio &&
+			assetType != AssetType::Animation) {
+			return;
+		}
+
+		const AssetRecord* record = AssetRegistry::Get().FindByPath(selectedAssetPath);
+		if (record == nullptr) {
+			// 表示のためだけにRegistryへ登録する(実FileへのMove/Copyは行わない)。
+			record = AssetRegistry::Get().NotifyAssetAdded(selectedAssetPath);
+		}
+		if (record == nullptr) {
+			return;
+		}
+
+		AssetImportMetadata* metadata = AssetImportSettingsStore::Get().GetOrCreate(record->id, assetType);
+		if (metadata == nullptr) {
+			return;
+		}
+
+		ImGui::Separator();
+		ImGui::TextUnformatted("Import Settings");
+		ImGui::Text("AssetId: %s", metadata->assetId.c_str());
+		ImGui::SameLine();
+		ImGui::Text("State: %s", GetAssetImportStateLabel(metadata->state));
+
+		if (metadata->state == AssetImportState::Failed || metadata->state == AssetImportState::MissingSource) {
+			ImGui::TextColored(
+				ImVec4(1.0f, 0.4f, 0.35f, 1.0f),
+				"Error: %s",
+				metadata->lastErrorReason.c_str());
+		}
+
+		bool hasSettingsChanged = false;
+
+		if (assetType == AssetType::Model) {
+			hasSettingsChanged |= ImGui::DragFloat("Import Scale", &metadata->model.importScale, 0.01f, 0.001f, 1000.0f);
+			hasSettingsChanged |= ImGui::Checkbox("Generate Normals", &metadata->model.generateNormals);
+			hasSettingsChanged |= ImGui::Checkbox("Flip UVs", &metadata->model.flipUVs);
+			hasSettingsChanged |= ImGui::Checkbox("Import Animation", &metadata->model.importAnimation);
+
+			const ModelData* modelData = EditorAssetUtility::GetSharedModelAssetData(selectedAssetPath, true);
+			if (modelData != nullptr) {
+				ImGui::Text("頂点数: %zu", modelData->vertices.size());
+				ImGui::Text("Material数: %zu", modelData->materials.size());
+				ImGui::Text("Skin Bone数: %zu", modelData->skinBoneNames.size());
+				if (modelData->vertices.size() > 60000u) {
+					ImGui::TextDisabled("Colliderに使うには大きい可能性があります。Auto Convex Collisionを検討してください。");
+				}
+			}
+			else {
+				ImGui::TextDisabled("Modelを読み込めません(壊れたFile、または未対応形式)。");
+			}
+		}
+		else if (assetType == AssetType::Texture) {
+			hasSettingsChanged |= ImGui::Checkbox("sRGB", &metadata->texture.srgb);
+			hasSettingsChanged |= ImGui::Checkbox("Normal Map", &metadata->texture.isNormalMap);
+			hasSettingsChanged |= ImGui::Checkbox("Generate Mipmaps", &metadata->texture.generateMipmaps);
+			hasSettingsChanged |= ImGui::DragInt("Max Size (0=無制限)", &metadata->texture.maxSize, 1.0f, 0, 8192);
+		}
+		else if (assetType == AssetType::Audio) {
+			hasSettingsChanged |= ImGui::Checkbox("Preload On Play Start", &metadata->audio.preloadOnPlayStart);
+
+			const AudioClipInfo clipInfo =
+				EditorSharedState::g_editorRuntimeManager.GetAudioManager().GetClipInfo(selectedAssetPath);
+			if (clipInfo.isLoaded) {
+				ImGui::Text("Channel: %s", clipInfo.channelCount >= 2 ? "Stereo" : "Mono");
+				ImGui::Text("Sample Rate: %u Hz", clipInfo.sampleRate);
+				ImGui::Text("Bit Depth: %u bit", clipInfo.bitsPerSample);
+				ImGui::Text("Duration: %.2f 秒", clipInfo.durationSeconds);
+			}
+			else {
+				ImGui::TextDisabled("Audio Clipを読み込めません(壊れたFile、または未対応形式)。");
+			}
+		}
+		else if (assetType == AssetType::Animation) {
+			PropertyAnimationClip previewClip{};
+			if (previewClip.LoadFromJson(selectedAssetPath)) {
+				ImGui::Text("Clip名: %s", previewClip.name.c_str());
+				ImGui::Text("Duration: %.2f 秒", previewClip.durationSeconds);
+				ImGui::Text("Loop: %s", previewClip.loop ? "true" : "false");
+				ImGui::Text("Track数: %zu", previewClip.tracks.size());
+				ImGui::Text("Event数: %zu", previewClip.events.size());
+			}
+			else {
+				ImGui::TextDisabled(".animclipを読み込めません(壊れたFile)。");
+			}
+		}
+
+		if (hasSettingsChanged) {
+			metadata->state = AssetImportState::NeedsReimport;
+		}
+
+		if (ImGui::Button("Apply")) {
+			AssetImportSettingsStore::Get().Save();
+			consoleMessages.push_back("Import Settings: 保存しました " + selectedAssetPath);
+		}
+
+		ImGui::SameLine();
+
+		if (ImGui::Button("Reimport")) {
+			RequestAssetReimport(selectedAssetPath, consoleMessages);
+			InvalidateProjectAssetCache();
+		}
+
+		ImGui::SameLine();
+
+		if (ImGui::Button("Reset to Default")) {
+			const AssetId resetAssetId = record->id;
+			AssetImportSettingsStore::Get().ResetToDefault(resetAssetId, assetType);
+			consoleMessages.push_back("Import Settings: 既定値へ戻しました " + selectedAssetPath);
+		}
+	}
+
+	// Project上でのAsset移動・Renameの正規手順。AssetRegistry::NotifyAssetMovedで同じAssetIdを
+	// 維持したままPathだけ差し替えるため、Scene / PrefabからのAssetId参照が壊れない
+	// (「旧Pathを削除して新Pathを別Assetとして登録する」誤りを避ける)。
+	void PerformAssetMove(
+		const std::string& oldPath,
+		const std::string& newPath,
+		std::string& selectedAssetPath,
+		std::vector<std::string>& consoleMessages) {
+		if (oldPath == newPath) {
+			return;
+		}
+
+		if (!std::filesystem::exists(oldPath)) {
+			consoleMessages.push_back("Asset: 移動対象が見つかりません " + oldPath);
+			return;
+		}
+
+		if (std::filesystem::exists(newPath)) {
+			consoleMessages.push_back("Asset: 移動先に同名のAssetが既に存在します " + newPath);
+			return;
+		}
+
+		std::error_code directoryError;
+		std::filesystem::create_directories(
+			std::filesystem::path(newPath).parent_path(),
+			directoryError);
+
+		std::error_code renameError;
+		std::filesystem::rename(oldPath, newPath, renameError);
+		if (renameError) {
+			consoleMessages.push_back("Asset: 移動に失敗 " + oldPath + " -> " + newPath);
+			return;
+		}
+
+		// AssetIdは維持したままPathだけ更新する。これによりScene / Prefab側がassetIdを
+		// 保持していれば、次回読み込み時にResolveComponentAssetReference経由で新Pathへ追従する。
+		AssetRegistry::Get().NotifyAssetMoved(oldPath, newPath);
+
+		// 旧Pathキーで持っていたCacheは実体を指さなくなるため破棄する(削除時のUnloadと同じ扱い)。
+		AssetManager::Get().Unload(oldPath);
+
+		if (g_currentScenePath == oldPath) {
+			g_currentScenePath = newPath;
+		}
+		if (selectedAssetPath == oldPath) {
+			selectedAssetPath = newPath;
+		}
+		if (g_selectedAssetPath == oldPath) {
+			g_selectedAssetPath = newPath;
+		}
+
+		consoleMessages.push_back("Asset: 移動 " + oldPath + " -> " + newPath);
+		InvalidateProjectAssetCache();
+	}
+
+	// Scene / モデル / Resource 等のAsset削除はディスクから直接消え、Undoで戻せない。
+	// Deleteキー一発で即消えると事故りやすいため、必ず確認ダイアログを一度挟む。
+	inline std::string g_pendingAssetDeletePath;  // 確認待ちのAsset相対パス。空なら確認ダイアログを開かない。
+
+	void DeleteSelectedAsset(std::string& selectedAssetPath, std::vector<std::string>& /*consoleMessages*/) {
+		if (selectedAssetPath.empty()) {
+			return;
+		}
+
+		g_pendingAssetDeletePath = selectedAssetPath;
+		ImGui::OpenPopup("Asset削除確認");
+	}
+
+	void DrawAssetDeleteConfirmationPopup(std::string& selectedAssetPath, std::vector<std::string>& consoleMessages) {
+		if (!ImGui::BeginPopupModal("Asset削除確認", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+			return;
+		}
+
+		ImGui::Text("次のAssetをディスクから削除します。元に戻せません。");
+		ImGui::TextColored(
+			ImVec4(1.0f, 0.55f, 0.15f, 1.0f),
+			"%s",
+			EditorAssetUtility::GetFilename(g_pendingAssetDeletePath).c_str());
+		ImGui::TextDisabled("%s", g_pendingAssetDeletePath.c_str());
+
+		// 削除するとどのAssetの参照が壊れるかを、実行する前に必ず見せる。
+		const AssetRecord* deletingRecord = AssetRegistry::Get().FindByPath(g_pendingAssetDeletePath);
+
+		if (deletingRecord != nullptr) {
+			const std::vector<AssetId> dependents =
+				AssetRegistry::Get().GetReverseDependencies(deletingRecord->id);
+
+			if (!dependents.empty()) {
+				ImGui::Separator();
+				ImGui::TextColored(
+					ImVec4(1.0f, 0.4f, 0.35f, 1.0f),
+					"警告: このAssetは %zu 件のAssetから参照されています。削除すると参照が壊れます。",
+					dependents.size());
+
+				for (const AssetId& dependentId : dependents) {
+					const AssetRecord* dependentRecord = AssetRegistry::Get().FindById(dependentId);
+					ImGui::TextDisabled(
+						"  %s",
+						dependentRecord != nullptr ? dependentRecord->path.c_str() : dependentId.c_str());
+				}
+
+				ImGui::Separator();
+			}
+		}
+
+		if (ImGui::Button("削除する", ImVec2(120.0f, 0.0f))) {
+			PerformAssetDeletion(g_pendingAssetDeletePath, selectedAssetPath, consoleMessages);
+			g_pendingAssetDeletePath.clear();
+			ImGui::CloseCurrentPopup();
+		}
+
+		ImGui::SameLine();
+
+		if (ImGui::Button("キャンセル", ImVec2(120.0f, 0.0f))) {
+			g_pendingAssetDeletePath.clear();
+			ImGui::CloseCurrentPopup();
+		}
+
+		ImGui::EndPopup();
+	}
+
+	// Rename入力欄。確認ダイアログとは別に、開いた瞬間の初期値としてだけ使う。
+	inline std::string g_pendingAssetRenamePath;  // Rename対象の相対パス。空ならダイアログを開かない。
+	inline char g_pendingAssetRenameNameBuffer[260] = "";  // 拡張子込みのファイル名を編集する入力欄。
+
+	void RenameSelectedAsset(const std::string& selectedAssetPath) {
+		if (selectedAssetPath.empty() || !std::filesystem::is_regular_file(selectedAssetPath)) {
+			return;  // フォルダーのRenameは今回のTexture / Model等の参照維持確認スコープ外のため対象外にする。
+		}
+
+		g_pendingAssetRenamePath = selectedAssetPath;
+		const std::string currentFileName = EditorAssetUtility::GetFilename(selectedAssetPath);
+		std::memset(g_pendingAssetRenameNameBuffer, 0, sizeof(g_pendingAssetRenameNameBuffer));
+		std::memcpy(
+			g_pendingAssetRenameNameBuffer,
+			currentFileName.c_str(),
+			(std::min)(currentFileName.size(), sizeof(g_pendingAssetRenameNameBuffer) - 1u));
+		ImGui::OpenPopup("AssetRename確認");
+	}
+
+	void DrawAssetRenameDialog(std::string& selectedAssetPath, std::vector<std::string>& consoleMessages) {
+		if (!ImGui::BeginPopupModal("AssetRename確認", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+			return;
+		}
+
+		ImGui::Text("新しいファイル名(拡張子込み)を入力してください。");
+		ImGui::TextDisabled("%s", g_pendingAssetRenamePath.c_str());
+		const bool isConfirmed = ImGui::InputText(
+			"##AssetRenameName",
+			g_pendingAssetRenameNameBuffer,
+			sizeof(g_pendingAssetRenameNameBuffer),
+			ImGuiInputTextFlags_EnterReturnsTrue);
+
+		if (ImGui::Button("Renameする", ImVec2(120.0f, 0.0f)) || isConfirmed) {
+			const std::string newFileName = g_pendingAssetRenameNameBuffer;
+			if (!newFileName.empty()) {
+				const std::filesystem::path newPath =
+					std::filesystem::path(g_pendingAssetRenamePath).parent_path() / newFileName;
+				PerformAssetMove(
+					g_pendingAssetRenamePath,
+					newPath.generic_string(),
+					selectedAssetPath,
+					consoleMessages);
+			}
+			g_pendingAssetRenamePath.clear();
+			ImGui::CloseCurrentPopup();
+		}
+
+		ImGui::SameLine();
+
+		if (ImGui::Button("キャンセル", ImVec2(120.0f, 0.0f))) {
+			g_pendingAssetRenamePath.clear();
+			ImGui::CloseCurrentPopup();
+		}
+
+		ImGui::EndPopup();
+	}
+
+	const std::vector<std::string>& CollectProjectAssetPaths() {
+		const std::chrono::steady_clock::time_point currentTime = std::chrono::steady_clock::now();
+
+		if (!isProjectAssetCacheDirty && currentTime < nextProjectAssetRefreshTime) {
+			return cachedProjectAssetPaths;
+		}
+
 		std::vector<std::string> assetPaths;  // assetPaths は Project グリッドに表示する Assets / resources 内ファイル。
+		std::unordered_map<std::string, std::string> assetFileNames;
+		std::unordered_map<std::string, std::string> assetParentPaths;
+		std::unordered_map<std::string, std::vector<std::filesystem::path>> projectChildDirectories;
+		std::unordered_set<std::string> projectDirectories;
 		const std::vector<std::filesystem::path> rootPaths = {
 			std::filesystem::path("Assets"),
 			std::filesystem::path("resources"),
@@ -238,6 +922,8 @@ namespace {
 				continue;
 			}
 
+			projectDirectories.insert(rootPath.generic_string());
+
 			for (const std::filesystem::directory_entry& entry :
 			     std::filesystem::recursive_directory_iterator(
 				     rootPath,
@@ -247,6 +933,13 @@ namespace {
 					break;
 				}
 
+				if (entry.is_directory(fileError)) {
+					const std::filesystem::path directoryPath = entry.path();
+					projectDirectories.insert(directoryPath.generic_string());
+					projectChildDirectories[directoryPath.parent_path().generic_string()].push_back(directoryPath);
+					continue;
+				}
+
 				if (!entry.is_regular_file(fileError)) {
 					continue;
 				}
@@ -254,6 +947,8 @@ namespace {
 				std::string assetPath = entry.path().generic_string();
 				if (IsProjectAssetFile(assetPath) &&
 					!EditorAssetUtility::IsBuiltInPrimitiveAssetPath(assetPath)) {
+					assetFileNames.emplace(assetPath, entry.path().filename().generic_string());
+					assetParentPaths.emplace(assetPath, entry.path().parent_path().generic_string());
 					assetPaths.push_back(assetPath);
 				}
 			}
@@ -261,56 +956,56 @@ namespace {
 
 		std::sort(assetPaths.begin(), assetPaths.end());
 		assetPaths.erase(std::unique(assetPaths.begin(), assetPaths.end()), assetPaths.end());
-		return assetPaths;
+
+		for (auto& childDirectoryPair : projectChildDirectories) {
+			std::vector<std::filesystem::path>& childDirectories = childDirectoryPair.second;
+			std::sort(childDirectories.begin(), childDirectories.end());
+		}
+
+		cachedProjectAssetPaths = std::move(assetPaths);
+		cachedProjectAssetFileNames = std::move(assetFileNames);
+		cachedProjectAssetParentPaths = std::move(assetParentPaths);
+		cachedProjectChildDirectories = std::move(projectChildDirectories);
+		cachedProjectDirectories = std::move(projectDirectories);
+		nextProjectAssetRefreshTime = currentTime + kProjectAssetRefreshInterval;
+		isProjectAssetCacheDirty = false;
+		return cachedProjectAssetPaths;
 	}
 
-	bool IsAssetInSelectedProjectFolder(const std::string& assetPath, const std::string& selectedAssetPath) {
-		// 左ツリーでフォルダーを選んでいる時だけ、その配下アセットに Project グリッドを絞る。
-		if (selectedAssetPath.empty()) {
+	bool IsAssetInSelectedProjectFolder(
+		const std::string& assetPath,
+		const std::string& currentProjectDirectoryPath,
+		bool hasFilterText) {
+		// 検索時は全 Project を対象にし、通常時は現在フォルダー直下だけを表示する。
+		if (hasFilterText) {
 			return true;
 		}
 
-		std::error_code fileError;
-		const std::filesystem::path selectedPath(selectedAssetPath);
-		if (!std::filesystem::exists(selectedPath, fileError) ||
-			!std::filesystem::is_directory(selectedPath, fileError)) {
-			return true;
-		}
-
-		const std::string folderPrefix = selectedPath.generic_string() + "/";
-		return assetPath == selectedPath.generic_string() ||
-			assetPath.rfind(folderPrefix, 0) == 0;
+		const auto parentPathIterator = cachedProjectAssetParentPaths.find(assetPath);
+		return parentPathIterator != cachedProjectAssetParentPaths.end() &&
+			parentPathIterator->second == currentProjectDirectoryPath;
 	}
 
-	void DrawProjectFolderNode(const std::filesystem::path& folderPath, std::string& selectedAssetPath) {
-		std::error_code fileError;
-		if (!std::filesystem::exists(folderPath, fileError) ||
-			!std::filesystem::is_directory(folderPath, fileError)) {
+	void DrawProjectFolderNode(
+		const std::filesystem::path& folderPath,
+		std::string& selectedAssetPath,
+		std::string& currentProjectDirectoryPath,
+		std::vector<std::string>& consoleMessages) {
+		const std::string folderPathText = folderPath.generic_string();
+
+		if (!cachedProjectDirectories.contains(folderPathText)) {
 			return;
 		}
 
-		const std::string folderPathText = folderPath.generic_string();
-		const bool isSelected = selectedAssetPath == folderPathText;
+		const bool isSelected = currentProjectDirectoryPath == folderPathText;
+		const auto childDirectoryIterator = cachedProjectChildDirectories.find(folderPathText);
+		const bool hasChildDirectory =
+			childDirectoryIterator != cachedProjectChildDirectories.end() &&
+			!childDirectoryIterator->second.empty();
 		ImGuiTreeNodeFlags treeNodeFlags =
 			ImGuiTreeNodeFlags_OpenOnArrow |
 			ImGuiTreeNodeFlags_OpenOnDoubleClick |
 			(isSelected ? ImGuiTreeNodeFlags_Selected : 0);
-
-		bool hasChildDirectory = false;
-		for (const std::filesystem::directory_entry& childEntry :
-		     std::filesystem::directory_iterator(
-			     folderPath,
-			     std::filesystem::directory_options::skip_permission_denied,
-			     fileError)) {
-			if (fileError) {
-				break;
-			}
-
-			if (childEntry.is_directory(fileError)) {
-				hasChildDirectory = true;
-				break;
-			}
-		}
 
 		if (!hasChildDirectory) {
 			treeNodeFlags |= ImGuiTreeNodeFlags_Leaf;
@@ -320,28 +1015,25 @@ namespace {
 		if (ImGui::IsItemClicked()) {
 			selectedAssetPath = folderPathText;
 			g_selectedAssetPath = folderPathText;
+			currentProjectDirectoryPath = folderPathText;
+		}
+
+		// AssetグリッドからこのFolderへDropしたら、正規のMove経路(AssetRegistry::NotifyAssetMoved
+		// でAssetIdを維持)で移動する。ドラッグ元は下のAssetグリッド側のBeginDragDropSourceを参照。
+		if (ImGui::BeginDragDropTarget()) {
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+				const std::string droppedAssetPath(static_cast<const char*>(payload->Data));
+				const std::filesystem::path newPath =
+					folderPath / std::filesystem::path(droppedAssetPath).filename();
+				PerformAssetMove(droppedAssetPath, newPath.generic_string(), selectedAssetPath, consoleMessages);
+			}
+			ImGui::EndDragDropTarget();
 		}
 
 		if (isOpened) {
 			if (hasChildDirectory) {
-				std::vector<std::filesystem::path> childDirectories;
-				for (const std::filesystem::directory_entry& childEntry :
-				     std::filesystem::directory_iterator(
-					     folderPath,
-					     std::filesystem::directory_options::skip_permission_denied,
-					     fileError)) {
-					if (fileError) {
-						break;
-					}
-
-					if (childEntry.is_directory(fileError)) {
-						childDirectories.push_back(childEntry.path());
-					}
-				}
-
-				std::sort(childDirectories.begin(), childDirectories.end());
-				for (const std::filesystem::path& childDirectoryPath : childDirectories) {
-					DrawProjectFolderNode(childDirectoryPath, selectedAssetPath);
+				for (const std::filesystem::path& childDirectoryPath : childDirectoryIterator->second) {
+					DrawProjectFolderNode(childDirectoryPath, selectedAssetPath, currentProjectDirectoryPath, consoleMessages);
 				}
 			}
 
@@ -351,6 +1043,9 @@ namespace {
 }
 
 void EditorBottomPanel::Initialize() {
+	std::error_code directoryError;
+	std::filesystem::create_directories(kDefaultSceneDirectory, directoryError);
+	InvalidateProjectAssetCache();
 }
 
 void EditorBottomPanel::Update() {
@@ -378,9 +1073,22 @@ void EditorBottomPanel::Draw(
 	ImGui::Begin("下部パネル###BottomPanel", nullptr, dockableWindowFlags);
 	if (ImGui::BeginTabBar("BottomPanelTabs", ImGuiTabBarFlags_Reorderable)) {
 		if (ImGui::BeginTabItem("Project")) {
+			if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows)) {
+				ReportEditorTeamActivity(
+					"Project View",
+					ImGui::IsAnyItemActive() ? "Asset操作中" : "閲覧中");
+			}
 			const bool isProjectWindowFocused =
 				ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);  // Project タブ全体がアクティブな時だけ Delete を受け付ける。
+			auto isSelectedAssetHardLocked = [&selectedAssetPath]() {
+				if (selectedAssetPath.empty()) return false;
+				const char* targetType = EditorAssetUtility::HasExtension(selectedAssetPath, ".prefab")
+					? "Prefab"
+					: EditorAssetUtility::HasExtension(selectedAssetPath, ".scene") ? "Scene" : "Asset";
+				return IsEditorTeamTargetHardLockedByAnotherUser(targetType, selectedAssetPath);
+			};
 			static char newFolderName[128] = "NewFolder";  // Project の新規フォルダー名入力欄。
+			static std::string currentProjectDirectoryPath = "Assets";  // ファイル選択とは分離した、右グリッドの表示先。
 			bool isOpenFolderPopupRequested = false;  // メニューを閉じた後にフォルダー作成モーダルを開く要求。
 
 			ImGui::InputText("検索", assetFilter, assetFilterSize);  // Project 内アセット名検索
@@ -389,6 +1097,42 @@ void EditorBottomPanel::Draw(
 				ImGui::OpenPopup("ProjectCreateAssetPopup");
 			}
 			if (ImGui::BeginPopup("ProjectCreateAssetPopup")) {
+				if (ImGui::MenuItem("ゲーム用Sceneフォルダー")) {
+					std::filesystem::create_directories(kDefaultSceneDirectory);
+					const std::string gameFolderPath =
+						MakeUniqueFolderPath(kDefaultSceneDirectory, "NewGame");
+					std::error_code fileError;
+
+					if (std::filesystem::create_directories(gameFolderPath, fileError) && !fileError) {
+						InvalidateProjectAssetCache();
+						selectedAssetPath = gameFolderPath;
+						g_selectedAssetPath = gameFolderPath;
+						currentProjectDirectoryPath = gameFolderPath;
+						consoleMessages.push_back("Asset: ゲーム用Sceneフォルダーを作成 " + gameFolderPath);
+					}
+					else {
+						consoleMessages.push_back("Asset: ゲーム用Sceneフォルダーの作成に失敗");
+					}
+				}
+
+				if (ImGui::MenuItem("Scene")) {
+					std::string sceneDirectory = GetSceneAssetCreateDirectory(selectedAssetPath);
+
+					// ゲームフォルダ未選択の状態でSceneを直下へ増やさない。
+					// ルートから作る場合は新しいゲーム単位のフォルダを必ず挟む。
+					if (sceneDirectory == kDefaultSceneDirectory) {
+						sceneDirectory = MakeUniqueFolderPath(kDefaultSceneDirectory, "NewGame");
+						std::filesystem::create_directories(sceneDirectory);
+						InvalidateProjectAssetCache();
+					}
+
+					CreateSceneAsset(
+						sceneDirectory,
+						selectedAssetPath,
+						consoleMessages);
+					currentProjectDirectoryPath = sceneDirectory;
+				}
+
 				if (ImGui::MenuItem("フォルダー")) {
 					std::memset(newFolderName, 0, sizeof(newFolderName));
 					const char* defaultFolderName = "NewFolder";
@@ -407,6 +1151,60 @@ void EditorBottomPanel::Draw(
 					}
 					else {
 						consoleMessages.push_back("Asset: Failed to create Input Actions");
+					}
+				}
+
+				if (ImGui::MenuItem("Animation Graph")) {
+					const std::string createDirectoryPath = GetProjectAssetCreateDirectory(selectedAssetPath);
+					std::filesystem::create_directories(createDirectoryPath);
+					const std::string filePath = MakeUniqueTextAssetPath(
+						createDirectoryPath,
+						"NewAnimationGraph",
+						".animgraph");
+
+					if (WriteUtf8BomTextFile(filePath, MakeDefaultAnimationGraphText())) {
+						selectedAssetPath = filePath;
+						g_selectedAssetPath = filePath;
+						consoleMessages.push_back("Asset: Animation Graph を作成 " + filePath);
+					}
+					else {
+						consoleMessages.push_back("Asset: Animation Graph の作成に失敗");
+					}
+				}
+
+				if (ImGui::MenuItem("Animation Clip")) {
+					const std::string createDirectoryPath = GetProjectAssetCreateDirectory(selectedAssetPath);
+					std::filesystem::create_directories(createDirectoryPath);
+					const std::string filePath = MakeUniqueTextAssetPath(
+						createDirectoryPath,
+						"NewAnimationClip",
+						".animclip");
+
+					if (WriteUtf8BomTextFile(filePath, MakeDefaultPropertyAnimationClipText())) {
+						selectedAssetPath = filePath;
+						g_selectedAssetPath = filePath;
+						consoleMessages.push_back("Asset: Animation Clip を作成 " + filePath);
+					}
+					else {
+						consoleMessages.push_back("Asset: Animation Clip の作成に失敗");
+					}
+				}
+
+				if (ImGui::MenuItem("Effect Asset")) {
+					const std::string createDirectoryPath = GetProjectAssetCreateDirectory(selectedAssetPath);
+					std::filesystem::create_directories(createDirectoryPath);
+					const std::string filePath = MakeUniqueTextAssetPath(
+						createDirectoryPath,
+						"NewEffect",
+						".effect");
+
+					if (WriteUtf8BomTextFile(filePath, MakeDefaultEffectAssetText())) {
+						selectedAssetPath = filePath;
+						g_selectedAssetPath = filePath;
+						consoleMessages.push_back("Asset: Effect Asset を作成 " + filePath);
+					}
+					else {
+						consoleMessages.push_back("Asset: Effect Asset の作成に失敗");
 					}
 				}
 				ImGui::EndPopup();
@@ -432,6 +1230,7 @@ void EditorBottomPanel::Draw(
 					std::error_code fileError;
 					const bool isCreated = std::filesystem::create_directories(folderPath, fileError);
 					if (isCreated && !fileError) {
+						InvalidateProjectAssetCache();
 						selectedAssetPath = folderPath;
 						g_selectedAssetPath = folderPath;
 						consoleMessages.push_back("Asset: Folder created " + folderPath);
@@ -451,17 +1250,46 @@ void EditorBottomPanel::Draw(
 				ImGui::EndPopup();
 			}
 
+			const std::vector<std::string>& assetPaths = CollectProjectAssetPaths();
+
 			ImGui::BeginChild("Folders", ImVec2(180.0f, 0.0f), ImGuiChildFlags_Borders);  // 左側の簡易フォルダツリー
-			DrawProjectFolderNode(std::filesystem::path("Assets"), selectedAssetPath);
-			DrawProjectFolderNode(std::filesystem::path("resources"), selectedAssetPath);
+			DrawProjectFolderNode(std::filesystem::path("Assets"), selectedAssetPath, currentProjectDirectoryPath, consoleMessages);
+			DrawProjectFolderNode(std::filesystem::path("resources"), selectedAssetPath, currentProjectDirectoryPath, consoleMessages);
 			ImGui::EndChild();
 			ImGui::SameLine();
 			ImGui::BeginChild("Assets", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);  // 右側のアセットグリッド
+			ImGui::TextDisabled("%s", currentProjectDirectoryPath.c_str());
+			ImGui::Separator();
 			if (ImGui::BeginTable("AssetGrid", 4, ImGuiTableFlags_SizingStretchSame)) {
-				std::vector<std::string> assetPaths = CollectProjectAssetPaths();
+				const bool hasFilterText = EditorAssetUtility::HasFilterText(assetFilter);
+
+				if (!hasFilterText) {
+					const auto childDirectoryIterator =
+						cachedProjectChildDirectories.find(currentProjectDirectoryPath);
+
+					if (childDirectoryIterator != cachedProjectChildDirectories.end()) {
+						for (const std::filesystem::path& childDirectoryPath : childDirectoryIterator->second) {
+							const std::string childDirectoryText = childDirectoryPath.generic_string();
+							ImGui::TableNextColumn();
+							ImGui::PushID(childDirectoryText.c_str());
+
+							if (ImGui::Button("DIR", ImVec2(58.0f, 48.0f))) {
+								currentProjectDirectoryPath = childDirectoryText;
+								selectedAssetPath = childDirectoryText;
+								g_selectedAssetPath = childDirectoryText;
+							}
+
+							ImGui::TextWrapped("%s", childDirectoryPath.filename().generic_string().c_str());
+							ImGui::PopID();
+						}
+					}
+				}
 
 				for (const std::string& relativePath : assetPaths) {
-					if (!IsAssetInSelectedProjectFolder(relativePath, selectedAssetPath)) {
+					if (!IsAssetInSelectedProjectFolder(
+							relativePath,
+							currentProjectDirectoryPath,
+							hasFilterText)) {
 						continue;
 					}
 
@@ -472,6 +1300,11 @@ void EditorBottomPanel::Draw(
 
 					ImGui::TableNextColumn();
 					ImGui::PushID(relativePath.c_str());
+					const auto fileNameIterator = cachedProjectAssetFileNames.find(relativePath);
+					const char* fileName = fileNameIterator != cachedProjectAssetFileNames.end()
+						? fileNameIterator->second.c_str()
+						: relativePath.c_str();
+					const std::string teamItemPopupId = "ProjectTeamItemContext##" + relativePath;
 					bool isPng =
 						EditorAssetUtility::HasExtension(relativePath, ".png") ||
 						EditorAssetUtility::HasExtension(relativePath, ".PNG");
@@ -489,6 +1322,9 @@ void EditorBottomPanel::Draw(
 							selectedAssetPath = relativePath;  // クリックした Texture を Inspector の選択アセットにする
 							g_selectedAssetPath = relativePath;
 						}
+						if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+							ImGui::OpenPopup(teamItemPopupId.c_str());
+						}
 						if (ImGui::IsItemHovered() &&
 							ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
 							OpenAssetWithShell(relativePath, consoleMessages);
@@ -502,8 +1338,7 @@ void EditorBottomPanel::Draw(
 							ImGui::Text("%s", relativePath.c_str());
 							ImGui::EndDragDropSource();
 						}
-						std::string filename = EditorAssetUtility::GetFilename(relativePath);
-						ImGui::TextWrapped("%s", filename.c_str());
+						ImGui::TextWrapped("%s", fileName);
 					}
 					else {
 						bool isSelected = selectedAssetPath == relativePath;  // 画像以外は拡張子別のテキストアイコンで表示する
@@ -538,6 +1373,15 @@ void EditorBottomPanel::Draw(
 						else if (EditorAssetUtility::HasExtension(relativePath, ".inputactions")) {
 							assetIcon = "INPUT";
 						}
+						else if (EditorAssetUtility::HasExtension(relativePath, ".animgraph")) {
+							assetIcon = "ANIM";
+						}
+						else if (EditorAssetUtility::HasExtension(relativePath, ".animclip")) {
+							assetIcon = "CLIP";
+						}
+						else if (EditorAssetUtility::HasExtension(relativePath, ".effect")) {
+							assetIcon = "FX";
+						}
 						else if (EditorAssetUtility::HasExtension(relativePath, ".json")) {
 							assetIcon = "JSON";
 						}
@@ -551,6 +1395,9 @@ void EditorBottomPanel::Draw(
 						if (ImGui::Button(assetIcon, ImVec2(58.0f, 48.0f))) {
 							selectedAssetPath = relativePath;  // クリックした Asset を Inspector の選択アセットにする
 							g_selectedAssetPath = relativePath;
+						}
+						if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+							ImGui::OpenPopup(teamItemPopupId.c_str());
 						}
 						if (ImGui::IsItemHovered() &&
 							ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
@@ -569,11 +1416,60 @@ void EditorBottomPanel::Draw(
 							ImGui::TextColored(
 								ImVec4(0.4f, 0.7f, 1.0f, 1.0f),
 								"%s",
-								EditorAssetUtility::GetFilename(relativePath).c_str());
+								fileName);
 						}
 						else {
-							ImGui::TextWrapped("%s", EditorAssetUtility::GetFilename(relativePath).c_str());
+							ImGui::TextWrapped("%s", fileName);
 						}
+					}
+
+					const bool isScriptAsset =
+						EditorAssetUtility::HasExtension(relativePath, ".cpp") ||
+						EditorAssetUtility::HasExtension(relativePath, ".h") ||
+						EditorAssetUtility::HasExtension(relativePath, ".py");
+					const std::string teamTargetType =
+						EditorAssetUtility::HasExtension(relativePath, ".prefab")
+							? "Prefab"
+							: isScriptAsset ? "Script" : "Asset";
+					EditorTeamItemTargetSummary teamItemSummary =
+						GetEditorTeamTargetItemSummary(teamTargetType, relativePath);
+					if (isScriptAsset) {
+						const EditorTeamItemTargetSummary lineSummary =
+							GetEditorTeamTargetItemSummary("ScriptLine", relativePath);
+						teamItemSummary.noteCount += lineSummary.noteCount;
+						teamItemSummary.pingCount += lineSummary.pingCount;
+						teamItemSummary.chatCount += lineSummary.chatCount;
+						teamItemSummary.reviewCount += lineSummary.reviewCount;
+						teamItemSummary.unresolvedCount += lineSummary.unresolvedCount;
+					}
+					if (teamItemSummary.GetTotalCount() > 0) {
+						char teamItemBadge[32]{};
+						std::snprintf(
+							teamItemBadge,
+							sizeof(teamItemBadge),
+							"TEAM %d",
+							teamItemSummary.GetTotalCount());
+						if (ImGui::SmallButton(teamItemBadge)) {
+							OpenEditorTeamTargetItems(teamTargetType, relativePath, false);
+						}
+					}
+					if (ImGui::BeginPopup(teamItemPopupId.c_str())) {
+						if (ImGui::MenuItem("付箋を作成")) {
+							OpenEditorTeamTargetItems(teamTargetType, relativePath, true, "Note");
+						}
+						if (ImGui::MenuItem("Pingを送信")) {
+							OpenEditorTeamTargetItems(teamTargetType, relativePath, true, "Ping");
+						}
+						if (ImGui::MenuItem("チャットを開始")) {
+							OpenEditorTeamTargetItems(teamTargetType, relativePath, true, "Chat");
+						}
+						if (ImGui::MenuItem("レビューを依頼")) {
+							OpenEditorTeamTargetItems(teamTargetType, relativePath, true, "Review");
+						}
+						if (isScriptAsset && ImGui::MenuItem("コード行へ付箋")) {
+							OpenEditorTeamTargetItems("ScriptLine", relativePath, true, "Note");
+						}
+						ImGui::EndPopup();
 					}
 					ImGui::PopID();
 				}
@@ -583,12 +1479,27 @@ void EditorBottomPanel::Draw(
 				ImGui::TextDisabled("検索中: %s", assetFilter);
 			}
 
-			if (isProjectWindowFocused &&
+			if (isProjectWindowFocused && !isSelectedAssetHardLocked() &&
 				!ImGui::IsAnyItemActive() &&
 				!ImGui::GetIO().WantTextInput &&
 				ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
 				DeleteSelectedAsset(selectedAssetPath, consoleMessages);
 			}
+
+			if (isProjectWindowFocused && !isSelectedAssetHardLocked() &&
+				!ImGui::IsAnyItemActive() &&
+				!ImGui::GetIO().WantTextInput &&
+				ImGui::IsKeyPressed(ImGuiKey_F2, false)) {
+				RenameSelectedAsset(selectedAssetPath);
+			}
+			if (isSelectedAssetHardLocked()) {
+				ImGui::TextDisabled("共同制作: 他のユーザーがこのAssetをHard Lockしています");
+			}
+
+			DrawAssetDeleteConfirmationPopup(selectedAssetPath, consoleMessages);
+			DrawAssetRenameDialog(selectedAssetPath, consoleMessages);
+			DrawAssetImportSettingsPanel(selectedAssetPath, consoleMessages);
+			DrawAssetDependencyPanel(selectedAssetPath, consoleMessages);
 
 			ImGui::EndChild();
 			ImGui::EndTabItem();

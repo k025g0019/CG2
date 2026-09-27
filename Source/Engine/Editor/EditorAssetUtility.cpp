@@ -1,7 +1,11 @@
 ﻿#include "EditorAssetUtility.h"
 
+#include "Source/Engine/Asset/AssetImportSettings.h"
+#include "Source/Engine/Asset/AssetRegistry.h"
+
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
@@ -11,9 +15,11 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #pragma warning(push, 0)
+#include <Windows.h>
 #include <fbxsdk.h>
 #include <meshoptimizer.h>
 #pragma warning(pop)
@@ -22,6 +28,20 @@
 
 namespace {
 	constexpr unsigned char kUtf8Bom[] = {0xEFu, 0xBBu, 0xBFu};  // テキストアセットを UTF-8 BOM 付きで保存する。
+
+	std::filesystem::path ResolveInstalledEngineAssetPath(const std::filesystem::path& requestedPath) {
+		if (requestedPath.empty() || requestedPath.is_absolute()) return requestedPath;
+		std::error_code fileError;
+		if (std::filesystem::exists(requestedPath, fileError) && !fileError) return requestedPath;
+		std::wstring executablePath(32768U, L'\0');
+		const DWORD length = GetModuleFileNameW(nullptr, executablePath.data(), static_cast<DWORD>(executablePath.size()));
+		if (length == 0U || length >= executablePath.size()) return requestedPath;
+		executablePath.resize(length);
+		const std::filesystem::path installedPath =
+			std::filesystem::path(executablePath).parent_path() / requestedPath;
+		fileError.clear();
+		return std::filesystem::exists(installedPath, fileError) && !fileError ? installedPath : requestedPath;
+	}
 
 	void InitializeDefaultMaterialData(ModelData& modelData) {
 		modelData.material = {};
@@ -36,6 +56,8 @@ namespace {
 		modelData.material.uvLayoutTextureFilePath.clear();
 		modelData.materials.clear();
 		modelData.animationClips.clear();
+		modelData.skinBoneNames.clear();
+		modelData.defaultSkinMatrices.clear();
 		modelData.localBoundsCenter = {0.0f, 0.0f, 0.0f};
 		modelData.localBoundsSize = {1.0f, 1.0f, 1.0f};
 	}
@@ -74,6 +96,72 @@ namespace {
 			(maxPosition.x - minPosition.x),
 			(maxPosition.y - minPosition.y),
 			(maxPosition.z - minPosition.z)};
+	}
+
+	// AssetId単位で保存されたImport設定(Scale/Normal再計算/UV反転)を、Cache登録前の
+	// 非indexed三角形列(modelData.vertices)へ直接反映する。Move/Renameしても
+	// AssetImportSettingsStoreはAssetId経由で解決するため設定は消えない。
+	void ApplyModelImportSettings(ModelData& modelData, const std::string& normalizedPath) {
+		const AssetRecord* record = AssetRegistry::Get().FindByPath(normalizedPath);
+		if (record == nullptr) {
+			return;
+		}
+
+		const AssetImportMetadata* metadata = AssetImportSettingsStore::Get().Find(record->id);
+		if (metadata == nullptr) {
+			return;
+		}
+
+		const ModelImportSettings& settings = metadata->model;
+
+		if (settings.importScale != 1.0f) {
+			for (VertexData& vertex : modelData.vertices) {
+				vertex.position.x *= settings.importScale;
+				vertex.position.y *= settings.importScale;
+				vertex.position.z *= settings.importScale;
+			}
+		}
+
+		if (settings.generateNormals) {
+			// 非indexed三角形列を3頂点ずつ読み、面法線をそのまま3頂点へ書き込む(Flat Shading相当)。
+			for (size_t triangleStart = 0u; triangleStart + 2u < modelData.vertices.size(); triangleStart += 3u) {
+				VertexData& vertexA = modelData.vertices[triangleStart];
+				VertexData& vertexB = modelData.vertices[triangleStart + 1u];
+				VertexData& vertexC = modelData.vertices[triangleStart + 2u];
+
+				const Vector3 edgeAB = {
+					vertexB.position.x - vertexA.position.x,
+					vertexB.position.y - vertexA.position.y,
+					vertexB.position.z - vertexA.position.z};
+				const Vector3 edgeAC = {
+					vertexC.position.x - vertexA.position.x,
+					vertexC.position.y - vertexA.position.y,
+					vertexC.position.z - vertexA.position.z};
+				Vector3 faceNormal = {
+					edgeAB.y * edgeAC.z - edgeAB.z * edgeAC.y,
+					edgeAB.z * edgeAC.x - edgeAB.x * edgeAC.z,
+					edgeAB.x * edgeAC.y - edgeAB.y * edgeAC.x};
+				const float faceNormalLength = std::sqrt(
+					faceNormal.x * faceNormal.x +
+					faceNormal.y * faceNormal.y +
+					faceNormal.z * faceNormal.z);
+
+				if (faceNormalLength > 0.00001f) {
+					faceNormal.x /= faceNormalLength;
+					faceNormal.y /= faceNormalLength;
+					faceNormal.z /= faceNormalLength;
+					vertexA.normal = faceNormal;
+					vertexB.normal = faceNormal;
+					vertexC.normal = faceNormal;
+				}
+			}
+		}
+
+		if (settings.flipUVs) {
+			for (VertexData& vertex : modelData.vertices) {
+				vertex.texcoord.y = 1.0f - vertex.texcoord.y;
+			}
+		}
 	}
 
 	void OptimizeModelVertices(ModelData& modelData) {
@@ -236,18 +324,122 @@ namespace {
 		}
 	}
 
+	// FBX の FileName は exporter や作成環境次第で UTF-8 ではなく、CP932 などの
+	// Windows ANSI コードページのまま入ることがある。std::filesystem::path に
+	// std::string を直接渡すと、MSVC が UTF-8 として変換して system_error を送出する。
+	bool TryConvertNarrowTextToWide(
+		const std::string& text,
+		const UINT codePage,
+		const DWORD flags,
+		std::wstring& wideText) {
+		if (text.empty()) {
+			wideText.clear();
+			return true;
+		}
+
+		const int requiredLength = MultiByteToWideChar(
+			codePage,
+			flags,
+			text.data(),
+			static_cast<int>(text.size()),
+			nullptr,
+			0);
+		if (requiredLength <= 0) {
+			return false;
+		}
+
+		wideText.resize(static_cast<size_t>(requiredLength));
+		return MultiByteToWideChar(
+			codePage,
+			flags,
+			text.data(),
+			static_cast<int>(text.size()),
+			wideText.data(),
+			requiredLength) == requiredLength;
+	}
+
+	bool TryConvertWideTextToUtf8(const std::wstring& wideText, std::string& utf8Text) {
+		if (wideText.empty()) {
+			utf8Text.clear();
+			return true;
+		}
+
+		const int requiredLength = WideCharToMultiByte(
+			CP_UTF8,
+			0,
+			wideText.data(),
+			static_cast<int>(wideText.size()),
+			nullptr,
+			0,
+			nullptr,
+			nullptr);
+		if (requiredLength <= 0) {
+			return false;
+		}
+
+		utf8Text.resize(static_cast<size_t>(requiredLength));
+		return WideCharToMultiByte(
+			CP_UTF8,
+			0,
+			wideText.data(),
+			static_cast<int>(wideText.size()),
+			utf8Text.data(),
+			requiredLength,
+			nullptr,
+			nullptr) == requiredLength;
+	}
+
+	bool TryCreatePathFromFbxText(const std::string& text, std::filesystem::path& path) {
+		std::wstring wideText;
+		// 現行 exporter の UTF-8 を優先し、古い Windows exporter のローカルコードページを
+		// フォールバックにする。どちらにも変換できない参照はインポート対象にしない。
+		if (!TryConvertNarrowTextToWide(text, CP_UTF8, MB_ERR_INVALID_CHARS, wideText) &&
+			!TryConvertNarrowTextToWide(text, CP_ACP, 0, wideText)) {
+			return false;
+		}
+
+		path = std::filesystem::path(wideText);
+		return true;
+	}
+
+	bool TryCreatePathFromUtf8Text(const std::string& text, std::filesystem::path& path) {
+		std::wstring wideText;
+		if (!TryConvertNarrowTextToWide(text, CP_UTF8, MB_ERR_INVALID_CHARS, wideText)) {
+			return false;
+		}
+
+		path = std::filesystem::path(wideText);
+		return true;
+	}
+
+	bool PathExistsWithoutThrowing(const std::string& utf8Path) {
+		std::filesystem::path path;
+		if (!TryCreatePathFromUtf8Text(utf8Path, path)) {
+			return false;
+		}
+
+		std::error_code error;
+		return std::filesystem::exists(path, error) && !error;
+	}
+
 	std::string MakeTexturePathRelativeToAsset(const std::string& assetPath, const std::string& texturePath) {
 		if (texturePath.empty()) {
 			return "";
 		}
 
-		const std::filesystem::path textureFilePath(texturePath);
-		if (textureFilePath.is_absolute()) {
-			return textureFilePath.generic_string();
+		std::filesystem::path textureFilePath;
+		std::filesystem::path assetFilePath;
+		if (!TryCreatePathFromFbxText(texturePath, textureFilePath) ||
+			!TryCreatePathFromUtf8Text(assetPath, assetFilePath)) {
+			return "";
 		}
 
-		const std::filesystem::path assetDirectory = std::filesystem::path(assetPath).parent_path();
-		return (assetDirectory / textureFilePath).lexically_normal().generic_string();
+		const std::filesystem::path resolvedPath = textureFilePath.is_absolute()
+			? textureFilePath
+			: (assetFilePath.parent_path() / textureFilePath).lexically_normal();
+
+		std::string resolvedUtf8Path;
+		return TryConvertWideTextToUtf8(resolvedPath.native(), resolvedUtf8Path) ? resolvedUtf8Path : "";
 	}
 
 	std::string TryGetFbxTexturePath(const FbxProperty& property, const std::string& assetPath) {
@@ -273,7 +465,7 @@ namespace {
 			const char* fileName = fileTexture->GetFileName();
 			if (fileName != nullptr && fileName[0] != '\0') {
 				const std::string resolvedTexturePath = MakeTexturePathRelativeToAsset(assetPath, fileName);
-				if (std::filesystem::exists(std::filesystem::path(resolvedTexturePath))) {
+				if (PathExistsWithoutThrowing(resolvedTexturePath)) {
 					return resolvedTexturePath;
 				}
 
@@ -283,7 +475,7 @@ namespace {
 			const char* relativeFileName = fileTexture->GetRelativeFileName();
 			if (relativeFileName != nullptr && relativeFileName[0] != '\0') {
 				const std::string resolvedTexturePath = MakeTexturePathRelativeToAsset(assetPath, relativeFileName);
-				if (std::filesystem::exists(std::filesystem::path(resolvedTexturePath))) {
+				if (PathExistsWithoutThrowing(resolvedTexturePath)) {
 					return resolvedTexturePath;
 				}
 
@@ -496,7 +688,108 @@ namespace {
 		return firstAnimatedNode;
 	}
 
-	void AppendFbxAnimationClips(ModelData& modelData, FbxScene* scene) {
+	struct FbxSkinBindingData {
+		FbxNode* meshNode = nullptr;  // Skin Cluster を持つ Mesh Node
+		FbxNode* boneNode = nullptr;  // Cluster が参照する Bone Node
+		FbxAMatrix meshBindGlobal{};  // Bind 時の Mesh Global 行列
+		FbxAMatrix boneBindGlobal{};  // Bind 時の Bone Global 行列
+	};
+
+	struct VertexSkinInfluenceData {
+		std::array<uint32_t, 4u> boneIndices{};
+		std::array<float, 4u> boneWeights{};
+	};
+
+	Matrix4x4 ConvertFbxSkinMatrix(const FbxAMatrix& fbxMatrix) {
+		// FBX の column-vector / 右手系を、エンジンの row-vector / X 反転座標へ変換する。
+		Matrix4x4 rowMatrix{};
+
+		for (int32_t row = 0; row < 4; row++) {
+			for (int32_t column = 0; column < 4; column++) {
+				rowMatrix.matrix[row][column] =
+					static_cast<float>(fbxMatrix[column][row]);
+			}
+		}
+
+		Matrix4x4 handednessMatrix = MakeIdentity4x4();
+		handednessMatrix.matrix[0][0] = -1.0f;
+		return Multiply(Multiply(handednessMatrix, rowMatrix), handednessMatrix);
+	}
+
+	Matrix4x4 EvaluateFbxSkinMatrix(
+		const FbxSkinBindingData& binding,
+		const FbxTime& sampleTime) {
+		if (binding.meshNode == nullptr || binding.boneNode == nullptr) {
+			return MakeIdentity4x4();
+		}
+
+		const FbxAMatrix meshCurrentGlobal =
+			binding.meshNode->EvaluateGlobalTransform(sampleTime);
+		const FbxAMatrix boneCurrentGlobal =
+			binding.boneNode->EvaluateGlobalTransform(sampleTime);
+		const FbxAMatrix skinMatrix =
+			meshCurrentGlobal.Inverse() *
+			boneCurrentGlobal *
+			binding.boneBindGlobal.Inverse() *
+			binding.meshBindGlobal;
+		return ConvertFbxSkinMatrix(skinMatrix);
+	}
+
+	void InsertFbxSkinInfluence(
+		VertexSkinInfluenceData& influenceData,
+		uint32_t boneIndex,
+		float boneWeight) {
+		if (boneWeight <= 0.000001f) {
+			return;
+		}
+
+		for (size_t influenceIndex = 0u;
+			 influenceIndex < influenceData.boneWeights.size();
+			 influenceIndex++) {
+			if (influenceData.boneWeights[influenceIndex] > 0.0f &&
+				influenceData.boneIndices[influenceIndex] == boneIndex) {
+				influenceData.boneWeights[influenceIndex] += boneWeight;
+				return;
+			}
+		}
+
+		size_t replacementIndex = 0u;
+		for (size_t influenceIndex = 1u;
+			 influenceIndex < influenceData.boneWeights.size();
+			 influenceIndex++) {
+			if (influenceData.boneWeights[influenceIndex] <
+				influenceData.boneWeights[replacementIndex]) {
+				replacementIndex = influenceIndex;
+			}
+		}
+
+		if (boneWeight > influenceData.boneWeights[replacementIndex]) {
+			influenceData.boneIndices[replacementIndex] = boneIndex;
+			influenceData.boneWeights[replacementIndex] = boneWeight;
+		}
+	}
+
+	void NormalizeFbxSkinInfluence(VertexSkinInfluenceData& influenceData) {
+		float totalWeight = 0.0f;
+
+		for (float boneWeight : influenceData.boneWeights) {
+			totalWeight += boneWeight;
+		}
+
+		if (totalWeight <= 0.000001f) {
+			return;
+		}
+
+		const float inverseTotalWeight = 1.0f / totalWeight;
+		for (float& boneWeight : influenceData.boneWeights) {
+			boneWeight *= inverseTotalWeight;
+		}
+	}
+
+	void AppendFbxAnimationClips(
+		ModelData& modelData,
+		FbxScene* scene,
+		const std::vector<FbxSkinBindingData>& skinBindings) {
 		if (scene == nullptr) {
 			return;
 		}
@@ -530,19 +823,21 @@ namespace {
 				scene->GetRootNode(),
 				animationLayer,
 				firstAnimatedNode);
+			const double sourceFrameRate = FbxTime::GetFrameRate(
+				scene->GetGlobalSettings().GetTimeMode());
+			const float sampleFrameRate = (std::clamp)(
+				static_cast<float>(sourceFrameRate),
+				15.0f,
+				60.0f);
+			const int32_t sampleCount = clipData.durationSeconds > 0.0f
+				? (std::min)(
+					static_cast<int32_t>(std::ceil(clipData.durationSeconds * sampleFrameRate)) + 1,
+					3600)
+				: 1;
+			const double clipStartSeconds = clipTimeSpan.GetStart().GetSecondDouble();
 
 			if (animatedNode != nullptr && clipData.durationSeconds > 0.0f) {
 				clipData.animatedNodeName = animatedNode->GetName();
-				const double sourceFrameRate = FbxTime::GetFrameRate(
-					scene->GetGlobalSettings().GetTimeMode());
-				const float sampleFrameRate = (std::clamp)(
-					static_cast<float>(sourceFrameRate),
-					15.0f,
-					60.0f);
-				const int32_t sampleCount = (std::min)(
-					static_cast<int32_t>(std::ceil(clipData.durationSeconds * sampleFrameRate)) + 1,
-					3600);
-				const double clipStartSeconds = clipTimeSpan.GetStart().GetSecondDouble();
 
 				for (int32_t sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
 					const float keyframeTime = (std::min)(
@@ -574,6 +869,32 @@ namespace {
 				}
 			}
 
+			if (!skinBindings.empty()) {
+				clipData.skinPoseFrames.reserve(static_cast<size_t>(sampleCount));
+
+				for (int32_t sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+					const float frameTime = clipData.durationSeconds > 0.0f
+						? (std::min)(
+							static_cast<float>(sampleIndex) / sampleFrameRate,
+							clipData.durationSeconds)
+						: 0.0f;
+					FbxTime sampleTime{};
+					sampleTime.SetSecondDouble(
+						clipStartSeconds + static_cast<double>(frameTime));
+
+					ModelSkinPoseFrameData poseFrame{};
+					poseFrame.timeSeconds = frameTime;
+					poseFrame.boneMatrices.reserve(skinBindings.size());
+
+					for (const FbxSkinBindingData& skinBinding : skinBindings) {
+						poseFrame.boneMatrices.push_back(
+							EvaluateFbxSkinMatrix(skinBinding, sampleTime));
+					}
+
+					clipData.skinPoseFrames.push_back(std::move(poseFrame));
+				}
+			}
+
 			modelData.animationClips.push_back(clipData);
 		}
 
@@ -585,9 +906,12 @@ namespace {
 	struct CachedModelAsset {
 		ModelData modelData;  // 読み込み済みメッシュ。描画と MeshCollider で共有する。
 		std::filesystem::file_time_type lastWriteTime{};  // ファイル更新を検知してキャッシュを作り直す。
+		std::chrono::steady_clock::time_point nextValidationTime{};  // 毎フレームのファイルシステム確認を避ける。
+		bool includesAnimation = false;  // true なら FBX Animation のサンプリングまで完了している。
 	};
 
 	std::unordered_map<std::string, CachedModelAsset> g_cachedModelAssets;  // 同じ asset を毎フレーム再パースしないための簡易キャッシュ。
+	std::unordered_map<std::string, std::string> g_modelCacheKeyByRequestedPath;  // 旧 resources path と移動後 path を同じ cache entry へ結ぶ。
 
 	std::string ToLowerText(const std::string& text) {
 		std::string lowerText = text;
@@ -607,6 +931,73 @@ namespace {
 		return normalizedPath;
 	}
 
+	// シーンやアセット設定から来るパスは UTF-8 のはずだが、壊れた旧データを
+	// std::filesystem に直接渡して Editor 全体を止めないようにする。
+	std::string NormalizeFilesystemPathForLookup(const std::string& pathText) {
+		std::filesystem::path path;
+		if (!TryCreatePathFromUtf8Text(pathText, path)) {
+			return NormalizeAssetPath(pathText);
+		}
+
+		std::string normalizedUtf8Path;
+		if (!TryConvertWideTextToUtf8(path.lexically_normal().native(), normalizedUtf8Path)) {
+			return NormalizeAssetPath(pathText);
+		}
+
+		return NormalizeAssetPath(normalizedUtf8Path);
+	}
+
+	std::string ResolveEditorDefaultAssetPath(const std::string& path) {
+		const std::string normalizedPath = NormalizeAssetPath(path);
+
+		if (normalizedPath == "resources/uvchecker.png" ||
+			normalizedPath.ends_with("/resources/uvchecker.png")) {
+			return "resources/editorDefault/uvChecker.png";
+		}
+
+		if (normalizedPath == "resources/monsterball.png" ||
+			normalizedPath.ends_with("/resources/monsterball.png")) {
+			return "resources/editorDefault/monsterBall.png";
+		}
+
+		if (normalizedPath == "resources/ball.png" ||
+			normalizedPath.ends_with("/resources/ball.png")) {
+			return "resources/editorDefault/ball.png";
+		}
+
+		if (normalizedPath == "resources/sibahu.png" ||
+			normalizedPath.ends_with("/resources/sibahu.png")) {
+			return "resources/editorDefault/sibahu.png";
+		}
+
+		if (normalizedPath == "resources/uvcube.fbx" ||
+			normalizedPath.ends_with("/resources/uvcube.fbx")) {
+			return "resources/editorDefault/UVCube.fbx";
+		}
+
+		if (normalizedPath == "resources/box.fbx" ||
+			normalizedPath.ends_with("/resources/box.fbx")) {
+			return "resources/editorDefault/box.fbx";
+		}
+
+		if (normalizedPath == "resources/cone.fbx" ||
+			normalizedPath.ends_with("/resources/cone.fbx")) {
+			return "resources/editorDefault/cone.fbx";
+		}
+
+		if (normalizedPath == "resources/icocube.fbx" ||
+			normalizedPath.ends_with("/resources/icocube.fbx")) {
+			return "resources/editorDefault/ICOCube.fbx";
+		}
+
+		if (normalizedPath == "resources/en.fbx" ||
+			normalizedPath.ends_with("/resources/en.fbx")) {
+			return "resources/editorDefault/en.fbx";
+		}
+
+		return path;
+	}
+
 	bool MatchesBuiltInPrimitivePath(const std::string& normalizedPath, const char* builtInPath) {
 		if (builtInPath == nullptr) {
 			return false;
@@ -620,11 +1011,13 @@ namespace {
 	bool TryGetBuiltInPrimitiveMeshType(
 		const std::string& normalizedPath,
 		EditorModelMeshType& meshType) {
-		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/uvcube.fbx")) {
+		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/uvcube.fbx") ||
+			MatchesBuiltInPrimitivePath(normalizedPath, "resources/editordefault/uvcube.fbx")) {
 			meshType = EditorModelMeshType::Cube;
 			return true;
 		}
-		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/box.fbx")) {
+		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/box.fbx") ||
+			MatchesBuiltInPrimitivePath(normalizedPath, "resources/editordefault/box.fbx")) {
 			meshType = EditorModelMeshType::Box;
 			return true;
 		}
@@ -632,7 +1025,8 @@ namespace {
 			meshType = EditorModelMeshType::Cylinder;
 			return true;
 		}
-		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/cone.fbx")) {
+		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/cone.fbx") ||
+			MatchesBuiltInPrimitivePath(normalizedPath, "resources/editordefault/cone.fbx")) {
 			meshType = EditorModelMeshType::Cone;
 			return true;
 		}
@@ -641,7 +1035,8 @@ namespace {
 			meshType = EditorModelMeshType::Torus;
 			return true;
 		}
-		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/icocube.fbx")) {
+		if (MatchesBuiltInPrimitivePath(normalizedPath, "resources/icocube.fbx") ||
+			MatchesBuiltInPrimitivePath(normalizedPath, "resources/editordefault/icocube.fbx")) {
 			meshType = EditorModelMeshType::Ico;
 			return true;
 		}
@@ -703,23 +1098,30 @@ namespace {
 		modelData.vertices.insert(modelData.vertices.end(), std::begin(vertices), std::end(vertices));
 	}
 
-	void AppendTriangleWithNormals(
+	void AppendSkinnedTriangleWithNormals(
 		ModelData& modelData,
-		const Vector3& firstPosition,
-		const Vector3& secondPosition,
-		const Vector3& thirdPosition,
-		const Vector2& firstTexcoord,
-		const Vector2& secondTexcoord,
-		const Vector2& thirdTexcoord,
-		const Vector3& firstNormal,
-		const Vector3& secondNormal,
-		const Vector3& thirdNormal) {
-		const VertexData vertices[3] = {
-			{{firstPosition.x, firstPosition.y, firstPosition.z, 1.0f}, firstTexcoord, NormalizeVector3(firstNormal)},
-			{{secondPosition.x, secondPosition.y, secondPosition.z, 1.0f}, secondTexcoord, NormalizeVector3(secondNormal)},
-			{{thirdPosition.x, thirdPosition.y, thirdPosition.z, 1.0f}, thirdTexcoord, NormalizeVector3(thirdNormal)}};
-
-		modelData.vertices.insert(modelData.vertices.end(), std::begin(vertices), std::end(vertices));
+		const std::array<Vector3, 3u>& positions,
+		const std::array<Vector2, 3u>& texcoords,
+		const std::array<Vector3, 3u>& normals,
+		const std::array<VertexSkinInfluenceData, 3u>& influences) {
+		for (size_t vertexIndex = 0u; vertexIndex < positions.size(); vertexIndex++) {
+			const VertexSkinInfluenceData& influenceData = influences[vertexIndex];
+			VertexData vertex{};
+			vertex.position = {
+				positions[vertexIndex].x,
+				positions[vertexIndex].y,
+				positions[vertexIndex].z,
+				1.0f};
+			vertex.texcoord = texcoords[vertexIndex];
+			vertex.normal = NormalizeVector3(normals[vertexIndex]);
+			vertex.boneIndices = influenceData.boneIndices;
+			vertex.boneWeights = {
+				influenceData.boneWeights[0],
+				influenceData.boneWeights[1],
+				influenceData.boneWeights[2],
+				influenceData.boneWeights[3]};
+			modelData.vertices.push_back(vertex);
+		}
 	}
 
 	struct ObjFaceVertexIndex {
@@ -773,7 +1175,17 @@ namespace {
 		std::vector<Vector3> positions;  // OBJ の v 行を一時保持する。
 		std::vector<Vector2> texcoords;  // OBJ の vt 行を一時保持する。
 		std::string line;
+		bool isFirstLine = true;
 		while (std::getline(file, line)) {
+			if (isFirstLine) {
+				isFirstLine = false;
+				if (line.size() >= sizeof(kUtf8Bom) &&
+					static_cast<unsigned char>(line[0]) == kUtf8Bom[0] &&
+					static_cast<unsigned char>(line[1]) == kUtf8Bom[1] &&
+					static_cast<unsigned char>(line[2]) == kUtf8Bom[2]) {
+					line.erase(0U, sizeof(kUtf8Bom));
+				}
+			}
 			std::istringstream lineStream(line);
 			std::string identifier;
 			lineStream >> identifier;
@@ -860,7 +1272,7 @@ namespace {
 		return !modelData.vertices.empty();
 	}
 
-	bool LoadFbxModel(const std::string& assetPath, ModelData& modelData) {
+	bool LoadFbxModel(const std::string& assetPath, ModelData& modelData, bool includeAnimation) {
 		InitializeDefaultMaterialData(modelData);
 		FbxManager* fbxManager = FbxManager::Create();
 		if (fbxManager == nullptr) {
@@ -928,7 +1340,8 @@ namespace {
 			}
 		};
 		appendMaterialNode(appendMaterialNode, scene->GetRootNode());
-		AppendFbxAnimationClips(modelData, scene);
+
+		std::vector<FbxSkinBindingData> skinBindings;
 
 		auto appendMeshNode = [&](auto&& appendMeshNodeSelf, FbxNode* node) -> void {
 			if (node == nullptr) {
@@ -942,6 +1355,67 @@ namespace {
 				geometryTransform.SetR(node->GetGeometricRotation(FbxNode::eSourcePivot));
 				geometryTransform.SetS(node->GetGeometricScaling(FbxNode::eSourcePivot));
 
+				const int32_t controlPointCount =
+					static_cast<int32_t>(mesh->GetControlPointsCount());
+				std::vector<VertexSkinInfluenceData> controlPointInfluences(
+					static_cast<size_t>((std::max)(controlPointCount, 0)));
+				const int32_t skinDeformerCount = static_cast<int32_t>(
+					mesh->GetDeformerCount(FbxDeformer::eSkin));
+
+				for (int32_t skinDeformerIndex = 0;
+					 skinDeformerIndex < skinDeformerCount;
+					 skinDeformerIndex++) {
+					FbxSkin* skin = static_cast<FbxSkin*>(
+						mesh->GetDeformer(skinDeformerIndex, FbxDeformer::eSkin));
+					if (skin == nullptr) {
+						continue;
+					}
+
+					const int32_t clusterCount = static_cast<int32_t>(skin->GetClusterCount());
+					for (int32_t clusterIndex = 0; clusterIndex < clusterCount; clusterIndex++) {
+						FbxCluster* cluster = skin->GetCluster(clusterIndex);
+						FbxNode* boneNode = cluster != nullptr ? cluster->GetLink() : nullptr;
+
+						if (cluster == nullptr || boneNode == nullptr) {
+							continue;
+						}
+
+						FbxSkinBindingData skinBinding{};
+						skinBinding.meshNode = node;
+						skinBinding.boneNode = boneNode;
+						cluster->GetTransformMatrix(skinBinding.meshBindGlobal);
+						cluster->GetTransformLinkMatrix(skinBinding.boneBindGlobal);
+						const uint32_t boneIndex = static_cast<uint32_t>(skinBindings.size());
+						skinBindings.push_back(skinBinding);
+						modelData.skinBoneNames.push_back(
+							std::string(node->GetName()) + "/" + boneNode->GetName());
+
+						const int32_t clusterControlPointCount =
+							static_cast<int32_t>(cluster->GetControlPointIndicesCount());
+						const int32_t* controlPointIndices = cluster->GetControlPointIndices();
+						const double* controlPointWeights = cluster->GetControlPointWeights();
+
+						for (int32_t influenceIndex = 0;
+							 influenceIndex < clusterControlPointCount;
+							 influenceIndex++) {
+							const int32_t controlPointIndex = controlPointIndices[influenceIndex];
+
+							if (controlPointIndex < 0 || controlPointIndex >= controlPointCount) {
+								continue;
+							}
+
+							InsertFbxSkinInfluence(
+								controlPointInfluences[static_cast<size_t>(controlPointIndex)],
+								boneIndex,
+								static_cast<float>(controlPointWeights[influenceIndex]));
+						}
+					}
+				}
+
+				for (VertexSkinInfluenceData& influenceData : controlPointInfluences) {
+					NormalizeFbxSkinInfluence(influenceData);
+				}
+
 				FbxStringList uvSetNames{};
 				mesh->GetUVSetNames(uvSetNames);
 				const char* primaryUvSetName =
@@ -952,9 +1426,10 @@ namespace {
 						continue;
 					}
 
-					Vector3 positions[3]{};
-					Vector3 normals[3]{};
-					Vector2 texcoords[3]{};
+					std::array<Vector3, 3u> positions{};
+					std::array<Vector3, 3u> normals{};
+					std::array<Vector2, 3u> texcoords{};
+					std::array<VertexSkinInfluenceData, 3u> influences{};
 					bool isValidTriangle = true;
 					for (int32_t vertexIndex = 0; vertexIndex < 3; vertexIndex++) {
 						const int32_t controlPointIndex = mesh->GetPolygonVertex(polygonIndex, vertexIndex);
@@ -965,6 +1440,8 @@ namespace {
 						}
 
 						const FbxVector4 localControlPoint = mesh->GetControlPointAt(controlPointIndex);
+						influences[static_cast<size_t>(vertexIndex)] =
+							controlPointInfluences[static_cast<size_t>(controlPointIndex)];
 						const FbxVector4 fbxPosition = geometryTransform.MultT(localControlPoint);
 
 						// GameObject 側の Transform で配置・回転・拡縮するため、
@@ -1017,17 +1494,12 @@ namespace {
 
 					// X 反転で面の表裏が逆になるため、2 番目と 3 番目を入れ替えて三角形を追加する。
 					// FBX の頂点法線をそのまま使い、Blender の smooth shade が面法線へ潰れないようにする。
-					AppendTriangleWithNormals(
+					AppendSkinnedTriangleWithNormals(
 						modelData,
-						positions[0],
-						positions[2],
-						positions[1],
-						texcoords[0],
-						texcoords[2],
-						texcoords[1],
-						normals[0],
-						normals[2],
-						normals[1]);
+						{positions[0], positions[2], positions[1]},
+						{texcoords[0], texcoords[2], texcoords[1]},
+						{normals[0], normals[2], normals[1]},
+						{influences[0], influences[2], influences[1]});
 				}
 			}
 
@@ -1038,6 +1510,21 @@ namespace {
 		};
 
 		appendMeshNode(appendMeshNode, scene->GetRootNode());
+
+		if (!skinBindings.empty()) {
+			FbxTime defaultPoseTime{};
+			defaultPoseTime.SetSecondDouble(0.0);
+			modelData.defaultSkinMatrices.reserve(skinBindings.size());
+
+			for (const FbxSkinBindingData& skinBinding : skinBindings) {
+				modelData.defaultSkinMatrices.push_back(
+					EvaluateFbxSkinMatrix(skinBinding, defaultPoseTime));
+			}
+		}
+
+		if (includeAnimation) {
+			AppendFbxAnimationClips(modelData, scene, skinBindings);
+		}
 
 		scene->Destroy();
 		fbxManager->Destroy();
@@ -1072,23 +1559,27 @@ bool EditorAssetUtility::HasExtension(const std::string& path, const char* exten
 		return false;
 	}
 
-	std::string pathText = path;
-	std::string extensionText = extension;
+	const size_t extensionLength = std::char_traits<char>::length(extension);
 
-	// 大文字小文字を無視するため、比較前に両方を小文字化する
-	for (char& character : pathText) {
-		character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
-	}
-	for (char& character : extensionText) {
-		character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
-	}
-
-	if (pathText.size() < extensionText.size()) {
+	if (path.size() < extensionLength) {
 		return false;
 	}
 
-	// パス末尾の extensionText.size() 文字だけを拡張子として比較する
-	return pathText.compare(pathText.size() - extensionText.size(), extensionText.size(), extensionText) == 0;
+	const size_t extensionStart = path.size() - extensionLength;
+
+	// パス全体をコピーせず、拡張子部分だけを大文字小文字を無視して比較する
+	for (size_t characterIndex = 0; characterIndex < extensionLength; ++characterIndex) {
+		const unsigned char pathCharacter =
+			static_cast<unsigned char>(path[extensionStart + characterIndex]);
+		const unsigned char extensionCharacter =
+			static_cast<unsigned char>(extension[characterIndex]);
+
+		if (std::tolower(pathCharacter) != std::tolower(extensionCharacter)) {
+			return false;
+		}
+	}
+
+	return true;
 }
 
 std::string EditorAssetUtility::GetFilename(const std::string& path) {
@@ -1101,11 +1592,22 @@ std::string EditorAssetUtility::GetFilename(const std::string& path) {
 }
 
 int32_t EditorAssetUtility::GetTextureIndex(const std::vector<std::string>& textureFilePaths, const std::string& path) {
+	const std::string normalizedRequestedPath = NormalizeFilesystemPathForLookup(path);
+	const std::string normalizedResolvedRequestedPath =
+		NormalizeFilesystemPathForLookup(ResolveEditorDefaultAssetPath(path));
+
 	for (uint32_t textureIndex = 0;
 		 textureIndex < static_cast<uint32_t>(textureFilePaths.size());
 		 textureIndex++) {
 		// 登録済みテクスチャパスと完全一致した番号を返す
 		if (textureFilePaths[textureIndex] == path) {
+			return static_cast<int32_t>(textureIndex);
+		}
+
+		const std::string normalizedRegisteredPath =
+			NormalizeFilesystemPathForLookup(textureFilePaths[textureIndex]);
+		if (normalizedRegisteredPath == normalizedRequestedPath ||
+			normalizedRegisteredPath == normalizedResolvedRequestedPath) {
 			return static_cast<int32_t>(textureIndex);
 		}
 	}
@@ -1128,49 +1630,181 @@ bool EditorAssetUtility::IsBuiltInPrimitiveAssetPath(const std::string& path) {
 	return TryGetBuiltInPrimitiveMeshType(NormalizeAssetPath(path), meshType);
 }
 
-bool EditorAssetUtility::LoadModelAsset(const std::string& path, ModelData& modelData) {
-	modelData = {};
+const ModelData* EditorAssetUtility::GetModelAssetData(const std::string& path, bool includeAnimation) {
 	if (path.empty()) {
-		return false;
+		return nullptr;
 	}
 
-	const std::filesystem::path filePath(path);
+	std::filesystem::path filePath;
+	if (!TryCreatePathFromUtf8Text(path, filePath)) {
+		return nullptr;
+	}
+
 	std::error_code fileError;
 	if (!std::filesystem::exists(filePath, fileError) || fileError) {
-		return false;
+		std::filesystem::path resolvedFilePath;
+		if (!TryCreatePathFromUtf8Text(ResolveEditorDefaultAssetPath(path), resolvedFilePath)) {
+			return nullptr;
+		}
+
+		fileError.clear();
+		if (!std::filesystem::exists(resolvedFilePath, fileError) || fileError) {
+			// Project配布では内蔵PrimitiveをProjectへ複製しない。
+			// Project側に無いresources配下だけ、導入済みEngineから読む。
+			resolvedFilePath = ResolveInstalledEngineAssetPath(resolvedFilePath);
+			fileError.clear();
+			if (!std::filesystem::exists(resolvedFilePath, fileError) || fileError) return nullptr;
+		}
+
+		filePath = resolvedFilePath;
 	}
 
-	const std::string normalizedPath = NormalizeAssetPath(filePath.generic_string());
+	std::string resolvedFilePathUtf8;
+	if (!TryConvertWideTextToUtf8(filePath.native(), resolvedFilePathUtf8)) {
+		return nullptr;
+	}
+
+	const std::string normalizedPath = NormalizeFilesystemPathForLookup(resolvedFilePathUtf8);
+	const std::string normalizedRequestedPath = NormalizeFilesystemPathForLookup(path);
 	const std::filesystem::file_time_type lastWriteTime = std::filesystem::last_write_time(filePath, fileError);
 	if (!fileError) {
 		auto cacheIterator = g_cachedModelAssets.find(normalizedPath);
 		if (cacheIterator != g_cachedModelAssets.end() &&
-			cacheIterator->second.lastWriteTime == lastWriteTime) {
-			modelData = cacheIterator->second.modelData;
-			return !modelData.vertices.empty();
+			cacheIterator->second.lastWriteTime == lastWriteTime &&
+			(!includeAnimation || cacheIterator->second.includesAnimation)) {
+			cacheIterator->second.nextValidationTime = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+			g_modelCacheKeyByRequestedPath[normalizedRequestedPath] = normalizedPath;
+			g_modelCacheKeyByRequestedPath[normalizedPath] = normalizedPath;
+			return cacheIterator->second.modelData.vertices.empty() ? nullptr : &cacheIterator->second.modelData;
+		}
+	}
+
+	// Import設定でAnimationを含めない指定があれば、呼び出し側の要求より優先して除外する
+	// (Import設定はAssetそのものの方針、includeAnimationは呼び出し側の一時的な要求のため)。
+	bool resolvedIncludeAnimation = includeAnimation;
+	if (includeAnimation) {
+		const AssetRecord* animationGateRecord = AssetRegistry::Get().FindByPath(normalizedPath);
+		if (animationGateRecord != nullptr) {
+			const AssetImportMetadata* animationGateMetadata =
+				AssetImportSettingsStore::Get().Find(animationGateRecord->id);
+			if (animationGateMetadata != nullptr && !animationGateMetadata->model.importAnimation) {
+				resolvedIncludeAnimation = false;
+			}
 		}
 	}
 
 	ModelData loadedModelData{};
 	bool isLoaded = false;
+	const bool isFbxAsset = HasExtension(path, ".fbx");
 	if (HasExtension(path, ".obj")) {
-		isLoaded = LoadObjModel(filePath.generic_string(), loadedModelData);
+		isLoaded = LoadObjModel(resolvedFilePathUtf8, loadedModelData);
 	}
-	else if (HasExtension(path, ".fbx")) {
-		isLoaded = LoadFbxModel(filePath.generic_string(), loadedModelData);
+	else if (isFbxAsset) {
+		isLoaded = LoadFbxModel(resolvedFilePathUtf8, loadedModelData, resolvedIncludeAnimation);
 	}
 
 	if (!isLoaded) {
-		return false;
+		return nullptr;
 	}
 
+	ApplyModelImportSettings(loadedModelData, normalizedPath);
 	OptimizeModelVertices(loadedModelData);
 
 	CachedModelAsset& cachedAsset = g_cachedModelAssets[normalizedPath];
-	cachedAsset.modelData = loadedModelData;
+	cachedAsset.modelData = std::move(loadedModelData);
 	cachedAsset.lastWriteTime = lastWriteTime;
-	modelData = cachedAsset.modelData;
+	cachedAsset.nextValidationTime = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+	cachedAsset.includesAnimation = !isFbxAsset || resolvedIncludeAnimation;
+	g_modelCacheKeyByRequestedPath[normalizedRequestedPath] = normalizedPath;
+	g_modelCacheKeyByRequestedPath[normalizedPath] = normalizedPath;
+	return cachedAsset.modelData.vertices.empty() ? nullptr : &cachedAsset.modelData;
+}
+
+const ModelData* EditorAssetUtility::GetSharedModelAssetData(const std::string& path, bool includeAnimation) {
+	const std::string requestedCacheKey = NormalizeFilesystemPathForLookup(path);
+	auto aliasIterator = g_modelCacheKeyByRequestedPath.find(requestedCacheKey);
+	const std::string& modelCacheKey =
+		aliasIterator != g_modelCacheKeyByRequestedPath.end() ? aliasIterator->second : requestedCacheKey;
+	auto cacheIterator = g_cachedModelAssets.find(modelCacheKey);
+
+	if (cacheIterator != g_cachedModelAssets.end() &&
+		(!includeAnimation || cacheIterator->second.includesAnimation) &&
+		std::chrono::steady_clock::now() < cacheIterator->second.nextValidationTime) {
+		return cacheIterator->second.modelData.vertices.empty() ? nullptr : &cacheIterator->second.modelData;
+	}
+
+	return GetModelAssetData(path, includeAnimation);
+}
+
+void EditorAssetUtility::InvalidateModelAssetCache(const std::string& path) {
+	if (path.empty()) {
+		return;
+	}
+
+	const std::string requestedCacheKey = NormalizeFilesystemPathForLookup(path);
+	const auto aliasIterator = g_modelCacheKeyByRequestedPath.find(requestedCacheKey);
+	const std::string modelCacheKey =
+		aliasIterator != g_modelCacheKeyByRequestedPath.end()
+		? aliasIterator->second
+		: requestedCacheKey;
+
+	g_cachedModelAssets.erase(modelCacheKey);
+
+	// 同じ実ファイルを指す旧 resources path などの別名も消し、古い参照へ戻らないようにする。
+	for (auto iterator = g_modelCacheKeyByRequestedPath.begin();
+		iterator != g_modelCacheKeyByRequestedPath.end();) {
+		if (iterator->first == requestedCacheKey || iterator->second == modelCacheKey) {
+			iterator = g_modelCacheKeyByRequestedPath.erase(iterator);
+		}
+		else {
+			++iterator;
+		}
+	}
+}
+
+bool EditorAssetUtility::LoadModelAsset(const std::string& path, ModelData& modelData) {
+	modelData = {};
+	const ModelData* cachedModelData = GetModelAssetData(path, true);
+	if (cachedModelData == nullptr) {
+		return false;
+	}
+
+	modelData = *cachedModelData;
 	return !modelData.vertices.empty();
+}
+
+bool EditorAssetUtility::GetModelColliderBounds(
+	const std::string& path,
+	Vector3& colliderCenter,
+	Vector3& colliderSize) {
+	const ModelData* modelData = GetSharedModelAssetData(path, false);  // 描画キャッシュから Bounds だけを参照する。
+	if (modelData == nullptr || modelData->vertices.empty()) {
+		return false;
+	}
+
+	Vector3 minimumPosition = {
+		modelData->vertices[0].position.x,
+		modelData->vertices[0].position.y,
+		modelData->vertices[0].position.z};
+	Vector3 maximumPosition = minimumPosition;
+	for (const VertexData& vertex : modelData->vertices) {
+		minimumPosition.x = (std::min)(minimumPosition.x, vertex.position.x);
+		minimumPosition.y = (std::min)(minimumPosition.y, vertex.position.y);
+		minimumPosition.z = (std::min)(minimumPosition.z, vertex.position.z);
+		maximumPosition.x = (std::max)(maximumPosition.x, vertex.position.x);
+		maximumPosition.y = (std::max)(maximumPosition.y, vertex.position.y);
+		maximumPosition.z = (std::max)(maximumPosition.z, vertex.position.z);
+	}
+
+	colliderCenter = {
+		(minimumPosition.x + maximumPosition.x) * 0.5f,
+		(minimumPosition.y + maximumPosition.y) * 0.5f,
+		(minimumPosition.z + maximumPosition.z) * 0.5f};
+	colliderSize = {
+		(std::max)(maximumPosition.x - minimumPosition.x, 0.01f),
+		(std::max)(maximumPosition.y - minimumPosition.y, 0.01f),
+		(std::max)(maximumPosition.z - minimumPosition.z, 0.01f)};
+	return true;
 }
 
 bool EditorAssetUtility::IsRenderTextureAssetPath(const std::string& path) {
@@ -1179,8 +1813,8 @@ bool EditorAssetUtility::IsRenderTextureAssetPath(const std::string& path) {
 
 EditorRenderTextureAsset EditorAssetUtility::MakeDefaultRenderTextureAsset() {
 	EditorRenderTextureAsset asset{};
-	asset.width = 1280;
-	asset.height = 720;
+	asset.width = 1920;
+	asset.height = 1080;
 	asset.useHdr = true;
 	asset.useDepth = true;
 	asset.clearColor = {0.0f, 0.0f, 0.0f, 1.0f};
@@ -1255,7 +1889,7 @@ bool EditorAssetUtility::SaveRenderTextureAsset(const std::string& path, const E
 	const int32_t width = (std::clamp)(asset.width, 1, 8192);
 	const int32_t height = (std::clamp)(asset.height, 1, 8192);
 	file.write(reinterpret_cast<const char*>(kUtf8Bom), static_cast<std::streamsize>(sizeof(kUtf8Bom)));
-	file << "# CG2 RenderTexture\r\n";
+	file << "# CG2Engine RenderTexture\r\n";
 	file << "# Camera の出力先や PostProcess の中間結果として使う描画用 Texture 設定です。\r\n";
 	file << "width=" << width << "\r\n";
 	file << "height=" << height << "\r\n";

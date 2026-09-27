@@ -1,7 +1,8 @@
-#include "EditorAIManager.h"
+﻿#include "EditorAIManager.h"
 
 #include "EditorAssetUtility.h"
 #include "EditorComponentUtility.h"
+#include "Source/Engine/Speech/SpeechSystem.h"
 
 #include <algorithm>
 #include <array>
@@ -39,20 +40,6 @@ namespace {
 	constexpr int32_t kGoapHasTarget = 1;  // GOAP の世界状態: 対象がいる。
 	constexpr int32_t kGoapHasPath = 2;  // GOAP の世界状態: 経路を作れる。
 	constexpr int32_t kGoapInRange = 3;  // GOAP の世界状態: 対象へ届く距離。
-	constexpr const char* kDefaultBehaviorTreeXml = R"(
-<root BTCPP_format="4">
-	<BehaviorTree ID="MainTree">
-		<Fallback>
-			<Sequence>
-				<CanSeeTarget/>
-				<MoveToTarget/>
-			</Sequence>
-			<Patrol/>
-		</Fallback>
-	</BehaviorTree>
-</root>
-)";
-
 	bool IsAiAgentType(EditorComponentType type) {
 		return
 			type == EditorComponentType::AIBehaviorTree ||
@@ -166,6 +153,78 @@ namespace {
 		const uint64_t objectPart = static_cast<uint32_t>(gameObjectId);
 		const uint64_t componentPart = static_cast<uint32_t>(sensorComponentType);
 		return static_cast<int64_t>((objectPart << 32) | componentPart);
+	}
+
+	int32_t FindVoiceCommandIndex(const std::vector<std::string>& commands, const std::string& recognizedText) {
+		for (size_t commandIndex = 0u; commandIndex < commands.size(); ++commandIndex) {
+			if (!commands[commandIndex].empty() && commands[commandIndex] == recognizedText) {
+				return static_cast<int32_t>(commandIndex);
+			}
+		}
+
+		return -1;
+	}
+
+	std::vector<uint32_t> MakeComparableText(const std::string& text) {
+		std::vector<uint32_t> codePoints;
+		for (size_t byteIndex = 0u; byteIndex < text.size();) {
+			const uint8_t firstByte = static_cast<uint8_t>(text[byteIndex]);
+			uint32_t codePoint = firstByte;
+			size_t byteCount = 1u;
+			if ((firstByte & 0xe0u) == 0xc0u) {
+				codePoint = firstByte & 0x1fu;
+				byteCount = 2u;
+			}
+			else if ((firstByte & 0xf0u) == 0xe0u) {
+				codePoint = firstByte & 0x0fu;
+				byteCount = 3u;
+			}
+			else if ((firstByte & 0xf8u) == 0xf0u) {
+				codePoint = firstByte & 0x07u;
+				byteCount = 4u;
+			}
+
+			if (byteIndex + byteCount > text.size()) byteCount = 1u;
+			for (size_t continuationIndex = 1u; continuationIndex < byteCount; ++continuationIndex) {
+				codePoint = (codePoint << 6u) | (static_cast<uint8_t>(text[byteIndex + continuationIndex]) & 0x3fu);
+			}
+			byteIndex += byteCount;
+
+			const bool isIgnored =
+				codePoint == 0x20u || codePoint == 0x3000u ||
+				codePoint == 0x3001u || codePoint == 0x3002u ||
+				codePoint == 0xff01u || codePoint == 0xff1fu;
+			if (isIgnored) continue;
+			if (codePoint >= static_cast<uint32_t>('A') && codePoint <= static_cast<uint32_t>('Z')) {
+				codePoint += static_cast<uint32_t>('a' - 'A');
+			}
+			codePoints.push_back(codePoint);
+		}
+		return codePoints;
+	}
+
+	float CalculateTextSimilarity(const std::string& firstText, const std::string& secondText) {
+		const std::vector<uint32_t> first = MakeComparableText(firstText);
+		const std::vector<uint32_t> second = MakeComparableText(secondText);
+		if (first.empty() || second.empty()) return first == second ? 1.0f : 0.0f;
+
+		std::vector<size_t> previous(second.size() + 1u);
+		std::vector<size_t> current(second.size() + 1u);
+		for (size_t index = 0u; index <= second.size(); ++index) previous[index] = index;
+		for (size_t firstIndex = 1u; firstIndex <= first.size(); ++firstIndex) {
+			current[0] = firstIndex;
+			for (size_t secondIndex = 1u; secondIndex <= second.size(); ++secondIndex) {
+				const size_t replacementCost = first[firstIndex - 1u] == second[secondIndex - 1u] ? 0u : 1u;
+				current[secondIndex] = (std::min)({
+					previous[secondIndex] + 1u,
+					current[secondIndex - 1u] + 1u,
+					previous[secondIndex - 1u] + replacementCost});
+			}
+			previous.swap(current);
+		}
+
+		const float maximumLength = static_cast<float>((std::max)(first.size(), second.size()));
+		return 1.0f - static_cast<float>(previous[second.size()]) / maximumLength;
 	}
 
 	float Clamp01(float value) {
@@ -424,6 +483,7 @@ namespace {
 			(component.type == EditorComponentType::BoxCollider ||
 			 component.type == EditorComponentType::SphereCollider ||
 			 component.type == EditorComponentType::CapsuleCollider ||
+			 component.type == EditorComponentType::AutoConvexCollision ||
 			 component.type == EditorComponentType::MeshCollider ||
 			 component.type == EditorComponentType::NavMeshObstacle ||
 			 component.type == EditorComponentType::AIDynamicObstacle);
@@ -613,6 +673,114 @@ namespace {
 #pragma warning(pop)
 }
 
+namespace {
+	bool IsBehaviorTreeDefinition(EditorComponentType type) {
+		return
+			type == EditorComponentType::AIBehaviorBlackboard ||
+			type == EditorComponentType::AIBehaviorSelector ||
+			type == EditorComponentType::AIBehaviorSequence ||
+			type == EditorComponentType::AIBehaviorTask ||
+			type == EditorComponentType::AIBehaviorDecorator;
+	}
+
+	bool IsStateMachineDefinition(EditorComponentType type) {
+		return
+			type == EditorComponentType::AIState ||
+			type == EditorComponentType::AIStateTransition;
+	}
+
+	bool IsGoapDefinition(EditorComponentType type) {
+		return
+			type == EditorComponentType::AIGoapGoal ||
+			type == EditorComponentType::AIGoapAction ||
+			type == EditorComponentType::AIGoapWorldState;
+	}
+
+	bool IsHtnDefinition(EditorComponentType type) {
+		return
+			type == EditorComponentType::AIHtnDomain ||
+			type == EditorComponentType::AIHtnTask ||
+			type == EditorComponentType::AIHtnMethod;
+	}
+
+	bool IsDefinitionCompatible(EditorComponentType agentType, EditorComponentType definitionType) {
+		if (agentType == EditorComponentType::AIBehaviorTree) {
+			return IsBehaviorTreeDefinition(definitionType);
+		}
+
+		if (agentType == EditorComponentType::AIStateMachine) {
+			return IsStateMachineDefinition(definitionType);
+		}
+
+		if (agentType == EditorComponentType::AIGoapPlanner) {
+			return IsGoapDefinition(definitionType);
+		}
+
+		if (agentType == EditorComponentType::AIHtnPlanner) {
+			return IsHtnDefinition(definitionType);
+		}
+
+		return
+			(agentType == EditorComponentType::AIPathfindingAgent ||
+			 agentType == EditorComponentType::AIRecastCrowdAgent) &&
+			definitionType == EditorComponentType::AIPathRequest;
+	}
+
+	bool IsBehaviorModeDefinition(EditorComponentType type) {
+		return
+			type == EditorComponentType::AIBehaviorTask ||
+			type == EditorComponentType::AIState ||
+			type == EditorComponentType::AIGoapAction ||
+			type == EditorComponentType::AIHtnTask ||
+			type == EditorComponentType::AIHtnMethod;
+	}
+
+	void ApplyAiDefinition(
+		const EditorComponent& definition,
+		EditorComponent& runtimeAgent) {
+		if (!definition.isActive || !IsDefinitionCompatible(runtimeAgent.type, definition.type)) {
+			return;
+		}
+
+		if (definition.connectedGameObjectId != kInvalidGameObjectId) {
+			runtimeAgent.connectedGameObjectId = definition.connectedGameObjectId;
+		}
+
+		if (runtimeAgent.assetPath.empty() && !definition.assetPath.empty()) {
+			runtimeAgent.assetPath = definition.assetPath;
+		}
+
+		if (IsBehaviorModeDefinition(definition.type)) {
+			runtimeAgent.inputBehavior = (std::clamp)(definition.inputBehavior, 0, 3);
+		}
+
+		if (definition.type == EditorComponentType::AIPathRequest) {
+			runtimeAgent.navStoppingDistance = (std::max)(definition.colliderRadius, 0.0f);
+		}
+	}
+
+	void ApplyAiDefinitions(
+		const EditorScene& editorScene,
+		const EditorGameObject& gameObject,
+		EditorComponent& runtimeAgent) {
+		for (const EditorComponent& definition : gameObject.components) {
+			ApplyAiDefinition(definition, runtimeAgent);
+		}
+
+		for (int32_t childGameObjectId : gameObject.children) {
+			const EditorGameObject* childGameObject = editorScene.FindGameObject(childGameObjectId);
+
+			if (childGameObject == nullptr || !childGameObject->isActive) {
+				continue;
+			}
+
+			for (const EditorComponent& definition : childGameObject->components) {
+				ApplyAiDefinition(definition, runtimeAgent);
+			}
+		}
+	}
+}
+
 void EditorAIManager::Initialize(EditorScene* editorScene, EditorPhysicsManager* physicsManager, std::vector<std::string>* consoleMessages) {
 	editorScene_ = editorScene;  // Play 中の AI が読む Scene。
 	physicsManager_ = physicsManager;  // Rigidbody 付き AI を動かす物理 API。
@@ -629,14 +797,230 @@ void EditorAIManager::Start() {
 	visibleTargets_.clear();
 	sensorResults_.clear();
 	sensorPreviousPositions_.clear();
+	aiUpdateRemainingSeconds_.clear();
+	aiAccumulatedDeltaSeconds_.clear();
+	cachedAgentDirections_.clear();
+	cachedRuntimeAgents_.clear();
+	voiceCommandCooldownRemaining_.clear();
 	isStarted_ = true;
+	StartVoiceCommandRecognition();
 	PushConsoleMessage("AI: ThirdParty/AI の AI Component を開始しました。");
+}
+
+void EditorAIManager::StartVoiceCommandRecognition() {
+	StopVoiceCommandRecognition();
+	if (editorScene_ == nullptr) return;
+
+	SpeechConfig config{};
+	config.mode = SpeechRecognitionMode::Keyword;
+	config.backendKind = SpeechBackendKind::WindowsSpeechApi;
+	config.confidenceThreshold = 0.0f;  // 採否は Component ごとの可変設定で行う。
+	config.isContinuous = true;
+	bool hasVoiceCommandComponent = false;
+
+	for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
+		if (!gameObject.isActive) continue;
+		for (const EditorComponent& component : gameObject.components) {
+			if (!component.isActive || component.type != EditorComponentType::AIVoiceCommand ||
+				component.voiceCommandMatchMode != 0) {
+				continue;
+			}
+
+			if (!hasVoiceCommandComponent) {
+				config.language = component.voiceCommandLanguage.empty() ? "ja-JP" : component.voiceCommandLanguage;
+				config.microphoneDeviceName = component.voiceCommandMicrophoneDevice;
+				hasVoiceCommandComponent = true;
+			}
+
+			for (const std::string& phrase : component.voiceCommandPhrases) {
+				if (phrase.empty() || std::find(config.keywords.begin(), config.keywords.end(), phrase) != config.keywords.end()) {
+					continue;
+				}
+				config.keywords.push_back(phrase);
+			}
+		}
+	}
+
+	if (!hasVoiceCommandComponent || config.keywords.empty()) return;
+
+	voiceCommandBackend_ = std::make_unique<WindowsSpeechApiBackend>();
+	voiceCommandBackend_->ApplyConfig(config);
+	if (!voiceCommandBackend_->Initialize()) {
+		const ExternalFeatureError error = voiceCommandBackend_->GetLastError();
+		PushConsoleMessage("音声コマンド: 音響認識を開始できませんでした: " + error.message);
+		voiceCommandBackend_.reset();
+		return;
+	}
+
+	voiceCommandBackend_->StartRecognition();
+	if (!voiceCommandBackend_->IsRecognizing()) {
+		const ExternalFeatureError error = voiceCommandBackend_->GetLastError();
+		PushConsoleMessage("音声コマンド: マイク認識を開始できませんでした: " + error.message);
+		voiceCommandBackend_->Shutdown();
+		voiceCommandBackend_.reset();
+		return;
+	}
+
+	PushConsoleMessage("音声コマンド: 登録語の音響認識を開始しました。");
+}
+
+void EditorAIManager::UpdateVoiceCommands(float deltaTime) {
+	for (auto& cooldownEntry : voiceCommandCooldownRemaining_) {
+		cooldownEntry.second = (std::max)(0.0f, cooldownEntry.second - deltaTime);
+	}
+
+	// Command は発話したフレームだけ true になる。前回結果を保持して誤発火させない。
+	for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
+		for (const EditorComponent& component : gameObject.components) {
+			if (component.type == EditorComponentType::AIVoiceCommand) {
+				sensorResults_[MakeSensorKey(gameObject.id, component.type)] = EditorAiSensorResult{};
+			}
+		}
+	}
+
+	UpdateTextVoiceCommands();
+
+	if (voiceCommandBackend_ == nullptr || !voiceCommandBackend_->IsRecognizing()) return;
+
+	voiceCommandBackend_->Update();
+	const std::vector<SpeechResult> speechResults = voiceCommandBackend_->GetResults();
+	for (const SpeechResult& speechResult : speechResults) {
+		if (!speechResult.isFinal || speechResult.text.empty()) continue;
+
+		for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
+			if (!gameObject.isActive) continue;
+			for (const EditorComponent& component : gameObject.components) {
+				if (!component.isActive || component.type != EditorComponentType::AIVoiceCommand ||
+					component.voiceCommandMatchMode != 0) {
+					continue;
+				}
+
+				const int32_t commandIndex = FindVoiceCommandIndex(component.voiceCommandPhrases, speechResult.text);
+				if (commandIndex < 0) continue;
+
+				const int64_t sensorKey = MakeSensorKey(gameObject.id, component.type);
+				if (voiceCommandCooldownRemaining_[sensorKey] > 0.0f) continue;
+
+				float secondScore = 0.0f;
+				for (const SpeechAlternative& alternative : speechResult.alternatives) {
+					const int32_t alternativeIndex = FindVoiceCommandIndex(component.voiceCommandPhrases, alternative.text);
+					if (alternativeIndex >= 0 && alternativeIndex != commandIndex) {
+						secondScore = (std::max)(secondScore, Clamp01(alternative.confidence));
+					}
+				}
+
+				const float correctionStrength = Clamp01(component.voiceCommandCorrectionStrength);
+				const float configuredThreshold = Clamp01(component.voiceCommandThreshold);
+				const float configuredMargin = Clamp01(component.voiceCommandMinimumMargin);
+				// 0 は Score=1・候補差=1 の厳格判定。1 に近づくほど Inspector の許容値まで連続的に緩和する。
+				const float effectiveThreshold = 1.0f + (configuredThreshold - 1.0f) * correctionStrength;
+				const float effectiveMargin = 1.0f + (configuredMargin - 1.0f) * correctionStrength;
+				const float topScore = Clamp01(speechResult.confidence);
+				const float scoreMargin = topScore - secondScore;
+				const bool isAccepted = topScore >= effectiveThreshold && scoreMargin >= effectiveMargin;
+				std::ostringstream scoreLog;
+				scoreLog << "音声コマンド候補: " << component.voiceCommandPhrases[static_cast<size_t>(commandIndex)]
+				         << " (1位=" << topScore << ", 2位=" << secondScore << ", 差=" << scoreMargin
+				         << ", 必要Score=" << effectiveThreshold << ", 必要差=" << effectiveMargin
+				         << ", 補正強度=" << correctionStrength << ") " << (isAccepted ? "採用" : "棄却");
+				PushConsoleMessage(scoreLog.str());
+				if (!isAccepted) continue;
+
+				EditorAiSensorResult commandResult{};
+				commandResult.isDetected = true;
+				commandResult.hasDetails = true;
+				commandResult.commandId = commandIndex;
+				commandResult.confidence = topScore;
+				commandResult.text = speechResult.text;
+				commandResult.command = component.voiceCommandPhrases[static_cast<size_t>(commandIndex)];
+				sensorResults_[sensorKey] = commandResult;
+				voiceCommandCooldownRemaining_[sensorKey] = (std::max)(0.0f, component.voiceCommandCooldownSeconds);
+
+			}
+		}
+	}
+}
+
+void EditorAIManager::UpdateTextVoiceCommands() {
+	for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
+		if (!gameObject.isActive) continue;
+		const std::vector<SpeechResult>& speechResults = SpeechSystem::Get().GetFrameResults(gameObject.id);
+		if (speechResults.empty()) continue;
+
+		for (const EditorComponent& component : gameObject.components) {
+			if (!component.isActive || component.type != EditorComponentType::AIVoiceCommand ||
+				component.voiceCommandMatchMode == 0 ||
+				component.voiceCommandPhrases.empty()) {
+				continue;
+			}
+
+			const int64_t sensorKey = MakeSensorKey(gameObject.id, component.type);
+			if (voiceCommandCooldownRemaining_[sensorKey] > 0.0f) continue;
+
+			for (const SpeechResult& speechResult : speechResults) {
+				if (!speechResult.isFinal || speechResult.text.empty()) continue;
+
+				int32_t topCommandIndex = -1;
+				float topScore = 0.0f;
+				float secondScore = 0.0f;
+				for (size_t commandIndex = 0u; commandIndex < component.voiceCommandPhrases.size(); ++commandIndex) {
+					const std::string& command = component.voiceCommandPhrases[commandIndex];
+					if (command.empty()) continue;
+					const float score = component.voiceCommandMatchMode == 2
+						? (MakeComparableText(speechResult.text) == MakeComparableText(command) ? 1.0f : 0.0f)
+						: CalculateTextSimilarity(speechResult.text, command);
+					if (score > topScore) {
+						secondScore = topScore;
+						topScore = score;
+						topCommandIndex = static_cast<int32_t>(commandIndex);
+					}
+					else if (score > secondScore) {
+						secondScore = score;
+					}
+				}
+
+				if (topCommandIndex < 0) continue;
+				const float correctionStrength = Clamp01(component.voiceCommandCorrectionStrength);
+				const float effectiveThreshold = 1.0f + (Clamp01(component.voiceCommandThreshold) - 1.0f) * correctionStrength;
+				const float effectiveMargin = 1.0f + (Clamp01(component.voiceCommandMinimumMargin) - 1.0f) * correctionStrength;
+				const float scoreMargin = topScore - secondScore;
+				const bool isAccepted = topScore >= effectiveThreshold && scoreMargin >= effectiveMargin;
+				std::ostringstream scoreLog;
+				scoreLog << "音声コマンド文字候補: " << component.voiceCommandPhrases[static_cast<size_t>(topCommandIndex)]
+				         << " (Score=" << topScore << ", 2位=" << secondScore << ", 差=" << scoreMargin
+				         << ", 必要Score=" << effectiveThreshold << ", 必要差=" << effectiveMargin
+				         << ", 補正強度=" << correctionStrength << ") " << (isAccepted ? "採用" : "棄却");
+				PushConsoleMessage(scoreLog.str());
+				if (!isAccepted) continue;
+
+				EditorAiSensorResult commandResult{};
+				commandResult.isDetected = true;
+				commandResult.hasDetails = true;
+				commandResult.commandId = topCommandIndex;
+				commandResult.confidence = topScore;
+				commandResult.text = speechResult.text;
+				commandResult.command = component.voiceCommandPhrases[static_cast<size_t>(topCommandIndex)];
+				sensorResults_[sensorKey] = commandResult;
+				voiceCommandCooldownRemaining_[sensorKey] = (std::max)(0.0f, component.voiceCommandCooldownSeconds);
+				break;
+			}
+		}
+	}
+}
+
+void EditorAIManager::StopVoiceCommandRecognition() {
+	if (voiceCommandBackend_ == nullptr) return;
+	voiceCommandBackend_->StopRecognition();
+	voiceCommandBackend_->Shutdown();
+	voiceCommandBackend_.reset();
 }
 
 void EditorAIManager::Update(float deltaTime) {
 	if (!isStarted_ || editorScene_ == nullptr || deltaTime <= 0.0f) {
 		return;
 	}
+
+	UpdateVoiceCommands(deltaTime);
 
 	for (EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
 		if (!gameObject.isActive) {
@@ -649,10 +1033,85 @@ void EditorAIManager::Update(float deltaTime) {
 			}
 
 			if (IsAiAgentType(component.type)) {
-				UpdateAgent(gameObject, component, deltaTime);
+				const int64_t updateKey = MakeSensorKey(gameObject.id, component.type);
+				float& remainingSeconds = aiUpdateRemainingSeconds_[updateKey];
+				float& accumulatedSeconds = aiAccumulatedDeltaSeconds_[updateKey];
+				remainingSeconds -= deltaTime;
+				accumulatedSeconds += deltaTime;
+
+				if (remainingSeconds <= 0.0f || cachedRuntimeAgents_.find(updateKey) == cachedRuntimeAgents_.end()) {
+					EditorComponent runtimeAgent = component;
+					ApplyAiDefinitions(*editorScene_, gameObject, runtimeAgent);
+					const EditorGameObject* targetGameObject = runtimeAgent.connectedGameObjectId >= 0
+						? editorScene_->FindGameObject(runtimeAgent.connectedGameObjectId)
+						: nullptr;
+					const float distanceSquared = targetGameObject != nullptr && targetGameObject->isActive
+						? LengthSquaredXZ(MakeHorizontalVector(gameObject.translate, targetGameObject->translate))
+						: 0.0f;
+					float updateInterval = 0.1f;
+
+					if (distanceSquared > 600.0f * 600.0f) {
+						updateInterval = 1.0f;
+					}
+					else if (distanceSquared > 300.0f * 300.0f) {
+						updateInterval = 0.5f;
+					}
+					else if (distanceSquared > 150.0f * 150.0f) {
+						updateInterval = 0.2f;
+					}
+
+					Vector3 desiredDirection = MakeDesiredDirection(
+						gameObject,
+						runtimeAgent,
+						targetGameObject,
+						accumulatedSeconds);
+					Vector3 pythonDirection{};
+
+					if (TryRunPythonDirection(
+						gameObject,
+						runtimeAgent,
+						targetGameObject,
+						accumulatedSeconds,
+						pythonDirection)) {
+						desiredDirection = pythonDirection;
+					}
+
+					cachedAgentDirections_[updateKey] = desiredDirection;
+					cachedRuntimeAgents_[updateKey] = runtimeAgent;
+					accumulatedSeconds = 0.0f;
+					const uint32_t staggerValue = static_cast<uint32_t>(gameObject.id * 17 + static_cast<int32_t>(component.type));
+					const float staggerScale = 0.85f + static_cast<float>(staggerValue % 31u) * 0.01f;
+					remainingSeconds += updateInterval * staggerScale;
+				}
+
+				MoveAgent(
+					gameObject,
+					cachedRuntimeAgents_[updateKey],
+					cachedAgentDirections_[updateKey],
+					deltaTime);
 			}
 			else if (IsAiSensorType(component.type)) {
-				UpdateVisionSensor(gameObject, component, deltaTime);
+				// 音声コマンドは限定語彙の音響認識を毎フレーム処理済み。
+				// 汎用 Sensor 更新へ通すと結果が false で上書きされるため除外する。
+				if (component.type == EditorComponentType::AIVoiceCommand) {
+					continue;
+				}
+
+				const int64_t updateKey = MakeSensorKey(gameObject.id, component.type);
+				float& remainingSeconds = aiUpdateRemainingSeconds_[updateKey];
+				float& accumulatedSeconds = aiAccumulatedDeltaSeconds_[updateKey];
+				remainingSeconds -= deltaTime;
+				accumulatedSeconds += deltaTime;
+
+				if (remainingSeconds <= 0.0f) {
+					UpdateVisionSensor(gameObject, component, accumulatedSeconds);
+					accumulatedSeconds = 0.0f;
+					const bool isExternalSensor =
+						component.type == EditorComponentType::AIOpenCvObjectDetector ||
+						component.type == EditorComponentType::AIOpenCvColorTracker ||
+						component.type == EditorComponentType::AIWhisperSpeechRecognizer;
+					remainingSeconds += isExternalSensor ? 0.25f : 0.1f;
+				}
 			}
 		}
 	}
@@ -662,6 +1121,7 @@ void EditorAIManager::Draw() {
 }
 
 void EditorAIManager::Stop() {
+	StopVoiceCommandRecognition();
 	agentVelocities_.clear();
 	patrolOrigins_.clear();
 	agentTimers_.clear();
@@ -671,6 +1131,11 @@ void EditorAIManager::Stop() {
 	visibleTargets_.clear();
 	sensorResults_.clear();
 	sensorPreviousPositions_.clear();
+	aiUpdateRemainingSeconds_.clear();
+	aiAccumulatedDeltaSeconds_.clear();
+	cachedAgentDirections_.clear();
+	cachedRuntimeAgents_.clear();
+	voiceCommandCooldownRemaining_.clear();
 	isStarted_ = false;
 }
 
@@ -722,6 +1187,18 @@ void EditorAIManager::UpdateVisionSensor(const EditorGameObject& gameObject, Edi
 		sensorComponent.connectedGameObjectId != kInvalidGameObjectId ? editorScene_->FindGameObject(sensorComponent.connectedGameObjectId) : nullptr;
 	const int64_t sensorKey = MakeSensorKey(gameObject.id, sensorComponent.type);
 	EditorAiSensorResult sensorResult = MakeBaseSensorResult(gameObject, sensorComponent, pythonTargetGameObject);
+	const bool isOpenCvSensor =
+		sensorComponent.type == EditorComponentType::AIOpenCvObjectDetector ||
+		sensorComponent.type == EditorComponentType::AIOpenCvColorTracker;
+	const EditorComponent* openCvCamera = EditorComponentUtility::FindComponent(
+		gameObject,
+		EditorComponentType::AIOpenCvCamera);
+
+	if (isOpenCvSensor && openCvCamera != nullptr && !openCvCamera->isActive) {
+		sensorResults_[sensorKey] = sensorResult;
+		visibleTargets_[gameObject.id] = false;
+		return;
+	}
 
 	if (TryRunPythonSensor(gameObject, sensorComponent, pythonTargetGameObject, deltaTime, sensorResult)) {
 		const bool wasDetected = sensorResults_[sensorKey].isDetected;
@@ -859,6 +1336,29 @@ Vector3 EditorAIManager::MakeBehaviorTreeDirection(
 	Vector3 treeDirection{};  // BehaviorTree.CPP の Action ノードが最終的に出す移動方向。
 	bool treeActionSelected = false;  // Tree が何かしらの行動を選んだかどうか。
 	const bool sensorCanSeeTarget = visibleTargets_[gameObject.id];  // 視界センサーの前回結果。
+	const bool hasCustomBehaviorTree =
+		EditorAssetUtility::HasExtension(aiComponent.assetPath, ".xml") &&
+		std::filesystem::exists(aiComponent.assetPath);
+
+	// 標準 Tree は CanSeeTarget -> MoveToTarget / Patrol の固定構成なので、毎フレームの XML 解析を省く。
+	if (!hasCustomBehaviorTree) {
+		bool canSeeTarget = false;
+
+		if (targetGameObject != nullptr) {
+			const float distance = DistanceXZ(gameObject.translate, targetGameObject->translate);
+			const float sightRange = (std::max)(aiComponent.colliderRadius, aiComponent.navStoppingDistance);
+			const bool canSeeByDistance = sightRange > 0.0f && distance <= sightRange;
+			canSeeTarget = sensorCanSeeTarget || canSeeByDistance;
+		}
+
+		if (canSeeTarget) {
+			return MakePathfindingDirection(gameObject, aiComponent, targetGameObject);
+		}
+
+		EditorComponent patrolComponent = aiComponent;
+		patrolComponent.inputBehavior = 2;
+		return MakeBehaviorModeDirection(gameObject, patrolComponent, targetGameObject, deltaTime);
+	}
 
 	BT::BehaviorTreeFactory factory;
 	factory.registerSimpleCondition(
@@ -936,10 +1436,7 @@ Vector3 EditorAIManager::MakeBehaviorTreeDirection(
 		});
 
 	try {
-		BT::Tree tree =
-			EditorAssetUtility::HasExtension(aiComponent.assetPath, ".xml") && std::filesystem::exists(aiComponent.assetPath)
-				? factory.createTreeFromFile(aiComponent.assetPath)
-				: factory.createTreeFromText(kDefaultBehaviorTreeXml);
+		BT::Tree tree = factory.createTreeFromFile(aiComponent.assetPath);
 		tree.tickOnce();
 	}
 	catch (const std::exception&) {
@@ -999,12 +1496,12 @@ Vector3 EditorAIManager::MakeGoapDirection(
 	}
 
 	const float distance = DistanceXZ(gameObject.translate, targetGameObject->translate);
-	goap::WorldState startState("CG2_Start");
+	goap::WorldState startState("CG2Engine_Start");
 	startState.setVariable(kGoapHasTarget, true);
 	startState.setVariable(kGoapHasPath, true);
 	startState.setVariable(kGoapInRange, distance <= (std::max)(aiComponent.navStoppingDistance, 0.0f));
 
-	goap::WorldState goalState("CG2_Goal");
+	goap::WorldState goalState("CG2Engine_Goal");
 	goalState.setVariable(kGoapInRange, true);
 
 	std::vector<goap::Action> actions;
@@ -1070,12 +1567,23 @@ Vector3 EditorAIManager::MakePathfindingDirection(
 	}
 
 	const float agentRadius = (std::max)(aiComponent.navAgentRadius, 0.1f);
-	const float cellSize = (std::max)(agentRadius * 2.0f, 0.5f);
+	const EditorComponent* gridSettings = EditorComponentUtility::FindComponent(
+		gameObject,
+		EditorComponentType::AIMicroPatherGrid);
+	const bool hasGridSettings = gridSettings != nullptr && gridSettings->isActive;
+	const float cellSize = hasGridSettings
+		? (std::max)(gridSettings->colliderRadius, 0.1f)
+		: (std::max)(agentRadius * 2.0f, 0.5f);
 	float agentPositionDetour[3] = {gameObject.translate.x, gameObject.translate.y, gameObject.translate.z};  // Detour は float[3] で座標を扱う。
 	float targetPositionDetour[3] = {targetGameObject->translate.x, targetGameObject->translate.y, targetGameObject->translate.z};  // 経路探索先。
 	const float detourDistance = dtVdist2D(agentPositionDetour, targetPositionDetour);  // RecastNavigation / Detour の 2D 距離。
 	const float searchExtent = (std::clamp)(detourDistance + 8.0f, 12.0f, 48.0f);
-	const int32_t gridSize = (std::clamp)(static_cast<int32_t>(std::ceil(searchExtent / cellSize)) * 2 + 1, 15, 81);
+	const int32_t automaticGridSize =
+		(std::clamp)(static_cast<int32_t>(std::ceil(searchExtent / cellSize)) * 2 + 1, 15, 81);
+	const int32_t configuredGridSize = hasGridSettings
+		? static_cast<int32_t>(std::round((std::max)(gridSettings->colliderSize.x, gridSettings->colliderSize.z)))
+		: automaticGridSize;
+	const int32_t gridSize = (std::clamp)(configuredGridSize, 15, 161);
 	const Vector3 center = {
 		(gameObject.translate.x + targetGameObject->translate.x) * 0.5f,
 		gameObject.translate.y,

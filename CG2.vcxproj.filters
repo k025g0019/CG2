@@ -1,6 +1,72 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
+	<ClCompile Include="Source\Engine\Animation\AnimationGraph.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Animation\PropertyAnimationClip.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorAnimationWindowManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorDiagnosticsWindowManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorHookWireDebugWindowManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorPvShootWindowManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorLogFieldRegistry.generated.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorLogMonitorManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorLogMonitorWindowManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorLogSystemProviders.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorProfilerManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorProfilerAllocationTracker.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorTeamUuid.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorTeamCollaborationManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorReplayManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Asset\AssetManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Asset\AssetRegistry.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Effect\EffectAsset.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Effect\EditorEffectManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Effect\EffectDefinition.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Effect\EditorVfxManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Effect\EditorEffekseerManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
     <Filter Include="ソース ファイル">
       <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
       <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
@@ -21,12 +87,107 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+	<ClInclude Include="Source\Engine\Animation\AnimationGraph.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Animation\PropertyAnimationClip.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorAnimationWindowManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorDiagnosticsWindowManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorHookWireDebugWindowManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorPvShootWindowManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorLogFieldKind.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorLogFieldRegistry.generated.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorLogMonitorManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorLogMonitorWindowManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorLogSystemProviders.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorProfilerManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorProfilerAllocationTracker.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorTeamUuid.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorTeamCollaborationManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorReplayManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Asset\AssetType.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Asset\AssetManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Asset\AssetRegistry.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Effect\EffectAsset.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Effect\EditorEffectManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Effect\EffectDefinition.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Effect\EditorVfxManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Effect\EditorEffekseerManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
     <None Include=".editorconfig" />
     <None Include="Assets\Input\InGameInputAction.json">
       <Filter>リソース ファイル</Filter>
     </None>
+	<None Include="Assets\Shaders\Particle\ParticleClear.CS.hlsl" />
+	<None Include="Assets\Shaders\Particle\ParticleCommon.hlsli" />
+	<None Include="Assets\Shaders\Particle\ParticleUpdate.CS.hlsl" />
+	<None Include="Assets\Shaders\Particle\ParticleSpawn.CS.hlsl" />
+	<None Include="Assets\Shaders\Particle\Particle.VS.hlsl" />
+	<None Include="Assets\Shaders\Particle\Particle.PS.hlsl" />
+	<None Include="Assets\Shaders\Particle\OceanSprayMist.hlsli" />
+	<None Include="Assets\Shaders\Particle\ParticleModel.VS.hlsl" />
+	<None Include="Assets\Shaders\Particle\ParticleModel.PS.hlsl" />
+	<None Include="Assets\Shaders\Transparency\WeightedOIT.PS.hlsl" />
+	<None Include="Assets\Shaders\Transparency\WeightedOITComposite.PS.hlsl" />
+	<None Include="Assets\Shaders\Transparency\RefractiveSurface.PS.hlsl" />
+	<None Include="Assets\Shaders\Temporal\SkinnedMotionVector.VS.hlsl" />
+	<None Include="Assets\Shaders\Water\UnderwaterCaustics.PS.hlsl" />
+	<None Include="Assets\Shaders\Common\SurfaceDeformation.hlsli" />
 	<None Include="Assets\Shaders\Object3d.VS.hlsl" />
 	<None Include="Assets\Shaders\Object3d.PS.hlsl" />
+	<None Include="Assets\Shaders\Water\OceanSpectrum.hlsli" />
+	<None Include="Assets\Shaders\Water\OceanFftSampling.hlsli" />
+	<None Include="Assets\Shaders\Water\OceanFFT_UpdateSpectrum.CS.hlsl" />
+	<None Include="Assets\Shaders\Water\OceanFFT_Row.CS.hlsl" />
+	<None Include="Assets\Shaders\Water\OceanFFT_Transpose.CS.hlsl" />
+	<None Include="Assets\Shaders\Water\OceanFFT_Finalize.CS.hlsl" />
+	<None Include="Assets\Shaders\Water\OceanSurface.hlsli" />
+	<None Include="Assets\Shaders\Water\OceanSurface.PS.hlsl" />
 	<None Include="Assets\Shaders\Object3dReflectionMask.PS.hlsl" />
 	<None Include="Assets\Shaders\Culling\BuildIndirectArgs.CS.hlsl" />
 	<None Include="Assets\Shaders\Culling\FrustumCulling.CS.hlsl" />
@@ -45,6 +206,7 @@
 	<None Include="Assets\Shaders\PostProcess\SMAA\SMAAEdgeDetection.PS.hlsl" />
 	<None Include="Assets\Shaders\PostProcess\SMAA\SMAANeighborhoodBlend.PS.hlsl" />
 	<None Include="Assets\Shaders\PostProcess\FinalComposite.PS.hlsl" />
+	<None Include="Assets\Shaders\PostProcess\SSGI.PS.hlsl" />
     <None Include="Assets\Shaders\DirectXTK\EnvironmentMapEffectBridge.hlsli" />
     <None Include="Assets\Shaders\Reflection\ParallaxCorrectedCubemap.hlsli" />
     <None Include="Assets\Shaders\Reflection\SSRComposite.CS.hlsl" />
@@ -61,6 +223,7 @@
     <None Include="Assets\Shaders\Temporal\TemporalResolve.CS.hlsl" />
     <None Include="Assets\Shaders\Temporal\VelocityDilate.CS.hlsl" />
     <None Include="Assets\Shaders\ShadowDepth.VS.hlsl" />
+    <None Include="Assets\Shaders\Shadow\AlphaCutoutShadowDepth.PS.hlsl" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Source\Engine\Core\CrashHandler.cpp">
@@ -73,6 +236,9 @@
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorAssetFactory.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorAssetManagerAdapters.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorAssetUtility.cpp">
@@ -96,9 +262,60 @@
     <ClCompile Include="Source\Engine\Editor\EditorJoltPhysicsManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="Source\Engine\Editor\EditorLocalMoveManager.cpp">
-      <Filter>ソース ファイル</Filter>
-    </ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorLocalMoveManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorRailMovementManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorRailBranchManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorActionSequenceManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorSaveManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorTargetingManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorDamageManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorObjectPoolManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorWeaponManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorWeaponLoadoutManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorRuntimePropertyManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorCameraEffectManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorWaveSpawnerManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorSceneOptimizationManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorWaterRailShooterSceneBuilder.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorGameplayEventManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorUiBindingManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorGameplayToolsWindowManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorRollingMoveManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
@@ -129,6 +346,9 @@
     <ClCompile Include="Source\Engine\Editor\EditorNavigationManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
+	<ClCompile Include="Source\Engine\Editor\EditorBlastDestructionManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
     <ClCompile Include="ThirdParty\meshoptimizer\src\allocator.cpp">
       <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
     </ClCompile>
@@ -192,6 +412,9 @@
     <ClCompile Include="Source\Engine\Editor\EditorPhysicsManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorOceanSystem.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorScene.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
@@ -213,6 +436,51 @@
     <ClCompile Include="Source\Engine\Editor\EditorRuntimeManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Engine\External\ExternalFeature.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Speech\SpeechSystem.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+	<ClCompile Include="Source\Engine\Speech\WhisperSpeechBackend.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+    <ClCompile Include="Source\Engine\Speech\WindowsSpeechApiBackend.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Vision\VisionSystem.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Vision\MediaFoundationCameraSource.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Vision\BuiltinVisionBackend.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Vision\OnnxVisionBackend.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Online\OnlineJson.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Online\OnlineService.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Online\WinHttpOnlineBackend.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Haptics\HapticSystem.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Haptics\FeelKitHapticBackend.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorExternalFeatureManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorExternalFeatureWindowManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorDockingManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
@@ -220,6 +488,9 @@
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorGameViewManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorGameBuildManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorHierarchyWindowManager.cpp">
@@ -255,6 +526,15 @@
 	<ClCompile Include="Source\Engine\Renderer\EditorGpuCullingManager.cpp">
 	  <Filter>ソース ファイル</Filter>
 	</ClCompile>
+	<ClCompile Include="Source\Engine\Renderer\EditorOceanFftManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Renderer\EditorGpuParticleManager.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
+	<ClCompile Include="Source\Engine\Renderer\EditorVfxRenderer.cpp">
+	  <Filter>ソース ファイル</Filter>
+	</ClCompile>
 	<ClCompile Include="Source\Engine\Renderer\EditorPostProcessQualityManager.cpp">
 	  <Filter>ソース ファイル</Filter>
 	</ClCompile>
@@ -265,6 +545,15 @@
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="Source\Engine\Core\StringUtility.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\EngineVersion.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\ProjectVersionManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\EngineEnvironmentCheck.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="Source\Engine\Core\Log.cpp">
@@ -1172,6 +1461,9 @@
     <ClInclude Include="Source\Engine\Editor\EditorAssetFactory.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorAssetManagerAdapters.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
     <ClInclude Include="Source\Engine\Editor\EditorAssetUtility.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
@@ -1199,9 +1491,60 @@
     <ClInclude Include="Source\Engine\Editor\EditorJoltPhysicsManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="Source\Engine\Editor\EditorLocalMoveManager.h">
-      <Filter>ヘッダー ファイル</Filter>
-    </ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorLocalMoveManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorRailMovementManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorRailBranchManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorActionSequenceManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorSaveManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorTargetingManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorDamageManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorObjectPoolManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorWeaponManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorWeaponLoadoutManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorRuntimePropertyManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorCameraEffectManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorWaveSpawnerManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorSceneOptimizationManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorWaterRailShooterSceneBuilder.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorGameplayEventManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorUiBindingManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorGameplayToolsWindowManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
     <ClInclude Include="Source\Engine\Editor\EditorRollingMoveManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
@@ -1214,7 +1557,13 @@
     <ClInclude Include="Source\Engine\Editor\EditorNavigationManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
+	<ClInclude Include="Source\Engine\Editor\EditorBlastDestructionManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
     <ClInclude Include="Source\Engine\Editor\EditorPhysicsManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorOceanSystem.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="Source\Engine\Editor\EditorScene.h">
@@ -1244,7 +1593,94 @@
 	<ClInclude Include="Source\Engine\Core\EditorScriptApi.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
+    <ClInclude Include="Source\Engine\Core\EngineVersion.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Core\EngineVersion.generated.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Core\ProjectVersionManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Core\EngineEnvironmentCheck.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
     <ClInclude Include="Source\Engine\Editor\EditorRuntimeManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\External\ExternalFeature.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Speech\SpeechTypes.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Speech\ISpeechBackend.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Speech\NullSpeechBackend.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Speech\SpeechSystem.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+	<ClInclude Include="Source\Engine\Speech\WhisperSpeechBackend.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+    <ClInclude Include="Source\Engine\Speech\WindowsSpeechApiBackend.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Vision\VisionTypes.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Vision\IVisionBackend.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Vision\ICameraSource.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Vision\VisionSystem.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Vision\MediaFoundationCameraSource.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Vision\BuiltinVisionBackend.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Vision\OnnxVisionBackend.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Online\OnlineTypes.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Online\IOnlineBackend.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Online\OnlineJson.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Online\OnlineService.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Online\WinHttpOnlineBackend.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Haptics\HapticTypes.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Haptics\IHapticBackend.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Haptics\HapticSystem.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Haptics\FeelKitHapticBackend.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorExternalFeatureManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorExternalFeatureWindowManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
 	<ClInclude Include="Source\Engine\Core\EditorSharedState.h">
@@ -1257,6 +1693,9 @@
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="Source\Engine\Editor\EditorGameViewManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorGameBuildManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="Source\Engine\Editor\EditorHierarchyWindowManager.h">
@@ -1290,6 +1729,15 @@
 	  <Filter>ヘッダー ファイル</Filter>
 	</ClInclude>
 	<ClInclude Include="Source\Engine\Renderer\EditorGpuCullingManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Renderer\EditorOceanFftManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Renderer\EditorGpuParticleManager.h">
+	  <Filter>ヘッダー ファイル</Filter>
+	</ClInclude>
+	<ClInclude Include="Source\Engine\Renderer\EditorVfxRenderer.h">
 	  <Filter>ヘッダー ファイル</Filter>
 	</ClInclude>
 	<ClInclude Include="Source\Engine\Renderer\EditorPostProcessQualityManager.h">

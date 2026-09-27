@@ -12,6 +12,7 @@ public:
 	void Initialize();  // ImGui のデバイス初期化は PlatformManager 済みなので、この Manager は追加初期化しない。
 	void Update();  // ImGui と ImGuizmo の新しい 1 フレームを開始する。
 	void Draw();  // ImGui の描画データを確定し、Renderer に描画可能フラグを渡す。
+	void RenderPlatformWindows();  // メイン Window 外へ切り離した ImGui タブ用の OS Window を更新・描画する。
 };
 
 #pragma warning(pop)

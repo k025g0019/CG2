@@ -1,0 +1,345 @@
+diff --git a/app/data.ts b/app/data.ts
+index d10b95e..f9c47a9 100644
+--- a/app/data.ts
++++ b/app/data.ts
+@@ -11,9 +11,6 @@ export const docNavigation = [
+   { label: "外部連携", href: "/docs/external-integration" },
+   { label: "現行仕様", href: "/docs/engine-spec" },
+   { label: "内部仕様", href: "/docs/internal-specs" },
+-  { label: "描画機能", href: "/docs/rendering" },
+-  { label: "Asset管理", href: "/docs/asset-management" },
+-  { label: "Lighting / GI", href: "/docs/lighting-gi" },
+   { label: "共同制作", href: "/docs/team-collaboration" },
+   { label: "トラブルシューティング", href: "/docs/troubleshooting" },
+ ];
+diff --git a/app/docs/asset-management/page.tsx b/app/docs/asset-management/page.tsx
+index 7e8109b..cfc10fe 100644
+--- a/app/docs/asset-management/page.tsx
++++ b/app/docs/asset-management/page.tsx
+@@ -1,5 +1,7 @@
+ ﻿import { Callout, DocHeader, DocsShell, StatusPill } from "../../ui";
+ 
++import Link from "next/link";
++
+ const assetTypes = [
+   ["Model", ".fbx, .obj", "Model CacheとScene Object GPU Resourceを無効化"],
+   ["Texture", ".png, .jpg, .jpeg, .tga, .dds", "Scene Object GPU Resourceを無効化"],
+@@ -64,6 +66,7 @@ export default function AssetManagementPage() {
+           <div><h3>移動と削除</h3><p>移動と確定できる場合だけ同じAssetIdのPathを更新します。削除ではRecordを削除し、IDを予約し続けません。</p></div>
+         </div>
+       </section>
++      <Link className="text-link" href="/docs/internal-specs">内部仕様の分野一覧へ →</Link>
+     </DocsShell>
+   );
+ }
+diff --git a/app/docs/engine-spec/page.tsx b/app/docs/engine-spec/page.tsx
+index c6a4fb7..f1f5b7c 100644
+--- a/app/docs/engine-spec/page.tsx
++++ b/app/docs/engine-spec/page.tsx
+@@ -1,14 +1,12 @@
+-import Link from "next/link";
+ import { Callout, DocHeader, DocsShell, StatusPill } from "../../ui";
+ import { engineVersion } from "../../generated/engineVersion";
+ 
+ export default function EngineSpecPage() {
+   return <DocsShell>
+-    <DocHeader eyebrow="CURRENT ENGINE SPEC / 08" title="利用者が使える範囲を確認する。" lead="現行Buildで利用できる環境、Editor機能、Project互換、Component、Script、描画、共同制作の対応範囲を利用者向けに整理します。内部の所有関係や処理順は別の内部仕様ページで説明します。" meta={`ENGINE / ${engineVersion.display} · API VERSION / ${engineVersion.scriptApi} · PROJECT FORMAT / ${engineVersion.projectFormat}`} />
++    <DocHeader eyebrow="CURRENT ENGINE SPEC" title="CG2Engineの対応範囲。" lead="現行Buildで利用できる環境、Editor機能、Project互換、Component、Script、描画、共同制作の対応範囲をまとめます。" meta={`ENGINE / ${engineVersion.display} · API VERSION / ${engineVersion.scriptApi} · PROJECT FORMAT / ${engineVersion.projectFormat}`} />
+     <div className="doc-badge-row"><StatusPill tone="stable">WINDOWS 64 BIT</StatusPill><StatusPill tone="stable">DIRECTX 12</StatusPill><StatusPill tone="partial">CURRENT BUILD</StatusPill></div>
+     <Callout title="現行値を優先する" tone="note"><p>現在の基準はComponent 287種類、Runtime API 413 Entry、Script Template 26種類、Inspector 1,981 Field / 278 Componentです。過去の評価章や追加時点の件数は履歴として扱います。</p></Callout>
+     <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">SUPPORTED SCOPE</p><h2>利用できる環境</h2></div><div className="two-column-doc"><div><h3>Editor / Game</h3><p>Windows 64 bit、DirectX 12、Dear ImGui Docking、XAudio2、Jolt Physics、FBX/OBJ Import、C++ DLL Scriptを基準にします。</p></div><div><h3>対象外</h3><p>Linux/macOS Editor、Vulkan/Metal Renderer、Web Buildは現行仕様に含まれません。外部DeviceやNetworkも利用できない場合の代替経路を用意します。</p></div></div></section>
+     <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">USER-FACING CONTRACT</p><h2>利用者が確認する契約</h2></div><div className="detail-card-grid"><article><span>PROJECT</span><h3>Versionを合わせる</h3><p>ProjectのEngine Version、Project Format、Script API Version、Channelを確認します。不一致時はMigrationまたはEngine切替を行います。</p></article><article><span>SAVE</span><h3>安全に保存する</h3><p>Scene、Prefab、Asset、Project Settings、Input、Animation、Effect、Scriptを明示的に保存します。Play中のRuntime値は編集設定と分けます。</p></article><article><span>STATUS</span><h3>実装状態を読む</h3><p>実装済み、一部実装、要実機確認、未対応を区別し、Build成功だけでPlayや外部Deviceの成功とは判断しません。</p></article></div></section>
+-    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">SEPARATE INTERNAL DOCUMENTATION</p><h2>内部仕様は別ページで読む</h2></div><p className="section-intro">処理の所有者、Managerの依存、1 Frameの順序、保存行の互換、GPU Resource寿命、Thread、通信の責務は利用者向け手順に混ぜません。</p><Link className="button button-secondary" href="/docs/internal-specs">内部仕様を開く →</Link></section>
+   </DocsShell>;
+ }
+diff --git a/app/docs/internal-specs/architecture/page.tsx b/app/docs/internal-specs/architecture/page.tsx
+new file mode 100644
+index 0000000..1b32d5b
+--- /dev/null
++++ b/app/docs/internal-specs/architecture/page.tsx
+@@ -0,0 +1,11 @@
++import Link from "next/link";
++import { DocHeader, DocsShell } from "../../../ui";
++
++export default function ArchitectureInternalsPage() {
++  return <DocsShell><DocHeader eyebrow="INTERNAL SPEC / ARCHITECTURE" title="全体構成と所有関係" lead="起動形態、Managerの所有者、初期化順、1 Frameの処理順をまとめます。" meta="SOURCE / engine-architecture-internals.md" />
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">EXECUTION MODES</p><h2>実行形態</h2></div><div className="detail-card-grid"><article><h3>Editor</h3><p>Project互換を確認した後、Platform、Scene Lifecycle、Window、Rendererを初期化します。</p></article><article><h3>Standalone</h3><p><code>game.build</code>を読み、Editor UIを省いて指定SceneからPlayを開始します。</p></article><article><h3>Tool Modes</h3><p>Build CLI、Migration、Environment Checkは同じ実行ファイルの起動引数から処理します。</p></article></div></section>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">OWNERSHIP</p><h2>最上位の所有関係</h2></div><div className="detail-card-grid"><article><h3>GameScene</h3><p>Platform、Scene Lifecycle、各Window、共同制作、RendererのManagerを束ねます。</p></article><article><h3>Runtime Manager</h3><p>Physics、Script、Input、Animation、Audio、Effect、AI、Navigation、Gameplay Managerを所有します。</p></article><article><h3>Render Manager</h3><p>GPU Commandを発行し、Render PassとPresentを担当します。</p></article></div><p className="section-intro">基本階層は<code>main → Scene → GameObject → Component</code>です。GameSceneは順序を制御し、分野別処理は担当Managerへ置きます。Manager間の依存は初期化時に注入します。</p></section>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">FRAME ORDER</p><h2>UpdateとDraw</h2></div><div className="two-column-doc"><div><h3>Update</h3><p>Platform入力とViewport更新の後にScene Lifecycle、Editor Window、共同制作、Render Managerを更新します。StandaloneではGame ViewとRuntime側の処理だけを進めます。</p></div><div><h3>Draw</h3><p>Runtime Debug Draw、ImGui構築、Rendererによる3D/2D/PostProcess/ImGui描画、Multi-Viewport、Profiler履歴、FPS制限の順です。</p></div></div></section>
++    <Link className="text-link" href="/docs/internal-specs">内部仕様の分野一覧へ →</Link>
++  </DocsShell>;
++}
+diff --git a/app/docs/internal-specs/collaboration/page.tsx b/app/docs/internal-specs/collaboration/page.tsx
+new file mode 100644
+index 0000000..77907b5
+--- /dev/null
++++ b/app/docs/internal-specs/collaboration/page.tsx
+@@ -0,0 +1,11 @@
++import Link from "next/link";
++import { DocHeader, DocsShell } from "../../../ui";
++
++export default function CollaborationInternalsPage() {
++  return <DocsShell><DocHeader eyebrow="INTERNAL SPEC / COLLABORATION" title="共同制作のRevisionと同期責務" lead="Editor、CG2TeamServer、Launcher、Asset Registry間の通信と永続化をまとめます。" meta="SOURCE / team-collaboration-internals.md" />
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">OWNERSHIP</p><h2>同期データの所有者</h2></div><div className="detail-card-grid"><article><h3>Editor Manager</h3><p><code>EditorTeamCollaborationManager</code>が接続状態、差分、Revision、Lock、Presence、履歴、競合、TeamItemを所有します。</p></article><article><h3>CG2TeamServer</h3><p>Project単位でRevisionを確定し、変更配信、履歴再送、Heartbeat、接続上限を管理します。</p></article><article><h3>Asset Registry</h3><p>受信Assetを登録し、依存索引とHot Reload通知へ接続します。各Editor Windowは同期データ本体を保持しません。</p></article></div></section>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">CHANGE FLOW</p><h2>変更確定の流れ</h2></div><div className="numbered-steps"><article><span>01</span><h3>Change Event</h3><p>変更をchangeId、baseRevision、Scene/Object/Component UUID、Operation、Payloadへ正規化します。</p></article><article><span>02</span><h3>Host Commit</h3><p>HostまたはServerが全体順序Revisionを付け、Commitを認証済みPeerへ配信します。</p></article><article><span>03</span><h3>履歴と復旧</h3><p>Commitをchange-logへ追記し、未同期変更は再接続後にBase Revisionと比較します。競合内容は上書きせず退避します。</p></article></div></section>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">PROTOCOL</p><h2>Handshakeと途中参加</h2></div><p className="section-intro">HandshakeでProtocol、Project ID、Engine互換情報を検証します。途中参加用SnapshotやHandshake応答は宛先User IDを付け、認証前Payloadと他Client宛Messageを適用しません。Protocol 3はSnapshot Revision、履歴再送、Offline 3-way同期を含みます。</p><Link className="text-link" href="/docs/team-collaboration">共同制作の設定と使い方 →</Link></section>
++    <Link className="text-link" href="/docs/internal-specs">内部仕様の分野一覧へ →</Link>
++  </DocsShell>;
++}
+diff --git a/app/docs/internal-specs/external-integration/page.tsx b/app/docs/internal-specs/external-integration/page.tsx
+new file mode 100644
+index 0000000..fe35421
+--- /dev/null
++++ b/app/docs/internal-specs/external-integration/page.tsx
+@@ -0,0 +1,11 @@
++import Link from "next/link";
++import { DocHeader, DocsShell } from "../../../ui";
++
++export default function ExternalIntegrationInternalsPage() {
++  return <DocsShell><DocHeader eyebrow="INTERNAL SPEC / EXTERNAL SYSTEMS" title="外部連携の所有権とThread境界" lead="Speech、Vision、Haptics、OnlineのBackend、Device、Worker Thread、Main Threadの責務をまとめます。" meta="SOURCE / external-integration-internals.md" />
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">LAYERING</p><h2>SystemとBackendの境界</h2></div><div className="detail-card-grid"><article><h3>Editor接続</h3><p>ComponentとScript WrapperからExternal Feature Manager / OnlineServiceを経て各Systemへ渡します。</p></article><article><h3>Backend</h3><p>Speech、Vision、Haptics、OnlineのSystemがBackend Interfaceを所有します。</p></article><article><h3>Platform SDK</h3><p>SAPI、Media Foundation、ONNX Runtime、FeelKit、WinHTTP固有型はBackend内へ閉じます。</p></article></div><p className="section-intro">上位層へ渡すのはEngine独自のPlain Dataです。OS Handle、SDK固有型、Session PointerはBackendの外へ出しません。</p></section>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">THREAD OWNERSHIP</p><h2>Threadごとの責務</h2></div><div className="detail-card-grid"><article><span>MAIN</span><h3>GameとCallback</h3><p>Component登録、System Update、Script API、Input Action、UI、Online Callbackを実行します。</p></article><article><span>CAPTURE</span><h3>Camera Frame</h3><p>Capture ThreadがBGRA Frameを更新し、Main Threadは最新Frameを受け取ります。Capture側からSceneやImGuiへ触れません。</p></article><article><span>ONLINE</span><h3>Network Request</h3><p>Worker ThreadはRequestを直列処理してResponse Queueへ積みます。Gameplay CallbackはMain Threadで呼びます。</p></article></div></section>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">SHUTDOWN</p><h2>停止時の解放順</h2></div><p className="section-intro">停止を通知してThreadをjoinし、その後にMedia Foundation、WinHTTP Handle、Backend、Session、Queueを解放します。Play停止時にCallbackを外し、次のPlayへ前回のSessionを残しません。</p><Link className="text-link" href="/docs/external-integration">外部連携の設定と使い方 →</Link></section>
++    <Link className="text-link" href="/docs/internal-specs">内部仕様の分野一覧へ →</Link>
++  </DocsShell>;
++}
+diff --git a/app/docs/internal-specs/page.tsx b/app/docs/internal-specs/page.tsx
+index 7cd49d2..3b0f462 100644
+--- a/app/docs/internal-specs/page.tsx
++++ b/app/docs/internal-specs/page.tsx
+@@ -1,22 +1,32 @@
+ import Link from "next/link";
+-import { Callout, DocHeader, DocsShell, StatusPill } from "../../ui";
++import { DocHeader, DocsShell } from "../../ui";
+ 
+ const internalTopics = [
+-  ["01", "全体内部設計", "mainからScene、GameObject、Componentへ至る所有関係、起動順、Update/Draw順、拡張規約。"],
+-  ["02", "Runtimeサブシステム", "Play開始・停止、Manager依存、時間、PhysicsとScriptの境界、Event、Reset、Error境界。"],
+-  ["03", "データ保存・互換性", "Project、Scene、Prefab、Asset Registry、Hash、依存、Backup、Invite、共同制作Change Log。"],
+-  ["04", "Rendering Pipeline", "DirectX 12 Pass、GPU Resource、Barrier、Scene/Game View、Temporal History、Bloom、SMAA、SSR。"],
+-  ["05", "外部連携内部設計", "Speech、Vision、Haptics、OnlineのBackend、Thread、Memory、Device失敗、DirectX/GL境界。"],
+-  ["06", "共同制作内部設計", "CG2TeamServer、認証、Revision、Scene/Asset同期、TeamItem、Lock、Conflict、永続化。"],
++  ["01", "全体構成", "Engineの所有関係、起動順、Scene・GameObject・Component、拡張規約。", "/docs/internal-specs/architecture"],
++  ["02", "Runtime", "Play開始と停止、Manager依存、1 Frameの更新順、時間とEvent。", "/docs/internal-specs/runtime"],
++  ["03", "保存と互換性", "Project、Scene、Prefab、Asset Registry、共同制作データの保存契約。", "/docs/internal-specs/persistence"],
++  ["04", "描画機能", "DirectX 12のPass、Resource寿命、Temporal、PostProcess、AudioとPhysics描画。", "/docs/rendering"],
++  ["05", "Asset管理", "UUID、Hash、依存索引、種別別Hot Reload、手動対応の内部契約。", "/docs/asset-management"],
++  ["06", "Lighting / GI", "Shadow、Light Probe、SSGI、Volumetric、Reflection、最終合成の接続。", "/docs/lighting-gi"],
++  ["07", "外部連携", "Speech、Vision、Haptics、OnlineのBackend、Thread、Memory境界。", "/docs/internal-specs/external-integration"],
++  ["08", "共同制作", "CG2TeamServer、認証、Revision、同期、Lock、Conflict、復旧設計。", "/docs/internal-specs/collaboration"],
+ ];
+ 
+ export default function InternalSpecsPage() {
+   return <DocsShell>
+-    <DocHeader eyebrow="INTERNAL SPECIFICATIONS / ENGINEERING" title="内部仕様を、利用者向け説明から分離する。" lead="ここはEngineを拡張・保守する人向けの設計説明です。利用者がComponentやWindowを使う手順ではなく、所有関係、寿命、Thread、保存契約、描画Pass、通信責務を扱います。" meta="ENGINEERING REFERENCE / 2026.09.26 · NOT A USER GUIDE" />
+-    <div className="doc-badge-row"><StatusPill tone="experimental">ENGINEERING</StatusPill><StatusPill tone="partial">SOURCE CONTRACT</StatusPill><StatusPill tone="stable">SEPARATE FROM USER GUIDE</StatusPill></div>
+-    <Callout title="利用者向けページと混ぜない" tone="warning"><p>操作手順、Inspectorの値、Componentの組み合わせ、C++ APIの使い方は通常のドキュメントを参照してください。内部仕様では、それらを実装する所有者・順序・境界・復旧契約だけを説明します。</p></Callout>
+-    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">INTERNAL MAP</p><h2>分野別の内部説明</h2></div><div className="doc-card-grid">{internalTopics.map(([number, title, copy]) => <article className="doc-topic-card" key={number}><span className="doc-topic-number">{number}</span><h3>{title}</h3><p>{copy}</p><div className="topic-tags"><span>内部設計</span><span>Source照合</span></div></article>)}</div></section>
+-    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">BOUNDARY RULES</p><h2>内部仕様で固定するもの</h2></div><div className="detail-card-grid"><article><span>OWNERSHIP</span><h3>責務を一箇所に置く</h3><p>mainやGameSceneへ処理を集中させず、Scene、Object、Component、Manager、Systemの所有関係を維持します。</p></article><article><span>LIFETIME</span><h3>開始と停止を対にする</h3><p>Thread、Backend、Handle、Queue、GPU Resourceは開始順と停止順を明記し、次のPlayへ状態を残しません。</p></article><article><span>COMPATIBILITY</span><h3>既存形式を壊さない</h3><p>Sceneの未知行、APIの末尾拡張、Project Version、BackupとConflictを前提に変更します。</p></article></div></section>
+-    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">RETURN TO USER DOCS</p><h2>利用者向け説明へ戻る</h2></div><div className="link-grid"><Link href="/docs/engine-spec">現行Engine仕様 →</Link><Link href="/docs/user-guide">利用者ガイド →</Link><Link href="/docs/cpp-scripting">C++ API →</Link><Link href="/docs/external-integration">外部連携の使い方 →</Link></div></section>
++    <DocHeader eyebrow="INTERNAL SPECIFICATIONS" title="CG2Engine 内部仕様" lead="Engine内部の構成と処理を、分野ごとにまとめています。" meta="ENGINEERING REFERENCE / 2026.09.26" />
++    <section className="doc-section">
++      <div className="doc-section-title"><p className="eyebrow">SPECIFICATIONS</p><h2>分野を選ぶ</h2></div>
++      <div className="doc-card-grid">
++        {internalTopics.map(([number, title, copy, href]) => (
++          <Link className="doc-topic-card" href={href} key={number}>
++            <span className="doc-topic-number">{number}</span>
++            <h3>{title}</h3>
++            <p>{copy}</p>
++            <b>仕様を読む →</b>
++          </Link>
++        ))}
++      </div>
++    </section>
+   </DocsShell>;
+ }
+diff --git a/app/docs/internal-specs/persistence/page.tsx b/app/docs/internal-specs/persistence/page.tsx
+new file mode 100644
+index 0000000..244c44f
+--- /dev/null
++++ b/app/docs/internal-specs/persistence/page.tsx
+@@ -0,0 +1,11 @@
++import Link from "next/link";
++import { Callout, DocHeader, DocsShell } from "../../../ui";
++
++export default function PersistenceInternalsPage() {
++  return <DocsShell><DocHeader eyebrow="INTERNAL SPEC / PERSISTENCE" title="保存形式と互換性境界" lead="Project、Scene、Prefab、Asset Registry、共同制作データの保存責務をまとめます。" meta="SOURCE / data-persistence-internals.md" />
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">PROJECT DATA</p><h2>Project内の保存領域</h2></div><div className="reference-table-wrap"><table className="reference-table"><thead><tr><th>Path</th><th>役割</th></tr></thead><tbody><tr><td><code>Assets/</code></td><td>Scene、Prefab、Model、Texture、Material、Animation、Input、Effect</td></tr><tr><td><code>ProjectSettings/</code></td><td>Version、Game、Editor、Build、共同制作設定</td></tr><tr><td><code>Library/</code></td><td>再生成可能なCache</td></tr><tr><td><code>.team/</code></td><td>共同制作の履歴、Base、Backup、Conflict、Trash</td></tr></tbody></table></div></section>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">SCENE SERIALIZATION</p><h2>Sceneの識別と安全保存</h2></div><div className="two-column-doc"><div><h3>IDの役割</h3><p>Scene UUID、GameObject UUID、Component UUIDは保存・同期参照に使います。整数GameObject IDはRuntimeの高速参照用です。Load、Prefab Instantiate、Scene Mergeで衝突を検査します。</p></div><div><h3>未知行の保持</h3><p>解釈できないSerialization行は保持して再保存へ戻します。これは旧Buildが未知機能を実行できる保証ではありません。</p></div></div><Callout title="既存Fileを守る" tone="note"><p>Sceneは一時Fileへ全量出力し、StreamとErrorを確認してから置換します。失敗時に元Destinationを削除しません。</p></Callout></section>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">EDIT DATA / RUNTIME DATA</p><h2>編集値とRuntime値</h2></div><p className="section-intro">HP、Ammo、Cooldown、Physics速度、Pool貸出状態、Audio HandleなどはPlay中の一時値です。Sceneへ保存する値は初期設定、Asset Path、係数、Action名などに限ります。</p></section>
++    <Link className="text-link" href="/docs/internal-specs">内部仕様の分野一覧へ →</Link>
++  </DocsShell>;
++}
+diff --git a/app/docs/internal-specs/runtime/page.tsx b/app/docs/internal-specs/runtime/page.tsx
+new file mode 100644
+index 0000000..8441d23
+--- /dev/null
++++ b/app/docs/internal-specs/runtime/page.tsx
+@@ -0,0 +1,10 @@
++import Link from "next/link";
++import { DocHeader, DocsShell } from "../../../ui";
++
++export default function RuntimeInternalsPage() {
++  return <DocsShell><DocHeader eyebrow="INTERNAL SPEC / RUNTIME" title="Runtimeの開始・更新・停止" lead="Play Runtimeの状態遷移、Managerの依存、固定時間、Event配送をまとめます。" meta="SOURCE / runtime-subsystem-internals.md" />
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">LIFECYCLE</p><h2>Playの状態遷移</h2></div><div className="numbered-steps"><article><span>01</span><h3>開始前Snapshot</h3><p>Play開始前のSceneとPathを保持し、Runtime用の状態を初期化します。</p></article><article><span>02</span><h3>依存順で開始</h3><p>PoolとPhysicsを先に準備し、Gameplay、Animation、AI、Audio、外部連携、Scriptを依存関係に沿って開始します。</p></article><article><span>03</span><h3>停止と復元</h3><p>非同期Loadを止め、Runtime Managerを停止・解放した後、開始前Sceneを復元します。</p></article></div></section>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">FRAME CONTRACT</p><h2>1 Frameの主な順序</h2></div><ol className="reference-list"><li>Scene Transition、非同期Load、Streaming</li><li>Replay入力とTime Scaleの適用</li><li>Input、Targeting、C++ Script Update</li><li>Gameplay要求、Weapon、AI、Navigation</li><li>固定Physics StepとPhysics Event、Script FixedUpdate</li><li>Animation、Effect、Audio、Haptics、外部連携</li><li>UI Binding、Camera Effect、Log Monitor、Runtime State公開</li></ol><p className="section-intro">順序は同じFrameで値を参照できる時点を決めます。Physicsは描画Frameあたり最大4 Step、Script FixedUpdateは実行したPhysics Stepと同数呼び出します。</p></section>
++    <Link className="text-link" href="/docs/internal-specs">内部仕様の分野一覧へ →</Link>
++  </DocsShell>;
++}
+diff --git a/app/docs/lighting-gi/page.tsx b/app/docs/lighting-gi/page.tsx
+index 9169e67..b5a2946 100644
+--- a/app/docs/lighting-gi/page.tsx
++++ b/app/docs/lighting-gi/page.tsx
+@@ -1,5 +1,7 @@
+ ﻿import { Callout, DocHeader, DocsShell, StatusPill } from "../../ui";
+ 
++import Link from "next/link";
++
+ const passes = [
+   ["01", "Shadow Map", "Sun CSM 4段とPoint Light 6面をAtlasへ描画"],
+   ["02", "Light Probe Bake", "SH9係数と八面体の距離モーメントを更新"],
+@@ -57,6 +59,7 @@ export default function LightingGiPage() {
+           <li><span>04</span><p>BloomとFinal Composite後に、露出と色が意図した結果かGame Viewで確認する</p></li>
+         </ol>
+       </section>
++      <Link className="text-link" href="/docs/internal-specs">内部仕様の分野一覧へ →</Link>
+     </DocsShell>
+   );
+ }
+diff --git a/app/docs/page.tsx b/app/docs/page.tsx
+index 7549c27..e754c40 100644
+--- a/app/docs/page.tsx
++++ b/app/docs/page.tsx
+@@ -47,44 +47,23 @@ const docSections = [
+   },
+   {
+     number: "07",
+-    title: "描画・Audio",
+-    copy: "Ocean、Terrain、高度物理、Particle、Audio、Material、Temporalの設定と確認。",
+-    links: ["Ocean", "Physics Debug", "PostProcess"],
+-    href: "/docs/rendering",
+-  },
+-  {
+-    number: "08",
+-    title: "Asset管理",
+-    copy: "AssetRegistry、UUID、Hash、依存関係、種別別Hot Reloadと再Buildが必要な条件。",
+-    links: ["Hot Reload", "Asset ID", "手動対応"],
+-    href: "/docs/asset-management",
+-  },
+-  {
+-    number: "09",
+-    title: "Lighting / GI",
+-    copy: "Shadow、Light Probe GI、SSGI、Volumetric、反射の順序と確認方法。",
+-    links: ["Shadow", "Light Probe", "SSGI"],
+-    href: "/docs/lighting-gi",
+-  },
+-  {
+-    number: "10",
+     title: "外部連携",
+     copy: "Speech、Vision、Haptics、Online Servicesの導入、設定、Script、失敗時の確認。",
+     links: ["Speech", "Vision", "Online"],
+     href: "/docs/external-integration",
+   },
+   {
+-    number: "11",
++    number: "08",
+     title: "共同制作",
+     copy: "Host / Client同期、Lock、Conflict、Backup、Asset転送の操作と制限。",
+     links: ["Host", "Conflict", "Backup"],
+     href: "/docs/team-collaboration",
+   },
+   {
+-    number: "12",
++    number: "09",
+     title: "内部仕様",
+-    copy: "利用者向け説明とは分離した、Engine内部の所有関係、保存、Runtime、描画、通信設計。",
+-    links: ["Architecture", "Runtime", "Persistence"],
++    copy: "Architecture、Runtime、保存、描画、Asset、Lighting、通信の内部仕様。",
++    links: ["Architecture", "Rendering", "Asset", "Lighting / GI"],
+     href: "/docs/internal-specs",
+   },
+ ];
+diff --git a/app/docs/rendering/page.tsx b/app/docs/rendering/page.tsx
+index 919b806..8afe420 100644
+--- a/app/docs/rendering/page.tsx
++++ b/app/docs/rendering/page.tsx
+@@ -1,5 +1,7 @@
+ ﻿import { Callout, DocHeader, DocsShell, StatusPill } from "../../ui";
+ 
++import Link from "next/link";
++
+ const renderingRows = [
+   { area: "Ocean / Underwater", detail: "GPU FFT波面、泡、反射、屈折、吸収、浅瀬色、水中処理の実装経路があります。" },
+   { area: "Terrain / Foliage", detail: "Terrain 3段階LOD、Foliage GPU Instancing、距離密度、風変形の実装経路があります。" },
+@@ -179,6 +181,7 @@ export default function RenderingReference() {
+           <li><span>✓</span>Editor確認後、StandaloneでもAsset、Shader、Audio、Scene遷移を再確認する</li>
+         </ul>
+       </section>
++      <Link className="text-link" href="/docs/internal-specs">内部仕様の分野一覧へ →</Link>
+     </DocsShell>
+   );
+ }
+diff --git a/app/globals.css b/app/globals.css
+index 17d5074..df4c3fc 100644
+--- a/app/globals.css
++++ b/app/globals.css
+@@ -885,6 +885,25 @@ h3 {
+   border-radius: 6px;
+ }
+ 
++.doc-topic-card[href] {
++  display: block;
++  color: inherit;
++  transition: border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
++}
++
++.doc-topic-card[href]:hover,
++.doc-topic-card[href]:focus-visible {
++  border-color: var(--blue);
++  box-shadow: 0 12px 28px rgb(20 45 72 / 9%);
++  transform: translateY(-3px);
++}
++
++.doc-topic-card[href] > b {
++  display: block;
++  margin-top: 22px;
++  color: var(--blue-dark);
++}
++
+ .doc-topic-number {
+   color: var(--blue);
+   font-family: var(--font-mono), monospace;
+diff --git a/app/page.tsx b/app/page.tsx
+index 1984778..ab4663e 100644
+--- a/app/page.tsx
++++ b/app/page.tsx
+@@ -36,13 +36,10 @@ const workflowLinks = [
+   { title: "Animation・Effect", copy: "Clip、Timeline、Animator、Event、CPU Particle。", href: "/docs/animation-effects" },
+   { title: "ゲーム制作", copy: "Spline、射撃、Pool、Sequence、Prefab、Scene、Save。", href: "/docs/gameplay-tools" },
+   { title: "C++ API", copy: "DLL、26 Template、型宣言、Gameplay、Scene、Rail、Save。", href: "/docs/cpp-scripting" },
+-  { title: "描画・Audio・物理", copy: "Ocean、Terrain、高度物理、Particle、Audio、Material、Temporal。", href: "/docs/rendering" },
+-  { title: "Asset管理", copy: "Registry、UUID、依存関係、種別別Hot Reloadと手動対応。", href: "/docs/asset-management" },
+-  { title: "Lighting / GI", copy: "Shadow、Light Probe GI、SSGI、Volumetric、反射の接続と確認。", href: "/docs/lighting-gi" },
+   { title: "共同制作", copy: "Host / Client同期、Lock、Conflict、Backup、Asset転送の復旧手順。", href: "/docs/team-collaboration" },
+   { title: "外部連携", copy: "Speech、Vision、Haptics、Online Servicesの設定とScript API。", href: "/docs/external-integration" },
+   { title: "トラブルシューティング", copy: "白画面、Physics、Script、描画、共同制作を症状から切り分ける。", href: "/docs/troubleshooting" },
+-  { title: "内部仕様", copy: "利用者向けページと分離したEngine内部設計の説明。", href: "/docs/internal-specs" },
++  { title: "内部仕様", copy: "Architecture、Runtime、保存、描画、Asset、Lighting、共同制作の内部設計。", href: "/docs/internal-specs" },
+ ];
+ 
+ export default function Home() {
+diff --git a/app/ui.tsx b/app/ui.tsx
+index adda633..decc876 100644
+--- a/app/ui.tsx
++++ b/app/ui.tsx
+@@ -107,6 +107,10 @@ export function ArrowLink({ href, children }: { href: string; children: ReactNod
+   return <Link className="arrow-link" href={href}>{children}<span aria-hidden="true">↗</span></Link>;
+ }
+ 
++export function InternalSpecsBackLink() {
++  return <Link className="text-link" href="/docs/internal-specs">内部仕様の分野一覧へ →</Link>;
++}
++
+ export function CodeBlock({ code, label = "C++" }: { code: string; label?: string }) {
+   return (
+     <div className="code-block">

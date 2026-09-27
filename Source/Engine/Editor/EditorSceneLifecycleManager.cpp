@@ -21,7 +21,10 @@ void EditorSceneLifecycleManager::Initialize() {
 	// Manager 初期化は一度だけ。毎フレーム呼ぶと参照先や状態を上書きして選択が壊れる。
 	if (!g_isEditorManagerInitialized) {
 		g_editorSelectionManager.Initialize(&g_editorScene, &editorSceneObjects);  // 選択 Manager は GameObject と SceneObject の選択 ID を相互変換する。
-		g_editorSceneSynchronizer.Initialize(&g_editorScene, &g_editorSceneObjectManager);  // Synchronizer は EditorScene の GameObject から描画用 SceneObject を作る。
+		g_editorSceneSynchronizer.Initialize(
+			&g_editorScene,
+			&g_editorSceneObjectManager,
+			&g_editorRuntimeManager.GetAnimationManager());  // 再生中の Bone Pose まで SceneObject へ同期する。
 		g_editorSceneCameraController.Initialize();  // Scene カメラはエディター専用の Transform を初期位置に戻す。
 
 		// AssetFactory は Project からのドラッグ配置で GameObject と SceneObject を同時生成する。
@@ -78,6 +81,10 @@ void EditorSceneLifecycleManager::Update() {
 	// Play していない時は Inspector 編集値をそのまま保ち、物理で Transform を動かさない。
 	if (g_editorRuntimeManager.IsPlaying()) {
 		constexpr float editorPlayDeltaTime = 1.0f / 60.0f;  // editorPlayDeltaTime は 60FPS 固定の物理更新秒数。
+		EditorProfilerManager::Scope runtimeUpdateScope(
+			g_editorRuntimeManager.GetProfilerManager(),
+			"Runtime.Update",
+			"Editor");
 		g_editorRuntimeManager.Update(g_key, editorPlayDeltaTime);  // RuntimeManager が InputManager と PhysicsManager を順番に更新する。
 	}
 
@@ -85,13 +92,25 @@ void EditorSceneLifecycleManager::Update() {
 	// GameObject と DirectX 描画用 SceneObject の同期
 	//================================================================
 
-	g_editorSceneSynchronizer.Update(g_editorTextureFilePaths, g_selectedPlacedSceneObjectIndex);  // GameObject の ModelRenderer / SpriteRenderer から SceneObject を生成・削除・更新する。
+	{
+		EditorProfilerManager::Scope sceneSynchronizerScope(
+			g_editorRuntimeManager.GetProfilerManager(),
+			"Scene Synchronizer.Update",
+			"Editor");
+		g_editorSceneSynchronizer.Update(g_editorTextureFilePaths, g_selectedPlacedSceneObjectIndex);  // GameObject の ModelRenderer / SpriteRenderer から SceneObject を生成・削除・更新する。
+	}
 
 	// 旧プレビュー用の選択番号と、新しい GameObject 選択 ID を同じ対象にそろえる。
-	g_editorSelectionManager.SyncLegacySelection(
-		g_selectedEditorGameObjectId,
-		g_selectedSceneObject,
-		g_selectedPlacedSceneObjectIndex);
+	{
+		EditorProfilerManager::Scope selectionScope(
+			g_editorRuntimeManager.GetProfilerManager(),
+			"Selection Synchronization",
+			"Editor");
+		g_editorSelectionManager.SyncLegacySelection(
+			g_selectedEditorGameObjectId,
+			g_selectedSceneObject,
+			g_selectedPlacedSceneObjectIndex);
+	}
 
 }
 

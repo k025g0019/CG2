@@ -42,7 +42,8 @@ float3 EvaluateIBLWithF0(
 
     float2 brdf = gBRDFLUT.Sample(gIblSampler, float2(NdotV, roughness)).rg;
 
-    float3 specularIBL = prefilteredColor * (F0 * brdf.x + brdf.y);
+    // 粗い面でも視線が浅い角度では Fresnel が増えるため、固定 F0 ではなく現在角度の F を使う。
+    float3 specularIBL = prefilteredColor * (F * brdf.x + brdf.y);
 
     float3 ibl = (kD * diffuseIBL + specularIBL) * ao;
 

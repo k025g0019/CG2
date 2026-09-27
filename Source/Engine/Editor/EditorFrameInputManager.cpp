@@ -4,6 +4,7 @@
 
 #include "Engine/Input/InputSystem.h"
 #include "EditorSharedState.h"
+#include "Source/Engine/Core/GamepadInput.h"
 
 using namespace EditorSharedState;
 
@@ -86,9 +87,18 @@ void EditorFrameInputManager::Update() {
 		g_hr = g_keyboardDevice->GetDeviceState(sizeof(g_key), g_key);
 	}
 
-	// ESC 押下はアプリ終了要求として WM_QUIT を発行する。
-	if (g_key[DIK_ESCAPE]) {
-		PostQuitMessage(0);
+	// ESCの意味は起動形態で変える。書き出し済みPlayerでは従来通りアプリ終了要求。
+	// Editor内では「視点操作=常時」等でPlay中にGameViewから抜けにくくなった時、
+	// ESCがエディタごと終了する唯一の脱出手段になってしまっていたため、
+	// Play中はStopとして扱い、Editorそのものは閉じないようにする。
+	const bool isEscapeTriggered = g_key[DIK_ESCAPE] != 0 && g_preKey[DIK_ESCAPE] == 0;
+	if (isEscapeTriggered) {
+		if (g_isStandaloneGame) {
+			PostQuitMessage(0);
+		}
+		else if (g_editorRuntimeManager.IsPlaying()) {
+			g_editorRuntimeManager.TogglePlay();
+		}
 	}
 
 	//================================================================
@@ -109,8 +119,17 @@ void EditorFrameInputManager::Update() {
 	g_feelKitHaptics.update();
 
 	//================================================================
+	// Gamepad (XInput) 状態の取得
+	//================================================================
+	// Input Action の Gamepad Binding はここで更新した値を読む。
+	// 未接続・抜き差しは GamepadInput 側が中立値へ倒して安全に扱う。
+	GamepadInput::Get().Update();
+
+	//================================================================
 	// DirectInput マウス状態の取得
 	//================================================================
+
+	g_preMouseState = g_mouseState;
 
 	if (g_mouseDevice != nullptr) {
 		g_hr = g_mouseDevice->Acquire();
@@ -119,6 +138,10 @@ void EditorFrameInputManager::Update() {
 			g_mouseDevice->Acquire();
 			g_hr = g_mouseDevice->GetDeviceState(sizeof(g_mouseState), &g_mouseState);
 		}
+	}
+
+	if (g_runtimeCursorLocked) {
+		ApplyRuntimeCursorLock(true);
 	}
 
 	//================================================================

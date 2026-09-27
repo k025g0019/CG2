@@ -14,19 +14,23 @@ RWTexture2D<float4> gResolvedColor : register(u0);
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
-    if (any(dispatchThreadId.xy >= gRenderSize))
+    uint2 pixelPosition;
+
+    if (!ResolveViewportDispatchPixel(dispatchThreadId.xy, pixelPosition))
     {
         return;
     }
 
-    const uint2 pixelPosition = dispatchThreadId.xy;
     const float2 currentUv = GetScreenUv(pixelPosition);
     const float2 velocity = gDilatedVelocity.Load(int3(pixelPosition, 0));
     const float2 previousUv = currentUv - velocity;
     const float4 currentColor = gCurrentColor.Load(int3(pixelPosition, 0));
     const float reactiveMask = gReactiveMask.Load(int3(pixelPosition, 0));
 
-    if (gTemporalParameters.x < 0.5f || reactiveMask >= 0.98f || !IsScreenUvValid(previousUv))
+    if (!IsScreenUvValid(currentUv) ||
+        gTemporalParameters.x < 0.5f ||
+        reactiveMask >= 0.98f ||
+        !IsScreenUvValid(previousUv))
     {
         gResolvedColor[pixelPosition] = currentColor;
         return;
@@ -44,12 +48,13 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     float3 resolvedColor = lerp(currentColor.rgb, clampedHistoryColor, historyWeight);
 
     const int2 pixel = int2(pixelPosition);
-    const int2 maxPixel = int2(gRenderSize) - int2(1, 1);
+    const int2 minimumPixel = GetViewportMinimumPixel();
+    const int2 maximumPixel = GetViewportMaximumPixel();
     const float3 neighborAverage = (
-        gCurrentColor.Load(int3(min(pixel + int2(1, 0), maxPixel), 0)).rgb +
-        gCurrentColor.Load(int3(max(pixel - int2(1, 0), int2(0, 0)), 0)).rgb +
-        gCurrentColor.Load(int3(min(pixel + int2(0, 1), maxPixel), 0)).rgb +
-        gCurrentColor.Load(int3(max(pixel - int2(0, 1), int2(0, 0)), 0)).rgb) * 0.25f;
+        gCurrentColor.Load(int3(clamp(pixel + int2(1, 0), minimumPixel, maximumPixel), 0)).rgb +
+        gCurrentColor.Load(int3(clamp(pixel - int2(1, 0), minimumPixel, maximumPixel), 0)).rgb +
+        gCurrentColor.Load(int3(clamp(pixel + int2(0, 1), minimumPixel, maximumPixel), 0)).rgb +
+        gCurrentColor.Load(int3(clamp(pixel - int2(0, 1), minimumPixel, maximumPixel), 0)).rgb) * 0.25f;
     resolvedColor += (resolvedColor - neighborAverage) * saturate(gTemporalParameters.z);
 
     gResolvedColor[pixelPosition] = float4(resolvedColor, currentColor.a);

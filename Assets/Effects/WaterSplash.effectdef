@@ -1,0 +1,56 @@
+{
+	"id": "WaterSplash",
+	"maxConcurrentInstances": 32,
+	"lod": [
+		{ "distance": 50.0, "spawnMultiplier": 1.0 },
+		{ "distance": 120.0, "spawnMultiplier": 0.4 },
+		{ "distance": 250.0, "spawnMultiplier": 0.0 }
+	],
+	"nodes": [
+		{
+			"name": "Droplets",
+			"nodeType": "Billboard",
+			"texture": "Assets/Effects/Textures/spark.png",
+			"blendMode": "AlphaBlend",
+			"billboardMode": "Directional",
+			"direction": { "x": 0.0, "y": 1.0, "z": 0.0 },
+			"emissionRate": 0.0,
+			"burstCount": 14,
+			"maxCount": 32,
+			"lifetime": 0.5,
+			"lifetimeRandomness": 0.3,
+			"speed": 4.0,
+			"speedRandomness": 0.5,
+			"gravity": 9.0,
+			"drag": 0.2,
+			"sizeStart": 0.1,
+			"sizeEnd": 0.05,
+			"stretchScale": 1.5,
+			"shapeRadius": 0.15,
+			"colorStart": { "x": 0.8, "y": 0.9, "z": 1.0 },
+			"colorEnd": { "x": 0.6, "y": 0.7, "z": 0.9 },
+			"alphaStart": 0.9,
+			"alphaEnd": 0.0,
+			"useSoftParticle": true,
+			"softParticleFadeDistance": 0.4
+		},
+		{
+			"name": "Ripple",
+			"nodeType": "Ring",
+			"texture": "Assets/Effects/Textures/ring.png",
+			"blendMode": "AlphaBlend",
+			"ringInnerRadiusStart": 0.05,
+			"ringOuterRadiusStart": 0.3,
+			"ringInnerRadiusEnd": 1.5,
+			"ringOuterRadiusEnd": 2.0,
+			"ringLifetime": 0.7,
+			"ringSegments": 28,
+			"colorStart": { "x": 0.85, "y": 0.9, "z": 1.0 },
+			"colorEnd": { "x": 0.85, "y": 0.9, "z": 1.0 },
+			"alphaStart": 0.6,
+			"alphaEnd": 0.0,
+			"useSoftParticle": true,
+			"softParticleFadeDistance": 1.2
+		}
+	]
+}

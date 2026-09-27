@@ -46,50 +46,31 @@
     float materialExtensionPadding2;
     float2 uvTiling;
     float2 uvOffset;
+    float oceanEnabled;
+    float oceanFoamStrength;
+    float oceanRoughness;
+    float oceanColorBlendScale;
+    float3 oceanDeepColor;
+    float oceanPerPixelDisplacementStrength;
+    float oceanDetailNormalStrength;
+    float oceanFoamThreshold;
+    float oceanAbsorptionDistance;
+    float oceanRefractionDistortion;
+    float oceanWaterDepth;
+    float oceanCrestSharpness;
+    float oceanPerPixelDisplacementSteps;
+    float oceanPerPixelDisplacementDistance;
+    int surfaceMode;
+    float surfaceMaterialPadding0;
+    float surfaceMaterialPadding1;
+    float surfaceMaterialPadding2;
 };
+
+#include "../Water/OceanSurface.hlsli"
 
 ConstantBuffer<Material> gMaterial : register(b0);
 
-struct DirectionalLightData
-{
-    float4 color;
-    float3 direction;
-    float intensity;
-    float3 position;
-    float range;
-    float3 skyUpperColor;
-    float skyIntensity;
-    float3 skyLowerColor;
-    float skyEmission;
-    float ambientIntensity;
-    float horizonSharpness;
-    float reflectionIntensity;
-    float spotCosInner;
-    float spotCosOuter;
-    int lightType;
-    float areaRadius;
-    float3 cameraPosition;
-    float padding3;
-    float environmentTextureEnabled;
-    float environmentTextureIntensity;
-    float environmentTextureRotation;
-    float environmentTextureMipBias;
-    float shadowTileIndex;
-    float shadowTileUvScaleX;
-    float shadowTileUvScaleY;
-    float shadowTileUvBiasX;
-    float shadowTileUvBiasY;
-    float shadowEnabled;
-    float shadowPadding0;
-    float shadowPadding1;
-    float shadowPadding2;
-    row_major float4x4 shadowVP;
-};
-
-struct DirectionalLightArray
-{
-    DirectionalLightData lights[4];
-};
+#include "../Common/SceneLightData.hlsli"
 
 ConstantBuffer<DirectionalLightArray> gDirectionalLight : register(b1);
 Texture2D gBaseColorMap : register(t0);
@@ -108,6 +89,14 @@ struct PixelShaderInput
     float2 texcoord : TEXCOORD0;
     float3 normal : NORMAL0;
     float3 worldPosition : TEXCOORD1;
+    float4 oceanData : TEXCOORD2;
+    float4 currentClipPosition : TEXCOORD3;
+    float4 previousClipPosition : TEXCOORD4;
+    float2 motionVectorScale : TEXCOORD5;
+    float4 oceanSamplingData : TEXCOORD6;
+    nointerpolation float3 oceanWorldAxisX : TEXCOORD7;
+    nointerpolation float3 oceanWorldAxisY : TEXCOORD8;
+    nointerpolation float3 oceanWorldAxisZ : TEXCOORD9;
     bool isFrontFace : SV_IsFrontFace;
 };
 
@@ -117,6 +106,7 @@ struct GBufferOutput
     float4 normal : SV_TARGET1;
     float4 material : SV_TARGET2;
     float4 emission : SV_TARGET3;
+    float2 motionVector : SV_TARGET4;
 };
 
 float2 BuildMaterialUv(float2 texcoord)
@@ -196,6 +186,18 @@ float3 ApplyNormalMap(
         normal * max(tangentNormal.z, 0.001f));
 }
 
+float ComputeOceanShallowWeight(float normalDotView, float normalizedWaveHeight)
+{
+    const float opticalPathLength =
+        max(gMaterial.oceanWaterDepth, 0.1f) /
+        max(saturate(normalDotView), 0.24f);
+    return EvaluateOceanShallowWeight(
+        opticalPathLength,
+        normalizedWaveHeight,
+        gMaterial.oceanAbsorptionDistance,
+        gMaterial.oceanColorBlendScale);
+}
+
 GBufferOutput main(PixelShaderInput input)
 {
     float3 geometricNormal = normalize(input.normal);
@@ -254,28 +256,112 @@ GBufferOutput main(PixelShaderInput input)
         ? gEmissionMap.Sample(gSampler, materialUv).rgb
         : float3(1.0f, 1.0f, 1.0f);
 
-    const float metallic = saturate(gMaterial.metallic * metallicMap);
-    const float roughness = clamp(gMaterial.roughness * roughnessMap, 0.035f, 1.0f);
+    float metallic = saturate(gMaterial.metallic * metallicMap);
+    float roughness = clamp(gMaterial.roughness * roughnessMap, 0.035f, 1.0f);
+    float surfaceTransmission = saturate(gMaterial.transmission);
     const float ambientOcclusion = lerp(
         1.0f,
         ambientOcclusionMap,
         saturate(gMaterial.ambientOcclusionStrength));
-    const float3 worldNormal = ApplyNormalMap(
+    float3 worldNormal = ApplyNormalMap(
         materialUv,
         geometricNormal,
         tangent,
         bitangent);
+    float3 surfaceAlbedo = max(baseColor.rgb, 0.0f);
+
+    float4 oceanSurfaceData = input.oceanData;
+
+    if (gMaterial.oceanEnabled >= 0.5f)
+    {
+        float3 oceanFftNormal =
+            gMaterial.doubleSided != 0 && !input.isFrontFace ? -input.normal : input.normal;
+        ResolveOceanPixelSurface(
+            input.oceanSamplingData,
+            input.oceanWorldAxisX,
+            input.oceanWorldAxisY,
+            input.oceanWorldAxisZ,
+            oceanFftNormal,
+            oceanSurfaceData);
+        const OceanSurfaceFrame oceanSurfaceFrame = EvaluateOceanSurfaceFrame(
+            oceanFftNormal,
+            input.worldPosition,
+            oceanSurfaceData,
+            gMaterial.oceanDetailNormalStrength,
+            gMaterial.oceanCrestSharpness);
+        // Deferred側もForward側と同じ滑らかな光学法線を格納する。
+        // 微細法線をそのままGBufferへ入れると、強い光で粒状の反射へ戻る。
+        worldNormal = EvaluateOceanOpticalNormal(oceanSurfaceFrame);
+        const float normalDotView = saturate(dot(worldNormal, viewDirection));
+        const float shallowWeight = ComputeOceanShallowWeight(normalDotView, oceanSurfaceData.w);
+        const float foam = EvaluateOceanFoam(
+            input.worldPosition,
+            oceanSurfaceData,
+            oceanSurfaceFrame,
+            gMaterial.oceanFoamStrength,
+            gMaterial.oceanFoamThreshold,
+            gMaterial.oceanCrestSharpness);
+        const float oceanCrest = smoothstep(0.38f, 0.92f, saturate(oceanSurfaceData.w));
+        surfaceAlbedo = EvaluateOceanWaterColor(
+            gMaterial.oceanDeepColor,
+            baseColor.rgb,
+            shallowWeight,
+            foam,
+            oceanSurfaceFrame,
+            oceanSurfaceData.w,
+            normalDotView);
+        metallic = 0.0f;
+        roughness = EvaluateOceanRoughness(
+            clamp(gMaterial.oceanRoughness, 0.055f, 1.0f),
+            worldNormal,
+            oceanSurfaceFrame.interpolationVariance,
+            oceanCrest,
+            foam);
+        surfaceTransmission *=
+            (1.0f - foam) *
+            lerp(0.55f, 1.0f, shallowWeight);
+    }
+
+    const float safeIor = max(gMaterial.ior, 1.0001f);
+    const float dielectricF0Root = (safeIor - 1.0f) / (safeIor + 1.0f);
+    const float dielectricF0 = max(0.04f, dielectricF0Root * dielectricF0Root);
+    const float metalF0 = max(
+        dot(surfaceAlbedo, float3(0.2126f, 0.7152f, 0.0722f)),
+        0.0f);
+    const float dielectricSpecularScale = lerp(
+        1.0f,
+        2.0f,
+        saturate(gMaterial.reflectance));
+    float materialF0 = lerp(
+        saturate(dielectricF0 * dielectricSpecularScale),
+        metalF0,
+        metallic);
+
+    if (gMaterial.oceanEnabled >= 0.5f)
+    {
+        materialF0 = dielectricF0Root * dielectricF0Root;
+    }
 
     GBufferOutput output;
-    output.albedo = float4(max(baseColor.rgb, 0.0f), saturate(baseColor.a));
+    output.albedo = float4(surfaceAlbedo, saturate(baseColor.a));
     output.normal = float4(worldNormal * 0.5f + 0.5f, 1.0f);
+    // Deferred Lighting 用契約: x=roughness、y=metallic、z=AO、w=F0。
+    // SSR / Planar は Object3dReflectionMask の専用 RT を参照する。
     output.material = float4(
         roughness,
         metallic,
         ambientOcclusion,
-        saturate(max(gMaterial.reflectance, gMaterial.reflectionProbeIntensity)));
+        saturate(materialF0));
     output.emission = float4(
         emissionMap * max(gMaterial.emissionColor, 0.0f) * max(gMaterial.emissionStrength, 0.0f),
-        saturate(gMaterial.transmission));
+        surfaceTransmission);
+    const float2 currentNdc =
+        input.currentClipPosition.xy / max(abs(input.currentClipPosition.w), 0.00001f);
+    const float2 previousNdc =
+        input.previousClipPosition.xy / max(abs(input.previousClipPosition.w), 0.00001f);
+    const float2 currentUv = float2(currentNdc.x * 0.5f + 0.5f, 0.5f - currentNdc.y * 0.5f);
+    const float2 previousUv = float2(previousNdc.x * 0.5f + 0.5f, 0.5f - previousNdc.y * 0.5f);
+    output.motionVector =
+        (currentUv - previousUv) * saturate(input.motionVectorScale);
     return output;
 }

@@ -74,6 +74,10 @@ struct EditorInspectorPanelContext {
 	std::string& selectedAssetPath;  // Project で選択中の AssetPath
 };
 
+// Inspector の見出しと同じ日本語コンポーネント名を返す。
+// Log監視ウィンドウなど、Inspector 以外の UI からも同じ表記を使うために公開する。
+const char* GetEditorComponentDisplayName(EditorComponentType type);
+
 class EditorInspectorPanel {
 public:
 	void Initialize();  // Inspector 初期化。現時点では保持状態なし

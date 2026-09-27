@@ -11,12 +11,24 @@ RWTexture2D<float2> gDilatedVelocity : register(u0);
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
-    if (any(dispatchThreadId.xy >= gRenderSize))
+    uint2 resolvedPixelPosition;
+
+    if (!ResolveViewportDispatchPixel(dispatchThreadId.xy, resolvedPixelPosition))
     {
         return;
     }
 
-    const int2 pixelPosition = int2(dispatchThreadId.xy);
+    const int2 pixelPosition = int2(resolvedPixelPosition);
+    const float2 currentUv = GetScreenUv(resolvedPixelPosition);
+
+    if (!IsScreenUvValid(currentUv))
+    {
+        gDilatedVelocity[pixelPosition] = 0.0f;
+        return;
+    }
+
+    const int2 viewportMinimumPixel = GetViewportMinimumPixel();
+    const int2 viewportMaximumPixel = GetViewportMaximumPixel();
     float nearestDepth = 1.0f;
     float2 selectedVelocity = 0.0f;
 
@@ -28,8 +40,8 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         {
             const int2 samplePosition = clamp(
                 pixelPosition + int2(offsetX, offsetY),
-                int2(0, 0),
-                int2(gRenderSize) - 1);
+                viewportMinimumPixel,
+                viewportMaximumPixel);
             const float sampleDepth = gSceneDepth.Load(int3(samplePosition, 0));
 
             if (sampleDepth <= nearestDepth)

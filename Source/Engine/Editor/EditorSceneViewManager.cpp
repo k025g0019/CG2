@@ -2,13 +2,20 @@
 
 #include "EditorSceneViewManager.h"
 
+#include "EditorAssetUtility.h"
 #include "EditorComponentUtility.h"
 #include "EditorSharedState.h"
+#include "EditorTeamCollaborationManager.h"
+#include "Log.h"
 #include "ThirdParty/imgui-docking/imgui-docking/imgui_internal.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <filesystem>
 #include <numbers>
+#include <string>
+#include <vector>
 
 using namespace EditorSharedState;
 
@@ -60,6 +67,83 @@ namespace {
 		}
 
 		return projectedPoint.screenPosition;
+	}
+
+	bool TryGetSceneCursorWorldPosition(Vector3& worldPosition) {
+		if (g_editorSceneWidth <= 0.0f || g_editorSceneHeight <= 0.0f) {
+			return false;
+		}
+		const ImVec2 mousePosition = ImGui::GetMousePos();
+		const float ndcX = ((mousePosition.x - g_editorSceneX) / g_editorSceneWidth) * 2.0f - 1.0f;
+		const float ndcY = 1.0f - ((mousePosition.y - g_editorSceneY) / g_editorSceneHeight) * 2.0f;
+		const Matrix4x4 inverseViewProjection = Inverse(Multiply(g_viewMatrix, g_projectionMatrix));
+		const Vector3 rayNear = Transform(Vector3{ndcX, ndcY, 0.0f}, inverseViewProjection);
+		const Vector3 rayFar = Transform(Vector3{ndcX, ndcY, 1.0f}, inverseViewProjection);
+		const Vector3 rayDirection = Normalize(Subtract(rayFar, rayNear));
+		if (Length(rayDirection) <= kProjectionEpsilon) {
+			return false;
+		}
+
+		// Scene座標付箋は編集用グリッド(Y=0)との交点へ置く。平行視点では前方10mを使用する。
+		if (std::fabs(rayDirection.y) > kProjectionEpsilon) {
+			const float distance = -rayNear.y / rayDirection.y;
+			if (distance >= 0.0f) {
+				worldPosition = Add(rayNear, Multiply(distance, rayDirection));
+				return true;
+			}
+		}
+		worldPosition = Add(rayNear, Multiply(10.0f, rayDirection));
+		return true;
+	}
+
+	bool DrawTeamItemSceneMarkers(ImDrawList* sceneDrawList) {
+		const std::vector<EditorTeamSceneMarker> markers = GetEditorTeamSceneMarkers();
+		const ImVec2 mousePosition = ImGui::GetMousePos();
+		bool isMarkerHot = false;
+		for (const EditorTeamSceneMarker& marker : markers) {
+			ProjectedScenePoint projected{};
+			if (!TryProjectWorldPosition(
+					Vector3{marker.worldPosition[0], marker.worldPosition[1], marker.worldPosition[2]},
+					projected)) {
+				continue;
+			}
+			if (std::fabs(projected.ndcX) > 1.1f || std::fabs(projected.ndcY) > 1.1f) {
+				continue;
+			}
+
+			const bool isPing = marker.pingAnimationSeconds >= 0.0f;
+			const float pulse = isPing
+				? 4.0f + 3.0f * (0.5f + 0.5f * std::sin(marker.pingAnimationSeconds * 8.0f))
+				: 0.0f;
+			const ImU32 color = marker.color != 0u ? marker.color : IM_COL32(255, 210, 70, 255);
+			sceneDrawList->AddCircleFilled(projected.screenPosition, 8.0f, color);
+			if (isPing) {
+				sceneDrawList->AddCircle(projected.screenPosition, 14.0f + pulse, color, 24, 2.0f);
+			}
+			char markerText[96]{};
+			std::snprintf(
+				markerText,
+				sizeof(markerText),
+				"%s %d%s%s",
+				isPing ? "Ping" : "Note",
+				marker.summary.GetTotalCount(),
+				marker.creatorName.empty() ? "" : " / ",
+				marker.creatorName.c_str());
+			sceneDrawList->AddText(
+				ImVec2(projected.screenPosition.x + 12.0f, projected.screenPosition.y - 8.0f),
+				color,
+				markerText);
+
+			const float deltaX = mousePosition.x - projected.screenPosition.x;
+			const float deltaY = mousePosition.y - projected.screenPosition.y;
+			if (deltaX * deltaX + deltaY * deltaY <= 14.0f * 14.0f) {
+				isMarkerHot = true;
+				if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+					OpenEditorTeamTargetItems(marker.targetType, marker.targetId, false);
+				}
+			}
+		}
+		return isMarkerHot;
 	}
 
 	Vector3 GetModelDropPosition() {
@@ -181,6 +265,44 @@ namespace {
 		return isHot;
 	}
 
+	bool DrawPhysicsDebugSettingsButton(const ImVec2& position) {
+		EditorPhysicsSettings& physicsSettings = g_editorScene.GetPhysicsSettings();
+		ImGui::SetCursorScreenPos(position);
+		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.14f, 0.17f, 0.95f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.23f, 0.28f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.30f, 0.58f, 1.0f, 1.0f));
+
+		if (ImGui::Button("物理", ImVec2(52.0f, 30.0f))) {
+			ImGui::OpenPopup("物理デバッグ表示");
+		}
+		bool isHot = ImGui::IsItemHovered() || ImGui::IsItemActive();
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("Scene View の物理表示を種類別に変更します");
+		}
+
+		ImGui::PopStyleColor(3);
+
+		if (ImGui::BeginPopup("物理デバッグ表示")) {
+			ImGui::TextUnformatted("表示する種類");
+			ImGui::Separator();
+			ImGui::Checkbox("当たり判定の形", &physicsSettings.drawColliderDebug);
+			ImGui::Checkbox("速度 / 角速度", &physicsSettings.drawVelocityDebug);
+			ImGui::Checkbox("力 / 場の向き", &physicsSettings.drawForceDirectionDebug);
+			ImGui::Checkbox("影響範囲 / 流体領域", &physicsSettings.drawFieldVolumeDebug);
+			ImGui::Checkbox("ばね / Joint 接続", &physicsSettings.drawConnectionDebug);
+			ImGui::Checkbox("接触点 / 法線", &physicsSettings.drawContactDebug);
+			ImGui::Checkbox("Ray / ShapeCast", &physicsSettings.drawCastDebug);
+			ImGui::Separator();
+			ImGui::Checkbox("選択中だけ表示", &physicsSettings.drawSelectedOnlyDebug);
+			ImGui::DragFloat("ベクトル倍率", &physicsSettings.debugVectorScale, 0.01f, 0.01f, 10.0f, "%.2f");
+			physicsSettings.debugVectorScale = (std::clamp)(physicsSettings.debugVectorScale, 0.01f, 10.0f);
+			isHot = true;
+			ImGui::EndPopup();
+		}
+
+		return isHot;
+	}
+
 	bool DrawSceneToolBar() {
 		bool isToolBarHot = false;  // true なら Scene 範囲選択やカメラ操作を開始しない。
 		ImVec2 toolPosition{g_editorSceneX + 6.0f, g_editorSceneY + 12.0f};
@@ -193,27 +315,41 @@ namespace {
 		isToolBarHot |= DrawSceneToolButton("R", "拡縮ギズモ", 3, toolPosition);
 		toolPosition.y += toolButtonStep;
 		isToolBarHot |= DrawSceneToolButton("T", "統合ギズモ", 4, toolPosition);
+		toolPosition.y += toolButtonStep;
+		isToolBarHot |= DrawPhysicsDebugSettingsButton(toolPosition);
 
 		return isToolBarHot;
 	}
 
-	const EditorComponent* FindDebugCollider(const EditorGameObject& gameObject) {
-		const EditorComponentType colliderTypes[] = {
-			EditorComponentType::BoxCollider,
-			EditorComponentType::SphereCollider,
-			EditorComponentType::CapsuleCollider,
-			EditorComponentType::MeshCollider,
-			EditorComponentType::TerrainCollider,
-			EditorComponentType::CharacterController};
+	bool IsPhysicsDebugColliderType(EditorComponentType componentType) {
+		return
+			componentType == EditorComponentType::AutoConvexCollision ||
+			componentType == EditorComponentType::BoxCollider ||
+			componentType == EditorComponentType::SphereCollider ||
+			componentType == EditorComponentType::CapsuleCollider ||
+			componentType == EditorComponentType::TerrainCollider ||
+			componentType == EditorComponentType::WheelCollider ||
+			componentType == EditorComponentType::CharacterController;
+	}
 
-		for (EditorComponentType colliderType : colliderTypes) {
-			const EditorComponent* collider = EditorComponentUtility::FindComponent(gameObject, colliderType);
-			if (collider != nullptr && collider->isActive) {
-				return collider;
-			}
+	bool IsPhysicsDebugJointType(EditorComponentType componentType) {
+		return
+			componentType == EditorComponentType::HingeJoint ||
+			componentType == EditorComponentType::FixedJoint ||
+			componentType == EditorComponentType::SpringJoint ||
+			componentType == EditorComponentType::ConfigurableJoint ||
+			componentType == EditorComponentType::CharacterJoint;
+	}
+
+	const EditorComponent* FindActiveComponent(
+		const EditorGameObject& gameObject,
+		EditorComponentType componentType) {
+		const EditorComponent* component = EditorComponentUtility::FindComponent(gameObject, componentType);
+		if (component == nullptr || !component->isActive) {
+			return nullptr;
 		}
 
-		return nullptr;
+		return component;
 	}
 
 	ImU32 GetPhysicsDebugColor(const EditorGameObject& gameObject, const EditorComponent& collider) {
@@ -235,8 +371,189 @@ namespace {
 	}
 
 	Vector3 TransformColliderPoint(const EditorGameObject& gameObject, const Vector3& localPoint) {
-		Matrix4x4 worldMatrix = MakeAffineMatrix(gameObject.scale, gameObject.rotate, gameObject.translate);
+		const Matrix4x4 worldMatrix = g_editorScene.GetWorldMatrix(gameObject.id);
 		return Transform(localPoint, worldMatrix);
+	}
+
+	Vector3 GetGameObjectWorldPosition(const EditorGameObject& gameObject) {
+		const Matrix4x4 worldMatrix = g_editorScene.GetWorldMatrix(gameObject.id);
+		return Vector3{
+			worldMatrix.matrix[3][0],
+			worldMatrix.matrix[3][1],
+			worldMatrix.matrix[3][2]};
+	}
+
+	int32_t ResolveRailPointIndex(int32_t pointIndex, int32_t pointCount, bool isLooping) {
+		if (isLooping) {
+			const int32_t wrappedIndex = pointIndex % pointCount;
+			return wrappedIndex < 0 ? wrappedIndex + pointCount : wrappedIndex;
+		}
+
+		return (std::clamp)(pointIndex, 0, pointCount - 1);
+	}
+
+	Vector3 EvaluateRailCatmullRom(
+		const Vector3& firstPoint,
+		const Vector3& secondPoint,
+		const Vector3& thirdPoint,
+		const Vector3& fourthPoint,
+		float normalizedTime) {
+		const float squaredTime = normalizedTime * normalizedTime;
+		const float cubedTime = squaredTime * normalizedTime;
+		return {
+			0.5f * (
+				2.0f * secondPoint.x +
+				(-firstPoint.x + thirdPoint.x) * normalizedTime +
+				(2.0f * firstPoint.x - 5.0f * secondPoint.x + 4.0f * thirdPoint.x - fourthPoint.x) * squaredTime +
+				(-firstPoint.x + 3.0f * secondPoint.x - 3.0f * thirdPoint.x + fourthPoint.x) * cubedTime),
+			0.5f * (
+				2.0f * secondPoint.y +
+				(-firstPoint.y + thirdPoint.y) * normalizedTime +
+				(2.0f * firstPoint.y - 5.0f * secondPoint.y + 4.0f * thirdPoint.y - fourthPoint.y) * squaredTime +
+				(-firstPoint.y + 3.0f * secondPoint.y - 3.0f * thirdPoint.y + fourthPoint.y) * cubedTime),
+			0.5f * (
+				2.0f * secondPoint.z +
+				(-firstPoint.z + thirdPoint.z) * normalizedTime +
+				(2.0f * firstPoint.z - 5.0f * secondPoint.z + 4.0f * thirdPoint.z - fourthPoint.z) * squaredTime +
+				(-firstPoint.z + 3.0f * secondPoint.z - 3.0f * thirdPoint.z + fourthPoint.z) * cubedTime)};
+	}
+
+	const EditorComponent* FindRailMovementForPath(int32_t railPathGameObjectId) {
+		for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
+			const EditorComponent* railMovement = EditorComponentUtility::FindComponent(
+				gameObject,
+				EditorComponentType::RailMovement);
+
+			if (railMovement != nullptr && railMovement->railPathGameObjectId == railPathGameObjectId) {
+				return railMovement;
+			}
+		}
+
+		return nullptr;
+	}
+
+	bool IsRailPathObject(const EditorGameObject& gameObject) {
+		if (gameObject.children.size() < 2u) {
+			return false;
+		}
+
+		if (FindRailMovementForPath(gameObject.id) != nullptr) {
+			return true;
+		}
+
+		int32_t namedPointCount = 0;
+
+		for (const int32_t childGameObjectId : gameObject.children) {
+			const EditorGameObject* childGameObject = g_editorScene.FindGameObject(childGameObjectId);
+
+			if (childGameObject != nullptr && childGameObject->name.rfind("Point", 0u) == 0u) {
+				namedPointCount++;
+			}
+		}
+
+		return namedPointCount >= 2;
+	}
+
+	int32_t ResolveSelectedRailPathGameObjectId() {
+		const EditorGameObject* selectedGameObject =
+			g_editorScene.FindGameObject(g_selectedEditorGameObjectId);
+
+		if (selectedGameObject == nullptr) {
+			return -1;
+		}
+
+		const EditorComponent* railMovement = EditorComponentUtility::FindComponent(
+			*selectedGameObject,
+			EditorComponentType::RailMovement);
+
+		if (railMovement != nullptr && railMovement->railPathGameObjectId >= 0) {
+			return railMovement->railPathGameObjectId;
+		}
+
+		if (IsRailPathObject(*selectedGameObject)) {
+			return selectedGameObject->id;
+		}
+
+		const EditorGameObject* parentGameObject =
+			g_editorScene.FindGameObject(selectedGameObject->parentId);
+		return parentGameObject != nullptr && IsRailPathObject(*parentGameObject) ?
+			parentGameObject->id : -1;
+	}
+
+	bool BuildRailPreviewSamples(
+		const EditorGameObject& railPathGameObject,
+		const EditorComponent* railMovement,
+		std::vector<Vector3>& controlPointPositions,
+		std::vector<Vector3>& railSamples) {
+		controlPointPositions.clear();
+		railSamples.clear();
+
+		for (const int32_t childGameObjectId : railPathGameObject.children) {
+			const EditorGameObject* controlPointGameObject =
+				g_editorScene.FindGameObject(childGameObjectId);
+
+			if (controlPointGameObject != nullptr && controlPointGameObject->isActive) {
+				controlPointPositions.push_back(GetGameObjectWorldPosition(*controlPointGameObject));
+			}
+		}
+
+		if (controlPointPositions.size() < 2u) {
+			return false;
+		}
+
+		const bool isLooping = railMovement != nullptr && railMovement->railLoop;
+		const bool usesSmoothCurve = railMovement == nullptr || railMovement->railUseSmoothCurve;
+		const int32_t controlPointCount = static_cast<int32_t>(controlPointPositions.size());
+		const int32_t segmentCount = isLooping ? controlPointCount : controlPointCount - 1;
+		const int32_t samplesPerSegment = usesSmoothCurve ? 16 : 1;
+		railSamples.push_back(controlPointPositions.front());
+
+		for (int32_t segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
+			const int32_t firstIndex = ResolveRailPointIndex(segmentIndex - 1, controlPointCount, isLooping);
+			const int32_t secondIndex = ResolveRailPointIndex(segmentIndex, controlPointCount, isLooping);
+			const int32_t thirdIndex = ResolveRailPointIndex(segmentIndex + 1, controlPointCount, isLooping);
+			const int32_t fourthIndex = ResolveRailPointIndex(segmentIndex + 2, controlPointCount, isLooping);
+
+			for (int32_t sampleIndex = 1; sampleIndex <= samplesPerSegment; sampleIndex++) {
+				const float normalizedTime =
+					static_cast<float>(sampleIndex) / static_cast<float>(samplesPerSegment);
+				railSamples.push_back(usesSmoothCurve ?
+					EvaluateRailCatmullRom(
+						controlPointPositions[static_cast<size_t>(firstIndex)],
+						controlPointPositions[static_cast<size_t>(secondIndex)],
+						controlPointPositions[static_cast<size_t>(thirdIndex)],
+						controlPointPositions[static_cast<size_t>(fourthIndex)],
+						normalizedTime) :
+					controlPointPositions[static_cast<size_t>(thirdIndex)]);
+			}
+		}
+
+		return railSamples.size() >= 2u;
+	}
+
+	void DrawWorldProjectedLine(
+		ImDrawList* sceneDrawList,
+		const Vector3& worldStart,
+		const Vector3& worldEnd,
+		ImU32 color,
+		float thickness) {
+		ProjectedScenePoint projectedStart{};
+		ProjectedScenePoint projectedEnd{};
+		bool hasScreenStart = TryProjectWorldPosition(worldStart, projectedStart);
+		bool hasScreenEnd = TryProjectWorldPosition(worldEnd, projectedEnd);
+
+		if (!hasScreenStart || !hasScreenEnd) {
+			return;
+		}
+
+		if (std::fabs(projectedStart.ndcX) > kProjectedLineNdcLimit ||
+			std::fabs(projectedStart.ndcY) > kProjectedLineNdcLimit ||
+			std::fabs(projectedEnd.ndcX) > kProjectedLineNdcLimit ||
+			std::fabs(projectedEnd.ndcY) > kProjectedLineNdcLimit) {
+			return;
+		}
+
+		sceneDrawList->AddLine(projectedStart.screenPosition, projectedEnd.screenPosition, color, thickness);
 	}
 
 	void DrawProjectedLine(
@@ -248,16 +565,22 @@ namespace {
 		float thickness) {
 		Vector3 worldStart = TransformColliderPoint(gameObject, localStart);
 		Vector3 worldEnd = TransformColliderPoint(gameObject, localEnd);
+		DrawWorldProjectedLine(sceneDrawList, worldStart, worldEnd, color, thickness);
+	}
+
+	void DrawWorldArrowBetween(
+		ImDrawList* sceneDrawList,
+		const Vector3& worldStart,
+		const Vector3& worldEnd,
+		ImU32 color,
+		const char* label) {
 		ProjectedScenePoint projectedStart{};
 		ProjectedScenePoint projectedEnd{};
-		bool hasScreenStart = TryProjectWorldPosition(worldStart, projectedStart);  // hasScreenStart/End はカメラ前方の点だけ DrawList に流すための判定。
-		bool hasScreenEnd = TryProjectWorldPosition(worldEnd, projectedEnd);
-
-		if (!hasScreenStart || !hasScreenEnd) {
+		if (!TryProjectWorldPosition(worldStart, projectedStart) ||
+			!TryProjectWorldPosition(worldEnd, projectedEnd)) {
 			return;
 		}
 
-		// 画面外へ大きく発散した補助線は SceneView を埋めるだけなので描かない。
 		if (std::fabs(projectedStart.ndcX) > kProjectedLineNdcLimit ||
 			std::fabs(projectedStart.ndcY) > kProjectedLineNdcLimit ||
 			std::fabs(projectedEnd.ndcX) > kProjectedLineNdcLimit ||
@@ -265,7 +588,52 @@ namespace {
 			return;
 		}
 
-		sceneDrawList->AddLine(projectedStart.screenPosition, projectedEnd.screenPosition, color, thickness);
+		const float screenVectorX = projectedEnd.screenPosition.x - projectedStart.screenPosition.x;
+		const float screenVectorY = projectedEnd.screenPosition.y - projectedStart.screenPosition.y;
+		const float screenLength = std::sqrt((screenVectorX * screenVectorX) + (screenVectorY * screenVectorY));
+		if (screenLength <= 1.0f) {
+			return;
+		}
+
+		const float normalizedX = screenVectorX / screenLength;
+		const float normalizedY = screenVectorY / screenLength;
+		constexpr float kArrowHeadLength = 9.0f;
+		constexpr float kArrowHeadWidth = 4.0f;
+		const ImVec2 arrowBase{
+			projectedEnd.screenPosition.x - (normalizedX * kArrowHeadLength),
+			projectedEnd.screenPosition.y - (normalizedY * kArrowHeadLength)};
+		const ImVec2 arrowLeft{
+			arrowBase.x - (normalizedY * kArrowHeadWidth),
+			arrowBase.y + (normalizedX * kArrowHeadWidth)};
+		const ImVec2 arrowRight{
+			arrowBase.x + (normalizedY * kArrowHeadWidth),
+			arrowBase.y - (normalizedX * kArrowHeadWidth)};
+
+		sceneDrawList->AddLine(projectedStart.screenPosition, projectedEnd.screenPosition, color, 2.0f);
+		sceneDrawList->AddTriangleFilled(projectedEnd.screenPosition, arrowLeft, arrowRight, color);
+		if (label != nullptr && label[0] != '\0') {
+			sceneDrawList->AddText(
+				ImVec2(projectedEnd.screenPosition.x + 5.0f, projectedEnd.screenPosition.y + 3.0f),
+				color,
+				label);
+		}
+	}
+
+	void DrawWorldVectorArrow(
+		ImDrawList* sceneDrawList,
+		const Vector3& worldStart,
+		const Vector3& vector,
+		float displayScale,
+		ImU32 color,
+		const char* label) {
+		const float vectorLength = Length(vector);
+		if (vectorLength <= kProjectionEpsilon) {
+			return;
+		}
+
+		const float displayLength = (std::clamp)(vectorLength * displayScale, 0.3f, 20.0f);
+		const Vector3 worldEnd = Add(worldStart, Multiply(displayLength, Normalize(vector)));
+		DrawWorldArrowBetween(sceneDrawList, worldStart, worldEnd, color, label);
 	}
 
 	void DrawLocalCircle(
@@ -293,28 +661,284 @@ namespace {
 		}
 	}
 
-	void DrawBoxColliderDebug(ImDrawList* sceneDrawList, const EditorGameObject& gameObject, const EditorComponent& collider, ImU32 color) {
-		Vector3 halfSize{
-			collider.colliderSize.x * 0.5f,
-			collider.colliderSize.y * 0.5f,
-			collider.colliderSize.z * 0.5f};
-		Vector3 corners[8] = {
-			MakeLocalPoint(collider.colliderCenter, -halfSize.x, -halfSize.y, -halfSize.z),
-			MakeLocalPoint(collider.colliderCenter, halfSize.x, -halfSize.y, -halfSize.z),
-			MakeLocalPoint(collider.colliderCenter, halfSize.x, -halfSize.y, halfSize.z),
-			MakeLocalPoint(collider.colliderCenter, -halfSize.x, -halfSize.y, halfSize.z),
-			MakeLocalPoint(collider.colliderCenter, -halfSize.x, halfSize.y, -halfSize.z),
-			MakeLocalPoint(collider.colliderCenter, halfSize.x, halfSize.y, -halfSize.z),
-			MakeLocalPoint(collider.colliderCenter, halfSize.x, halfSize.y, halfSize.z),
-			MakeLocalPoint(collider.colliderCenter, -halfSize.x, halfSize.y, halfSize.z)};
+	void DrawWorldCircle(
+		ImDrawList* sceneDrawList,
+		const Vector3& center,
+		const Vector3& axisA,
+		const Vector3& axisB,
+		float radius,
+		ImU32 color) {
+		constexpr int32_t kSegmentCount = 24;
+		Vector3 previousPoint{};
+
+		for (int32_t segmentIndex = 0; segmentIndex <= kSegmentCount; ++segmentIndex) {
+			const float angle = std::numbers::pi_v<float> * 2.0f *
+				static_cast<float>(segmentIndex) / static_cast<float>(kSegmentCount);
+			const Vector3 currentPoint{
+				center.x + (axisA.x * std::cos(angle) + axisB.x * std::sin(angle)) * radius,
+				center.y + (axisA.y * std::cos(angle) + axisB.y * std::sin(angle)) * radius,
+				center.z + (axisA.z * std::cos(angle) + axisB.z * std::sin(angle)) * radius};
+
+			if (segmentIndex > 0) {
+				DrawWorldProjectedLine(sceneDrawList, previousPoint, currentPoint, color, 1.25f);
+			}
+			previousPoint = currentPoint;
+		}
+	}
+
+	void DrawWorldSphere(ImDrawList* sceneDrawList, const Vector3& center, float radius, ImU32 color) {
+		if (radius <= 0.0f) {
+			return;
+		}
+
+		DrawWorldCircle(sceneDrawList, center, Vector3{1.0f, 0.0f, 0.0f}, Vector3{0.0f, 1.0f, 0.0f}, radius, color);
+		DrawWorldCircle(sceneDrawList, center, Vector3{1.0f, 0.0f, 0.0f}, Vector3{0.0f, 0.0f, 1.0f}, radius, color);
+		DrawWorldCircle(sceneDrawList, center, Vector3{0.0f, 1.0f, 0.0f}, Vector3{0.0f, 0.0f, 1.0f}, radius, color);
+	}
+
+	void DrawWorldMarker(ImDrawList* sceneDrawList, const Vector3& worldPosition, ImU32 color) {
+		ProjectedScenePoint projectedPoint{};
+		if (!TryProjectWorldPosition(worldPosition, projectedPoint)) {
+			return;
+		}
+
+		sceneDrawList->AddCircleFilled(projectedPoint.screenPosition, 4.0f, color);
+		sceneDrawList->AddCircle(projectedPoint.screenPosition, 7.0f, color, 12, 1.5f);
+	}
+
+	void DrawRailPathDebug(ImDrawList* sceneDrawList) {
+		const int32_t selectedRailPathGameObjectId = ResolveSelectedRailPathGameObjectId();
+		std::vector<int32_t> railPathGameObjectIds;
+
+		for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
+			const EditorComponent* railMovement = EditorComponentUtility::FindComponent(
+				gameObject,
+				EditorComponentType::RailMovement);
+
+			if (railMovement == nullptr || railMovement->railPathGameObjectId < 0 ||
+				std::find(
+					railPathGameObjectIds.begin(),
+					railPathGameObjectIds.end(),
+					railMovement->railPathGameObjectId) != railPathGameObjectIds.end()) {
+				continue;
+			}
+
+			railPathGameObjectIds.push_back(railMovement->railPathGameObjectId);
+		}
+
+		if (selectedRailPathGameObjectId >= 0 &&
+			std::find(
+				railPathGameObjectIds.begin(),
+				railPathGameObjectIds.end(),
+				selectedRailPathGameObjectId) == railPathGameObjectIds.end()) {
+			railPathGameObjectIds.push_back(selectedRailPathGameObjectId);
+		}
+
+		for (const int32_t railPathGameObjectId : railPathGameObjectIds) {
+			const EditorGameObject* railPathGameObject =
+				g_editorScene.FindGameObject(railPathGameObjectId);
+			const EditorComponent* railMovement = FindRailMovementForPath(railPathGameObjectId);
+
+			if (railPathGameObject == nullptr) {
+				continue;
+			}
+
+			std::vector<Vector3> controlPointPositions;
+			std::vector<Vector3> railSamples;
+
+			if (!BuildRailPreviewSamples(
+					*railPathGameObject,
+					railMovement,
+					controlPointPositions,
+					railSamples)) {
+				continue;
+			}
+
+			const bool isSelectedPath = railPathGameObjectId == selectedRailPathGameObjectId;
+			const ImU32 railColor = isSelectedPath ?
+				IM_COL32(255, 190, 70, 255) : IM_COL32(55, 205, 235, 150);
+			const float railThickness = isSelectedPath ? 3.5f : 1.75f;
+
+			for (size_t sampleIndex = 1u; sampleIndex < railSamples.size(); sampleIndex++) {
+				DrawWorldProjectedLine(
+					sceneDrawList,
+					railSamples[sampleIndex - 1u],
+					railSamples[sampleIndex],
+					railColor,
+					railThickness);
+			}
+
+			if (!isSelectedPath) {
+				continue;
+			}
+
+			for (size_t controlPointIndex = 0u;
+				controlPointIndex < controlPointPositions.size();
+				controlPointIndex++) {
+				const Vector3& controlPointPosition = controlPointPositions[controlPointIndex];
+				DrawWorldMarker(sceneDrawList, controlPointPosition, IM_COL32(255, 225, 105, 255));
+				ProjectedScenePoint projectedPoint{};
+
+				if (TryProjectWorldPosition(controlPointPosition, projectedPoint)) {
+					const std::string pointLabel = "P" + std::to_string(controlPointIndex);
+					sceneDrawList->AddText(
+						ImVec2(projectedPoint.screenPosition.x + 9.0f, projectedPoint.screenPosition.y - 14.0f),
+						IM_COL32(255, 235, 150, 255),
+						pointLabel.c_str());
+				}
+			}
+
+			constexpr size_t kGuideSampleInterval = 16u;
+
+			for (size_t sampleIndex = 0u;
+				sampleIndex < railSamples.size();
+				sampleIndex += kGuideSampleInterval) {
+				const size_t previousSampleIndex = sampleIndex > 0u ? sampleIndex - 1u : sampleIndex;
+				const size_t nextSampleIndex = (std::min)(sampleIndex + 1u, railSamples.size() - 1u);
+				const Vector3 direction = Subtract(
+					railSamples[nextSampleIndex],
+					railSamples[previousSampleIndex]);
+
+				if (Length(direction) <= kProjectionEpsilon) {
+					continue;
+				}
+
+				const Vector3 forward = Normalize(direction);
+				Vector3 referenceUp{0.0f, 1.0f, 0.0f};
+
+				if (std::fabs(Dot(forward, referenceUp)) >= 0.98f) {
+					referenceUp = {0.0f, 0.0f, 1.0f};
+				}
+
+				const Vector3 right = Normalize(Cross(referenceUp, forward));
+				const Vector3 up = Normalize(Cross(forward, right));
+				const Vector3& samplePosition = railSamples[sampleIndex];
+				DrawWorldArrowBetween(
+					sceneDrawList,
+					samplePosition,
+					Add(samplePosition, Multiply(1.4f, forward)),
+					IM_COL32(255, 220, 90, 230),
+					nullptr);
+
+				if (railMovement == nullptr) {
+					continue;
+				}
+
+				const float horizontalRange = (std::max)(railMovement->railMovementRange.x, 0.0f);
+				const float verticalRange = (std::max)(railMovement->railMovementRange.y, 0.0f);
+				DrawWorldProjectedLine(
+					sceneDrawList,
+					Add(samplePosition, Multiply(-horizontalRange, right)),
+					Add(samplePosition, Multiply(horizontalRange, right)),
+					IM_COL32(80, 220, 255, 190),
+					1.5f);
+				DrawWorldProjectedLine(
+					sceneDrawList,
+					Add(samplePosition, Multiply(-verticalRange, up)),
+					Add(samplePosition, Multiply(verticalRange, up)),
+					IM_COL32(120, 255, 150, 190),
+					1.5f);
+			}
+		}
+	}
+
+	void DrawTrajectoryPreviewDebug(ImDrawList* sceneDrawList) {
+		for (const EditorGameObject& rendererObject : g_editorScene.GetGameObjects()) {
+			const EditorComponent* trajectoryRenderer = EditorComponentUtility::FindComponent(
+				rendererObject,
+				EditorComponentType::TrajectoryRenderer);
+
+			if (!rendererObject.isActive || trajectoryRenderer == nullptr ||
+				!trajectoryRenderer->isActive || !trajectoryRenderer->trajectoryShowInSceneView) {
+				continue;
+			}
+
+			const int32_t predictionGameObjectId = trajectoryRenderer->trajectoryPredictionGameObjectId >= 0
+				? trajectoryRenderer->trajectoryPredictionGameObjectId
+				: rendererObject.id;
+			const EditorGameObject* predictionObject = g_editorScene.FindGameObject(predictionGameObjectId);
+			const EditorComponent* prediction = predictionObject != nullptr
+				? EditorComponentUtility::FindComponent(*predictionObject, EditorComponentType::BallisticPrediction)
+				: nullptr;
+
+			if (prediction == nullptr || !prediction->isActive || !prediction->ballisticValid ||
+				prediction->ballisticTrajectoryPoints.size() < 2u) {
+				continue;
+			}
+
+			const ImU32 lineColor = ImGui::ColorConvertFloat4ToU32(ImVec4(
+				(std::clamp)(trajectoryRenderer->trajectoryColor.x, 0.0f, 1.0f),
+				(std::clamp)(trajectoryRenderer->trajectoryColor.y, 0.0f, 1.0f),
+				(std::clamp)(trajectoryRenderer->trajectoryColor.z, 0.0f, 1.0f),
+				(std::clamp)(trajectoryRenderer->trajectoryAlpha, 0.0f, 1.0f)));
+			const int32_t pointCount = (std::min)(
+				static_cast<int32_t>(prediction->ballisticTrajectoryPoints.size()),
+				(std::clamp)(trajectoryRenderer->trajectoryMaximumPoints, 2, 2048));
+
+			for (int32_t pointIndex = 1; pointIndex < pointCount; pointIndex++) {
+				DrawWorldProjectedLine(
+					sceneDrawList,
+					prediction->ballisticTrajectoryPoints[static_cast<size_t>(pointIndex - 1)],
+					prediction->ballisticTrajectoryPoints[static_cast<size_t>(pointIndex)],
+					lineColor,
+					(std::max)(trajectoryRenderer->trajectoryThickness, 0.5f));
+			}
+
+			if (trajectoryRenderer->trajectoryShowImpactPoint) {
+				ProjectedScenePoint projectedImpact{};
+
+				if (TryProjectWorldPosition(prediction->ballisticImpactPosition, projectedImpact)) {
+					sceneDrawList->AddCircle(
+						projectedImpact.screenPosition,
+						6.0f,
+						lineColor,
+						16,
+						(std::max)(trajectoryRenderer->trajectoryThickness, 1.0f));
+				}
+			}
+		}
+	}
+
+	void DrawLocalBoxDebug(
+		ImDrawList* sceneDrawList,
+		const EditorGameObject& gameObject,
+		const Vector3& center,
+		const Vector3& size,
+		ImU32 color) {
+		const Vector3 halfSize{
+			size.x * 0.5f,
+			size.y * 0.5f,
+			size.z * 0.5f};
+		const Vector3 corners[8] = {
+			MakeLocalPoint(center, -halfSize.x, -halfSize.y, -halfSize.z),
+			MakeLocalPoint(center, halfSize.x, -halfSize.y, -halfSize.z),
+			MakeLocalPoint(center, halfSize.x, -halfSize.y, halfSize.z),
+			MakeLocalPoint(center, -halfSize.x, -halfSize.y, halfSize.z),
+			MakeLocalPoint(center, -halfSize.x, halfSize.y, -halfSize.z),
+			MakeLocalPoint(center, halfSize.x, halfSize.y, -halfSize.z),
+			MakeLocalPoint(center, halfSize.x, halfSize.y, halfSize.z),
+			MakeLocalPoint(center, -halfSize.x, halfSize.y, halfSize.z)};
 		const int32_t edges[12][2] = {
 			{0, 1}, {1, 2}, {2, 3}, {3, 0},
 			{4, 5}, {5, 6}, {6, 7}, {7, 4},
 			{0, 4}, {1, 5}, {2, 6}, {3, 7}};
-
-		for (const int32_t(&edge)[2] : edges) {
-			DrawProjectedLine(sceneDrawList, gameObject, corners[edge[0]], corners[edge[1]], color, 1.5f);
+		Vector3 worldCorners[8]{};
+		for (int32_t cornerIndex = 0; cornerIndex < 8; cornerIndex++) {
+			worldCorners[cornerIndex] = TransformColliderPoint(gameObject, corners[cornerIndex]);
 		}
+
+		for (int32_t edgeIndex = 0; edgeIndex < 12; edgeIndex++) {
+			DrawWorldProjectedLine(
+				sceneDrawList,
+				worldCorners[edges[edgeIndex][0]],
+				worldCorners[edges[edgeIndex][1]],
+				color,
+				1.5f);
+		}
+	}
+
+	void DrawBoxColliderDebug(ImDrawList* sceneDrawList, const EditorGameObject& gameObject, const EditorComponent& collider, ImU32 color) {
+		DrawLocalBoxDebug(sceneDrawList, gameObject, collider.colliderCenter, collider.colliderSize, color);
 	}
 
 	void DrawSphereColliderDebug(ImDrawList* sceneDrawList, const EditorGameObject& gameObject, const EditorComponent& collider, ImU32 color) {
@@ -344,9 +968,748 @@ namespace {
 		}
 	}
 
-	void DrawPhysicsDebug(ImDrawList* sceneDrawList) {
-		const EditorPhysicsSettings& physicsSettings = g_editorScene.GetPhysicsSettings();
-		if (!physicsSettings.drawColliderDebug) {
+	void DrawWheelColliderDebug(ImDrawList* sceneDrawList, const EditorGameObject& gameObject, const EditorComponent& collider, ImU32 color) {
+		const float radius = (std::max)(collider.colliderRadius, 0.01f);
+		const float halfWidth = (std::max)(collider.colliderSize.x * 0.5f, 0.01f);
+		DrawLocalCircle(
+			sceneDrawList,
+			gameObject,
+			collider.colliderCenter,
+			Vector3{0.0f, 1.0f, 0.0f},
+			Vector3{0.0f, 0.0f, 1.0f},
+			radius,
+			color);
+		DrawProjectedLine(
+			sceneDrawList,
+			gameObject,
+			MakeLocalPoint(collider.colliderCenter, -halfWidth, 0.0f, 0.0f),
+			MakeLocalPoint(collider.colliderCenter, halfWidth, 0.0f, 0.0f),
+			color,
+			1.5f);
+	}
+
+	bool DrawAutoConvexColliderDebug(
+		ImDrawList* sceneDrawList,
+		const EditorGameObject& gameObject,
+		ImU32 color) {
+		// 毎フレームの Debug 表示で一時配列を再確保しない。Scene View は単一スレッドで描く。
+		static std::vector<EditorJoltPhysicsManager::PhysicsShapeTriangle> shapeTriangles;
+		const bool hasRuntimeShape = g_editorRuntimeManager.GetPhysicsManager().GetPhysicsShapeTriangles(
+				gameObject.id,
+				shapeTriangles);
+		const bool hasPreviewShape = !hasRuntimeShape &&
+			g_editorRuntimeManager.GetPhysicsManager().BuildAutoConvexPreviewTriangles(
+				gameObject.id,
+				shapeTriangles);
+		if (!hasRuntimeShape && !hasPreviewShape) {
+			return false;
+		}
+
+		// Play中は Jolt Body、Edit中は同じ設定から組み立てた一時Shapeの最終面を描く。
+		for (const EditorJoltPhysicsManager::PhysicsShapeTriangle& shapeTriangle : shapeTriangles) {
+			DrawWorldProjectedLine(sceneDrawList, shapeTriangle.first, shapeTriangle.second, color, 1.0f);
+			DrawWorldProjectedLine(sceneDrawList, shapeTriangle.second, shapeTriangle.third, color, 1.0f);
+			DrawWorldProjectedLine(sceneDrawList, shapeTriangle.third, shapeTriangle.first, color, 1.0f);
+		}
+
+		return true;
+	}
+
+	void DrawColliderDebug(ImDrawList* sceneDrawList, const EditorGameObject& gameObject) {
+		for (const EditorComponent& collider : gameObject.components) {
+			if (!collider.isActive || !IsPhysicsDebugColliderType(collider.type)) {
+				continue;
+			}
+
+			const ImU32 debugColor = GetPhysicsDebugColor(gameObject, collider);
+			if (collider.type == EditorComponentType::SphereCollider) {
+				DrawSphereColliderDebug(sceneDrawList, gameObject, collider, debugColor);
+			}
+			else if (collider.type == EditorComponentType::CapsuleCollider ||
+			         collider.type == EditorComponentType::CharacterController) {
+				DrawCapsuleColliderDebug(sceneDrawList, gameObject, collider, debugColor);
+			}
+			else if (collider.type == EditorComponentType::WheelCollider) {
+				DrawWheelColliderDebug(sceneDrawList, gameObject, collider, debugColor);
+			}
+			else if (collider.type == EditorComponentType::AutoConvexCollision) {
+				// Play / Edit のどちらでも、Runtime と同じ規則で生成した最終凸包を表示する。
+				if (!DrawAutoConvexColliderDebug(sceneDrawList, gameObject, debugColor)) {
+					DrawBoxColliderDebug(sceneDrawList, gameObject, collider, debugColor);
+				}
+			}
+			else {
+				// Terrain など、専用ワイヤーフレームを持たない Collider は Bounds を目安として表示する。
+				DrawBoxColliderDebug(sceneDrawList, gameObject, collider, debugColor);
+			}
+		}
+	}
+
+	void DrawVelocityDebug(
+		ImDrawList* sceneDrawList,
+		const EditorGameObject& gameObject,
+		const EditorPhysicsSettings& physicsSettings) {
+		const EditorComponent* rigidBody = FindActiveComponent(gameObject, EditorComponentType::RigidBody);
+		if (rigidBody == nullptr) {
+			return;
+		}
+
+		const bool shouldDrawLabel = IsGameObjectSelected(gameObject.id);
+		DrawWorldVectorArrow(
+			sceneDrawList,
+			GetGameObjectWorldPosition(gameObject),
+			rigidBody->velocity,
+			physicsSettings.debugVectorScale,
+			IM_COL32(70, 225, 255, 255),
+			shouldDrawLabel ? "速度" : nullptr);
+		DrawWorldVectorArrow(
+			sceneDrawList,
+			Add(GetGameObjectWorldPosition(gameObject), Vector3{0.0f, 0.2f, 0.0f}),
+			rigidBody->angularVelocity,
+			physicsSettings.debugVectorScale,
+			IM_COL32(225, 105, 255, 255),
+			shouldDrawLabel ? "角速度" : nullptr);
+	}
+
+	void DrawRadialFieldArrows(
+		ImDrawList* sceneDrawList,
+		const Vector3& center,
+		float radius,
+		bool isInward,
+		ImU32 color) {
+		const Vector3 directions[6] = {
+			Vector3{1.0f, 0.0f, 0.0f},
+			Vector3{-1.0f, 0.0f, 0.0f},
+			Vector3{0.0f, 1.0f, 0.0f},
+			Vector3{0.0f, -1.0f, 0.0f},
+			Vector3{0.0f, 0.0f, 1.0f},
+			Vector3{0.0f, 0.0f, -1.0f}};
+		const float previewRadius = radius > 0.0f ? (std::min)(radius, 4.0f) : 2.0f;
+
+		for (const Vector3& direction : directions) {
+			const Vector3 outerPoint = Add(center, Multiply(previewRadius, direction));
+			const Vector3 innerPoint = Add(center, Multiply(previewRadius * 0.35f, direction));
+			if (isInward) {
+				DrawWorldArrowBetween(sceneDrawList, outerPoint, innerPoint, color, nullptr);
+			}
+			else {
+				DrawWorldArrowBetween(sceneDrawList, innerPoint, outerPoint, color, nullptr);
+			}
+		}
+	}
+
+	void DrawForceDirectionDebug(
+		ImDrawList* sceneDrawList,
+		const EditorGameObject& gameObject,
+		const EditorPhysicsSettings& physicsSettings) {
+		const bool shouldDrawLabel = IsGameObjectSelected(gameObject.id);
+		const EditorComponent* rigidBody = FindActiveComponent(gameObject, EditorComponentType::RigidBody);
+		if (rigidBody != nullptr && rigidBody->useGravity) {
+			DrawWorldVectorArrow(
+				sceneDrawList,
+				GetGameObjectWorldPosition(gameObject),
+				physicsSettings.gravity,
+				physicsSettings.debugVectorScale,
+				IM_COL32(255, 95, 80, 255),
+				shouldDrawLabel ? "重力" : nullptr);
+		}
+
+		const EditorComponent* constantForce = FindActiveComponent(gameObject, EditorComponentType::ConstantForce);
+		if (constantForce != nullptr) {
+			DrawWorldVectorArrow(
+				sceneDrawList,
+				GetGameObjectWorldPosition(gameObject),
+				constantForce->velocity,
+				physicsSettings.debugVectorScale,
+				IM_COL32(255, 170, 70, 255),
+				shouldDrawLabel ? "常時力" : nullptr);
+		}
+
+		const EditorComponent* thruster = FindActiveComponent(gameObject, EditorComponentType::Thruster);
+		if (thruster != nullptr) {
+			const Vector3 applicationPoint = TransformColliderPoint(
+				gameObject,
+				thruster->thrusterLocalApplicationPoint);
+			Vector3 thrustDirection = thruster->thrusterDirection;
+
+			if (thruster->thrusterUseLocalDirection) {
+				const Vector3 localDirectionPoint = Add(
+					thruster->thrusterLocalApplicationPoint,
+					thruster->thrusterDirection);
+				thrustDirection = Subtract(
+					TransformColliderPoint(gameObject, localDirectionPoint),
+					applicationPoint);
+			}
+
+			if (Length(thrustDirection) > 0.0001f) {
+				const Vector3 thrustForce = Multiply(
+					thruster->thrusterForce * (std::clamp)(thruster->thrusterThrottle, 0.0f, 1.0f),
+					Normalize(thrustDirection));
+				DrawWorldVectorArrow(
+					sceneDrawList,
+					applicationPoint,
+					thrustForce,
+					physicsSettings.debugVectorScale,
+					IM_COL32(255, 135, 45, 255),
+					shouldDrawLabel ? "推進力" : nullptr);
+			}
+		}
+
+		const EditorComponent* torsionSpring = FindActiveComponent(
+			gameObject,
+			EditorComponentType::TorsionSpring);
+
+		if (torsionSpring != nullptr) {
+			DrawWorldVectorArrow(
+				sceneDrawList,
+				GetGameObjectWorldPosition(gameObject),
+				torsionSpring->torsionRestRotation,
+				physicsSettings.debugVectorScale,
+				IM_COL32(220, 130, 255, 255),
+				shouldDrawLabel ? "目標回転" : nullptr);
+		}
+
+		const EditorComponent* vortexField = FindActiveComponent(
+			gameObject,
+			EditorComponentType::VortexField);
+
+		if (vortexField != nullptr) {
+			const Vector3 fieldCenter = GetGameObjectWorldPosition(gameObject);
+			const Vector3 worldAxis = Subtract(
+				TransformColliderPoint(gameObject, vortexField->vortexAxis),
+				fieldCenter);
+
+			if (Length(worldAxis) > 0.0001f) {
+				DrawWorldVectorArrow(
+					sceneDrawList,
+					fieldCenter,
+					Normalize(worldAxis),
+					physicsSettings.debugVectorScale,
+					IM_COL32(70, 220, 255, 255),
+					shouldDrawLabel ? "渦軸" : nullptr);
+			}
+		}
+
+		const EditorComponent* pressureField = FindActiveComponent(
+			gameObject,
+			EditorComponentType::PressureField);
+
+		if (pressureField != nullptr) {
+			DrawRadialFieldArrows(
+				sceneDrawList,
+				GetGameObjectWorldPosition(gameObject),
+				pressureField->pressureFieldRadius,
+				pressureField->pressureFieldPressure < 0.0f,
+				IM_COL32(255, 125, 70, 255));
+		}
+
+		const EditorComponent* uprightStabilizer = FindActiveComponent(
+			gameObject,
+			EditorComponentType::UprightStabilizer);
+
+		if (uprightStabilizer != nullptr) {
+			const Vector3 worldPosition = GetGameObjectWorldPosition(gameObject);
+			const Vector3 currentWorldUp = Subtract(
+				TransformColliderPoint(gameObject, uprightStabilizer->uprightLocalUpAxis),
+				worldPosition);
+			DrawWorldVectorArrow(
+				sceneDrawList,
+				worldPosition,
+				currentWorldUp,
+				physicsSettings.debugVectorScale,
+				IM_COL32(255, 190, 70, 255),
+				shouldDrawLabel ? "現在の上" : nullptr);
+			DrawWorldVectorArrow(
+				sceneDrawList,
+				worldPosition,
+				uprightStabilizer->uprightTargetWorldUp,
+				physicsSettings.debugVectorScale,
+				IM_COL32(80, 255, 145, 255),
+				shouldDrawLabel ? "目標の上" : nullptr);
+		}
+
+		const EditorComponent* aerodynamics = FindActiveComponent(gameObject, EditorComponentType::Aerodynamics);
+		if (aerodynamics != nullptr) {
+			DrawWorldVectorArrow(
+				sceneDrawList,
+				GetGameObjectWorldPosition(gameObject),
+				aerodynamics->aerodynamicAmbientWindVelocity,
+				physicsSettings.debugVectorScale,
+				IM_COL32(90, 255, 145, 255),
+				shouldDrawLabel ? "基礎風" : nullptr);
+		}
+
+		const EditorComponent* windZone = FindActiveComponent(gameObject, EditorComponentType::WindZone);
+		if (windZone != nullptr) {
+			if (windZone->windZoneMode == 0) {
+				const Vector3 windVelocity = Multiply(windZone->windZoneSpeed, Normalize(windZone->windZoneDirection));
+				DrawWorldVectorArrow(
+					sceneDrawList,
+					GetGameObjectWorldPosition(gameObject),
+					windVelocity,
+					physicsSettings.debugVectorScale,
+					IM_COL32(90, 255, 145, 255),
+					shouldDrawLabel ? "風" : nullptr);
+			}
+			else {
+				DrawRadialFieldArrows(
+					sceneDrawList,
+					GetGameObjectWorldPosition(gameObject),
+					windZone->windZoneRadius,
+					false,
+					IM_COL32(90, 255, 145, 255));
+			}
+		}
+
+		const EditorComponent* gravityField = FindActiveComponent(gameObject, EditorComponentType::GravityField);
+		if (gravityField != nullptr) {
+			DrawRadialFieldArrows(
+				sceneDrawList,
+				GetGameObjectWorldPosition(gameObject),
+				gravityField->gravityFieldInfluenceRadius,
+				true,
+				IM_COL32(255, 95, 80, 255));
+		}
+
+		const EditorComponent* rotatingFrame = FindActiveComponent(gameObject, EditorComponentType::RotatingFrame);
+		if (rotatingFrame != nullptr) {
+			DrawWorldVectorArrow(
+				sceneDrawList,
+				GetGameObjectWorldPosition(gameObject),
+				rotatingFrame->rotatingFrameAngularVelocity,
+				physicsSettings.debugVectorScale,
+				IM_COL32(225, 105, 255, 255),
+				shouldDrawLabel ? "回転軸" : nullptr);
+			DrawWorldVectorArrow(
+				sceneDrawList,
+				GetGameObjectWorldPosition(gameObject),
+				rotatingFrame->rotatingFrameLinearVelocity,
+				physicsSettings.debugVectorScale,
+				IM_COL32(70, 225, 255, 255),
+				shouldDrawLabel ? "中心速度" : nullptr);
+		}
+
+		const EditorComponent* fluidVolume = FindActiveComponent(gameObject, EditorComponentType::FluidVolume);
+		if (fluidVolume != nullptr) {
+			DrawWorldVectorArrow(
+				sceneDrawList,
+				GetGameObjectWorldPosition(gameObject),
+				fluidVolume->fluidFlowVelocity,
+				physicsSettings.debugVectorScale,
+				IM_COL32(60, 235, 180, 255),
+				shouldDrawLabel ? "流れ" : nullptr);
+		}
+
+		const EditorComponent* electromagneticField = FindActiveComponent(gameObject, EditorComponentType::ElectromagneticField);
+		if (electromagneticField != nullptr) {
+			if (electromagneticField->electromagneticFieldMode == 0) {
+				DrawWorldVectorArrow(
+					sceneDrawList,
+					GetGameObjectWorldPosition(gameObject),
+					electromagneticField->electromagneticElectricField,
+					physicsSettings.debugVectorScale,
+					IM_COL32(255, 225, 70, 255),
+					shouldDrawLabel ? "電場" : nullptr);
+			}
+			else {
+				const bool isInward = electromagneticField->electromagneticSourceCharge < 0.0f;
+				DrawRadialFieldArrows(
+					sceneDrawList,
+					GetGameObjectWorldPosition(gameObject),
+					electromagneticField->electromagneticInfluenceRadius,
+					isInward,
+					IM_COL32(255, 225, 70, 255));
+			}
+
+			DrawWorldVectorArrow(
+				sceneDrawList,
+				GetGameObjectWorldPosition(gameObject),
+				electromagneticField->electromagneticMagneticField,
+				physicsSettings.debugVectorScale,
+				IM_COL32(210, 100, 255, 255),
+				shouldDrawLabel ? "磁場" : nullptr);
+		}
+
+		for (const EditorComponent& component : gameObject.components) {
+			if (!component.isActive || !IsPhysicsDebugJointType(component.type)) {
+				continue;
+			}
+
+			DrawWorldVectorArrow(
+				sceneDrawList,
+				GetGameObjectWorldPosition(gameObject),
+				component.jointAxis,
+				physicsSettings.debugVectorScale,
+				IM_COL32(255, 205, 90, 255),
+				shouldDrawLabel ? "Joint軸" : nullptr);
+		}
+	}
+
+	void DrawFieldVolumeDebug(ImDrawList* sceneDrawList, const EditorGameObject& gameObject) {
+		constexpr ImU32 fieldColor = IM_COL32(90, 255, 160, 170);
+		const EditorComponent* windZone = FindActiveComponent(gameObject, EditorComponentType::WindZone);
+		if (windZone != nullptr && windZone->windZoneRadius > 0.0f) {
+			DrawWorldSphere(sceneDrawList, GetGameObjectWorldPosition(gameObject), windZone->windZoneRadius, fieldColor);
+		}
+
+		const EditorComponent* gravityField = FindActiveComponent(gameObject, EditorComponentType::GravityField);
+		if (gravityField != nullptr && gravityField->gravityFieldInfluenceRadius > 0.0f) {
+			DrawWorldSphere(
+				sceneDrawList,
+				GetGameObjectWorldPosition(gameObject),
+				gravityField->gravityFieldInfluenceRadius,
+				IM_COL32(255, 95, 80, 160));
+		}
+
+		const EditorComponent* rotatingFrame = FindActiveComponent(gameObject, EditorComponentType::RotatingFrame);
+		if (rotatingFrame != nullptr && rotatingFrame->rotatingFrameRadius > 0.0f) {
+			DrawWorldSphere(
+				sceneDrawList,
+				GetGameObjectWorldPosition(gameObject),
+				rotatingFrame->rotatingFrameRadius,
+				IM_COL32(225, 105, 255, 160));
+		}
+
+		const EditorComponent* fluidVolume = FindActiveComponent(gameObject, EditorComponentType::FluidVolume);
+		if (fluidVolume != nullptr) {
+			DrawLocalBoxDebug(
+				sceneDrawList,
+				gameObject,
+				Vector3{0.0f, 0.0f, 0.0f},
+				fluidVolume->fluidVolumeSize,
+				IM_COL32(60, 235, 180, 210));
+		}
+
+		const EditorComponent* buoyancy = FindActiveComponent(gameObject, EditorComponentType::Buoyancy);
+		if (buoyancy != nullptr) {
+			DrawLocalBoxDebug(
+				sceneDrawList,
+				gameObject,
+				buoyancy->buoyancyCenterOffset,
+				buoyancy->buoyancyHullSize,
+				IM_COL32(70, 170, 255, 210));
+		}
+
+		const EditorComponent* aerodynamics = FindActiveComponent(gameObject, EditorComponentType::Aerodynamics);
+		if (aerodynamics != nullptr) {
+			DrawWorldMarker(
+				sceneDrawList,
+				TransformColliderPoint(gameObject, aerodynamics->aerodynamicCenterOfPressure),
+				IM_COL32(255, 170, 70, 255));
+		}
+
+		const EditorComponent* electromagneticField = FindActiveComponent(gameObject, EditorComponentType::ElectromagneticField);
+		if (electromagneticField != nullptr && electromagneticField->electromagneticInfluenceRadius > 0.0f) {
+			DrawWorldSphere(
+				sceneDrawList,
+				GetGameObjectWorldPosition(gameObject),
+				electromagneticField->electromagneticInfluenceRadius,
+				IM_COL32(255, 225, 70, 160));
+		}
+
+		const EditorComponent* vortexField = FindActiveComponent(
+			gameObject,
+			EditorComponentType::VortexField);
+
+		if (vortexField != nullptr && vortexField->vortexRadius > 0.0f) {
+			DrawWorldSphere(
+				sceneDrawList,
+				GetGameObjectWorldPosition(gameObject),
+				vortexField->vortexRadius,
+				IM_COL32(70, 220, 255, 160));
+		}
+
+		const EditorComponent* pressureField = FindActiveComponent(
+			gameObject,
+			EditorComponentType::PressureField);
+
+		if (pressureField != nullptr && pressureField->pressureFieldRadius > 0.0f) {
+			DrawWorldSphere(
+				sceneDrawList,
+				GetGameObjectWorldPosition(gameObject),
+				pressureField->pressureFieldRadius,
+				IM_COL32(255, 125, 70, 160));
+		}
+	}
+
+	void DrawConnectionDebug(ImDrawList* sceneDrawList, const EditorGameObject& gameObject) {
+		const EditorComponent* springForce = FindActiveComponent(gameObject, EditorComponentType::SpringForce);
+		if (springForce != nullptr) {
+			const Vector3 ownerAnchor = TransformColliderPoint(gameObject, springForce->springForceLocalAnchor);
+			Vector3 targetAnchor = springForce->springForceWorldAnchor;
+			const EditorGameObject* targetGameObject = g_editorScene.FindGameObject(springForce->springForceTargetGameObjectId);
+			if (targetGameObject != nullptr) {
+				targetAnchor = TransformColliderPoint(*targetGameObject, springForce->springForceTargetLocalAnchor);
+			}
+
+			DrawWorldProjectedLine(
+				sceneDrawList,
+				ownerAnchor,
+				targetAnchor,
+				IM_COL32(255, 185, 80, 255),
+				2.0f);
+			DrawWorldMarker(sceneDrawList, ownerAnchor, IM_COL32(255, 210, 110, 255));
+			DrawWorldMarker(sceneDrawList, targetAnchor, IM_COL32(255, 210, 110, 255));
+		}
+
+		const EditorComponent* ropeConstraint = FindActiveComponent(
+			gameObject,
+			EditorComponentType::RopeConstraint);
+
+		if (ropeConstraint != nullptr) {
+			const Vector3 ownerAnchor = TransformColliderPoint(gameObject, ropeConstraint->ropeLocalAnchor);
+			Vector3 targetAnchor = ropeConstraint->ropeWorldAnchor;
+			const EditorGameObject* targetGameObject = g_editorScene.FindGameObject(
+				ropeConstraint->ropeTargetGameObjectId);
+
+			if (targetGameObject != nullptr) {
+				targetAnchor = TransformColliderPoint(*targetGameObject, ropeConstraint->ropeTargetLocalAnchor);
+			}
+
+			const ImU32 ropeColor = ropeConstraint->ropeIsBroken
+				? IM_COL32(255, 70, 70, 255)
+				: IM_COL32(80, 220, 255, 255);
+			DrawWorldProjectedLine(sceneDrawList, ownerAnchor, targetAnchor, ropeColor, 2.5f);
+			DrawWorldMarker(sceneDrawList, ownerAnchor, ropeColor);
+			DrawWorldMarker(sceneDrawList, targetAnchor, ropeColor);
+		}
+
+		const EditorComponent* suspension = FindActiveComponent(
+			gameObject,
+			EditorComponentType::Suspension);
+
+		if (suspension != nullptr) {
+			const Vector3 worldAnchor = TransformColliderPoint(
+				gameObject,
+				suspension->suspensionLocalAnchor);
+			const Vector3 worldDirectionPoint = TransformColliderPoint(
+				gameObject,
+				Add(suspension->suspensionLocalAnchor, suspension->suspensionLocalDirection));
+			const Vector3 rawWorldDirection = Subtract(worldDirectionPoint, worldAnchor);
+			const float directionLength = Length(rawWorldDirection);
+
+			if (directionLength > kProjectionEpsilon) {
+				const Vector3 worldDirection = Multiply(1.0f / directionLength, rawWorldDirection);
+				const float displayLength = suspension->suspensionIsGrounded
+					? suspension->suspensionCurrentLength
+					: suspension->suspensionMaximumLength;
+				const Vector3 wheelCenter = Add(
+					worldAnchor,
+					Multiply((std::max)(displayLength, 0.0f), worldDirection));
+				const ImU32 suspensionColor = suspension->suspensionIsGrounded
+					? IM_COL32(80, 255, 145, 255)
+					: IM_COL32(150, 170, 190, 255);
+				DrawWorldProjectedLine(
+					sceneDrawList,
+					worldAnchor,
+					wheelCenter,
+					suspensionColor,
+					2.5f);
+				DrawWorldMarker(sceneDrawList, worldAnchor, suspensionColor);
+				DrawWorldSphere(
+					sceneDrawList,
+					wheelCenter,
+					(std::max)(suspension->suspensionWheelRadius, 0.0f),
+					suspensionColor);
+			}
+		}
+
+		const EditorComponent* torsionSpring = FindActiveComponent(
+			gameObject,
+			EditorComponentType::TorsionSpring);
+
+		if (torsionSpring != nullptr) {
+			const EditorGameObject* targetGameObject = g_editorScene.FindGameObject(
+				torsionSpring->torsionTargetGameObjectId);
+
+			if (targetGameObject != nullptr) {
+				DrawWorldProjectedLine(
+					sceneDrawList,
+					GetGameObjectWorldPosition(gameObject),
+					GetGameObjectWorldPosition(*targetGameObject),
+					IM_COL32(220, 130, 255, 255),
+					2.0f);
+			}
+		}
+
+		const EditorComponent* pulleyConstraint = FindActiveComponent(
+			gameObject,
+			EditorComponentType::PulleyConstraint);
+
+		if (pulleyConstraint != nullptr) {
+			const Vector3 ownerAnchor = TransformColliderPoint(
+				gameObject,
+				pulleyConstraint->pulleyOwnerLocalAnchor);
+			const EditorGameObject* targetGameObject = g_editorScene.FindGameObject(
+				pulleyConstraint->pulleyTargetGameObjectId);
+			const ImU32 pulleyColor = pulleyConstraint->pulleyIsBroken
+				? IM_COL32(255, 70, 70, 255)
+				: IM_COL32(75, 235, 220, 255);
+
+			DrawWorldProjectedLine(
+				sceneDrawList,
+				ownerAnchor,
+				pulleyConstraint->pulleyOwnerWorldSupport,
+				pulleyColor,
+				2.5f);
+			DrawWorldProjectedLine(
+				sceneDrawList,
+				pulleyConstraint->pulleyOwnerWorldSupport,
+				pulleyConstraint->pulleyTargetWorldSupport,
+				pulleyColor,
+				1.5f);
+			DrawWorldMarker(sceneDrawList, ownerAnchor, pulleyColor);
+			DrawWorldMarker(sceneDrawList, pulleyConstraint->pulleyOwnerWorldSupport, pulleyColor);
+			DrawWorldMarker(sceneDrawList, pulleyConstraint->pulleyTargetWorldSupport, pulleyColor);
+
+			if (targetGameObject != nullptr) {
+				const Vector3 targetAnchor = TransformColliderPoint(
+					*targetGameObject,
+					pulleyConstraint->pulleyTargetLocalAnchor);
+				DrawWorldProjectedLine(
+					sceneDrawList,
+					pulleyConstraint->pulleyTargetWorldSupport,
+					targetAnchor,
+					pulleyColor,
+					2.5f);
+				DrawWorldMarker(sceneDrawList, targetAnchor, pulleyColor);
+			}
+		}
+
+		const EditorComponent* physicsServo = FindActiveComponent(
+			gameObject,
+			EditorComponentType::PhysicsServo);
+
+		if (physicsServo != nullptr) {
+			Vector3 desiredPosition = physicsServo->servoTargetPosition;
+			const EditorGameObject* targetGameObject = g_editorScene.FindGameObject(
+				physicsServo->servoTargetGameObjectId);
+
+			if (targetGameObject != nullptr) {
+				desiredPosition = Add(
+					GetGameObjectWorldPosition(*targetGameObject),
+					physicsServo->servoTargetPosition);
+			}
+
+			DrawWorldProjectedLine(
+				sceneDrawList,
+				GetGameObjectWorldPosition(gameObject),
+				desiredPosition,
+				IM_COL32(120, 175, 255, 255),
+				2.0f);
+			DrawWorldMarker(sceneDrawList, desiredPosition, IM_COL32(120, 175, 255, 255));
+		}
+
+		for (const EditorComponent& component : gameObject.components) {
+			if (!component.isActive || !IsPhysicsDebugJointType(component.type)) {
+				continue;
+			}
+
+			const EditorGameObject* connectedGameObject = g_editorScene.FindGameObject(component.connectedGameObjectId);
+			if (connectedGameObject == nullptr) {
+				continue;
+			}
+
+			DrawWorldProjectedLine(
+				sceneDrawList,
+				GetGameObjectWorldPosition(gameObject),
+				GetGameObjectWorldPosition(*connectedGameObject),
+				IM_COL32(255, 205, 90, 255),
+				2.0f);
+			DrawWorldMarker(
+				sceneDrawList,
+				GetGameObjectWorldPosition(*connectedGameObject),
+				IM_COL32(255, 205, 90, 255));
+		}
+	}
+
+	void DrawContactDebug(
+		ImDrawList* sceneDrawList,
+		const EditorPhysicsSettings& physicsSettings) {
+		if (!g_editorRuntimeManager.IsPlaying()) {
+			return;
+		}
+
+		const std::vector<EditorJoltPhysicsManager::PhysicsEvent>& contactEvents =
+			g_editorRuntimeManager.GetPhysicsManager().GetContactDebugEvents();
+		for (const EditorJoltPhysicsManager::PhysicsEvent& contactEvent : contactEvents) {
+			if (contactEvent.type == EditorJoltPhysicsManager::PhysicsEventType::CollisionExit ||
+				contactEvent.type == EditorJoltPhysicsManager::PhysicsEventType::TriggerExit) {
+				continue;
+			}
+
+			const EditorJoltPhysicsManager::CollisionInfo& collision = contactEvent.collision;
+			if (collision.selfGameObjectId > collision.otherGameObjectId) {
+				continue;  // 同じ接触は両側分のEventがあるため、ID順で1本へまとめる。
+			}
+
+			if (physicsSettings.drawSelectedOnlyDebug &&
+				!IsGameObjectSelected(collision.selfGameObjectId) &&
+				!IsGameObjectSelected(collision.otherGameObjectId)) {
+				continue;
+			}
+
+			const ImU32 contactColor = collision.isTrigger
+				? IM_COL32(80, 255, 150, 255)
+				: IM_COL32(255, 145, 70, 255);
+			DrawWorldMarker(sceneDrawList, collision.point, contactColor);
+			DrawWorldArrowBetween(
+				sceneDrawList,
+				collision.point,
+				Add(collision.point, Multiply(0.75f, Normalize(collision.normal))),
+				contactColor,
+				nullptr);
+		}
+	}
+
+	void DrawCastDebug(ImDrawList* sceneDrawList) {
+		if (!g_editorRuntimeManager.IsPlaying()) {
+			return;
+		}
+
+		const std::vector<EditorPhysicsManager::PhysicsDebugCast>& debugCasts =
+			g_editorRuntimeManager.GetPhysicsManager().GetFrameDebugCasts();
+		for (const EditorPhysicsManager::PhysicsDebugCast& debugCast : debugCasts) {
+			const Vector3 castDirection = Normalize(debugCast.direction);
+			if (Length(castDirection) <= kProjectionEpsilon) {
+				continue;
+			}
+
+			Vector3 castEnd = Add(debugCast.origin, Multiply(debugCast.distance, castDirection));
+			if (debugCast.hasHit) {
+				castEnd = debugCast.hit.point;
+			}
+
+			ImU32 castColor = IM_COL32(255, 225, 80, 230);
+			if (debugCast.type == EditorPhysicsManager::PhysicsDebugCastType::Sphere) {
+				castColor = IM_COL32(70, 225, 255, 230);
+			}
+			else if (debugCast.type == EditorPhysicsManager::PhysicsDebugCastType::Capsule) {
+				castColor = IM_COL32(225, 105, 255, 230);
+			}
+
+			DrawWorldArrowBetween(sceneDrawList, debugCast.origin, castEnd, castColor, nullptr);
+			if (debugCast.radius > 0.0f) {
+				DrawWorldSphere(sceneDrawList, debugCast.origin, debugCast.radius, castColor);
+				DrawWorldSphere(sceneDrawList, castEnd, debugCast.radius, castColor);
+			}
+
+			if (debugCast.hasHit) {
+				DrawWorldMarker(sceneDrawList, debugCast.hit.point, IM_COL32(255, 95, 80, 255));
+				DrawWorldArrowBetween(
+					sceneDrawList,
+					debugCast.hit.point,
+					Add(debugCast.hit.point, Multiply(0.75f, Normalize(debugCast.hit.normal))),
+					IM_COL32(255, 95, 80, 255),
+					nullptr);
+			}
+		}
+	}
+
+	// Hookは「選択点」と「力を伝えるRigidbody」が別Objectになるため、
+	// Hierarchyの数値だけでは接続先の取り違えに気付けない。SceneView上で線として見せる。
+	void DrawHookWireDebug(ImDrawList* sceneDrawList) {
+		if (!g_isHookWireSceneGizmoVisible) {
 			return;
 		}
 
@@ -355,23 +1718,159 @@ namespace {
 				continue;
 			}
 
-			const EditorComponent* collider = FindDebugCollider(gameObject);
-			if (collider == nullptr) {
+			const EditorComponent* hookComponent = EditorComponentUtility::FindComponent(
+				gameObject,
+				EditorComponentType::WireConnectable);
+			if (hookComponent == nullptr || !hookComponent->isActive) {
 				continue;
 			}
 
-			ImU32 debugColor = GetPhysicsDebugColor(gameObject, *collider);
-			if (collider->type == EditorComponentType::SphereCollider) {
-				DrawSphereColliderDebug(sceneDrawList, gameObject, *collider, debugColor);
+			Vector3 hookWorldScale{};
+			Vector3 hookWorldRotation{};
+			Vector3 hookWorldPosition{};
+			if (!g_editorScene.GetWorldTransform(
+					gameObject.id,
+					hookWorldScale,
+					hookWorldRotation,
+					hookWorldPosition)) {
+				continue;
 			}
-			else if (collider->type == EditorComponentType::CapsuleCollider ||
-			         collider->type == EditorComponentType::CharacterController) {
-				DrawCapsuleColliderDebug(sceneDrawList, gameObject, *collider, debugColor);
+
+			// AnchorはHookのローカル座標なので、World行列を通した実位置を描く。
+			const Vector3 anchorWorldPosition = Transform(
+				hookComponent->wireConnectableLocalAnchor,
+				g_editorScene.GetWorldMatrix(gameObject.id));
+
+			ProjectedScenePoint anchorPoint{};
+			if (!TryProjectWorldPosition(anchorWorldPosition, anchorPoint)) {
+				continue;
 			}
-			else {
-				// MeshCollider / TerrainCollider は Jolt 側も Box 近似で初期表示するため、SceneView でも外枠を表示する。
-				DrawBoxColliderDebug(sceneDrawList, gameObject, *collider, debugColor);
+
+			const int32_t physicsBodyGameObjectId =
+				hookComponent->wireConnectablePhysicsBodyGameObjectId >= 0
+					? hookComponent->wireConnectablePhysicsBodyGameObjectId
+					: gameObject.id;
+			const EditorGameObject* physicsBodyGameObject =
+				g_editorScene.FindGameObject(physicsBodyGameObjectId);
+			const EditorComponent* physicsBodyRigidBody = physicsBodyGameObject != nullptr
+				? EditorComponentUtility::FindComponent(*physicsBodyGameObject, EditorComponentType::RigidBody)
+				: nullptr;
+			// 力の伝わらない構成（参照切れ、Rigidbodyなし）は警告色にして配置中に気付けるようにする。
+			const bool isPhysicsBodyValid = physicsBodyGameObject != nullptr && physicsBodyRigidBody != nullptr;
+			const ImU32 hookColor = isPhysicsBodyValid
+				? IM_COL32(120, 220, 255, 235)
+				: IM_COL32(255, 140, 60, 235);
+
+			sceneDrawList->AddCircleFilled(anchorPoint.screenPosition, 4.0f, hookColor);
+			sceneDrawList->AddCircle(anchorPoint.screenPosition, 8.0f, hookColor, 0, 1.5f);
+
+			if (physicsBodyGameObject == nullptr || physicsBodyGameObjectId == gameObject.id) {
+				continue;
 			}
+
+			Vector3 bodyWorldScale{};
+			Vector3 bodyWorldRotation{};
+			Vector3 bodyWorldPosition{};
+			if (!g_editorScene.GetWorldTransform(
+					physicsBodyGameObjectId,
+					bodyWorldScale,
+					bodyWorldRotation,
+					bodyWorldPosition)) {
+				continue;
+			}
+
+			ProjectedScenePoint bodyPoint{};
+			if (!TryProjectWorldPosition(bodyWorldPosition, bodyPoint)) {
+				continue;
+			}
+
+			const bool isLineSafe =
+				std::fabs(anchorPoint.ndcX) <= kProjectedLineNdcLimit &&
+				std::fabs(anchorPoint.ndcY) <= kProjectedLineNdcLimit &&
+				std::fabs(bodyPoint.ndcX) <= kProjectedLineNdcLimit &&
+				std::fabs(bodyPoint.ndcY) <= kProjectedLineNdcLimit;
+			if (!isLineSafe) {
+				continue;
+			}
+
+			sceneDrawList->AddLine(
+				anchorPoint.screenPosition,
+				bodyPoint.screenPosition,
+				hookColor,
+				1.5f);
+			sceneDrawList->AddCircle(bodyPoint.screenPosition, 5.0f, hookColor, 0, 1.5f);
+		}
+	}
+
+	void DrawPhysicsDebug(ImDrawList* sceneDrawList) {
+		const EditorPhysicsSettings& physicsSettings = g_editorScene.GetPhysicsSettings();
+		if (!physicsSettings.drawColliderDebug &&
+			!physicsSettings.drawVelocityDebug &&
+			!physicsSettings.drawForceDirectionDebug &&
+			!physicsSettings.drawFieldVolumeDebug &&
+			!physicsSettings.drawConnectionDebug &&
+			!physicsSettings.drawContactDebug &&
+			!physicsSettings.drawCastDebug) {
+			return;
+		}
+
+		for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
+			if (!gameObject.isActive ||
+				(physicsSettings.drawSelectedOnlyDebug && !IsGameObjectSelected(gameObject.id))) {
+				continue;
+			}
+
+			if (physicsSettings.drawColliderDebug) {
+				DrawColliderDebug(sceneDrawList, gameObject);
+			}
+
+			if (physicsSettings.drawVelocityDebug) {
+				DrawVelocityDebug(sceneDrawList, gameObject, physicsSettings);
+			}
+
+			if (physicsSettings.drawForceDirectionDebug) {
+				DrawForceDirectionDebug(sceneDrawList, gameObject, physicsSettings);
+			}
+
+			if (physicsSettings.drawFieldVolumeDebug) {
+				DrawFieldVolumeDebug(sceneDrawList, gameObject);
+			}
+
+			if (physicsSettings.drawConnectionDebug) {
+				DrawConnectionDebug(sceneDrawList, gameObject);
+			}
+		}
+
+		if (physicsSettings.drawContactDebug) {
+			DrawContactDebug(sceneDrawList, physicsSettings);
+		}
+
+		if (physicsSettings.drawCastDebug) {
+			DrawCastDebug(sceneDrawList);
+		}
+	}
+
+	// Navigation は Runtime が実際に使っている Surface / Obstacle / Link / 経路を描く。
+	// 編集用の近似ではなく、UpdateAgent / CalculatePath と同じ NavigationManager のデータを使う。
+	void DrawNavigationDebug(ImDrawList* sceneDrawList) {
+		if (!g_editorRuntimeManager.IsPlaying()) {
+			return;
+		}
+
+		static std::vector<EditorNavigationManager::NavigationDebugLine> navigationLines;
+		g_editorRuntimeManager.GetNavigationManager().BuildDebugLines(navigationLines);
+		for (const EditorNavigationManager::NavigationDebugLine& navigationLine : navigationLines) {
+			const ImU32 color = ImGui::ColorConvertFloat4ToU32(ImVec4(
+				(std::clamp)(navigationLine.color.x, 0.0f, 1.0f),
+				(std::clamp)(navigationLine.color.y, 0.0f, 1.0f),
+				(std::clamp)(navigationLine.color.z, 0.0f, 1.0f),
+				1.0f));
+			DrawWorldProjectedLine(
+				sceneDrawList,
+				navigationLine.start,
+				navigationLine.end,
+				color,
+				2.0f);
 		}
 	}
 
@@ -403,9 +1902,20 @@ namespace {
 				continue;
 			}
 
-			pivotTransform.translate = Add(pivotTransform.translate, gameObject->translate);
-			pivotTransform.rotate = Add(pivotTransform.rotate, gameObject->rotate);
-			pivotTransform.scale = Add(pivotTransform.scale, gameObject->scale);
+			Vector3 worldScale{};
+			Vector3 worldRotation{};
+			Vector3 worldPosition{};
+			if (!g_editorScene.GetWorldTransform(
+					gameObjectId,
+					worldScale,
+					worldRotation,
+					worldPosition)) {
+				continue;
+			}
+
+			pivotTransform.translate = Add(pivotTransform.translate, worldPosition);
+			pivotTransform.rotate = Add(pivotTransform.rotate, worldRotation);
+			pivotTransform.scale = Add(pivotTransform.scale, worldScale);
 			selectedObjectCount += 1.0f;
 		}
 
@@ -442,18 +1952,34 @@ namespace {
 				continue;
 			}
 
-			Vector3 localOffset = Subtract(gameObject->translate, beforeTransform.translate);
+			Vector3 worldScale{};
+			Vector3 worldRotation{};
+			Vector3 worldPosition{};
+			if (!g_editorScene.GetWorldTransform(
+					gameObjectId,
+					worldScale,
+					worldRotation,
+					worldPosition)) {
+				continue;
+			}
+
+			Vector3 localOffset = Subtract(worldPosition, beforeTransform.translate);
 			localOffset.x *= scaleRatio.x;
 			localOffset.y *= scaleRatio.y;
 			localOffset.z *= scaleRatio.z;
 			localOffset = Transform(localOffset, deltaRotationMatrix);
 
-			gameObject->translate = Add(afterTransform.translate, localOffset);
-			gameObject->rotate = Add(gameObject->rotate, rotationDelta);
-			gameObject->scale = {
-				(std::max)(0.01f, gameObject->scale.x * scaleRatio.x),
-				(std::max)(0.01f, gameObject->scale.y * scaleRatio.y),
-				(std::max)(0.01f, gameObject->scale.z * scaleRatio.z)};
+			const Vector3 nextWorldPosition = Add(afterTransform.translate, localOffset);
+			const Vector3 nextWorldRotation = Add(worldRotation, rotationDelta);
+			const Vector3 nextWorldScale{
+				(std::max)(0.01f, worldScale.x * scaleRatio.x),
+				(std::max)(0.01f, worldScale.y * scaleRatio.y),
+				(std::max)(0.01f, worldScale.z * scaleRatio.z)};
+			g_editorScene.SetWorldTransform(
+				gameObjectId,
+				nextWorldScale,
+				nextWorldRotation,
+				nextWorldPosition);
 		}
 	}
 
@@ -498,7 +2024,7 @@ namespace {
 		}
 
 		ProjectedScenePoint projectedPoint{};
-		if (!TryProjectWorldPosition(gameObject.translate, projectedPoint) ||
+		if (!TryProjectWorldPosition(GetGameObjectWorldPosition(gameObject), projectedPoint) ||
 			!IsProjectedPointInsideScene(projectedPoint.screenPosition, 42.0f)) {
 			return false;
 		}
@@ -546,7 +2072,7 @@ namespace {
 		}
 
 		ProjectedScenePoint projectedPoint{};
-		if (!TryProjectWorldPosition(gameObject.translate, projectedPoint) ||
+		if (!TryProjectWorldPosition(GetGameObjectWorldPosition(gameObject), projectedPoint) ||
 			!IsProjectedPointInsideScene(projectedPoint.screenPosition, 48.0f)) {
 			return false;
 		}
@@ -562,8 +2088,15 @@ namespace {
 			ImVec2(iconMax.x + 14.0f, projectedPoint.screenPosition.y + 12.0f),
 			IM_COL32(180, 220, 255, 210));
 
-		Vector3 forwardDirection = GetSceneIconForwardDirection(gameObject.rotate);
-		Vector3 forwardEnd = Add(gameObject.translate, Multiply(1.2f, forwardDirection));
+		const Matrix4x4 worldMatrix = g_editorScene.GetWorldMatrix(gameObject.id);
+		Vector3 forwardDirection{
+			worldMatrix.matrix[2][0],
+			worldMatrix.matrix[2][1],
+			worldMatrix.matrix[2][2]};
+		forwardDirection = Length(forwardDirection) > 0.0001f
+			? Normalize(forwardDirection)
+			: GetSceneIconForwardDirection(gameObject.rotate);
+		Vector3 forwardEnd = Add(GetGameObjectWorldPosition(gameObject), Multiply(1.2f, forwardDirection));
 		ProjectedScenePoint projectedForwardEnd{};
 		if (TryProjectWorldPosition(forwardEnd, projectedForwardEnd)) {
 			sceneDrawList->AddLine(projectedPoint.screenPosition, projectedForwardEnd.screenPosition, iconColor, 2.0f);
@@ -588,6 +2121,37 @@ namespace {
 		return isIconHot;
 	}
 
+	void DrawSceneTargetPointGizmo(ImDrawList* sceneDrawList, const EditorGameObject& gameObject) {
+		const EditorComponent* targetPoint = EditorComponentUtility::FindComponent(
+			gameObject,
+			EditorComponentType::TargetPoint);
+
+		if (targetPoint == nullptr || !targetPoint->isActive) {
+			return;
+		}
+
+		const Matrix4x4 worldMatrix = g_editorScene.GetWorldMatrix(gameObject.id);
+		const Vector3 targetPosition = Transform(targetPoint->targetPointAimOffset, worldMatrix);
+		const ImU32 targetColor = IsGameObjectSelected(gameObject.id)
+			? IM_COL32(255, 235, 80, 255)
+			: IM_COL32(255, 150, 60, 210);
+		DrawWorldSphere(
+			sceneDrawList,
+			targetPosition,
+			(std::max)(targetPoint->targetPointRadius, 0.01f),
+			targetColor);
+		DrawWorldMarker(sceneDrawList, targetPosition, targetColor);
+
+		ProjectedScenePoint projectedPoint{};
+
+		if (TryProjectWorldPosition(targetPosition, projectedPoint)) {
+			sceneDrawList->AddText(
+				ImVec2(projectedPoint.screenPosition.x + 9.0f, projectedPoint.screenPosition.y - 9.0f),
+				targetColor,
+				gameObject.name.c_str());
+		}
+	}
+
 	bool DrawSceneLightAndCameraGameObjectIcons(ImDrawList* sceneDrawList) {
 		if (!g_isSceneGizmoVisible) {
 			return false;
@@ -601,6 +2165,7 @@ namespace {
 
 			isAnyIconHot = DrawSceneLightGameObjectIcon(sceneDrawList, gameObject) || isAnyIconHot;
 			isAnyIconHot = DrawSceneCameraGameObjectIcon(sceneDrawList, gameObject) || isAnyIconHot;
+			DrawSceneTargetPointGizmo(sceneDrawList, gameObject);
 		}
 
 		return isAnyIconHot;
@@ -634,7 +2199,11 @@ void EditorSceneViewManager::Draw() {
 		ImVec2(g_editorSceneWidth, g_editorSceneHeight + kEditorSceneHeaderHeight),
 		ImGuiCond_FirstUseEver);
 
-	ImGui::Begin("シーン###SceneView", nullptr, sceneWindowFlags);  // ###SceneView は DockBuilder と同じ固定 ID。表示名だけ日本語にしている。
+	const std::string sceneDisplayName = g_currentScenePath.empty()
+		? "未保存シーン"
+		: std::filesystem::path(g_currentScenePath).filename().generic_string();
+	const std::string sceneWindowTitle = sceneDisplayName + " - シーン###SceneView";
+	ImGui::Begin(sceneWindowTitle.c_str(), nullptr, sceneWindowFlags);  // ###SceneView は固定し、Docking を維持したまま現在 Scene 名を表示する。
 
 	ImGuiWindow* sceneWindow = ImGui::GetCurrentWindowRead();  // sceneWindow は Docking タブの表示状態まで含めて SceneView の実表示を判定するために使う。
 	bool isSceneDockTabVisible =
@@ -664,15 +2233,20 @@ void EditorSceneViewManager::Draw() {
 	g_editorSceneHeight = (std::max)(sceneContentSize.y, 180.0f);
 	g_isSceneViewVisible = true;
 
-	g_viewport.TopLeftX = g_editorSceneX;  // viewport は DirectX12 の NDC から画面座標への変換範囲。
-	g_viewport.TopLeftY = g_editorSceneY;
+	// ImGui の画面座標は ViewportsEnable 中デスクトップ基準になるため、
+	// back buffer 基準へ戻してから viewport へ渡す。引き忘れると 3D だけが枠の分だけ右下へずれる。
+	const float sceneRenderX = g_editorSceneX - g_editorRenderOriginX;
+	const float sceneRenderY = g_editorSceneY - g_editorRenderOriginY;
+
+	g_viewport.TopLeftX = sceneRenderX;  // viewport は DirectX12 の NDC から画面座標への変換範囲。
+	g_viewport.TopLeftY = sceneRenderY;
 	g_viewport.Width = g_editorSceneWidth;
 	g_viewport.Height = g_editorSceneHeight;
 
-	g_scissorRect.left = static_cast<LONG>(g_editorSceneX);  // scissorRect は DirectX12 が SceneView の外へ描かないための切り取り矩形。
-	g_scissorRect.top = static_cast<LONG>(g_editorSceneY);
-	g_scissorRect.right = static_cast<LONG>(g_editorSceneX + g_editorSceneWidth);
-	g_scissorRect.bottom = static_cast<LONG>(g_editorSceneY + g_editorSceneHeight);
+	g_scissorRect.left = static_cast<LONG>(sceneRenderX);  // scissorRect は DirectX12 が SceneView の外へ描かないための切り取り矩形。
+	g_scissorRect.top = static_cast<LONG>(sceneRenderY);
+	g_scissorRect.right = static_cast<LONG>(sceneRenderX + g_editorSceneWidth);
+	g_scissorRect.bottom = static_cast<LONG>(sceneRenderY + g_editorSceneHeight);
 
 	// 3D 用透視投影。アスペクト比は Docking 後の SceneView サイズから毎フレーム更新する。
 	g_projectionMatrix = MakePerspectiveFovMatrix(
@@ -689,14 +2263,6 @@ void EditorSceneViewManager::Draw() {
 		g_editorWindowHeight,
 		0.0f,
 		100.0f);
-
-	// cameraMatrix はエディターカメラの Transform から作るワールド行列。
-	g_cameraMatrix = MakeAffineMatrix(
-		g_cameraTransform.scale,
-		g_cameraTransform.rotate,
-		g_cameraTransform.translate);
-
-	g_viewMatrix = Inverse(g_cameraMatrix);  // viewMatrix はカメラ行列の逆行列。ワールド座標をカメラ空間へ移す。
 
 	// 左端 42px はツールバー領域として扱い、Scene 操作のクリック判定から外す。
 	ImVec2 sceneInteractionMin{g_editorSceneX + 42.0f, g_editorSceneY};
@@ -725,11 +2291,28 @@ void EditorSceneViewManager::Draw() {
 					static_cast<size_t>(payload->DataSize - 1));
 				g_selectedAssetPath = droppedAsset;
 
-				// droppedTextureIndex が 0 以上なら登録済みテクスチャなので Sprite として配置する。
-				int32_t droppedTextureIndex =
-					EditorAssetUtility::GetTextureIndex(g_editorTextureFilePaths, droppedAsset);
+				// 起動時の固定テクスチャ一覧にない画像も Sprite として配置できるよう、拡張子で判定する。
+				bool isSpriteAsset =
+					EditorAssetUtility::HasExtension(droppedAsset, ".png") ||
+					EditorAssetUtility::HasExtension(droppedAsset, ".jpg") ||
+					EditorAssetUtility::HasExtension(droppedAsset, ".jpeg");
 
-				if (droppedTextureIndex >= 0) {
+				if (EditorAssetUtility::HasExtension(droppedAsset, ".prefab")) {
+					g_editorScene.PushUndo();
+					const int32_t prefabRootId = g_editorScene.InstantiatePrefab(droppedAsset);
+					EditorGameObject* prefabRoot = g_editorScene.FindGameObject(prefabRootId);
+
+					if (prefabRoot != nullptr) {
+						prefabRoot->translate = GetModelDropPosition();
+						g_selectedEditorGameObjectId = prefabRootId;
+						SetSingleSelectedGameObject(prefabRootId);
+						g_previousSelectedEditorGameObjectId = -1;
+						g_editorSceneSynchronizer.Update(
+							g_editorTextureFilePaths,
+							g_selectedPlacedSceneObjectIndex);
+					}
+				}
+				else if (isSpriteAsset) {
 					// 画像アセットは SpriteRenderer 付き GameObject として配置する。
 					g_editorAssetFactory.CreateSpriteGameObject(
 						droppedAsset,
@@ -771,6 +2354,14 @@ void EditorSceneViewManager::Draw() {
 		g_editorCameraPanSpeed,
 		g_editorCameraWheelMoveSpeed);
 
+	// ホイール・パン・回転で更新されたカメラを、このフレームの補助表示にも即座に反映する。
+	// ここが操作前の行列のままだと、後段の3D描画だけが最新カメラを使い、Collider枠などが1フレームずれる。
+	g_cameraMatrix = MakeAffineMatrix(
+		g_cameraTransform.scale,
+		g_cameraTransform.rotate,
+		g_cameraTransform.translate);
+	g_viewMatrix = Inverse(g_cameraMatrix);
+
 	ImDrawList* sceneDrawList = ImGui::GetWindowDrawList();  // sceneDrawList は SceneView 上にガイド線・アイコン・選択矩形を重ねるための DrawList。
 	bool canUseToolShortcut =
 		isSceneHovered &&
@@ -792,6 +2383,46 @@ void EditorSceneViewManager::Draw() {
 		IM_COL32(180, 220, 255, 255),
 		"Perspective");
 
+	char sceneFpsText[192]{};
+	const float sceneFrameRate = g_renderProfile.frameRate;
+	const float sceneFrameTimeMilliseconds = g_renderProfile.frameMilliseconds;
+	constexpr double bytesPerMegabyte = 1024.0 * 1024.0;
+	const double localVideoMemoryUsageMegabytes =
+		static_cast<double>(g_renderProfile.localVideoMemoryUsage) / bytesPerMegabyte;
+	const double localVideoMemoryBudgetMegabytes =
+		static_cast<double>(g_renderProfile.localVideoMemoryBudget) / bytesPerMegabyte;
+	std::snprintf(
+		sceneFpsText,
+		_countof(sceneFpsText),
+		"%.1f FPS  Frame %.2f ms  GPU %.2f ms\nVRAM %.0f / %.0f MB  Obj %u  Inst %u",
+		sceneFrameRate,
+		sceneFrameTimeMilliseconds,
+		g_renderProfile.gpuFrameMilliseconds,
+		localVideoMemoryUsageMegabytes,
+		localVideoMemoryBudgetMegabytes,
+		g_renderProfile.sceneObjectCount,
+		g_renderProfile.instanceCount);
+	const ImVec2 sceneFpsTextSize = ImGui::CalcTextSize(sceneFpsText);
+	const ImVec2 sceneFpsTextPosition{
+		g_editorSceneX + 54.0f,
+		g_editorSceneY + g_editorSceneHeight - sceneFpsTextSize.y - 14.0f};
+	const ImVec2 sceneFpsBackgroundMin{
+		sceneFpsTextPosition.x - 8.0f,
+		sceneFpsTextPosition.y - 5.0f};
+	const ImVec2 sceneFpsBackgroundMax{
+		sceneFpsTextPosition.x + sceneFpsTextSize.x + 8.0f,
+		sceneFpsTextPosition.y + sceneFpsTextSize.y + 5.0f};
+	sceneDrawList->AddRectFilled(
+		sceneFpsBackgroundMin,
+		sceneFpsBackgroundMax,
+		IM_COL32(12, 18, 24, 205),
+		5.0f);
+	sceneDrawList->AddText(
+		sceneFpsTextPosition,
+		IM_COL32(210, 245, 210, 255),
+		sceneFpsText);
+
+	bool isTeamItemMarkerHot = false;
 	// Scene タブだけ床グリッドを表示する。Game / Asset Store では補助線を出さない。
 	if (isSceneTabActive) {
 		sceneDrawList->PushClipRect(
@@ -836,12 +2467,17 @@ void EditorSceneViewManager::Draw() {
 			}
 		}
 
+		DrawRailPathDebug(sceneDrawList);
+		DrawTrajectoryPreviewDebug(sceneDrawList);
 		DrawPhysicsDebug(sceneDrawList);
+		isTeamItemMarkerHot = DrawTeamItemSceneMarkers(sceneDrawList);
+		DrawNavigationDebug(sceneDrawList);
+		DrawHookWireDebug(sceneDrawList);
 
 		sceneDrawList->PopClipRect();
 	}
 
-	bool isGizmoHovered = false;  // isGizmoHovered はギズモ上クリックを範囲選択として扱わないためのフラグ。
+	bool isGizmoHovered = isTeamItemMarkerHot;  // TeamItemマーカーのクリックも範囲選択として扱わない。
 	bool isGizmoActive = false;  // isGizmoActive はギズモ操作中に Scene 選択を開始しないためのフラグ。
 	Transforms* selectedGizmoTransform = nullptr;  // selectedGizmoTransform は現在ギズモで動かす Transform の実体。
 	EditorGameObject* selectedGameObjectGizmo = nullptr;  // Light / Camera など描画メッシュを持たない GameObject を直接動かす対象。
@@ -878,9 +2514,11 @@ void EditorSceneViewManager::Draw() {
 	if (!hasSelectedGizmoTransform && g_selectedEditorGameObjectId >= 0) {
 		selectedGameObjectGizmo = g_editorScene.FindGameObject(g_selectedEditorGameObjectId);
 		if (selectedGameObjectGizmo != nullptr) {
-			selectedGameObjectGizmoTransform.translate = selectedGameObjectGizmo->translate;
-			selectedGameObjectGizmoTransform.rotate = selectedGameObjectGizmo->rotate;
-			selectedGameObjectGizmoTransform.scale = selectedGameObjectGizmo->scale;
+			g_editorScene.GetWorldTransform(
+				selectedGameObjectGizmo->id,
+				selectedGameObjectGizmoTransform.scale,
+				selectedGameObjectGizmoTransform.rotate,
+				selectedGameObjectGizmoTransform.translate);
 			selectedGizmoTransform = &selectedGameObjectGizmoTransform;
 			hasSelectedGizmoTransform = true;
 		}
@@ -914,7 +2552,16 @@ void EditorSceneViewManager::Draw() {
 		ImGuizmo::SetDrawlist(sceneDrawList);
 		ImGuizmo::SetRect(g_editorSceneX, g_editorSceneY, g_editorSceneWidth, g_editorSceneHeight);
 
-		if (hasSelectedGizmoTransform && selectedGizmoTransform != nullptr) {
+		bool isSelectionLockedByAnotherUser =
+			IsEditorTeamGameObjectLockedByAnotherUser(g_selectedEditorGameObjectId);
+
+		for (const int32_t selectedGameObjectId : g_selectedEditorGameObjectIds) {
+			isSelectionLockedByAnotherUser = isSelectionLockedByAnotherUser ||
+				IsEditorTeamGameObjectLockedByAnotherUser(selectedGameObjectId);
+		}
+
+		if (hasSelectedGizmoTransform && selectedGizmoTransform != nullptr &&
+			!isSelectionLockedByAnotherUser) {
 			ImGuizmo::OPERATION gizmoOperation = GetActiveGizmoOperation();  // gizmoOperation は移動・回転・拡縮・統合のどれを操作するかを表す。
 			const Transforms originalGizmoTransform = *selectedGizmoTransform;  // 複数選択時は変換前との差分を各 GameObject へ配るため、編集前を保持する。
 
@@ -935,6 +2582,35 @@ void EditorSceneViewManager::Draw() {
 				g_isGizmoSnapEnabled ? g_gizmoSnapValues : nullptr);
 			isGizmoHovered = isGizmoHovered || ImGuizmo::IsOver(gizmoOperation);
 			isGizmoActive = isGizmoActive || ImGuizmo::IsUsing();
+
+			if (ImGuizmo::IsUsing()) {
+				// Scene ViewのTransformギズモ操作は、InspectorのTransformComponentロックと同じ粒度で保護する。
+				// GameObject全体ではなくTransform Componentだけロックするため、他ユーザーは同じGameObjectの
+				// 別Componentを並行して編集できる。
+				auto requestTransformEditingLock = [](int32_t gameObjectId) {
+					const EditorGameObject* gameObject = g_editorScene.FindGameObject(gameObjectId);
+
+					if (gameObject == nullptr) {
+						return;
+					}
+
+					const EditorComponent* transformComponent = EditorComponentUtility::FindComponent(
+						*gameObject,
+						EditorComponentType::Transform);
+					RequestEditorTeamEditingLock(
+						gameObjectId,
+						transformComponent != nullptr ? transformComponent->uuid : std::string("Transform"));
+				};
+
+				if (g_selectedEditorGameObjectIds.size() >= 2) {
+					for (const int32_t selectedGameObjectId : g_selectedEditorGameObjectIds) {
+						requestTransformEditingLock(selectedGameObjectId);
+					}
+				}
+				else if (g_selectedEditorGameObjectId >= 0) {
+					requestTransformEditingLock(g_selectedEditorGameObjectId);
+				}
+			}
 
 			if (isManipulated) {
 				// ImGuizmo が返した行列を Transform の translate / rotate / scale に戻すための一時配列。
@@ -976,14 +2652,65 @@ void EditorSceneViewManager::Draw() {
 						g_selectedPlacedSceneObjectIndex);
 				}
 				else if (selectedGameObjectGizmo != nullptr) {
-					// SceneObject を持たない GameObject は、一時 Transform の結果をそのまま本体へ戻す。
-					selectedGameObjectGizmo->translate = selectedGizmoTransform->translate;
-					selectedGameObjectGizmo->rotate = selectedGizmoTransform->rotate;
-					selectedGameObjectGizmo->scale = selectedGizmoTransform->scale;
+					// ギズモのワールドSRTを親空間へ戻し、階層を壊さず保存する。
+					g_editorScene.SetWorldTransform(
+						selectedGameObjectGizmo->id,
+						selectedGizmoTransform->scale,
+						selectedGizmoTransform->rotate,
+						selectedGizmoTransform->translate);
 				}
 				else {
 					g_editorSelectionManager.SyncSelectedPlacedObjectToGameObject(g_selectedPlacedSceneObjectIndex);  // SceneObject を動かした結果を、対応する GameObject の Transform Component へ同期する。
 				}
+			}
+
+			// ギズモが反応しない不具合の再現時にVS出力から状態を追えるようにする。
+			// 毎フレーム出すと埋もれるので、SceneView内で左クリックした瞬間だけ出す。
+			if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+				const ImVec2 clickMousePosition = ImGui::GetMousePos();
+				// カメラや行列がNaN/Infになっていないかもここで確認する。
+				// NaNになった編集用カメラでギズモを計算すると、比較が常にfalseになり
+				// 「出るのに一切反応しない」症状に一致する。
+				const bool isCameraTransformFinite =
+					std::isfinite(g_cameraTransform.translate.x) &&
+					std::isfinite(g_cameraTransform.translate.y) &&
+					std::isfinite(g_cameraTransform.translate.z) &&
+					std::isfinite(g_cameraTransform.rotate.x) &&
+					std::isfinite(g_cameraTransform.rotate.y) &&
+					std::isfinite(g_cameraTransform.rotate.z);
+				const bool isViewMatrixFinite = std::isfinite(g_viewMatrix.matrix[3][0]) &&
+					std::isfinite(g_viewMatrix.matrix[3][1]) &&
+					std::isfinite(g_viewMatrix.matrix[3][2]);
+
+				char gizmoDiagnosticBuffer[512];
+				std::snprintf(
+					gizmoDiagnosticBuffer,
+					sizeof(gizmoDiagnosticBuffer),
+					"[GIZMO-DIAG] click=(%.1f,%.1f) sceneRect=(%.1f,%.1f,%.1f,%.1f) "
+					"hasSelectedGizmoTransform=%d isSelectionLockedByAnotherUser=%d "
+					"isGizmoHovered=%d isGizmoActive=%d selectedGameObjectId=%d "
+					"multiSelectCount=%zu wantCaptureMouse=%d "
+					"cameraTransformFinite=%d viewMatrixFinite=%d cameraPos=(%.2f,%.2f,%.2f)\n",
+					static_cast<double>(clickMousePosition.x),
+					static_cast<double>(clickMousePosition.y),
+					static_cast<double>(g_editorSceneX),
+					static_cast<double>(g_editorSceneY),
+					static_cast<double>(g_editorSceneWidth),
+					static_cast<double>(g_editorSceneHeight),
+					hasSelectedGizmoTransform ? 1 : 0,
+					isSelectionLockedByAnotherUser ? 1 : 0,
+					isGizmoHovered ? 1 : 0,
+					isGizmoActive ? 1 : 0,
+					g_selectedEditorGameObjectId,
+					g_selectedEditorGameObjectIds.size(),
+					ImGui::GetIO().WantCaptureMouse ? 1 : 0,
+					isCameraTransformFinite ? 1 : 0,
+					isViewMatrixFinite ? 1 : 0,
+					static_cast<double>(g_cameraTransform.translate.x),
+					static_cast<double>(g_cameraTransform.translate.y),
+					static_cast<double>(g_cameraTransform.translate.z));
+				// このタグはVS出力で意図的に必ず見せたいため、抑制済みのLog()ではなく直接出す。
+				OutputDebugStringA(gizmoDiagnosticBuffer);
 			}
 		}
 
@@ -1207,7 +2934,7 @@ void EditorSceneViewManager::Draw() {
 					}
 
 					ProjectedScenePoint projectedPoint{};
-					if (!TryProjectWorldPosition(gameObject.translate, projectedPoint)) {
+					if (!TryProjectWorldPosition(GetGameObjectWorldPosition(gameObject), projectedPoint)) {
 						continue;
 					}
 
@@ -1234,7 +2961,49 @@ void EditorSceneViewManager::Draw() {
 		}
 	}
 
+	// 右クリックだけ（カメラ回転ドラッグではない）の時にScene座標または選択Objectへ直接TeamItemを作る。
+	static Vector3 teamItemContextWorldPosition{};
+	if (isSceneHovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+		const ImVec2 rightDragDelta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Right);
+		if (std::fabs(rightDragDelta.x) < 2.0f && std::fabs(rightDragDelta.y) < 2.0f &&
+			TryGetSceneCursorWorldPosition(teamItemContextWorldPosition)) {
+			ImGui::OpenPopup("SceneViewTeamItemContext");
+		}
+	}
+	if (ImGui::BeginPopup("SceneViewTeamItemContext")) {
+		if (ImGui::MenuItem("このScene座標へ付箋")) {
+			OpenEditorTeamScenePositionItems(
+				{teamItemContextWorldPosition.x, teamItemContextWorldPosition.y, teamItemContextWorldPosition.z},
+				true,
+				"Note");
+		}
+		if (ImGui::MenuItem("このScene座標へPing")) {
+			OpenEditorTeamScenePositionItems(
+				{teamItemContextWorldPosition.x, teamItemContextWorldPosition.y, teamItemContextWorldPosition.z},
+				true,
+				"Ping");
+		}
+		if (g_selectedEditorGameObjectId >= 0) {
+			const EditorGameObject* selectedObject = g_editorScene.FindGameObject(g_selectedEditorGameObjectId);
+			if (selectedObject != nullptr) {
+				ImGui::Separator();
+				if (ImGui::MenuItem("選択GameObjectへ付箋")) {
+					OpenEditorTeamTargetItems("GameObject", selectedObject->uuid, true, "Note");
+				}
+				if (ImGui::MenuItem("選択GameObjectへPing")) {
+					OpenEditorTeamTargetItems("GameObject", selectedObject->uuid, true, "Ping");
+				}
+			}
+		}
+		ImGui::EndPopup();
+	}
+
 	drawSceneDropTarget();  // SceneView 最後にドロップターゲットを処理して、Project からのアセット配置を受ける。
+	if (isSceneHovered) {
+		ReportEditorTeamActivity(
+			"Scene View",
+			isGizmoActive ? "Gizmo操作中" : "閲覧中");
+	}
 	ImGui::End();
 #endif
 }

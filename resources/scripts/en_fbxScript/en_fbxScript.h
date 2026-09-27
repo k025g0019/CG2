@@ -1,14 +1,21 @@
 ﻿#pragma once
 
-#include "EditorScriptApi.h"
+#include "EditorNativeScript.h"
 
 //================================================================
 // en_fbxScript のユーザー編集用データ
 //================================================================
 
-class en_fbxScript {
+class en_fbxScript final : public Script {
 public:
-	float moveSpeed = 3.0f;  // Update で移動量を決める基本速度。
-	float rotateSpeed = 1.0f;  // Update で回転量を決める基本速度。
-	bool isStarted = false;  // Start が呼ばれたかどうかの状態。
+	void Start() override;
+	void Update(float deltaTime) override;
+	void FixedUpdate(float fixedDeltaTime) override;
+	void OnCollisionEnter(const EditorScriptPhysicsEvent& physicsEvent) override;
+	void Stop() override;
+
+private:
+	float moveSpeed_ = 3.0f;
+	float rotateSpeed_ = 1.0f;
+	bool isStarted_ = false;
 };

@@ -1,9 +1,17 @@
 ﻿#include "EditorPostProcessQualityManager.h"
 
+#include "Source/Engine/Editor/EditorProfilerManager.h"
+
 #include <algorithm>
+#include <cstring>
 
 namespace {
 	constexpr uint32_t kPostProcessDescriptorStartIndex = 90u;
+	constexpr uint32_t kExposureDescriptorStartIndex = 109u;
+	constexpr uint32_t kHistogramSrvDescriptorIndex = 111u;
+	constexpr uint32_t kHistogramUavDescriptorIndex = 112u;
+	constexpr uint32_t kHistogramBinCount = 256u;
+	constexpr uint32_t kHistogramConstantCount = 12u;
 	constexpr uint32_t kBloomPrefilterPipelineIndex = 0u;
 	constexpr uint32_t kBloomDownsamplePipelineIndex = 1u;
 	constexpr uint32_t kBloomUpsamplePipelineIndex = 2u;
@@ -12,6 +20,7 @@ namespace {
 	constexpr uint32_t kSmaaNeighborhoodPipelineIndex = 5u;
 	constexpr uint32_t kGlarePipelineIndex = 6u;
 	constexpr uint32_t kFilterPipelineIndex = 7u;
+	constexpr uint32_t kAutoExposurePipelineIndex = 8u;
 	constexpr uint32_t kRootConstantCount = EditorPostProcessQualityManager::kRootConstantCount;
 
 
@@ -37,6 +46,7 @@ bool EditorPostProcessQualityManager::Initialize(
 	UINT srvDescriptorSize,
 	IDxcBlob* fullscreenVertexShaderBlob,
 	const std::array<IDxcBlob*, kPipelineCount>& pixelShaderBlobs,
+	IDxcBlob* histogramComputeShaderBlob,
 	uint32_t renderWidth,
 	uint32_t renderHeight) {
 
@@ -45,7 +55,7 @@ bool EditorPostProcessQualityManager::Initialize(
 	//================================================================
 
 	if (device == nullptr || srvDescriptorHeap == nullptr || srvDescriptorSize == 0u ||
-		fullscreenVertexShaderBlob == nullptr) {
+		fullscreenVertexShaderBlob == nullptr || histogramComputeShaderBlob == nullptr) {
 		return false;
 	}
 
@@ -72,7 +82,10 @@ bool EditorPostProcessQualityManager::Initialize(
 		return false;
 	}
 
-	if (!CreateRootSignatureAndPipelineStates(fullscreenVertexShaderBlob, pixelShaderBlobs)) {
+	if (!CreateRootSignatureAndPipelineStates(
+		fullscreenVertexShaderBlob,
+		pixelShaderBlobs,
+		histogramComputeShaderBlob)) {
 		Finalize();
 		return false;
 	}
@@ -293,7 +306,8 @@ bool EditorPostProcessQualityManager::ExecuteGlare(
 	float colorR,
 	float colorG,
 	float colorB,
-	bool preserveSource) {
+	bool preserveSource,
+	float sampleRatio) {
 
 	if (!isInitialized_ || commandList == nullptr || sourceColorSrvHandle.ptr == 0u || glareMode <= 1) {
 		return false;
@@ -303,6 +317,13 @@ bool EditorPostProcessQualityManager::ExecuteGlare(
 	// Bloom で抽出済みの明部から、選択した Glare 形状を作る
 	//================================================================
 
+	const ResourceType destinationResourceType =
+		sourceColorSrvHandle.ptr == srvHandles_[static_cast<size_t>(ResourceType::GlareOutputA)].ptr
+		? ResourceType::GlareOutputB
+		: ResourceType::GlareOutputA;
+	// Bloom の明部テクスチャは半解像度なので、Glare も同じ解像度のまま処理する。
+	// ぼかし成分をフル解像度へ先に拡大すると、画質差が小さいままピクセル数だけ4倍になる。
+	// サンプリング間隔は従来のフル解像度基準を維持し、光条の幅と長さを変えない。
 	std::array<float, kRootConstantCount> constants{};
 	constants[0] = 1.0f / static_cast<float>(renderWidth_);
 	constants[1] = 1.0f / static_cast<float>(renderHeight_);
@@ -319,11 +340,7 @@ bool EditorPostProcessQualityManager::ExecuteGlare(
 	constants[12] = (std::max)(colorR, 0.0f);
 	constants[13] = (std::max)(colorG, 0.0f);
 	constants[14] = (std::max)(colorB, 0.0f);
-
-	const ResourceType destinationResourceType =
-		sourceColorSrvHandle.ptr == srvHandles_[static_cast<size_t>(ResourceType::GlareOutputA)].ptr
-		? ResourceType::GlareOutputB
-		: ResourceType::GlareOutputA;
+	constants[15] = (std::clamp)(sampleRatio, 0.25f, 1.0f);
 
 	const bool isGlareExecuted = DrawPass(
 		commandList,
@@ -386,6 +403,192 @@ bool EditorPostProcessQualityManager::ExecuteFilter(
 	return isFilterExecuted;
 }
 
+bool EditorPostProcessQualityManager::ExecuteAutoExposure(
+	ID3D12GraphicsCommandList* commandList,
+	D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle,
+	ID3D12Resource* sourceColorResource,
+	float minimumExposure,
+	float maximumExposure,
+	float adaptationSpeed,
+	float targetLuminance,
+	float deltaTime,
+	float viewportUvX,
+	float viewportUvY,
+	float viewportUvWidth,
+	float viewportUvHeight) {
+
+	if (!isInitialized_ || commandList == nullptr || sourceColorSrvHandle.ptr == 0u ||
+		sourceColorResource == nullptr) {
+		return false;
+	}
+
+	if (histogramResource_ == nullptr || histogramRootSignature_ == nullptr ||
+		histogramPipelineState_ == nullptr || histogramSrvHandle_.ptr == 0u ||
+		histogramUavGpuHandle_.ptr == 0u || histogramUavCpuHandle_.ptr == 0u) {
+		return false;
+	}
+
+	if (isHistogramReadbackPending_ && histogramReadbackResource_ != nullptr) {
+		void* histogramMappedAddress = nullptr;
+		const D3D12_RANGE readRange{0u, static_cast<SIZE_T>(kHistogramBinCount * sizeof(uint32_t))};
+
+		if (SUCCEEDED(histogramReadbackResource_->Map(
+			0u,
+			&readRange,
+			&histogramMappedAddress)) &&
+			histogramMappedAddress != nullptr) {
+			const uint32_t* histogramValues = static_cast<const uint32_t*>(histogramMappedAddress);
+			uint32_t maximumBinValue = 1u;
+
+			for (uint32_t binIndex = 0u; binIndex < kHistogramBinCount; binIndex++) {
+				maximumBinValue = (std::max)(maximumBinValue, histogramValues[binIndex]);
+			}
+
+			const float inverseMaximumBinValue = 1.0f / static_cast<float>(maximumBinValue);
+
+			for (uint32_t binIndex = 0u; binIndex < kHistogramBinCount; binIndex++) {
+				histogramNormalized_[binIndex] =
+					static_cast<float>(histogramValues[binIndex]) * inverseMaximumBinValue;
+			}
+
+			histogramReadbackResource_->Unmap(0u, nullptr);
+			hasHistogramData_ = true;
+		}
+
+		isHistogramReadbackPending_ = false;
+	}
+
+	//================================================================
+	// HDR対数輝度を256 binへ集計する
+	//================================================================
+
+	ID3D12DescriptorHeap* descriptorHeaps[] = {srvDescriptorHeap_};
+	commandList->SetDescriptorHeaps(1u, descriptorHeaps);
+	D3D12_RESOURCE_BARRIER sourceColorTransitionBarrier{};
+	sourceColorTransitionBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+	sourceColorTransitionBarrier.Transition.pResource = sourceColorResource;
+	sourceColorTransitionBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+	sourceColorTransitionBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+	sourceColorTransitionBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+	commandList->ResourceBarrier(1u, &sourceColorTransitionBarrier);
+	D3D12_RESOURCE_BARRIER histogramTransitionBarrier{};
+	histogramTransitionBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+	histogramTransitionBarrier.Transition.pResource = histogramResource_.Get();
+	histogramTransitionBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+	histogramTransitionBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+	histogramTransitionBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+	commandList->ResourceBarrier(1u, &histogramTransitionBarrier);
+
+	constexpr UINT clearHistogramValues[4] = {0u, 0u, 0u, 0u};
+	commandList->ClearUnorderedAccessViewUint(
+		histogramUavGpuHandle_,
+		histogramUavCpuHandle_,
+		histogramResource_.Get(),
+		clearHistogramValues,
+		0u,
+		nullptr);
+
+	constexpr uint32_t kHistogramSampleWidth = 256u;
+	constexpr uint32_t kHistogramSampleHeight = 144u;
+	constexpr float kMinimumLogLuminance = -12.0f;
+	constexpr float kMaximumLogLuminance = 8.0f;
+	std::array<uint32_t, kHistogramConstantCount> histogramConstants{};
+	histogramConstants[0] = kHistogramSampleWidth;
+	histogramConstants[1] = kHistogramSampleHeight;
+	const float histogramFloatConstants[6] = {
+		(std::clamp)(viewportUvX, 0.0f, 1.0f),
+		(std::clamp)(viewportUvY, 0.0f, 1.0f),
+		(std::clamp)(viewportUvWidth, 0.001f, 1.0f),
+		(std::clamp)(viewportUvHeight, 0.001f, 1.0f),
+		kMinimumLogLuminance,
+		kMaximumLogLuminance
+	};
+	std::memcpy(
+		&histogramConstants[2],
+		histogramFloatConstants,
+		sizeof(histogramFloatConstants));
+	commandList->SetComputeRootSignature(histogramRootSignature_.Get());
+	commandList->SetPipelineState(histogramPipelineState_.Get());
+	commandList->SetComputeRootDescriptorTable(0u, sourceColorSrvHandle);
+	commandList->SetComputeRootDescriptorTable(1u, histogramUavGpuHandle_);
+	commandList->SetComputeRoot32BitConstants(
+		2u,
+		kHistogramConstantCount,
+		histogramConstants.data(),
+		0u);
+	RecordEditorProfilerDispatch();
+	commandList->Dispatch(
+		(kHistogramSampleWidth + 7u) / 8u,
+		(kHistogramSampleHeight + 7u) / 8u,
+		1u);
+
+	D3D12_RESOURCE_BARRIER histogramUavBarrier{};
+	histogramUavBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+	histogramUavBarrier.UAV.pResource = histogramResource_.Get();
+	commandList->ResourceBarrier(1u, &histogramUavBarrier);
+	histogramTransitionBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+	histogramTransitionBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+	commandList->ResourceBarrier(1u, &histogramTransitionBarrier);
+	sourceColorTransitionBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+	sourceColorTransitionBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+	commandList->ResourceBarrier(1u, &sourceColorTransitionBarrier);
+
+	const ResourceType destinationResourceType =
+		lastExposureOutputResourceType_ == ResourceType::Exposure0
+		? ResourceType::Exposure1
+		: ResourceType::Exposure0;
+	const D3D12_GPU_DESCRIPTOR_HANDLE previousExposureHandle =
+		srvHandles_[static_cast<size_t>(lastExposureOutputResourceType_)];
+	std::array<float, kRootConstantCount> constants{};
+	constants[0] = (std::max)(minimumExposure, 0.01f);
+	constants[1] = (std::max)(maximumExposure, constants[0]);
+	constants[2] = (std::max)(adaptationSpeed, 0.0f);
+	constants[3] = (std::clamp)(deltaTime, 0.0f, 0.25f);
+	constants[4] = (std::max)(targetLuminance, 0.001f);
+	constants[5] = isExposureHistoryValid_ ? 1.0f : 0.0f;
+	constants[6] = (std::clamp)(viewportUvX, 0.0f, 1.0f);
+	constants[7] = (std::clamp)(viewportUvY, 0.0f, 1.0f);
+	constants[8] = (std::clamp)(viewportUvWidth, 0.001f, 1.0f);
+	constants[9] = (std::clamp)(viewportUvHeight, 0.001f, 1.0f);
+	constants[10] = kMinimumLogLuminance;
+	constants[11] = kMaximumLogLuminance;
+	// 鏡面反射や太陽が画面へ入っただけで全体露出が変動しないよう、
+	// ヒストグラムの最暗部と最明部を外して中間輝度を測光する。
+	constants[12] = 0.05f;
+	constants[13] = 0.95f;
+
+	const bool isExposureExecuted = DrawPass(
+		commandList,
+		kAutoExposurePipelineIndex,
+		destinationResourceType,
+		sourceColorSrvHandle,
+		previousExposureHandle,
+		constants,
+		histogramSrvHandle_);
+
+	if (isExposureExecuted) {
+		lastExposureOutputResourceType_ = destinationResourceType;
+		isExposureHistoryValid_ = true;
+	}
+
+	if (histogramReadbackResource_ != nullptr) {
+		D3D12_RESOURCE_BARRIER histogramCopyBarrier{};
+		histogramCopyBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		histogramCopyBarrier.Transition.pResource = histogramResource_.Get();
+		histogramCopyBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		histogramCopyBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		histogramCopyBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+		commandList->ResourceBarrier(1u, &histogramCopyBarrier);
+		commandList->CopyResource(histogramReadbackResource_.Get(), histogramResource_.Get());
+		histogramCopyBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+		histogramCopyBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		commandList->ResourceBarrier(1u, &histogramCopyBarrier);
+		isHistogramReadbackPending_ = true;
+	}
+
+	return isExposureExecuted;
+}
+
 void EditorPostProcessQualityManager::Finalize() {
 	ReleaseSizeDependentResources();
 
@@ -393,6 +596,8 @@ void EditorPostProcessQualityManager::Finalize() {
 		pipelineState.Reset();
 	}
 
+	histogramPipelineState_.Reset();
+	histogramRootSignature_.Reset();
 	rootSignature_.Reset();
 	rtvDescriptorHeap_.Reset();
 	device_.Reset();
@@ -418,12 +623,25 @@ D3D12_GPU_DESCRIPTOR_HANDLE EditorPostProcessQualityManager::GetSmaaOutputSrvHan
 	return srvHandles_[static_cast<size_t>(ResourceType::SmaaOutput)];
 }
 
+D3D12_GPU_DESCRIPTOR_HANDLE EditorPostProcessQualityManager::GetAutoExposureSrvHandle() const {
+	return srvHandles_[static_cast<size_t>(lastExposureOutputResourceType_)];
+}
+
+const std::array<float, 256u>& EditorPostProcessQualityManager::GetHistogramNormalized() const {
+	return histogramNormalized_;
+}
+
+bool EditorPostProcessQualityManager::HasHistogramData() const {
+	return hasHistogramData_;
+}
+
 bool EditorPostProcessQualityManager::CreateRootSignatureAndPipelineStates(
 	IDxcBlob* fullscreenVertexShaderBlob,
-	const std::array<IDxcBlob*, kPipelineCount>& pixelShaderBlobs) {
+	const std::array<IDxcBlob*, kPipelineCount>& pixelShaderBlobs,
+	IDxcBlob* histogramComputeShaderBlob) {
 
-	std::array<D3D12_DESCRIPTOR_RANGE, 2u> descriptorRanges{};
-	std::array<D3D12_ROOT_PARAMETER, 3u> rootParameters{};
+	std::array<D3D12_DESCRIPTOR_RANGE, 3u> descriptorRanges{};
+	std::array<D3D12_ROOT_PARAMETER, 4u> rootParameters{};
 
 	for (uint32_t descriptorIndex = 0u; descriptorIndex < descriptorRanges.size(); descriptorIndex++) {
 		D3D12_DESCRIPTOR_RANGE& descriptorRange = descriptorRanges[descriptorIndex];
@@ -439,10 +657,10 @@ bool EditorPostProcessQualityManager::CreateRootSignatureAndPipelineStates(
 		rootParameter.DescriptorTable.pDescriptorRanges = &descriptorRange;
 	}
 
-	rootParameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-	rootParameters[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-	rootParameters[2].Constants.ShaderRegister = 0u;
-	rootParameters[2].Constants.Num32BitValues = kRootConstantCount;
+	rootParameters[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+	rootParameters[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	rootParameters[3].Constants.ShaderRegister = 0u;
+	rootParameters[3].Constants.Num32BitValues = kRootConstantCount;
 
 	D3D12_STATIC_SAMPLER_DESC linearSampler{};
 	linearSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -488,6 +706,7 @@ bool EditorPostProcessQualityManager::CreateRootSignatureAndPipelineStates(
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
 		DXGI_FORMAT_R8G8_UNORM,
 		DXGI_FORMAT_R8G8B8A8_UNORM,
+		DXGI_FORMAT_R16G16B16A16_FLOAT,
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
@@ -542,6 +761,80 @@ bool EditorPostProcessQualityManager::CreateRootSignatureAndPipelineStates(
 		}
 	}
 
+	//================================================================
+	// 輝度Histogram専用Compute Root Signature / PSO
+	//================================================================
+
+	std::array<D3D12_DESCRIPTOR_RANGE, 2u> histogramDescriptorRanges{};
+	histogramDescriptorRanges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	histogramDescriptorRanges[0].NumDescriptors = 1u;
+	histogramDescriptorRanges[0].BaseShaderRegister = 0u;
+	histogramDescriptorRanges[0].OffsetInDescriptorsFromTableStart =
+		D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+	histogramDescriptorRanges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+	histogramDescriptorRanges[1].NumDescriptors = 1u;
+	histogramDescriptorRanges[1].BaseShaderRegister = 0u;
+	histogramDescriptorRanges[1].OffsetInDescriptorsFromTableStart =
+		D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+	std::array<D3D12_ROOT_PARAMETER, 3u> histogramRootParameters{};
+
+	for (uint32_t descriptorIndex = 0u;
+		descriptorIndex < static_cast<uint32_t>(histogramDescriptorRanges.size());
+		descriptorIndex++) {
+		histogramRootParameters[descriptorIndex].ParameterType =
+			D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+		histogramRootParameters[descriptorIndex].ShaderVisibility =
+			D3D12_SHADER_VISIBILITY_ALL;
+		histogramRootParameters[descriptorIndex].DescriptorTable.NumDescriptorRanges = 1u;
+		histogramRootParameters[descriptorIndex].DescriptorTable.pDescriptorRanges =
+			&histogramDescriptorRanges[descriptorIndex];
+	}
+
+	histogramRootParameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+	histogramRootParameters[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+	histogramRootParameters[2].Constants.ShaderRegister = 0u;
+	histogramRootParameters[2].Constants.Num32BitValues = kHistogramConstantCount;
+	D3D12_ROOT_SIGNATURE_DESC histogramRootSignatureDescription{};
+	histogramRootSignatureDescription.NumParameters =
+		static_cast<UINT>(histogramRootParameters.size());
+	histogramRootSignatureDescription.pParameters = histogramRootParameters.data();
+	histogramRootSignatureDescription.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+	signatureBlob.Reset();
+	errorBlob.Reset();
+	result = D3D12SerializeRootSignature(
+		&histogramRootSignatureDescription,
+		D3D_ROOT_SIGNATURE_VERSION_1,
+		signatureBlob.GetAddressOf(),
+		errorBlob.GetAddressOf());
+
+	if (FAILED(result) || signatureBlob == nullptr) {
+		return false;
+	}
+
+	result = device_->CreateRootSignature(
+		0u,
+		signatureBlob->GetBufferPointer(),
+		signatureBlob->GetBufferSize(),
+		IID_PPV_ARGS(histogramRootSignature_.GetAddressOf()));
+
+	if (FAILED(result) || histogramRootSignature_ == nullptr) {
+		return false;
+	}
+
+	D3D12_COMPUTE_PIPELINE_STATE_DESC histogramPipelineDescription{};
+	histogramPipelineDescription.pRootSignature = histogramRootSignature_.Get();
+	histogramPipelineDescription.CS = {
+		histogramComputeShaderBlob->GetBufferPointer(),
+		histogramComputeShaderBlob->GetBufferSize()
+	};
+	result = device_->CreateComputePipelineState(
+		&histogramPipelineDescription,
+		IID_PPV_ARGS(histogramPipelineState_.GetAddressOf()));
+
+	if (FAILED(result) || histogramPipelineState_ == nullptr) {
+		return false;
+	}
+
 	return true;
 }
 
@@ -559,13 +852,15 @@ bool EditorPostProcessQualityManager::CreateSizeDependentResources(
 		bloomWidth0,
 		(std::max)(1u, bloomWidth0 / 2u),
 		(std::max)(1u, bloomWidth0 / 4u),
+		bloomWidth0,
+		bloomWidth0,
 		renderWidth,
 		renderWidth,
 		renderWidth,
 		renderWidth,
 		renderWidth,
-		renderWidth,
-		renderWidth,
+		1u,
+		1u,
 	};
 	const std::array<uint32_t, static_cast<size_t>(ResourceType::Count)> resourceHeights = {
 		bloomHeight0,
@@ -575,13 +870,15 @@ bool EditorPostProcessQualityManager::CreateSizeDependentResources(
 		bloomHeight0,
 		(std::max)(1u, bloomHeight0 / 2u),
 		(std::max)(1u, bloomHeight0 / 4u),
+		bloomHeight0,
+		bloomHeight0,
 		renderHeight,
 		renderHeight,
 		renderHeight,
 		renderHeight,
 		renderHeight,
-		renderHeight,
-		renderHeight,
+		1u,
+		1u,
 	};
 	resourceWidths_ = resourceWidths;
 	resourceHeights_ = resourceHeights;
@@ -628,12 +925,85 @@ bool EditorPostProcessQualityManager::CreateSizeDependentResources(
 		srvDescription.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 		srvDescription.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		srvDescription.Texture2D.MipLevels = 1u;
-		const uint32_t descriptorIndex = kPostProcessDescriptorStartIndex + resourceIndex;
+		const uint32_t exposure0Index = static_cast<uint32_t>(ResourceType::Exposure0);
+		const uint32_t descriptorIndex = resourceIndex >= exposure0Index
+			? kExposureDescriptorStartIndex + resourceIndex - exposure0Index
+			: kPostProcessDescriptorStartIndex + resourceIndex;
 		device_->CreateShaderResourceView(
 			resources_[resourceIndex].Get(),
 			&srvDescription,
 			GetCpuSrvDescriptorHandle(descriptorIndex));
 		srvHandles_[resourceIndex] = GetGpuSrvDescriptorHandle(descriptorIndex);
+	}
+
+	D3D12_RESOURCE_DESC histogramResourceDescription{};
+	histogramResourceDescription.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+	histogramResourceDescription.Width =
+		static_cast<UINT64>(kHistogramBinCount) *
+		static_cast<UINT64>(sizeof(uint32_t));
+	histogramResourceDescription.Height = 1u;
+	histogramResourceDescription.DepthOrArraySize = 1u;
+	histogramResourceDescription.MipLevels = 1u;
+	histogramResourceDescription.Format = DXGI_FORMAT_UNKNOWN;
+	histogramResourceDescription.SampleDesc.Count = 1u;
+	histogramResourceDescription.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+	histogramResourceDescription.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+	D3D12_HEAP_PROPERTIES histogramHeapProperties{};
+	histogramHeapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
+	HRESULT histogramResult = device_->CreateCommittedResource(
+		&histogramHeapProperties,
+		D3D12_HEAP_FLAG_NONE,
+		&histogramResourceDescription,
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+		nullptr,
+		IID_PPV_ARGS(histogramResource_.GetAddressOf()));
+
+	if (FAILED(histogramResult) || histogramResource_ == nullptr) {
+		return false;
+	}
+
+	D3D12_SHADER_RESOURCE_VIEW_DESC histogramSrvDescription{};
+	histogramSrvDescription.Format = DXGI_FORMAT_UNKNOWN;
+	histogramSrvDescription.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	histogramSrvDescription.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+	histogramSrvDescription.Buffer.FirstElement = 0u;
+	histogramSrvDescription.Buffer.NumElements = kHistogramBinCount;
+	histogramSrvDescription.Buffer.StructureByteStride =
+		static_cast<UINT>(sizeof(uint32_t));
+	device_->CreateShaderResourceView(
+		histogramResource_.Get(),
+		&histogramSrvDescription,
+		GetCpuSrvDescriptorHandle(kHistogramSrvDescriptorIndex));
+	D3D12_UNORDERED_ACCESS_VIEW_DESC histogramUavDescription{};
+	histogramUavDescription.Format = DXGI_FORMAT_UNKNOWN;
+	histogramUavDescription.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+	histogramUavDescription.Buffer.FirstElement = 0u;
+	histogramUavDescription.Buffer.NumElements = kHistogramBinCount;
+	histogramUavDescription.Buffer.StructureByteStride =
+		static_cast<UINT>(sizeof(uint32_t));
+	histogramUavCpuHandle_ = GetCpuSrvDescriptorHandle(kHistogramUavDescriptorIndex);
+	device_->CreateUnorderedAccessView(
+		histogramResource_.Get(),
+		nullptr,
+		&histogramUavDescription,
+		histogramUavCpuHandle_);
+	histogramSrvHandle_ = GetGpuSrvDescriptorHandle(kHistogramSrvDescriptorIndex);
+	histogramUavGpuHandle_ = GetGpuSrvDescriptorHandle(kHistogramUavDescriptorIndex);
+
+	D3D12_RESOURCE_DESC histogramReadbackDescription = histogramResourceDescription;
+	histogramReadbackDescription.Flags = D3D12_RESOURCE_FLAG_NONE;
+	D3D12_HEAP_PROPERTIES histogramReadbackHeapProperties{};
+	histogramReadbackHeapProperties.Type = D3D12_HEAP_TYPE_READBACK;
+	const HRESULT histogramReadbackResult = device_->CreateCommittedResource(
+		&histogramReadbackHeapProperties,
+		D3D12_HEAP_FLAG_NONE,
+		&histogramReadbackDescription,
+		D3D12_RESOURCE_STATE_COPY_DEST,
+		nullptr,
+		IID_PPV_ARGS(histogramReadbackResource_.GetAddressOf()));
+
+	if (FAILED(histogramReadbackResult) || histogramReadbackResource_ == nullptr) {
+		return false;
 	}
 
 	return true;
@@ -644,11 +1014,21 @@ void EditorPostProcessQualityManager::ReleaseSizeDependentResources() {
 		resource.Reset();
 	}
 
+	histogramResource_.Reset();
+	histogramReadbackResource_.Reset();
+	histogramUavCpuHandle_ = {};
+	histogramSrvHandle_ = {};
+	histogramUavGpuHandle_ = {};
+	histogramNormalized_.fill(0.0f);
+	isHistogramReadbackPending_ = false;
+	hasHistogramData_ = false;
 	srvHandles_.fill({});
 	resourceWidths_.fill(0u);
 	resourceHeights_.fill(0u);
 	lastGlareOutputResourceType_ = ResourceType::GlareOutputA;
 	lastFilterOutputResourceType_ = ResourceType::FilterOutputA;
+	lastExposureOutputResourceType_ = ResourceType::Exposure0;
+	isExposureHistoryValid_ = false;
 	renderWidth_ = 0u;
 	renderHeight_ = 0u;
 }
@@ -659,7 +1039,8 @@ bool EditorPostProcessQualityManager::DrawPass(
 	ResourceType destinationResourceType,
 	D3D12_GPU_DESCRIPTOR_HANDLE source0SrvHandle,
 	D3D12_GPU_DESCRIPTOR_HANDLE source1SrvHandle,
-	const std::array<float, kRootConstantCount>& constants) {
+	const std::array<float, kRootConstantCount>& constants,
+	D3D12_GPU_DESCRIPTOR_HANDLE source2SrvHandle) {
 
 	if (pipelineIndex >= pipelineStates_.size() || source0SrvHandle.ptr == 0u ||
 		source1SrvHandle.ptr == 0u) {
@@ -699,8 +1080,12 @@ bool EditorPostProcessQualityManager::DrawPass(
 	commandList->SetPipelineState(pipelineStates_[pipelineIndex].Get());
 	commandList->SetGraphicsRootDescriptorTable(0u, source0SrvHandle);
 	commandList->SetGraphicsRootDescriptorTable(1u, source1SrvHandle);
-	commandList->SetGraphicsRoot32BitConstants(2u, kRootConstantCount, constants.data(), 0u);
+	commandList->SetGraphicsRootDescriptorTable(
+		2u,
+		source2SrvHandle.ptr == 0u ? source1SrvHandle : source2SrvHandle);
+	commandList->SetGraphicsRoot32BitConstants(3u, kRootConstantCount, constants.data(), 0u);
 	commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	RecordEditorProfilerDrawCall();
 	commandList->DrawInstanced(3u, 1u, 0u, 0u);
 
 	transitionBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;

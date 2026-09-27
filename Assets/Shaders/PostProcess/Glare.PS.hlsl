@@ -14,7 +14,7 @@ cbuffer GlareConstants : register(b0)
     float2 gCenter;
     float gPreserveSource;
     float3 gTintColor;
-    float gReserved0;
+    float gSampleRatio;
 };
 
 struct PixelShaderInput
@@ -37,6 +37,12 @@ float3 SampleHighlight(float2 uv)
 
 float3 SampleChromatic(float2 uv, float2 direction, float amount)
 {
+    // 色収差を使わない場合は、同じ座標をRGB別に3回読む必要がない。
+    if (abs(amount) <= 0.0001f)
+    {
+        return SampleHighlight(uv);
+    }
+
     const float2 colorOffset = direction * amount * gInverseResolution;
     return float3(
         SampleHighlight(uv + colorOffset).r,
@@ -50,10 +56,17 @@ float3 EvaluateGhosts(float2 uv)
     float3 glare = 0.0f;
     float totalWeight = 0.0f;
 
-    [unroll]
+	const int ghostCount = clamp(int(round(6.0f * gSampleRatio)), 2, 6);
+
+    [loop]
     for (int ghostIndex = 0; ghostIndex < 6; ghostIndex++)
     {
-        const float ghostRate = (float(ghostIndex) + 1.0f) / 6.0f;
+		if (ghostIndex >= ghostCount)
+		{
+			break;
+		}
+
+        const float ghostRate = (float(ghostIndex) + 1.0f) / float(ghostCount);
         const float ghostScale = lerp(-0.35f, -2.25f, ghostRate);
         const float2 ghostUv = gCenter + fromCenter * ghostScale;
         const float radialMask = pow(saturate(1.0f - length(ghostUv - gCenter) * 1.25f), 2.0f);
@@ -71,7 +84,8 @@ float3 EvaluateGhosts(float2 uv)
 float3 EvaluateStreaks(float2 uv, bool isSimpleStar)
 {
     const int directionCount = isSimpleStar ? clamp(int(gStreakCount), 4, 8) : clamp(int(gStreakCount), 2, 4);
-    const int stepCount = isSimpleStar ? 8 : 22;
+	const int maximumStepCount = isSimpleStar ? 8 : 22;
+	const int stepCount = clamp(int(round(float(maximumStepCount) * gSampleRatio)), 4, maximumStepCount);
     const float stepWidth = isSimpleStar ? 1.15f : 3.25f;
     float3 glare = SampleHighlight(uv);
     float totalWeight = 1.0f;
@@ -90,7 +104,7 @@ float3 EvaluateStreaks(float2 uv, bool isSimpleStar)
         const float2 direction = float2(cos(directionAngle), sin(directionAngle));
 
         [loop]
-        for (int stepIndex = 1; stepIndex <= 16; stepIndex++)
+        for (int stepIndex = 1; stepIndex <= 22; stepIndex++)
         {
             if (stepIndex > stepCount)
             {
@@ -112,12 +126,18 @@ float3 EvaluateStreaks(float2 uv, bool isSimpleStar)
 
 float3 EvaluateFogGlow(float2 uv)
 {
+	const int sampleCount = clamp(int(round(32.0f * gSampleRatio)), 8, 32);
     float3 glare = SampleHighlight(uv) * 2.0f;
     float totalWeight = 2.0f;
 
-    [unroll]
+	[loop]
     for (int sampleIndex = 0; sampleIndex < 32; sampleIndex++)
     {
+		if (sampleIndex >= sampleCount)
+		{
+			break;
+		}
+
         const float ring = 1.0f + float(sampleIndex / 8);
         const float angle = kPi * 2.0f * float(sampleIndex % 8) / 8.0f + ring * 0.37f;
         const float2 direction = float2(cos(angle), sin(angle));
@@ -132,16 +152,22 @@ float3 EvaluateFogGlow(float2 uv)
 
 float3 EvaluateSunBeams(float2 uv)
 {
+	const int sampleCount = clamp(int(round(24.0f * gSampleRatio)), 6, 24);
     const float2 ray = gCenter - uv;
     const float distanceToCenter = length(ray);
     const float centerMask = pow(saturate(1.0f - distanceToCenter * 1.8f), 2.0f);
     float3 glare = 0.0f;
     float totalWeight = 0.0f;
 
-    [unroll]
+	[loop]
     for (int sampleIndex = 0; sampleIndex < 24; sampleIndex++)
     {
-        const float sampleRate = float(sampleIndex) / 23.0f;
+		if (sampleIndex >= sampleCount)
+		{
+			break;
+		}
+
+		const float sampleRate = float(sampleIndex) / float(max(sampleCount - 1, 1));
         const float weight = pow(saturate(gFade), float(sampleIndex)) * (1.0f - sampleRate);
         const float beamLength = saturate(gSize * 0.18f);
         const float2 sampleUv = uv + ray * sampleRate * beamLength;
@@ -199,6 +225,13 @@ float4 main(PixelShaderInput input) : SV_TARGET0
         glare = EvaluateKernel(input.texcoord);
     }
 
-    const float3 sourceColor = SampleHighlight(input.texcoord) * saturate(gPreserveSource);
+    float3 sourceColor = 0.0f;
+
+    // 最初の合成で元画像を残さない場合は、不要なテクスチャ参照を発行しない。
+    if (gPreserveSource >= 0.5f)
+    {
+        sourceColor = SampleHighlight(input.texcoord);
+    }
+
     return float4(max(sourceColor + glare * gIntensity * max(gTintColor, 0.0f), 0.0f), 1.0f);
 }

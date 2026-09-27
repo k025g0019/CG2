@@ -1,0 +1,15 @@
+﻿CG2EngineProjectSettings|1
+GameWidth|1929
+GameHeight|1081
+WindowMode|0
+VSync|1
+FrameRateLimit|0
+MasterVolume|1
+SfxVolume|1
+BgmVolume|0.7
+AmbienceVolume|0.8
+UiVolume|1
+VoiceVolume|1
+GamepadStickDeadZone|0.24
+GamepadTriggerThreshold|0.12
+GamepadLookSensitivity|1

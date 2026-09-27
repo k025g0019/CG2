@@ -128,6 +128,6 @@ float ApplyVignette(float2 texcoord, float strength, float radius)
 	float2 centeredUv = texcoord * 2.0f - 1.0f;
 	float distanceFromCenter = dot(centeredUv, centeredUv);
 	float safeRadius = max(radius, 0.0001f);
-	float vignette = 1.0f - smoothstep(safeRadius, 1.0f, distanceFromCenter);
+	float vignette = 1.0f - smoothstep(safeRadius, 1.35f, distanceFromCenter) * 0.35f;
 	return lerp(1.0f, vignette, saturate(strength));
 }

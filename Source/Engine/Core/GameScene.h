@@ -5,17 +5,26 @@
 #pragma warning(pop)
 
 #include "EditorBottomPanelWindowManager.h"
+#include "EditorAnimationWindowManager.h"
 #include "EditorDockingManager.h"
+#include "EditorDiagnosticsWindowManager.h"
+#include "EditorExternalFeatureWindowManager.h"
 #include "EditorFrameInputManager.h"
+#include "EditorGameBuildManager.h"
 #include "EditorGameViewManager.h"
 #include "EditorHierarchyWindowManager.h"
+#include "EditorHookWireDebugWindowManager.h"
 #include "EditorImguiFrameManager.h"
 #include "EditorInspectorWindowManager.h"
+#include "EditorLogMonitorWindowManager.h"
 #include "EditorMainMenuManager.h"
 #include "EditorPlatformManager.h"
+#include "EditorPvShootWindowManager.h"
 #include "EditorRenderManager.h"
+#include "EditorGameplayToolsWindowManager.h"
 #include "EditorSceneLifecycleManager.h"
 #include "EditorSceneViewManager.h"
+#include "EditorTeamCollaborationManager.h"
 
 #pragma warning(push)
 #pragma warning(disable : 4820)
@@ -44,7 +53,18 @@ private:
 	EditorHierarchyWindowManager hierarchyWindowManager_;  // Hierarchy ウィンドウと GameObject ツリー操作を扱う Manager。
 	EditorInspectorWindowManager inspectorWindowManager_;  // Inspector ウィンドウと Component 編集を扱う Manager。
 	EditorBottomPanelWindowManager bottomPanelWindowManager_;  // Project / Console の下部パネル表示を扱う Manager。
+	EditorAnimationWindowManager animationWindowManager_;  // Timeline、Keyframe、Preview、Animation Event の編集を扱う Manager。
+	EditorGameplayToolsWindowManager gameplayToolsWindowManager_;  // 汎用Spline、Event Timeline、State Graphを扱うManager。
+	EditorDiagnosticsWindowManager diagnosticsWindowManager_;  // Runtime ProfilerとScene静的検査を扱うManager。
+	EditorExternalFeatureWindowManager externalFeatureWindowManager_;  // 音声認識/画像認識/オンライン/HapticsのDebug表示を扱うManager。
+	EditorLogMonitorWindowManager logMonitorWindowManager_;  // GameObject/Component/System横断の汎用ログ・監視選択UIを扱うManager。
+	EditorTeamCollaborationManager teamCollaborationManager_;  // 3人共同制作のRevision、変更ログ、TCP同期を扱うManager。
+	EditorHookWireDebugWindowManager hookWireDebugWindowManager_;  // Hook構成の設定不備とRuntime Wireを検査するManager。
+	EditorPvShootWindowManager pvShootWindowManager_;  // PV撮影モードのCamera/PostProcess/TimeScale調整を扱うManager。
 	EditorRenderManager renderManager_;  // SceneObject / Sprite / ImGui を GPU に描画する Manager。
+	EditorGameBuildSettings gameBuildSettings_;  // Standalone Player の起動 Scene と遷移可能 Scene を保持する。
+	bool isStandaloneGame_ = false;  // Editor UI を描かず GameView だけを表示する起動なら true。
+	bool hasStandaloneInitializationFailed_ = false;  // game.build が壊れていた場合に Editor へ誤って戻らないためのフラグ。
 };
 
 #pragma warning(pop)

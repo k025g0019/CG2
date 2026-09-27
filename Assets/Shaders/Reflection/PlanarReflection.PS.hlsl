@@ -6,7 +6,13 @@
     row_major float4x4 inverseViewProjection;
     row_major float4x4 reflectionViewProjection;
     float4 viewport;
+    float3 cameraPosition;
+    float cameraPadding;
+    float3 planeNormal;
+    float planePadding;
 };
+
+#include "ReflectionCommon.hlsli"
 
 ConstantBuffer<PlanarReflectionCB> gPlanarReflection : register(b0);
 Texture2D<float4> gSceneColor : register(t0);
@@ -129,11 +135,27 @@ float4 main(PixelShaderInput input) : SV_TARGET0
         return sceneColor;
     }
 
-    const float roughness = saturate(1.0f - materialMask.y);
+    const float roughness = saturate(materialMask.y);
     const float3 reflectionColor = SamplePlanarReflection(reflectionUv, roughness);
     const float reflectionIntensity = max(materialMask.w * gPlanarReflection.intensityScale, 0.0f);
+    const float3 viewDirection = normalize(
+        gPlanarReflection.cameraPosition - worldPosition);
+    float3 reflectionNormal = normalize(gPlanarReflection.planeNormal);
 
-    // 鏡面は元の床色を混ぜず、反射RTの色をそのまま置く。
-    // lerp すると半透明板に見えるため、Planar は反射色で置き換える。
-    return float4(reflectionColor * reflectionIntensity, 1.0f);
+    if (dot(reflectionNormal, viewDirection) < 0.0f)
+    {
+        reflectionNormal = -reflectionNormal;
+    }
+
+    const float normalDotView = saturate(dot(reflectionNormal, viewDirection));
+    const float fresnel = ReflectionFresnelSchlickRoughness(
+        normalDotView,
+        saturate(materialMask.x),
+        roughness);
+    const float reflectionWeight = saturate(fresnel * reflectionIntensity);
+
+    // 材質の直接光は残し、Fresnel で決まる鏡面エネルギーだけを反射 RT へ置換する。
+    return float4(
+        lerp(sceneColor.rgb, reflectionColor, reflectionWeight),
+        sceneColor.a);
 }

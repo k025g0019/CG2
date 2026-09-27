@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "EditorScene.h"
 
@@ -28,6 +28,8 @@ private:
 	void SolvePositionConstraint(EditorGameObject& gameObject, EditorComponent& component);
 	void SolveRotationConstraint(EditorGameObject& gameObject, EditorComponent& component);
 	void SolveScaleConstraint(EditorGameObject& gameObject, EditorComponent& component);
+	void SolveTurretAim(EditorGameObject& gameObject, EditorComponent& component, float deltaTime);
+	void SolveCameraHorizonStabilizer(EditorGameObject& gameObject, EditorComponent& component, float deltaTime);
 	EditorGameObject* FindTarget(int32_t targetId);
 	Vector3 GetAimDirection(int32_t aimAxis, const Vector3& targetDir) const;
 	Vector3 BuildLookAtRotation(const Vector3& from, const Vector3& target, int32_t upAxis, float rollDeg) const;

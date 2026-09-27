@@ -12,5 +12,5 @@ if errorlevel 1 exit /b 1
 
 if not exist "%SCRIPT_DIR%\x64\Release" mkdir "%SCRIPT_DIR%\x64\Release"
 
-cl /nologo /utf-8 /std:c++20 /EHsc /MD /O2 /LD /I "%PROJECT_ROOT%" "%SCRIPT_DIR%\ennsui_fbxScript.cpp" /Fe:"%SCRIPT_DIR%\x64\Release\ennsui_fbxScript.dll"
+cl /nologo /utf-8 /std:c++20 /EHsc /MD /O2 /LD /I "%PROJECT_ROOT%\Source\Engine\Core" /I "%PROJECT_ROOT%" "%SCRIPT_DIR%\ennsui_fbxScript.cpp" "%SCRIPT_DIR%\ennsui_fbxScript.Generated.cpp" /Fe:"%SCRIPT_DIR%\x64\Release\ennsui_fbxScript.dll"
 popd

@@ -1,4 +1,4 @@
-﻿# CG2 Python AI template
+﻿# CG2Engine Python AI template
 # 対象から離れる方向を返すサンプル。
 
 from __future__ import annotations

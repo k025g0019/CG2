@@ -8,7 +8,7 @@ namespace CG2EngineVersionGenerated {
 	inline constexpr std::uint32_t kMajor = 0U;
 	inline constexpr std::uint32_t kMinor = 9U;
 	inline constexpr std::uint32_t kPatch = 4U;
-	inline constexpr std::uint32_t kBuild = 180U;
+	inline constexpr std::uint32_t kBuild = 181U;
 	inline constexpr char kChannel[] = "Stable";
 	inline constexpr std::uint32_t kProjectFormat = 1U;
 	inline constexpr std::uint32_t kSceneFormat = 1U;

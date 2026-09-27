@@ -63,9 +63,17 @@ namespace {
 				error = "NvBlastExtAuthoring.dllがありません。Build/PhysicsSdk/Setup.ps1でAuthoring SDKを生成してください。";
 				return false;
 			}
-			createMesh = reinterpret_cast<CreateAuthoringMeshFunction>(GetProcAddress(handle, "CG2BlastAuthoringCreateMesh"));
-			createSites = reinterpret_cast<CreateSitesGeneratorFunction>(GetProcAddress(handle, "CG2BlastAuthoringCreateVoronoiSitesGenerator"));
-			createTool = reinterpret_cast<CreateFractureToolFunction>(GetProcAddress(handle, "CG2BlastAuthoringCreateFractureTool"));
+			// Bridge の Export 名は CG2 系だが、旧名(Mano系)で生成済みのSDKもそのまま使えるようにする。
+			const auto resolve = [handle](const char* current, const char* legacy) {
+				FARPROC address = GetProcAddress(handle, current);
+				return address != nullptr ? address : GetProcAddress(handle, legacy);
+			};
+			createMesh = reinterpret_cast<CreateAuthoringMeshFunction>(
+				resolve("CG2BlastAuthoringCreateMesh", "ManoBlastAuthoringCreateMesh"));
+			createSites = reinterpret_cast<CreateSitesGeneratorFunction>(
+				resolve("CG2BlastAuthoringCreateVoronoiSitesGenerator", "ManoBlastAuthoringCreateVoronoiSitesGenerator"));
+			createTool = reinterpret_cast<CreateFractureToolFunction>(
+				resolve("CG2BlastAuthoringCreateFractureTool", "ManoBlastAuthoringCreateFractureTool"));
 			if (createMesh == nullptr || createSites == nullptr || createTool == nullptr) {
 				error = "NvBlastExtAuthoring.dllのBridge APIが一致しません。Physics SDKを再生成してください。";
 				return false;

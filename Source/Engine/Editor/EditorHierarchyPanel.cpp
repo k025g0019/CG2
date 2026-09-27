@@ -3,10 +3,13 @@
 #include "EditorAssetUtility.h"
 #include "EditorComponentUtility.h"
 #include "EditorSharedState.h"
+#include "EditorTeamCollaborationManager.h"
 
 #pragma warning(push, 0)
 #include "ThirdParty/imgui-docking/imgui-docking/imgui.h"
 #pragma warning(pop)
+
+#include <cstdio>
 
 using namespace EditorSharedState;
 
@@ -125,10 +128,21 @@ void EditorHierarchyPanel::Draw(
 	}
 
 	ImGui::SameLine();
+	const bool isSelectedLockedByAnotherUser =
+		IsEditorTeamGameObjectLockedByAnotherUser(selectedGameObjectId);
+
+	if (isSelectedLockedByAnotherUser) {
+		ImGui::BeginDisabled();
+	}
 
 	if (ImGui::Button("親解除")) {
+		RequestEditorTeamEditingLock(selectedGameObjectId);
 		editorScene_->PushUndo();  // 選択中 GameObject の parentId を無効 ID に戻す
 		editorScene_->SetParent(selectedGameObjectId, -1, true);
+	}
+
+	if (isSelectedLockedByAnotherUser) {
+		ImGui::EndDisabled();
 	}
 
 	// Hookは「選択中の物体の子として、見た目・選択Collider・HookPointを揃えた1セット」を作る。
@@ -199,8 +213,15 @@ void EditorHierarchyPanel::Draw(
 	};
 
 	if (ImGui::BeginPopup("HierarchyCreatePopup")) {
+		if (isSelectedLockedByAnotherUser) {
+			ImGui::BeginDisabled();
+		}
 		if (ImGui::MenuItem("Hook（選択物体の子）")) {
+			RequestEditorTeamEditingLock(selectedGameObjectId);
 			createHookOnSelectedGameObject();
+		}
+		if (isSelectedLockedByAnotherUser) {
+			ImGui::EndDisabled();
 		}
 
 		ImGui::SetItemTooltip(
@@ -284,7 +305,8 @@ void EditorHierarchyPanel::Draw(
 
 	for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
 		// EffectSystem が Play 中だけ生成する描画粒子は、利用者が編集する Scene オブジェクトではない。
-		if (gameObject.name.rfind("__EffectParticle_", 0u) == 0u) {
+		if (gameObject.name.rfind("__EffectParticle_", 0u) == 0u ||
+			gameObject.name.rfind("__BlastChunk_", 0u) == 0u) {
 			continue;
 		}
 
@@ -307,6 +329,7 @@ void EditorHierarchyPanel::Draw(
 		!ImGui::IsAnyItemActive() &&
 		!ImGui::GetIO().WantTextInput &&
 		selectedGameObjectId >= 0 &&
+		!IsEditorTeamGameObjectLockedByAnotherUser(selectedGameObjectId) &&
 		ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
 		pendingHierarchyDeleteGameObjectId = selectedGameObjectId;
 		ImGui::OpenPopup("Hierarchy削除確認");
@@ -319,7 +342,15 @@ void EditorHierarchyPanel::Draw(
 
 		ImGui::Text("「%s」を子階層ごと削除しますか？", deletingName.c_str());
 
+		const bool isDeleteLocked =
+			IsEditorTeamGameObjectLockedByAnotherUser(pendingHierarchyDeleteGameObjectId);
+
+		if (isDeleteLocked) {
+			ImGui::BeginDisabled();
+		}
+
 		if (ImGui::Button("削除する", ImVec2(120.0f, 0.0f))) {
+			RequestEditorTeamEditingLock(pendingHierarchyDeleteGameObjectId);
 			editorScene_->PushUndo();  // Delete も Undo で戻せるように、削除前の Scene を退避する。
 			if (editorScene_->DeleteGameObject(pendingHierarchyDeleteGameObjectId)) {
 				SelectFirstGameObjectOrClear(
@@ -337,6 +368,11 @@ void EditorHierarchyPanel::Draw(
 			ImGui::CloseCurrentPopup();
 		}
 
+		if (isDeleteLocked) {
+			ImGui::EndDisabled();
+			ImGui::TextDisabled("共同制作: 他のユーザーが編集中です");
+		}
+
 		ImGui::SameLine();
 
 		if (ImGui::Button("キャンセル", ImVec2(120.0f, 0.0f))) {
@@ -345,6 +381,12 @@ void EditorHierarchyPanel::Draw(
 		}
 
 		ImGui::EndPopup();
+	}
+
+	if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows)) {
+		ReportEditorTeamActivity(
+			"Hierarchy",
+			ImGui::IsAnyItemActive() ? "GameObject操作中" : "閲覧中");
 	}
 }
 
@@ -361,7 +403,8 @@ void EditorHierarchyPanel::DrawGameObjectNode(
 	}
 
 	// 一時 Particle が親子付けされた場合も Hierarchy へ表示しない。
-	if (gameObject->name.rfind("__EffectParticle_", 0u) == 0u) {
+	if (gameObject->name.rfind("__EffectParticle_", 0u) == 0u ||
+		gameObject->name.rfind("__BlastChunk_", 0u) == 0u) {
 		return;
 	}
 
@@ -391,11 +434,19 @@ void EditorHierarchyPanel::DrawGameObjectNode(
 		treeNodeFlags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
 	}
 
+	const std::string editorLabel = GetEditorTeamGameObjectEditorLabel(gameObject->id);
+	const std::string displayName = editorLabel.empty()
+		? gameObject->name
+		: gameObject->name + "  [" + editorLabel + "]";
 	const bool isNodeOpen = ImGui::TreeNodeEx(
 		reinterpret_cast<void*>(static_cast<intptr_t>(gameObject->id)),
 		treeNodeFlags,
 		"%s",
-		gameObject->name.c_str());
+		displayName.c_str());
+	const std::string teamItemPopupId = "HierarchyTeamItemContext##" + gameObject->uuid;
+	if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+		ImGui::OpenPopup(teamItemPopupId.c_str());
+	}
 	if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen()) {
 		selectedGameObjectId = gameObject->id;  // Hierarchy でクリックした GameObject を選択状態にする
 		SetSingleSelectedGameObject(selectedGameObjectId);
@@ -421,7 +472,9 @@ void EditorHierarchyPanel::DrawGameObjectNode(
 		}
 	}
 
-	if (ImGui::BeginDragDropSource()) {
+	if (!IsEditorTeamGameObjectLockedByAnotherUser(gameObject->id) &&
+		ImGui::BeginDragDropSource()) {
+		RequestEditorTeamEditingLock(gameObject->id);
 		ImGui::SetDragDropPayload("GAME_OBJECT_ID", &gameObject->id, sizeof(gameObject->id));  // 親子付け用に GameObject ID を DragDrop Payload として渡す
 		ImGui::Text("%s", gameObject->name.c_str());
 		ImGui::EndDragDropSource();
@@ -430,10 +483,42 @@ void EditorHierarchyPanel::DrawGameObjectNode(
 	if (ImGui::BeginDragDropTarget()) {
 		if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("GAME_OBJECT_ID")) {
 			int32_t childId = *static_cast<const int32_t*>(payload->Data);  // Drop された GameObject をこのノードの子にする
-			editorScene_->PushUndo();
-			editorScene_->SetParent(childId, gameObject->id, true);
+
+			if (!IsEditorTeamGameObjectLockedByAnotherUser(childId) &&
+				!IsEditorTeamGameObjectLockedByAnotherUser(gameObject->id)) {
+				RequestEditorTeamEditingLock(childId);
+				editorScene_->PushUndo();
+				editorScene_->SetParent(childId, gameObject->id, true);
+			}
 		}
 		ImGui::EndDragDropTarget();
+	}
+
+	// GameObjectへ紐付いた付箋・チャット・レビューをHierarchyから直接開く。
+	const EditorTeamItemTargetSummary teamItemSummary =
+		GetEditorTeamTargetItemSummary("GameObject", gameObject->uuid);
+	if (teamItemSummary.GetTotalCount() > 0) {
+		ImGui::SameLine();
+		char teamItemBadge[32]{};
+		std::snprintf(teamItemBadge, sizeof(teamItemBadge), "TEAM %d", teamItemSummary.GetTotalCount());
+		if (ImGui::SmallButton(teamItemBadge)) {
+			OpenEditorTeamTargetItems("GameObject", gameObject->uuid, false);
+		}
+	}
+	if (ImGui::BeginPopup(teamItemPopupId.c_str())) {
+		if (ImGui::MenuItem("付箋を作成")) {
+			OpenEditorTeamTargetItems("GameObject", gameObject->uuid, true, "Note");
+		}
+		if (ImGui::MenuItem("Pingを送信")) {
+			OpenEditorTeamTargetItems("GameObject", gameObject->uuid, true, "Ping");
+		}
+		if (ImGui::MenuItem("チャットを開始")) {
+			OpenEditorTeamTargetItems("GameObject", gameObject->uuid, true, "Chat");
+		}
+		if (ImGui::MenuItem("レビューを依頼")) {
+			OpenEditorTeamTargetItems("GameObject", gameObject->uuid, true, "Review");
+		}
+		ImGui::EndPopup();
 	}
 
 	if (hasChildren && isNodeOpen) {

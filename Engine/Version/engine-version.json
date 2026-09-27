@@ -1,0 +1,10 @@
+﻿{
+  "major": 0,
+  "minor": 9,
+  "patch": 4,
+  "build": 180,
+  "channel": "Stable",
+  "projectFormat": 1,
+  "sceneFormat": 1,
+  "prefabFormat": 1
+}

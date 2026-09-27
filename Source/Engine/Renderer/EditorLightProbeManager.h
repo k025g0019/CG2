@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #pragma warning(push, 0)
 #include <Windows.h>
@@ -66,6 +66,7 @@ public:
 
 	// グリッド設定を反映する。形状が変わったらリソースを作り直す。
 	void UpdateGrid(const GridSettings& settings);
+	void RequestFullRebake();  // SceneまたはLightが変わった時だけ、全ProbeのBakeを先頭から要求する。
 
 	// 毎フレーム最初に呼ぶ。作り直した直後のProbeを0クリアし、
 	// 読み取り状態へ遷移させる。D3D12はリソースの初期値を保証しないため、

@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cmath>
-#include <unordered_map>
+#include <optional>
 
 #pragma warning(disable : 5045)
 
@@ -733,17 +733,30 @@ void EditorSceneSynchronizer::Update(
 	std::vector<EditorSceneObject>& sceneObjects = sceneObjectManager_->GetSceneObjects();  // 描画用 SceneObject 配列を直接編集する
 	const std::vector<EditorGameObject>& gameObjects = editorScene_->GetGameObjects();
 	static std::vector<SynchronizedGameObjectData> synchronizedGameObjects;
-	static std::unordered_map<int32_t, size_t> synchronizedGameObjectIndices;
+	static std::vector<int32_t> synchronizedGameObjectIndices;
 	synchronizedGameObjects.clear();
-	synchronizedGameObjectIndices.clear();
 	synchronizedGameObjects.reserve(gameObjects.size());
-	synchronizedGameObjectIndices.reserve(gameObjects.size());
+
+	int32_t maximumGameObjectId = -1;
+	for (const EditorGameObject& gameObject : gameObjects) {
+		maximumGameObjectId = (std::max)(maximumGameObjectId, gameObject.id);
+	}
+
+	const size_t requiredIndexCount = maximumGameObjectId >= 0
+		? static_cast<size_t>(maximumGameObjectId) + 1u
+		: 0u;
+	synchronizedGameObjectIndices.resize(requiredIndexCount, -1);
+	std::fill(synchronizedGameObjectIndices.begin(), synchronizedGameObjectIndices.end(), -1);
 
 	// Component 配列はここで 1 度だけ走査し、以降は ID 索引から参照する。
 	for (const EditorGameObject& gameObject : gameObjects) {
 		const size_t synchronizedIndex = synchronizedGameObjects.size();
 		synchronizedGameObjects.push_back(CollectSynchronizedGameObjectData(gameObject));
-		synchronizedGameObjectIndices.emplace(gameObject.id, synchronizedIndex);
+
+		if (gameObject.id >= 0) {
+			synchronizedGameObjectIndices[static_cast<size_t>(gameObject.id)] =
+				static_cast<int32_t>(synchronizedIndex);
+		}
 	}
 
 	const EditorGameObject* activeCameraObject = nullptr;
@@ -781,14 +794,18 @@ void EditorSceneSynchronizer::Update(
 		const EditorSceneObject& sceneObject =
 			sceneObjects[static_cast<size_t>(sceneObjectIndex)];
 		// 紐づく GameObject が消えていないか ID 索引から確認する
-		const auto synchronizedGameObjectIterator =
-			synchronizedGameObjectIndices.find(sceneObject.gameObjectId);
-		bool shouldRemove = synchronizedGameObjectIterator == synchronizedGameObjectIndices.end();
+		const bool hasSynchronizedGameObject =
+			sceneObject.gameObjectId >= 0 &&
+			static_cast<size_t>(sceneObject.gameObjectId) < synchronizedGameObjectIndices.size() &&
+			synchronizedGameObjectIndices[static_cast<size_t>(sceneObject.gameObjectId)] >= 0;
+		bool shouldRemove = !hasSynchronizedGameObject;
 
 		// Renderer Component が外された SceneObject は描画対象から消す
 		if (!shouldRemove) {
+			const int32_t synchronizedIndex =
+				synchronizedGameObjectIndices[static_cast<size_t>(sceneObject.gameObjectId)];
 			const SynchronizedGameObjectData& synchronizedData =
-				synchronizedGameObjects[synchronizedGameObjectIterator->second];
+				synchronizedGameObjects[static_cast<size_t>(synchronizedIndex)];
 
 			if (sceneObject.type == EditorSceneObjectType::Model) {
 				const bool hasActiveModelRenderer =
@@ -836,16 +853,20 @@ void EditorSceneSynchronizer::Update(
 		}
 	}
 
-	static std::unordered_map<int32_t, int32_t> sceneObjectIndices;
-	sceneObjectIndices.clear();
-	sceneObjectIndices.reserve(sceneObjects.size() + synchronizedGameObjects.size());
+	static std::vector<int32_t> sceneObjectIndices;
+	static const EditorComponent emptyRenderer{};
+	static const MaterialData emptyMaterial{};
+	sceneObjectIndices.resize(synchronizedGameObjectIndices.size(), -1);
+	std::fill(sceneObjectIndices.begin(), sceneObjectIndices.end(), -1);
 
 	for (int32_t sceneObjectIndex = 0;
 		 sceneObjectIndex < static_cast<int32_t>(sceneObjects.size());
 		 sceneObjectIndex++) {
-		sceneObjectIndices.emplace(
-			sceneObjects[static_cast<size_t>(sceneObjectIndex)].gameObjectId,
-			sceneObjectIndex);
+		const int32_t gameObjectId = sceneObjects[static_cast<size_t>(sceneObjectIndex)].gameObjectId;
+
+		if (gameObjectId >= 0 && static_cast<size_t>(gameObjectId) < sceneObjectIndices.size()) {
+			sceneObjectIndices[static_cast<size_t>(gameObjectId)] = sceneObjectIndex;
+		}
 	}
 
 	// GameObject 側に Renderer があれば、対応する SceneObject を作る / 更新する
@@ -856,7 +877,7 @@ void EditorSceneSynchronizer::Update(
 			? synchronizedData.modelRenderer
 			: skinnedMeshRenderer;
 		const EditorComponent* spriteRenderer = synchronizedData.spriteRenderer;
-		EditorComponent spriteRendererOverride{};
+		std::optional<EditorComponent> spriteRendererOverride;
 
 		if (spriteRenderer != nullptr &&
 			spriteRenderer->type == EditorComponentType::TilemapRenderer &&
@@ -864,10 +885,10 @@ void EditorSceneSynchronizer::Update(
 			synchronizedData.tilemap->isActive &&
 			spriteRenderer->assetPath.empty() &&
 			spriteRenderer->textureAssetPath.empty()) {
-			spriteRendererOverride = *spriteRenderer;
-			spriteRendererOverride.assetPath = synchronizedData.tilemap->assetPath;
-			spriteRendererOverride.textureAssetPath = synchronizedData.tilemap->assetPath;
-			spriteRenderer = &spriteRendererOverride;
+			spriteRendererOverride.emplace(*spriteRenderer);
+			spriteRendererOverride->assetPath = synchronizedData.tilemap->assetPath;
+			spriteRendererOverride->textureAssetPath = synchronizedData.tilemap->assetPath;
+			spriteRenderer = &spriteRendererOverride.value();
 		}
 		const EditorComponent* meshFilter = synchronizedData.meshFilter;
 		const EditorComponent* reflectionProbe = synchronizedData.reflectionProbe != nullptr
@@ -913,10 +934,8 @@ void EditorSceneSynchronizer::Update(
 			synchronizedWorldMatrix);
 
 		// 既に GameObject と紐づく SceneObject があるか ID 索引から探す
-		const auto sceneObjectIterator = sceneObjectIndices.find(gameObject.id);
-
-		if (sceneObjectIterator != sceneObjectIndices.end()) {
-			sceneObjectIndex = sceneObjectIterator->second;
+		if (gameObject.id >= 0 && static_cast<size_t>(gameObject.id) < sceneObjectIndices.size()) {
+			sceneObjectIndex = sceneObjectIndices[static_cast<size_t>(gameObject.id)];
 		}
 
 		if (sceneObjectIndex < 0) {
@@ -953,7 +972,10 @@ void EditorSceneSynchronizer::Update(
 
 			sceneObjects[static_cast<size_t>(sceneObjectIndex)].gameObjectId = gameObject.id;  // 作成した SceneObject と GameObject を ID で紐づける
 			sceneObjects[static_cast<size_t>(sceneObjectIndex)].meshType = meshType;
-			sceneObjectIndices.emplace(gameObject.id, sceneObjectIndex);
+
+			if (gameObject.id >= 0 && static_cast<size_t>(gameObject.id) < sceneObjectIndices.size()) {
+				sceneObjectIndices[static_cast<size_t>(gameObject.id)] = sceneObjectIndex;
+			}
 		}
 
 		// GameObject の Transform を描画用 SceneObject へコピーする
@@ -1154,9 +1176,7 @@ void EditorSceneSynchronizer::Update(
 					: importedTexturePath;
 			};
 
-			const EditorComponent emptyRenderer{};
 			const EditorComponent& materialComponent = modelRenderer != nullptr ? *modelRenderer : emptyRenderer;
-			const MaterialData emptyMaterial{};
 			const MaterialData& importedMaterial = modelData != nullptr ? modelData->material : emptyMaterial;
 			synchronizeMaterialTexture(
 				EditorMaterialTextureSlot::Normal,

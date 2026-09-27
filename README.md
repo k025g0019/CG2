@@ -1,7 +1,11 @@
-﻿# CG2 エディタ README
+﻿# ManoEngine エディタ README
 
-CG2 エディタは、DirectX12、ImGui Docking、ImGuizmo、Jolt Physics を使った Unity 風の簡易ゲームエンジン / エディタです。  
+ManoEngine エディタは、DirectX12、ImGui Docking、ImGuizmo、Jolt Physics を使った Unity 風の簡易ゲームエンジン / エディタです。  
 GameObject を Scene に置き、インスペクターから日本語名のコンポーネントを追加して、描画、入力、物理、保存、Prefab、Console 確認を行えます。
+
+> **現行仕様について:** このREADMEの機能表には初期実装時点の履歴が多く残り、複数選択、Asset Registry、Gamepad、Terrain Collider、Lighting、Script等で現在の実装より古い記述があります。2026-09-26時点の全体仕様、コード構造、処理順は[`docs/engine-internals.md`](docs/engine-internals.md)を正として参照してください。文書全体は[`docs/ReadMe.md`](docs/ReadMe.md)から辿れます。
+
+基本操作、問題対処、配布、共同制作は[`docs/user-guide.md`](docs/user-guide.md)、保存形式、Runtime更新順、描画Pass等の内部契約は[`docs/engine-internals.md`](docs/engine-internals.md)を参照してください。
 
 ## 機能レベルの見方
 
@@ -36,7 +40,7 @@ GameObject を Scene に置き、インスペクターから日本語名のコ�
 | タグ / レイヤー | 一部実装 | Inspector 表示、保存、物理レイヤー判定の入口があります。Unity の Tag Manager 相当はまだ弱いです。 |
 | 親子付け | 一部実装 | ヒエラルキーで階層を持てます。Prefab 差分や複雑な親子 Transform 制御は未完成です。 |
 | 複製 / 削除 | 一部実装 | GameObject の複製と削除ができます。削除時は描画側の見た目も同期します。 |
-| 複数選択 | 未対応 | 複数 GameObject の一括編集はまだありません。 |
+| 複数選択 | 実装済み | Scene/Hierarchyで複数GameObjectを選択し、Gizmo操作や対象操作へ渡せます。 |
 
 ## Transform とギズモ
 
@@ -61,8 +65,8 @@ GameObject を Scene に置き、インスペクターから日本語名のコ�
 | FBX 基本形 | 一部実装 | FBX ファイル名から内部プリミティブへ対応付けて表示します。 |
 | 球系 FBX | 一部実装 | `sphere.fbx`、`ball.fbx` などは球メッシュとして表示し、球の当たり判定を自動追加します。 |
 | WAV | 追加・表示 | Project に表示できます。AudioSource の本格再生設定はまだ限定的です。 |
-| Asset Database | 未対応 | GUID、meta、参照関係、参照切れ検出はまだありません。 |
-| Importer | 未対応 | Unity の Import Settings のような詳細変換設定はまだありません。 |
+| Asset Registry | 実装済み | Asset ID、Path、Hash、依存・逆依存、Missing参照を管理します。Project View経由の移動ではIDを維持します。 |
+| Importer | 一部実装 | Asset別Import Settings、状態、Reimport、既定値復元があります。Unityの全Importer設定と同等ではありません。 |
 
 ## 基本形 3D オブジェクト
 
@@ -84,7 +88,7 @@ GameObject を Scene に置き、インスペクターから日本語名のコ�
 | 2D スプライト描画 | 一部実装 | 登録済み PNG を Scene にスプライトとして表示します。 |
 | Material 色 | 一部実装 | MeshRenderer / SpriteRenderer の色を Inspector から変更できます。初期値は白です。 |
 | Texture 表示 | 一部実装 | 登録済みテクスチャをモデルやスプライトに使います。任意テクスチャ割り当て UI は限定的です。 |
-| Directional Light | 一部実装 | 平行光源の色、向き、強さを持ちます。影や複数ライトは未対応です。 |
+| Directional Light | 実装済み | 色、向き、強さ、CSM Shadowを持ち、Point/Spot LightやProbe/Reflection経路と併用できます。 |
 | Camera | 一部実装 | Game View 用の視点として使えます。FOV や Culling Mask などは限定的です。 |
 | 背景色 | 実装済み | Inspector から Scene 背景色を変えられます。 |
 | Gizmo / Icon | 一部実装 | ライト、カメラ、当たり判定のデバッグ表示があります。 |
@@ -102,10 +106,10 @@ GameObject を Scene に置き、インスペクターから日本語名のコ�
 | Sphere Collider | 実装済み | 球の当たり判定です。球 FBX や低ポリ球に自動で付きます。 |
 | Capsule Collider | 一部実装 | Jolt の Capsule Shape として扱います。キャラクター用の基礎形状に使えます。 |
 | Mesh Collider | 一部実装 | 静的形状の入口があります。Unity の複雑な Mesh Collider と同等ではありません。 |
-| Terrain Collider | 追加・表示 | コンポーネント追加と Inspector 表示はあります。本格 Terrain 衝突は未完成です。 |
+| Terrain Collider | 実装済み | Height Mapを描画と同じ式で展開し、Jolt用Collider格子へ反映します。 |
 | Trigger | 一部実装 | 押し返さない当たり判定として区別します。イベントログの入口があります。 |
 | Collision | 一部実装 | 押し返す衝突として扱います。Jolt の接触結果を Play ランタイムへ渡し、OnCollision 系の元データとして使える段階です。 |
-| 物理イベント | 一部実装 | Enter / Stay / Exit を両オブジェクト向けイベント構造体へ変換し、FixedUpdate 前に Script 側へ渡します。ユーザー自作関数への最終ディスパッチは今後です。 |
+| 物理イベント | 実装済み | Enter / Stay / Exit を両オブジェクト向けイベントへ変換し、Native ScriptのOnCollision/OnTriggerへ通知します。 |
 | Raycast | 一部実装 | Scene 内 Collider に Ray を飛ばし、命中 GameObject、位置、法線、距離を返す API 入口があります。 |
 | SphereCast | 一部実装 | 太さのある Raycast として Jolt に問い合わせる API 入口があります。 |
 | CapsuleCast | 一部実装 | カプセル形状を移動させる問い合わせ API 入口があります。 |
@@ -118,7 +122,7 @@ GameObject を Scene に置き、インスペクターから日本語名のコ�
 | 連続衝突判定 | 一部実装 | 高速移動体向けの設定入口があります。Unity と同等の詳細設定は不足しています。 |
 | Character Controller | 一部実装 | Jolt CharacterVirtual を使い、重力、移動、接地の基礎処理があります。坂、段差の細かい調整は今後です。 |
 | Joint | 一部実装 | Fixed、Hinge、Spring、Character Joint を Jolt Constraint として作ります。細かい制限 UI はまだ少ないです。 |
-| Physics Debug | 一部実装 | Scene 上に Collider の形、Trigger 色、接触系ログを表示できます。接触点や法線の詳細表示は今後です。 |
+| Physics Debug | 実装済み | Edit/PlayのCollider、Trigger、接触点・法線、Ray/Sphere/Capsule CastをScene上に表示します。 |
 | Physics Settings | 一部実装 | 重力、固定更新時間、レイヤー判定の内部値があります。専用設定画面はまだありません。 |
 
 ## 入力
@@ -128,7 +132,7 @@ GameObject を Scene に置き、インスペクターから日本語名のコ�
 | キーボード入力 | 一部実装 | 旧 Input コンポーネントに加え、PlayerInput で Actions アセットを読んで Move / Jump / Fire を扱えます。 |
 | Rigidbody 移動 | 一部実装 | Play 中は Transform 直書きではなく、Rigidbody / CharacterController の速度へ反映します。 |
 | マウス入力 | 一部実装 | Scene 操作と選択で使います。ゲーム入力としての設定 UI はまだ弱いです。 |
-| ゲームパッド | 未対応 | 統一 Input System とゲームパッド対応は今後です。 |
+| ゲームパッド | 実装済み | XInput最大4台、Dead Zone、感度、Trigger/DPad、切断時中立化、Input Action Bindingに対応します。 |
 | PlayerInput | 一部実装 | Actions、Default Map、Behavior、Move / Jump / Fire の Event 名を Inspector から設定できます。 |
 | Input Action | 一部実装 | `.inputactions` ファイルを作成し、Move / Jump / Fire の簡易 Action を読めます。 |
 
@@ -162,8 +166,8 @@ GameObject を Scene に置き、インスペクターから日本語名のコ�
 | Update | 一部実装 | 毎フレーム処理の入口があります。 |
 | FixedUpdate | 一部実装 | 物理固定更新と合わせる入口があります。 |
 | Stop | 一部実装 | Play 停止時に呼ぶ入口があります。 |
-| OnCollision / OnTrigger | 一部実装 | Jolt の Enter / Stay / Exit をイベント構造体として ScriptManager へ渡します。ユーザー自作 C++ 関数へ直接呼び分ける最終段は今後です。 |
-| ユーザー自作 C++ コンポーネント | 未対応 | エディタから新規 C++ クラスを作り、即追加する仕組みはまだありません。 |
+| OnCollision / OnTrigger | 実装済み | Jolt の Enter / Stay / ExitをNative Scriptの各Virtual CallbackへDispatchします。 |
+| ユーザー自作 C++ Script | 実装済み | TemplateからNative Scriptを作成し、DLLをScript/MonoBehaviourへ割り当て、公開FieldとLifecycleを使用できます。Build自体はVisual Studio等で行います。 |
 
 ## PlayerInput の使い方
 
@@ -189,8 +193,8 @@ Action|Player|Fire|Button|Mouse|LeftButton
 - `Move` はカメラ相対移動として動きます。
 - `Jump` は床付近で上向き速度を与えます。
 - `Fire` は Console にイベントログを出します。
-- `Move / Jump / Fire` 以外の Action 名はまだ未対応です。
-- `Invoke C++ Events` は Inspector で関数名を持てますが、ユーザー自作 C++ 関数への完全ディスパッチは今後です。
+- `Move / Jump / Fire`は生成Templateの初期Actionです。任意Action名はBindingとScript公開Actionを一致させて使用します。
+- `Invoke C++ Events`は登録済みNative Script Actionへ値と入力ContextをDispatchします。
 
 ## 保存と Prefab
 
@@ -200,7 +204,7 @@ Action|Player|Fire|Button|Mouse|LeftButton
 | Scene 読み込み | 一部実装 | 保存した Scene を読み込めます。壊れたファイルの耐性はまだ弱いです。 |
 | Prefab 保存 | 一部実装 | 選択中 GameObject を Prefab として保存できます。 |
 | Prefab 生成 | 一部実装 | 保存した Prefab から GameObject を作れます。 |
-| Prefab 差分管理 | 未対応 | Apply / Revert、差分表示、ネスト Prefab は未対応です。 |
+| Prefab 差分管理 | 一部実装 | Apply / Revert、Variant、明示Overrideがあります。完全な任意Property差分表示とNested Prefab編集は未対応です。 |
 | Play 状態復元 | 一部実装 | Play 前の Scene をバックアップし、Stop 時に戻します。完全な Unity Play Mode 復元ではありません。 |
 
 ## 外部ライブラリ利用
@@ -226,10 +230,10 @@ Action|Player|Fire|Button|Mouse|LeftButton
 
 ## まだ Unity と同じではないところ
 
-- FBX はファイル名から基本形へ割り当てる段階で、スキンメッシュ、ボーン、アニメーションクリップの完全読み込みは未対応です。
-- UI コンポーネントは追加と Inspector 表示が中心で、Button、Slider、EventSystem の本格実行は未完成です。
-- Audio Mixer、Particle System、NavMesh、Terrain、Tilemap は追加・表示段階です。
-- Prefab の Apply / Revert、差分管理、ネスト Prefab は未対応です。
-- Asset Database、GUID、meta、参照切れ検出は未対応です。
+- FBX SDKを使用してModel/Material/Texture依存を読み込みます。複雑なRig Retargetingや全FBX機能の互換性はAssetごとの確認が必要です。
+- UIはText/Button/Slider/Toggle、Navigation、Script APIを実行できます。Rich TextとTextMeshPro完全互換は未対応です。
+- Audio Bus、Particle/VFX、Navigation、Terrain Height Colliderは実装されています。Unity相当のMixer Graph、完全NavMesh A*、Terrain編集Brush等は対象外です。
+- PrefabはApply / Revert / Variant / 明示Overrideを持ちます。完全な任意Property差分とNested Prefab編集は未対応です。
+- Asset RegistryはAsset ID、Hash、依存・逆依存、Missing参照を管理します。外部Toolで移動したFileを同一Assetと断定する万能追跡ではありません。
 - Console は画面表示できますが、Unity のようなスタックトレース、ログ種別フィルター、クリックジャンプは未完成です。
-- Build 機能、Package Manager、Profiler、Editor 拡張 API は未対応です。
+- Game BuildとCPU/GPU Profilerは実装されています。Package Managerと一般公開されたEditor拡張Plugin APIは未対応です。

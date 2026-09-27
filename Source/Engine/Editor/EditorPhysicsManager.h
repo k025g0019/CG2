@@ -96,6 +96,7 @@ public:
 	void RegisterRuntimeHierarchy(int32_t rootGameObjectId);  // Pool等がPlay中に複製した階層を物理Worldと固定更新Cacheへ追加する
 	bool SetGameObjectSimulationActive(int32_t gameObjectId, bool isActive);  // GameObjectの実行状態に合わせてJolt Bodyを物理Worldへ出し入れする
 	bool SetGameObjectTransform(int32_t gameObjectId, const Vector3& position, const Vector3& rotation);  // Poolから再利用するBodyのWorld姿勢を同期する
+	int32_t GetPhysicsBodyCount() const;  // Diagnostics 表示用。Jolt World にある Body 数を返す。
 	bool Raycast(const Vector3& origin, const Vector3& direction, float distance, EditorJoltPhysicsManager::PhysicsHit& hit) const;  // Runtime から Physics.Raycast 相当を呼べる入口
 	bool RaycastIgnoringGameObject(const Vector3& origin, const Vector3& direction, float distance, int32_t ignoredGameObjectId, EditorJoltPhysicsManager::PhysicsHit& hit) const;  // サスペンションなど所有者自身を除外する Raycast
 	bool RaycastIgnoringGameObjects(const Vector3& origin, const Vector3& direction, float distance, const std::vector<int32_t>& ignoredGameObjectIds, EditorJoltPhysicsManager::PhysicsHit& hit) const;  // Attack Filter用の複数除外Raycast
@@ -107,6 +108,8 @@ public:
 	bool AddForce(int32_t gameObjectId, const Vector3& force);  // Runtime から Rigidbody.AddForce 相当を呼べる入口
 	bool GetBodyMass(int32_t gameObjectId, float& bodyMass) const;  // Jolt へ反映済みの実質量を返す（診断用）
 	bool GetBodyDiagnostics(int32_t gameObjectId, Vector3& bodyPosition, bool& isAddedToWorld) const;  // Body実座標とWorld登録状態（診断用）
+	bool GetPhysicsShapeTriangles(int32_t gameObjectId, std::vector<EditorJoltPhysicsManager::PhysicsShapeTriangle>& shapeTriangles) const;  // Scene Viewが最終Physics Shapeをワイヤーフレーム表示するための取得口
+	bool BuildAutoConvexPreviewTriangles(int32_t gameObjectId, std::vector<EditorJoltPhysicsManager::PhysicsShapeTriangle>& shapeTriangles) const;  // Play前のAutoConvex最終凸包Previewを返す
 	bool AddForceAtPosition(int32_t gameObjectId, const Vector3& force, const Vector3& worldPosition);  // 船体内部など World 位置へ力を加える入口
 	bool AddImpulse(int32_t gameObjectId, const Vector3& impulse);  // Runtime から Rigidbody.AddImpulse 相当を呼べる入口
 	bool AddTorque(int32_t gameObjectId, const Vector3& torque);  // Runtime から Rigidbody.AddTorque 相当を呼べる入口

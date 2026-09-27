@@ -1,5 +1,8 @@
 ﻿#include "EditorAssetUtility.h"
 
+#include "Source/Engine/Asset/AssetImportSettings.h"
+#include "Source/Engine/Asset/AssetRegistry.h"
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -16,6 +19,7 @@
 #include <vector>
 
 #pragma warning(push, 0)
+#include <Windows.h>
 #include <fbxsdk.h>
 #include <meshoptimizer.h>
 #pragma warning(pop)
@@ -24,6 +28,20 @@
 
 namespace {
 	constexpr unsigned char kUtf8Bom[] = {0xEFu, 0xBBu, 0xBFu};  // テキストアセットを UTF-8 BOM 付きで保存する。
+
+	std::filesystem::path ResolveInstalledEngineAssetPath(const std::filesystem::path& requestedPath) {
+		if (requestedPath.empty() || requestedPath.is_absolute()) return requestedPath;
+		std::error_code fileError;
+		if (std::filesystem::exists(requestedPath, fileError) && !fileError) return requestedPath;
+		std::wstring executablePath(32768U, L'\0');
+		const DWORD length = GetModuleFileNameW(nullptr, executablePath.data(), static_cast<DWORD>(executablePath.size()));
+		if (length == 0U || length >= executablePath.size()) return requestedPath;
+		executablePath.resize(length);
+		const std::filesystem::path installedPath =
+			std::filesystem::path(executablePath).parent_path() / requestedPath;
+		fileError.clear();
+		return std::filesystem::exists(installedPath, fileError) && !fileError ? installedPath : requestedPath;
+	}
 
 	void InitializeDefaultMaterialData(ModelData& modelData) {
 		modelData.material = {};
@@ -78,6 +96,72 @@ namespace {
 			(maxPosition.x - minPosition.x),
 			(maxPosition.y - minPosition.y),
 			(maxPosition.z - minPosition.z)};
+	}
+
+	// AssetId単位で保存されたImport設定(Scale/Normal再計算/UV反転)を、Cache登録前の
+	// 非indexed三角形列(modelData.vertices)へ直接反映する。Move/Renameしても
+	// AssetImportSettingsStoreはAssetId経由で解決するため設定は消えない。
+	void ApplyModelImportSettings(ModelData& modelData, const std::string& normalizedPath) {
+		const AssetRecord* record = AssetRegistry::Get().FindByPath(normalizedPath);
+		if (record == nullptr) {
+			return;
+		}
+
+		const AssetImportMetadata* metadata = AssetImportSettingsStore::Get().Find(record->id);
+		if (metadata == nullptr) {
+			return;
+		}
+
+		const ModelImportSettings& settings = metadata->model;
+
+		if (settings.importScale != 1.0f) {
+			for (VertexData& vertex : modelData.vertices) {
+				vertex.position.x *= settings.importScale;
+				vertex.position.y *= settings.importScale;
+				vertex.position.z *= settings.importScale;
+			}
+		}
+
+		if (settings.generateNormals) {
+			// 非indexed三角形列を3頂点ずつ読み、面法線をそのまま3頂点へ書き込む(Flat Shading相当)。
+			for (size_t triangleStart = 0u; triangleStart + 2u < modelData.vertices.size(); triangleStart += 3u) {
+				VertexData& vertexA = modelData.vertices[triangleStart];
+				VertexData& vertexB = modelData.vertices[triangleStart + 1u];
+				VertexData& vertexC = modelData.vertices[triangleStart + 2u];
+
+				const Vector3 edgeAB = {
+					vertexB.position.x - vertexA.position.x,
+					vertexB.position.y - vertexA.position.y,
+					vertexB.position.z - vertexA.position.z};
+				const Vector3 edgeAC = {
+					vertexC.position.x - vertexA.position.x,
+					vertexC.position.y - vertexA.position.y,
+					vertexC.position.z - vertexA.position.z};
+				Vector3 faceNormal = {
+					edgeAB.y * edgeAC.z - edgeAB.z * edgeAC.y,
+					edgeAB.z * edgeAC.x - edgeAB.x * edgeAC.z,
+					edgeAB.x * edgeAC.y - edgeAB.y * edgeAC.x};
+				const float faceNormalLength = std::sqrt(
+					faceNormal.x * faceNormal.x +
+					faceNormal.y * faceNormal.y +
+					faceNormal.z * faceNormal.z);
+
+				if (faceNormalLength > 0.00001f) {
+					faceNormal.x /= faceNormalLength;
+					faceNormal.y /= faceNormalLength;
+					faceNormal.z /= faceNormalLength;
+					vertexA.normal = faceNormal;
+					vertexB.normal = faceNormal;
+					vertexC.normal = faceNormal;
+				}
+			}
+		}
+
+		if (settings.flipUVs) {
+			for (VertexData& vertex : modelData.vertices) {
+				vertex.texcoord.y = 1.0f - vertex.texcoord.y;
+			}
+		}
 	}
 
 	void OptimizeModelVertices(ModelData& modelData) {
@@ -240,18 +324,122 @@ namespace {
 		}
 	}
 
+	// FBX の FileName は exporter や作成環境次第で UTF-8 ではなく、CP932 などの
+	// Windows ANSI コードページのまま入ることがある。std::filesystem::path に
+	// std::string を直接渡すと、MSVC が UTF-8 として変換して system_error を送出する。
+	bool TryConvertNarrowTextToWide(
+		const std::string& text,
+		const UINT codePage,
+		const DWORD flags,
+		std::wstring& wideText) {
+		if (text.empty()) {
+			wideText.clear();
+			return true;
+		}
+
+		const int requiredLength = MultiByteToWideChar(
+			codePage,
+			flags,
+			text.data(),
+			static_cast<int>(text.size()),
+			nullptr,
+			0);
+		if (requiredLength <= 0) {
+			return false;
+		}
+
+		wideText.resize(static_cast<size_t>(requiredLength));
+		return MultiByteToWideChar(
+			codePage,
+			flags,
+			text.data(),
+			static_cast<int>(text.size()),
+			wideText.data(),
+			requiredLength) == requiredLength;
+	}
+
+	bool TryConvertWideTextToUtf8(const std::wstring& wideText, std::string& utf8Text) {
+		if (wideText.empty()) {
+			utf8Text.clear();
+			return true;
+		}
+
+		const int requiredLength = WideCharToMultiByte(
+			CP_UTF8,
+			0,
+			wideText.data(),
+			static_cast<int>(wideText.size()),
+			nullptr,
+			0,
+			nullptr,
+			nullptr);
+		if (requiredLength <= 0) {
+			return false;
+		}
+
+		utf8Text.resize(static_cast<size_t>(requiredLength));
+		return WideCharToMultiByte(
+			CP_UTF8,
+			0,
+			wideText.data(),
+			static_cast<int>(wideText.size()),
+			utf8Text.data(),
+			requiredLength,
+			nullptr,
+			nullptr) == requiredLength;
+	}
+
+	bool TryCreatePathFromFbxText(const std::string& text, std::filesystem::path& path) {
+		std::wstring wideText;
+		// 現行 exporter の UTF-8 を優先し、古い Windows exporter のローカルコードページを
+		// フォールバックにする。どちらにも変換できない参照はインポート対象にしない。
+		if (!TryConvertNarrowTextToWide(text, CP_UTF8, MB_ERR_INVALID_CHARS, wideText) &&
+			!TryConvertNarrowTextToWide(text, CP_ACP, 0, wideText)) {
+			return false;
+		}
+
+		path = std::filesystem::path(wideText);
+		return true;
+	}
+
+	bool TryCreatePathFromUtf8Text(const std::string& text, std::filesystem::path& path) {
+		std::wstring wideText;
+		if (!TryConvertNarrowTextToWide(text, CP_UTF8, MB_ERR_INVALID_CHARS, wideText)) {
+			return false;
+		}
+
+		path = std::filesystem::path(wideText);
+		return true;
+	}
+
+	bool PathExistsWithoutThrowing(const std::string& utf8Path) {
+		std::filesystem::path path;
+		if (!TryCreatePathFromUtf8Text(utf8Path, path)) {
+			return false;
+		}
+
+		std::error_code error;
+		return std::filesystem::exists(path, error) && !error;
+	}
+
 	std::string MakeTexturePathRelativeToAsset(const std::string& assetPath, const std::string& texturePath) {
 		if (texturePath.empty()) {
 			return "";
 		}
 
-		const std::filesystem::path textureFilePath(texturePath);
-		if (textureFilePath.is_absolute()) {
-			return textureFilePath.generic_string();
+		std::filesystem::path textureFilePath;
+		std::filesystem::path assetFilePath;
+		if (!TryCreatePathFromFbxText(texturePath, textureFilePath) ||
+			!TryCreatePathFromUtf8Text(assetPath, assetFilePath)) {
+			return "";
 		}
 
-		const std::filesystem::path assetDirectory = std::filesystem::path(assetPath).parent_path();
-		return (assetDirectory / textureFilePath).lexically_normal().generic_string();
+		const std::filesystem::path resolvedPath = textureFilePath.is_absolute()
+			? textureFilePath
+			: (assetFilePath.parent_path() / textureFilePath).lexically_normal();
+
+		std::string resolvedUtf8Path;
+		return TryConvertWideTextToUtf8(resolvedPath.native(), resolvedUtf8Path) ? resolvedUtf8Path : "";
 	}
 
 	std::string TryGetFbxTexturePath(const FbxProperty& property, const std::string& assetPath) {
@@ -277,7 +465,7 @@ namespace {
 			const char* fileName = fileTexture->GetFileName();
 			if (fileName != nullptr && fileName[0] != '\0') {
 				const std::string resolvedTexturePath = MakeTexturePathRelativeToAsset(assetPath, fileName);
-				if (std::filesystem::exists(std::filesystem::path(resolvedTexturePath))) {
+				if (PathExistsWithoutThrowing(resolvedTexturePath)) {
 					return resolvedTexturePath;
 				}
 
@@ -287,7 +475,7 @@ namespace {
 			const char* relativeFileName = fileTexture->GetRelativeFileName();
 			if (relativeFileName != nullptr && relativeFileName[0] != '\0') {
 				const std::string resolvedTexturePath = MakeTexturePathRelativeToAsset(assetPath, relativeFileName);
-				if (std::filesystem::exists(std::filesystem::path(resolvedTexturePath))) {
+				if (PathExistsWithoutThrowing(resolvedTexturePath)) {
 					return resolvedTexturePath;
 				}
 
@@ -743,6 +931,22 @@ namespace {
 		return normalizedPath;
 	}
 
+	// シーンやアセット設定から来るパスは UTF-8 のはずだが、壊れた旧データを
+	// std::filesystem に直接渡して Editor 全体を止めないようにする。
+	std::string NormalizeFilesystemPathForLookup(const std::string& pathText) {
+		std::filesystem::path path;
+		if (!TryCreatePathFromUtf8Text(pathText, path)) {
+			return NormalizeAssetPath(pathText);
+		}
+
+		std::string normalizedUtf8Path;
+		if (!TryConvertWideTextToUtf8(path.lexically_normal().native(), normalizedUtf8Path)) {
+			return NormalizeAssetPath(pathText);
+		}
+
+		return NormalizeAssetPath(normalizedUtf8Path);
+	}
+
 	std::string ResolveEditorDefaultAssetPath(const std::string& path) {
 		const std::string normalizedPath = NormalizeAssetPath(path);
 
@@ -971,7 +1175,17 @@ namespace {
 		std::vector<Vector3> positions;  // OBJ の v 行を一時保持する。
 		std::vector<Vector2> texcoords;  // OBJ の vt 行を一時保持する。
 		std::string line;
+		bool isFirstLine = true;
 		while (std::getline(file, line)) {
+			if (isFirstLine) {
+				isFirstLine = false;
+				if (line.size() >= sizeof(kUtf8Bom) &&
+					static_cast<unsigned char>(line[0]) == kUtf8Bom[0] &&
+					static_cast<unsigned char>(line[1]) == kUtf8Bom[1] &&
+					static_cast<unsigned char>(line[2]) == kUtf8Bom[2]) {
+					line.erase(0U, sizeof(kUtf8Bom));
+				}
+			}
 			std::istringstream lineStream(line);
 			std::string identifier;
 			lineStream >> identifier;
@@ -1345,23 +1559,27 @@ bool EditorAssetUtility::HasExtension(const std::string& path, const char* exten
 		return false;
 	}
 
-	std::string pathText = path;
-	std::string extensionText = extension;
+	const size_t extensionLength = std::char_traits<char>::length(extension);
 
-	// 大文字小文字を無視するため、比較前に両方を小文字化する
-	for (char& character : pathText) {
-		character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
-	}
-	for (char& character : extensionText) {
-		character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
-	}
-
-	if (pathText.size() < extensionText.size()) {
+	if (path.size() < extensionLength) {
 		return false;
 	}
 
-	// パス末尾の extensionText.size() 文字だけを拡張子として比較する
-	return pathText.compare(pathText.size() - extensionText.size(), extensionText.size(), extensionText) == 0;
+	const size_t extensionStart = path.size() - extensionLength;
+
+	// パス全体をコピーせず、拡張子部分だけを大文字小文字を無視して比較する
+	for (size_t characterIndex = 0; characterIndex < extensionLength; ++characterIndex) {
+		const unsigned char pathCharacter =
+			static_cast<unsigned char>(path[extensionStart + characterIndex]);
+		const unsigned char extensionCharacter =
+			static_cast<unsigned char>(extension[characterIndex]);
+
+		if (std::tolower(pathCharacter) != std::tolower(extensionCharacter)) {
+			return false;
+		}
+	}
+
+	return true;
 }
 
 std::string EditorAssetUtility::GetFilename(const std::string& path) {
@@ -1374,11 +1592,9 @@ std::string EditorAssetUtility::GetFilename(const std::string& path) {
 }
 
 int32_t EditorAssetUtility::GetTextureIndex(const std::vector<std::string>& textureFilePaths, const std::string& path) {
-	const std::filesystem::path requestedPath(path);
-	const std::filesystem::path resolvedRequestedPath(ResolveEditorDefaultAssetPath(path));
-	const std::string normalizedRequestedPath = NormalizeAssetPath(requestedPath.lexically_normal().generic_string());
+	const std::string normalizedRequestedPath = NormalizeFilesystemPathForLookup(path);
 	const std::string normalizedResolvedRequestedPath =
-		NormalizeAssetPath(resolvedRequestedPath.lexically_normal().generic_string());
+		NormalizeFilesystemPathForLookup(ResolveEditorDefaultAssetPath(path));
 
 	for (uint32_t textureIndex = 0;
 		 textureIndex < static_cast<uint32_t>(textureFilePaths.size());
@@ -1388,8 +1604,8 @@ int32_t EditorAssetUtility::GetTextureIndex(const std::vector<std::string>& text
 			return static_cast<int32_t>(textureIndex);
 		}
 
-		const std::filesystem::path registeredPath(textureFilePaths[textureIndex]);
-		const std::string normalizedRegisteredPath = NormalizeAssetPath(registeredPath.lexically_normal().generic_string());
+		const std::string normalizedRegisteredPath =
+			NormalizeFilesystemPathForLookup(textureFilePaths[textureIndex]);
 		if (normalizedRegisteredPath == normalizedRequestedPath ||
 			normalizedRegisteredPath == normalizedResolvedRequestedPath) {
 			return static_cast<int32_t>(textureIndex);
@@ -1419,20 +1635,37 @@ const ModelData* EditorAssetUtility::GetModelAssetData(const std::string& path, 
 		return nullptr;
 	}
 
-	std::filesystem::path filePath(path);
+	std::filesystem::path filePath;
+	if (!TryCreatePathFromUtf8Text(path, filePath)) {
+		return nullptr;
+	}
+
 	std::error_code fileError;
 	if (!std::filesystem::exists(filePath, fileError) || fileError) {
-		const std::filesystem::path resolvedFilePath(ResolveEditorDefaultAssetPath(path));
+		std::filesystem::path resolvedFilePath;
+		if (!TryCreatePathFromUtf8Text(ResolveEditorDefaultAssetPath(path), resolvedFilePath)) {
+			return nullptr;
+		}
+
 		fileError.clear();
 		if (!std::filesystem::exists(resolvedFilePath, fileError) || fileError) {
-			return nullptr;
+			// Project配布では内蔵PrimitiveをProjectへ複製しない。
+			// Project側に無いresources配下だけ、導入済みEngineから読む。
+			resolvedFilePath = ResolveInstalledEngineAssetPath(resolvedFilePath);
+			fileError.clear();
+			if (!std::filesystem::exists(resolvedFilePath, fileError) || fileError) return nullptr;
 		}
 
 		filePath = resolvedFilePath;
 	}
 
-	const std::string normalizedPath = NormalizeAssetPath(filePath.generic_string());
-	const std::string normalizedRequestedPath = NormalizeAssetPath(std::filesystem::path(path).lexically_normal().generic_string());
+	std::string resolvedFilePathUtf8;
+	if (!TryConvertWideTextToUtf8(filePath.native(), resolvedFilePathUtf8)) {
+		return nullptr;
+	}
+
+	const std::string normalizedPath = NormalizeFilesystemPathForLookup(resolvedFilePathUtf8);
+	const std::string normalizedRequestedPath = NormalizeFilesystemPathForLookup(path);
 	const std::filesystem::file_time_type lastWriteTime = std::filesystem::last_write_time(filePath, fileError);
 	if (!fileError) {
 		auto cacheIterator = g_cachedModelAssets.find(normalizedPath);
@@ -1446,35 +1679,49 @@ const ModelData* EditorAssetUtility::GetModelAssetData(const std::string& path, 
 		}
 	}
 
+	// Import設定でAnimationを含めない指定があれば、呼び出し側の要求より優先して除外する
+	// (Import設定はAssetそのものの方針、includeAnimationは呼び出し側の一時的な要求のため)。
+	bool resolvedIncludeAnimation = includeAnimation;
+	if (includeAnimation) {
+		const AssetRecord* animationGateRecord = AssetRegistry::Get().FindByPath(normalizedPath);
+		if (animationGateRecord != nullptr) {
+			const AssetImportMetadata* animationGateMetadata =
+				AssetImportSettingsStore::Get().Find(animationGateRecord->id);
+			if (animationGateMetadata != nullptr && !animationGateMetadata->model.importAnimation) {
+				resolvedIncludeAnimation = false;
+			}
+		}
+	}
+
 	ModelData loadedModelData{};
 	bool isLoaded = false;
 	const bool isFbxAsset = HasExtension(path, ".fbx");
 	if (HasExtension(path, ".obj")) {
-		isLoaded = LoadObjModel(filePath.generic_string(), loadedModelData);
+		isLoaded = LoadObjModel(resolvedFilePathUtf8, loadedModelData);
 	}
 	else if (isFbxAsset) {
-		isLoaded = LoadFbxModel(filePath.generic_string(), loadedModelData, includeAnimation);
+		isLoaded = LoadFbxModel(resolvedFilePathUtf8, loadedModelData, resolvedIncludeAnimation);
 	}
 
 	if (!isLoaded) {
 		return nullptr;
 	}
 
+	ApplyModelImportSettings(loadedModelData, normalizedPath);
 	OptimizeModelVertices(loadedModelData);
 
 	CachedModelAsset& cachedAsset = g_cachedModelAssets[normalizedPath];
 	cachedAsset.modelData = std::move(loadedModelData);
 	cachedAsset.lastWriteTime = lastWriteTime;
 	cachedAsset.nextValidationTime = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-	cachedAsset.includesAnimation = !isFbxAsset || includeAnimation;
+	cachedAsset.includesAnimation = !isFbxAsset || resolvedIncludeAnimation;
 	g_modelCacheKeyByRequestedPath[normalizedRequestedPath] = normalizedPath;
 	g_modelCacheKeyByRequestedPath[normalizedPath] = normalizedPath;
 	return cachedAsset.modelData.vertices.empty() ? nullptr : &cachedAsset.modelData;
 }
 
 const ModelData* EditorAssetUtility::GetSharedModelAssetData(const std::string& path, bool includeAnimation) {
-	const std::string requestedCacheKey =
-		NormalizeAssetPath(std::filesystem::path(path).lexically_normal().generic_string());
+	const std::string requestedCacheKey = NormalizeFilesystemPathForLookup(path);
 	auto aliasIterator = g_modelCacheKeyByRequestedPath.find(requestedCacheKey);
 	const std::string& modelCacheKey =
 		aliasIterator != g_modelCacheKeyByRequestedPath.end() ? aliasIterator->second : requestedCacheKey;
@@ -1487,6 +1734,32 @@ const ModelData* EditorAssetUtility::GetSharedModelAssetData(const std::string& 
 	}
 
 	return GetModelAssetData(path, includeAnimation);
+}
+
+void EditorAssetUtility::InvalidateModelAssetCache(const std::string& path) {
+	if (path.empty()) {
+		return;
+	}
+
+	const std::string requestedCacheKey = NormalizeFilesystemPathForLookup(path);
+	const auto aliasIterator = g_modelCacheKeyByRequestedPath.find(requestedCacheKey);
+	const std::string modelCacheKey =
+		aliasIterator != g_modelCacheKeyByRequestedPath.end()
+		? aliasIterator->second
+		: requestedCacheKey;
+
+	g_cachedModelAssets.erase(modelCacheKey);
+
+	// 同じ実ファイルを指す旧 resources path などの別名も消し、古い参照へ戻らないようにする。
+	for (auto iterator = g_modelCacheKeyByRequestedPath.begin();
+		iterator != g_modelCacheKeyByRequestedPath.end();) {
+		if (iterator->first == requestedCacheKey || iterator->second == modelCacheKey) {
+			iterator = g_modelCacheKeyByRequestedPath.erase(iterator);
+		}
+		else {
+			++iterator;
+		}
+	}
 }
 
 bool EditorAssetUtility::LoadModelAsset(const std::string& path, ModelData& modelData) {
@@ -1616,7 +1889,7 @@ bool EditorAssetUtility::SaveRenderTextureAsset(const std::string& path, const E
 	const int32_t width = (std::clamp)(asset.width, 1, 8192);
 	const int32_t height = (std::clamp)(asset.height, 1, 8192);
 	file.write(reinterpret_cast<const char*>(kUtf8Bom), static_cast<std::streamsize>(sizeof(kUtf8Bom)));
-	file << "# CG2 RenderTexture\r\n";
+	file << "# ManoEngine RenderTexture\r\n";
 	file << "# Camera の出力先や PostProcess の中間結果として使う描画用 Texture 設定です。\r\n";
 	file << "width=" << width << "\r\n";
 	file << "height=" << height << "\r\n";

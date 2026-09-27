@@ -18,16 +18,19 @@ void EditorRuntimeManager::Initialize(EditorScene* editorScene, std::vector<std:
 	aiManager_.Initialize(editorScene_, &physicsManager_, consoleMessages_);
 	scriptManager_.Initialize(editorScene_, &inputManager_, &animationManager_, &effectManager_, &audioManager_, &aiManager_, &physicsManager_, consoleMessages_);
 	scriptManager_.SetProfilerManager(&profilerManager_);
+	scriptManager_.SetNavigationManager(&navigationManager_);
 	inputManager_.Initialize(editorScene_, consoleMessages_);
 	animationManager_.Initialize(editorScene_, &effectManager_, &scriptManager_, consoleMessages_);
 	audioManager_.Initialize(editorScene_, &physicsManager_);
 	freeTransformManager_.Initialize(editorScene_);
 	constraintManager_.Initialize(editorScene_);
 	physicsManager_.Initialize(editorScene_, consoleMessages_);
+	blastDestructionManager_.Initialize(editorScene_, &physicsManager_, &scriptManager_, consoleMessages_, &damageManager_, &effectManager_);
 	sceneOptimizationManager_.Initialize(
 		editorScene_,
 		&physicsManager_,
 		&objectPoolManager_);
+	externalFeatureManager_.Initialize(editorScene_, &inputManager_, &scriptManager_, consoleMessages_);
 	targetingManager_.Initialize(editorScene_, &inputManager_, &physicsManager_, &scriptManager_);
 	damageManager_.Initialize(editorScene_, &scriptManager_, &physicsManager_, &objectPoolManager_);
 	objectPoolManager_.Initialize(editorScene_, &physicsManager_, &damageManager_, &scriptManager_);
@@ -53,7 +56,8 @@ void EditorRuntimeManager::Initialize(EditorScene* editorScene, std::vector<std:
 		&damageManager_,
 		&inputManager_,
 		&audioManager_,
-		&effectManager_);
+		&effectManager_,
+		&physicsManager_);
 	logMonitorManager_.Initialize(editorScene_, &profilerManager_, &weaponManager_, &runtimePropertyManager_);
 	objectPoolManager_.SetRuntimeResetCallback([this](int32_t gameObjectId) {
 		if (editorScene_ == nullptr) {
@@ -144,8 +148,6 @@ void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 	if (!isPlaying_ || editorScene_ == nullptr) {
 		return;
 	}
-
-	profilerManager_.UpdateMeasurement();
 
 	if (sceneTransitionState_.active) {
 		// 演出中はSceneが切り替わる可能性があるため、他のGameplay系Updateを止めて専念する。
@@ -240,6 +242,7 @@ void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 		profileUpdate("WeaponLoadout.Update", [this, deltaTime]() { weaponLoadoutManager_.Update(deltaTime); });
 	});
 	profileUpdate("Runtime Property", [this, deltaTime]() {
+		blastDestructionManager_.Update(deltaTime);
 		runtimePropertyManager_.Update(deltaTime);
 	});
 	profileUpdate("AI and Navigation", [this, deltaTime, &profileUpdate]() {
@@ -289,9 +292,12 @@ void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 		profileUpdate("Effekseer.Update", [this, deltaTime]() { effekseerManager_.Update(deltaTime); });
 		profileUpdate("Vfx.Update", [this, deltaTime]() { vfxManager_.Update(deltaTime); });
 	});
-	profileUpdate("Audio and Haptics", [this, deltaTime, &profileUpdate]() {
+	profileUpdate("Audio and Haptics", [this, deltaTime, unscaledDeltaTime, &profileUpdate]() {
 		profileUpdate("Audio.Update", [this, deltaTime]() { audioManager_.Update(deltaTime); });
-		profileUpdate("Haptics.Update", [this, deltaTime]() { UpdateHapticSources(deltaTime); });
+		profileUpdate("External Features.Update", [this, unscaledDeltaTime]() {
+			// 認識と通信は Game 側の TimeScale で速度を変えない。
+			externalFeatureManager_.Update(unscaledDeltaTime);
+		});
 	});
 	profileUpdate("UI and Camera", [this, deltaTime, keyState, &profileUpdate]() {
 		profileUpdate("FreeTransform.Update", [this, deltaTime, keyState]() { freeTransformManager_.Update(deltaTime, keyState); });
@@ -383,6 +389,22 @@ const EditorPhysicsManager& EditorRuntimeManager::GetPhysicsManager() const {
 	return physicsManager_;
 }
 
+EditorNavigationManager& EditorRuntimeManager::GetNavigationManager() {
+	return navigationManager_;
+}
+
+const EditorNavigationManager& EditorRuntimeManager::GetNavigationManager() const {
+	return navigationManager_;
+}
+
+EditorBlastDestructionManager& EditorRuntimeManager::GetBlastDestructionManager() {
+	return blastDestructionManager_;
+}
+
+const EditorBlastDestructionManager& EditorRuntimeManager::GetBlastDestructionManager() const {
+	return blastDestructionManager_;
+}
+
 EditorProfilerManager& EditorRuntimeManager::GetProfilerManager() {
 	return profilerManager_;
 }
@@ -405,6 +427,14 @@ EditorReplayManager& EditorRuntimeManager::GetReplayManager() {
 
 const EditorReplayManager& EditorRuntimeManager::GetReplayManager() const {
 	return replayManager_;
+}
+
+EditorExternalFeatureManager& EditorRuntimeManager::GetExternalFeatureManager() {
+	return externalFeatureManager_;
+}
+
+const EditorExternalFeatureManager& EditorRuntimeManager::GetExternalFeatureManager() const {
+	return externalFeatureManager_;
 }
 
 void EditorRuntimeManager::StartRuntimeSystems(bool shouldReinitializeScript) {
@@ -442,6 +472,8 @@ void EditorRuntimeManager::StartRuntimeSystems(bool shouldReinitializeScript) {
 
 	isPlaying_ = true;
 	objectPoolManager_.PreparePools();
+	// Blastが子Chunkを非Active化してからJoltが初期Body一覧を構築する。
+	blastDestructionManager_.Start();
 	physicsManager_.StartSimulation();
 	sceneOptimizationManager_.Start();
 	objectPoolManager_.Start();
@@ -463,7 +495,8 @@ void EditorRuntimeManager::StartRuntimeSystems(bool shouldReinitializeScript) {
 	aiManager_.Start();
 	navigationManager_.Start();
 	audioManager_.Start();
-	StartHapticSources();
+	// 音声認識/画像認識/Haptics/Online は Script Start の前に開き、Start から使えるようにする。
+	externalFeatureManager_.Start();
 	scriptManager_.Start();
 	// Pool Itemの複製(Duplicate + 物理/Script登録)はPlay中に行うと単発のHitchになるため、
 	// Physics/ScriptのStartが済んだこの時点で初期容量分をまとめて実体化しておく。
@@ -491,12 +524,14 @@ void EditorRuntimeManager::StopRuntimeSystems() {
 	gameplayEventManager_.Stop();
 	waveSpawnerManager_.Stop();
 	physicsManager_.StopSimulation();
+	// Joltが一時Chunkを参照しなくなってから、Blastが内部GameObjectを破棄する。
+	blastDestructionManager_.Stop();
 	effectManager_.Stop();
 	effekseerManager_.Stop();
 	vfxManager_.Stop();
 	animationManager_.Stop();
 	audioManager_.Stop();
-	StopHapticSources();
+	externalFeatureManager_.Stop();
 	scriptManager_.Stop();
 	localMoveManager_.Stop();
 	railMovementManager_.Stop();
@@ -504,82 +539,6 @@ void EditorRuntimeManager::StopRuntimeSystems() {
 	aiManager_.Stop();
 	navigationManager_.Stop();
 	isPlaying_ = false;
-}
-
-void EditorRuntimeManager::StartHapticSources() {
-	hapticLoopTimers_.clear();
-
-	if (editorScene_ == nullptr) {
-		return;
-	}
-
-	for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
-		const EditorComponent* hapticSource = EditorComponentUtility::FindComponent(
-			gameObject,
-			EditorComponentType::HapticSource);
-
-		if (!gameObject.isActive ||
-			hapticSource == nullptr ||
-			!hapticSource->isActive ||
-			!hapticSource->audioPlayOnAwake) {
-			continue;
-		}
-
-		PlayHapticSource(gameObject, *hapticSource);
-	}
-}
-
-void EditorRuntimeManager::UpdateHapticSources(float deltaTime) {
-	if (editorScene_ == nullptr) {
-		return;
-	}
-
-	for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
-		const EditorComponent* hapticSource = EditorComponentUtility::FindComponent(
-			gameObject,
-			EditorComponentType::HapticSource);
-
-		if (!gameObject.isActive ||
-			hapticSource == nullptr ||
-			!hapticSource->isActive ||
-			!hapticSource->hapticLoop) {
-			hapticLoopTimers_.erase(gameObject.id);
-			continue;
-		}
-
-		float& loopTimer = hapticLoopTimers_[gameObject.id];
-		loopTimer -= (std::max)(deltaTime, 0.0f);
-
-		if (loopTimer <= 0.0f) {
-			PlayHapticSource(gameObject, *hapticSource);
-		}
-	}
-}
-
-void EditorRuntimeManager::StopHapticSources() {
-	EditorSharedState::g_feelKitHaptics.stop();
-	hapticLoopTimers_.clear();
-}
-
-bool EditorRuntimeManager::PlayHapticSource(
-	const EditorGameObject& gameObject,
-	const EditorComponent& component) {
-	FeelKitHapticsVibrationDesc vibrationDesc{};
-	vibrationDesc.leftStrength = (std::clamp)(component.hapticStrength, 0.0f, 1.0f);
-	vibrationDesc.rightStrength = vibrationDesc.leftStrength;
-	vibrationDesc.durationMs = (std::max)(component.hapticDurationMs, 1);
-	vibrationDesc.isEnabled = true;
-
-	const bool wasPlayed = component.assetPath.empty()
-		? EditorSharedState::g_feelKitHaptics.playOneShot(vibrationDesc)
-		: EditorSharedState::g_feelKitHaptics.vibrateSound(component.assetPath.c_str(), vibrationDesc);
-
-	if (component.hapticLoop) {
-		hapticLoopTimers_[gameObject.id] =
-			(std::max)(static_cast<float>(vibrationDesc.durationMs) / 1000.0f, 0.016f);
-	}
-
-	return wasPlayed;
 }
 
 bool EditorRuntimeManager::LoadSceneForPlay(const std::string& scenePath) {
@@ -755,18 +714,21 @@ bool EditorRuntimeManager::RequestSceneUnload(const std::string& scenePath) {
 	}
 
 	const std::vector<int32_t> removingGameObjectIds = sceneIterator->gameObjectIds;
-	StopRuntimeSystems();
 
+	// Additive読込と同じ理由でRuntime全体は止めない。消えたObjectのScript instanceは
+	// StartAdditive側で破棄され、残ったObjectのStart済み状態はそのまま保たれる。
 	for (const int32_t gameObjectId : removingGameObjectIds) {
+		physicsManager_.SetGameObjectSimulationActive(gameObjectId, false);
 		editorScene_->DeleteGameObject(gameObjectId);
 	}
 
 	additiveScenes_.erase(sceneIterator);
-	Initialize(editorScene_, consoleMessages_);
-	StartRuntimeSystems(false);
+	scriptManager_.StartAdditive();
 
 	if (consoleMessages_ != nullptr) {
-		consoleMessages_->push_back("Scene: Additive破棄 " + normalizedScenePath);
+		consoleMessages_->push_back(
+			"Scene: Additive破棄 " + normalizedScenePath + " (" +
+			std::to_string(removingGameObjectIds.size()) + " Object)");
 	}
 
 	return true;
@@ -1212,21 +1174,47 @@ bool EditorRuntimeManager::ApplyLoadedScene(
 		return false;
 	}
 
-	StopRuntimeSystems();
-
 	if (isAdditive) {
+		// Additive読込でRuntime全体をStop/Startすると、既にPlay中のObjectのScript Startが
+		// もう一度走り、HP・スコア・進行状態が初期化される。Streamingでは毎Chunkごとに
+		// それが起きるため、ここでは全体を止めず、追加されたObjectだけを起動する。
 		AdditiveSceneRecord additiveScene{};
 		additiveScene.scenePath = scenePath;
 
 		if (!editorScene_->MergeScene(loadedScene, additiveScene.gameObjectIds)) {
-			Initialize(editorScene_, consoleMessages_);
-			StartRuntimeSystems(false);
+			if (consoleMessages_ != nullptr) {
+				consoleMessages_->push_back("Scene: Additive読込に失敗しました " + scenePath);
+			}
+
 			return false;
 		}
 
 		additiveScenes_.push_back(additiveScene);
+
+		// 追加Objectへ物理Bodyを作る。Poolが複製した階層と同じ登録経路を使う。
+		// RegisterRuntimeHierarchyは子孫までまとめて登録するため、Root(親を持たないObject)だけ渡す。
+		for (const int32_t addedGameObjectId : additiveScene.gameObjectIds) {
+			const EditorGameObject* addedGameObject = editorScene_->FindGameObject(addedGameObjectId);
+
+			if (addedGameObject != nullptr && addedGameObject->parentId < 0) {
+				physicsManager_.RegisterRuntimeHierarchy(addedGameObjectId);
+			}
+		}
+
+		scriptManager_.StartAdditive();
+
+		if (consoleMessages_ != nullptr) {
+			consoleMessages_->push_back(
+				"Scene: Additive読込 " + scenePath + " (" +
+				std::to_string(additiveScene.gameObjectIds.size()) + " Object)");
+		}
+
+		return true;
 	}
-	else {
+
+	StopRuntimeSystems();
+
+	{
 		railMovementManager_.ResetSessionState();
 		actionSequenceManager_.ResetSessionState();
 		saveManager_.ResetSceneState();
@@ -1236,13 +1224,13 @@ bool EditorRuntimeManager::ApplyLoadedScene(
 	}
 
 	Initialize(editorScene_, consoleMessages_);
-	StartRuntimeSystems(false);
+	// 非同期遷移ではSceneのGameObject構成が丸ごと入れ替わる。
+	// 旧SceneのScript API / Binding状態を使い回すと、ResultControllerなど
+	// 新Scene側のStart処理が走らず、Result UIが非表示のままになる可能性がある。
+	StartRuntimeSystems(true);
 
 	if (consoleMessages_ != nullptr) {
-		consoleMessages_->push_back(
-			isAdditive
-				? "Scene: Additive読込 " + scenePath
-				: "Scene: 非同期遷移 " + scenePath);
+		consoleMessages_->push_back("Scene: 非同期遷移 " + scenePath);
 	}
 
 	return true;

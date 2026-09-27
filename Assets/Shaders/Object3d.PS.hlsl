@@ -100,7 +100,7 @@ ConstantBuffer<DirectionalLightArray> gDirectionalLight : register(b1);
 
 bool IsOceanSurfacePass()
 {
-#if defined(CG2_OCEAN_SURFACE_PASS)
+#if defined(MANOENGINE_OCEAN_SURFACE_PASS)
     return true;
 #else
     return gMaterial.oceanEnabled >= 0.5f;
@@ -934,7 +934,7 @@ ObjectPixelOutput main(PixelShaderInput input) : SV_TARGET0
     {
         float3 classicDirect = 0.0f;
 
-        for (int lightIdx = 0; lightIdx < 4; lightIdx++)
+        for (int lightIdx = 0; lightIdx < MANO_MAX_SCENE_LIGHTS; lightIdx++)
         {
             DirectionalLightData light = gDirectionalLight.lights[lightIdx];
             if (light.shadowEnabled < -0.5f) break;
@@ -999,7 +999,7 @@ ObjectPixelOutput main(PixelShaderInput input) : SV_TARGET0
     }
 
     float3 direct = 0.0f;
-    for (int lightIdx = 0; lightIdx < 4; lightIdx++)
+    for (int lightIdx = 0; lightIdx < MANO_MAX_SCENE_LIGHTS; lightIdx++)
     {
         DirectionalLightData light = gDirectionalLight.lights[lightIdx];
         if (light.shadowEnabled < -0.5f) break;

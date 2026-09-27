@@ -303,6 +303,16 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         motionAcceleration -= radialDirection * min(particle.motion2.x, 0.0f);
     }
 
+    // 上昇気流は運動方式に関係なく効かせ、寿命とともに弱める。
+    // 爆発直後だけ舞い上がり、あとは重力で落ちる破片や粉塵を1つの式で表せる。
+    const float updraftStrength = max(particle.orientation.w, 0.0f);
+    if (updraftStrength > 0.0f)
+    {
+        const float updraftLifeRate =
+            saturate(particle.lifeSize.x / max(particle.lifeSize.y, 0.0001f));
+        motionAcceleration.y += updraftStrength * (1.0f - updraftLifeRate);
+    }
+
     const float3 previousPosition = particle.positionLifetime.xyz;
     particle.velocitySize.xyz += (noise + motionAcceleration) * gParticleUpdate.deltaTime;
     particle.velocitySize.y -= particle.physics.x * gParticleUpdate.deltaTime;

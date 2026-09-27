@@ -71,6 +71,7 @@ constexpr size_t kEditorMaterialTextureSlotCount =
 struct EditorOceanRenderSettings {
 	bool isEnabled = false;  // true の SceneObject だけ海面変形する
 	int32_t gridResolution = 2048;  // カメラ近傍の仮想分割数。実頂点数は連続 LOD で抑える
+	int32_t fftUpdateInterval = 0;  // 0=Auto、1以上=指定フレーム間隔
 	float size = 240.0f;  // 近傍 LOD の基準寸法。描画外周は地平線方向へ自動拡張する
 	float waveHeight = 1.8f;  // 主波の高さ
 	float maxWaveHeight = 4.5f;  // 合成後の高さ上限
@@ -169,6 +170,11 @@ struct EditorSceneObject {
 	TransformationMatrix* gameTransformationData;  // gameTransformationResource を CPU から書き込むための Map 済みポインタ
 	ID3D12Resource* materialResource;  // GameObject ごとの色と Texture 使用有無を GPU へ渡す ConstantBuffer
 	Material* materialData;  // materialResource を CPU から書き込むための Map 済みポインタ
+	D3D12_GPU_VIRTUAL_ADDRESS transformationGpuAddress;  // 共有Upload Buffer内のScene Viewスロット
+	D3D12_GPU_VIRTUAL_ADDRESS gameTransformationGpuAddress;  // 共有Upload Buffer内のGame Viewスロット
+	D3D12_GPU_VIRTUAL_ADDRESS materialGpuAddress;  // 共有Upload Buffer内のMaterialスロット
+	uint32_t objectBufferSlot;  // SceneObjectManagerの共有Bufferスロット番号
+	bool usesSharedObjectBuffers;  // trueなら上記ResourceをSceneObject単位ではReleaseしない
 	std::string textureAssetPath;  // Model / Sprite が明示的に使う画像パス
 	ID3D12Resource* customTextureResource;  // 個別画像を GPU へ載せる Texture Resource
 	ID3D12Resource* customTextureUploadResource;  // customTextureResource へ転送する中間 Upload Buffer
@@ -185,6 +191,7 @@ struct EditorSceneObject {
 	ID3D12Resource* customMeshIndexResource;  // 共有頂点メッシュの Index を GPU へ渡すバッファ
 	D3D12_INDEX_BUFFER_VIEW customMeshIndexBufferView;  // DrawIndexedInstanced 用の Index Buffer View
 	uint32_t customMeshIndexCount;  // 0 なら従来どおり非 Index 描画する
+	bool usesSharedCustomMesh;  // trueならVertex/Index Bufferの所有権はSceneObjectManagerの共有Cacheが持つ
 	ID3D12Resource* currentSkinMatrixResource;  // 現在フレームの Bone 行列を頂点 Shader へ渡す StructuredBuffer
 	Matrix4x4* currentSkinMatrixData;  // currentSkinMatrixResource の Map 済み書き込み先
 	ID3D12Resource* previousSkinMatrixResource;  // 前フレームの Bone 行列を Motion Vector へ渡す StructuredBuffer

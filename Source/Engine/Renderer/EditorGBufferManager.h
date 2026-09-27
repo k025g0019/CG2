@@ -23,6 +23,7 @@ public:
 		UINT srvDescriptorSize,
 		ID3D12RootSignature* objectRootSignature,
 		IDxcBlob* vertexShaderBlob,
+		IDxcBlob* batchedVertexShaderBlob,
 		IDxcBlob* pixelShaderBlob,
 		const D3D12_INPUT_ELEMENT_DESC* inputElementDescs,
 		UINT inputElementCount,
@@ -34,6 +35,7 @@ public:
 		ID3D12GraphicsCommandList* commandList,
 		D3D12_CPU_DESCRIPTOR_HANDLE depthStencilViewHandle);
 	void BindPipelineState(ID3D12GraphicsCommandList* commandList, bool isDoubleSided) const;
+	void BindBatchedPipelineState(ID3D12GraphicsCommandList* commandList, bool isDoubleSided) const;
 	void End(ID3D12GraphicsCommandList* commandList);
 	void Finalize();
 
@@ -56,6 +58,7 @@ private:
 
 	bool CreatePipelineStates(
 		IDxcBlob* vertexShaderBlob,
+		IDxcBlob* batchedVertexShaderBlob,
 		IDxcBlob* pixelShaderBlob,
 		const D3D12_INPUT_ELEMENT_DESC* inputElementDescs,
 		UINT inputElementCount);
@@ -73,6 +76,8 @@ private:
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> objectRootSignature_;
 	Microsoft::WRL::ComPtr<ID3D12PipelineState> pipelineState_;
 	Microsoft::WRL::ComPtr<ID3D12PipelineState> doubleSidedPipelineState_;
+	Microsoft::WRL::ComPtr<ID3D12PipelineState> batchedPipelineState_;
+	Microsoft::WRL::ComPtr<ID3D12PipelineState> batchedDoubleSidedPipelineState_;
 	std::array<Microsoft::WRL::ComPtr<ID3D12Resource>, kRenderTargetCount> resources_{};
 	std::array<D3D12_GPU_DESCRIPTOR_HANDLE, kRenderTargetCount> srvHandles_{};
 	uint32_t renderWidth_ = 0u;

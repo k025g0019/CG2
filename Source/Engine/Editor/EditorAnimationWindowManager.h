@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Source/Engine/Animation/AnimationGraph.h"
 #include "Source/Engine/Animation/PropertyAnimationClip.h"
 #include "EditorScene.h"
 
@@ -8,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #pragma warning(push)
 #pragma warning(disable : 4820)
@@ -41,6 +43,18 @@ private:
 	bool isRecording_ = false;  // true の間は Inspector / Gizmo の変更値を Key 化する。
 	bool isDirty_ = false;  // 保存後に Clip 内容が変化したか。
 
+	//================================================================
+	// Animator Graph (.animgraph) 編集タブ
+	//================================================================
+	AnimationGraph animationGraph_{};  // 現在編集中の .animgraph の編集コピー。
+	std::string animationGraphPath_;  // 保存・再読込に使う現在の .animgraph パス。
+	std::vector<std::string> graphClipNames_;  // Animator 対象 Model の Clip 名一覧（Clip 番号選択用）。
+	int32_t selectedStateIndex_ = -1;  // 編集中の State 番号。
+	int32_t selectedTransitionIndex_ = -1;  // 編集中の Transition 番号。
+	int32_t selectedParameterIndex_ = -1;  // 編集中の Parameter 番号。
+	bool isGraphDirty_ = false;  // 保存後に Graph 内容が変化したか。
+	bool hasGraphLoadFailed_ = false;  // 読み込みに失敗した .animgraph を選択中か。
+
 	void SynchronizeSelectedAsset();  // Project または Animation Component の選択から開く Clip を決める。
 	void CreateAnimationClip();  // Assets/Animation に空の Clip を作り、選択 GameObject へ設定する。
 	bool LoadAnimationClip(const std::string& filePath);  // 編集中 Preview を戻してから .animclip を読み込む。
@@ -67,6 +81,23 @@ private:
 	bool ReadProperty(const EditorGameObject& gameObject, AnimationPropertyTarget target, float& value) const;  // Scene 値を float Track 値へ変換する。
 	bool WriteProperty(EditorGameObject& gameObject, AnimationPropertyTarget target, float value) const;  // float Track 値を Scene へ書き戻す。
 	void SynchronizeRenderedScene();  // GameObject の Preview 変更を SceneView 描画配列へ同期する。
+
+	void SynchronizeSelectedGraphAsset();  // Project 選択または Animator Component から編集する Graph を決める。
+	bool LoadAnimationGraph(const std::string& filePath);  // .animgraph を読み込み、選択状態を作り直す。
+	void SaveAnimationGraph();  // 編集コピーを animationGraphPath_ へ書き戻す。
+	void CreateAnimationGraph();  // Assets/Animation へ最小構成の .animgraph を作り、選択 GameObject へ設定する。
+	void AssignGraphToSelectedGameObject();  // 選択 GameObject に Animator Component と Graph パスを設定する。
+	void RefreshGraphClipNames();  // Animator が参照する Model の Animation Clip 名を取り直す。
+	void DrawAnimatorGraphTab();  // State / Transition / Parameter 編集 UI 全体を描画する。
+	void DrawGraphToolbar();  // 新規・保存・再読込・割り当て・実行中 State 表示を描画する。
+	void DrawGraphParameterList();  // Parameter の追加・削除・型・既定値を編集する。
+	void DrawGraphStateList();  // State の追加・削除・選択と Entry State 指定を描画する。
+	void DrawGraphStateEditor();  // 選択 State の Clip / Blend Tree / Sample を編集する。
+	void DrawGraphTransitionList();  // Transition の追加・削除・選択を描画する。
+	void DrawGraphTransitionEditor();  // 選択 Transition の遷移条件・Exit Time・Blend 秒を編集する。
+	void DrawGraphEventList();  // Clip 再生中に発火する Animation Event を追加・編集する。
+	void DeleteGraphState(int32_t stateIndex);  // State 削除に合わせて Transition と Entry State を貼り直す。
+	void DrawClipIndexRow(const char* label, int32_t& clipIndex);  // Clip 番号を名前付き Combo として編集する。
 };
 
 #pragma warning(pop)

@@ -52,6 +52,12 @@ private:
 		bool hasSpawnedOnStart = false;  // Play開始Modeの重複生成を防ぐ
 	};
 
+	struct TransformState {
+		Vector3 translate{};
+		Vector3 rotate{};
+		Vector3 scale{1.0f, 1.0f, 1.0f};
+	};
+
 	EditorScene* editorScene_ = nullptr;  // Template複製とActive切替を行うScene
 	EditorPhysicsManager* physicsManager_ = nullptr;  // 待機ItemのBody出し入れと姿勢同期を行う
 	EditorDamageManager* damageManager_ = nullptr;  // 再利用ItemのHealthと死亡状態を初期化する
@@ -60,6 +66,7 @@ private:
 	std::unordered_map<int32_t, int32_t> poolOwnerByItemId_;  // Item IDから返却先Poolを引く索引
 	std::unordered_map<int32_t, uint64_t> spawnVersions_;  // Item再利用を別の生成として区別する貸出世代
 	std::unordered_map<int32_t, bool> originalActiveStates_;  // Pool待機前のTemplate階層Active状態
+	std::unordered_map<int32_t, TransformState> originalTransformStates_;  // Pool Itemを待機姿勢へ戻すための初期Transform
 	std::unordered_map<int32_t, SpawnerRuntime> spawnerRuntimes_;  // PrefabSpawner所有者ごとのTimer
 	bool isStarted_ = false;  // Play中だけ自動生成を進める
 	std::function<void(int32_t)> runtimeResetCallback_;  // RuntimeManagerが各Systemの状態初期化をまとめる
@@ -67,6 +74,8 @@ private:
 	int32_t CreatePoolItem(PoolRuntime& poolRuntime, int32_t ownerGameObjectId);  // Templateを複製して待機Itemを1つ実体化する
 	void PrewarmPool(PoolRuntime& poolRuntime, int32_t ownerGameObjectId);  // Play開始時にinitialCapacity分を先に実体化し、Play中の複製Hitchを無くす
 	void SetItemActive(int32_t gameObjectId, bool isActive);  // Template階層のScene、姿勢、Jolt Activeを同時に変更する
+	void CaptureItemTransformState(int32_t gameObjectId);  // Pool Itemの初期姿勢を階層ごとに保存する
+	void RestoreItemTransformState(int32_t gameObjectId);  // Release/Spawn前にRuntimeで汚れたTransformを戻す
 	void ResetItemRuntimeState(int32_t gameObjectId);  // Template階層にあるHealthと死亡状態を再貸出用に戻す
 	void QueueSpawnAction(
 		const EditorGameObject& spawnerGameObject,

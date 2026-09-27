@@ -46,6 +46,7 @@ private:
 	float cameraInputYaw_ = 0.0f;
 	float cameraInputPitch_ = 0.0f;
 	float cameraInputOrbitDistance_ = 0.0f;
+	Vector3 cameraInputFreeMoveOffset_{};  // FreeLookのWASD/QE入力を追従位置からのOffsetとして保持する。
 	bool cameraInputInitialized_ = false;
 	bool cameraInputOwnsCursorLock_ = false;  // Scriptのカーソル固定を誤って解除しないためCamera側の所有を記録する。
 	bool cameraInputOwnsCursorVisibility_ = false;  // Camera側が非表示へ変更した時だけStop時に表示へ戻す。

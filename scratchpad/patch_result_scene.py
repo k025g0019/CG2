@@ -1,7 +1,7 @@
-import io
+﻿import io
 
-SRC = r"C:\kogakuin\LE1\CG2\Assets\Scenes\WaterRailShooter_0817.scene"
-DST = r"C:\kogakuin\LE1\CG2\Assets\Scenes\Result.scene"
+SRC = r"C:\kogakuin\ManoEngine\Assets\Scenes\WaterRailShooter_0817.scene"
+DST = r"C:\kogakuin\ManoEngine\Assets\Scenes\Result.scene"
 
 def read_lines(path):
     with io.open(path, "r", encoding="utf-8", newline="") as f:

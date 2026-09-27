@@ -122,6 +122,30 @@ namespace EditorSharedState {
 
 	inline SoundData SoundLoadWave(const char* filePath); // WAV �ǂݍ��݂Ɖ���Ɏg�� helper �錾�B
 	inline void SoundUnload(SoundData* soundData);
+	// 起動時Shaderを最後まで検査し、失敗した全Pathを1回の画面表示へまとめる。
+	inline std::vector<std::string> g_shaderCompilationFailures;
+
+	inline std::filesystem::path GetEngineDirectory() {
+		std::wstring executablePath(32768U, L'\0');
+		const DWORD length = GetModuleFileNameW(nullptr, executablePath.data(), static_cast<DWORD>(executablePath.size()));
+		if (length == 0U || length >= executablePath.size()) return {};
+		executablePath.resize(length);
+		return std::filesystem::path(executablePath).parent_path();
+	}
+
+	// ProjectとEngineを別Folderへ置く配布版では、相対PathをまずProject側で探し、
+	// Projectに無い内蔵ResourceだけCG2.exeと同じFolderから解決する。
+	inline std::filesystem::path ResolveEngineOrProjectFilePath(const std::filesystem::path& requestedPath) {
+		if (requestedPath.empty() || requestedPath.is_absolute()) return requestedPath;
+		std::error_code fileError;
+		if (std::filesystem::exists(requestedPath, fileError) && !fileError) return requestedPath;
+
+		const std::filesystem::path engineDirectory = GetEngineDirectory();
+		if (engineDirectory.empty()) return requestedPath;
+		const std::filesystem::path enginePath = engineDirectory / requestedPath;
+		fileError.clear();
+		return std::filesystem::exists(enginePath, fileError) && !fileError ? enginePath : requestedPath;
+	}
 
 	inline D3D12_CPU_DESCRIPTOR_HANDLE GetCPUDescriptorHandle(
 		ID3D12DescriptorHeap* descriptorHeap, UINT descriptorSize, UINT index) {
@@ -139,9 +163,16 @@ namespace EditorSharedState {
 		return handle;
 	}
 
-	inline DirectX::ScratchImage LoadTexture(const std::wstring& filePath) {
+	// forceSrgb/generateMipmaps/maxSizeはTexture Import Settings用の拡張引数。
+	// 既定値(true/true/0)は変更前と同じ挙動になるため、既存の全呼び出し元は無変更で動く。
+	inline DirectX::ScratchImage LoadTexture(
+		const std::wstring& filePath,
+		bool forceSrgb = true,
+		bool generateMipmaps = true,
+		int32_t maxSize = 0) {
 		DirectX::ScratchImage emptyImage{};
-		if (filePath.empty() || !std::filesystem::exists(filePath)) {
+		const std::filesystem::path resolvedFilePath = ResolveEngineOrProjectFilePath(filePath);
+		if (filePath.empty() || !std::filesystem::exists(resolvedFilePath)) {
 			return emptyImage;
 		}
 
@@ -151,26 +182,57 @@ namespace EditorSharedState {
 		// image �� WIC / HDR / DDS ����ǂݍ��񂾌��摜�f�[�^�B
 		DirectX::ScratchImage image{};
 
-		std::filesystem::path path(filePath);
+		std::filesystem::path path(resolvedFilePath);
 		std::wstring extension = path.extension().wstring();
 		std::transform(extension.begin(), extension.end(), extension.begin(), towlower);
 
 		HRESULT hr = E_FAIL;
 		bool useSrgbMipFilter = true;
 		if (extension == L".hdr") {
-			hr = DirectX::LoadFromHDRFile(filePath.c_str(), &metadata, image);
+			hr = DirectX::LoadFromHDRFile(resolvedFilePath.c_str(), &metadata, image);
 			useSrgbMipFilter = false;
 		}
 		else if (extension == L".dds") {
-			hr = DirectX::LoadFromDDSFile(filePath.c_str(), DirectX::DDS_FLAGS_NONE, &metadata, image);
+			hr = DirectX::LoadFromDDSFile(resolvedFilePath.c_str(), DirectX::DDS_FLAGS_NONE, &metadata, image);
 			useSrgbMipFilter = false;
 		}
 		else {
-			hr = DirectX::LoadFromWICFile(filePath.c_str(), DirectX::WIC_FLAGS_FORCE_SRGB, &metadata, image);
-			useSrgbMipFilter = true;
+			hr = DirectX::LoadFromWICFile(
+				resolvedFilePath.c_str(),
+				forceSrgb ? DirectX::WIC_FLAGS_FORCE_SRGB : DirectX::WIC_FLAGS_FORCE_LINEAR,
+				&metadata,
+				image);
+			useSrgbMipFilter = forceSrgb;
 		}
 		if (FAILED(hr) || image.GetImageCount() == 0u || image.GetImages() == nullptr) {
 			return emptyImage;
+		}
+
+		// maxSizeが指定されていれば、Mipmap生成前に長辺がその値を超えないようDownscaleする。
+		if (maxSize > 0 &&
+			(metadata.width > static_cast<size_t>(maxSize) || metadata.height > static_cast<size_t>(maxSize))) {
+			const float widthScale = static_cast<float>(maxSize) / static_cast<float>(metadata.width);
+			const float heightScale = static_cast<float>(maxSize) / static_cast<float>(metadata.height);
+			const float resizeScale = (std::min)(widthScale, heightScale);
+			const size_t resizedWidth = (std::max)(static_cast<size_t>(static_cast<float>(metadata.width) * resizeScale), size_t{1});
+			const size_t resizedHeight = (std::max)(static_cast<size_t>(static_cast<float>(metadata.height) * resizeScale), size_t{1});
+
+			DirectX::ScratchImage resizedImage{};
+			if (SUCCEEDED(DirectX::Resize(
+					image.GetImages(),
+					image.GetImageCount(),
+					image.GetMetadata(),
+					resizedWidth,
+					resizedHeight,
+					DirectX::TEX_FILTER_DEFAULT,
+					resizedImage))) {
+				image = std::move(resizedImage);
+				metadata = image.GetMetadata();
+			}
+		}
+
+		if (!generateMipmaps) {
+			return image;
 		}
 
 		// mipImages �� GPU �T���v�����O�p�� mipmap ��ǉ������摜�f�[�^�B
@@ -337,13 +399,17 @@ namespace EditorSharedState {
 		IDxcCompiler3* dxcCompiler,
 		IDxcIncludeHandler* includeHandler,
 		std::ofstream& logStream) {
+		const std::filesystem::path resolvedFilePath = ResolveEngineOrProjectFilePath(filePath);
+		const std::wstring resolvedFilePathText = resolvedFilePath.wstring();
 		Log(logStream, std::format("Begin CompileShader, path:{}, profile:{}",
-		                           ConvertString(filePath), ConvertString(std::wstring{profile})));
+		                           ConvertString(resolvedFilePathText), ConvertString(std::wstring{profile})));
 
 		ComPtr<IDxcBlobEncoding> shaderSourceSource;
-		HRESULT hr = dxcUtils->LoadFile(filePath.c_str(), nullptr, shaderSourceSource.GetAddressOf());
+		HRESULT hr = dxcUtils->LoadFile(resolvedFilePathText.c_str(), nullptr, shaderSourceSource.GetAddressOf());
 		if (FAILED(hr) || shaderSourceSource == nullptr) {
-			Log(logStream, std::format("Failed to load shader file: {}", ConvertString(filePath)));
+			const std::string message = std::format("Failed to load shader file: {}", ConvertString(resolvedFilePathText));
+			Log(logStream, message);
+			g_shaderCompilationFailures.push_back(message);
 			return nullptr;
 		}
 		
@@ -365,9 +431,19 @@ namespace EditorSharedState {
 		includeDirectories.push_back(L"ThirdParty/Shader/NoiseShader-3.0.1/Packages/jp.keijiro.noiseshader/Shader");
 		includeDirectories.push_back(L"ThirdParty/Shader/FidelityFX-SDK-v1.1.4/bin/shaders");
 		includeDirectories.push_back(L"ThirdParty/Shader/FidelityFX-SDK-v1.1.4/sdk/include");
+		const std::filesystem::path engineDirectory = GetEngineDirectory();
+		includeDirectories.push_back((engineDirectory / L"Assets/Shaders").wstring());
+		includeDirectories.push_back((engineDirectory / L"Assets/Shaders/lygia").wstring());
+		includeDirectories.push_back((engineDirectory / L"Assets/Shaders/FidelityFX").wstring());
+		includeDirectories.push_back((engineDirectory / L"ThirdParty/Shader").wstring());
+		includeDirectories.push_back((engineDirectory / L"ThirdParty/Shader/lygia").wstring());
+		includeDirectories.push_back((engineDirectory / L"ThirdParty/Shader/NoiseShader-3.0.1").wstring());
+		includeDirectories.push_back((engineDirectory / L"ThirdParty/Shader/NoiseShader-3.0.1/Packages/jp.keijiro.noiseshader/Shader").wstring());
+		includeDirectories.push_back((engineDirectory / L"ThirdParty/Shader/FidelityFX-SDK-v1.1.4/bin/shaders").wstring());
+		includeDirectories.push_back((engineDirectory / L"ThirdParty/Shader/FidelityFX-SDK-v1.1.4/sdk/include").wstring());
 
 		std::vector<LPCWSTR> arguments{};
-		arguments.push_back(filePath.c_str());
+		arguments.push_back(resolvedFilePathText.c_str());
 		arguments.push_back(L"-E");
 		arguments.push_back(L"main");
 		arguments.push_back(L"-T");
@@ -399,8 +475,13 @@ namespace EditorSharedState {
 		shaderResult->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(shaderError.GetAddressOf()), nullptr);
 		if (shaderError != nullptr && shaderError->GetStringLength() != 0) {
 			Log(shaderError->GetStringPointer());
-			Log(logStream, std::format("Compile Error, path:{}, profile:{}",
-			                           ConvertString(filePath), ConvertString(std::wstring{profile})));
+			Log(logStream, shaderError->GetStringPointer());
+			if (FAILED(compileStatus)) {
+				Log(logStream, std::format("Compile Error, path:{}, profile:{}",
+				                           ConvertString(filePath), ConvertString(std::wstring{profile})));
+				g_shaderCompilationFailures.push_back(
+					ConvertString(filePath) + ": " + std::string(shaderError->GetStringPointer(), shaderError->GetStringLength()));
+			}
 		}
 
 		if (FAILED(compileStatus)) {
@@ -449,7 +530,9 @@ namespace EditorSharedState {
 		// modelData �� OBJ �̒��_�z��� Material �����܂Ƃ߂ĕԂ��B
 		ModelData modelData{};
 
-		std::ifstream file(directoryPath + "/" + filename); // file �� directoryPath/filename �� .obj �t�@�C���B
+		const std::filesystem::path resolvedModelPath =
+			ResolveEngineOrProjectFilePath(std::filesystem::path(directoryPath) / filename);
+		std::ifstream file(resolvedModelPath); // Projectに無い内蔵OBJはEngine側から読む。
 		if (!file.is_open()) {
 			return modelData;
 		}
@@ -521,7 +604,7 @@ namespace EditorSharedState {
 				std::string materialFilename; // materialFilename �� OBJ ���Q�Ƃ��� .mtl �t�@�C�����B
 				lineStream >> materialFilename;
 
-				modelData.material = LoadMaterialTemplateFile(directoryPath, materialFilename);
+				modelData.material = LoadMaterialTemplateFile(resolvedModelPath.parent_path().string(), materialFilename);
 				// .mtl ��ǂݍ��݁ATexture �p�X�� modelData �ɕێ�����B
 			}
 		}
@@ -537,7 +620,8 @@ namespace EditorSharedState {
 			return soundData;
 		}
 
-		std::ifstream file(filePath, std::ios_base::binary); // file �� WAV ���o�C�i���Ƃ��ēǂޓ��� stream�B
+		const std::filesystem::path resolvedSoundPath = ResolveEngineOrProjectFilePath(filePath);
+		std::ifstream file(resolvedSoundPath, std::ios_base::binary); // 内蔵SoundはEngine側へFallbackする。
 		if (!file.is_open()) {
 			return soundData;
 		}
@@ -654,8 +738,14 @@ namespace EditorSharedState {
 	constexpr uint32_t kRuntimeSwapChainBufferCount = 2; // kRuntimeSwapChainBufferCount �� SwapChain �� back buffer ���B
 	constexpr uint32_t kRuntimeSpriteIndexCount = 6; // kRuntimeSpriteIndexCount �� Sprite �l�p�`�� 2 �O�p�`�ŕ`�� index ���B
 	constexpr uint32_t kRuntimeShadowMapSize = 5120; // 5x5 atlas。Sun CSM とPoint Lightのキューブ影(6面)を同居させる。
+	// 画像SRVを置く共通Descriptor Heapの総容量。普通のGame Engineと同じ桁へ合わせている。
+	// D3D12の保証上限は1,000,000で、1個32B程度のため65536でも約2MB。足りなければここだけ増やす。
+	constexpr uint32_t kRuntimeSrvDescriptorHeapCapacity = 65536;
+	// 0からこの数までは描画機能・View別Temporal履歴・動的Fontの予約。これ以降を画像SRVへ使う。
+	constexpr uint32_t kRuntimeReservedSrvDescriptorCount = 205;
 	constexpr uint32_t kRuntimeShadowSrvDescriptorIndex = 15;
-	constexpr uint32_t kMaxShadowLights = 4;
+	// 1フレームで評価する通常ライト数。影の枚数は別途Shadow Atlas容量で制限する。
+	constexpr uint32_t kMaxSceneLights = 16;
 	constexpr uint32_t kShadowAtlasTiles = 5; // 5x5 grid = 25 タイル。各タイルは 1024x1024。
 	// タイル予算: Sun cascade 4 + Point Light最大3灯 x 6面 = 22。25タイルなら収まる。
 	constexpr uint32_t kRuntimeHdrSrvDescriptorIndex = 16; // HDR RT �� SRV �� DescriptorHeap �� 16 �ԖځB
@@ -822,6 +912,8 @@ namespace EditorSharedState {
 	inline uint32_t g_renderHeight = 1u;
 
 	struct EditorRenderProfile {
+		float frameMilliseconds = 0.0f;
+		float frameRate = 0.0f;
 		float gpuFrameMilliseconds = 0.0f;
 		std::uint64_t localVideoMemoryUsage = 0u;
 		std::uint64_t localVideoMemoryBudget = 0u;
@@ -902,6 +994,11 @@ namespace EditorSharedState {
 	inline ComPtr<ID3D12PipelineState> g_shadowCullNonePipelineState;
 	inline ComPtr<ID3D12PipelineState> g_alphaCutoutShadowPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_alphaCutoutShadowCullNonePipelineState;
+	inline ComPtr<ID3D12PipelineState> g_batchedGraphicsPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_batchedCullFrontPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_batchedCullNonePipelineState;
+	inline ComPtr<ID3D12PipelineState> g_batchedShadowPipelineState;
+	inline ComPtr<ID3D12PipelineState> g_batchedShadowCullNonePipelineState;
 
 	// Post-process root signature and pipeline states
 	inline ComPtr<ID3D12RootSignature> g_postProcessRootSignature;
@@ -961,6 +1058,9 @@ namespace EditorSharedState {
 	inline TransformationMatrix* g_sphereTransformationMatrixData = nullptr;
 	inline ID3D12Resource* g_identitySkinMatrixResource = nullptr;  // 非 Skin 頂点でも t16 / t17 を常に有効な SRV にする
 	inline Matrix4x4* g_identitySkinMatrixData = nullptr;
+	constexpr uint32_t kEditorBatchInstanceCapacity = 65536u;
+	inline ID3D12Resource* g_batchInstanceResource = nullptr;
+	inline EditorBatchInstanceData* g_batchInstanceData = nullptr;
 
 	// g_modelData �͋N�����ɓǂݍ��ފ��� OBJ ���f���B
 	inline ModelData g_modelData{};
@@ -1015,6 +1115,13 @@ namespace EditorSharedState {
 	inline float g_editorGameWidth = 0.0f;
 	inline float g_editorGameHeight = 0.0f;
 
+	// g_editorRenderOriginX / Y は ImGui 座標から back buffer 座標へ直すための原点。
+	// ViewportsEnable が有効な間、ImGui の画面座標はデスクトップ基準になり、
+	// Window の枠とタイトルバーの分だけ back buffer 座標より大きくなる。
+	// この差を引かずに D3D12 の viewport へ渡すと、3D だけが右下へずれて描かれる。
+	inline float g_editorRenderOriginX = 0.0f;
+	inline float g_editorRenderOriginY = 0.0f;
+
 	inline bool g_isSceneViewVisible = false; // g_isSceneViewVisible �� SceneView �֕`�悷���`�����t���[���L�����ǂ����B
 	inline bool g_isGameViewVisible = false; // g_isGameViewVisible �� GameView �֕`�悷���`���L�����ǂ����B
 	inline bool g_isAnimationWindowVisible = false;  // true なら Docking 可能な Animation Window を表示する。
@@ -1024,6 +1131,7 @@ namespace EditorSharedState {
 	inline bool g_isDiagnosticsWindowVisible = false;  // trueならProfilerとScene Validatorを表示する。
 	inline bool g_isLogMonitorWindowVisible = false;  // trueなら汎用ログ・監視Windowを表示する。
 	inline bool g_isTeamCollaborationWindowVisible = false;  // trueなら共同制作Server、接続、競合画面を表示する。
+	inline bool g_isExternalFeatureWindowVisible = false;  // trueなら音声認識/画像認識/オンライン/HapticsのDebug Windowを表示する。
 	inline bool g_isHookWireDebugWindowVisible = false;  // trueならHook構成とRuntime Wireの検査Windowを表示する。
 	inline bool g_isHookWireSceneGizmoVisible = true;  // trueならSceneViewへHook→力伝達先の線とAnchorを重ねる。
 	inline bool g_isGameViewUsingSceneCamera = true; // true �Ȃ� Camera Component ���Ȃ����� Scene �J�������p���Ă���B

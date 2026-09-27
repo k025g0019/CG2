@@ -316,7 +316,7 @@ enum class EditorComponentType {
 	AIMotionSensor,
 	// Whisper 用の音声認識
 	AIWhisperSpeechRecognizer,
-	// Whisper 用の音声コマンド
+	// 登録語の限定語彙音響認識による音声コマンド
 	AIVoiceCommand,
 	// Particle 表現
 	ParticleSystem,
@@ -575,8 +575,16 @@ enum class EditorComponentType {
 	// Runtime Wireの太さ、色、たるみなどの表示設定を提供する
 	WireRenderer,
 	// Sun Portal（窓/開口部を簡易Area Lightとして扱い、室内側へSun光を足す）
-	// 既存Sceneのシリアライズ済み型番号を一切ズラさないよう、必ず末尾へ追加する。
+	// 既存Sceneのシリアライズ済み型番号を一切ズラさないよう、必ず末尾側へ追加する。
 	SunPortal,
+	// Scene単位で描画負荷の間引きと品質上限をまとめる
+	PerformanceSettings,
+	// マイク入力から音声コマンド / Speech-to-Text を得る(外部認識モジュール)
+	SpeechRecognizer,
+	// Camera Device から映像フレームを取得する(外部認識モジュール)
+	CameraInput,
+	// Camera フレームから物体・顔・色・動きを認識する(外部認識モジュール)
+	ImageRecognizer,
 	// Component 種類数。範囲チェックに使う
 	Count,
 };
@@ -766,7 +774,10 @@ struct EditorComponent {
 	std::string uuid;  // 共同制作で Component を名前や配列位置に依存せず識別する永続 UUID
 	EditorComponentType type;  // Component の種類
 	bool isActive;  // Inspector の有効チェック
-	std::string assetPath;  // Model / Sprite / Audio などの Asset パス
+	std::string assetPath;  // Model / Sprite / Audio などの Asset パス。現在位置・表示・Fallback用の情報として扱う
+	// assetPathが指すAssetの永続識別子(AssetRegistry::AssetId)。空なら未解決またはRegistry未対応の旧データ。
+	// 保存されたassetIdがあれば移動・Rename後もそちらを優先してPathを解決する(EditorScene::ResolveComponentAssetPath参照)。
+	std::string assetId;
 	std::string textureAssetPath;  // Renderer が明示的に使う画像パス
 	std::string normalTextureAssetPath;  // Renderer が使う Normal Map の画像パス
 	std::string metallicTextureAssetPath;  // Renderer が使う Metallic Map の画像パス
@@ -987,6 +998,7 @@ struct EditorComponent {
 	float glareFade;  // 光条が中心から離れるほど減衰する割合
 	float glareColorModulation;  // Ghosts / Streaks の色ずれ量
 	Vector3 glareCenter;  // Sun Beams の光源位置。x/y は画面 UV、z は予約値
+	float glareSampleRatio;  // Glare のサンプル倍率。1.0で最高品質、値を下げるほど軽量
 	std::array<float, 8> glareIntensityByMode;  // Glare 種類ごとの強さ。index は glareMode と同じ
 	std::array<float, 8> glareSizeByMode;  // Glare 種類ごとの広がり / 長さ
 	std::array<float, 8> glareAngleByMode;  // Glare 種類ごとの角度（度）
@@ -1037,6 +1049,17 @@ struct EditorComponent {
 	// LocalContrast/Bloomをそれぞれ個別に有効化して、どちらが元画像の模様を
 	// 再注入しているか切り分ける(1=基準のみ 2=LocalContrastのみ 3=Bloomのみ 4=両方)。
 	int32_t compositeDebugView;
+	// PerformanceSettings 設定
+	bool performanceAdaptiveQuality;  // trueならGPU時間を見て更新頻度を自動で下げる
+	int32_t performanceTargetFps;  // 目標FPS。自動品質判定のGPU時間しきい値に使う
+	int32_t performanceViewRenderMode;  // 0=Auto、1=Sceneのみ、2=Gameのみ、3=両方
+	bool performanceAllowShadowThrottle;  // Shadow Mapの更新間引きを許可する
+	bool performanceAllowReflectionThrottle;  // Planar Reflectionの更新間引きを許可する
+	bool performanceAllowBakeThrottle;  // Light Probe Bakeの更新間引きを許可する
+	int32_t performanceShadowUpdateInterval;  // 0=Auto、1以上=指定フレーム間隔
+	int32_t performanceReflectionUpdateInterval;  // 0=Auto、1以上=指定フレーム間隔
+	int32_t performanceOceanFftUpdateInterval;  // 0=Auto、1以上=Ocean FFTの指定フレーム間隔
+	float performanceGlareSampleRatio;  // Scene全体のGlareサンプル上限
 	// Sun (Directional Light) 拡張設定。Light コンポーネントの assetPath=="Sun" でのみ意味を持つ
 	float sunAzimuthDegrees;  // 太陽方位角(度)。0=+Z、90=+X として時計回り
 	float sunElevationDegrees;  // 太陽高度(度)。90で真上、0で水平線、負で地平線下
@@ -1077,6 +1100,7 @@ struct EditorComponent {
 	float cameraNearClip;  // ニアクリップ距離
 	float cameraFarClip;  // ファークリップ距離
 	int32_t cameraProjectionMode;  // 0=Perspective, 1=Orthographic
+	float cameraOrthographicSize;  // Orthographic時の縦方向の表示高さ(m)。横幅はAspectから決める
 	bool cameraDofEnabled;  // 被写界深度有効
 	float cameraDofFocusDistance;  // フォーカス距離
 	float cameraDofAperture;  // 絞り（ボケ量）
@@ -1555,6 +1579,9 @@ std::string waveStartedActionName;  // 条件成立時に通知する任意Scrip
 	std::string waveCompletedActionName;  // 全生成時に生成数Payload付きで通知する任意Script Action
 	std::string waveAllDefeatedActionName;  // 全撃破または全返却時に通知する任意Script Action
 	float waveSpawnRailStartNormalized;  // 生成物が RailMovement を持つ時のレール開始進行率。-1 なら生成物自身の設定
+	bool waveSpawnAheadOfSource;  // trueなら指定RailFollowerの前方へ生成する
+	int32_t waveSpawnProgressSourceGameObjectId;  // 前方生成の基準RailFollower。未設定は -1
+	float waveSpawnAheadNormalized;  // 基準RailFollowerより前に出す進行率差
 	// Wave 生存数維持(ラッシュ)設定。0 なら従来どおり waveSpawnCount 体を一度に出し切る。
 	// 1 以上ならこの数を画面内に保つよう、撃破されるたびに waveSpawnCount へ達するまで補充する。
 	int32_t waveTargetAliveCount;
@@ -1924,6 +1951,51 @@ std::string waveStartedActionName;  // 条件成立時に通知する任意Scrip
 	int32_t destructibleActionTargetGameObjectId;  // 破壊通知先
 	std::string destructibleDestroyedActionName;  // 破壊Action
 	bool destructibleDestroyed;  // Play中の破壊済み状態
+	// NVIDIA Blast 1.1.5破壊設定。既定ではSource MeshをEditor/Play開始前に自動Bakeする。
+	bool destructibleBlastEnabled;  // trueならHealth無効化だけでなくBlastのBond破断を使う
+	int32_t destructibleBlastFractureMethod;  // 0=Voronoi。将来の方式追加でも保存形式を維持する
+	int32_t destructibleBlastChunkCount;  // 自動Bakeで生成する目標Chunk数
+	int32_t destructibleBlastRandomSeed;  // 同じSource/設定から同じ破片を作る決定的Seed
+	float destructibleBlastBondHealth;  // 各Chunk間Bondの初期耐久値
+	float destructibleBlastDamageRadius;  // Scriptで半径を省略できないためInspectorの既定半径として公開する
+	float destructibleBlastImpulse;  // 切り離されたChunkへ加える既定Impulse
+	float destructibleBlastChunkMass;  // Runtimeで自動追加するRigidbodyの質量
+	int32_t destructibleBlastBondNeighborCount;  // 各Chunkから近い何個へBondを張るか
+	int32_t destructibleBlastCollisionQuality;  // 0=Low、1=Medium、2=High
+	bool destructibleBlastAutoBake;  // Source/設定Hashが変わった場合にPlay前へ自動Bakeする
+	bool destructibleBlastUsePrefracturedChildren;  // Advanced互換。明示時だけ直下の子をChunkとして使う
+	bool destructibleBlastHideChunksUntilFracture;  // 互換入力または内部Chunkを最初の分裂まで隠す
+	std::string destructibleBlastBakeStatus;  // Inspector表示用。Needs Bake/Baking/Ready/Failed/Missing Source
+	std::string destructibleBlastBakeError;  // 失敗理由。Sceneへは保存しないRuntime診断値
+	bool destructibleBlastForceRebake;  // InspectorのRebake要求。次のBake完了時に解除する
+	bool destructibleBlastClearCacheRequested;  // InspectorのClear Cache要求。安全なBake処理側で消去する
+	// 破片の後片付け。破片軽量化のOnOffとは独立で、Delayが0なら何もしない
+	float destructibleBlastDebrisSinkDelay;  // 0なら沈めない。分離からこの秒数後に沈み始める
+	float destructibleBlastDebrisSinkDuration;  // 沈み切ってGameObjectを破棄するまでの秒数
+	float destructibleBlastDebrisSinkDistance;  // 沈み込む距離
+	// 破片予算。見た目の破片数を保ったままRigidbody数とGameObject数を抑える設定
+	bool destructibleBlastOptimizeEnabled;  // 破片最適化のOnOff。falseなら以下の予算設定を全て無視して従来の全物理破片にする
+	int32_t destructibleBlastMaxPhysicsChunks;  // Rigidbody化するChunk数の上限。0なら物理破片を作らない
+	bool destructibleBlastUseClusterPhysics;  // 上限を超えた破片を物理Chunkの子として運ぶ
+	int32_t destructibleBlastClusterSize;  // 1つの物理Clusterへまとめる目標Chunk数（追従Chunkは上限-1個）
+	float destructibleBlastClusterScatterDelay;  // Cluster内の追従Chunkを視覚的にばらけさせ始める秒数
+	float destructibleBlastClusterScatterDistance;  // 追従Chunkをばらけさせる最大距離
+	float destructibleBlastPhysicsLifetime;  // 0より大きいなら経過後にDynamicを解除して描画だけ残す
+	bool destructibleBlastUseGpuDebris;  // 物理にもClusterにも回らなかった破片をGPU破片として飛ばす
+	float destructibleBlastGpuDebrisLifetime;  // GPU破片が消えるまでの秒数
+	float destructibleBlastGpuDebrisGravity;  // GPU破片へ加える下方向加速度
+	float destructibleBlastGpuDebrisDrag;  // GPU破片の速度減衰
+	float destructibleBlastGpuDebrisWind;  // GPU破片へ加える乱流（風）の強さ
+	int32_t destructibleBlastGpuDebrisMotionType;  // 0=直線、1=爆発（外向きへ継続加速）、2=渦（旋回+上昇）
+	float destructibleBlastGpuDebrisRadialAcceleration;  // 爆発・渦で中心から外向きへ加える加速度
+	float destructibleBlastGpuDebrisUpdraft;  // GPU破片へ加える上昇気流。寿命とともに弱まる
+	float destructibleBlastGpuDebrisAngularSpeed;  // 渦の旋回速度（度/秒）
+	float destructibleBlastGpuDebrisSpin;  // GPU破片の回転速度（度/秒）
+	int32_t destructibleBlastGpuDebrisMeshLimit;  // GPU破片が使うChunk Mesh種類の上限。0ならChunkごとに個別Mesh
+	bool destructibleBlastUseDistanceLod;  // Camera距離で破壊方式を切り替える
+	float destructibleBlastLodNearDistance;  // これ未満は通常Blast
+	float destructibleBlastLodFarDistance;  // これ以上はGPU破片だけ
+	int32_t destructibleBlastLodFarDebrisCount;  // 遠距離で飛ばすGPU破片数の上限。0なら全部
 	// FormationFollower 設定
 	int32_t formationLeaderGameObjectId;  // Leader
 	Vector3 formationLocalOffset;  // Leader基準の位置Offset
@@ -2398,6 +2470,19 @@ std::string waveStartedActionName;  // 条件成立時に通知する任意Scrip
 	float textEffectRuntimeElapsed;  // 出現/常時で共有するActivate基準のClock
 	bool textEffectRuntimeWasActive;
 	int32_t textFontIndex;  // Text/TextMeshProUGUIが使うFont候補のIndex。0=既定Font。
+	// Text の体裁設定。既定値は従来描画（Rect高さ＝文字サイズ、左上寄せ、折返しなし、装飾なし）と一致させる。
+	std::string textFontAssetPath;  // Project内の.ttf/.otf。空ならtextFontIndexのSystem Fontを使う
+	float textFontSize;  // px。0以下ならRect高さから決める従来挙動
+	int32_t textHorizontalAlign;  // 0=左, 1=中央, 2=右
+	int32_t textVerticalAlign;  // 0=上, 1=中央, 2=下
+	bool textWordWrap;  // Rect幅で折り返す
+	int32_t textOverflowMode;  // 0=はみ出す, 1=Rectで切り取る, 2=入り切らない行末を…にする
+	float textOutlineWidth;  // px。0で縁取りなし
+	Vector3 textOutlineColor;
+	bool textShadowEnabled;
+	float textShadowOffsetX;  // px
+	float textShadowOffsetY;  // px
+	Vector3 textShadowColor;
 	// SceneTransition 設定とRuntime値
 	int32_t sceneTransitionType;  // 0=None,1=FadeColor,2=Wipe,3=CameraDive
 	std::string sceneTransitionTargetScenePath;
@@ -2435,6 +2520,76 @@ std::string waveStartedActionName;  // 条件成立時に通知する任意Scrip
 	float wireRendererSlackSag;  // たるみ時の下方向カーブ量m
 	int32_t wireRendererSegmentCount;
 	bool wireRendererVisible;
+	//============================================================
+	// 外部認識・オンライン連携モジュールの設定
+	// 実処理は Source/Engine/Speech / Vision / Haptics 側が持ち、
+	// ここは Inspector と Scene 保存のための設定値だけを置く。
+	//============================================================
+	// SpeechRecognizer 設定
+	int32_t speechRecognitionMode;  // 0=Keyword, 1=Speech-to-Text
+	int32_t speechBackendKind;  // 0=自動, 1=Windows Speech API, 2=Whisper, 3=ONNX, 4=使用しない
+	std::string speechLanguage;  // "ja-JP" など
+	std::string speechMicrophoneDevice;  // 空なら既定マイク
+	std::string speechModelAssetPath;  // Whisper / ONNX Backend が使うモデル
+	float speechConfidenceThreshold;  // これ未満の認識結果は捨てる
+	bool speechWhisperEndOnSilence;  // 発話後の無音でWhisper推論を開始する
+	float speechWhisperMaximumCaptureSeconds;  // 無音を検出できない場合の最大録音秒数
+	float speechWhisperSilenceSeconds;  // 発話終了とみなす連続無音秒数
+	float speechWhisperVoiceThreshold;  // 発話中とみなす表示音量(0〜1)
+	bool speechContinuousRecognition;  // falseなら1回認識したら停止する
+	bool speechStartOnPlay;  // Play開始時に自動で認識を始める
+	std::vector<std::string> speechKeywords;  // Keyword Modeの登録語
+	std::vector<std::string> speechKeywordActionNames;  // 各Keywordに対応するInput Action名(空なら通知しない)
+	std::string speechInputActionMapName;  // Keyword → Input Actionを流すAction Map名
+	std::string speechRecognizedActionName;  // 認識時に呼ぶC++ Script Action名
+	// AIVoiceCommand 設定。文字起こしとは別の限定語彙音響認識として使う。
+	std::vector<std::string> voiceCommandPhrases;
+	int32_t voiceCommandMatchMode;  // 0=音声類似, 1=文字類似, 2=完全一致
+	float voiceCommandCorrectionStrength;  // 0=補正なしの厳格判定、1=設定範囲内で最大補正
+	float voiceCommandThreshold;  // 1位候補に必要な最低Confidence
+	float voiceCommandMinimumMargin;  // 1位と2位に必要な差
+	float voiceCommandCooldownSeconds;
+	std::string voiceCommandLanguage;
+	std::string voiceCommandMicrophoneDevice;
+	// CameraInput 設定
+	std::string cameraInputDeviceName;  // 空なら既定Camera
+	int32_t cameraInputWidth;  // 要求解像度。Cameraが拒否したら実際の値へ落ちる
+	int32_t cameraInputHeight;
+	int32_t cameraInputFrameRateLimit;  // 0で無制限
+	bool cameraInputStartOnPlay;  // Play開始時に自動で映像取得を始める
+	bool cameraInputDebugPreview;  // Debug Windowへ映像情報を出す
+	// ImageRecognizer 設定
+	int32_t visionRecognitionMode;  // 0=物体検出,1=画像分類,2=顔検出,3=顔ランドマーク,4=頭部方向,5=色追跡,6=動体検出
+	int32_t visionBackendKind;  // 0=自動,1=内蔵,2=ONNX,3=OpenCV,4=MediaPipe,5=使用しない
+	std::string visionModelAssetPath;
+	std::string visionLabelAssetPath;  // 1行1ラベル。空ならモデル横の.txtを探す
+	float visionConfidenceThreshold;
+	float visionRecognitionInterval;  // 推論間隔(秒)。毎フレーム推論しない
+	int32_t visionCameraGameObjectId;  // 映像元のCameraInput所有GameObject。-1なら先頭のCameraを使う
+	bool visionStartOnPlay;
+	bool visionDebugPreview;
+	Vector3 visionTargetColor;  // Color Trackingの追跡色
+	float visionColorTolerance;
+	float visionMinimumAreaRatio;  // これ未満の検出面積は無視する
+	float visionMotionThreshold;
+	std::string visionInputActionMapName;  // 認識結果 → Input Actionを流すAction Map名
+	std::string visionInputActionName;
+	std::string visionInputTriggerLabel;  // Label一致で発火させる検出ラベル
+	int32_t visionInputTriggerMode;  // 0=Label検出,1=Yaw右,2=Yaw左,3=Pitch上,4=Pitch下,5=動き検出,6=色検出
+	float visionInputAngleThreshold;  // Head Pose条件の角度しきい値(度)
+	std::string visionDetectedActionName;  // 認識時に呼ぶC++ Script Action名
+	// HapticSource 追加設定(強さ/持続時間/ループは hapticStrength 系を使う)
+	int32_t hapticPattern;  // 0=一定,1=パルス,2=立ち上がり,3=減衰,4=衝撃
+	int32_t hapticChannel;  // 0=両方,1=左,2=右
+	float hapticFrequency;  // パルス/衝撃の1秒あたり回数
+	std::string hapticClipAssetPath;  // .haptic Clip。空ならInspectorの値を直接使う
+	bool hapticAudioReactive;  // assetPathのAudioを解析して強度を作る
+	int32_t hapticAudioFrequencyRange;  // 0=低域,1=全域,2=高域
+	float hapticAudioSensitivity;
+	float hapticAudioIntensityScale;
+	bool hapticPhysicsReactive;  // 衝突Impulseから強度を作る
+	float hapticMaximumImpulse;  // 強度1.0になるImpulse
+	int32_t hapticTargetDevice;  // 0=自動,1=XInput,2=Switch2
 };
 
 struct EditorGameObject {
@@ -2504,6 +2659,7 @@ public:
 		const std::string& objectUuid,
 		const std::string& componentUuid,
 		const std::string& property);  // UUIDを基準に共同制作の1変更だけを現在Sceneへ統合する
+	bool SaveGameObjectFragment(const std::string& objectUuid, const std::string& filePath) const;  // 共同制作のSetProperty系差分用に、GameObject 1つだけを含む断片Sceneを保存する
 	void PushUndo();  // 現在の Scene 状態を Undo スタックへ積む
 	bool Undo();  // 1 つ前の Scene 状態へ戻す
 	bool Redo();  // Undo した Scene 状態をやり直す
@@ -2538,6 +2694,9 @@ public:
 private:
 	int32_t nextGameObjectId_;
 	std::string sceneUuid_;
+	// LoadSceneがこのBuildで解釈できなかった行。SaveSceneで末尾へ書き戻し、
+	// 新しいBuildが追加した行を古いBuildで開いて保存し直しても消さないようにする。
+	std::vector<std::string> unknownSceneLines_;
 	EditorPhysicsSettings physicsSettings_;
 	std::vector<EditorGameObject> gameObjects_;
 	mutable std::unordered_map<int32_t, int32_t> gameObjectIndexById_;  // ID検索を全件線形走査せず O(1) で行う索引。

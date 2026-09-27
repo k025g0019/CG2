@@ -5,16 +5,30 @@
 #include "EditorComponentUtility.h"
 #include "EditorProfilerManager.h"
 #include "EditorSharedState.h"
+#include "Source/Engine/Asset/AssetRegistry.h"
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <unordered_set>
+
+#include <windows.h>
+#include <commdlg.h>
+#pragma comment(lib, "comdlg32.lib")
 
 using namespace EditorSharedState;
 
 namespace {
 	constexpr int32_t kValidationIntervalFrames = 60;
+
+	// SceneSerializationSmokeTest専用の許容誤差比較。Engine全体で使う汎用Math Utilityは
+	// 既存コードに見当たらないため、ここでだけ小さなepsilonを使う。
+	bool IsNearlyEqualForSmokeTest(float actual, float expected) {
+		constexpr float kEpsilon = 0.0001f;
+		return std::fabs(actual - expected) <= kEpsilon;
+	}
 
 	const char* GetSeverityName(EditorValidationSeverity severity) {
 		switch (severity) {
@@ -26,6 +40,104 @@ namespace {
 		default:
 			return "Info";
 		}
+	}
+
+	float GetAverageMilliseconds(const EditorProfilerSample& sample) {
+		return sample.sampleCount > 0u
+			? sample.totalMilliseconds / static_cast<float>(sample.sampleCount)
+			: 0.0f;
+	}
+
+	std::string EscapeProfilerCsvField(const std::string& fieldText) {
+		const bool needsQuoting =
+			fieldText.find(',') != std::string::npos ||
+			fieldText.find('"') != std::string::npos ||
+			fieldText.find('\n') != std::string::npos;
+
+		if (!needsQuoting) {
+			return fieldText;
+		}
+
+		std::string escapedText = "\"";
+		for (const char character : fieldText) {
+			if (character == '"') {
+				escapedText += "\"\"";
+			}
+			else {
+				escapedText += character;
+			}
+		}
+		escapedText += "\"";
+		return escapedText;
+	}
+
+	// 呼出回数(回数が多くて重い)と合計/最大ms(1回自体が重い)を分けて共有できるよう、表と同じ列でCSV化する。
+	std::string BuildProfilerExportText(const std::vector<EditorProfilerSample>& samples) {
+		std::string exportText =
+			"イベント名,処理元,GameObject,Thread,呼出回数,合計ms,平均ms,Self ms,最大ms,DrawCall,Dispatch,Alloc回数,Alloc KB\n";
+
+		for (const EditorProfilerSample& sample : samples) {
+			std::string gameObjectText = "-";
+			if (sample.gameObjectId >= 0) {
+				const EditorGameObject* gameObject = g_editorScene.FindGameObject(sample.gameObjectId);
+				gameObjectText =
+					(gameObject != nullptr ? gameObject->name : std::string("削除済み")) +
+					" (" + std::to_string(sample.gameObjectId) + ")";
+			}
+
+			char numberBuffer[256]{};
+			std::snprintf(
+				numberBuffer,
+				_countof(numberBuffer),
+				"%llu,%.3f,%.3f,%.3f,%.3f,%llu,%llu,%llu,%.2f",
+				static_cast<unsigned long long>(sample.sampleCount),
+				sample.totalMilliseconds,
+				GetAverageMilliseconds(sample),
+				sample.selfMilliseconds,
+				sample.peakMilliseconds,
+				static_cast<unsigned long long>(sample.drawCallCount),
+				static_cast<unsigned long long>(sample.dispatchCount),
+				static_cast<unsigned long long>(sample.allocationCount),
+				static_cast<double>(sample.allocatedBytes) / 1024.0);
+
+			exportText += EscapeProfilerCsvField(sample.name) + ",";
+			exportText += EscapeProfilerCsvField(sample.source) + ",";
+			exportText += EscapeProfilerCsvField(gameObjectText) + ",";
+			exportText += EscapeProfilerCsvField(sample.threadName) + ",";
+			exportText += numberBuffer;
+			exportText += "\n";
+		}
+
+		return exportText;
+	}
+
+	void SaveProfilerExportToFile(const std::string& exportText) {
+		wchar_t fileBuffer[MAX_PATH] = L"ProfilerResult.csv";
+		OPENFILENAMEW ofn{};
+		ofn.lStructSize = sizeof(ofn);
+		ofn.lpstrFilter = L"CSVファイル (*.csv)\0*.csv\0すべてのファイル (*.*)\0*.*\0";
+		ofn.lpstrFile = fileBuffer;
+		ofn.nMaxFile = MAX_PATH;
+		ofn.lpstrDefExt = L"csv";
+		ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
+
+		if (GetSaveFileNameW(&ofn) == 0) {
+			return;  // 保存先選択をキャンセルした場合は何もしない
+		}
+
+		std::filesystem::path savePath(fileBuffer);
+		if (savePath.extension().empty()) {
+			savePath += L".csv";
+		}
+
+		std::ofstream outputFile(savePath, std::ios::trunc | std::ios::binary);
+		if (!outputFile.is_open()) {
+			return;
+		}
+
+		static constexpr unsigned char kProfilerExportUtf8Bom[] = {0xEFu, 0xBBu, 0xBFu};
+		outputFile.write(reinterpret_cast<const char*>(kProfilerExportUtf8Bom), sizeof(kProfilerExportUtf8Bom));
+		outputFile << exportText;
 	}
 }
 
@@ -65,6 +177,11 @@ void EditorDiagnosticsWindowManager::Draw() {
 	if (ImGui::BeginTabBar("DiagnosticsTabs")) {
 		if (ImGui::BeginTabItem("Profiler")) {
 			DrawProfiler();
+			ImGui::EndTabItem();
+		}
+
+		if (ImGui::BeginTabItem("Physics")) {
+			DrawPhysics();
 			ImGui::EndTabItem();
 		}
 
@@ -112,6 +229,39 @@ void EditorDiagnosticsWindowManager::Draw() {
 	}
 
 	ImGui::End();
+#endif
+}
+
+void EditorDiagnosticsWindowManager::DrawPhysics() {
+#ifdef USE_IMGUI
+	const EditorPhysicsSettings& settings = g_editorScene.GetPhysicsSettings();
+	const EditorPhysicsManager& physics = g_editorRuntimeManager.GetPhysicsManager();
+	ImGui::Text("接触 %d 件 / Cast %d 件", static_cast<int>(physics.GetContactDebugEvents().size()), static_cast<int>(physics.GetFrameDebugCasts().size()));
+	ImGui::TextDisabled("UI (6) と Ignore Raycast (7) は物理衝突・Queryから除外されます。false の行列要素は Contact を拒否します。");
+	if (ImGui::CollapsingHeader("Layer Collision Matrix", ImGuiTreeNodeFlags_DefaultOpen)) {
+		for (int32_t row = 0; row < 8; ++row) {
+			for (int32_t column = 0; column < 8; ++column) {
+				ImGui::PushID(row * 8 + column);
+				const bool enabled = settings.layerCollisionMatrix[row][column];
+				ImGui::TextColored(enabled ? ImVec4(0.35f, 0.9f, 0.45f, 1.0f) : ImVec4(1.0f, 0.35f, 0.3f, 1.0f), "%d-%d:%s", row, column, enabled ? "Pass" : "Ignore");
+				ImGui::PopID();
+				if (column != 7) ImGui::SameLine();
+			}
+		}
+	}
+	if (ImGui::CollapsingHeader("Contacts", ImGuiTreeNodeFlags_DefaultOpen)) {
+		for (const EditorJoltPhysicsManager::PhysicsEvent& event : physics.GetContactDebugEvents()) {
+			const auto& c = event.collision;
+			ImGui::Text("%d <-> %d  point(%.2f, %.2f, %.2f)  %s", c.selfGameObjectId, c.otherGameObjectId, c.point.x, c.point.y, c.point.z, c.isTrigger ? "Trigger" : "Collision");
+		}
+	}
+	if (ImGui::CollapsingHeader("Ray / Shape Cast", ImGuiTreeNodeFlags_DefaultOpen)) {
+		for (const EditorPhysicsManager::PhysicsDebugCast& cast : physics.GetFrameDebugCasts()) {
+			const char* type = cast.type == EditorPhysicsManager::PhysicsDebugCastType::Ray ? "Ray" : cast.type == EditorPhysicsManager::PhysicsDebugCastType::Sphere ? "Sphere" : "Capsule";
+			ImGui::Text("%s distance %.2f  %s", type, cast.distance, cast.hasHit ? "Hit" : "No Hit");
+			if (cast.hasHit) ImGui::SameLine(), ImGui::Text(" object %d", cast.hit.gameObjectId);
+		}
+	}
 #endif
 }
 
@@ -216,18 +366,266 @@ void EditorDiagnosticsWindowManager::ValidateScene() {
 	}
 }
 
+// Scene保存→読込の往復でTransformと代表Component(Light)の値が保持されることを確認する
+// 最初の回帰テスト。g_editorScene(現在編集中のScene)には一切触れず、独立したEditorScene
+// インスタンス上でだけ検証するため、実行してもユーザーが開いているSceneを壊さない。
+void EditorDiagnosticsWindowManager::RunSceneSerializationSmokeTest() {
+	constexpr const char* kTestObjectName = "SerializationSmokeTestObject";
+	constexpr const char* kTempSceneDirectory = "runtime_cache/validation";
+	constexpr const char* kTempScenePath = "runtime_cache/validation/scene_serialization_smoke_test.scene";
+
+	// 0 や 1 などの既定値と衝突しない、識別しやすい非既定値。
+	const Vector3 expectedPosition = {12.25f, -3.5f, 87.125f};
+	const Vector3 expectedRotation = {0.261799f, 0.645772f, -0.383972f};  // 15° / 37° / -22° をラジアンへ変換した値(rotateはラジアン管理のため)
+	const Vector3 expectedScale = {1.5f, 0.75f, 2.25f};
+	const float expectedLightIntensity = 41.75f;
+	const float expectedLightRange = 63.5f;  // colliderRadius(Light の到達距離)
+	const Vector3 expectedLightColor = {0.15f, 0.85f, 0.35f};
+
+	bool allPassed = true;
+
+	auto reportFloatMismatch = [&allPassed](const std::string& fieldName, float expected, float actual) {
+		if (IsNearlyEqualForSmokeTest(actual, expected)) {
+			return;
+		}
+		allPassed = false;
+		g_editorConsoleMessages.push_back(
+			"SceneSerializationSmokeTest FAILED " + fieldName +
+			" Expected=" + std::to_string(expected) +
+			" Actual=" + std::to_string(actual));
+	};
+
+	std::error_code directoryError;
+	std::filesystem::create_directories(kTempSceneDirectory, directoryError);
+
+	// 1〜5: 空のテストSceneへGameObjectを1個生成し、Transformと代表Component(Light)へ非既定値を設定する。
+	EditorScene sourceScene;
+	const int32_t gameObjectId = sourceScene.CreateGameObject(kTestObjectName);
+	EditorGameObject* sourceGameObject = sourceScene.FindGameObject(gameObjectId);
+
+	if (sourceGameObject == nullptr) {
+		g_editorConsoleMessages.push_back("SceneSerializationSmokeTest FAILED GameObjectの生成に失敗しました。");
+		return;
+	}
+
+	sourceGameObject->translate = expectedPosition;
+	sourceGameObject->rotate = expectedRotation;
+	sourceGameObject->scale = expectedScale;
+
+	sourceScene.AddComponent(gameObjectId, EditorComponentType::Light);
+	EditorGameObject* sourceGameObjectAfterAddComponent = sourceScene.FindGameObject(gameObjectId);
+	EditorComponent* sourceLight = sourceGameObjectAfterAddComponent != nullptr ?
+		EditorComponentUtility::FindComponent(*sourceGameObjectAfterAddComponent, EditorComponentType::Light) :
+		nullptr;
+
+	if (sourceLight == nullptr) {
+		g_editorConsoleMessages.push_back("SceneSerializationSmokeTest FAILED Light Componentの追加に失敗しました。");
+		return;
+	}
+
+	sourceLight->intensity = expectedLightIntensity;
+	sourceLight->colliderRadius = expectedLightRange;
+	sourceLight->color = expectedLightColor;
+
+	// 6: 一時Sceneファイルへ実際に保存する。
+	if (!sourceScene.SaveScene(kTempScenePath)) {
+		g_editorConsoleMessages.push_back(
+			"SceneSerializationSmokeTest FAILED Sceneの保存に失敗しました。 Path=" + std::string(kTempScenePath));
+		return;
+	}
+
+	// 7〜8: メモリ上のSceneとは別の新しいEditorSceneインスタンスへ読み直す。保存直後の値を
+	// 使い回さないことで、実際にファイルへ書かれた内容だけを検証する。
+	EditorScene reloadedScene;
+
+	if (!reloadedScene.LoadScene(kTempScenePath)) {
+		g_editorConsoleMessages.push_back(
+			"SceneSerializationSmokeTest FAILED Sceneの再読込に失敗しました。 Path=" + std::string(kTempScenePath));
+		return;
+	}
+
+	// 9: GameObjectを名前で取得する。
+	const EditorGameObject* reloadedGameObject = nullptr;
+
+	for (const EditorGameObject& gameObject : reloadedScene.GetGameObjects()) {
+		if (gameObject.name == kTestObjectName) {
+			reloadedGameObject = &gameObject;
+			break;
+		}
+	}
+
+	if (reloadedGameObject == nullptr) {
+		allPassed = false;
+		g_editorConsoleMessages.push_back(
+			"SceneSerializationSmokeTest FAILED GameObject Expected=" + std::string(kTestObjectName) + " Actual=見つからない");
+	}
+	else {
+		// 10: Transformを比較する。
+		reportFloatMismatch("Transform.Position.x", expectedPosition.x, reloadedGameObject->translate.x);
+		reportFloatMismatch("Transform.Position.y", expectedPosition.y, reloadedGameObject->translate.y);
+		reportFloatMismatch("Transform.Position.z", expectedPosition.z, reloadedGameObject->translate.z);
+		reportFloatMismatch("Transform.Rotation.x", expectedRotation.x, reloadedGameObject->rotate.x);
+		reportFloatMismatch("Transform.Rotation.y", expectedRotation.y, reloadedGameObject->rotate.y);
+		reportFloatMismatch("Transform.Rotation.z", expectedRotation.z, reloadedGameObject->rotate.z);
+		reportFloatMismatch("Transform.Scale.x", expectedScale.x, reloadedGameObject->scale.x);
+		reportFloatMismatch("Transform.Scale.y", expectedScale.y, reloadedGameObject->scale.y);
+		reportFloatMismatch("Transform.Scale.z", expectedScale.z, reloadedGameObject->scale.z);
+
+		// 11〜12: Componentとそのフィールドを取得して比較する。
+		const EditorComponent* reloadedLight =
+			EditorComponentUtility::FindComponent(*reloadedGameObject, EditorComponentType::Light);
+
+		if (reloadedLight == nullptr) {
+			allPassed = false;
+			g_editorConsoleMessages.push_back(
+				"SceneSerializationSmokeTest FAILED Light Component Expected=存在する Actual=見つからない");
+		}
+		else {
+			reportFloatMismatch("Light.Intensity", expectedLightIntensity, reloadedLight->intensity);
+			reportFloatMismatch("Light.Range", expectedLightRange, reloadedLight->colliderRadius);
+			reportFloatMismatch("Light.Color.r", expectedLightColor.x, reloadedLight->color.x);
+			reportFloatMismatch("Light.Color.g", expectedLightColor.y, reloadedLight->color.y);
+			reportFloatMismatch("Light.Color.b", expectedLightColor.z, reloadedLight->color.z);
+		}
+	}
+
+	// テスト専用の一時Sceneなので、確認が終わったら削除する。
+	std::error_code removeError;
+	std::filesystem::remove(kTempScenePath, removeError);
+
+	if (allPassed) {
+		g_editorConsoleMessages.push_back("SceneSerializationSmokeTest PASSED");
+	}
+	else {
+		g_editorConsoleMessages.push_back("SceneSerializationSmokeTest FAILED");
+	}
+}
+
 void EditorDiagnosticsWindowManager::DrawProfiler() {
 #ifdef USE_IMGUI
 	EditorProfilerManager& profilerManager = g_editorRuntimeManager.GetProfilerManager();
 	std::vector<EditorProfilerSample> samples = profilerManager.GetSortedSamples();
 	const bool isProfilerEnabled = profilerManager.IsEnabled();
-	const bool isPlaying = g_editorRuntimeManager.IsPlaying();
 	float measurementDurationSeconds = profilerManager.GetMeasurementDurationSeconds();
-	static bool showCallHierarchy = true;
+	static bool showCallHierarchy = false;
+	static float heavyThresholdMilliseconds = 1.0f;  // 平均msがこの値以上の行を「単体で重い」として強調表示する。
+	static int32_t profilerSortColumnIndex = 4;
+	static bool isProfilerSortAscending = false;
 
-	ImGui::Text("GPU Frame: %.2f ms", g_renderProfile.gpuFrameMilliseconds);
+	//================================================================
+	// Frame History(いつ重くなったかを時系列で見る)
+	//================================================================
+
+	static std::vector<float> cpuFrameHistory;
+	static std::vector<float> gpuFrameHistory;
+	profilerManager.GetFrameHistory(cpuFrameHistory, gpuFrameHistory);
+
+	const float lastCpuMilliseconds = profilerManager.GetLastCpuFrameMilliseconds();
+	const float averageCpuMilliseconds = profilerManager.GetAverageCpuFrameMilliseconds();
+	ImGui::Text(
+		"CPU Frame: %.2f ms (平均 %.2f ms / %.0f FPS)",
+		lastCpuMilliseconds,
+		averageCpuMilliseconds,
+		averageCpuMilliseconds > 0.001f ? 1000.0f / averageCpuMilliseconds : 0.0f);
 	ImGui::SameLine();
-	ImGui::Text("Objects: %u  Instances: %u", g_renderProfile.sceneObjectCount, g_renderProfile.instanceCount);
+	ImGui::Text("GPU Frame: %.2f ms", g_renderProfile.gpuFrameMilliseconds);
+
+	if (!cpuFrameHistory.empty()) {
+		// 上限を直近の最大値に合わせ、スパイクが潰れないようにする。
+		const float maximumCpuMilliseconds =
+			(std::max)(*std::max_element(cpuFrameHistory.begin(), cpuFrameHistory.end()), 1.0f);
+		ImGui::PlotLines(
+			"CPU ms",
+			cpuFrameHistory.data(),
+			static_cast<int32_t>(cpuFrameHistory.size()),
+			0,
+			nullptr,
+			0.0f,
+			maximumCpuMilliseconds * 1.1f,
+			ImVec2(-1.0f, 60.0f));
+
+		if (!gpuFrameHistory.empty()) {
+			const float maximumGpuMilliseconds =
+				(std::max)(*std::max_element(gpuFrameHistory.begin(), gpuFrameHistory.end()), 1.0f);
+			ImGui::PlotLines(
+				"GPU ms",
+				gpuFrameHistory.data(),
+				static_cast<int32_t>(gpuFrameHistory.size()),
+				0,
+				nullptr,
+				0.0f,
+				maximumGpuMilliseconds * 1.1f,
+				ImVec2(-1.0f, 60.0f));
+		}
+	}
+
+	//================================================================
+	// Runtime Stats(増え続けるリソースを1画面で見つける)
+	//================================================================
+
+	if (ImGui::CollapsingHeader("Runtime Stats", ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::Text("Objects: %u  Instances: %u", g_renderProfile.sceneObjectCount, g_renderProfile.instanceCount);
+
+		const std::uint64_t usedVideoMemoryMegabytes = g_renderProfile.localVideoMemoryUsage / (1024u * 1024u);
+		const std::uint64_t budgetVideoMemoryMegabytes = g_renderProfile.localVideoMemoryBudget / (1024u * 1024u);
+		ImGui::Text("VRAM: %llu MB / %llu MB", usedVideoMemoryMegabytes, budgetVideoMemoryMegabytes);
+
+		// Play 中だけ実値が取れるものは、停止中はその旨を出して誤解させない。
+		if (g_editorRuntimeManager.IsPlaying()) {
+			const EditorAudioManager& audioManager = g_editorRuntimeManager.GetAudioManager();
+			ImGui::Text(
+				"Audio Voice: %d / %d  (読込済Clip %d)",
+				audioManager.GetActiveVoiceCount(),
+				audioManager.GetMaxGlobalVoiceCount(),
+				audioManager.GetLoadedClipCount());
+			ImGui::Text(
+				"Physics Body: %d",
+				g_editorRuntimeManager.GetPhysicsManager().GetPhysicsBodyCount());
+
+			const EditorVfxManager::DebugStats vfxStats = g_editorRuntimeManager.GetVfxManager().GetDebugStats();
+			ImGui::Text(
+				"VFX: Effect %d / Emitter %d / Particle %d",
+				vfxStats.activeEffectCount,
+				vfxStats.activeEmitterCount,
+				vfxStats.activeParticleCount);
+		}
+		else {
+			ImGui::TextDisabled("Audio Voice / Physics Body / VFX は Play 中のみ計測されます。");
+		}
+
+		ImGui::Text("Asset Registry 登録数: %zu", AssetRegistry::Get().GetAllRecords().size());
+
+		// Draw Call / Dispatch は Profiler サンプルの合計から出す。
+		std::uint64_t totalDrawCallCount = 0u;
+		std::uint64_t totalDispatchCount = 0u;
+		std::uint64_t totalAllocatedBytes = 0u;
+
+		for (const EditorProfilerSample& sample : samples) {
+			totalDrawCallCount += sample.drawCallCount;
+			totalDispatchCount += sample.dispatchCount;
+			totalAllocatedBytes += sample.allocatedBytes;
+		}
+
+		ImGui::Text(
+			"計測中の Draw Call: %llu  Dispatch: %llu  Alloc: %llu KB",
+			totalDrawCallCount,
+			totalDispatchCount,
+			totalAllocatedBytes / 1024u);
+
+		if (!isProfilerEnabled && samples.empty()) {
+			ImGui::TextDisabled("Draw Call / Alloc は下の計測を開始すると集計されます。");
+		}
+
+		//================================================================
+		// Runtime Error(気づかないまま進めてしまう失敗を前に出す)
+		//================================================================
+		if (g_lastPhysicsBodyFailure != "-" && !g_lastPhysicsBodyFailure.empty()) {
+			ImGui::TextColored(
+				ImVec4(1.0f, 0.4f, 0.35f, 1.0f),
+				"物理Body生成の直近失敗: %s",
+				g_lastPhysicsBodyFailure.c_str());
+		}
+	}
 
 	//================================================================
 	// 手動計測
@@ -252,18 +650,8 @@ void EditorDiagnosticsWindowManager::DrawProfiler() {
 			profilerManager.SetMeasurementDurationSeconds(measurementDurationSeconds);
 		}
 
-		if (!isPlaying) {
-			ImGui::BeginDisabled();
-		}
-
-		if (ImGui::Button("負荷イベント計測を開始")) {
+		if (ImGui::Button("Editor / Play負荷計測を開始")) {
 			profilerManager.SetEnabled(true);
-		}
-
-		if (!isPlaying) {
-			ImGui::EndDisabled();
-			ImGui::SameLine();
-			ImGui::TextDisabled("Play中に計測できます");
 		}
 
 		if (!samples.empty()) {
@@ -275,9 +663,32 @@ void EditorDiagnosticsWindowManager::DrawProfiler() {
 		}
 	}
 
+	if (!samples.empty()) {
+		if (ImGui::Button("結果をコピー")) {
+			const std::string exportText = BuildProfilerExportText(samples);
+			ImGui::SetClipboardText(exportText.c_str());
+		}
+
+		ImGui::SameLine();
+
+		if (ImGui::Button("ファイルに保存…")) {
+			const std::string exportText = BuildProfilerExportText(samples);
+			SaveProfilerExportToFile(exportText);
+		}
+
+		ImGui::SameLine();
+		ImGui::TextDisabled("(チームへの共有用にCSVで書き出します)");
+	}
+
 	ImGui::Separator();
 	ImGui::TextDisabled("Engineと有効なNative Script DLLを同じ期間で集計し、合計時間順に表示します。");
 	ImGui::Checkbox("呼出階層で表示", &showCallHierarchy);
+	ImGui::SameLine();
+	ImGui::SetNextItemWidth(100.0f);
+	ImGui::InputFloat("重い判定(平均ms)", &heavyThresholdMilliseconds, 0.1f, 1.0f, "%.2f");
+	heavyThresholdMilliseconds = (std::max)(heavyThresholdMilliseconds, 0.0f);
+	ImGui::SameLine();
+	ImGui::TextDisabled("(平均msがこの値以上の行を赤く強調)");
 
 	if (showCallHierarchy) {
 		std::sort(
@@ -295,28 +706,115 @@ void EditorDiagnosticsWindowManager::DrawProfiler() {
 				return firstSample.callPath < secondSample.callPath;
 			});
 	}
+	else {
+		ImGui::SameLine();
+		ImGui::TextDisabled("(列見出しをクリックすると並び替えできます。既定は呼出回数の多い順)");
+	}
 
-	if (ImGui::BeginTable(
-			"ProfilerSamples",
-			12,
-			ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-				ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX)) {
-		ImGui::TableSetupColumn("イベント名");
-		ImGui::TableSetupColumn("処理元");
-		ImGui::TableSetupColumn("GameObject");
-		ImGui::TableSetupColumn("Thread");
-		ImGui::TableSetupColumn("呼出回数");
-		ImGui::TableSetupColumn("合計 ms");
-		ImGui::TableSetupColumn("Self ms");
-		ImGui::TableSetupColumn("最大 ms");
-		ImGui::TableSetupColumn("DrawCall");
-		ImGui::TableSetupColumn("Dispatch");
-		ImGui::TableSetupColumn("Alloc回数");
-		ImGui::TableSetupColumn("Alloc KB");
+	ImGuiTableFlags tableFlags =
+		ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX;
+
+	if (!showCallHierarchy) {
+		// 呼出階層表示中はThread/GameObject/CallPath順を保ちたいため、列クリックでの並び替えは通常表示のときだけ許可する。
+		tableFlags |= ImGuiTableFlags_Sortable;
+	}
+
+	if (ImGui::BeginTable("ProfilerSamples", 13, tableFlags)) {
+		ImGui::TableSetupColumn("イベント名", ImGuiTableColumnFlags_NoSort);
+		ImGui::TableSetupColumn("処理元", ImGuiTableColumnFlags_NoSort);
+		ImGui::TableSetupColumn("GameObject", ImGuiTableColumnFlags_NoSort);
+		ImGui::TableSetupColumn("Thread", ImGuiTableColumnFlags_NoSort);
+		ImGui::TableSetupColumn(
+			"呼出回数",
+			ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_PreferSortDescending);
+		ImGui::TableSetupColumn("合計 ms", ImGuiTableColumnFlags_PreferSortDescending);
+		ImGui::TableSetupColumn("平均 ms", ImGuiTableColumnFlags_PreferSortDescending);
+		ImGui::TableSetupColumn("Self ms", ImGuiTableColumnFlags_PreferSortDescending);
+		ImGui::TableSetupColumn("最大 ms", ImGuiTableColumnFlags_PreferSortDescending);
+		ImGui::TableSetupColumn("DrawCall", ImGuiTableColumnFlags_PreferSortDescending);
+		ImGui::TableSetupColumn("Dispatch", ImGuiTableColumnFlags_PreferSortDescending);
+		ImGui::TableSetupColumn("Alloc回数", ImGuiTableColumnFlags_PreferSortDescending);
+		ImGui::TableSetupColumn("Alloc KB", ImGuiTableColumnFlags_PreferSortDescending);
 		ImGui::TableHeadersRow();
+
+		if (!showCallHierarchy) {
+			if (ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs()) {
+				if (sortSpecs->SpecsDirty && sortSpecs->SpecsCount > 0) {
+					const ImGuiTableColumnSortSpecs& sortSpec = sortSpecs->Specs[0];
+					profilerSortColumnIndex = sortSpec.ColumnIndex;
+					isProfilerSortAscending = sortSpec.SortDirection == ImGuiSortDirection_Ascending;
+				}
+
+				// samplesは毎フレーム取得し直されるため、選択中の並び順も毎フレーム適用する。
+				std::stable_sort(
+					samples.begin(),
+					samples.end(),
+					[&](const EditorProfilerSample& firstSample, const EditorProfilerSample& secondSample) {
+						int comparisonResult = 0;
+
+						switch (profilerSortColumnIndex) {
+							case 4:
+								comparisonResult = (firstSample.sampleCount > secondSample.sampleCount) -
+									(firstSample.sampleCount < secondSample.sampleCount);
+								break;
+							case 5:
+								comparisonResult = (firstSample.totalMilliseconds > secondSample.totalMilliseconds) -
+									(firstSample.totalMilliseconds < secondSample.totalMilliseconds);
+								break;
+							case 6: {
+								const float firstAverage = GetAverageMilliseconds(firstSample);
+								const float secondAverage = GetAverageMilliseconds(secondSample);
+								comparisonResult = (firstAverage > secondAverage) - (firstAverage < secondAverage);
+								break;
+							}
+							case 7:
+								comparisonResult = (firstSample.selfMilliseconds > secondSample.selfMilliseconds) -
+									(firstSample.selfMilliseconds < secondSample.selfMilliseconds);
+								break;
+							case 8:
+								comparisonResult = (firstSample.peakMilliseconds > secondSample.peakMilliseconds) -
+									(firstSample.peakMilliseconds < secondSample.peakMilliseconds);
+								break;
+							case 9:
+								comparisonResult = (firstSample.drawCallCount > secondSample.drawCallCount) -
+									(firstSample.drawCallCount < secondSample.drawCallCount);
+								break;
+							case 10:
+								comparisonResult = (firstSample.dispatchCount > secondSample.dispatchCount) -
+									(firstSample.dispatchCount < secondSample.dispatchCount);
+								break;
+							case 11:
+								comparisonResult = (firstSample.allocationCount > secondSample.allocationCount) -
+									(firstSample.allocationCount < secondSample.allocationCount);
+								break;
+							case 12:
+								comparisonResult = (firstSample.allocatedBytes > secondSample.allocatedBytes) -
+									(firstSample.allocatedBytes < secondSample.allocatedBytes);
+								break;
+							default:
+								break;
+							}
+
+						if (comparisonResult == 0) {
+							return false;
+						}
+
+						return isProfilerSortAscending ? comparisonResult < 0 : comparisonResult > 0;
+					});
+
+				sortSpecs->SpecsDirty = false;
+			}
+		}
 
 		for (const EditorProfilerSample& sample : samples) {
 			ImGui::TableNextRow();
+			const float averageMilliseconds = GetAverageMilliseconds(sample);
+
+			if (averageMilliseconds >= heavyThresholdMilliseconds) {
+				// 呼出回数の多寡とは別に、1回自体が重い行だと一目で分かるよう行全体を赤系に強調する。
+				ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, IM_COL32(120, 45, 40, 140));
+			}
+
 			ImGui::TableSetColumnIndex(0);
 			const float indentationWidth = showCallHierarchy
 				? static_cast<float>(sample.callDepth) * 14.0f
@@ -349,16 +847,18 @@ void EditorDiagnosticsWindowManager::DrawProfiler() {
 			ImGui::TableSetColumnIndex(5);
 			ImGui::Text("%.3f", sample.totalMilliseconds);
 			ImGui::TableSetColumnIndex(6);
-			ImGui::Text("%.3f", sample.selfMilliseconds);
+			ImGui::Text("%.3f", averageMilliseconds);
 			ImGui::TableSetColumnIndex(7);
-			ImGui::Text("%.3f", sample.peakMilliseconds);
+			ImGui::Text("%.3f", sample.selfMilliseconds);
 			ImGui::TableSetColumnIndex(8);
-			ImGui::Text("%llu", static_cast<unsigned long long>(sample.drawCallCount));
+			ImGui::Text("%.3f", sample.peakMilliseconds);
 			ImGui::TableSetColumnIndex(9);
-			ImGui::Text("%llu", static_cast<unsigned long long>(sample.dispatchCount));
+			ImGui::Text("%llu", static_cast<unsigned long long>(sample.drawCallCount));
 			ImGui::TableSetColumnIndex(10);
-			ImGui::Text("%llu", static_cast<unsigned long long>(sample.allocationCount));
+			ImGui::Text("%llu", static_cast<unsigned long long>(sample.dispatchCount));
 			ImGui::TableSetColumnIndex(11);
+			ImGui::Text("%llu", static_cast<unsigned long long>(sample.allocationCount));
+			ImGui::TableSetColumnIndex(12);
 			ImGui::Text("%.2f", static_cast<double>(sample.allocatedBytes) / 1024.0);
 		}
 
@@ -421,6 +921,13 @@ void EditorDiagnosticsWindowManager::DrawSceneValidation() {
 
 	ImGui::SameLine();
 	ImGui::Checkbox("自動検査", &shouldAutoValidate_);
+
+	if (ImGui::Button("Scene Serialization Smoke Test")) {
+		RunSceneSerializationSmokeTest();
+	}
+	ImGui::SameLine();
+	ImGui::TextDisabled("(結果はConsoleへ出力されます。現在編集中のSceneには影響しません)");
+
 	ImGui::Separator();
 
 	for (const EditorValidationIssue& issue : validationIssues_) {

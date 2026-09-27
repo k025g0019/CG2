@@ -1,4 +1,4 @@
-﻿# CG2 Python AI template
+﻿# ManoEngine Python AI template
 # 出力は必ず "x y z" の 3 つの数値にする。
 # C++ 側はこの方向ベクトルを水平移動方向として受け取る。
 

@@ -1,9 +1,16 @@
 ﻿#include "EditorGameBuildManager.h"
 
+#include "EditorBlastDestructionManager.h"
+#include "EditorComponentUtility.h"
+#include "EditorScene.h"
+#include "Source/Engine/Core/EngineVersion.h"
+#include "Source/Engine/Core/ProjectVersionManager.h"
+
 #include <Windows.h>
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <queue>
@@ -17,6 +24,54 @@ namespace {
 	constexpr const char* kProjectSettingsPath = "ProjectSettings/GameBuildSettings.cg2";
 	constexpr const char* kStandaloneManifestName = "game.build";
 	constexpr const wchar_t* kReleaseGameBuildLogPath = L"BuildLogs/ReleaseGameBuild.log";
+	constexpr const wchar_t* kDevelopmentGameBuildLogPath = L"BuildLogs/DevelopmentGameBuild.log";
+
+	bool BakeDestructibleAssetsForBuild(
+		const std::filesystem::path& projectRoot,
+		const EditorGameBuildSettings& buildSettings,
+		std::string& resultMessage) {
+		for (const std::string& scenePath : buildSettings.scenePaths) {
+			EditorScene scene;
+			if (!scene.LoadScene((projectRoot / std::filesystem::path(scenePath)).generic_string())) {
+				resultMessage = "Build: 破壊Asset確認用にSceneを読めません " + scenePath;
+				return false;
+			}
+			std::vector<std::string> bakeMessages;
+			for (EditorGameObject& gameObject : scene.GetGameObjects()) {
+				EditorComponent* component = EditorComponentUtility::FindComponent(
+					gameObject, EditorComponentType::DestructiblePart);
+				if (component != nullptr && component->isActive && component->destructibleBlastEnabled &&
+					!component->destructibleBlastUsePrefracturedChildren) {
+					// InspectorのAuto BakeをOFFにしていても、配布物に未Bake Assetを残さない。
+					component->destructibleBlastAutoBake = true;
+				}
+			}
+			EditorBlastDestructionManager blastManager;
+			blastManager.Initialize(&scene, nullptr, nullptr, &bakeMessages);
+			blastManager.Start();
+			bool bakeSucceeded = true;
+			std::string failureReason;
+			for (const EditorGameObject& gameObject : scene.GetGameObjects()) {
+				const EditorComponent* component = EditorComponentUtility::FindComponent(
+					gameObject, EditorComponentType::DestructiblePart);
+				if (component == nullptr || !component->isActive || !component->destructibleBlastEnabled ||
+					component->destructibleBlastUsePrefracturedChildren) continue;
+				if (component->destructibleBlastBakeStatus != "Ready") {
+					bakeSucceeded = false;
+					failureReason = component->destructibleBlastBakeError.empty()
+						? component->destructibleBlastBakeStatus
+						: component->destructibleBlastBakeError;
+					break;
+				}
+			}
+			blastManager.Stop();
+			if (!bakeSucceeded) {
+				resultMessage = "Build: 未BakeのDestructiblePartがあります " + scenePath + " (" + failureReason + ")";
+				return false;
+			}
+		}
+		return true;
+	}
 
 	std::filesystem::path GetExecutableDirectory() {
 		std::wstring executablePath(MAX_PATH, L'\0');
@@ -185,9 +240,10 @@ namespace {
 		return waitResult == WAIT_OBJECT_0 && exitCodeRead != FALSE;
 	}
 
-	bool BuildReleasePlayer(
+	bool BuildGamePlayer(
 		const std::filesystem::path& projectRoot,
-		const std::filesystem::path& releaseDirectory,
+		const std::filesystem::path& playerDirectory,
+		EditorGameBuildConfiguration configuration,
 		std::string& resultMessage) {
 		const std::filesystem::path msBuildPath = FindMsBuildExecutable();
 
@@ -196,21 +252,23 @@ namespace {
 			return false;
 		}
 
-		const std::filesystem::path buildLogPath = projectRoot / kReleaseGameBuildLogPath;
+		const bool isDevelopment = configuration == EditorGameBuildConfiguration::Development;
+		const std::filesystem::path buildLogPath = projectRoot /
+			(isDevelopment ? kDevelopmentGameBuildLogPath : kReleaseGameBuildLogPath);
 		std::error_code fileError;
-		std::filesystem::create_directories(releaseDirectory, fileError);
+		std::filesystem::create_directories(playerDirectory, fileError);
 
 		if (fileError) {
-			resultMessage = "Build: ReleaseGame用フォルダーを作成できません";
+			resultMessage = "Build: Player用フォルダーを作成できません";
 			return false;
 		}
 
 		std::wstring processArguments;
 		processArguments += QuoteCommandArgument(projectRoot / "CG2.vcxproj");
 		processArguments += L" /t:Build";
-		processArguments += L" /p:Configuration=Release";
+		processArguments += isDevelopment ? L" /p:Configuration=Debug" : L" /p:Configuration=Release";
 		processArguments += L" /p:Platform=x64";
-		processArguments += L" \"/p:OutDir=" + releaseDirectory.wstring() + L"/\"";
+		processArguments += L" \"/p:OutDir=" + playerDirectory.wstring() + L"/\"";
 		processArguments += L" /m:1 /nodeReuse:false /nologo /verbosity:minimal";
 		DWORD processExitCode = ERROR_PROCESS_ABORTED;
 
@@ -222,16 +280,17 @@ namespace {
 				processExitCode) ||
 			processExitCode != ERROR_SUCCESS) {
 			resultMessage =
-				"Build: ReleaseGame本体のビルドに失敗しました。ログ: " +
+				"Build: " + std::string(isDevelopment ? "Development" : "Release") +
+				" Player本体のビルドに失敗しました。ログ: " +
 				buildLogPath.generic_string();
 			return false;
 		}
 
-		const std::filesystem::path releaseExecutablePath = releaseDirectory / "CG2.exe";
+		const std::filesystem::path releaseExecutablePath = playerDirectory / "CG2.exe";
 		fileError.clear();
 
 		if (!std::filesystem::exists(releaseExecutablePath, fileError)) {
-			resultMessage = "Build: ビルド成功後のCG2.exeが見つかりません";
+			resultMessage = "Build: Playerビルド後のCG2.exeが見つかりません";
 			return false;
 		}
 
@@ -338,7 +397,7 @@ namespace {
 		}
 
 		if (executableName.empty()) {
-			executableName = L"CG2Game";
+			executableName = L"ManoEngineGame";
 		}
 
 		return std::filesystem::path(executableName + L".exe");
@@ -765,11 +824,11 @@ bool EditorGameBuildManager::ExportReleaseGame(
 	}
 
 	const std::filesystem::path projectRoot = FindProjectRoot();
-	// x64/Release は Editor 自身がそこから起動している場合があり(Release で開いていないと重いため)、
-	// そこから書き出そうとすると再ビルド時にファイルロックで失敗する。
-	// 書き出し専用に独立した x64/ReleaseGame ビルドを別途用意し、そこから読む。
-	const std::filesystem::path releaseDirectory = projectRoot / "x64" / "ReleaseGame";
-	const std::filesystem::path releaseExecutablePath = releaseDirectory / "CG2.exe";
+	// Editor自身のx64/Debug・Releaseを上書きしないよう、書き出し専用の出力先を使う。
+	const bool isDevelopment = buildSettings.configuration == EditorGameBuildConfiguration::Development;
+	const std::filesystem::path playerDirectory = projectRoot / "x64" /
+		(isDevelopment ? "DevelopmentGame" : "ReleaseGame");
+	const std::filesystem::path releaseExecutablePath = playerDirectory / "CG2.exe";
 	std::error_code fileError;
 
 	for (const std::string& scenePath : buildSettings.scenePaths) {
@@ -780,16 +839,21 @@ bool EditorGameBuildManager::ExportReleaseGame(
 		}
 	}
 
+	// Release Playerは実行時Fractureを行わない。未生成CacheはPlayerビルド前にEditor側でBakeする。
+	if (!BakeDestructibleAssetsForBuild(projectRoot, buildSettings, resultMessage)) {
+		return false;
+	}
+
 	if (!BuildReferencedNativeScripts(projectRoot, buildSettings, resultMessage)) {
 		return false;
 	}
 
-	if (!BuildReleasePlayer(projectRoot, releaseDirectory, resultMessage)) {
+	if (!BuildGamePlayer(projectRoot, playerDirectory, buildSettings.configuration, resultMessage)) {
 		return false;
 	}
 
 	std::filesystem::path outputDirectory = buildSettings.outputDirectory.empty()
-		? std::filesystem::path("Builds/CG2Game")
+		? std::filesystem::path("Builds/ManoEngineGame")
 		: Utf8Path(buildSettings.outputDirectory);
 
 	if (outputDirectory.is_relative()) {
@@ -805,8 +869,8 @@ bool EditorGameBuildManager::ExportReleaseGame(
 	}
 
 	fileError.clear();
-	if (std::filesystem::equivalent(releaseDirectory, outputDirectory, fileError)) {
-		resultMessage = "Build: x64/Release 自体は出力先に指定できません";
+	if (std::filesystem::equivalent(playerDirectory, outputDirectory, fileError)) {
+		resultMessage = "Build: x64のPlayer中間出力先は指定できません";
 		return false;
 	}
 
@@ -824,13 +888,17 @@ bool EditorGameBuildManager::ExportReleaseGame(
 	}
 
 	for (const std::filesystem::directory_entry& entry :
-		 std::filesystem::directory_iterator(releaseDirectory, fileError)) {
+		 std::filesystem::directory_iterator(playerDirectory, fileError)) {
 		if (fileError) {
 			break;
 		}
 
 		if (!entry.is_regular_file(fileError) || entry.path().extension() != ".dll") {
 			continue;
+		}
+		const std::wstring runtimeDllName = entry.path().filename().wstring();
+		if (runtimeDllName == L"NvBlastExtAuthoring.dll" || runtimeDllName == L"NvBlastGlobals.dll") {
+			continue;  // Bake専用DLLは配布Playerへ含めない。
 		}
 
 		fileError.clear();
@@ -846,7 +914,8 @@ bool EditorGameBuildManager::ExportReleaseGame(
 	}
 
 	const std::vector<std::pair<std::filesystem::path, std::string>> runtimeDirectories = {
-		{releaseDirectory / "ThirdParty", "ThirdParty"},
+		{playerDirectory / "ThirdParty", "ThirdParty"},
+		{projectRoot / "Library" / "FractureCache", "Library/FractureCache"},
 	};
 
 	for (const auto& [sourcePath, destinationName] : runtimeDirectories) {
@@ -913,7 +982,8 @@ bool EditorGameBuildManager::ExportReleaseGame(
 		return false;
 	}
 
-	resultMessage = "Build: ゲームを書き出しました " + WideToUtf8(gameExecutablePath.generic_wstring());
+	resultMessage = "Build: " + std::string(isDevelopment ? "Development" : "Release") +
+		" ゲームを書き出しました " + WideToUtf8(gameExecutablePath.generic_wstring());
 
 	if (buildSettings.includeOnlyReferencedAssets) {
 		resultMessage += " (参照Asset " + std::to_string(copiedAssetCount) + "件 + 共通Shader)";
@@ -946,6 +1016,16 @@ bool EditorGameBuildManager::TryLoadStandaloneManifest(
 		resultMessage = "GameBuild: 起動シーンがありません";
 		return false;
 	}
+	if (!buildSettings.engineVersion.empty() && buildSettings.engineVersion != GetManoEngineDisplayVersion()) {
+		resultMessage = "GameBuild: Engine Version不一致 (Build " + buildSettings.engineVersion +
+			" / Player " + GetManoEngineDisplayVersion() + ")";
+		return false;
+	}
+	if (buildSettings.projectFormatVersion > GetManoProjectFormatVersion() ||
+		(buildSettings.scriptApiVersion != 0U && buildSettings.scriptApiVersion != GetManoScriptApiVersion())) {
+		resultMessage = "GameBuild: Project FormatまたはScript API Versionが非互換です";
+		return false;
+	}
 
 	resultMessage = "GameBuild: " + buildSettings.startupScenePath;
 	return true;
@@ -961,6 +1041,10 @@ bool EditorGameBuildManager::LoadSettingsFile(
 	}
 
 	EditorGameBuildSettings loadedSettings{};
+	loadedSettings.engineVersion = GetManoEngineDisplayVersion();
+	loadedSettings.engineChannel = GetEngineUpdateChannelText(GetManoEngineUpdateChannel());
+	loadedSettings.projectFormatVersion = GetManoProjectFormatVersion();
+	loadedSettings.scriptApiVersion = GetManoScriptApiVersion();
 	loadedSettings.scenePaths.clear();
 	std::string line;
 	bool isFirstLine = true;
@@ -996,6 +1080,15 @@ bool EditorGameBuildManager::LoadSettingsFile(
 		else if (key == "ReferencedAssetsOnly") {
 			loadedSettings.includeOnlyReferencedAssets = value != "0";
 		}
+		else if (key == "Configuration") {
+			loadedSettings.configuration = value == "Development"
+				? EditorGameBuildConfiguration::Development
+				: EditorGameBuildConfiguration::Release;
+		}
+		else if (key == "EngineVersion") loadedSettings.engineVersion = value;
+		else if (key == "EngineChannel") loadedSettings.engineChannel = value;
+		else if (key == "ProjectFormatVersion") loadedSettings.projectFormatVersion = static_cast<std::uint32_t>(std::strtoul(value.c_str(), nullptr, 10));
+		else if (key == "ScriptApiVersion") loadedSettings.scriptApiVersion = static_cast<std::uint32_t>(std::strtoul(value.c_str(), nullptr, 10));
 		else if (key == "Scene" && !value.empty() &&
 			std::find(
 				loadedSettings.scenePaths.begin(),
@@ -1033,10 +1126,20 @@ bool EditorGameBuildManager::SaveSettingsFile(
 	file.write(
 		reinterpret_cast<const char*>(kUtf8Bom),
 		static_cast<std::streamsize>(sizeof(kUtf8Bom)));
-	file << "CG2GameBuild|1\r\n";
+	file << "ManoEngineGameBuild|1\r\n";
+	file << "EngineVersion|" << GetManoEngineDisplayVersion() << "\r\n";
+	ProjectVersionSettings projectVersion = ProjectVersionManager::CreateCurrentDefaults();
+	std::string projectVersionError;
+	ProjectVersionManager::Load(std::filesystem::current_path(), projectVersion, projectVersionError);
+	file << "EngineChannel|" << GetEngineUpdateChannelText(projectVersion.updateChannel) << "\r\n";
+	file << "ProjectFormatVersion|" << projectVersion.projectFormatVersion << "\r\n";
+	file << "ScriptApiVersion|" << GetManoScriptApiVersion() << "\r\n";
 	file << "ProductName|" << buildSettings.productName << "\r\n";
 	file << "OutputDirectory|" << buildSettings.outputDirectory << "\r\n";
 	file << "StartupScene|" << buildSettings.startupScenePath << "\r\n";
+	file << "Configuration|" <<
+		(buildSettings.configuration == EditorGameBuildConfiguration::Development ? "Development" : "Release") <<
+		"\r\n";
 	file << "ReferencedAssetsOnly|" << (buildSettings.includeOnlyReferencedAssets ? 1 : 0) << "\r\n";
 
 	for (const std::string& scenePath : buildSettings.scenePaths) {

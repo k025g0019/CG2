@@ -138,7 +138,7 @@ struct Material {
 static_assert(offsetof(Material, uvTransform) == 96u, "Material と HLSL cbuffer の uvTransform 開始位置が一致していません。");
 static_assert(sizeof(Material) == 464u, "Material と HLSL cbuffer のサイズが一致していません。");
 
-constexpr int32_t kMaxEmissiveLights = 8;
+constexpr int32_t kMaxEmissiveLights = 32;
 
 struct EmissiveLight {
 	Vector3 position;  // 放射オブジェクトのワールド位置
@@ -281,6 +281,22 @@ struct TransformationMatrix {
 static_assert(
 	sizeof(TransformationMatrix) == 960u,
 	"TransformationMatrix と Ocean HLSL cbuffer のサイズが一致していません。");
+
+// 同一Mesh/Materialを1 Drawへまとめる時だけ使う軽量Transform。
+// Ocean・Terrain・Skinningは従来のTransformationMatrix経路へ残す。
+struct EditorBatchInstanceData {
+	Matrix4x4 WVP;
+	Matrix4x4 World;
+	Matrix4x4 lightWVP;
+	Matrix4x4 previousWVP;
+	Vector4 temporalParams;
+	uint32_t cullingObjectIndex;
+	uint32_t padding0;
+	uint32_t padding1;
+	uint32_t padding2;
+};
+
+static_assert(sizeof(EditorBatchInstanceData) == 288u);
 
 struct Sprite {
 	Vector2 position;  // スプライトの左上基準位置

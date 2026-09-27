@@ -1,4 +1,4 @@
-#include "EditorReplayManager.h"
+﻿#include "EditorReplayManager.h"
 
 #include <algorithm>
 #include <cstring>
@@ -6,7 +6,7 @@
 #include <fstream>
 
 namespace {
-	constexpr char kReplayHeader[] = "CG2REPLAY2";
+	constexpr char kReplayHeader[] = "ManoEngineREPLAY2";
 }
 
 void EditorReplayManager::StartRecording() {

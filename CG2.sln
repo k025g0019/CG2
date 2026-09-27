@@ -3,9 +3,13 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
 VisualStudioVersion = 18.5.11801.241 oobstable
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "CG2", "CG2.vcxproj", "{E2675A88-50E0-460F-B75F-9F665CC7968C}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "CG2", "CG2.vcxproj", "{787C711C-3419-4AEB-BA52-CE282FE125FF}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "DirectXTex", "ThirdParty\DirectXTex\DirectXTex_Desktop_2022.vcxproj", "{371B9FA9-4C90-4AC6-A123-ACED756D6C77}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ManoLauncher", "Tools\ManoLauncher\ManoLauncher.vcxproj", "{54E674D8-B052-4E78-A5FA-6FE229936DB7}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ManoTeamServer", "Tools\ManoTeamServer\ManoTeamServer.vcxproj", "{7B3C2E91-5D48-4A16-9F27-1C4E8A6D3B52}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -13,19 +17,27 @@ Global
 		Release|x64 = Release|x64
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{E2675A88-50E0-460F-B75F-9F665CC7968C}.Debug|x64.ActiveCfg = Debug|x64
-		{E2675A88-50E0-460F-B75F-9F665CC7968C}.Debug|x64.Build.0 = Debug|x64
-		{E2675A88-50E0-460F-B75F-9F665CC7968C}.Release|x64.ActiveCfg = Release|x64
-		{E2675A88-50E0-460F-B75F-9F665CC7968C}.Release|x64.Build.0 = Release|x64
+		{787C711C-3419-4AEB-BA52-CE282FE125FF}.Debug|x64.ActiveCfg = Debug|x64
+		{787C711C-3419-4AEB-BA52-CE282FE125FF}.Debug|x64.Build.0 = Debug|x64
+		{787C711C-3419-4AEB-BA52-CE282FE125FF}.Release|x64.ActiveCfg = Release|x64
+		{787C711C-3419-4AEB-BA52-CE282FE125FF}.Release|x64.Build.0 = Release|x64
 		{371B9FA9-4C90-4AC6-A123-ACED756D6C77}.Debug|x64.ActiveCfg = Debug|x64
 		{371B9FA9-4C90-4AC6-A123-ACED756D6C77}.Debug|x64.Build.0 = Debug|x64
 		{371B9FA9-4C90-4AC6-A123-ACED756D6C77}.Release|x64.ActiveCfg = Release|x64
 		{371B9FA9-4C90-4AC6-A123-ACED756D6C77}.Release|x64.Build.0 = Release|x64
+		{54E674D8-B052-4E78-A5FA-6FE229936DB7}.Debug|x64.ActiveCfg = Debug|x64
+		{54E674D8-B052-4E78-A5FA-6FE229936DB7}.Debug|x64.Build.0 = Debug|x64
+		{54E674D8-B052-4E78-A5FA-6FE229936DB7}.Release|x64.ActiveCfg = Release|x64
+		{54E674D8-B052-4E78-A5FA-6FE229936DB7}.Release|x64.Build.0 = Release|x64
+		{7B3C2E91-5D48-4A16-9F27-1C4E8A6D3B52}.Debug|x64.ActiveCfg = Debug|x64
+		{7B3C2E91-5D48-4A16-9F27-1C4E8A6D3B52}.Debug|x64.Build.0 = Debug|x64
+		{7B3C2E91-5D48-4A16-9F27-1C4E8A6D3B52}.Release|x64.ActiveCfg = Release|x64
+		{7B3C2E91-5D48-4A16-9F27-1C4E8A6D3B52}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
-		SolutionGuid = {BE1A9A69-EC90-4A98-9977-D1B2A5239FC0}
+		SolutionGuid = {F262CA9B-2B76-4CAE-9A63-8AF6AC86D990}
 	EndGlobalSection
 EndGlobal

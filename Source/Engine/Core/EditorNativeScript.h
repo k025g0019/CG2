@@ -6,7 +6,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -83,6 +85,77 @@ enum class MouseButton : int32_t {
 	Left = 0,
 	Right = 1,
 	Middle = 2,
+};
+
+// NVIDIA Blast 1.1.5で作成されたDestructiblePartをScriptから破断する高水準API。
+// gameObjectIdにはBlastを有効にしたDestructiblePart所有Objectを渡す。
+class BlastDestruction final {
+public:
+	static bool ApplyDamage(
+		int32_t gameObjectId,
+		const EditorScriptVector3& worldPosition,
+		float radius,
+		float damage,
+		float impulse = 0.0f) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->BlastApplyDamage != nullptr &&
+			runtimeApi->BlastApplyDamage(gameObjectId, &worldPosition, radius, damage, impulse);
+	}
+
+	// Inspectorの「既定Damage半径」「既定分離Impulse」を使う簡略版。
+	static bool ApplyDamage(
+		int32_t gameObjectId,
+		const EditorScriptVector3& worldPosition,
+		float damage) {
+		return ApplyDamage(gameObjectId, worldPosition, 0.0f, damage, -1.0f);
+	}
+
+	static bool FractureAll(int32_t gameObjectId, float impulse = 0.0f) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->BlastFractureAll != nullptr &&
+			runtimeApi->BlastFractureAll(gameObjectId, impulse);
+	}
+
+	static bool IsFractured(int32_t gameObjectId) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->BlastIsFractured != nullptr &&
+			runtimeApi->BlastIsFractured(gameObjectId);
+	}
+
+	static int32_t GetChunkCount(int32_t gameObjectId) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->BlastGetChunkCount != nullptr
+			? runtimeApi->BlastGetChunkCount(gameObjectId)
+			: 0;
+	}
+
+	static int32_t GetActorCount(int32_t gameObjectId) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->BlastGetActorCount != nullptr
+			? runtimeApi->BlastGetActorCount(gameObjectId)
+			: 0;
+	}
+
+	static int32_t GetBondCount(int32_t gameObjectId) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->BlastGetBondCount != nullptr
+			? runtimeApi->BlastGetBondCount(gameObjectId)
+			: 0;
+	}
+
+	// chunkIndexは0からGetChunkCount()未満。分裂後の演出・スコア加算等を個々のChunkへ紐付けるために使う。
+	static bool GetChunkGameObjectId(int32_t gameObjectId, int32_t chunkIndex, int32_t& chunkGameObjectId) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->BlastGetChunkGameObjectId != nullptr &&
+			runtimeApi->BlastGetChunkGameObjectId(gameObjectId, chunkIndex, &chunkGameObjectId);
+	}
+
+	// そのChunkが本体からすでに分離済み(動的Rigidbody化済み)かどうか。
+	static bool IsChunkDetached(int32_t gameObjectId, int32_t chunkIndex) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->BlastIsChunkDetached != nullptr &&
+			runtimeApi->BlastIsChunkDetached(gameObjectId, chunkIndex);
+	}
 };
 
 class Input final {
@@ -2359,8 +2432,177 @@ public:
 			: 0.0f;
 	}
 
+	// 個別Voice操作用のHandleを返す再生。戻り値をAudioVoiceへ渡して音量・Pitch等を後から変える。
+	// 使い方: AudioVoice voice = Audio(gameObject).PlayVoice(); voice.SetVolume(0.5f);
+	EditorScriptAudioHandle PlayVoice() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->AudioPlayWithHandle != nullptr
+			? runtimeApi->AudioPlayWithHandle(gameObjectId_)
+			: kInvalidEditorScriptAudioHandle;
+	}
+
+	// AudioSource Componentを用意せず、Clipを直接World座標へ鳴らす(着弾音・足音など)。
+	static EditorScriptAudioHandle PlayAtPosition(
+		const char* clipAssetPath,
+		const EditorScriptVector3& position,
+		int32_t audioBus = 0,
+		float volume = 1.0f,
+		bool loop = false) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->AudioPlayClipAtPosition != nullptr
+			? runtimeApi->AudioPlayClipAtPosition(clipAssetPath, &position, audioBus, volume, loop)
+			: kInvalidEditorScriptAudioHandle;
+	}
+
+	// 距離減衰もPanもしない2D再生(BGM、UI SE)。
+	static EditorScriptAudioHandle Play2D(
+		const char* clipAssetPath,
+		int32_t audioBus = 0,
+		float volume = 1.0f,
+		bool loop = false) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->AudioPlayClip2D != nullptr
+			? runtimeApi->AudioPlayClip2D(clipAssetPath, audioBus, volume, loop)
+			: kInvalidEditorScriptAudioHandle;
+	}
+
 private:
 	int32_t gameObjectId_ = -1;
+};
+
+// 再生中のAudio Voice 1本を操作する。再生が終わったVoiceのHandleは無効になり、
+// 以降の操作は全てfalseを返すだけで何もしない(Crashしない)。
+class AudioVoice final {
+public:
+	using Handle = EditorScriptAudioHandle;
+
+	explicit AudioVoice(Handle audioHandle = kInvalidEditorScriptAudioHandle)
+		: audioHandle_(audioHandle) {
+	}
+
+	Handle GetHandle() const {
+		return audioHandle_;
+	}
+
+	// 再生が続いているか(Pause中も含む)。
+	bool IsValid() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->AudioIsHandleValid != nullptr &&
+			runtimeApi->AudioIsHandleValid(audioHandle_);
+	}
+
+	// 今実際に鳴っているか(Pause中はfalse)。
+	bool IsPlaying() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->AudioIsPlayingHandle != nullptr &&
+			runtimeApi->AudioIsPlayingHandle(audioHandle_);
+	}
+
+	bool Stop() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->AudioStopHandle != nullptr &&
+			runtimeApi->AudioStopHandle(audioHandle_);
+	}
+
+	bool Pause() const {
+		return SetPaused(true);
+	}
+
+	bool Resume() const {
+		return SetPaused(false);
+	}
+
+	bool SetPaused(bool isPaused) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->AudioSetPaused != nullptr &&
+			runtimeApi->AudioSetPaused(audioHandle_, isPaused);
+	}
+
+	bool SetVolume(float volume) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->AudioSetVolumeHandle != nullptr &&
+			runtimeApi->AudioSetVolumeHandle(audioHandle_, volume);
+	}
+
+	bool GetVolume(float& volume) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->AudioGetVolumeHandle != nullptr &&
+			runtimeApi->AudioGetVolumeHandle(audioHandle_, &volume);
+	}
+
+	bool SetPitch(float pitch) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->AudioSetPitch != nullptr &&
+			runtimeApi->AudioSetPitch(audioHandle_, pitch);
+	}
+
+	bool GetPitch(float& pitch) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->AudioGetPitch != nullptr &&
+			runtimeApi->AudioGetPitch(audioHandle_, &pitch);
+	}
+
+	bool SetLoop(bool loop) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->AudioSetLoop != nullptr &&
+			runtimeApi->AudioSetLoop(audioHandle_, loop);
+	}
+
+	bool GetLoop(bool& loop) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->AudioGetLoop != nullptr &&
+			runtimeApi->AudioGetLoop(audioHandle_, &loop);
+	}
+
+	// Audio::PlayAtPositionで鳴らしたVoiceの位置を更新する。
+	// AudioSource経由のVoiceはGameObjectのTransformが位置なのでfalseを返す。
+	bool SetPosition(const EditorScriptVector3& position) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->AudioSetPositionHandle != nullptr &&
+			runtimeApi->AudioSetPositionHandle(audioHandle_, &position);
+	}
+
+	bool SetBus(int32_t audioBus) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->AudioSetBus != nullptr &&
+			runtimeApi->AudioSetBus(audioHandle_, audioBus);
+	}
+
+	bool GetPlaybackPosition(float& seconds) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->AudioGetPlaybackPosition != nullptr &&
+			runtimeApi->AudioGetPlaybackPosition(audioHandle_, &seconds);
+	}
+
+	bool SetPlaybackPosition(float seconds) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->AudioSetPlaybackPosition != nullptr &&
+			runtimeApi->AudioSetPlaybackPosition(audioHandle_, seconds);
+	}
+
+	bool GetDuration(float& seconds) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->AudioGetDuration != nullptr &&
+			runtimeApi->AudioGetDuration(audioHandle_, &seconds);
+	}
+
+	// durationSeconds秒かけてtargetVolumeへ寄せる。targetVolume=0なら到達時に自動停止する。
+	bool FadeTo(float targetVolume, float durationSeconds) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->AudioFadeTo != nullptr &&
+			runtimeApi->AudioFadeTo(audioHandle_, targetVolume, durationSeconds);
+	}
+
+	bool FadeIn(float durationSeconds, float targetVolume = 1.0f) const {
+		return SetVolume(0.0f) && FadeTo(targetVolume, durationSeconds);
+	}
+
+	bool FadeOut(float durationSeconds) const {
+		return FadeTo(0.0f, durationSeconds);
+	}
+
+private:
+	Handle audioHandle_ = kInvalidEditorScriptAudioHandle;
 };
 
 // GameObjectを介さず任意のWorld座標へEffekseer(.efk/.efkefc)を再生する。
@@ -2395,6 +2637,129 @@ public:
 			runtimeApi->StopEffekseerEffectAtPosition(effekseerPlaybackHandle);
 		}
 	}
+};
+
+// 再生中のVFX Instance 1個を操作する。.effectdef(Effect ID)と Effekseer(.efk/.efkefc)の
+// どちらで再生したかはHandleが覚えているため、Script側は同じ操作APIを使える。
+// 再生が終わったInstanceのHandleは無効になり、以降の操作は全てfalseを返す(Crashしない)。
+class VfxInstance final {
+public:
+	using Handle = EditorScriptVfxHandle;
+
+	explicit VfxInstance(Handle vfxHandle = kInvalidEditorScriptVfxHandle)
+		: vfxHandle_(vfxHandle) {
+	}
+
+	// World座標へ発生させる。effectIdOrAssetPathが.efk/.efkefcならEffekseer、
+	// それ以外は.effectdefのEffect IDとして再生する。
+	static VfxInstance Spawn(
+		const char* effectIdOrAssetPath,
+		const EditorScriptVector3& position,
+		const EditorScriptVector3& rotationEuler = EditorScriptVector3{}) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->VfxSpawn != nullptr
+			? VfxInstance{runtimeApi->VfxSpawn(effectIdOrAssetPath, &position, &rotationEuler)}
+			: VfxInstance{};
+	}
+
+	// GameObjectへ追従させて発生させる(銃口炎・ミサイル曳光など)。
+	// Effekseerは追従を持たないため、発生時点のWorld座標へ固定される。
+	static VfxInstance SpawnAttached(
+		const char* effectIdOrAssetPath,
+		const GameObject& followGameObject,
+		const EditorScriptVector3& localOffset = EditorScriptVector3{}) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->VfxSpawnAttached != nullptr
+			? VfxInstance{runtimeApi->VfxSpawnAttached(
+				  effectIdOrAssetPath, followGameObject.GetInstanceId(), &localOffset)}
+			: VfxInstance{};
+	}
+
+	Handle GetHandle() const {
+		return vfxHandle_;
+	}
+
+	bool IsPlaying() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->VfxIsPlayingHandle != nullptr &&
+			runtimeApi->VfxIsPlayingHandle(vfxHandle_);
+	}
+
+	// 新規発生を止める。既に出ているParticleは寿命まで残る。
+	bool Stop() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->VfxStopHandle != nullptr &&
+			runtimeApi->VfxStopHandle(vfxHandle_);
+	}
+
+	bool Pause() const {
+		return SetPaused(true);
+	}
+
+	bool Resume() const {
+		return SetPaused(false);
+	}
+
+	bool SetPaused(bool isPaused) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->VfxSetPausedHandle != nullptr &&
+			runtimeApi->VfxSetPausedHandle(vfxHandle_, isPaused);
+	}
+
+	// 既存Particleを捨てて最初から再生し直す。
+	bool Restart() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->VfxRestartHandle != nullptr &&
+			runtimeApi->VfxRestartHandle(vfxHandle_);
+	}
+
+	bool SetPosition(const EditorScriptVector3& position) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->VfxSetPositionHandle != nullptr &&
+			runtimeApi->VfxSetPositionHandle(vfxHandle_, &position);
+	}
+
+	bool GetPosition(EditorScriptVector3& position) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->VfxGetPositionHandle != nullptr &&
+			runtimeApi->VfxGetPositionHandle(vfxHandle_, &position);
+	}
+
+	bool SetPlaybackSpeed(float playbackSpeed) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->VfxSetPlaybackSpeed != nullptr &&
+			runtimeApi->VfxSetPlaybackSpeed(vfxHandle_, playbackSpeed);
+	}
+
+	// Effekseerは設定値を読み戻せないため、Effekseer Instanceではfalseを返す。
+	bool GetPlaybackSpeed(float& playbackSpeed) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->VfxGetPlaybackSpeed != nullptr &&
+			runtimeApi->VfxGetPlaybackSpeed(vfxHandle_, &playbackSpeed);
+	}
+
+	// .effectdef Instanceの生存Particle数。Effekseerは非対応でfalse。
+	bool GetParticleCount(int32_t& particleCount) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->VfxGetParticleCountHandle != nullptr &&
+			runtimeApi->VfxGetParticleCountHandle(vfxHandle_, &particleCount);
+	}
+
+	// 回転・拡縮はEffekseer Instanceのみ対応する(.effectdefはInstance Transformを持たない)。
+	bool SetRotation(const EditorScriptVector3& rotationEuler) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->VfxSetRotationHandle != nullptr &&
+			runtimeApi->VfxSetRotationHandle(vfxHandle_, &rotationEuler);
+	}
+
+	bool SetScale(const EditorScriptVector3& scale) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->VfxSetScaleHandle != nullptr &&
+			runtimeApi->VfxSetScaleHandle(vfxHandle_, &scale);
+	}
+
+private:
+	Handle vfxHandle_ = kInvalidEditorScriptVfxHandle;
 };
 
 class TimeScale final {
@@ -2765,6 +3130,289 @@ public:
 		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
 		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->RelayAction != nullptr &&
 			runtimeApi->RelayAction(gameObjectId_);
+	}
+
+private:
+	int32_t gameObjectId_ = -1;
+};
+
+// Terrain Componentを持つGameObjectの高さを問い合わせる。
+// 描画(頂点シェーダ)・Collider・このAPIは同じHeightMapと同じ式を使うため、値が一致する。
+// Raycastを撃たずに接地高さが要る場面(設置、AIの経路判断、カメラ追従)で使う。
+class Terrain final {
+public:
+	explicit Terrain(const GameObject& gameObject)
+		: gameObjectId_(gameObject.GetInstanceId()) {
+	}
+
+	// World XZ における地表のY(World)を返す。Terrain範囲外でも端の高さでClampして返す。
+	bool GetHeightAt(float worldX, float worldZ, float& worldHeight) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->TerrainGetHeightAtWorld != nullptr &&
+			runtimeApi->TerrainGetHeightAtWorld(gameObjectId_, worldX, worldZ, &worldHeight);
+	}
+
+	bool GetHeightAt(const EditorScriptVector3& worldPosition, float& worldHeight) const {
+		return GetHeightAt(worldPosition.x, worldPosition.z, worldHeight);
+	}
+
+	// そのWorld XZがTerrainのXZ範囲内か。範囲外を弾きたい場合はGetHeightAtの前に確認する。
+	bool Contains(float worldX, float worldZ) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->TerrainContainsWorldPosition != nullptr &&
+			runtimeApi->TerrainContainsWorldPosition(gameObjectId_, worldX, worldZ);
+	}
+
+private:
+	int32_t gameObjectId_ = -1;
+};
+
+// Text / Button / Toggle / Slider などのUI Componentを持つGameObjectを操作する。
+// 表示文字列はstd::stringのため汎用Field API(GetFloat/SetFloat等)では扱えず、このClassが唯一の経路である。
+// 対象GameObjectにUI Componentが無い場合は全て false を返す。
+class Ui final {
+public:
+	explicit Ui(const GameObject& gameObject)
+		: gameObjectId_(gameObject.GetInstanceId()) {
+	}
+
+	bool SetText(const char* text) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->UiSetText != nullptr &&
+			runtimeApi->UiSetText(gameObjectId_, text);
+	}
+
+	bool SetText(const std::string& text) const {
+		return SetText(text.c_str());
+	}
+
+	bool GetText(std::string& text) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi == nullptr || runtimeApi->UiGetText == nullptr) {
+			return false;
+		}
+
+		char buffer[1024] = {};
+
+		if (!runtimeApi->UiGetText(gameObjectId_, buffer, static_cast<int32_t>(sizeof(buffer)))) {
+			return false;
+		}
+
+		text = buffer;
+		return true;
+	}
+
+	bool SetColor(const EditorScriptVector3& color, float alpha = 1.0f) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->UiSetTextColor != nullptr &&
+			runtimeApi->UiSetTextColor(gameObjectId_, &color, alpha);
+	}
+
+	bool GetColor(EditorScriptVector3& color, float& alpha) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->UiGetTextColor != nullptr &&
+			runtimeApi->UiGetTextColor(gameObjectId_, &color, &alpha);
+	}
+
+	// 0以下を渡すとRect高さから決める自動サイズへ戻る。
+	bool SetFontSize(float fontSize) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->UiSetFontSize != nullptr &&
+			runtimeApi->UiSetFontSize(gameObjectId_, fontSize);
+	}
+
+	bool GetFontSize(float& fontSize) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->UiGetFontSize != nullptr &&
+			runtimeApi->UiGetFontSize(gameObjectId_, &fontSize);
+	}
+
+	bool SetInteractable(bool isInteractable) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->UiSetInteractable != nullptr &&
+			runtimeApi->UiSetInteractable(gameObjectId_, isInteractable);
+	}
+
+	bool GetInteractable(bool& isInteractable) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->UiGetInteractable != nullptr &&
+			runtimeApi->UiGetInteractable(gameObjectId_, &isInteractable);
+	}
+
+	bool SetSliderValue(float value) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->UiSetSliderValue != nullptr &&
+			runtimeApi->UiSetSliderValue(gameObjectId_, value);
+	}
+
+	bool GetSliderValue(float& value) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->UiGetSliderValue != nullptr &&
+			runtimeApi->UiGetSliderValue(gameObjectId_, &value);
+	}
+
+	bool SetToggleValue(bool value) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->UiSetToggleValue != nullptr &&
+			runtimeApi->UiSetToggleValue(gameObjectId_, value);
+	}
+
+	bool GetToggleValue(bool& value) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->UiGetToggleValue != nullptr &&
+			runtimeApi->UiGetToggleValue(gameObjectId_, &value);
+	}
+
+private:
+	int32_t gameObjectId_ = -1;
+};
+
+// Camera / CinemachineCamera Componentを持つGameObjectの投影・向き・優先度をScriptから操作する。
+// Blend / Shakeの再生は従来通りCameraEffectsを使う。
+class Camera final {
+public:
+	explicit Camera(const GameObject& gameObject)
+		: gameObjectId_(gameObject.GetInstanceId()) {
+	}
+
+	explicit Camera(int32_t gameObjectId = -1)
+		: gameObjectId_(gameObjectId) {
+	}
+
+	// Game Viewが今使っているCamera(有効なうち最大Priority)。無ければ無効なCameraを返す。
+	static Camera GetActive() {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->CameraGetActive != nullptr
+			? Camera{runtimeApi->CameraGetActive()}
+			: Camera{};
+	}
+
+	int32_t GetInstanceId() const {
+		return gameObjectId_;
+	}
+
+	bool IsValid() const {
+		float fieldOfView = 0.0f;
+		return GetFieldOfView(fieldOfView);
+	}
+
+	bool GetFieldOfView(float& fieldOfViewDegrees) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->CameraGetFieldOfView != nullptr &&
+			runtimeApi->CameraGetFieldOfView(gameObjectId_, &fieldOfViewDegrees);
+	}
+
+	bool SetFieldOfView(float fieldOfViewDegrees) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->CameraSetFieldOfView != nullptr &&
+			runtimeApi->CameraSetFieldOfView(gameObjectId_, fieldOfViewDegrees);
+	}
+
+	bool GetNearClip(float& nearClip) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->CameraGetNearClip != nullptr &&
+			runtimeApi->CameraGetNearClip(gameObjectId_, &nearClip);
+	}
+
+	bool SetNearClip(float nearClip) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->CameraSetNearClip != nullptr &&
+			runtimeApi->CameraSetNearClip(gameObjectId_, nearClip);
+	}
+
+	bool GetFarClip(float& farClip) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->CameraGetFarClip != nullptr &&
+			runtimeApi->CameraGetFarClip(gameObjectId_, &farClip);
+	}
+
+	bool SetFarClip(float farClip) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->CameraSetFarClip != nullptr &&
+			runtimeApi->CameraSetFarClip(gameObjectId_, farClip);
+	}
+
+	// 0=Perspective、1=Orthographic。
+	bool GetProjectionMode(int32_t& projectionMode) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->CameraGetProjectionMode != nullptr &&
+			runtimeApi->CameraGetProjectionMode(gameObjectId_, &projectionMode);
+	}
+
+	bool SetProjectionMode(int32_t projectionMode) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->CameraSetProjectionMode != nullptr &&
+			runtimeApi->CameraSetProjectionMode(gameObjectId_, projectionMode);
+	}
+
+	bool GetOrthographicSize(float& orthographicSize) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->CameraGetOrthographicSize != nullptr &&
+			runtimeApi->CameraGetOrthographicSize(gameObjectId_, &orthographicSize);
+	}
+
+	bool SetOrthographicSize(float orthographicSize) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->CameraSetOrthographicSize != nullptr &&
+			runtimeApi->CameraSetOrthographicSize(gameObjectId_, orthographicSize);
+	}
+
+	bool GetPriority(int32_t& priority) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->CameraGetPriority != nullptr &&
+			runtimeApi->CameraGetPriority(gameObjectId_, &priority);
+	}
+
+	bool SetPriority(int32_t priority) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->CameraSetPriority != nullptr &&
+			runtimeApi->CameraSetPriority(gameObjectId_, priority);
+	}
+
+	bool GetEnabled(bool& isEnabled) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->CameraGetEnabled != nullptr &&
+			runtimeApi->CameraGetEnabled(gameObjectId_, &isEnabled);
+	}
+
+	bool SetEnabled(bool isEnabled) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->CameraSetEnabled != nullptr &&
+			runtimeApi->CameraSetEnabled(gameObjectId_, isEnabled);
+	}
+
+	// 他の有効Cameraより高いPriorityを与えて、このCameraへ切り替える。
+	bool SetActive() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->CameraSetActive != nullptr &&
+			runtimeApi->CameraSetActive(gameObjectId_);
+	}
+
+	bool LookAt(const EditorScriptVector3& targetPosition) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->CameraLookAt != nullptr &&
+			runtimeApi->CameraLookAt(gameObjectId_, &targetPosition);
+	}
+
+	bool LookAt(const GameObject& targetGameObject) const {
+		if (!targetGameObject.HasReference()) {
+			return false;
+		}
+
+		return LookAt(targetGameObject.GetTransform().position);
+	}
+
+	bool GetLookDirection(EditorScriptVector3& direction) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->CameraGetLookDirection != nullptr &&
+			runtimeApi->CameraGetLookDirection(gameObjectId_, &direction);
+	}
+
+	bool SetLookDirection(const EditorScriptVector3& direction) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->CameraSetLookDirection != nullptr &&
+			runtimeApi->CameraSetLookDirection(gameObjectId_, &direction);
 	}
 
 private:
@@ -3174,6 +3822,97 @@ public:
 		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
 		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->SetRendererEmission != nullptr &&
 			runtimeApi->SetRendererEmission(gameObjectId_, &color, strength);
+	}
+
+	bool GetColor(EditorScriptVector3& color) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->RendererGetColor != nullptr &&
+			runtimeApi->RendererGetColor(gameObjectId_, &color);
+	}
+
+	bool GetEmission(EditorScriptVector3& color, float& strength) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->RendererGetEmission != nullptr &&
+			runtimeApi->RendererGetEmission(gameObjectId_, &color, &strength);
+	}
+
+	// 描画のON/OFF。ModelRenderer / SkinnedMeshRenderer Componentの有効状態を切り替える。
+	bool SetEnabled(bool isEnabled) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->RendererSetEnabled != nullptr &&
+			runtimeApi->RendererSetEnabled(gameObjectId_, isEnabled);
+	}
+
+	bool GetEnabled(bool& isEnabled) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->RendererGetEnabled != nullptr &&
+			runtimeApi->RendererGetEnabled(gameObjectId_, &isEnabled);
+	}
+
+	bool SetOpacity(float opacity) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->RendererSetOpacity != nullptr &&
+			runtimeApi->RendererSetOpacity(gameObjectId_, opacity);
+	}
+
+	bool GetOpacity(float& opacity) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->RendererGetOpacity != nullptr &&
+			runtimeApi->RendererGetOpacity(gameObjectId_, &opacity);
+	}
+
+	// propertyNameは "Metallic" "Roughness" "IOR" "Alpha" "EmissionStrength" "ReflectionStrength"
+	// "NormalScale" "AmbientOcclusionStrength" "HeightScale" "AlphaCutoff" "ClearCoat"
+	// "ClearCoatRoughness" "Intensity"。大文字小文字は区別しない。未知名はfalse。
+	bool SetMaterialFloat(const char* propertyName, float value) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->RendererSetMaterialFloat != nullptr &&
+			runtimeApi->RendererSetMaterialFloat(gameObjectId_, propertyName, value);
+	}
+
+	bool GetMaterialFloat(const char* propertyName, float& value) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->RendererGetMaterialFloat != nullptr &&
+			runtimeApi->RendererGetMaterialFloat(gameObjectId_, propertyName, &value);
+	}
+
+	// propertyNameは "Color"("BaseColor" / "Albedo") または "EmissionColor"。
+	bool SetMaterialColor(const char* propertyName, const EditorScriptVector3& color) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->RendererSetMaterialColor != nullptr &&
+			runtimeApi->RendererSetMaterialColor(gameObjectId_, propertyName, &color);
+	}
+
+	bool GetMaterialColor(const char* propertyName, EditorScriptVector3& color) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->RendererGetMaterialColor != nullptr &&
+			runtimeApi->RendererGetMaterialColor(gameObjectId_, propertyName, &color);
+	}
+
+	// slotNameは "BaseColor"("Albedo" / "Texture") "Normal" "Metallic" "Roughness"
+	// "AmbientOcclusion"("AO") "Emission" "Height" "Opacity"。空文字を渡すとそのスロットを外す。
+	bool SetMaterialTexture(const char* slotName, const char* textureAssetPath) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->RendererSetMaterialTexture != nullptr &&
+			runtimeApi->RendererSetMaterialTexture(gameObjectId_, slotName, textureAssetPath);
+	}
+
+	bool GetMaterialTexture(const char* slotName, std::string& textureAssetPath) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi == nullptr || runtimeApi->RendererGetMaterialTexture == nullptr) {
+			return false;
+		}
+
+		char buffer[520] = {};
+
+		if (!runtimeApi->RendererGetMaterialTexture(
+				gameObjectId_, slotName, buffer, static_cast<int32_t>(sizeof(buffer)))) {
+			return false;
+		}
+
+		textureAssetPath = buffer;
+		return true;
 	}
 
 	bool SetColorFromMass(
@@ -3701,6 +4440,90 @@ public:
 		return GameObject{fieldValue != nullptr ? fieldValue->intValue : -1};
 	}
 
+	//============================================================
+	// SCRIPT_FIELD_* で宣言した Field の書き換え
+	//
+	// 値は Script インスタンスごとに保持し、Inspector 表示にもそのまま反映される。
+	// .h へメンバーを増やさずゲーム中の状態を持てる。型が違う名前へは書き込まず false を返す。
+	//============================================================
+
+	bool SetFieldBool(const char* fieldName, bool value) {
+		EditorScriptFieldValue* fieldValue = FindAutoFieldValue(fieldName, EditorScriptFieldTypeBool);
+
+		if (fieldValue == nullptr) {
+			return false;
+		}
+
+		fieldValue->boolValue = value;
+		return true;
+	}
+
+	bool SetFieldInt(const char* fieldName, int32_t value) {
+		EditorScriptFieldValue* fieldValue = FindAutoFieldValue(fieldName, EditorScriptFieldTypeInt32);
+
+		if (fieldValue == nullptr) {
+			return false;
+		}
+
+		fieldValue->intValue = value;
+		return true;
+	}
+
+	bool SetFieldFloat(const char* fieldName, float value) {
+		EditorScriptFieldValue* fieldValue = FindAutoFieldValue(fieldName, EditorScriptFieldTypeFloat);
+
+		if (fieldValue == nullptr) {
+			return false;
+		}
+
+		fieldValue->floatValue = value;
+		return true;
+	}
+
+	bool SetFieldVector2(const char* fieldName, const EditorScriptVector2& value) {
+		EditorScriptFieldValue* fieldValue = FindAutoFieldValue(fieldName, EditorScriptFieldTypeVector2);
+
+		if (fieldValue == nullptr) {
+			return false;
+		}
+
+		fieldValue->vector2Value = value;
+		return true;
+	}
+
+	bool SetFieldVector3(const char* fieldName, const EditorScriptVector3& value) {
+		EditorScriptFieldValue* fieldValue = FindAutoFieldValue(fieldName, EditorScriptFieldTypeVector3);
+
+		if (fieldValue == nullptr) {
+			return false;
+		}
+
+		fieldValue->vector3Value = value;
+		return true;
+	}
+
+	bool SetFieldString(const char* fieldName, const std::string& value) {
+		EditorScriptFieldValue* fieldValue = FindAutoFieldValue(fieldName, EditorScriptFieldTypeString);
+
+		if (fieldValue == nullptr) {
+			return false;
+		}
+
+		CopyText(value.c_str(), fieldValue->stringValue, sizeof(fieldValue->stringValue));
+		return true;
+	}
+
+	bool SetFieldGameObject(const char* fieldName, const GameObject& gameObject) {
+		EditorScriptFieldValue* fieldValue = FindAutoFieldValue(fieldName, EditorScriptFieldTypeGameObject);
+
+		if (fieldValue == nullptr) {
+			return false;
+		}
+
+		fieldValue->intValue = gameObject.GetInstanceId();
+		return true;
+	}
+
 protected:
 	using ActionFunction = std::function<void(const EditorScriptInputActionContext&)>;
 
@@ -3867,6 +4690,20 @@ protected:
 			[&scenePath](const EditorScriptFieldValue& fieldValue) { scenePath = fieldValue.stringValue; });
 	}
 
+	//============================================================
+	// Inspector へ出さない可変状態
+	//
+	// Script インスタンスごとに 1 つ作られる。lambda へコピーキャプチャして使うので、
+	// .h へメンバー変数を増やさずに状態を持てる。中身は std::make_shared と同じである。
+	// 例: const auto hitCount = MakeState<int32_t>(0);
+	//     BindCollisionEnter([hitCount](const EditorScriptPhysicsEvent&) { (*hitCount)++; });
+	//============================================================
+
+	template <typename StateType, typename... ArgumentTypes>
+	static std::shared_ptr<StateType> MakeState(ArgumentTypes&&... arguments) {
+		return std::make_shared<StateType>(std::forward<ArgumentTypes>(arguments)...);
+	}
+
 	void BindAction(const char* functionName, ActionFunction actionFunction) {
 		if (functionName == nullptr || functionName[0] == '\0' || !actionFunction) {
 			return;
@@ -3977,6 +4814,16 @@ private:
 
 		return &fieldIterator->second;
 	}
+
+	EditorScriptFieldValue* FindAutoFieldValue(const char* fieldName, int32_t fieldType) {
+		const auto fieldIterator = autoFieldValues_.find(fieldName != nullptr ? fieldName : "");
+
+		if (fieldIterator == autoFieldValues_.end() || fieldIterator->second.type != fieldType) {
+			return nullptr;
+		}
+
+		return &fieldIterator->second;
+	}
 };
 
 //================================================================
@@ -3988,18 +4835,82 @@ private:
 
 class Script : public EditorNativeScript {
 public:
+	using LifecycleCallback = std::function<void()>;
+	using UpdateCallback = std::function<void(float)>;
+	using PhysicsEventCallback = std::function<void(const EditorScriptPhysicsEvent&)>;
+	using WireEventCallback = std::function<void(const EditorScriptWireEvent&)>;
+	using AnimationEventCallback = std::function<void(const EditorScriptAnimationEvent&)>;
+
+	// 任意のライフサイクルだけを .cpp のコンストラクタから登録する。
+	// 派生クラスの .h へ override 宣言を追加する必要はない。
+	void BindStart(LifecycleCallback callback) { startCallback_ = std::move(callback); }
+	void BindUpdate(UpdateCallback callback) { updateCallback_ = std::move(callback); }
+	void BindFixedUpdate(UpdateCallback callback) { fixedUpdateCallback_ = std::move(callback); }
+	void BindStop(LifecycleCallback callback) { stopCallback_ = std::move(callback); }
+	void BindCollisionEnter(PhysicsEventCallback callback) { collisionEnterCallback_ = std::move(callback); }
+	void BindCollisionStay(PhysicsEventCallback callback) { collisionStayCallback_ = std::move(callback); }
+	void BindCollisionExit(PhysicsEventCallback callback) { collisionExitCallback_ = std::move(callback); }
+	void BindTriggerEnter(PhysicsEventCallback callback) { triggerEnterCallback_ = std::move(callback); }
+	void BindTriggerStay(PhysicsEventCallback callback) { triggerStayCallback_ = std::move(callback); }
+	void BindTriggerExit(PhysicsEventCallback callback) { triggerExitCallback_ = std::move(callback); }
+	void BindWireConnected(WireEventCallback callback) { wireConnectedCallback_ = std::move(callback); }
+	void BindWireTensionChanged(WireEventCallback callback) { wireTensionChangedCallback_ = std::move(callback); }
+	void BindWireBroken(WireEventCallback callback) { wireBrokenCallback_ = std::move(callback); }
+	void BindWireTargetLost(WireEventCallback callback) { wireTargetLostCallback_ = std::move(callback); }
+	void BindWireDestroyed(WireEventCallback callback) { wireDestroyedCallback_ = std::move(callback); }
+	void BindAnimationEvent(AnimationEventCallback callback) { animationEventCallback_ = std::move(callback); }
+
 	virtual void Start() {
+		if (startCallback_) startCallback_();
 	}
 
 	virtual void Update(float deltaTime) {
-		(void)deltaTime;
+		if (updateCallback_) updateCallback_(deltaTime);
 	}
 
 	virtual void FixedUpdate(float fixedDeltaTime) {
-		(void)fixedDeltaTime;
+		if (fixedUpdateCallback_) fixedUpdateCallback_(fixedDeltaTime);
 	}
 
 	virtual void Stop() {
+		if (stopCallback_) stopCallback_();
+	}
+
+	void OnCollisionEnter(const EditorScriptPhysicsEvent& physicsEvent) override {
+		if (collisionEnterCallback_) collisionEnterCallback_(physicsEvent);
+	}
+	void OnCollisionStay(const EditorScriptPhysicsEvent& physicsEvent) override {
+		if (collisionStayCallback_) collisionStayCallback_(physicsEvent);
+	}
+	void OnCollisionExit(const EditorScriptPhysicsEvent& physicsEvent) override {
+		if (collisionExitCallback_) collisionExitCallback_(physicsEvent);
+	}
+	void OnTriggerEnter(const EditorScriptPhysicsEvent& physicsEvent) override {
+		if (triggerEnterCallback_) triggerEnterCallback_(physicsEvent);
+	}
+	void OnTriggerStay(const EditorScriptPhysicsEvent& physicsEvent) override {
+		if (triggerStayCallback_) triggerStayCallback_(physicsEvent);
+	}
+	void OnTriggerExit(const EditorScriptPhysicsEvent& physicsEvent) override {
+		if (triggerExitCallback_) triggerExitCallback_(physicsEvent);
+	}
+	void OnWireConnected(const EditorScriptWireEvent& wireEvent) override {
+		if (wireConnectedCallback_) wireConnectedCallback_(wireEvent);
+	}
+	void OnWireTensionChanged(const EditorScriptWireEvent& wireEvent) override {
+		if (wireTensionChangedCallback_) wireTensionChangedCallback_(wireEvent);
+	}
+	void OnWireBroken(const EditorScriptWireEvent& wireEvent) override {
+		if (wireBrokenCallback_) wireBrokenCallback_(wireEvent);
+	}
+	void OnWireTargetLost(const EditorScriptWireEvent& wireEvent) override {
+		if (wireTargetLostCallback_) wireTargetLostCallback_(wireEvent);
+	}
+	void OnWireDestroyed(const EditorScriptWireEvent& wireEvent) override {
+		if (wireDestroyedCallback_) wireDestroyedCallback_(wireEvent);
+	}
+	void OnAnimationEvent(const EditorScriptAnimationEvent& animationEvent) override {
+		if (animationEventCallback_) animationEventCallback_(animationEvent);
 	}
 
 	GameObject GetGameObject() const {
@@ -4056,4 +4967,661 @@ private:
 	}
 
 	int32_t gameObjectId_ = -1;
+	LifecycleCallback startCallback_;
+	UpdateCallback updateCallback_;
+	UpdateCallback fixedUpdateCallback_;
+	LifecycleCallback stopCallback_;
+	PhysicsEventCallback collisionEnterCallback_;
+	PhysicsEventCallback collisionStayCallback_;
+	PhysicsEventCallback collisionExitCallback_;
+	PhysicsEventCallback triggerEnterCallback_;
+	PhysicsEventCallback triggerStayCallback_;
+	PhysicsEventCallback triggerExitCallback_;
+	WireEventCallback wireConnectedCallback_;
+	WireEventCallback wireTensionChangedCallback_;
+	WireEventCallback wireBrokenCallback_;
+	WireEventCallback wireTargetLostCallback_;
+	WireEventCallback wireDestroyedCallback_;
+	AnimationEventCallback animationEventCallback_;
+};
+
+//================================================================
+// 外部認識・オンライン連携の高水準 API
+//================================================================
+// Speech / Vision / Haptics / Online のいずれも、Backend や外部 SDK を
+// ゲーム側へ出さず、この型だけで使えるようにしている。
+// 機能が使えない環境では「何もせず false / 既定値」を返し、ゲームロジックは止めない。
+
+// 外部機能の共通状態。Editor 表示と同じ意味で使う。
+enum class ExternalFeatureStatus : int32_t {
+	Unavailable = 0,
+	Ready = 1,
+	Running = 2,
+	Error = 3,
+};
+
+// SpeechRecognizerComponent を持つ GameObject の音声認識を操作する。
+// 使い方: Speech speech(gameObject); speech.Start(); if (speech.WasKeywordRecognized("Jump")) { ... }
+class Speech final {
+public:
+	explicit Speech(const GameObject& gameObject)
+		: gameObjectId_(gameObject.GetInstanceId()) {
+	}
+
+	bool Start() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->SpeechStartRecognition != nullptr &&
+			runtimeApi->SpeechStartRecognition(gameObjectId_);
+	}
+
+	bool Stop() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->SpeechStopRecognition != nullptr &&
+			runtimeApi->SpeechStopRecognition(gameObjectId_);
+	}
+
+	bool IsRecognizing() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->SpeechIsRecognizing != nullptr &&
+			runtimeApi->SpeechIsRecognizing(gameObjectId_);
+	}
+
+	// マイクが開いているだけの待機状態と、実際の発話中を区別する。
+	bool IsSpeaking() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->SpeechIsSpeaking != nullptr &&
+			runtimeApi->SpeechIsSpeaking(gameObjectId_);
+	}
+
+	// Whisperが録音済み音声を文字へ変換している間だけtrueを返す。
+	bool IsProcessing() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->SpeechIsProcessing != nullptr &&
+			runtimeApi->SpeechIsProcessing(gameObjectId_);
+	}
+
+	// UIでそのまま使える既定の状態文字列。独自表示にしたい場合は上のbool APIを使う。
+	std::string GetActivityText() const {
+		if (IsSpeaking()) return "話し中";
+		if (IsProcessing()) return "推論中";
+		if (IsRecognizing()) return "認識待機中";
+		return "停止中";
+	}
+
+	// 直近の確定文字列。まだ何も認識していなければ空文字列を返す。
+	std::string GetLastText() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (gameObjectId_ < 0 || runtimeApi == nullptr || runtimeApi->SpeechGetLastResult == nullptr) {
+			return std::string();
+		}
+
+		char textBuffer[512] = {};
+		float confidence = 0.0f;
+		bool isFinal = false;
+
+		if (!runtimeApi->SpeechGetLastResult(gameObjectId_, textBuffer, 512, &confidence, &isFinal)) {
+			return std::string();
+		}
+
+		return std::string(textBuffer);
+	}
+
+	float GetLastConfidence() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (gameObjectId_ < 0 || runtimeApi == nullptr || runtimeApi->SpeechGetLastResult == nullptr) {
+			return 0.0f;
+		}
+
+		char textBuffer[512] = {};
+		float confidence = 0.0f;
+		bool isFinal = false;
+		runtimeApi->SpeechGetLastResult(gameObjectId_, textBuffer, 512, &confidence, &isFinal);
+		return confidence;
+	}
+
+	// 発話・推論中は状態を、認識完了後は直近の認識文字列を返す。
+	// Whisperは推論完了前の文字列を持たないため、発話中の内容を推測して返さない。
+	std::string GetDisplayText() const {
+		if (IsSpeaking() || IsProcessing()) {
+			return GetActivityText();
+		}
+
+		const std::string lastText = GetLastText();
+		return lastText.empty() ? GetActivityText() : lastText;
+	}
+
+	// Text Componentを持つUI GameObjectへ、現在の状態または認識文字列を直接表示する。
+	bool SetUiText(const GameObject& uiGameObject) const {
+		return Ui(uiGameObject).SetText(GetDisplayText());
+	}
+
+	// このフレームに登録キーワードを認識したか。Input Action と同じ感覚で使える。
+	bool WasKeywordRecognized(const char* keyword) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr &&
+			runtimeApi->SpeechWasKeywordRecognized != nullptr &&
+			runtimeApi->SpeechWasKeywordRecognized(gameObjectId_, keyword);
+	}
+
+private:
+	int32_t gameObjectId_ = -1;
+};
+
+// 画像認識の 1 件分の検出結果。
+struct VisionObject {
+	std::string label;
+	float confidence = 0.0f;
+	float x = 0.0f;
+	float y = 0.0f;
+	float width = 0.0f;
+	float height = 0.0f;
+};
+
+// CameraInputComponent / ImageRecognizerComponent を操作する。
+// 使い方: Vision vision(gameObject); vision.StartRecognition(); if (vision.HasMotion()) { ... }
+class Vision final {
+public:
+	explicit Vision(const GameObject& gameObject)
+		: gameObjectId_(gameObject.GetInstanceId()) {
+	}
+
+	bool StartCamera() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->VisionStartCamera != nullptr &&
+			runtimeApi->VisionStartCamera(gameObjectId_);
+	}
+
+	bool StopCamera() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->VisionStopCamera != nullptr &&
+			runtimeApi->VisionStopCamera(gameObjectId_);
+	}
+
+	bool StartRecognition() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->VisionStartRecognition != nullptr &&
+			runtimeApi->VisionStartRecognition(gameObjectId_);
+	}
+
+	bool StopRecognition() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->VisionStopRecognition != nullptr &&
+			runtimeApi->VisionStopRecognition(gameObjectId_);
+	}
+
+	ExternalFeatureStatus GetStatus() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (gameObjectId_ < 0 || runtimeApi == nullptr || runtimeApi->VisionGetState == nullptr) {
+			return ExternalFeatureStatus::Unavailable;
+		}
+
+		return static_cast<ExternalFeatureStatus>(runtimeApi->VisionGetState(gameObjectId_));
+	}
+
+	int32_t GetObjectCount() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->VisionGetObjectCount != nullptr
+			? runtimeApi->VisionGetObjectCount(gameObjectId_)
+			: 0;
+	}
+
+	bool TryGetObject(int32_t objectIndex, VisionObject& outObject) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (gameObjectId_ < 0 || runtimeApi == nullptr || runtimeApi->VisionGetObject == nullptr) {
+			return false;
+		}
+
+		char labelBuffer[128] = {};
+
+		if (!runtimeApi->VisionGetObject(
+				gameObjectId_,
+				objectIndex,
+				labelBuffer,
+				128,
+				&outObject.confidence,
+				&outObject.x,
+				&outObject.y,
+				&outObject.width,
+				&outObject.height)) {
+			return false;
+		}
+
+		outObject.label = labelBuffer;
+		return true;
+	}
+
+	// 指定ラベルの物体が見えているか。
+	bool IsObjectDetected(const char* label) const {
+		const int32_t objectCount = GetObjectCount();
+
+		for (int32_t objectIndex = 0; objectIndex < objectCount; ++objectIndex) {
+			VisionObject detectedObject{};
+
+			if (!TryGetObject(objectIndex, detectedObject)) {
+				continue;
+			}
+
+			if (label == nullptr || detectedObject.label == label) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	std::string GetTopClassification() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (gameObjectId_ < 0 || runtimeApi == nullptr || runtimeApi->VisionGetTopClassification == nullptr) {
+			return std::string();
+		}
+
+		char labelBuffer[128] = {};
+		float confidence = 0.0f;
+
+		if (!runtimeApi->VisionGetTopClassification(gameObjectId_, labelBuffer, 128, &confidence)) {
+			return std::string();
+		}
+
+		return std::string(labelBuffer);
+	}
+
+	int32_t GetFaceCount() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->VisionGetFaceCount != nullptr
+			? runtimeApi->VisionGetFaceCount(gameObjectId_)
+			: 0;
+	}
+
+	bool TryGetFace(int32_t faceIndex, VisionObject& outFace) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (gameObjectId_ < 0 || runtimeApi == nullptr || runtimeApi->VisionGetFace == nullptr) {
+			return false;
+		}
+
+		outFace.label = "face";
+		return runtimeApi->VisionGetFace(
+			gameObjectId_,
+			faceIndex,
+			&outFace.confidence,
+			&outFace.x,
+			&outFace.y,
+			&outFace.width,
+			&outFace.height);
+	}
+
+	// 顔の向き。未対応 Backend では false を返す(勝手に別の値へ置き換えない)。
+	bool TryGetHeadPose(float& outYaw, float& outPitch, float& outRoll) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->VisionGetHeadPose != nullptr &&
+			runtimeApi->VisionGetHeadPose(gameObjectId_, &outYaw, &outPitch, &outRoll);
+	}
+
+	bool HasMotion() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (gameObjectId_ < 0 || runtimeApi == nullptr || runtimeApi->VisionGetMotion == nullptr) {
+			return false;
+		}
+
+		bool hasMotion = false;
+		float motionMagnitude = 0.0f;
+		float centerX = 0.0f;
+		float centerY = 0.0f;
+
+		return runtimeApi->VisionGetMotion(gameObjectId_, &hasMotion, &motionMagnitude, &centerX, &centerY) &&
+			hasMotion;
+	}
+
+	float GetMotionMagnitude() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (gameObjectId_ < 0 || runtimeApi == nullptr || runtimeApi->VisionGetMotion == nullptr) {
+			return 0.0f;
+		}
+
+		bool hasMotion = false;
+		float motionMagnitude = 0.0f;
+		float centerX = 0.0f;
+		float centerY = 0.0f;
+		runtimeApi->VisionGetMotion(gameObjectId_, &hasMotion, &motionMagnitude, &centerX, &centerY);
+		return motionMagnitude;
+	}
+
+	// 色追跡。検出できていれば中心座標を 0〜1 で返す。
+	bool TryGetTrackedColorCenter(float& outCenterX, float& outCenterY) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (gameObjectId_ < 0 || runtimeApi == nullptr || runtimeApi->VisionGetColorTracking == nullptr) {
+			return false;
+		}
+
+		bool isDetected = false;
+		float areaRatio = 0.0f;
+
+		if (!runtimeApi->VisionGetColorTracking(
+				gameObjectId_, &isDetected, &outCenterX, &outCenterY, &areaRatio)) {
+			return false;
+		}
+
+		return isDetected;
+	}
+
+private:
+	int32_t gameObjectId_ = -1;
+};
+
+// 再生中の振動 1 本を操作する Handle。
+class HapticVoice final {
+public:
+	explicit HapticVoice(uint32_t hapticHandle = 0u)
+		: hapticHandle_(hapticHandle) {
+	}
+
+	bool IsValid() const {
+		return hapticHandle_ != 0u;
+	}
+
+	bool IsPlaying() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return IsValid() && runtimeApi != nullptr && runtimeApi->HapticIsPlayingHandle != nullptr &&
+			runtimeApi->HapticIsPlayingHandle(hapticHandle_);
+	}
+
+	bool Stop() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return IsValid() && runtimeApi != nullptr && runtimeApi->HapticStopHandle != nullptr &&
+			runtimeApi->HapticStopHandle(hapticHandle_);
+	}
+
+	// 0.0 〜 1.0。再生中でも変えられる。
+	bool SetIntensity(float intensity) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return IsValid() && runtimeApi != nullptr && runtimeApi->HapticSetHandleIntensity != nullptr &&
+			runtimeApi->HapticSetHandleIntensity(hapticHandle_, intensity);
+	}
+
+	bool SetFrequency(float frequency) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return IsValid() && runtimeApi != nullptr && runtimeApi->HapticSetHandleFrequency != nullptr &&
+			runtimeApi->HapticSetHandleFrequency(hapticHandle_, frequency);
+	}
+
+	bool SetPlaybackSpeed(float playbackSpeed) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return IsValid() && runtimeApi != nullptr && runtimeApi->HapticSetHandlePlaybackSpeed != nullptr &&
+			runtimeApi->HapticSetHandlePlaybackSpeed(hapticHandle_, playbackSpeed);
+	}
+
+	bool SetLooping(bool isLooping) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return IsValid() && runtimeApi != nullptr && runtimeApi->HapticSetHandleLooping != nullptr &&
+			runtimeApi->HapticSetHandleLooping(hapticHandle_, isLooping);
+	}
+
+	uint32_t GetHandle() const {
+		return hapticHandle_;
+	}
+
+private:
+	uint32_t hapticHandle_ = 0u;
+};
+
+// Device の接続状態。
+enum class HapticDeviceStatus : int32_t {
+	Unavailable = 0,
+	Disconnected = 1,
+	Connected = 2,
+	Error = 3,
+};
+
+// HapticSourceComponent を持つ GameObject の振動を操作する。
+// Device が無い場合は無効 Handle を返すだけで、ゲームロジックは止まらない。
+// 使い方: HapticVoice voice = Haptic(gameObject).Play(); voice.SetIntensity(0.5f);
+class Haptic final {
+public:
+	explicit Haptic(const GameObject& gameObject)
+		: gameObjectId_(gameObject.GetInstanceId()) {
+	}
+
+	HapticVoice Play() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (gameObjectId_ < 0 || runtimeApi == nullptr || runtimeApi->HapticPlaySource == nullptr) {
+			return HapticVoice();
+		}
+
+		return HapticVoice(runtimeApi->HapticPlaySource(gameObjectId_));
+	}
+
+	// 衝突の強さから振動を作る。HapticSource の Physics Reactive が有効な時だけ鳴る。
+	HapticVoice PlayFromImpulse(float impulse) const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (gameObjectId_ < 0 || runtimeApi == nullptr || runtimeApi->HapticPlayFromImpulse == nullptr) {
+			return HapticVoice();
+		}
+
+		return HapticVoice(runtimeApi->HapticPlayFromImpulse(gameObjectId_, impulse));
+	}
+
+	bool Stop() const {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return gameObjectId_ >= 0 && runtimeApi != nullptr && runtimeApi->HapticStopSource != nullptr &&
+			runtimeApi->HapticStopSource(gameObjectId_);
+	}
+
+	// Component を用意せず .haptic Clip を直接鳴らす。
+	static HapticVoice PlayClip(const char* clipAssetPath, int32_t ownerGameObjectId = -1) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi == nullptr || runtimeApi->HapticPlayClipAsset == nullptr) {
+			return HapticVoice();
+		}
+
+		return HapticVoice(runtimeApi->HapticPlayClipAsset(clipAssetPath, ownerGameObjectId));
+	}
+
+	static void SetMasterIntensity(float masterIntensity) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi != nullptr && runtimeApi->HapticSetMasterIntensity != nullptr) {
+			runtimeApi->HapticSetMasterIntensity(masterIntensity);
+		}
+	}
+
+	static HapticDeviceStatus GetDeviceStatus() {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi == nullptr || runtimeApi->HapticGetDeviceState == nullptr) {
+			return HapticDeviceStatus::Unavailable;
+		}
+
+		return static_cast<HapticDeviceStatus>(runtimeApi->HapticGetDeviceState());
+	}
+
+private:
+	int32_t gameObjectId_ = -1;
+};
+
+// Leaderboard の 1 行。
+struct OnlineLeaderboardEntry {
+	std::string playerId;
+	std::string playerName;
+	int64_t score = 0;
+	int32_t rank = 0;
+};
+
+// ランキング種類。
+enum class OnlineLeaderboardScope : int32_t {
+	Global = 0,
+	Daily = 1,
+	Weekly = 2,
+	Season = 3,
+	Custom = 4,
+};
+
+// 接続状態。
+enum class OnlineStatus : int32_t {
+	Offline = 0,
+	Connecting = 1,
+	Online = 2,
+	Error = 3,
+};
+
+// Cloudflare などのオンライン機能を使う。HTTP の詳細は Engine 側が持つ。
+// 取得系は「要求 → 次以降のフレームで参照」で使う(通信で Main Thread を止めないため)。
+// 使い方:
+//   Online::SubmitScore("Score", 12500);
+//   Online::RequestTopScores("Score", 100);
+//   ... 数フレーム後 ...
+//   for (int32_t i = 0; i < Online::GetLeaderboardCount(); ++i) { ... }
+class Online final {
+public:
+	// Player ID の決め方はゲーム側が選ぶ。ログイン方式でも端末固有 ID でもよい。
+	static void SetPlayerIdentity(const char* playerId, const char* playerName) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi != nullptr && runtimeApi->OnlineSetPlayerIdentity != nullptr) {
+			runtimeApi->OnlineSetPlayerIdentity(playerId, playerName);
+		}
+	}
+
+	static bool IsEnabled() {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->OnlineIsEnabled != nullptr &&
+			runtimeApi->OnlineIsEnabled();
+	}
+
+	static OnlineStatus GetStatus() {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi == nullptr || runtimeApi->OnlineGetConnectionState == nullptr) {
+			return OnlineStatus::Offline;
+		}
+
+		return static_cast<OnlineStatus>(runtimeApi->OnlineGetConnectionState());
+	}
+
+	// 送れなかった送信は Engine 側の再送 Queue に残る。その件数。
+	static int32_t GetPendingRequestCount() {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->OnlineGetPendingRequestCount != nullptr
+			? runtimeApi->OnlineGetPendingRequestCount()
+			: 0;
+	}
+
+	static bool SubmitScore(
+		const char* boardName,
+		int64_t score,
+		OnlineLeaderboardScope scope = OnlineLeaderboardScope::Global) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->OnlineSubmitScore != nullptr &&
+			runtimeApi->OnlineSubmitScore(boardName, score, static_cast<int32_t>(scope));
+	}
+
+	static bool RequestTopScores(
+		const char* boardName,
+		int32_t entryCount = 100,
+		OnlineLeaderboardScope scope = OnlineLeaderboardScope::Global) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->OnlineRequestTopScores != nullptr &&
+			runtimeApi->OnlineRequestTopScores(boardName, entryCount, static_cast<int32_t>(scope));
+	}
+
+	static int32_t GetLeaderboardCount() {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->OnlineGetLeaderboardCount != nullptr
+			? runtimeApi->OnlineGetLeaderboardCount()
+			: 0;
+	}
+
+	static bool TryGetLeaderboardEntry(int32_t entryIndex, OnlineLeaderboardEntry& outEntry) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi == nullptr || runtimeApi->OnlineGetLeaderboardEntry == nullptr) {
+			return false;
+		}
+
+		char playerIdBuffer[128] = {};
+		char playerNameBuffer[128] = {};
+
+		if (!runtimeApi->OnlineGetLeaderboardEntry(
+				entryIndex,
+				playerIdBuffer,
+				128,
+				playerNameBuffer,
+				128,
+				&outEntry.score,
+				&outEntry.rank)) {
+			return false;
+		}
+
+		outEntry.playerId = playerIdBuffer;
+		outEntry.playerName = playerNameBuffer;
+		return true;
+	}
+
+	static bool SetPlayerValue(const char* key, const char* value) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->OnlineSetPlayerValue != nullptr &&
+			runtimeApi->OnlineSetPlayerValue(key, value);
+	}
+
+	static bool RequestPlayerData() {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->OnlineRequestPlayerData != nullptr &&
+			runtimeApi->OnlineRequestPlayerData();
+	}
+
+	static std::string GetPlayerValue(const char* key) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi == nullptr || runtimeApi->OnlineGetPlayerValue == nullptr) {
+			return std::string();
+		}
+
+		char valueBuffer[1024] = {};
+
+		if (!runtimeApi->OnlineGetPlayerValue(key, valueBuffer, 1024)) {
+			return std::string();
+		}
+
+		return std::string(valueBuffer);
+	}
+
+	static bool UploadCloudSave(const char* slotName, const char* saveText) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->OnlineUploadCloudSave != nullptr &&
+			runtimeApi->OnlineUploadCloudSave(slotName, saveText);
+	}
+
+	static bool RequestCloudSave(const char* slotName) {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+		return runtimeApi != nullptr && runtimeApi->OnlineRequestCloudSave != nullptr &&
+			runtimeApi->OnlineRequestCloudSave(slotName);
+	}
+
+	// RequestCloudSave の結果。まだ届いていなければ空文字列。
+	static std::string GetCloudSave() {
+		const EditorScriptRuntimeApi* runtimeApi = EditorNativeScriptRuntime::GetRuntimeApi();
+
+		if (runtimeApi == nullptr || runtimeApi->OnlineGetCloudSave == nullptr) {
+			return std::string();
+		}
+
+		std::string saveText(65536u, '\0');
+
+		if (!runtimeApi->OnlineGetCloudSave(saveText.data(), static_cast<int32_t>(saveText.size()))) {
+			return std::string();
+		}
+
+		saveText.resize(std::strlen(saveText.c_str()));
+		return saveText;
+	}
 };

@@ -11,8 +11,10 @@ namespace {
 	constexpr int32_t kRocketSlot = 2;
 	constexpr int32_t kMissileSlot = 3;
 	constexpr float kStormProgress = 0.52f;
-	// ボスは廃止。Railが終端(進行率1.0)へ到達した時点でMission Clearにする。
-	constexpr float kRailCompleteProgress = 0.999f;
+	// ボスは廃止。Railが終端付近へ到達した時点でMission Clearにする。
+	// RailFollowerの補間や終端停止で1.0fぴったりまで進まない場合があるため、
+	// 画面上ほぼ到達している0.985fをClear判定に使う。
+	constexpr float kRailCompleteProgress = 0.985f;
 
 	// Enemy encounter redesign: 22 rail-progress-gated events (E01..E22) replace the old
 	// Battle A / Battle B two-wave design. Each fires its EncounterController exactly once
@@ -39,9 +41,10 @@ namespace {
 	constexpr float kEvent20Progress = 0.81f;
 	constexpr float kEvent21Progress = 0.86f;
 	constexpr float kEvent22Progress = 0.93f;
-	constexpr const char* kTitleScenePath = "Assets/Scenes/Title.scene";
-	constexpr const char* kGameplayScenePath = "Assets/Scenes/WaterRailShooter_0817.scene";
-	constexpr const char* kResultScenePath = "Assets/Scenes/Result.scene";
+	constexpr const char* kTitleScenePath = "Assets/Scenes/WaterRailShooter/Title.scene";
+	constexpr const char* kGameplayScenePath = "Assets/Scenes/WaterRailShooter/WaterRailShooter_0817.scene";
+	constexpr const char* kClearResultScenePath = "Assets/Scenes/WaterRailShooter/WaterRailShooter_Clear.scene";
+	constexpr const char* kGameOverResultScenePath = "Assets/Scenes/WaterRailShooter/WaterRailShooter_GameOver.scene";
 
 	// Title / Result の各Sceneでこの名前のGameObjectへScript Componentを付けると、
 	// そのSceneの入口処理としてUpdateが分岐する。
@@ -52,8 +55,9 @@ namespace {
 	constexpr const char* kResultIsClearKey = "ResultIsClear";
 	constexpr const char* kResultEnemyCountKey = "DestroyedEnemyCount";
 
-	// 死亡・クリアの表示を見せてからResultへ移るまでの秒数。Spaceで即座にスキップできる。
-	constexpr float kResultTransitionDelaySeconds = 2.5f;
+	// Result SceneのLoad要求が一時的に拒否された場合の再試行間隔。
+	// Gameplay側には結果UIを出さず、Result Sceneだけを結果表示の場所にする。
+	constexpr float kResultRetrySeconds = 0.25f;
 
 	// TargetSteering の移動Mode。Component側 targetSteeringMoveMode と同じ並び。
 	// 敵1体の行動は「どのModeを、どの順で使うか」だけをScript側で決め、
@@ -118,6 +122,15 @@ namespace {
 		// 使う。外部.effectdefファイルの文字列呼び出しはしない。既定でGameObjectはisActive=falseに
 		// してあるので、撃破位置へ移動させてから一定時間だけSetActive(true)にし、時間が来たら
 		// SetActive(false)へ戻す。
+		GameObject playerAimTarget;
+		// 撃破イベント内で毎回名前検索を行うと、Find/文字列処理が一時Allocになるため、
+		// StageControllerと再生対象はPlay開始時に一度だけ解決して使い回す。
+		GameObject stageController;
+		GameObject explosionSmall;
+		GameObject explosionLarge;
+		GameObject sfxExplosionSmall;
+		GameObject sfxExplosionLarge;
+		GameObject salvageCounter;
 		float explosionSmallRemainingSeconds = 0.0f;
 		float explosionLargeRemainingSeconds = 0.0f;
 	};
@@ -142,7 +155,15 @@ namespace {
 			return;
 		}
 
-		const GameObject explosionEffect = Find(isLargeExplosion ? "FX Explosion Large" : "FX Explosion Small");
+		GameObject& cachedExplosionEffect = isLargeExplosion
+			? sharedGameState.explosionLarge
+			: sharedGameState.explosionSmall;
+		// 通常はStartで解決済み。旧Sceneや入口順序が異なる場合だけ一度フォールバックする。
+		if (!cachedExplosionEffect.HasReference()) {
+			cachedExplosionEffect = Find(isLargeExplosion ? "FX Explosion Large" : "FX Explosion Small");
+		}
+
+		const GameObject& explosionEffect = cachedExplosionEffect;
 
 		if (!explosionEffect.HasReference()) {
 			return;
@@ -166,8 +187,7 @@ namespace {
 
 	// 撃破効果音等と違いUpdateで毎フレーム呼ぶ必要があるため、StageController側のUpdateから
 	// 一度だけ呼ぶ。時間切れになったExplosion GameObjectをSetActive(false)へ戻すだけの処理。
-	void StopEnemyDestroyedEffect(const char* effectGameObjectName) {
-		const GameObject explosionEffect = Find(effectGameObjectName);
+	void StopEnemyDestroyedEffect(const GameObject& explosionEffect) {
 
 		if (!explosionEffect.HasReference()) {
 			return;
@@ -187,7 +207,7 @@ namespace {
 			sharedGameState.explosionSmallRemainingSeconds -= deltaTime;
 
 			if (sharedGameState.explosionSmallRemainingSeconds <= 0.0f) {
-				StopEnemyDestroyedEffect("FX Explosion Small");
+				StopEnemyDestroyedEffect(sharedGameState.explosionSmall);
 			}
 		}
 
@@ -195,7 +215,7 @@ namespace {
 			sharedGameState.explosionLargeRemainingSeconds -= deltaTime;
 
 			if (sharedGameState.explosionLargeRemainingSeconds <= 0.0f) {
-				StopEnemyDestroyedEffect("FX Explosion Large");
+				StopEnemyDestroyedEffect(sharedGameState.explosionLarge);
 			}
 		}
 	}
@@ -215,11 +235,88 @@ namespace {
 		return GameObject::Find(gameObjectName);
 	}
 
-	void SetActive(const char* gameObjectName, bool isActive) {
+	bool SetActive(const char* gameObjectName, bool isActive) {
 		const GameObject gameObject = Find(gameObjectName);
 
-		if (gameObject.HasReference()) {
-			gameObject.SetActive(isActive);
+		if (!gameObject.HasReference()) {
+			return false;
+		}
+
+		return gameObject.SetActive(isActive);
+	}
+
+	bool SetResultTextVisible(const char* gameObjectName, bool isVisible) {
+		const GameObject gameObject = Find(gameObjectName);
+
+		if (!gameObject.HasReference()) {
+			return false;
+		}
+
+		// Text GameObjectだけONにしても、Text Component側が無効だと描画されない。
+		// Result Sceneでは表示対象のText Componentも必ず復旧してからGameObjectを表示する。
+		// Scene Builderで作ったUIはTextMeshProUGUIを使う場合があるため、旧Textと両方を復旧する。
+		if (isVisible) {
+			gameObject.SetComponentActive("Text", true);
+			gameObject.SetComponentActive("TextMeshProUGUI", true);
+		}
+
+		return gameObject.SetActive(isVisible);
+	}
+
+	void SetComponentActiveForAll(const char* componentTypeName, bool isActive) {
+		for (const GameObject& gameObject : GameObject::FindAllWithComponent(componentTypeName)) {
+			gameObject.SetComponentActive(componentTypeName, isActive);
+		}
+	}
+
+	void ReleaseOrDeactivateAllWithComponent(const char* componentTypeName) {
+		for (const GameObject& gameObject : GameObject::FindAllWithComponent(componentTypeName)) {
+			if (!ObjectPool::Release(gameObject)) {
+				gameObject.SetActive(false);
+			}
+		}
+	}
+
+	void StopGameplayForResultTransition() {
+		// Gameplay Scene内の仮Result UIは使わない。
+		// 結果表示はResult.sceneのResultControllerだけに集約する。
+		SetActive("MISSION CLEAR Text", false);
+		SetActive("RESULT Button", false);
+		SetActive("MISSION FAILED Text", false);
+		SetActive("RESTART Button", false);
+
+		// Result遷移待ち中に生成・発射が進むと、遷移失敗時に敵や弾だけが増え続ける。
+		// ここではWaterRailShooter専用の戦闘系だけを止め、Engineの汎用挙動は変えない。
+		SetComponentActiveForAll("WaveSpawner", false);
+		SetComponentActiveForAll("EncounterController", false);
+		SetComponentActiveForAll("ProjectileEmitter", false);
+		SetComponentActiveForAll("WeaponGroup", false);
+
+		ReleaseOrDeactivateAllWithComponent("ProjectileDetonator");
+		ReleaseOrDeactivateAllWithComponent("TargetSteering");
+	}
+
+	GameObject GetActionTargetGameObject(const EditorScriptInputActionContext& inputContext) {
+		if (inputContext.payloadType != EditorScriptActionPayloadTypeGameObject ||
+			inputContext.payloadGameObjectId < 0) {
+			return GameObject{};
+		}
+
+		return GameObject{inputContext.payloadGameObjectId};
+	}
+
+	void RetireDestroyedEnemy(const EditorScriptInputActionContext& inputContext) {
+		const GameObject enemy = GetActionTargetGameObject(inputContext);
+
+		if (!enemy.HasReference()) {
+			return;
+		}
+
+		// WaveSpawnerはPool返却を「撃破済み」として扱う。
+		// 撃破後にActiveのまま残すと、描画・物理・ターゲット候補に残り続け、
+		// 終盤の重さや射線詰まりの原因になる。
+		if (!ObjectPool::Release(enemy)) {
+			enemy.SetActive(false);
 		}
 	}
 
@@ -241,8 +338,37 @@ namespace {
 		return value;
 	}
 
+	const char* GetResultScenePath(bool isClear) {
+		return isClear ? kClearResultScenePath : kGameOverResultScenePath;
+	}
+
+	bool TryLoadResultScene(bool isClear) {
+		// 同期LoadSceneは失敗時復帰のために現在のGameplay Sceneを丸ごとコピーする。
+		// 終盤はPool生成物が多く、このコピーがResult遷移の体感待ち時間になるため、
+		// Resultだけは非同期読込要求にして重いコピーを避ける。
+		// CLEARとGAME OVERはScene自体を分け、Result Scene内のText Active切替へ依存しない。
+		const char* resultScenePath = GetResultScenePath(isClear);
+		const bool loadOk = SceneManager::LoadSceneAsync(std::string{resultScenePath});
+		Log(std::string("DEBUG_SCENE_ROLE: LoadSceneAsync(") + resultScenePath + ") result=" + (loadOk ? "true" : "false"));
+		return loadOk;
+	}
+
+	bool ApplyResultSceneUi(int32_t& destroyedEnemyCount) {
+		float isClearValue = 0.0f;
+		float destroyedEnemyCountValue = 0.0f;
+		SceneManager::GetFloat(kResultIsClearKey, isClearValue);
+		SceneManager::GetFloat(kResultEnemyCountKey, destroyedEnemyCountValue);
+		const bool isClear = isClearValue > 0.5f;
+		destroyedEnemyCount = static_cast<int32_t>(destroyedEnemyCountValue);
+
+		// CLEAR / GAME OVER はScene自体を分けて初期Activeを固定する。
+		// ここでは親Canvasだけ復旧し、Textの出し分けはSceneデータへ任せる。
+		SetActive("Canvas", true);
+		return isClear;
+	}
+
 	// 死亡・クリアのどちらでもここを通し、結果をScene間永続値へ記録してから
-	// Result Sceneへの遷移待ちを始める。実際の遷移はUpdateが待ち時間を数えて行う。
+	// Result Sceneへ即時遷移する。失敗時だけUpdateで短い間隔の再試行を続ける。
 	void BeginResultTransition(bool isClear) {
 		if (sharedGameState.isResultTransitionPending) {
 			return;
@@ -252,9 +378,14 @@ namespace {
 		SceneManager::SetFloat(
 			kResultEnemyCountKey,
 			static_cast<float>(sharedGameState.smallBoatDestroyedCount + sharedGameState.missileBoatDestroyedCount));
+		StopGameplayForResultTransition();
 		sharedGameState.isResultTransitionPending = true;
-		sharedGameState.resultTransitionRemainingSeconds = kResultTransitionDelaySeconds;
+		sharedGameState.resultTransitionRemainingSeconds = kResultRetrySeconds;
 		Log(isClear ? "RESULT: MISSION CLEAR -> Result Scene" : "RESULT: MISSION FAILED -> Result Scene");
+
+		if (TryLoadResultScene(isClear)) {
+			sharedGameState.isResultTransitionPending = false;
+		}
 	}
 
 	//================================================================
@@ -329,7 +460,7 @@ namespace {
 	constexpr float kAimTargetFallbackDistance = 400.0f;
 
 	void UpdateAimTarget(const GameObject& playerShip) {
-		const GameObject aimTarget = Find("PlayerAimTarget");
+		const GameObject& aimTarget = sharedGameState.playerAimTarget;
 
 		if (!aimTarget.HasReference()) {
 			return;
@@ -394,12 +525,22 @@ namespace {
 
 	// AUDIO 配下の AudioSource を名前で鳴らす。assetPath が空のスロットは
 	// EditorAudioManager 側で何もせず戻るため、音声ファイル未設定でも安全に呼べる。
-	void PlaySfx(const char* audioObjectName) {
-		const GameObject audioObject = Find(audioObjectName);
-
+	void PlaySfx(const GameObject& audioObject) {
 		if (audioObject.HasReference()) {
 			Audio{audioObject}.Play();
 		}
+	}
+
+	void PlaySfx(const char* audioObjectName) {
+		PlaySfx(Find(audioObjectName));
+	}
+
+	void PlayCachedSfx(GameObject& cachedAudioObject, const char* audioObjectName) {
+		if (!cachedAudioObject.HasReference()) {
+			cachedAudioObject = Find(audioObjectName);
+		}
+
+		PlaySfx(cachedAudioObject);
 	}
 
 	// 装備中の武器に対応する発砲音を鳴らす。
@@ -413,7 +554,12 @@ namespace {
 	}
 
 	void AddSalvage(float salvageAmount) {
-		const GameObject salvageCounter = Find("SALVAGE Counter");
+		GameObject salvageCounter = sharedGameState.salvageCounter;
+
+		if (!salvageCounter.HasReference()) {
+			salvageCounter = Find("SALVAGE Counter");
+			sharedGameState.salvageCounter = salvageCounter;
+		}
 
 		if (!salvageCounter.HasReference()) {
 			return;
@@ -471,7 +617,7 @@ namespace {
 		}
 
 		sharedGameState.isMissionClear = true;
-		PlaySfx("SFX Explosion Large");
+		PlayCachedSfx(sharedGameState.sfxExplosionLarge, "SFX Explosion Large");
 		const GameObject mainBgm = Find("BGM Main");
 
 		if (mainBgm.HasReference()) {
@@ -481,8 +627,6 @@ namespace {
 		RailFollower{Find("PlayerShip")}.Pause();
 		AddSalvage(500.0f);
 		PlaySfx("SFX Mission Clear");
-		SetActive("MISSION CLEAR Text", true);
-		SetActive("RESULT Button", true);
 		SetState("Clear");
 		ObjectiveTracker{Find("StageController")}.Set("Clear", ObjectiveState::Completed, 1.0f);
 		Log("MISSION CLEAR (RAIL COMPLETE)");
@@ -519,8 +663,11 @@ void WaterRailShooter0817::Start(int32_t gameObjectId) {
 	const GameObject titleController = Find(kTitleControllerName);
 
 	if (titleController.HasReference() && gameObjectId == titleController.GetInstanceId()) {
+		hasResolvedSceneRole_ = true;
+		isTitleController_ = true;
+		isResultController_ = false;
 		// 次のプレイのために、前回の結果待ち状態を必ず捨てる。
-		sharedGameState = {};
+		sharedGameState = SharedGameState();
 		Log("TITLE: PRESS SPACE TO START");
 		return;
 	}
@@ -528,29 +675,37 @@ void WaterRailShooter0817::Start(int32_t gameObjectId) {
 	const GameObject resultController = Find(kResultControllerName);
 
 	if (resultController.HasReference() && gameObjectId == resultController.GetInstanceId()) {
-		float isClearValue = 0.0f;
-		float destroyedEnemyCount = 0.0f;
-		SceneManager::GetFloat(kResultIsClearKey, isClearValue);
-		SceneManager::GetFloat(kResultEnemyCountKey, destroyedEnemyCount);
-		const bool isClear = isClearValue > 0.5f;
-
-		// Scene側に該当Objectがあれば結果に応じて出し分ける。無ければ何もしない。
-		SetActive("MISSION CLEAR Text", isClear);
-		SetActive("MISSION FAILED Text", !isClear);
+		hasResolvedSceneRole_ = true;
+		isTitleController_ = false;
+		isResultController_ = true;
+		int32_t destroyedEnemyCount = 0;
+		const bool isClear = ApplyResultSceneUi(destroyedEnemyCount);
 		Log(std::string("RESULT: ") + (isClear ? "MISSION CLEAR" : "MISSION FAILED") +
-			" / 撃破数 " + std::to_string(static_cast<int32_t>(destroyedEnemyCount)) +
+			" / 撃破数 " + std::to_string(destroyedEnemyCount) +
 			" / PRESS SPACE TO RETURN TO TITLE");
 		return;
 	}
 
 	const GameObject stageController = Find("StageController");
+	cachedStageController_ = stageController;
+	cachedPlayerShip_ = Find("PlayerShip");
 
 	if (!stageController.HasReference() || gameObjectId != stageController.GetInstanceId()) {
+		hasResolvedSceneRole_ = true;
+		isTitleController_ = false;
+		isResultController_ = false;
 		return;
 	}
 
-	sharedGameState = {};
+	sharedGameState = SharedGameState();
 	sharedGameState.isInitialized = true;
+	sharedGameState.stageController = stageController;
+	sharedGameState.playerAimTarget = Find("PlayerAimTarget");
+	sharedGameState.explosionSmall = Find("FX Explosion Small");
+	sharedGameState.explosionLarge = Find("FX Explosion Large");
+	sharedGameState.sfxExplosionSmall = Find("SFX Explosion Small");
+	sharedGameState.sfxExplosionLarge = Find("SFX Explosion Large");
+	sharedGameState.salvageCounter = Find("SALVAGE Counter");
 
 	SetActive("MISSION CLEAR Text", false);
 	SetActive("RESULT Button", false);
@@ -563,8 +718,17 @@ void WaterRailShooter0817::Start(int32_t gameObjectId) {
 }
 
 void WaterRailShooter0817::Update(int32_t gameObjectId, float deltaTime) {
-	// 名前検索はScene全体の線形走査になるため、Title/Resultの判定は初回だけ行って保持する。
-	// ゲーム本編Sceneでは両方falseになり、以降このFindは走らない。
+	// 非同期Scene遷移後に古い役割判定が残ると、ResultControllerなのに通常Gameplayとして扱われ、
+	// CLEAR / GAME OVER のTextをONにできない。現在SceneにResultControllerがいる場合は毎フレーム補正する。
+	const GameObject currentResultController = Find(kResultControllerName);
+	if (currentResultController.HasReference() && gameObjectId == currentResultController.GetInstanceId()) {
+		hasResolvedSceneRole_ = true;
+		isTitleController_ = false;
+		isResultController_ = true;
+	}
+
+	// StartでScene役割を解決済み。旧SceneでStartが呼ばれなかった場合だけ、従来の
+	// 初回判定を残して安全に復旧する。
 	if (!hasResolvedSceneRole_) {
 		hasResolvedSceneRole_ = true;
 		const GameObject titleController = Find(kTitleControllerName);
@@ -594,6 +758,9 @@ void WaterRailShooter0817::Update(int32_t gameObjectId, float deltaTime) {
 
 	// Result Scene: Spaceでタイトルへ戻る。
 	if (isResultController_) {
+		int32_t unusedDestroyedEnemyCount = 0;
+		ApplyResultSceneUi(unusedDestroyedEnemyCount);
+
 		if (Input::GetKeyDown(KeyCode::Space)) {
 			Log("RESULT: BACK TO TITLE");
 			const bool loadOk = SceneManager::LoadScene(kTitleScenePath);
@@ -603,8 +770,8 @@ void WaterRailShooter0817::Update(int32_t gameObjectId, float deltaTime) {
 		return;
 	}
 
-	const GameObject playerShip = Find("PlayerShip");
-	const GameObject stageController = Find("StageController");
+	const GameObject& playerShip = cachedPlayerShip_;
+	const GameObject& stageController = cachedStageController_;
 
 	if (playerShip.HasReference() && gameObjectId == playerShip.GetInstanceId()) {
 		if (!sharedGameState.isPlayerDestroyed && !sharedGameState.isMissionClear) {
@@ -640,14 +807,20 @@ void WaterRailShooter0817::Update(int32_t gameObjectId, float deltaTime) {
 
 	UpdateEnemyDestroyedEffects(deltaTime);
 
-	// 死亡・クリア後は表示を少し見せてからResult Sceneへ移る。Spaceで即スキップできる。
+	// 死亡・クリア後はGameplay内UIを出さず、Result SceneへのLoadだけを再試行する。
 	if (sharedGameState.isResultTransitionPending) {
 		sharedGameState.resultTransitionRemainingSeconds -= deltaTime;
 
-		if (sharedGameState.resultTransitionRemainingSeconds <= 0.0f || Input::GetKeyDown(KeyCode::Space)) {
-			sharedGameState.isResultTransitionPending = false;
-			const bool loadOk = SceneManager::LoadScene(kResultScenePath);
-			Log(std::string("DEBUG_SCENE_ROLE: LoadScene(Result) result=") + (loadOk ? "true" : "false"));
+		if (sharedGameState.resultTransitionRemainingSeconds <= 0.0f) {
+			if (TryLoadResultScene(sharedGameState.isMissionClear)) {
+				sharedGameState.isResultTransitionPending = false;
+			}
+			else {
+				// Clear/Failed後はPlayer入力を止めるため、ここで一度遷移に失敗すると
+				// 「Clear判定後に撃てないがResultへ行かない」状態になる。
+				// SceneManager側が一時的にLoadSceneを受け付けない場合に備え、短い間隔で再試行する。
+				sharedGameState.resultTransitionRemainingSeconds = kResultRetrySeconds;
+			}
 		}
 
 		return;
@@ -744,8 +917,6 @@ void WaterRailShooter0817::Update(int32_t gameObjectId, float deltaTime) {
 	if (!sharedGameState.isStormStarted && railProgress >= kStormProgress) {
 		sharedGameState.isStormStarted = true;
 		SetState("Storm");
-		RuntimeProperty::SetFloat(Find("Ocean"), "Ocean", "WaveHeight", 2.25f);
-		RuntimeProperty::SetFloat(Find("Ocean"), "Ocean", "WindSpeed", 26.0f);
 		Log("STORM SECTION");
 	}
 
@@ -868,15 +1039,16 @@ void WaterRailShooter0817::OnEnemyMoveCompleted(const EditorScriptInputActionCon
 
 void WaterRailShooter0817::OnSmallBoatDestroyed(const EditorScriptInputActionContext& inputContext) {
 	PlayEnemyDestroyedEffect(inputContext, false);
+	RetireDestroyedEnemy(inputContext);
 	sharedGameState.smallBoatDestroyedCount++;
-	PlaySfx("SFX Explosion Small");
+	PlayCachedSfx(sharedGameState.sfxExplosionSmall, "SFX Explosion Small");
 	AddSalvage(20.0f);
 
 	if (sharedGameState.isBattleBStarted) {
 		sharedGameState.battleBDestroyedCount++;
 	}
 
-	ObjectiveTracker{Find("StageController")}.Set(
+	ObjectiveTracker{sharedGameState.stageController}.Set(
 		sharedGameState.isBattleBStarted ? "BattleB" : "BattleA",
 		ObjectiveState::Active,
 		static_cast<float>(sharedGameState.isBattleBStarted
@@ -886,11 +1058,12 @@ void WaterRailShooter0817::OnSmallBoatDestroyed(const EditorScriptInputActionCon
 
 void WaterRailShooter0817::OnMissileBoatDestroyed(const EditorScriptInputActionContext& inputContext) {
 	PlayEnemyDestroyedEffect(inputContext, true);
+	RetireDestroyedEnemy(inputContext);
 	sharedGameState.missileBoatDestroyedCount++;
 	sharedGameState.battleBDestroyedCount++;
-	PlaySfx("SFX Explosion Small");
+	PlayCachedSfx(sharedGameState.sfxExplosionSmall, "SFX Explosion Small");
 	AddSalvage(40.0f);
-	ObjectiveTracker{Find("StageController")}.Set(
+	ObjectiveTracker{sharedGameState.stageController}.Set(
 		"BattleB",
 		ObjectiveState::Active,
 		static_cast<float>(sharedGameState.battleBDestroyedCount));
@@ -900,15 +1073,17 @@ void WaterRailShooter0817::OnMissileBoatDestroyed(const EditorScriptInputActionC
 // これまでハンドラが無く撃破しても何も起きなかった。Salvageと撃破音をここで処理する。
 void WaterRailShooter0817::OnGunBoatDestroyed(const EditorScriptInputActionContext& inputContext) {
 	PlayEnemyDestroyedEffect(inputContext, false);
+	RetireDestroyedEnemy(inputContext);
 	sharedGameState.smallBoatDestroyedCount++;
-	PlaySfx("SFX Explosion Small");
+	PlayCachedSfx(sharedGameState.sfxExplosionSmall, "SFX Explosion Small");
 	AddSalvage(35.0f);
 }
 
 void WaterRailShooter0817::OnHighSpeedBoatDestroyed(const EditorScriptInputActionContext& inputContext) {
 	PlayEnemyDestroyedEffect(inputContext, false);
+	RetireDestroyedEnemy(inputContext);
 	sharedGameState.smallBoatDestroyedCount++;
-	PlaySfx("SFX Explosion Small");
+	PlayCachedSfx(sharedGameState.sfxExplosionSmall, "SFX Explosion Small");
 	AddSalvage(15.0f);
 }
 
@@ -949,11 +1124,9 @@ void WaterRailShooter0817::OnMaxRushCompleted(const EditorScriptInputActionConte
 void WaterRailShooter0817::OnPlayerDestroyed(const EditorScriptInputActionContext& inputContext) {
 	(void)inputContext;
 	sharedGameState.isPlayerDestroyed = true;
-	PlaySfx("SFX Explosion Large");
+	PlayCachedSfx(sharedGameState.sfxExplosionLarge, "SFX Explosion Large");
 	RailFollower{Find("PlayerShip")}.Pause();
 	PlaySfx("SFX Mission Failed");
-	SetActive("MISSION FAILED Text", true);
-	SetActive("RESTART Button", true);
 	SetState("Failed");
 	Log("PLAYER: DESTROYED");
 	BeginResultTransition(false);
@@ -961,13 +1134,13 @@ void WaterRailShooter0817::OnPlayerDestroyed(const EditorScriptInputActionContex
 
 void WaterRailShooter0817::OnResult(const EditorScriptInputActionContext& inputContext) {
 	if (IsPerformed(inputContext)) {
-		SceneManager::LoadScene(kResultScenePath);
+		SceneManager::LoadSceneAsync(std::string{GetResultScenePath(sharedGameState.isMissionClear)});
 	}
 }
 
 void WaterRailShooter0817::OnRestart(const EditorScriptInputActionContext& inputContext) {
 	if (IsPerformed(inputContext)) {
-		SceneManager::LoadScene(kGameplayScenePath);
+		SceneManager::LoadSceneAsync(std::string{kGameplayScenePath});
 	}
 }
 

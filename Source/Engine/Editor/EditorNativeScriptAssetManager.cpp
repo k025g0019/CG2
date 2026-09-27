@@ -1,12 +1,18 @@
 ﻿#include "EditorNativeScriptAssetManager.h"
 
 #include "Source/Engine/Core/EditorNativeScript.h"  // 生成対象の公開 C++ API もエンジンビルド時に検証する。
+#include "Source/Engine/Core/EngineVersion.h"  // Engine インストール先の候補を Version 付きで bat へ書き出す。
 
 #include <algorithm>
 #include <array>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <string>
+
+#pragma warning(push, 0)
+#include <Windows.h>
+#pragma warning(pop)
 
 namespace {
 	constexpr std::array<unsigned char, 3> kUtf8Bom{{0xEFu, 0xBBu, 0xBFu}};  // 保存時に先頭へ付ける UTF-8 BOM。
@@ -40,6 +46,46 @@ namespace {
 		{EditorNativeScriptTemplate::RailEventController, "移動・イベント", "レールイベント受信", "Rail進行率MarkerのIDを型付きAction Payloadとして受け取ります。", "RailMovement / RailEventMarker / ActionRelay"},
 		{EditorNativeScriptTemplate::SimulationLodController, "最適化", "シミュレーションLOD参照", "距離別のRuntime LOD段階をゲーム固有処理から参照します。", "SimulationLOD / Script"},
 	}};
+
+	// Script API ヘッダーを配っている Engine インストール先を返す。
+	// Engine 配布物は CG2.exe と同じ場所へ ScriptApi フォルダーを持つ。
+	std::string GetEngineDirectoryPath() {
+		std::wstring executablePath(32768U, L'\0');
+		const DWORD pathLength = GetModuleFileNameW(
+			nullptr,
+			executablePath.data(),
+			static_cast<DWORD>(executablePath.size()));
+
+		if (pathLength == 0U || pathLength >= executablePath.size()) {
+			return {};
+		}
+
+		executablePath.resize(pathLength);
+		return std::filesystem::path(executablePath).parent_path().string();
+	}
+
+	// 用途別の本体は「関数の中身」として書いてあるので、lambda へ入れる分だけ字下げを足す。
+	std::string IndentBlock(const std::string& blockText) {
+		std::string indentedText;
+		indentedText.reserve(blockText.size() + blockText.size() / 8U);
+		bool isLineStart = true;
+
+		for (const char letter : blockText) {
+			if (isLineStart && letter != '\n') {
+				indentedText.push_back('\t');
+			}
+
+			indentedText.push_back(letter);
+			isLineStart = letter == '\n';
+		}
+
+		// 末尾の改行は挿入先が持つため、空行が増えないよう取る。
+		if (!indentedText.empty() && indentedText.back() == '\n') {
+			indentedText.pop_back();
+		}
+
+		return indentedText;
+	}
 
 	void ReplaceAll(std::string& text, const std::string& oldText, const std::string& newText) {
 		size_t replacePosition = 0U;
@@ -153,47 +199,27 @@ namespace {
 		return "\tif (runtimeApi == nullptr || inputContext.phase != EditorScriptInputPhasePerformed) {\n\t\treturn;\n\t}\n\n\tif (inputContext.valueType == EditorScriptInputValueTypeButton) {\n\t\truntimeApi->Log(inputContext.buttonValue > 0.5f ? \"OnValueChanged: ON\" : \"OnValueChanged: OFF\");\n\t\treturn;\n\t}\n\n\tconst std::string message = \"OnValueChanged: \" + std::to_string(inputContext.vector2Value.x);\n\truntimeApi->Log(message.c_str());\n";
 	}
 
-	std::string MakeTemplateMethodDeclarations(EditorNativeScriptTemplate scriptTemplate) {
-		if (scriptTemplate == EditorNativeScriptTemplate::RailEventController) {
-			return "\tvoid OnRailMarker(const EditorScriptInputActionContext& inputContext);\n";
-		}
-
-		return {};
-	}
-
 	std::string MakeTemplateActionBindings(EditorNativeScriptTemplate scriptTemplate) {
 		if (scriptTemplate == EditorNativeScriptTemplate::RailEventController) {
-			return "\tBindAction(\"OnRailMarker\", [this](const EditorScriptInputActionContext& inputContext) { OnRailMarker(inputContext); });\n";
+			return R"SCRIPT(	BindAction("OnRailMarker", [this](const EditorScriptInputActionContext& inputContext) {
+		if (EditorNativeScriptRuntime::GetRuntimeApi() == nullptr ||
+			inputContext.phase != EditorScriptInputPhasePerformed) {
+			return;
+		}
+
+		const std::string markerId = inputContext.payloadType == EditorScriptActionPayloadTypeString &&
+			inputContext.payloadString != nullptr
+			? inputContext.payloadString
+			: "";
+		const std::string message = "Rail Marker: " + markerId;
+		EditorNativeScriptRuntime::GetRuntimeApi()->Log(message.c_str());
+
+		// markerIdごとのゲーム固有処理はここへ追加する。
+	});
+)SCRIPT";
 		}
 
 		return {};
-	}
-
-	std::string MakeTemplateMethodDefinitions(
-		const std::string& scriptName,
-		EditorNativeScriptTemplate scriptTemplate) {
-		if (scriptTemplate != EditorNativeScriptTemplate::RailEventController) {
-			return {};
-		}
-
-		std::string methodText = R"SCRIPT(
-void __SCRIPT_NAME__::OnRailMarker(const EditorScriptInputActionContext& inputContext) {
-	if (runtimeApi == nullptr || inputContext.phase != EditorScriptInputPhasePerformed) {
-		return;
-	}
-
-	const std::string markerId = inputContext.payloadType == EditorScriptActionPayloadTypeString &&
-		inputContext.payloadString != nullptr
-		? inputContext.payloadString
-		: "";
-	const std::string message = "Rail Marker: " + markerId;
-	runtimeApi->Log(message.c_str());
-
-	// markerIdごとのゲーム固有処理はここへ追加する。
-}
-)SCRIPT";
-		ReplaceAll(methodText, "__SCRIPT_NAME__", scriptName);
-		return methodText;
 	}
 }
 
@@ -248,7 +274,7 @@ EditorNativeScriptAssetResult EditorNativeScriptAssetManager::CreateNativeScript
 
 	const bool isHeaderWritten = WriteUtf8BomFile(
 		result.headerFilePath,
-		MakeHeaderText(result.sanitizedScriptName, scriptTemplate));
+		MakeHeaderText(result.sanitizedScriptName));
 	const bool isSourceWritten = WriteUtf8BomFile(
 		result.sourceFilePath,
 		MakeSourceText(result.sanitizedScriptName, scriptTemplate));
@@ -256,9 +282,9 @@ EditorNativeScriptAssetResult EditorNativeScriptAssetManager::CreateNativeScript
 		result.generatedSourceFilePath,
 		MakeGeneratedSourceText(result.sanitizedScriptName));
 	const bool isDebugBuildFileWritten =
-		WriteUtf8BomFile(result.buildDebugFilePath, MakeBuildScriptText(result.sanitizedScriptName, true));
+		WriteUtf8File(result.buildDebugFilePath, MakeBuildScriptText(result.sanitizedScriptName, true));
 	const bool isReleaseBuildFileWritten =
-		WriteUtf8BomFile(result.buildReleaseFilePath, MakeBuildScriptText(result.sanitizedScriptName, false));
+		WriteUtf8File(result.buildReleaseFilePath, MakeBuildScriptText(result.sanitizedScriptName, false));
 
 	if (!isHeaderWritten || !isSourceWritten || !isGeneratedSourceWritten ||
 		!isDebugBuildFileWritten || !isReleaseBuildFileWritten) {
@@ -270,6 +296,68 @@ EditorNativeScriptAssetResult EditorNativeScriptAssetManager::CreateNativeScript
 	result.message = isDebugBuild
 		? "C++ スクリプトを生成しました。build_debug.bat を実行すると DLL が作られます。"
 		: "C++ スクリプトを生成しました。build_release.bat を実行すると DLL が作られます。";
+	return result;
+}
+
+EditorNativeScriptAssetResult EditorNativeScriptAssetManager::RefreshNativeScriptSupportFiles(
+	const std::string& dllFilePath,
+	bool isDebugBuild) {
+	EditorNativeScriptAssetResult result{};
+	const std::filesystem::path dllPath = std::filesystem::path(dllFilePath);
+	result.sanitizedScriptName = SanitizeScriptName(dllPath.stem().string());
+
+	if (result.sanitizedScriptName.empty() || dllPath.parent_path().empty()) {
+		result.message = "C++ ScriptのDLL PathからScript名を取得できませんでした。";
+		return result;
+	}
+
+	// resources/scripts/<ScriptName>/x64/<Configuration>/<ScriptName>.dll の3階層上。
+	std::filesystem::path scriptDirectoryPath = dllPath;
+	for (int32_t parentIndex = 0; parentIndex < 3; ++parentIndex) {
+		if (scriptDirectoryPath.empty() || !scriptDirectoryPath.has_parent_path()) {
+			result.message = "C++ ScriptのDLL Pathが標準Folder構成ではありません。";
+			return result;
+		}
+		scriptDirectoryPath = scriptDirectoryPath.parent_path();
+	}
+
+	result.scriptDirectoryPath = scriptDirectoryPath.generic_string();
+	result.headerFilePath =
+		(scriptDirectoryPath / (result.sanitizedScriptName + ".h")).generic_string();
+	result.sourceFilePath =
+		(scriptDirectoryPath / (result.sanitizedScriptName + ".cpp")).generic_string();
+	result.generatedSourceFilePath =
+		(scriptDirectoryPath / (result.sanitizedScriptName + ".Generated.cpp")).generic_string();
+	result.buildDebugFilePath = (scriptDirectoryPath / "build_debug.bat").generic_string();
+	result.buildReleaseFilePath = (scriptDirectoryPath / "build_release.bat").generic_string();
+	result.dllFilePath = dllFilePath;
+
+	if (!std::filesystem::exists(result.sourceFilePath)) {
+		result.message = "ユーザーScript本体が見つからないため、補助ファイルを更新できませんでした。";
+		return result;
+	}
+
+	// .hと.cppはユーザー資産なので既存内容を絶対に上書きしない。
+	// .Generated.cppとbuild batはEngine管理ファイルのため、現行APIに合わせて再生成する。
+	const bool isGeneratedSourceWritten = WriteUtf8BomFile(
+		result.generatedSourceFilePath,
+		MakeGeneratedSourceText(result.sanitizedScriptName));
+	const bool isDebugBuildFileWritten = WriteUtf8File(
+		result.buildDebugFilePath,
+		MakeBuildScriptText(result.sanitizedScriptName, true));
+	const bool isReleaseBuildFileWritten = WriteUtf8File(
+		result.buildReleaseFilePath,
+		MakeBuildScriptText(result.sanitizedScriptName, false));
+
+	if (!isGeneratedSourceWritten || !isDebugBuildFileWritten || !isReleaseBuildFileWritten) {
+		result.message = "C++ Scriptの補助ファイル更新に失敗しました。ユーザーの.cppは変更していません。";
+		return result;
+	}
+
+	result.isSucceeded = true;
+	result.message = isDebugBuild
+		? "Script補助ファイルを現行Engine用へ更新しました。Debug DLLをBuildします。"
+		: "Script補助ファイルを現行Engine用へ更新しました。Release DLLをBuildします。";
 	return result;
 }
 
@@ -300,65 +388,25 @@ std::string EditorNativeScriptAssetManager::SanitizeScriptName(const std::string
 	return sanitizedScriptName;
 }
 
-std::string EditorNativeScriptAssetManager::MakeHeaderText(
-	const std::string& scriptName,
-	EditorNativeScriptTemplate scriptTemplate) {
-	if (scriptTemplate == EditorNativeScriptTemplate::Empty) {
-		std::string emptyHeaderText = R"SCRIPT(#pragma once
-
-#include "EditorNativeScript.h"
-
-//================================================================
-// __SCRIPT_NAME__ - 必要なゲーム処理だけを追加する C++ Script
-//================================================================
-
-class __SCRIPT_NAME__ final : public Script {
-public:
-	void Update(float deltaTime) override;
-};
-)SCRIPT";
-		ReplaceAll(emptyHeaderText, "__SCRIPT_NAME__", scriptName);
-		return emptyHeaderText;
-	}
-
+std::string EditorNativeScriptAssetManager::MakeHeaderText(const std::string& scriptName) {
 	std::string headerText = R"SCRIPT(#pragma once
 
 #include "EditorNativeScript.h"
 
-#include <string>
-
 //================================================================
-// __SCRIPT_NAME__ - GameObject へ追加する C++ Component
+// __SCRIPT_NAME__ - GameObject へ追加する C++ Script
+//
+// このファイルは Engine が作る定型で、編集する必要はない。
+// 公開変数は SCRIPT_FIELD_*、ライフサイクルは Bind*、Inspector へ出さない状態は
+// MakeState を使い、すべて __SCRIPT_NAME__.cpp へ書く。
 //================================================================
 
 class __SCRIPT_NAME__ final : public Script {
 public:
-	__SCRIPT_NAME__();  // 公開変数と Input Action 関数を登録する。
-
-	void Start() override;
-	void Update(float deltaTime) override;
-	void FixedUpdate(float fixedDeltaTime) override;
-	void OnCollisionEnter(const EditorScriptPhysicsEvent& physicsEvent) override;
-	void OnTriggerEnter(const EditorScriptPhysicsEvent& physicsEvent) override;
-	void Stop() override;
-
-private:
-	float moveSpeed_ = 3.0f;  // Inspector から編集する移動速度。
-	float jumpImpulse_ = 5.0f;  // Inspector から編集するジャンプの瞬間力。
-	std::string startMessage_ = "__SCRIPT_NAME__::Start";  // Inspector から編集する開始ログ。
-	std::string nextScenePath_;  // Space を押した時に開く .scene。空なら遷移しない。
-	EditorScriptVector2 moveInput_{};  // OnMove が受けた入力を Update まで保持する。
-
-	void OnMove(const EditorScriptInputActionContext& inputContext);
-	void OnJump(const EditorScriptInputActionContext& inputContext);
-	void OnFire(const EditorScriptInputActionContext& inputContext);
-	void OnClick(const EditorScriptInputActionContext& inputContext);
-	void OnValueChanged(const EditorScriptInputActionContext& inputContext);
-__TEMPLATE_METHOD_DECLARATIONS__
+	__SCRIPT_NAME__();  // 必要な処理だけ .cpp 側で Bind する。
 };
 )SCRIPT";
 	ReplaceAll(headerText, "__SCRIPT_NAME__", scriptName);
-	ReplaceAll(headerText, "__TEMPLATE_METHOD_DECLARATIONS__", MakeTemplateMethodDeclarations(scriptTemplate));
 	return headerText;
 }
 
@@ -368,10 +416,40 @@ std::string EditorNativeScriptAssetManager::MakeSourceText(
 	if (scriptTemplate == EditorNativeScriptTemplate::Empty) {
 		std::string emptySourceText = R"SCRIPT(#include "__SCRIPT_NAME__.h"
 
-void __SCRIPT_NAME__::Update(float deltaTime) {
-	(void)deltaTime;
+//================================================================
+// ユーザーが編集する C++ Script 本体
+//
+// 追記はこの .cpp だけで完結する。.h へ宣言を増やす必要はない。
+//================================================================
 
-	// ゲーム処理だけをここへ記述する。
+// 公開変数はここで宣言する。Inspector へ並び、FieldFloat で読み、SetFieldFloat で書く。
+// 例:
+// SCRIPT_FIELD_FLOAT(moveSpeed, "移動速度", 3.0f, 0.0f, 100.0f, 0.1f)
+
+__SCRIPT_NAME__::__SCRIPT_NAME__() {
+	// Inspector へ出さない状態は MakeState で持つ。Script インスタンスごとに 1 つ作られる。
+	// 例:
+	// const auto elapsedTime = MakeState<float>(0.0f);
+
+	// 必要な処理だけ登録する。使わないライフサイクルの空実装は不要。
+	// 例:
+	// BindUpdate([this](float deltaTime) {
+	// 	(void)deltaTime;
+	// });
+	//
+	// BindCollisionEnter([this](const EditorScriptPhysicsEvent& physicsEvent) {
+	// 	(void)physicsEvent;
+	// });
+	//
+	// 任意Actionも同じ場所へ登録できる。
+	// 例:
+	// BindAction("OnFire", [this](const EditorScriptInputActionContext& inputContext) {
+	// 	if (inputContext.phase != EditorScriptInputPhasePerformed) {
+	// 		return;
+	// 	}
+	//
+	// 	// 発射処理などを書く。
+	// });
 }
 )SCRIPT";
 		ReplaceAll(emptySourceText, "__SCRIPT_NAME__", scriptName);
@@ -384,96 +462,102 @@ void __SCRIPT_NAME__::Update(float deltaTime) {
 
 //================================================================
 // ユーザーが編集する C++ Component 本体
+//
+// 公開変数は SCRIPT_FIELD_*、ライフサイクルは Bind*、Inspector へ出さない状態は
+// MakeState で持つ。追記も削除もこの .cpp だけで済み、.h は触らない。
 //================================================================
 
-__SCRIPT_NAME__::__SCRIPT_NAME__() {
-	ExposeFloat("moveSpeed", "移動速度", moveSpeed_, 0.0f, 100.0f, 0.1f);
-	ExposeFloat("jumpImpulse", "ジャンプ力", jumpImpulse_, 0.0f, 100.0f, 0.1f);
-	ExposeString("startMessage", "開始メッセージ", startMessage_);
-	ExposeScene("nextScenePath", "Space 遷移先 Scene", nextScenePath_);
+SCRIPT_FIELD_FLOAT(moveSpeed, "移動速度", 3.0f, 0.0f, 100.0f, 0.1f)
+SCRIPT_FIELD_FLOAT(jumpImpulse, "ジャンプ力", 5.0f, 0.0f, 100.0f, 0.1f)
+SCRIPT_FIELD_STRING(startMessage, "開始メッセージ", "__SCRIPT_NAME__::Start")
+SCRIPT_FIELD_SCENE(nextScenePath, "Space 遷移先 Scene", "")
 
-	BindAction("OnMove", [this](const EditorScriptInputActionContext& inputContext) { OnMove(inputContext); });
-	BindAction("OnJump", [this](const EditorScriptInputActionContext& inputContext) { OnJump(inputContext); });
-	BindAction("OnFire", [this](const EditorScriptInputActionContext& inputContext) { OnFire(inputContext); });
-	BindAction("OnClick", [this](const EditorScriptInputActionContext& inputContext) { OnClick(inputContext); });
-	BindAction("OnValueChanged", [this](const EditorScriptInputActionContext& inputContext) { OnValueChanged(inputContext); });
+__SCRIPT_NAME__::__SCRIPT_NAME__() {
+	// OnMove が受けた入力を Update まで保持する。
+	const std::shared_ptr<EditorScriptVector2> moveInput = MakeState<EditorScriptVector2>();
+
+	BindStart([this]() {
+		if (runtimeApi != nullptr) {
+			runtimeApi->Log(startMessage_.c_str());
+		}
+	});
+
+	BindUpdate([this, moveInput](float deltaTime) {
+		const int32_t gameObjectId = GetGameObjectId();
+__TEMPLATE_UPDATE_BODY__
+	});
+
+	BindFixedUpdate([this, moveInput](float fixedDeltaTime) {
+		const int32_t gameObjectId = GetGameObjectId();
+__TEMPLATE_FIXED_UPDATE_BODY__
+	});
+
+	BindCollisionEnter([this](const EditorScriptPhysicsEvent& physicsEvent) {
+		if (runtimeApi != nullptr) {
+			const std::string message = "OnCollisionEnter: other=" + std::to_string(physicsEvent.otherGameObjectId);
+			runtimeApi->Log(message.c_str());
+		}
+	});
+
+	BindTriggerEnter([this](const EditorScriptPhysicsEvent& physicsEvent) {
+		if (runtimeApi != nullptr) {
+			const std::string message = "OnTriggerEnter: other=" + std::to_string(physicsEvent.otherGameObjectId);
+			runtimeApi->Log(message.c_str());
+		}
+	});
+
+	BindStop([moveInput]() {
+		*moveInput = {};
+	});
+
+	BindAction("OnMove", [moveInput](const EditorScriptInputActionContext& inputContext) {
+		*moveInput = inputContext.phase == EditorScriptInputPhaseCanceled
+			? EditorScriptVector2{}
+			: inputContext.vector2Value;
+	});
+
+	BindAction("OnJump", [this](const EditorScriptInputActionContext& inputContext) {
+		if (runtimeApi == nullptr || inputContext.phase != EditorScriptInputPhasePerformed) {
+			return;
+		}
+
+		const EditorScriptVector3 jumpVelocity{0.0f, jumpImpulse_, 0.0f};
+		Rigidbody{inputContext.gameObjectId}.AddImpulse(jumpVelocity);
+	});
+
+	BindAction("OnFire", [this](const EditorScriptInputActionContext& inputContext) {
+__TEMPLATE_FIRE_BODY__
+	});
+
+	BindAction("OnClick", [this](const EditorScriptInputActionContext& inputContext) {
+__TEMPLATE_CLICK_BODY__
+	});
+
+	BindAction("OnValueChanged", [this](const EditorScriptInputActionContext& inputContext) {
+__TEMPLATE_VALUE_CHANGED_BODY__
+	});
 __TEMPLATE_ACTION_BINDINGS__
 }
-
-void __SCRIPT_NAME__::Start() {
-	if (runtimeApi != nullptr) {
-		runtimeApi->Log(startMessage_.c_str());
-	}
-}
-
-void __SCRIPT_NAME__::Update(float deltaTime) {
-	const int32_t gameObjectId = GetGameObjectId();
-__TEMPLATE_UPDATE_BODY__
-}
-
-void __SCRIPT_NAME__::FixedUpdate(float fixedDeltaTime) {
-	const int32_t gameObjectId = GetGameObjectId();
-__TEMPLATE_FIXED_UPDATE_BODY__
-}
-
-void __SCRIPT_NAME__::OnCollisionEnter(const EditorScriptPhysicsEvent& physicsEvent) {
-	if (runtimeApi != nullptr) {
-		const std::string message = "OnCollisionEnter: other=" + std::to_string(physicsEvent.otherGameObjectId);
-		runtimeApi->Log(message.c_str());
-	}
-}
-
-void __SCRIPT_NAME__::OnTriggerEnter(const EditorScriptPhysicsEvent& physicsEvent) {
-	if (runtimeApi != nullptr) {
-		const std::string message = "OnTriggerEnter: other=" + std::to_string(physicsEvent.otherGameObjectId);
-		runtimeApi->Log(message.c_str());
-	}
-}
-
-void __SCRIPT_NAME__::Stop() {
-	moveInput_ = {};
-}
-
-void __SCRIPT_NAME__::OnMove(const EditorScriptInputActionContext& inputContext) {
-	moveInput_ = inputContext.phase == EditorScriptInputPhaseCanceled
-		? EditorScriptVector2{}
-		: inputContext.vector2Value;
-}
-
-void __SCRIPT_NAME__::OnJump(const EditorScriptInputActionContext& inputContext) {
-	if (runtimeApi == nullptr || inputContext.phase != EditorScriptInputPhasePerformed) {
-		return;
-	}
-
-	const EditorScriptVector3 jumpImpulse{0.0f, jumpImpulse_, 0.0f};
-	Rigidbody{inputContext.gameObjectId}.AddImpulse(jumpImpulse);
-}
-
-void __SCRIPT_NAME__::OnFire(const EditorScriptInputActionContext& inputContext) {
-__TEMPLATE_FIRE_BODY__
-}
-
-void __SCRIPT_NAME__::OnClick(const EditorScriptInputActionContext& inputContext) {
-__TEMPLATE_CLICK_BODY__
-}
-
-void __SCRIPT_NAME__::OnValueChanged(const EditorScriptInputActionContext& inputContext) {
-__TEMPLATE_VALUE_CHANGED_BODY__
-}
-__TEMPLATE_METHOD_DEFINITIONS__
-
 )SCRIPT";
 	ReplaceAll(sourceText, "__SCRIPT_NAME__", scriptName);
-	ReplaceAll(sourceText, "__TEMPLATE_UPDATE_BODY__", MakeTemplateUpdateBody(scriptTemplate));
-	ReplaceAll(sourceText, "__TEMPLATE_FIXED_UPDATE_BODY__", MakeTemplateFixedUpdateBody(scriptTemplate));
-	ReplaceAll(sourceText, "__TEMPLATE_FIRE_BODY__", MakeTemplateFireBody(scriptTemplate));
-	ReplaceAll(sourceText, "__TEMPLATE_CLICK_BODY__", MakeTemplateClickBody(scriptTemplate));
-	ReplaceAll(sourceText, "__TEMPLATE_VALUE_CHANGED_BODY__", MakeTemplateValueChangedBody(scriptTemplate));
-	ReplaceAll(sourceText, "__TEMPLATE_ACTION_BINDINGS__", MakeTemplateActionBindings(scriptTemplate));
+	ReplaceAll(sourceText, "__TEMPLATE_UPDATE_BODY__", IndentBlock(MakeTemplateUpdateBody(scriptTemplate)));
 	ReplaceAll(
 		sourceText,
-		"__TEMPLATE_METHOD_DEFINITIONS__",
-		MakeTemplateMethodDefinitions(scriptName, scriptTemplate));
+		"__TEMPLATE_FIXED_UPDATE_BODY__",
+		IndentBlock(MakeTemplateFixedUpdateBody(scriptTemplate)));
+	ReplaceAll(sourceText, "__TEMPLATE_FIRE_BODY__", IndentBlock(MakeTemplateFireBody(scriptTemplate)));
+	ReplaceAll(sourceText, "__TEMPLATE_CLICK_BODY__", IndentBlock(MakeTemplateClickBody(scriptTemplate)));
+	ReplaceAll(
+		sourceText,
+		"__TEMPLATE_VALUE_CHANGED_BODY__",
+		IndentBlock(MakeTemplateValueChangedBody(scriptTemplate)));
+	ReplaceAll(sourceText, "__TEMPLATE_ACTION_BINDINGS__", MakeTemplateActionBindings(scriptTemplate));
+	// 用途別の本体は従来のメンバー名で書いてあるので、Field と MakeState の参照へ置き換える。
+	ReplaceAll(sourceText, "moveInput_", "(*moveInput)");
+	ReplaceAll(sourceText, "moveSpeed_", "FieldFloat(\"moveSpeed\")");
+	ReplaceAll(sourceText, "jumpImpulse_", "FieldFloat(\"jumpImpulse\")");
+	ReplaceAll(sourceText, "startMessage_", "FieldString(\"startMessage\")");
+	ReplaceAll(sourceText, "nextScenePath_", "FieldString(\"nextScenePath\")");
 	ReplaceAll(sourceText, "runtimeApi", "EditorNativeScriptRuntime::GetRuntimeApi()");
 	return sourceText;
 }
@@ -518,12 +602,17 @@ extern "C" __declspec(dllexport) bool EditorScript_Load(
 	uint32_t apiVersion,
 	const EditorScriptRuntimeApi* runtimeApi) {
 
-	if (apiVersion != kEditorScriptApiVersion || runtimeApi == nullptr) {
+	// Runtime APIは末尾追加のため、新しいEngineから古いScript API範囲を使うことは安全。
+	if (apiVersion < kEditorScriptApiVersion || runtimeApi == nullptr) {
 		return false;
 	}
 
 	EditorNativeScriptRuntime::SetRuntimeApi(runtimeApi);
 	return true;
+}
+
+extern "C" __declspec(dllexport) uint32_t EditorScript_GetRequiredApiVersion() {
+	return kEditorScriptApiVersion;
 }
 
 extern "C" __declspec(dllexport) void EditorScript_Unload() {
@@ -679,6 +768,8 @@ std::string EditorNativeScriptAssetManager::MakeBuildScriptText(const std::strin
 	const char* configurationDirectory = isDebug ? "Debug" : "Release";
 	const char* runtimeOption = isDebug ? "/MDd" : "/MD";
 	const char* optimizationOption = isDebug ? "/Od /Zi" : "/O2";
+	const std::string engineDirectoryPath = GetEngineDirectoryPath();
+	const std::string engineVersionText = GetManoEngineDisplayVersion();
 
 	buildScriptText
 		<< "@echo off\r\n"
@@ -687,6 +778,30 @@ std::string EditorNativeScriptAssetManager::MakeBuildScriptText(const std::strin
 		<< "pushd \"%~dp0\"\r\n"
 		<< "set \"SCRIPT_DIR=%CD%\"\r\n"
 		<< "set \"PROJECT_ROOT=%SCRIPT_DIR%\\..\\..\\..\"\r\n"
+		<< "set \"ENGINE_DIR=" << engineDirectoryPath << "\"\r\n"
+		<< "set \"ENGINE_VERSION=" << engineVersionText << "\"\r\n"
+		<< "\r\n"
+		// Script API ヘッダーの置き場所は Engine の入れ方で変わるので、候補を順に探す。
+		// Engine 配布物は CG2.exe と同じ場所の ScriptApi フォルダーへ入れている。
+		<< "set \"SCRIPT_API_DIR=\"\r\n"
+		<< "for %%D in (\r\n"
+		<< "  \"%MANOENGINE_SCRIPT_API%\"\r\n"
+		<< "  \"%PROJECT_ROOT%\\Source\\Engine\\Core\"\r\n"
+		<< "  \"%ENGINE_DIR%\\ScriptApi\"\r\n"
+		<< "  \"%PROJECT_ROOT%\\PortableEngine\\%ENGINE_VERSION%\\ScriptApi\"\r\n"
+		<< "  \"%PROJECT_ROOT%\\PortableEngine\\ScriptApi\"\r\n"
+		<< "  \"%LOCALAPPDATA%\\ManoEngine\\Engines\\%ENGINE_VERSION%\\ScriptApi\"\r\n"
+		<< "  \"%MANOENGINE_INSTALL_ROOT%\\Engines\\%ENGINE_VERSION%\\ScriptApi\"\r\n"
+		<< "  \"C:\\ManoHub\\Engines\\%ENGINE_VERSION%\\ScriptApi\"\r\n"
+		<< ") do if not defined SCRIPT_API_DIR if exist \"%%~D\\EditorNativeScript.h\" set \"SCRIPT_API_DIR=%%~D\"\r\n"
+		<< "\r\n"
+		<< "if not defined SCRIPT_API_DIR (\r\n"
+		<< "  echo [error] EditorNativeScript.h was not found.\r\n"
+		<< "  echo         Set MANOENGINE_SCRIPT_API to the ScriptApi folder of your ManoEngine install.\r\n"
+		<< "  popd\r\n"
+		<< "  exit /b 1\r\n"
+		<< ")\r\n"
+		<< "\r\n"
 		<< "set \"VSWHERE=%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe\"\r\n"
 		<< "for /f \"usebackq delims=\" %%i in (`\"%VSWHERE%\" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VSINSTALL=%%i\r\n"
 		<< "if \"%VSINSTALL%\"==\"\" exit /b 1\r\n"
@@ -697,7 +812,7 @@ std::string EditorNativeScriptAssetManager::MakeBuildScriptText(const std::strin
 		<< "\" mkdir \"%SCRIPT_DIR%\\x64\\" << configurationDirectory << "\"\r\n"
 		<< "\r\n"
 		<< "cl /nologo /utf-8 /std:c++20 /EHsc " << runtimeOption << " " << optimizationOption
-		<< " /LD /I \"%PROJECT_ROOT%\\Source\\Engine\\Core\" /I \"%PROJECT_ROOT%\" \"%SCRIPT_DIR%\\"
+		<< " /LD /I \"%SCRIPT_API_DIR%\" /I \"%PROJECT_ROOT%\" \"%SCRIPT_DIR%\\"
 		<< scriptName << ".cpp\" \"%SCRIPT_DIR%\\" << scriptName
 		<< ".Generated.cpp\" /Fe:\"%SCRIPT_DIR%\\x64\\" << configurationDirectory << "\\"
 		<< scriptName << ".dll\"\r\n"
@@ -715,6 +830,17 @@ bool EditorNativeScriptAssetManager::WriteUtf8BomFile(const std::string& filePat
 	}
 
 	file.write(reinterpret_cast<const char*>(kUtf8Bom.data()), static_cast<std::streamsize>(kUtf8Bom.size()));
+	file.write(text.data(), static_cast<std::streamsize>(text.size()));
+	return file.good();
+}
+
+// cmd.exe は先頭の UTF-8 BOM を命令として読んでしまうため、bat だけ BOM なしで保存する。
+bool EditorNativeScriptAssetManager::WriteUtf8File(const std::string& filePath, const std::string& text) {
+	std::ofstream file(filePath, std::ios::binary | std::ios::trunc);
+	if (!file.is_open()) {
+		return false;
+	}
+
 	file.write(text.data(), static_cast<std::streamsize>(text.size()));
 	return file.good();
 }

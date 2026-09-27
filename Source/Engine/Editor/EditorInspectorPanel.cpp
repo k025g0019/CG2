@@ -5,7 +5,15 @@
 #include "EditorComponentUtility.h"
 #include "EditorNativeScriptAssetManager.h"
 #include "EditorSharedState.h"
+#include "EditorGameBuildManager.h"
+#include "EditorTeamCollaborationManager.h"
 #include "Source/Engine/Animation/PropertyAnimationClip.h"
+#include "Source/Engine/Core/GamepadInput.h"
+#include "Source/Engine/Core/ProjectSettings.h"
+#include "Source/Engine/Haptics/HapticSystem.h"
+#include "Source/Engine/Online/OnlineService.h"
+#include "Source/Engine/Speech/SpeechSystem.h"
+#include "Source/Engine/Vision/VisionSystem.h"
 #include "Vector.h"
 
 #include <algorithm>
@@ -29,6 +37,37 @@ namespace {
 	constexpr float kWideButtonWidth = 230.0f;  // Inspector 下部の横長ボタン幅
 	constexpr float kRadianToDegree = 57.2957795f;  // 内部のラジアン値を Inspector 表示用の度数へ変換する係数。
 	constexpr float kDegreeToRadian = 0.0174532924f;  // Inspector で入力された度数を内部用ラジアンへ戻す係数。
+	std::string activeInspectorPropertyLabel;
+	std::string currentInspectorTeamGameObjectUuid;
+	std::string currentInspectorTeamComponentUuid;
+
+	void RememberActiveInspectorProperty(const std::string& label) {
+		if (ImGui::IsItemActive()) {
+			activeInspectorPropertyLabel = label;
+		}
+		if (currentInspectorTeamGameObjectUuid.empty() || currentInspectorTeamComponentUuid.empty()) {
+			return;
+		}
+		const std::string targetId = currentInspectorTeamGameObjectUuid +
+			"#component:" + currentInspectorTeamComponentUuid + "#property:" + label;
+		const EditorTeamItemTargetSummary summary =
+			GetEditorTeamTargetItemSummary("Property", targetId);
+		if (summary.GetTotalCount() > 0 && ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("TeamItem %d件\n右クリックで開く", summary.GetTotalCount());
+		}
+		if (ImGui::BeginPopupContextItem("PropertyTeamItemContext")) {
+			if (summary.GetTotalCount() > 0 && ImGui::MenuItem("関連TeamItemを開く")) {
+				OpenEditorTeamTargetItems("Property", targetId, false);
+			}
+			if (ImGui::MenuItem("このPropertyへ付箋")) {
+				OpenEditorTeamTargetItems("Property", targetId, true, "Note");
+			}
+			if (ImGui::MenuItem("このPropertyへPing")) {
+				OpenEditorTeamTargetItems("Property", targetId, true, "Ping");
+			}
+			ImGui::EndPopup();
+		}
+	}
 	constexpr unsigned char kUtf8Bom[] = {0xEFu, 0xBBu, 0xBFu};  // テキスト系アセットを UTF-8 BOM 付きで保存する。
 	int32_t g_pendingActionSequenceStepParentId = -1;  // Inspector 描画中の GameObject 配列再確保を避ける遅延作成要求。
 	int32_t g_pendingWeaponSlotParentId = -1;  // 可変Weapon Slotを安全な次フレームに追加する。
@@ -191,7 +230,7 @@ namespace {
 	std::string BuildInputActionsFileText(const std::vector<InputActionsAssetEntry>& entries) {
 		std::ostringstream fileText;
 		fileText
-			<< "# CG2 PlayerInput Actions\r\n"
+			<< "# ManoEngine PlayerInput Actions\r\n"
 			<< "# Action|ActionMap|ActionName|ValueType|BindingType|...\r\n";
 
 		for (const InputActionsAssetEntry& entry : entries) {
@@ -270,6 +309,7 @@ namespace {
 		{"ライト・環境", "ライトプローブグループ", EditorComponentType::LightProbeGroup},
 		{"ライト・環境", "ライトプローブプロキシボリューム", EditorComponentType::LightProbeProxyVolume},
 		{"ライト・環境", "ボリューム", EditorComponentType::Volume},
+		{"ライト・環境", "パフォーマンス設定", EditorComponentType::PerformanceSettings},
 		{"3D物理", "リジッドボディ", EditorComponentType::RigidBody},
 		{"3D物理", "箱の当たり判定", EditorComponentType::BoxCollider},
 		{"3D物理", "球の当たり判定", EditorComponentType::SphereCollider},
@@ -525,6 +565,9 @@ namespace {
 		{"地形・タイルマップ", "タイルマップ当たり判定 2D", EditorComponentType::TilemapCollider2D},
 		{"地形・タイルマップ", "グリッド", EditorComponentType::Grid},
 		{"FeelKit", "FeelKit 触覚ソース", EditorComponentType::HapticSource},
+		{"外部認識", "音声認識", EditorComponentType::SpeechRecognizer},
+		{"外部認識", "カメラ入力", EditorComponentType::CameraInput},
+		{"外部認識", "画像認識", EditorComponentType::ImageRecognizer},
 		{"ライト・環境", "ポストプロセス", EditorComponentType::PostProcess},
 		{"ライト・環境", "環境", EditorComponentType::Environment},
 		{"ライト・環境", "Sun Portal", EditorComponentType::SunPortal},
@@ -764,6 +807,102 @@ namespace {
 		return isOpen;
 	}
 
+	void DrawComponentTeamItemControls(
+		const std::string& gameObjectUuid,
+		const std::string& componentUuid) {
+		if (gameObjectUuid.empty() || componentUuid.empty()) {
+			return;
+		}
+
+		const std::string targetId = gameObjectUuid + "#component:" + componentUuid;
+		const EditorTeamItemTargetSummary summary =
+			GetEditorTeamTargetItemSummary("Component", targetId);
+		if (summary.GetTotalCount() > 0) {
+			char badgeLabel[32]{};
+			std::snprintf(badgeLabel, sizeof(badgeLabel), "TEAM %d", summary.GetTotalCount());
+			if (ImGui::SmallButton(badgeLabel)) {
+				OpenEditorTeamTargetItems("Component", targetId, false);
+			}
+			ImGui::SameLine();
+		}
+		if (ImGui::SmallButton("+ 付箋")) {
+			OpenEditorTeamTargetItems("Component", targetId, true, "Note");
+		}
+	}
+
+	void TrackComponentEditingLock(
+		int32_t gameObjectId,
+		const std::string& componentUuid,
+		float componentTop,
+		float componentBottom,
+		bool isLockedByAnotherUser) {
+		// ActiveId自体はImGui内部実装なので、操作開始時のマウス位置から担当Componentを記録する。
+		// Drag中にカーソルが欄外へ出ても、Active状態が続く間は同じComponentのロックを維持する。
+		static int32_t activeGameObjectId = -1;
+		static std::string activeComponentUuid;
+		if (!ImGui::IsAnyItemActive()) {
+			activeGameObjectId = -1;
+			activeComponentUuid.clear();
+			activeInspectorPropertyLabel.clear();
+			return;
+		}
+
+		const float mouseY = ImGui::GetIO().MousePos.y;
+		if (!isLockedByAnotherUser &&
+			ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
+			mouseY >= componentTop && mouseY <= componentBottom) {
+			activeGameObjectId = gameObjectId;
+			activeComponentUuid = componentUuid;
+		}
+
+		if (!isLockedByAnotherUser &&
+			activeGameObjectId == gameObjectId &&
+			activeComponentUuid == componentUuid) {
+			RequestEditorTeamEditingLock(gameObjectId, componentUuid);
+			const ImVec2 dragDelta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+			const bool isDragging = dragDelta.x != 0.0f || dragDelta.y != 0.0f;
+			const char* editingAction = isDragging
+				? "Slider操作中"
+				: ImGui::GetIO().WantTextInput ? "数値入力中" : "Checkbox操作中";
+			char propertyIdentityBuffer[32]{};
+			const ImGuiContext* context = ImGui::GetCurrentContext();
+			std::snprintf(
+				propertyIdentityBuffer,
+				sizeof(propertyIdentityBuffer),
+				"Property#%08X",
+				context != nullptr ? static_cast<unsigned int>(context->ActiveId) : 0u);
+			const std::string propertyIdentity = activeInspectorPropertyLabel.empty()
+				? propertyIdentityBuffer
+				: activeInspectorPropertyLabel;
+			ReportEditorTeamActivity(
+				"Inspector",
+				editingAction,
+				componentUuid,
+				propertyIdentity);
+
+			const EditorGameObject* activeObject = g_editorScene.FindGameObject(gameObjectId);
+			if (activeObject != nullptr) {
+				const std::string propertyTargetId = activeObject->uuid +
+					"#component:" + componentUuid + "#property:" + propertyIdentity;
+				const EditorTeamItemTargetSummary propertySummary =
+					GetEditorTeamTargetItemSummary("Property", propertyTargetId);
+				ImGui::PushID(propertyIdentity.c_str());
+				if (propertySummary.GetTotalCount() > 0) {
+					char badgeLabel[32]{};
+					std::snprintf(badgeLabel, sizeof(badgeLabel), "Property TEAM %d", propertySummary.GetTotalCount());
+					if (ImGui::SmallButton(badgeLabel)) {
+						OpenEditorTeamTargetItems("Property", propertyTargetId, false);
+					}
+					ImGui::SameLine();
+				}
+				if (ImGui::SmallButton("このPropertyへ付箋")) {
+					OpenEditorTeamTargetItems("Property", propertyTargetId, true, "Note");
+				}
+				ImGui::PopID();
+			}
+		}
+	}
+
 	bool BeginPropertyTable(const char* tableId, int32_t columnCount) {
 		// Label + Value を横並びにするための共通 Table
 		return ImGui::BeginTable(
@@ -801,6 +940,7 @@ namespace {
 			ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
 			ImGui::SetNextItemWidth(inputWidth);
 			isChanged |= ImGui::DragFloat("##X", &value.x, speed, minValue, maxValue, "%.3f");
+			RememberActiveInspectorProperty(std::string(label) + ".X");
 
 			ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
 			ImGui::AlignTextToFramePadding();
@@ -808,6 +948,7 @@ namespace {
 			ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
 			ImGui::SetNextItemWidth(inputWidth);
 			isChanged |= ImGui::DragFloat("##Y", &value.y, speed, minValue, maxValue, "%.3f");
+			RememberActiveInspectorProperty(std::string(label) + ".Y");
 
 			ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
 			ImGui::AlignTextToFramePadding();
@@ -815,6 +956,7 @@ namespace {
 			ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
 			ImGui::SetNextItemWidth(inputWidth);
 			isChanged |= ImGui::DragFloat("##Z", &value.z, speed, minValue, maxValue, "%.3f");
+			RememberActiveInspectorProperty(std::string(label) + ".Z");
 
 			ImGui::EndTable();
 		}
@@ -845,6 +987,7 @@ namespace {
 			ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
 			ImGui::SetNextItemWidth(inputWidth);
 			isChanged |= ImGui::DragFloat("##X", &value.x, speed, minValue, maxValue, "%.3f");
+			RememberActiveInspectorProperty(std::string(label) + ".X");
 
 			ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
 			ImGui::AlignTextToFramePadding();
@@ -852,6 +995,7 @@ namespace {
 			ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
 			ImGui::SetNextItemWidth(inputWidth);
 			isChanged |= ImGui::DragFloat("##Y", &value.y, speed, minValue, maxValue, "%.3f");
+			RememberActiveInspectorProperty(std::string(label) + ".Y");
 			ImGui::EndTable();
 		}
 
@@ -880,6 +1024,7 @@ namespace {
 			ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
 			ImGui::SetNextItemWidth(inputWidth);
 			isChanged |= ImGui::DragFloat("##X", &value.x, speed, minValue, maxValue, "%.3f");
+			RememberActiveInspectorProperty(std::string(label) + ".X");
 
 			ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
 			ImGui::AlignTextToFramePadding();
@@ -887,6 +1032,7 @@ namespace {
 			ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
 			ImGui::SetNextItemWidth(inputWidth);
 			isChanged |= ImGui::DragFloat("##Y", &value.y, speed, minValue, maxValue, "%.3f");
+			RememberActiveInspectorProperty(std::string(label) + ".Y");
 			ImGui::EndTable();
 		}
 
@@ -907,6 +1053,7 @@ namespace {
 			ImGui::TableNextColumn();
 			ImGui::SetNextItemWidth(-1.0f);
 			isChanged = ImGui::DragFloat("##Value", &value, speed, minValue, maxValue, "%.3f");
+			RememberActiveInspectorProperty(label);
 			ImGui::EndTable();
 		}
 
@@ -928,6 +1075,7 @@ namespace {
 			ImGui::TableNextColumn();
 			ImGui::SetNextItemWidth(-1.0f);
 			isChanged = ImGui::DragFloat("##Value", &value, speed, minValue, maxValue, "%.6e");
+			RememberActiveInspectorProperty(label);
 			ImGui::EndTable();
 		}
 
@@ -948,6 +1096,7 @@ namespace {
 			ImGui::TableNextColumn();
 			ImGui::SetNextItemWidth(-1.0f);
 			isChanged = ImGui::InputInt("##Value", &value);
+			RememberActiveInspectorProperty(label);
 			ImGui::EndTable();
 		}
 
@@ -968,6 +1117,7 @@ namespace {
 			ImGui::TextUnformatted(label);
 			ImGui::TableNextColumn();
 			isChanged = ImGui::Checkbox("##Value", &value);
+			RememberActiveInspectorProperty(label);
 			ImGui::EndTable();
 		}
 
@@ -991,6 +1141,7 @@ namespace {
 			ImGui::TableNextColumn();
 			ImGui::SetNextItemWidth(-1.0f);
 			isChanged = ImGui::InputText("##Value", buffer, sizeof(buffer));
+			RememberActiveInspectorProperty(label);
 			ImGui::EndTable();
 		}
 
@@ -1025,18 +1176,21 @@ namespace {
 			ImGui::TextUnformatted("X");
 			ImGui::TableNextColumn();
 			isChanged |= ImGui::Checkbox("##X", &freezeX);
+			RememberActiveInspectorProperty(std::string(label) + ".X");
 
 			ImGui::TableNextColumn();
 			ImGui::AlignTextToFramePadding();
 			ImGui::TextUnformatted("Y");
 			ImGui::TableNextColumn();
 			isChanged |= ImGui::Checkbox("##Y", &freezeY);
+			RememberActiveInspectorProperty(std::string(label) + ".Y");
 
 			ImGui::TableNextColumn();
 			ImGui::AlignTextToFramePadding();
 			ImGui::TextUnformatted("Z");
 			ImGui::TableNextColumn();
 			isChanged |= ImGui::Checkbox("##Z", &freezeZ);
+			RememberActiveInspectorProperty(std::string(label) + ".Z");
 
 			ImGui::EndTable();
 		}
@@ -1066,6 +1220,7 @@ namespace {
 			ImGui::TableNextColumn();
 			ImGui::SetNextItemWidth(-1.0f);
 			isChanged = ImGui::ColorEdit3("##Value", &color.x);
+			RememberActiveInspectorProperty(label);
 			ImGui::EndTable();
 		}
 
@@ -1128,6 +1283,7 @@ namespace {
 				ImGui::TableNextColumn();
 				ImGui::SetNextItemWidth(-1.0f);
 				isChanged = ImGui::Combo("##Value", &selectedIndex, comboItems, comboItemCount);
+				RememberActiveInspectorProperty(label);
 				ImGui::EndTable();
 			}
 
@@ -2054,7 +2210,7 @@ namespace {
 
 		std::string MakeDefaultPlayerInputActionsText() {
 			return
-				"# CG2 PlayerInput Actions\r\n"
+				"# ManoEngine PlayerInput Actions\r\n"
 				"# Action|ActionMap|ActionName|ValueType|BindingType|...\r\n"
 				"Action|Player|Move|Vector2|2DVector|W|S|A|D\r\n"
 				"Action|Player|Jump|Button|Key|Space\r\n"
@@ -2207,13 +2363,412 @@ namespace {
 			DrawTextRow("C++ 側", "BindAction(\"OnMove\", ...) の登録名と、上の C++ 関数名を一致させます。");
 		}
 
-	void DrawHapticSourceComponent(EditorComponent& component) {
-		DrawTextRow("説明", "FeelKitHaptics の触覚効果を再生するコンポーネントです。");
-		DrawStringInputRow("サウンド", component.assetPath);
+	void DrawHapticSourceComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& gameObject,
+		EditorComponent& component) {
+		DrawTextRow("説明", "HapticSystem 経由で触覚効果を再生します。Device は FeelKit Backend が扱います。");
+
+		const HapticDeviceInfo deviceInfo = HapticSystem::Get().GetDeviceInfo();
+		DrawTextRow("Device 状態", ToDisplayString(deviceInfo.state));
+		DrawTextRow("Device", deviceInfo.deviceName.empty() ? "なし" : deviceInfo.deviceName.c_str());
+
+		DrawSubHeader("再生設定");
+		DrawStringInputRow("Haptic Clip", component.hapticClipAssetPath);
+		DrawTextRow("Clip 補足", "空欄なら下の強さ・持続時間・パターンをそのまま使います。");
 		DrawCheckboxRow("自動再生", component.audioPlayOnAwake);
 		DrawFloatRow("強さ", component.hapticStrength, 0.01f, 0.0f, 1.0f);
 		DrawIntRow("持続時間(ms)", component.hapticDurationMs);
 		DrawCheckboxRow("ループ", component.hapticLoop);
+		DrawFloatRow("周波数(回/秒)", component.hapticFrequency, 0.1f, 0.0f, 200.0f);
+
+		const char* patternItems[] = {"一定", "パルス", "立ち上がり", "減衰", "衝撃"};
+		DrawComboRow("パターン", component.hapticPattern, patternItems, static_cast<int32_t>(_countof(patternItems)));
+
+		const char* channelItems[] = {"両方", "左", "右"};
+		DrawComboRow("チャンネル", component.hapticChannel, channelItems, static_cast<int32_t>(_countof(channelItems)));
+
+		const char* deviceItems[] = {"自動", "XInput", "Switch2"};
+		DrawComboRow("対象 Device", component.hapticTargetDevice, deviceItems, static_cast<int32_t>(_countof(deviceItems)));
+
+		DrawSubHeader("Audio 連動");
+		DrawStringInputRow("サウンド", component.assetPath);
+		DrawCheckboxRow("Audio Reactive", component.hapticAudioReactive);
+
+		if (component.hapticAudioReactive) {
+			const char* rangeItems[] = {"低域", "全域", "高域"};
+			DrawComboRow(
+				"周波数帯",
+				component.hapticAudioFrequencyRange,
+				rangeItems,
+				static_cast<int32_t>(_countof(rangeItems)));
+			DrawFloatRow("感度", component.hapticAudioSensitivity, 0.01f, 0.0f, 10.0f);
+			DrawFloatRow("強度倍率", component.hapticAudioIntensityScale, 0.01f, 0.0f, 10.0f);
+		}
+
+		DrawSubHeader("Physics 連動");
+		DrawCheckboxRow("Physics Reactive", component.hapticPhysicsReactive);
+
+		if (component.hapticPhysicsReactive) {
+			DrawFloatRow("最大 Impulse", component.hapticMaximumImpulse, 0.1f, 0.0001f, 100000.0f);
+			DrawTextRow("C++ 側", "Haptic(gameObject).PlayFromImpulse(impulse) で衝突強度から鳴らせます。");
+		}
+
+		// Play Mode に入らなくても試せるようにする(外部連携仕様書 80 項)。
+		DrawSubHeader("Editor プレビュー");
+
+		if (ImGui::Button("プレビュー", ImVec2(kWideButtonWidth, 0.0f))) {
+			context.runtimeManager.GetExternalFeatureManager().PreviewHapticComponent(component, gameObject.id);
+		}
+
+		ImGui::SameLine();
+
+		if (ImGui::Button("停止", ImVec2(kWideButtonWidth * 0.5f, 0.0f))) {
+			HapticSystem::Get().StopAll();
+		}
+
+		std::vector<HapticPlaybackStatus> playbackStatus;
+		HapticSystem::Get().GetPlaybackStatus(playbackStatus);
+		ImGui::TextDisabled(
+			"再生中: %d 本 / 出力強度: %.2f",
+			static_cast<int32_t>(playbackStatus.size()),
+			HapticSystem::Get().GetCurrentOutputIntensity());
+	}
+
+	// マイク / Camera Device の一覧は COM 列挙が重いため、更新ボタンを押した時だけ取り直す。
+	void DrawMicrophoneDeviceRow(std::string& deviceName) {
+		static std::vector<SpeechDeviceInfo> cachedDevices;
+		static bool hasEnumerated = false;
+
+		if (!hasEnumerated) {
+			SpeechSystem::Get().EnumerateDevices(cachedDevices);
+			hasEnumerated = true;
+		}
+
+		DrawStringInputRow("マイク", deviceName);
+
+		if (ImGui::Button("マイク一覧を更新", ImVec2(kWideButtonWidth, 0.0f))) {
+			SpeechSystem::Get().EnumerateDevices(cachedDevices);
+		}
+
+		if (cachedDevices.empty()) {
+			ImGui::TextDisabled("  マイクが見つかりません(空欄なら既定マイクを使います)。");
+			return;
+		}
+
+		for (const SpeechDeviceInfo& deviceInfo : cachedDevices) {
+			ImGui::PushID(deviceInfo.deviceName.c_str());
+
+			if (ImGui::SmallButton("使う")) {
+				deviceName = deviceInfo.deviceName;
+			}
+
+			ImGui::SameLine();
+			ImGui::TextDisabled("%s%s", deviceInfo.deviceName.c_str(), deviceInfo.isDefault ? " (既定)" : "");
+			ImGui::PopID();
+		}
+	}
+
+	void DrawCameraDeviceRow(std::string& deviceName) {
+		static std::vector<CameraDeviceInfo> cachedDevices;
+		static bool hasEnumerated = false;
+
+		if (!hasEnumerated) {
+			VisionSystem::Get().EnumerateCameraDevices(cachedDevices);
+			hasEnumerated = true;
+		}
+
+		DrawStringInputRow("Camera", deviceName);
+
+		if (ImGui::Button("Camera 一覧を更新", ImVec2(kWideButtonWidth, 0.0f))) {
+			VisionSystem::Get().EnumerateCameraDevices(cachedDevices);
+		}
+
+		if (cachedDevices.empty()) {
+			ImGui::TextDisabled("  Camera が見つかりません(空欄なら既定 Camera を使います)。");
+			return;
+		}
+
+		for (const CameraDeviceInfo& deviceInfo : cachedDevices) {
+			ImGui::PushID(deviceInfo.deviceName.c_str());
+
+			if (ImGui::SmallButton("使う")) {
+				deviceName = deviceInfo.deviceName;
+			}
+
+			ImGui::SameLine();
+			ImGui::TextDisabled("%s%s", deviceInfo.deviceName.c_str(), deviceInfo.isDefault ? " (既定)" : "");
+			ImGui::PopID();
+		}
+	}
+
+	void DrawSpeechRecognizerComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& gameObject,
+		EditorComponent& component) {
+		DrawTextRow("説明", "マイク入力を認識し、キーワードまたは文字起こしとしてゲームへ渡します。");
+
+		const char* modeItems[] = {"キーワード", "文字起こし"};
+		DrawComboRow(
+			"認識モード",
+			component.speechRecognitionMode,
+			modeItems,
+			static_cast<int32_t>(_countof(modeItems)));
+
+		const char* backendItems[] = {
+			"自動選択", "Windows Speech API", "Whisper", "ONNX(未実装)", "使用しない"};
+		DrawComboRow(
+			"Backend",
+			component.speechBackendKind,
+			backendItems,
+			static_cast<int32_t>(_countof(backendItems)));
+
+		DrawStringInputRow("言語", component.speechLanguage);
+		DrawMicrophoneDeviceRow(component.speechMicrophoneDevice);
+		DrawFloatRow("Confidence しきい値", component.speechConfidenceThreshold, 0.01f, 0.0f, 1.0f);
+		DrawCheckboxRow("連続認識", component.speechContinuousRecognition);
+		DrawCheckboxRow("Play 開始で認識開始", component.speechStartOnPlay);
+
+		if (component.speechBackendKind == 2 || component.speechBackendKind == 3) {
+			DrawStringInputRow("モデル", component.speechModelAssetPath);
+
+			if (component.speechBackendKind == 2) {
+				ImGui::TextDisabled("  whisper.cpp 用モデル（例: ggml-small.bin）を指定します。");
+				ImGui::TextDisabled("  whisper-cli.exe は Tools/Whisper または Engine 実行ファイルの隣へ配置します。");
+				DrawCheckboxRow("無音で発話終了", component.speechWhisperEndOnSilence);
+				DrawFloatRow("最大録音秒", component.speechWhisperMaximumCaptureSeconds, 0.1f, 0.5f, 30.0f);
+				if (component.speechWhisperEndOnSilence) {
+					DrawFloatRow("発話終了の無音秒", component.speechWhisperSilenceSeconds, 0.05f, 0.1f, 3.0f);
+					DrawFloatRow("音声判定音量", component.speechWhisperVoiceThreshold, 0.001f, 0.001f, 1.0f);
+					ImGui::TextDisabled("  発話後に指定秒数だけ無音が続くと、すぐ推論を開始します。");
+				}
+				else {
+					ImGui::TextDisabled("  最大録音秒ごとに固定分割して推論します。");
+				}
+
+				if (component.speechModelAssetPath.find("ggml-base.bin") != std::string::npos ||
+					component.speechModelAssetPath.find("ggml-tiny.bin") != std::string::npos) {
+					ImGui::TextDisabled("  注意: tiny/base は日本語の短文精度が低いため、small 以上を推奨します。");
+				}
+			}
+			else {
+				ImGui::TextDisabled("  ONNX Backend は未実装のため、実行時は利用不可を返します。");
+			}
+		}
+
+		DrawSubHeader("キーワード / Input Action");
+		DrawStringInputRow("Action Map", component.speechInputActionMapName);
+
+		// Keyword と Input Action 名は同じ並び順で対応させる(外部連携仕様書 9 項)。
+		component.speechKeywordActionNames.resize(component.speechKeywords.size());
+
+		for (size_t keywordIndex = 0u; keywordIndex < component.speechKeywords.size(); ++keywordIndex) {
+			ImGui::PushID(static_cast<int>(keywordIndex));
+			const std::string keywordLabel = "キーワード " + std::to_string(keywordIndex);
+			const std::string actionLabel = "Input Action " + std::to_string(keywordIndex);
+			DrawStringInputRow(keywordLabel.c_str(), component.speechKeywords[keywordIndex]);
+			DrawStringInputRow(actionLabel.c_str(), component.speechKeywordActionNames[keywordIndex]);
+
+			if (ImGui::SmallButton("この行を削除")) {
+				component.speechKeywords.erase(component.speechKeywords.begin() + static_cast<long long>(keywordIndex));
+				component.speechKeywordActionNames.erase(
+					component.speechKeywordActionNames.begin() + static_cast<long long>(keywordIndex));
+				ImGui::PopID();
+				break;
+			}
+
+			ImGui::PopID();
+		}
+
+		if (ImGui::Button("キーワードを追加", ImVec2(kWideButtonWidth, 0.0f))) {
+			component.speechKeywords.emplace_back();
+			component.speechKeywordActionNames.emplace_back();
+		}
+
+		DrawSubHeader("Script 通知");
+		DrawScriptActionRow(context, gameObject, gameObject.id, "認識時 Action", component.speechRecognizedActionName);
+
+		DrawSubHeader("実行状態");
+		const SpeechRuntimeStatus status = SpeechSystem::Get().GetStatus();
+		DrawTextRow("状態", ToDisplayString(status.state));
+		DrawTextRow("Backend", status.backendName.empty() ? "未初期化" : status.backendName.c_str());
+		DrawTextRow("Device", status.deviceName.empty() ? "未初期化" : status.deviceName.c_str());
+		ImGui::TextDisabled("  音量: %.2f / 認識中: %s", status.audioLevel, status.isRecognizing ? "はい" : "いいえ");
+		ImGui::TextDisabled(
+			"  直近: %s (Confidence %.2f)",
+			status.lastText.empty() ? "-" : status.lastText.c_str(),
+			status.lastConfidence);
+
+		if (status.lastError.HasError()) {
+			ImGui::TextDisabled("  エラー: %s", status.lastError.message.c_str());
+		}
+	}
+
+	void DrawCameraInputComponent(EditorComponent& component) {
+		DrawTextRow("説明", "Camera Device から映像フレームを取得し、ImageRecognizer へ渡します。");
+		DrawCameraDeviceRow(component.cameraInputDeviceName);
+		DrawIntRow("解像度 幅", component.cameraInputWidth);
+		DrawIntRow("解像度 高さ", component.cameraInputHeight);
+		component.cameraInputWidth = (std::clamp)(component.cameraInputWidth, 64, 4096);
+		component.cameraInputHeight = (std::clamp)(component.cameraInputHeight, 64, 4096);
+		DrawIntRow("FPS 上限 (0=無制限)", component.cameraInputFrameRateLimit);
+		component.cameraInputFrameRateLimit = (std::clamp)(component.cameraInputFrameRateLimit, 0, 240);
+		DrawCheckboxRow("Play 開始で取得開始", component.cameraInputStartOnPlay);
+		DrawCheckboxRow("Debug 表示", component.cameraInputDebugPreview);
+		ImGui::TextDisabled("  解像度は Camera が対応していない場合、近い値へ自動で落ちます。");
+	}
+
+	void DrawImageRecognizerComponent(
+		EditorInspectorPanelContext& context,
+		const EditorGameObject& gameObject,
+		EditorComponent& component) {
+		DrawTextRow("説明", "Camera フレームから物体・分類・顔・色・動きを認識します。");
+
+		const char* modeItems[] = {
+			"物体検出", "画像分類", "顔検出", "顔ランドマーク(未対応)", "頭部方向(未対応)", "色追跡", "動体検出"};
+		DrawComboRow(
+			"認識モード",
+			component.visionRecognitionMode,
+			modeItems,
+			static_cast<int32_t>(_countof(modeItems)));
+
+		const char* backendItems[] = {
+			"自動選択", "内蔵(色/動き)", "ONNX Runtime", "OpenCV(未実装)", "MediaPipe(未実装)", "使用しない"};
+		DrawComboRow(
+			"Backend",
+			component.visionBackendKind,
+			backendItems,
+			static_cast<int32_t>(_countof(backendItems)));
+
+		DrawGameObjectReferenceRow(
+			context,
+			gameObject,
+			"映像元 Camera",
+			component.visionCameraGameObjectId,
+			"先頭の Camera を使う",
+			false);
+		DrawFloatRow("Confidence しきい値", component.visionConfidenceThreshold, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("推論間隔(秒)", component.visionRecognitionInterval, 0.01f, 0.0f, 10.0f);
+		DrawCheckboxRow("Play 開始で認識開始", component.visionStartOnPlay);
+		DrawCheckboxRow("Debug 表示", component.visionDebugPreview);
+
+		const bool needsModel =
+			component.visionRecognitionMode == 0 ||
+			component.visionRecognitionMode == 1 ||
+			component.visionRecognitionMode == 2;
+
+		if (needsModel) {
+			DrawSubHeader("モデル");
+			DrawStringInputRow("Model (.onnx)", component.visionModelAssetPath);
+			DrawStringInputRow("Label (.txt)", component.visionLabelAssetPath);
+			ImGui::TextDisabled("  Label を空欄にすると、モデル横の同名 .txt / .names を探します。");
+		}
+
+		if (component.visionRecognitionMode == 5) {
+			DrawSubHeader("色追跡");
+			DrawVector3Row("追跡色 (RGB)", component.visionTargetColor, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("許容差", component.visionColorTolerance, 0.01f, 0.0f, 1.0f);
+			DrawFloatRow("最小面積比", component.visionMinimumAreaRatio, 0.001f, 0.0f, 1.0f);
+		}
+
+		if (component.visionRecognitionMode == 6) {
+			DrawSubHeader("動体検出");
+			DrawFloatRow("動き量しきい値", component.visionMotionThreshold, 0.001f, 0.0f, 1.0f);
+		}
+
+		if (component.visionRecognitionMode == 3 || component.visionRecognitionMode == 4) {
+			ImGui::TextDisabled("  このモードは未対応です。実行時は利用不可を返します。");
+		}
+
+		DrawSubHeader("Input Action 連携");
+		DrawStringInputRow("Action Map", component.visionInputActionMapName);
+		DrawStringInputRow("Action 名", component.visionInputActionName);
+
+		const char* triggerItems[] = {
+			"ラベル検出", "頭部 Yaw 右", "頭部 Yaw 左", "頭部 Pitch 上", "頭部 Pitch 下", "動き検出", "色検出"};
+		DrawComboRow(
+			"発火条件",
+			component.visionInputTriggerMode,
+			triggerItems,
+			static_cast<int32_t>(_countof(triggerItems)));
+
+		if (component.visionInputTriggerMode == 0) {
+			DrawStringInputRow("検出ラベル", component.visionInputTriggerLabel);
+		}
+		else if (component.visionInputTriggerMode >= 1 && component.visionInputTriggerMode <= 4) {
+			DrawFloatRow("角度しきい値(度)", component.visionInputAngleThreshold, 0.5f, 0.0f, 90.0f);
+		}
+
+		ImGui::TextDisabled("  検出位置は Action 名 + \"Position\" の Vector2 としても流します。");
+
+		DrawSubHeader("Script 通知");
+		DrawScriptActionRow(context, gameObject, gameObject.id, "検出時 Action", component.visionDetectedActionName);
+
+		DrawSubHeader("実行状態");
+		const VisionRuntimeStatus status = VisionSystem::Get().GetRecognizerStatus(gameObject.id);
+		DrawTextRow("Camera 状態", ToDisplayString(status.cameraState));
+		DrawTextRow("認識状態", ToDisplayString(status.recognitionState));
+		DrawTextRow("Backend", status.backendName.empty() ? "未初期化" : status.backendName.c_str());
+		ImGui::TextDisabled(
+			"  解像度: %d x %d / 取得 FPS: %.1f / 推論: %.1f ms",
+			status.frameWidth,
+			status.frameHeight,
+			status.captureFps,
+			status.inferenceMilliseconds);
+
+		if (status.lastError.HasError()) {
+			ImGui::TextDisabled("  エラー: %s", status.lastError.message.c_str());
+		}
+
+		VisionResult result{};
+
+		if (VisionSystem::Get().TryGetResult(gameObject.id, result) && result.isValid) {
+			for (const ObjectDetectionResult& object : result.objects) {
+				ImGui::TextDisabled(
+					"  物体: %s (%.2f) x=%.2f y=%.2f w=%.2f h=%.2f",
+					object.label.c_str(),
+					object.confidence,
+					object.x,
+					object.y,
+					object.width,
+					object.height);
+			}
+
+			for (const ImageClassificationResult& classification : result.classifications) {
+				ImGui::TextDisabled(
+					"  分類: %s (%.2f)",
+					classification.label.c_str(),
+					classification.confidence);
+			}
+
+			for (const FaceDetectionResult& face : result.faces) {
+				ImGui::TextDisabled(
+					"  顔: (%.2f) x=%.2f y=%.2f w=%.2f h=%.2f",
+					face.confidence,
+					face.x,
+					face.y,
+					face.width,
+					face.height);
+			}
+
+			if (result.mode == VisionRecognitionMode::ColorTracking) {
+				ImGui::TextDisabled(
+					"  色: 検出=%s 中心=(%.2f, %.2f) 面積比=%.4f",
+					result.colorTracking.isDetected ? "はい" : "いいえ",
+					result.colorTracking.centerX,
+					result.colorTracking.centerY,
+					result.colorTracking.areaRatio);
+			}
+
+			if (result.mode == VisionRecognitionMode::MotionDetection) {
+				ImGui::TextDisabled(
+					"  動き: 検出=%s 量=%.3f 中心=(%.2f, %.2f)",
+					result.motion.motion ? "はい" : "いいえ",
+					result.motion.motionMagnitude,
+					result.motion.centerX,
+					result.motion.centerY);
+			}
+		}
 	}
 
 	void DrawNativeScriptComponent(
@@ -2230,7 +2785,10 @@ namespace {
 			std::replace(commandPath.begin(), commandPath.end(), '/', '\\');
 
 			if (absolutePath.extension() == ".bat") {
-				const std::string command = "cmd /c \"\"" + commandPath + "\"\"";
+				// Script のビルドに失敗した場合もコンパイラ出力を確認できるよう、
+				// ビルド後のコマンドプロンプトを開いたままにする。
+				const std::string command =
+					"start \"Script Build\" cmd.exe /d /k \"\"" + commandPath + "\"\"";
 				std::system(command.c_str());
 				return;
 			}
@@ -2449,9 +3007,19 @@ namespace {
 				}
 			}
 
-			if (std::filesystem::exists(buildScriptPath)) {
+			// Engine更新後はGenerated.cppとbuild batだけを現行版へ更新してからBuildする。
+			// ユーザーの.h/.cppは保持するため、同名Scriptを作り直す必要はない。
+			if (std::filesystem::exists(scriptSourcePath)) {
 				if (ImGui::Button(kCurrentBuildButtonLabel, ImVec2(-1.0f, 0.0f))) {
-					openWithShell(buildScriptPath);
+					const EditorNativeScriptAssetResult refreshResult =
+						EditorNativeScriptAssetManager::RefreshNativeScriptSupportFiles(
+							component.assetPath,
+							kIsDebugEditorBuild);
+					generationMessage = refreshResult.message;
+
+					if (refreshResult.isSucceeded) {
+						openWithShell(buildScriptPath);
+					}
 				}
 				DrawTextRow("ビルド", buildScriptPath.generic_string().c_str());
 			}
@@ -2913,6 +3481,47 @@ namespace {
 			component.textFontIndex = (std::clamp)(
 				component.textFontIndex, 0, static_cast<int32_t>(_countof(fontItems)) - 1);
 			DrawComboRow("フォント", component.textFontIndex, fontItems, static_cast<int32_t>(_countof(fontItems)));
+			DrawStringInputRow("Font Asset", component.textFontAssetPath);
+			DrawTextRow(
+				"Font Assetの説明",
+				"Project内の.ttf/.otfを指定すると上のSystem Fontより優先します。空なら上の選択を使います。"
+				"配布時に同じ見た目にしたい場合はProject内Fontを使ってください。");
+			DrawFloatRow("Font Size (0=自動)", component.textFontSize, 1.0f, 0.0f, 512.0f);
+			const char* horizontalAlignItems[] = {"左", "中央", "右"};
+			component.textHorizontalAlign = (std::clamp)(component.textHorizontalAlign, 0, 2);
+			DrawComboRow(
+				"横揃え",
+				component.textHorizontalAlign,
+				horizontalAlignItems,
+				static_cast<int32_t>(_countof(horizontalAlignItems)));
+			const char* verticalAlignItems[] = {"上", "中央", "下"};
+			component.textVerticalAlign = (std::clamp)(component.textVerticalAlign, 0, 2);
+			DrawComboRow(
+				"縦揃え",
+				component.textVerticalAlign,
+				verticalAlignItems,
+				static_cast<int32_t>(_countof(verticalAlignItems)));
+			DrawCheckboxRow("折り返す", component.textWordWrap);
+			const char* overflowItems[] = {"はみ出す", "Rectで切り取る", "末尾を…にする"};
+			component.textOverflowMode = (std::clamp)(component.textOverflowMode, 0, 2);
+			DrawComboRow(
+				"はみ出し",
+				component.textOverflowMode,
+				overflowItems,
+				static_cast<int32_t>(_countof(overflowItems)));
+			DrawFloatRow("縁取り幅 (0=なし)", component.textOutlineWidth, 0.1f, 0.0f, 16.0f);
+
+			if (component.textOutlineWidth > 0.0f) {
+				DrawColor3Row("縁取り色", component.textOutlineColor);
+			}
+
+			DrawCheckboxRow("影", component.textShadowEnabled);
+
+			if (component.textShadowEnabled) {
+				DrawFloatRow("影Offset X", component.textShadowOffsetX, 0.1f, -32.0f, 32.0f);
+				DrawFloatRow("影Offset Y", component.textShadowOffsetY, 0.1f, -32.0f, 32.0f);
+				DrawColor3Row("影の色", component.textShadowColor);
+			}
 		}
 
 		if (component.type == EditorComponentType::Image ||
@@ -3178,6 +3787,43 @@ namespace {
 		else {
 			DrawFloatRow("判定半径", component.colliderRadius, 0.01f, 0.0f, 1000.0f);
 			DrawVector3Row("判定サイズ", component.colliderSize, 0.01f, 0.0f, 0.0f);
+		}
+	}
+
+	void DrawAiVoiceCommandComponent(EditorComponent& component) {
+		DrawTextRow("説明", "文字起こしとは別に、登録語だけを音響認識してゲームCommandへ変換します。");
+		DrawTextRow("判定", "1位Scoreがしきい値以上、かつ2位との差が候補差以上の時だけ確定します。");
+		const char* matchModes[] = {"音声類似", "文字類似", "完全一致"};
+		DrawComboRow("一致方法", component.voiceCommandMatchMode, matchModes, static_cast<int32_t>(_countof(matchModes)));
+		if (component.voiceCommandMatchMode != 0) {
+			ImGui::TextDisabled("  文字Modeは同じGameObjectの音声認識結果を使います。");
+		}
+		DrawFloatRow("補正強度 (0=なし / 1=最大)", component.voiceCommandCorrectionStrength, 0.01f, 0.0f, 1.0f);
+		ImGui::TextDisabled("  0は完全一致級の厳格判定、1で下の設定値まで最大に許容します。");
+		DrawFloatRow("一致しきい値", component.voiceCommandThreshold, 0.01f, 0.0f, 1.0f);
+		DrawFloatRow("候補との差", component.voiceCommandMinimumMargin, 0.01f, 0.0f, 1.0f);
+		const float correctionStrength = (std::clamp)(component.voiceCommandCorrectionStrength, 0.0f, 1.0f);
+		const float effectiveThreshold = 1.0f + ((std::clamp)(component.voiceCommandThreshold, 0.0f, 1.0f) - 1.0f) * correctionStrength;
+		const float effectiveMargin = 1.0f + ((std::clamp)(component.voiceCommandMinimumMargin, 0.0f, 1.0f) - 1.0f) * correctionStrength;
+		ImGui::TextDisabled("  実効判定: Score >= %.3f / 1位-2位 >= %.3f", effectiveThreshold, effectiveMargin);
+		DrawFloatRow("Cooldown 秒", component.voiceCommandCooldownSeconds, 0.05f, 0.0f, 60.0f);
+		DrawStringInputRow("言語", component.voiceCommandLanguage);
+		DrawMicrophoneDeviceRow(component.voiceCommandMicrophoneDevice);
+
+		DrawSubHeader("登録コマンド");
+		for (size_t commandIndex = 0u; commandIndex < component.voiceCommandPhrases.size(); ++commandIndex) {
+			ImGui::PushID(static_cast<int>(commandIndex));
+			DrawStringInputRow("コマンド", component.voiceCommandPhrases[commandIndex]);
+			if (ImGui::SmallButton("このコマンドを削除")) {
+				component.voiceCommandPhrases.erase(component.voiceCommandPhrases.begin() + static_cast<std::ptrdiff_t>(commandIndex));
+				ImGui::PopID();
+				break;
+			}
+			ImGui::PopID();
+		}
+
+		if (ImGui::Button("コマンドを追加", ImVec2(kWideButtonWidth, 0.0f))) {
+			component.voiceCommandPhrases.emplace_back();
 		}
 	}
 
@@ -4561,10 +5207,156 @@ namespace {
 	}
 
 	void DrawDestructiblePartComponent(EditorInspectorPanelContext& context, const EditorGameObject& owner, EditorComponent& component) {
-		DrawTextRow("説明", "Healthが0になった時に指定Componentと直下の子Objectを無効化します。");
+		DrawTextRow("説明", "通常MeshをPlay前に自動Fractureし、NVIDIA Blast 1.1.5で局所破壊します。");
 		DrawGameObjectReferenceRow(context, owner, "Health Source", component.destructibleHealthGameObjectId, "このObject", true);
 		DrawStringInputRow("無効化Component (;区切り)", component.destructibleDisableComponentNames);
 		DrawCheckboxRow("子Objectを無効化", component.destructibleDisableChildren);
+		DrawCheckboxRow("NVIDIA Blastを使用", component.destructibleBlastEnabled);
+
+		if (component.destructibleBlastEnabled) {
+			bool bakeInputChanged = false;
+			const char* fractureMethods[] = {"Voronoi"};
+			const char* collisionQualities[] = {"Low", "Medium", "High"};
+			bakeInputChanged |= DrawComboRow(
+				"分割方式",
+				component.destructibleBlastFractureMethod,
+				fractureMethods,
+				static_cast<int32_t>(_countof(fractureMethods)));
+			bakeInputChanged |= DrawIntRow("分割数", component.destructibleBlastChunkCount);
+			component.destructibleBlastChunkCount =
+				(std::clamp)(component.destructibleBlastChunkCount, 2, 256);
+			bakeInputChanged |= DrawIntRow("Random Seed", component.destructibleBlastRandomSeed);
+			bakeInputChanged |= DrawComboRow(
+				"Collider品質",
+				component.destructibleBlastCollisionQuality,
+				collisionQualities,
+				static_cast<int32_t>(_countof(collisionQualities)));
+			bakeInputChanged |= DrawCheckboxRow("Auto Bake", component.destructibleBlastAutoBake);
+			DrawFloatRow("Bond耐久値", component.destructibleBlastBondHealth, 1.0f, 0.001f, 1000000.0f);
+			DrawFloatRow("既定Damage半径", component.destructibleBlastDamageRadius, 0.1f, 0.001f, 100000.0f);
+			DrawFloatRow("既定分離Impulse", component.destructibleBlastImpulse, 0.1f, 0.0f, 1000000.0f);
+			DrawFloatRow("Chunk質量", component.destructibleBlastChunkMass, 0.1f, 0.001f, 1000000.0f);
+			DrawIntRow("近傍Bond数", component.destructibleBlastBondNeighborCount);
+			component.destructibleBlastBondNeighborCount =
+				(std::clamp)(component.destructibleBlastBondNeighborCount, 1, 16);
+
+			if (ImGui::CollapsingHeader("破片の後片付け (沈下・消滅)")) {
+				DrawFloatRow("沈み始める秒数", component.destructibleBlastDebrisSinkDelay, 0.1f, 0.0f, 600.0f);
+				DrawTextRow(
+					"沈下",
+					"0なら沈めません。0より大きいと物理破片がその秒数後に沈み始め、沈み切ったらGameObjectを破棄します。");
+				if (component.destructibleBlastDebrisSinkDelay > 0.0f) {
+					DrawFloatRow("沈む秒数", component.destructibleBlastDebrisSinkDuration, 0.1f, 0.01f, 600.0f);
+					DrawFloatRow("沈む距離", component.destructibleBlastDebrisSinkDistance, 0.1f, 0.0f, 1000.0f);
+					DrawTextRow(
+						"効果",
+						"破棄したぶんのDraw Call、Constant Buffer、Texture参照が解放されます。破片軽量化のOnOffとは独立です。");
+				}
+			}
+
+			if (ImGui::CollapsingHeader("破片軽量化 (GPU破片 / 物理数制限 / Cluster / LOD)")) {
+				DrawCheckboxRow("破片軽量化を使う", component.destructibleBlastOptimizeEnabled);
+				if (!component.destructibleBlastOptimizeEnabled) {
+					DrawTextRow(
+						"OFFの動作",
+						"分離Chunkを全てRigidbody化する本来の破壊です。以下の軽量化設定はすべて無視されます。");
+				}
+				else {
+					DrawTextRow("説明", "見た目の破片数は変えずにRigidbody数を減らします。Bakeには影響しません。");
+					DrawTextRow(
+						"振り分け順",
+						"体積上位=物理 → あふれ=Cluster追従 → さらにあふれ=GPU破片。全部OFFなら物理へ戻します。");
+					DrawIntRow("物理Chunk上限", component.destructibleBlastMaxPhysicsChunks);
+					component.destructibleBlastMaxPhysicsChunks =
+						(std::clamp)(component.destructibleBlastMaxPhysicsChunks, 0, 256);
+					DrawTextRow("物理Chunk上限", "体積の大きい順にこの数だけRigidbody化します。0なら物理破片を作りません。");
+					DrawFloatRow("物理化を続ける秒数", component.destructibleBlastPhysicsLifetime, 0.1f, 0.0f, 600.0f);
+					DrawTextRow("物理化秒数", "0なら解除しません。0より大きいと経過後にDynamicを止め、描画だけの瓦礫として残します。");
+
+					DrawCheckboxRow("あふれをClusterでまとめる", component.destructibleBlastUseClusterPhysics);
+					if (component.destructibleBlastUseClusterPhysics) {
+						DrawIntRow("Cluster内Chunk数", component.destructibleBlastClusterSize);
+						component.destructibleBlastClusterSize =
+							(std::clamp)(component.destructibleBlastClusterSize, 1, 256);
+						DrawFloatRow("ばらけ開始秒数", component.destructibleBlastClusterScatterDelay, 0.1f, 0.0f, 600.0f);
+						DrawFloatRow("ばらけ距離", component.destructibleBlastClusterScatterDistance, 0.01f, 0.0f, 1000.0f);
+						DrawTextRow("Cluster", "物理Chunkの子として運び、指定秒数後に見た目だけ少しずらします。物理数は増えません。");
+					}
+
+					DrawCheckboxRow("残りをGPU破片にする", component.destructibleBlastUseGpuDebris);
+					if (component.destructibleBlastUseGpuDebris) {
+						DrawFloatRow("GPU破片の寿命", component.destructibleBlastGpuDebrisLifetime, 0.1f, 0.01f, 600.0f);
+						DrawFloatRow("GPU破片の重力", component.destructibleBlastGpuDebrisGravity, 0.1f, -1000.0f, 1000.0f);
+						DrawFloatRow("GPU破片の減衰", component.destructibleBlastGpuDebrisDrag, 0.01f, 0.0f, 100.0f);
+						DrawFloatRow("GPU破片の風", component.destructibleBlastGpuDebrisWind, 0.1f, 0.0f, 1000.0f);
+						const char* debrisMotionTypes[] = {"直線", "爆発", "渦"};
+						DrawComboRow(
+							"GPU破片の運動",
+							component.destructibleBlastGpuDebrisMotionType,
+							debrisMotionTypes,
+							static_cast<int32_t>(_countof(debrisMotionTypes)));
+						DrawTextRow(
+							"運動",
+							"直線は初速のみ。爆発は破壊中心から外向きへ加速し続け、渦は中心まわりに旋回しながら舞い上がります。");
+						if (component.destructibleBlastGpuDebrisMotionType != 0) {
+							DrawFloatRow("GPU破片の外向き加速", component.destructibleBlastGpuDebrisRadialAcceleration, 0.1f, 0.0f, 1000.0f);
+						}
+						if (component.destructibleBlastGpuDebrisMotionType == 2) {
+							DrawFloatRow("GPU破片の旋回 deg/s", component.destructibleBlastGpuDebrisAngularSpeed, 1.0f, -36000.0f, 36000.0f);
+						}
+						DrawFloatRow("GPU破片の上昇気流", component.destructibleBlastGpuDebrisUpdraft, 0.1f, 0.0f, 1000.0f);
+						DrawTextRow("上昇気流", "運動方式に関係なく上へ加速します。寿命とともに弱まるので、直後だけ舞い上がります。");
+						DrawFloatRow("GPU破片の回転 deg/s", component.destructibleBlastGpuDebrisSpin, 1.0f, -36000.0f, 36000.0f);
+						DrawIntRow("GPU破片のMesh種類上限", component.destructibleBlastGpuDebrisMeshLimit);
+						component.destructibleBlastGpuDebrisMeshLimit =
+							(std::clamp)(component.destructibleBlastGpuDebrisMeshLimit, 0, 256);
+						DrawTextRow("Mesh種類上限", "Mesh種類ごとにGPU Draw Callが1つ増えます。0なら全Chunkを個別Meshで飛ばします。");
+					}
+
+					DrawCheckboxRow("距離で軽量化を強める", component.destructibleBlastUseDistanceLod);
+					if (component.destructibleBlastUseDistanceLod) {
+						DrawFloatRow("近距離までの距離", component.destructibleBlastLodNearDistance, 1.0f, 0.0f, 100000.0f);
+						DrawFloatRow("遠距離になる距離", component.destructibleBlastLodFarDistance, 1.0f, 0.0f, 100000.0f);
+						DrawIntRow("遠距離のGPU破片数上限", component.destructibleBlastLodFarDebrisCount);
+						component.destructibleBlastLodFarDebrisCount =
+							(std::max)(component.destructibleBlastLodFarDebrisCount, 0);
+						DrawTextRow(
+							"距離での変化",
+							"近距離は設定どおり、中距離は物理Chunk上限を半分、遠距離は物理とClusterを止めてGPU破片だけにします。");
+					}
+				}
+			}
+
+			DrawTextRow("Status", component.destructibleBlastBakeStatus.c_str());
+			if (!component.destructibleBlastBakeError.empty()) {
+				DrawTextRow("理由", component.destructibleBlastBakeError.c_str());
+			}
+			if (ImGui::Button("Rebake")) {
+				component.destructibleBlastForceRebake = true;
+				component.destructibleBlastBakeStatus = "Needs Bake";
+				component.destructibleBlastBakeError.clear();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Clear Cache")) {
+				component.destructibleBlastClearCacheRequested = true;
+				component.destructibleBlastBakeStatus = "Needs Bake";
+				component.destructibleBlastBakeError.clear();
+			}
+
+			if (ImGui::CollapsingHeader("Advanced: 外部事前分割Mesh")) {
+				bakeInputChanged |= DrawCheckboxRow(
+					"直下の子をChunkとして使用",
+					component.destructibleBlastUsePrefracturedChildren);
+				DrawTextRow(
+					"用途",
+					"外部DCCで作成した事前分割Assetとの互換用です。通常はOFFのまま使用します。");
+			}
+			if (bakeInputChanged) {
+				component.destructibleBlastBakeStatus = "Needs Bake";
+				component.destructibleBlastBakeError.clear();
+			}
+			DrawTextRow("使い方", "MeshのあるObjectへ追加してPlayします。未Bakeなら開始前に自動生成します。");
+		}
 		DrawTextRow("破壊済み", component.destructibleDestroyed ? "true" : "false");
 		DrawGameObjectReferenceRow(context, owner, "Action対象", component.destructibleActionTargetGameObjectId, "このObject", true);
 		DrawScriptActionRow(context, owner, component.destructibleActionTargetGameObjectId, "破壊Action", component.destructibleDestroyedActionName);
@@ -5821,6 +6613,23 @@ namespace {
 			DrawComboRow("編隊", component.waveFormationPattern, formationPatterns, 5);
 			DrawFloatRow("編隊間隔", component.waveFormationSpacing, 0.1f, 0.0f, 100000.0f);
 			DrawFloatRow("レール開始進行率", component.waveSpawnRailStartNormalized, 0.01f, -1.0f, 1.0f);
+			DrawCheckboxRow("基準Objectの前方に出す", component.waveSpawnAheadOfSource);
+
+			if (component.waveSpawnAheadOfSource) {
+				DrawGameObjectReferenceRow(
+					context,
+					ownerGameObject,
+					"前方生成の基準",
+					component.waveSpawnProgressSourceGameObjectId,
+					"未設定",
+					true);
+				DrawFloatRow("前方進行率差", component.waveSpawnAheadNormalized, 0.005f, 0.0f, 1.0f);
+				component.waveSpawnAheadNormalized = (std::clamp)(
+					component.waveSpawnAheadNormalized,
+					0.0f,
+					1.0f);
+				DrawTextRow("前方生成の説明", "基準RailFollowerの現在進行率にこの値を足して、敵のRailMovement開始位置に使います。");
+			}
 
 			if (component.waveFormationPattern == 4) {
 				DrawIntRow("グリッド列数", component.waveFormationColumns);
@@ -6285,20 +7094,39 @@ namespace {
 		DrawSubHeader("実行時 Audio Mixer");
 		EditorAudioManager& audioManager = context.runtimeManager.GetAudioManager();
 		float masterVolume = audioManager.GetMasterVolume();
-		float sfxVolume = audioManager.GetBusVolume(EditorAudioBus::Sfx);
-		float bgmVolume = audioManager.GetBusVolume(EditorAudioBus::Bgm);
-		float ambienceVolume = audioManager.GetBusVolume(EditorAudioBus::Ambience);
-		float uiVolume = audioManager.GetBusVolume(EditorAudioBus::Ui);
+		bool masterMuted = audioManager.IsMasterMuted();
 		DrawFloatRow("Master", masterVolume, 0.01f, 0.0f, 1.0f);
-		DrawFloatRow("SFX", sfxVolume, 0.01f, 0.0f, 1.0f);
-		DrawFloatRow("BGM", bgmVolume, 0.01f, 0.0f, 1.0f);
-		DrawFloatRow("Ambience", ambienceVolume, 0.01f, 0.0f, 1.0f);
-		DrawFloatRow("UI", uiVolume, 0.01f, 0.0f, 1.0f);
+		DrawCheckboxRow("Master Mute", masterMuted);
 		audioManager.SetMasterVolume(masterVolume);
-		audioManager.SetBusVolume(EditorAudioBus::Sfx, sfxVolume);
-		audioManager.SetBusVolume(EditorAudioBus::Bgm, bgmVolume);
-		audioManager.SetBusVolume(EditorAudioBus::Ambience, ambienceVolume);
-		audioManager.SetBusVolume(EditorAudioBus::Ui, uiVolume);
+		audioManager.SetMasterMute(masterMuted);
+
+		struct AudioBusRow {
+			const char* label;
+			EditorAudioBus audioBus;
+		};
+		const AudioBusRow busRows[] = {
+			{"SFX", EditorAudioBus::Sfx},
+			{"BGM", EditorAudioBus::Bgm},
+			{"Ambience", EditorAudioBus::Ambience},
+			{"UI", EditorAudioBus::Ui},
+			{"Voice", EditorAudioBus::Voice},
+		};
+
+		for (const AudioBusRow& busRow : busRows) {
+			ImGui::PushID(busRow.label);
+			float busVolume = audioManager.GetBusVolume(busRow.audioBus);
+			bool busMuted = audioManager.IsBusMuted(busRow.audioBus);
+			DrawFloatRow(busRow.label, busVolume, 0.01f, 0.0f, 1.0f);
+			DrawCheckboxRow("Mute", busMuted);
+			audioManager.SetBusVolume(busRow.audioBus, busVolume);
+			audioManager.SetBusMute(busRow.audioBus, busMuted);
+			ImGui::PopID();
+		}
+
+		DrawSubHeader("Voice管理");
+		int32_t maxGlobalVoiceCount = audioManager.GetMaxGlobalVoiceCount();
+		DrawIntRow("最大同時発音数(全体)", maxGlobalVoiceCount);
+		audioManager.SetMaxGlobalVoiceCount(maxGlobalVoiceCount);
 	}
 
 	void DrawPlayableDirectorComponent(EditorComponent& component) {
@@ -6599,6 +7427,8 @@ namespace {
 		DrawCheckboxRow("SSR", component.ssrEnabled);
 		ImGui::Separator();
 		DrawTextRow("グレア", "明るい部分から、にじみ・ゴースト・光条・放射状の光を生成します。");
+		DrawFloatRow("サンプル倍率", component.glareSampleRatio, 0.05f, 0.25f, 1.0f);
+		DrawTextRow("サンプル倍率の説明", "1.00は最高品質です。0.75前後なら見た目を保ちながら負荷を少し下げられます。");
 		const char* glareItems[] = {
 			"無効",
 			"ブルーム",
@@ -6881,6 +7711,62 @@ namespace {
 			static_cast<int32_t>(_countof(compositeDebugViewItems)));
 	}
 
+	void DrawPerformanceSettingsComponent(EditorComponent& component) {
+		DrawTextRow(
+			"説明",
+			"Scene単位で、描画負荷の高い処理の更新頻度と品質上限をまとめて調整します。");
+		DrawTextRow(
+			"注意",
+			"Playerや敵などGameplay Updateの間引きは既定OFFです。動きの滑らかさを壊さないためです。");
+
+		const char* viewRenderItems[] = {
+			"Auto Play=Game / Edit=Scene",
+			"Scene View のみ",
+			"Game View のみ",
+			"両方描画"
+		};
+		DrawComboRow(
+			"View描画",
+			component.performanceViewRenderMode,
+			viewRenderItems,
+			static_cast<int32_t>(_countof(viewRenderItems)));
+
+		DrawCheckboxRow("自動品質調整", component.performanceAdaptiveQuality);
+		DrawIntRow("目標FPS", component.performanceTargetFps);
+		component.performanceTargetFps = (std::clamp)(component.performanceTargetFps, 15, 240);
+
+		ImGui::Separator();
+		DrawTextRow("Glare", "PostProcess側のサンプル倍率より低い値をScene全体の上限として使います。");
+		DrawFloatRow("Glareサンプル上限", component.performanceGlareSampleRatio, 0.05f, 0.25f, 1.0f);
+
+		ImGui::Separator();
+		DrawCheckboxRow("Shadow更新間引き", component.performanceAllowShadowThrottle);
+		DrawIntRow("Shadow更新間隔", component.performanceShadowUpdateInterval);
+		component.performanceShadowUpdateInterval = (std::clamp)(
+			component.performanceShadowUpdateInterval,
+			0,
+			8);
+		DrawTextRow("Shadow更新間隔の説明", "0はAutoです。1は毎フレーム、2は2フレームに1回更新します。");
+
+		DrawCheckboxRow("平面反射更新間引き", component.performanceAllowReflectionThrottle);
+		DrawIntRow("平面反射更新間隔", component.performanceReflectionUpdateInterval);
+		component.performanceReflectionUpdateInterval = (std::clamp)(
+			component.performanceReflectionUpdateInterval,
+			0,
+			8);
+		DrawTextRow("平面反射更新間隔の説明", "0はAutoです。水面の反射が気になる場合は1へ戻します。");
+
+		ImGui::Separator();
+		DrawIntRow("Ocean FFT更新間隔", component.performanceOceanFftUpdateInterval);
+		component.performanceOceanFftUpdateInterval = (std::clamp)(
+			component.performanceOceanFftUpdateInterval,
+			0,
+			8);
+		DrawTextRow("Ocean FFT更新間隔の説明", "0はAutoです。1は毎フレーム更新、2以上は軽くなりますが波の動きは粗くなります。");
+
+		DrawCheckboxRow("LightProbe Bake間引き", component.performanceAllowBakeThrottle);
+	}
+
 	void DrawEnvironmentComponent(EditorComponent& component) {
 		DrawTextRow("説明", "環境光・スカイ・HDRIの設定を行います。空の色・明るさ・反射への影響を調整します。");
 		DrawStringInputRow("環境画像", component.assetPath);
@@ -6985,6 +7871,12 @@ namespace {
 		DrawIntRow("優先度", component.cameraPriority);
 		const char* projectionItems[] = {"Perspective", "Orthographic"};
 		DrawComboRow("投影", component.cameraProjectionMode, projectionItems, static_cast<int32_t>(_countof(projectionItems)));
+		if (component.cameraProjectionMode == 1) {
+			if (component.cameraOrthographicSize <= 0.0f) {
+				component.cameraOrthographicSize = 10.0f;
+			}
+			DrawFloatRow("Orthographic Size", component.cameraOrthographicSize, 0.1f, 0.01f, 10000.0f);
+		}
 		DrawFloatRow("視野角", component.cameraFieldOfView, 1.0f, 1.0f, 179.0f);
 		DrawFloatRow("ニアクリップ", component.cameraNearClip, 0.01f, 0.01f, 100.0f);
 		DrawFloatRow("ファークリップ", component.cameraFarClip, 1.0f, 0.1f, 10000.0f);
@@ -7158,7 +8050,7 @@ namespace {
 		DrawFloatRow("透明度", component.alpha, 0.01f, 0.0f, 1.0f);
 	}
 
-	void DrawTerrainComponent(EditorComponent& component) {
+	void DrawTerrainComponent(EditorGameObject& gameObject, EditorComponent& component) {
 		DrawTextRow("説明", "HeightMap から地形を生成し、距離に応じてメッシュLODを切り替えます。");
 		DrawStringInputRow("Height Map", component.assetPath);
 		DrawVector3Row("サイズ X / 高さ / Z", component.colliderSize, 1.0f, 0.01f, 10000.0f);
@@ -7168,6 +8060,28 @@ namespace {
 		}
 
 		DrawTextRow("LOD", "近距離 / 中距離 / 遠距離の3段階。Shadowは一段低いLODを使用します。");
+
+		// 地形の上を歩かせるにはTerrainColliderが要る。無い場合は当たり判定が一切作られない。
+		const bool hasTerrainCollider = EditorComponentUtility::FindComponent(
+			gameObject, EditorComponentType::TerrainCollider) != nullptr;
+
+		if (!hasTerrainCollider) {
+			DrawTextRow(
+				"当たり判定",
+				"TerrainColliderが付いていません。このままだと地形に当たり判定がありません。"
+				"上を歩かせる場合はTerrainColliderを追加してください。");
+		}
+		else if (component.assetPath.empty()) {
+			DrawTextRow(
+				"当たり判定",
+				"Height Mapが未設定のため、Colliderは平坦な箱になります。Height Mapを設定してください。");
+		}
+		else {
+			DrawTextRow(
+				"当たり判定",
+				"TerrainColliderは同じHeight Mapと最高LOD解像度から生成します。"
+				"解像度を上げると形は正確になりますが、Play開始時のMesh生成コストが増えます。");
+		}
 	}
 
 	void DrawFoliageComponent(EditorComponent& component) {
@@ -7544,6 +8458,9 @@ namespace {
 		case EditorComponentType::PostProcess:
 			DrawPostProcessComponent(component);
 			break;
+		case EditorComponentType::PerformanceSettings:
+			DrawPerformanceSettingsComponent(component);
+			break;
 		case EditorComponentType::Environment:
 			DrawEnvironmentComponent(component);
 			break;
@@ -7592,8 +8509,9 @@ namespace {
 			DrawCheckboxRow("ループ", component.audioLoop);
 			DrawCheckboxRow("自動再生", component.audioPlayOnAwake);
 			{
-				const char* audioBusItems[] = {"SFX", "BGM", "Ambience", "UI"};
-				component.audioBus = (std::clamp)(component.audioBus, 0, 3);
+				const char* audioBusItems[] = {"SFX", "BGM", "Ambience", "UI", "Voice"};
+				component.audioBus = (std::clamp)(
+					component.audioBus, 0, static_cast<int32_t>(_countof(audioBusItems)) - 1);
 				DrawComboRow(
 					"ミキサーバス",
 					component.audioBus,
@@ -8158,7 +9076,7 @@ namespace {
 			DrawAiDataComponent(context, gameObject, component, "Whisper で音声を文字列へ変換する入口です。", "Whisper");
 			break;
 		case EditorComponentType::AIVoiceCommand:
-			DrawAiDataComponent(context, gameObject, component, "音声認識結果からゲーム内コマンドを発火する入口です。", "Whisper");
+			DrawAiVoiceCommandComponent(component);
 			break;
 		case EditorComponentType::LocalMove:
 			DrawLocalMoveComponent(component);
@@ -8266,7 +9184,16 @@ namespace {
 			DrawNativeScriptComponent(context, gameObject, component, "MonoBehaviour 風に使う C++ DLL コンポーネントです。");
 			break;
 		case EditorComponentType::HapticSource:
-			DrawHapticSourceComponent(component);
+			DrawHapticSourceComponent(context, gameObject, component);
+			break;
+		case EditorComponentType::SpeechRecognizer:
+			DrawSpeechRecognizerComponent(context, gameObject, component);
+			break;
+		case EditorComponentType::CameraInput:
+			DrawCameraInputComponent(component);
+			break;
+		case EditorComponentType::ImageRecognizer:
+			DrawImageRecognizerComponent(context, gameObject, component);
 			break;
 		case EditorComponentType::ParticleSystem:
 			DrawParticleSystemComponent(
@@ -8288,7 +9215,7 @@ namespace {
 			DrawDecalProjectorComponent(component);
 			break;
 		case EditorComponentType::Terrain:
-			DrawTerrainComponent(component);
+			DrawTerrainComponent(gameObject, component);
 			break;
 		case EditorComponentType::Foliage:
 			DrawFoliageComponent(component);
@@ -8342,11 +9269,31 @@ namespace {
 		}
 	}
 
-	void DrawAddComponentPopup(EditorInspectorPanelContext& context, EditorGameObject& gameObject) {
+	void DrawAddComponentPopup(
+		EditorInspectorPanelContext& context,
+		EditorGameObject& gameObject,
+		bool isGameObjectLocked) {
 		DrawSectionSpace();
+
+		// Componentの追加はGameObjectの構造を変えるため、GameObject単位のロックで保護する。
+		if (isGameObjectLocked) {
+			ImGui::BeginDisabled();
+		}
+
 		DrawCenteredButtonAndOpenPopup("コンポーネントを追加", "AddComponentPopup");
 
+		if (isGameObjectLocked) {
+			ImGui::EndDisabled();
+		}
+
 		if (ImGui::BeginPopup("AddComponentPopup")) {
+			if (isGameObjectLocked) {
+				ImGui::CloseCurrentPopup();
+				ImGui::TextDisabled("共同制作: 他のユーザーがGameObject構造を編集中です");
+				ImGui::EndPopup();
+				return;
+			}
+
 			static char componentSearchText[96] = {};  // Add Component Popup 内の検索文字列
 			const char* categoryNames[] = {
 				"基本",
@@ -8368,6 +9315,7 @@ namespace {
 			};
 
 			auto addComponent = [&](const ComponentAddEntry& entry) {
+				RequestEditorTeamEditingLock(gameObject.id);
 				context.editorScene.PushUndo();
 				context.selectedAddComponentIndex = static_cast<int32_t>(entry.type);
 				context.editorScene.AddComponent(gameObject.id, entry.type);
@@ -8493,6 +9441,8 @@ namespace {
 
 		if (ImGui::CollapsingHeader("オブジェクト操作")) {
 			if (ImGui::Button("複製")) {
+				// 複製元GameObjectと生成処理を、複製中は他ユーザーの構造変更から保護する。
+				RequestEditorTeamEditingLock(selectedEditorGameObject->id);
 				context.editorScene.PushUndo();
 				context.selectedEditorGameObjectId =
 					context.editorScene.DuplicateGameObject(selectedEditorGameObject->id);
@@ -8521,9 +9471,29 @@ namespace {
 				SyncEditorSelection(context);
 			}
 
+			// Play中はScene側にRuntimeの変更(Destroy済みObjectの非Active化、Additive読込結果)が
+			// 乗っているため、そのまま保存すると元のSceneが壊れる。保存も読込もPlay中は止める。
+			const bool isPlayingForSceneIo = g_editorRuntimeManager.IsPlaying();
+
+			if (isPlayingForSceneIo) {
+				ImGui::BeginDisabled();
+			}
+
+			// 保存結果をボタン直下へ出す。失敗を無音にすると、保存できていないまま作業が続く。
+			static std::string sceneSaveStatusMessage;
+
 			if (ImGui::Button("Scene 保存")) {
 				if (!g_currentScenePath.empty()) {
-					context.editorScene.SaveScene(g_currentScenePath);
+					if (context.editorScene.SaveScene(g_currentScenePath)) {
+						sceneSaveStatusMessage = "Scene: 保存しました " + g_currentScenePath;
+					}
+					else {
+						sceneSaveStatusMessage =
+							"Scene: 保存に失敗しました " + g_currentScenePath +
+							" (元のファイルは変更していません)";
+					}
+
+					Log(sceneSaveStatusMessage);
 				}
 			}
 
@@ -8538,6 +9508,15 @@ namespace {
 					context.previousSelectedEditorGameObjectId = -1;
 					SyncEditorSelection(context);
 				}
+			}
+
+			if (isPlayingForSceneIo) {
+				ImGui::EndDisabled();
+				ImGui::TextUnformatted("Play中はScene保存・読込を止めています(Runtimeの変更が焼き付くため)");
+			}
+
+			if (!sceneSaveStatusMessage.empty()) {
+				ImGui::TextUnformatted(sceneSaveStatusMessage.c_str());
 			}
 
 			static char prefabPathBuffer[260] = "Assets/Prefabs/NewPrefab.prefab";
@@ -8609,6 +9588,7 @@ namespace {
 			ImGui::Text("選択中のGameObjectを削除しますか？");
 
 			if (ImGui::Button("削除する")) {
+				RequestEditorTeamEditingLock(context.selectedEditorGameObjectId);
 				context.editorScene.PushUndo();
 				context.editorScene.DeleteGameObject(context.selectedEditorGameObjectId);
 				context.selectedEditorGameObjectId = context.editorScene.GetGameObjects().empty()
@@ -8701,6 +9681,174 @@ namespace {
 
 		if (DrawComboRow(label, selectedIndex, names, static_cast<int32_t>(_countof(kDikEntries)))) {
 			keyName = kDikEntries[selectedIndex].name;
+		}
+	}
+
+	// Project 全体の実行設定。ここに出す項目は必ず Runtime へ接続済みのものだけにする
+	// (UIだけ存在して効かない設定を作らない)。
+	void DrawProjectSettingsPanel() {
+		if (!ImGui::CollapsingHeader("プロジェクト設定", ImGuiTreeNodeFlags_DefaultOpen)) {
+			return;
+		}
+
+		ProjectSettingsData& projectSettings = ProjectSettings::Get().GetMutableData();
+		bool hasChanged = false;
+
+		DrawSubHeader("画面");
+		hasChanged |= DrawIntRow("解像度 幅", projectSettings.gameWidth);
+		hasChanged |= DrawIntRow("解像度 高さ", projectSettings.gameHeight);
+		projectSettings.gameWidth = (std::clamp)(projectSettings.gameWidth, 320, 7680);
+		projectSettings.gameHeight = (std::clamp)(projectSettings.gameHeight, 240, 4320);
+
+		int32_t windowMode = static_cast<int32_t>(projectSettings.windowMode);
+		const char* windowModeItems[] = {"ウィンドウ", "ボーダーレス全画面"};
+
+		if (DrawComboRow("表示モード", windowMode, windowModeItems, _countof(windowModeItems))) {
+			projectSettings.windowMode = static_cast<ProjectWindowMode>(windowMode);
+			hasChanged = true;
+		}
+
+		ImGui::TextDisabled("解像度と表示モードは次回起動時に反映されます。");
+
+		DrawSubHeader("フレーム");
+		hasChanged |= DrawCheckboxRow("垂直同期 (VSync)", projectSettings.vsyncEnabled);
+		hasChanged |= DrawIntRow("FPS上限 (0=無制限)", projectSettings.frameRateLimit);
+		projectSettings.frameRateLimit = (std::clamp)(projectSettings.frameRateLimit, 0, 1000);
+		ImGui::TextDisabled("VSync と FPS上限は即座に反映されます。");
+
+		DrawSubHeader("破壊");
+		hasChanged |= DrawIntRow("Scene全体の物理破片上限 (0=無制限)", projectSettings.maxScenePhysicsDebris);
+		projectSettings.maxScenePhysicsDebris =
+			(std::clamp)(projectSettings.maxScenePhysicsDebris, 0, 100000);
+		ImGui::TextDisabled(
+			"同時にRigidbody化する破片の総数です。超えた破片はCluster追従かGPU破片へ回ります。");
+
+		DrawSubHeader("オーディオ初期音量");
+		hasChanged |= DrawFloatRow("Master", projectSettings.masterVolume, 0.01f, 0.0f, 1.0f);
+		hasChanged |= DrawFloatRow("SE", projectSettings.sfxVolume, 0.01f, 0.0f, 1.0f);
+		hasChanged |= DrawFloatRow("BGM", projectSettings.bgmVolume, 0.01f, 0.0f, 1.0f);
+		hasChanged |= DrawFloatRow("Ambience", projectSettings.ambienceVolume, 0.01f, 0.0f, 1.0f);
+		hasChanged |= DrawFloatRow("UI", projectSettings.uiVolume, 0.01f, 0.0f, 1.0f);
+		hasChanged |= DrawFloatRow("Voice", projectSettings.voiceVolume, 0.01f, 0.0f, 1.0f);
+		ImGui::TextDisabled("Play 開始時に Audio へ反映されます。");
+
+		DrawSubHeader("Gamepad");
+		hasChanged |= DrawFloatRow("Stick Dead Zone", projectSettings.gamepadStickDeadZone, 0.01f, 0.0f, 0.9f);
+		hasChanged |= DrawFloatRow("Trigger しきい値", projectSettings.gamepadTriggerThreshold, 0.01f, 0.0f, 1.0f);
+		hasChanged |= DrawFloatRow("Stick 感度", projectSettings.gamepadLookSensitivity, 0.01f, 0.05f, 10.0f);
+		ImGui::Text("接続中 Gamepad: %d 台", GamepadInput::Get().GetConnectedCount());
+		ImGui::TextDisabled("Dead Zone / 感度は次のフレームから反映されます。");
+
+		DrawSubHeader("Haptics");
+		hasChanged |= DrawFloatRow("振動の強さ", projectSettings.hapticMasterIntensity, 0.01f, 0.0f, 1.0f);
+		ImGui::TextDisabled("Play 開始時に HapticSystem の全体倍率へ反映されます。");
+
+		//================================================================
+		// Online Services(外部連携仕様書 51〜52 項)
+		// 秘密情報はここへ置かない。重要な認証情報は Cloudflare Worker 側が持つ。
+		//================================================================
+		DrawSubHeader("Online Services");
+		hasChanged |= DrawCheckboxRow("有効", projectSettings.onlineServicesEnabled);
+		DrawTextRow("Provider", projectSettings.onlineProviderName.c_str());
+
+		int32_t onlineEnvironment = projectSettings.onlineEnvironment;
+		const char* environmentItems[] = {"Development", "Production"};
+
+		if (DrawComboRow(
+				"Environment",
+				onlineEnvironment,
+				environmentItems,
+				static_cast<int32_t>(_countof(environmentItems)))) {
+			projectSettings.onlineEnvironment = (std::clamp)(onlineEnvironment, 0, 1);
+			hasChanged = true;
+		}
+
+		hasChanged |= DrawStringInputRow("API Base URL (本番)", projectSettings.onlineApiBaseUrl);
+		hasChanged |= DrawStringInputRow("API Base URL (開発)", projectSettings.onlineDevelopmentBaseUrl);
+		hasChanged |= DrawStringInputRow("Game ID", projectSettings.onlineGameId);
+		hasChanged |= DrawStringInputRow("Client Key", projectSettings.onlineClientKey);
+		hasChanged |= DrawIntRow("タイムアウト(秒)", projectSettings.onlineTimeoutSeconds);
+		projectSettings.onlineTimeoutSeconds = (std::clamp)(projectSettings.onlineTimeoutSeconds, 1, 60);
+		hasChanged |= DrawIntRow("再送 Queue 上限", projectSettings.onlineMaximumPendingRequests);
+		projectSettings.onlineMaximumPendingRequests =
+			(std::clamp)(projectSettings.onlineMaximumPendingRequests, 1, 1024);
+		ImGui::TextDisabled("Client Key は公開鍵だけを入れてください。管理鍵は Worker 側の Secret に置きます。");
+
+		{
+			const OnlineDebugInfo onlineDebugInfo = OnlineService::Get().GetDebugInfo();
+			ImGui::TextDisabled(
+				"接続状態: %s / 送信中: %d / 再送待ち: %d",
+				ToDisplayString(onlineDebugInfo.state),
+				onlineDebugInfo.inFlightCount,
+				onlineDebugInfo.pendingQueueCount);
+			ImGui::TextDisabled(
+				"使用 URL: %s",
+				onlineDebugInfo.activeBaseUrl.empty() ? "未設定" : onlineDebugInfo.activeBaseUrl.c_str());
+		}
+
+		//================================================================
+		// Startup Scene / Build Scene List(GameBuildSettings と同じFileを共有する)
+		//================================================================
+		DrawSubHeader("起動 Scene / Build Scene 一覧");
+		static EditorGameBuildSettings buildSettings{};
+		static bool hasLoadedBuildSettings = false;
+
+		if (!hasLoadedBuildSettings) {
+			EditorGameBuildManager::LoadProjectSettings(buildSettings);
+			hasLoadedBuildSettings = true;
+		}
+
+		DrawTextRow(
+			"起動 Scene",
+			buildSettings.startupScenePath.empty() ? "未設定" : buildSettings.startupScenePath.c_str());
+
+		if (!g_selectedAssetPath.empty() &&
+			EditorAssetUtility::HasExtension(g_selectedAssetPath, ".scene") &&
+			ImGui::Button("選択中 Scene を起動 Scene にする", ImVec2(-1.0f, 0.0f))) {
+			buildSettings.startupScenePath = g_selectedAssetPath;
+
+			if (std::find(buildSettings.scenePaths.begin(), buildSettings.scenePaths.end(), g_selectedAssetPath) ==
+				buildSettings.scenePaths.end()) {
+				buildSettings.scenePaths.push_back(g_selectedAssetPath);
+			}
+
+			EditorGameBuildManager::SaveProjectSettings(buildSettings);
+			g_gameBuildScenePaths = buildSettings.scenePaths;
+		}
+
+		for (int32_t sceneIndex = 0;
+			 sceneIndex < static_cast<int32_t>(buildSettings.scenePaths.size());
+			 ++sceneIndex) {
+			ImGui::PushID(sceneIndex);
+			ImGui::TextDisabled("  %d: %s", sceneIndex, buildSettings.scenePaths[static_cast<size_t>(sceneIndex)].c_str());
+			ImGui::SameLine();
+
+			if (ImGui::SmallButton("削除")) {
+				buildSettings.scenePaths.erase(buildSettings.scenePaths.begin() + sceneIndex);
+				EditorGameBuildManager::SaveProjectSettings(buildSettings);
+				g_gameBuildScenePaths = buildSettings.scenePaths;
+				ImGui::PopID();
+				break;
+			}
+
+			ImGui::PopID();
+		}
+
+		if (!g_selectedAssetPath.empty() &&
+			EditorAssetUtility::HasExtension(g_selectedAssetPath, ".scene") &&
+			ImGui::Button("選択中 Scene を Build 一覧へ追加", ImVec2(-1.0f, 0.0f))) {
+			if (std::find(buildSettings.scenePaths.begin(), buildSettings.scenePaths.end(), g_selectedAssetPath) ==
+				buildSettings.scenePaths.end()) {
+				buildSettings.scenePaths.push_back(g_selectedAssetPath);
+				EditorGameBuildManager::SaveProjectSettings(buildSettings);
+				g_gameBuildScenePaths = buildSettings.scenePaths;
+			}
+		}
+
+		ImGui::Separator();
+
+		if (hasChanged || ImGui::Button("プロジェクト設定を保存", ImVec2(-1.0f, 0.0f))) {
+			ProjectSettings::Get().Save();
 		}
 	}
 
@@ -9027,6 +10175,7 @@ void EditorInspectorPanel::Draw(EditorInspectorPanelContext& context) {
 		ImVec2(context.editorRightWidth, context.editorWindowHeight - context.editorMenuHeight),
 		ImGuiCond_FirstUseEver);
 	ImGui::Begin("インスペクター###Inspector", nullptr, context.dockableWindowFlags);
+	activeInspectorPropertyLabel.clear();
 
 	// 前フレームの描画中に要求された追加を、参照を取得する前に安全に反映する。
 	if (g_pendingActionSequenceStepParentId >= 0) {
@@ -9175,8 +10324,24 @@ void EditorInspectorPanel::Draw(EditorInspectorPanelContext& context) {
 		DrawMultiSelectionInspector(context);
 	}
 	else if (selectedEditorGameObject != nullptr) {
+		const bool isGameObjectLocked = IsEditorTeamGameObjectLockedByAnotherUser(
+			selectedEditorGameObject->id);
+		const float gameObjectHeaderTop = ImGui::GetCursorScreenPos().y;
+		if (isGameObjectLocked) {
+			ImGui::BeginDisabled();
+		}
 		DrawGameObjectHeader(context, *selectedEditorGameObject);
 		DrawObjectOperationPanel(context, selectedEditorGameObject);
+		if (isGameObjectLocked) {
+			ImGui::EndDisabled();
+			ImGui::TextDisabled("共同制作: 他のユーザーがGameObject構造を編集中です");
+		}
+		TrackComponentEditingLock(
+			selectedEditorGameObject != nullptr ? selectedEditorGameObject->id : -1,
+			{},
+			gameObjectHeaderTop,
+			ImGui::GetCursorScreenPos().y,
+			isGameObjectLocked);
 
 		if (selectedEditorGameObject == nullptr) {
 			ImGui::PopStyleVar(2);
@@ -9184,7 +10349,35 @@ void EditorInspectorPanel::Draw(EditorInspectorPanelContext& context) {
 			return;
 		}
 
+		EditorComponent* transformComponent = EditorComponentUtility::FindComponent(
+			*selectedEditorGameObject,
+			EditorComponentType::Transform);
+		const std::string transformComponentUuid = transformComponent != nullptr
+			? transformComponent->uuid
+			: std::string("Transform");
+		const bool isTransformLocked = IsEditorTeamComponentLockedByAnotherUser(
+			selectedEditorGameObject->id,
+			transformComponentUuid);
+		const float transformTop = ImGui::GetCursorScreenPos().y;
+		if (isTransformLocked) {
+			ImGui::BeginDisabled();
+		}
+		currentInspectorTeamGameObjectUuid = selectedEditorGameObject->uuid;
+		currentInspectorTeamComponentUuid = transformComponentUuid;
 		DrawTransformComponent(context, *selectedEditorGameObject);
+		currentInspectorTeamGameObjectUuid.clear();
+		currentInspectorTeamComponentUuid.clear();
+		DrawComponentTeamItemControls(selectedEditorGameObject->uuid, transformComponentUuid);
+		if (isTransformLocked) {
+			ImGui::EndDisabled();
+			ImGui::TextDisabled("共同制作: 他のユーザーがTransformを編集中です");
+		}
+		TrackComponentEditingLock(
+			selectedEditorGameObject->id,
+			transformComponentUuid,
+			transformTop,
+			ImGui::GetCursorScreenPos().y,
+			isTransformLocked);
 
 		int32_t removeComponentIndex = -1;  // ループ中に erase しないため、削除対象 index だけ保持する
 
@@ -9199,20 +10392,56 @@ void EditorInspectorPanel::Draw(EditorInspectorPanelContext& context) {
 			}
 
 			ImGui::PushID(componentIndex);
+			const bool isComponentLocked = IsEditorTeamComponentLockedByAnotherUser(
+				selectedEditorGameObject->id,
+				component.uuid);
+			const float componentTop = ImGui::GetCursorScreenPos().y;
+			if (isComponentLocked) {
+				ImGui::BeginDisabled();
+			}
 
-			if (DrawComponentHeader(GetComponentDisplayName(component.type), &component.isActive)) {
+			const bool isComponentOpen = DrawComponentHeader(
+				GetComponentDisplayName(component.type),
+				&component.isActive);
+			DrawComponentTeamItemControls(selectedEditorGameObject->uuid, component.uuid);
+			if (isComponentOpen) {
+				currentInspectorTeamGameObjectUuid = selectedEditorGameObject->uuid;
+				currentInspectorTeamComponentUuid = component.uuid;
 				DrawComponentBody(context, *selectedEditorGameObject, component);
+				currentInspectorTeamGameObjectUuid.clear();
+				currentInspectorTeamComponentUuid.clear();
+
+				// Componentの追加・削除はGameObjectの構造を変えるため、Component単位ではなく
+				// GameObject単位のロックで保護する（値編集用のisComponentLockedとは別軸）。
+				if (isGameObjectLocked) {
+					ImGui::BeginDisabled();
+				}
 
 				if (ImGui::Button("コンポーネント削除")) {
+					RequestEditorTeamEditingLock(selectedEditorGameObject->id);
 					removeComponentIndex = componentIndex;
 				}
+
+				if (isGameObjectLocked) {
+					ImGui::EndDisabled();
+				}
 			}
+			if (isComponentLocked) {
+				ImGui::EndDisabled();
+				ImGui::TextDisabled("共同制作: 他のユーザーがこのComponentを編集中です");
+			}
+			TrackComponentEditingLock(
+				selectedEditorGameObject->id,
+				component.uuid,
+				componentTop,
+				ImGui::GetCursorScreenPos().y,
+				isComponentLocked);
 
 			ImGui::PopID();
 		}
 
 
-		if (removeComponentIndex >= 0) {
+		if (removeComponentIndex >= 0 && !isGameObjectLocked) {
 			context.editorScene.PushUndo();
 			EditorComponentType removeType =
 				selectedEditorGameObject->components[static_cast<size_t>(removeComponentIndex)].type;
@@ -9220,7 +10449,7 @@ void EditorInspectorPanel::Draw(EditorInspectorPanelContext& context) {
 			SyncSelection(context);
 		}
 
-		DrawAddComponentPopup(context, *selectedEditorGameObject);
+		DrawAddComponentPopup(context, *selectedEditorGameObject, isGameObjectLocked);
 	}
 	else {
 		ImGui::Text("選択: %s", selectedObjectLabel);
@@ -9229,15 +10458,36 @@ void EditorInspectorPanel::Draw(EditorInspectorPanelContext& context) {
 			DrawLegacyPreviewInspector(context, *inspectedModelTransform, *inspectedSpriteTransform);
 		}
 
+		DrawProjectSettingsPanel();
+		const bool isSceneHardLocked = IsEditorTeamTargetHardLockedByAnotherUser(
+			"Scene", g_currentScenePath);
+		if (isSceneHardLocked) ImGui::BeginDisabled();
 		DrawEnvironmentPanel(context);
 		DrawPhysicsSettingsPanel(context);
 		DrawMaterialPanel(context);
 		DrawToolPanel(context);
 		DrawCameraControlPanel(context);
+		if (isSceneHardLocked) {
+			ImGui::EndDisabled();
+			ImGui::TextDisabled("共同制作: 他のユーザーがこのSceneをHard Lockしています");
+		}
+		const char* assetTargetType = EditorAssetUtility::HasExtension(context.selectedAssetPath, ".prefab")
+			? "Prefab"
+			: "Asset";
+		const bool isAssetHardLocked = IsEditorTeamTargetHardLockedByAnotherUser(
+			assetTargetType, context.selectedAssetPath);
+		if (isAssetHardLocked) ImGui::BeginDisabled();
 		DrawSelectedAssetPreview(context);
+		if (isAssetHardLocked) {
+			ImGui::EndDisabled();
+			ImGui::TextDisabled("共同制作: 他のユーザーがこのAssetをHard Lockしています");
+		}
 	}
 
 	ImGui::PopStyleVar(2);
+	if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) && !ImGui::IsAnyItemActive()) {
+		ReportEditorTeamActivity("Inspector", "閲覧中");
+	}
 	ImGui::End();
 }
 

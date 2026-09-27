@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <filesystem>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -8,12 +9,22 @@
 // ゲームビルド設定
 //================================================================
 
+enum class EditorGameBuildConfiguration : int32_t {
+	Development = 0,  // Debug情報とConsoleを残し、動作確認・不具合調査に使う。
+	Release = 1,      // 配布用の最適化ビルド。
+};
+
 struct EditorGameBuildSettings {
-	std::string productName = "CG2Game";
-	std::string outputDirectory = "Builds/CG2Game";
+	std::string productName = "ManoEngineGame";
+	std::string outputDirectory = "Builds/ManoEngineGame";
 	std::string startupScenePath;
 	std::vector<std::string> scenePaths;
+	EditorGameBuildConfiguration configuration = EditorGameBuildConfiguration::Release;
 	bool includeOnlyReferencedAssets = true;  // trueならScene依存AssetとEngine共通Shaderだけを出力する。
+	std::string engineVersion;  // 書き出しに使用したEditor本体のVersion。
+	std::string engineChannel;
+	std::uint32_t projectFormatVersion = 0U;
+	std::uint32_t scriptApiVersion = 0U;
 };
 
 //================================================================

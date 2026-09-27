@@ -27,6 +27,40 @@ public:
 	void Draw();  // 将来の NavMesh Debug 表示用。現時点では描画処理を持たない。
 	void Stop();  // Play 停止時に Navigation の実行状態を捨てる。
 
+	//================================================================
+	// Runtime Navigation API(C++ Script / Gameplay Component から使う)
+	//================================================================
+	// Component の接続先 GameObject を使わず、任意の座標を目的地にする。
+	// Surface 外を渡された場合は最寄りの Surface 上へ寄せてから採用する。
+	bool SetDestination(int32_t gameObjectId, const Vector3& destination);
+	// 現在の目的地。未設定なら false。
+	bool GetDestination(int32_t gameObjectId, Vector3& outDestination) const;
+	// 一時停止 / 再開。停止中は速度を 0 にし、目的地は保持する。
+	bool StopAgent(int32_t gameObjectId);
+	bool ResumeAgent(int32_t gameObjectId);
+	bool IsAgentStopped(int32_t gameObjectId) const;
+	// 目的地へ到達できる見込みがあるか。Surface 外・目的地未設定・到達不能なら false。
+	bool HasPath(int32_t gameObjectId) const;
+	// 直近の経路探索が失敗した理由。成功していれば空文字列。
+	std::string GetLastPathFailureReason(int32_t gameObjectId) const;
+	// 残り距離(XZ平面)。目的地が無ければ false。
+	bool GetRemainingDistance(int32_t gameObjectId, float& outDistance) const;
+	// Agent を NavMesh 上の指定位置へ直接移動させる(経路を無視する瞬間移動)。
+	bool WarpAgent(int32_t gameObjectId, const Vector3& position);
+	// Agent を動かさずに経路だけ求める。Surface と Obstacle を考慮した折れ線を返す。
+	bool CalculatePath(
+		const Vector3& startPosition,
+		const Vector3& endPosition,
+		float agentRadius,
+		std::vector<Vector3>& outPathPoints) const;
+	// Scene View のデバッグ描画用。Surface 矩形 / Obstacle / Link / Agent の現在経路を返す。
+	struct NavigationDebugLine {
+		Vector3 start{0.0f, 0.0f, 0.0f};
+		Vector3 end{0.0f, 0.0f, 0.0f};
+		Vector3 color{0.2f, 0.9f, 0.4f};
+	};
+	void BuildDebugLines(std::vector<NavigationDebugLine>& outLines) const;
+
 public:
 	struct NavigationSurface {
 		int32_t gameObjectId = -1;  // Surface を持つ GameObject ID。
@@ -81,6 +115,10 @@ private:
 	std::vector<NavigationLink> links_;  // 現在の NavMeshLink 一覧。
 	std::unordered_map<int32_t, Vector3> agentVelocities_;  // Agent ごとの水平移動速度。
 	std::unordered_map<int32_t, Vector3> agentDestinations_;  // 自動再経路探索 OFF の Agent が使う固定目的地。
+	// Runtime API で明示指定された目的地。Component の接続先より優先する。
+	std::unordered_map<int32_t, Vector3> scriptDestinations_;
+	std::unordered_map<int32_t, bool> stoppedAgents_;  // StopAgent で一時停止中の Agent。
+	std::unordered_map<int32_t, std::string> pathFailureReasons_;  // 直近の経路探索失敗理由。
 	float navigationRebuildRemainingSeconds_ = 0.0f;  // 静的Surface/Obstacleを毎フレーム全再収集しないための残り時間。
 	bool isStarted_ = false;  // Play 中の Navigation が開始済みなら true。
 

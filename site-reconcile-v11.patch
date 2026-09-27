@@ -1,0 +1,393 @@
+diff --git a/app/componentCatalog.ts b/app/componentCatalog.ts
+index 725acc6..bfeda84 100644
+--- a/app/componentCatalog.ts
++++ b/app/componentCatalog.ts
+@@ -230,6 +230,9 @@ AI|画像色追跡|AIOpenCvColorTracker
+ AI|動きセンサー|AIMotionSensor
+ AI|Whisper 音声認識|AIWhisperSpeechRecognizer
+ AI|音声コマンド|AIVoiceCommand
++外部認識・オンライン|音声認識|SpeechRecognizer
++外部認識・オンライン|カメラ入力|CameraInput
++外部認識・オンライン|画像認識|ImageRecognizer
+ エフェクト|パーティクルシステム|ParticleSystem
+ エフェクト|ビジュアルエフェクト|VisualEffect
+ エフェクト|トレイルレンダラー|TrailRenderer
+@@ -431,6 +434,9 @@ const descriptions: Record<string, string> = {
+   AIMotionSensor: "対象の移動量や画像内の動きを検出します。",
+   AIWhisperSpeechRecognizer: "音声を文字列へ変換する処理へ接続する入口です。",
+   AIVoiceCommand: "認識した言葉をゲーム内Commandへ変換する入口です。",
++  SpeechRecognizer: "マイク入力をKeywordまたは文字起こし結果へ変換します。",
++  CameraInput: "Camera Deviceから認識用Frameを取得します。",
++  ImageRecognizer: "Camera Frameから色、動き、物体、分類などを認識します。",
+   Animation: "FBX Clip、.animclip、手続きAnimationを再生します。",
+   Animator: ".animgraphのState、Transition、Blend Tree、Actionを実行します。",
+   AudioSource: "WAV、音量、Pitch、Loopなど音源の再生設定を持ちます。",
+diff --git a/app/components/ReferenceExplorer.tsx b/app/components/ReferenceExplorer.tsx
+index e6050b9..a593f33 100644
+--- a/app/components/ReferenceExplorer.tsx
++++ b/app/components/ReferenceExplorer.tsx
+@@ -12,6 +12,7 @@ const categories = [
+   { value: "State", label: "状態取得" },
+   { value: "Animation", label: "Animation" },
+   { value: "Effect", label: "Effect" },
++  { value: "External", label: "外部連携" },
+   { value: "GameObject", label: "GameObject" },
+   { value: "Scene", label: "Scene" },
+   { value: "Rail", label: "Rail" },
+diff --git a/app/data.ts b/app/data.ts
+index 81486f3..2291295 100644
+--- a/app/data.ts
++++ b/app/data.ts
+@@ -8,6 +8,8 @@ export const docNavigation = [
+   { label: "Animation・Effect", href: "/docs/animation-effects" },
+   { label: "制作ツール", href: "/docs/gameplay-tools" },
+   { label: "C++ API", href: "/docs/cpp-scripting" },
++  { label: "外部連携", href: "/docs/external-integration" },
++  { label: "現行仕様", href: "/docs/engine-spec" },
+   { label: "描画機能", href: "/docs/rendering" },
+   { label: "Asset管理", href: "/docs/asset-management" },
+   { label: "Lighting / GI", href: "/docs/lighting-gi" },
+@@ -33,6 +35,7 @@ export const componentCategories = [
+   { name: "カメラ", count: 10, summary: "Camera、Cinemachine、Blend、Shake、追従、水平線補正。", status: "一部実装", tone: "partial" as StatusTone },
+   { name: "物理", count: 1, summary: "Oceanと同じ波面を参照するBuoyancy。", status: "一部実装", tone: "partial" as StatusTone },
+   { name: "FeelKit", count: 1, summary: "触覚出力へ接続するHaptic Source。", status: "追加・表示", tone: "planned" as StatusTone },
++  { name: "外部認識・オンライン", count: 3, summary: "Speech、Camera/Vision、Online Services、Hapticsへの入口。", status: "一部実装", tone: "partial" as StatusTone },
+   { name: "データ", count: 1, summary: "型付きKeyと値を保持するGameplay Data。", status: "一部実装", tone: "partial" as StatusTone },
+   { name: "海・水面", count: 3, summary: "航跡、水面への出入り、海面前方Probe。", status: "一部実装", tone: "partial" as StatusTone },
+   { name: "最適化", count: 3, summary: "距離Active、Scene Streaming、Simulation LOD。", status: "一部実装", tone: "partial" as StatusTone },
+diff --git a/app/docs/components/page.tsx b/app/docs/components/page.tsx
+index 4b3feda..c6e2486 100644
+--- a/app/docs/components/page.tsx
++++ b/app/docs/components/page.tsx
+@@ -8,8 +8,8 @@ export default function ComponentsReference() {
+       <DocHeader
+         eyebrow="Componentリファレンス"
+         title="Componentを、目的から探す。"
+-        lead={`EditorComponentTypeは284種類（追加可能280＋Legacy互換4）。Add Componentの表示は${componentCatalog.length}項目です。各Componentについて、役割、Inspector、必要条件、Play時の動作、保存、C++ API、制限、確認手順を確認できます。`}
+-        meta="SOURCE REVIEW / 2026.09.26 · 284 TYPES / 286 MENU ITEMS"
++        lead={`EditorComponentTypeは287種類（追加可能283＋Legacy互換4）。Add Componentの表示は${componentCatalog.length}項目です。各Componentについて、役割、Inspector、必要条件、Play時の動作、保存、C++ API、制限、確認手順を確認できます。`}
++        meta="SOURCE REVIEW / 2026.09.26 · 287 TYPES / 289 MENU ITEMS"
+       />
+ 
+       <Callout title="実装状態の見方" tone="note">
+diff --git a/app/docs/cpp-scripting/page.tsx b/app/docs/cpp-scripting/page.tsx
+index a99ecea..7ec2c9f 100644
+--- a/app/docs/cpp-scripting/page.tsx
++++ b/app/docs/cpp-scripting/page.tsx
+@@ -223,8 +223,8 @@ export default function CppScripting() {
+       <DocHeader
+         eyebrow="C++ SCRIPTING / 05"
+         title="C++からゲームを動かす。"
+-        lead="GameObjectへDLLを取り付け、入力、物理、武器、Target、Damage情報、Scene、Save、Rail、Oceanを、26種類のTemplate、高水準Wrapper、369件のRuntime APIから扱います。"
+-        meta={`EDITOR SCRIPT API / VERSION ${engineVersion.scriptApi} · 369 RUNTIME ENTRIES`}
++        lead="GameObjectへDLLを取り付け、入力、物理、武器、Target、Damage情報、Scene、Save、Rail、Ocean、Speech、Vision、Haptics、Onlineを、26種類のTemplate、高水準Wrapper、413件のRuntime APIから扱います。"
++        meta={`EDITOR SCRIPT API / VERSION ${engineVersion.scriptApi} · 413 RUNTIME ENTRIES`}
+       />
+ 
+       <div className="doc-badge-row">
+diff --git a/app/docs/engine-spec/page.tsx b/app/docs/engine-spec/page.tsx
+new file mode 100644
+index 0000000..dc385c0
+--- /dev/null
++++ b/app/docs/engine-spec/page.tsx
+@@ -0,0 +1,13 @@
++import { Callout, DocHeader, DocsShell, StatusPill } from "../../ui";
++import { engineVersion } from "../../generated/engineVersion";
++
++export default function EngineSpecPage() {
++  return <DocsShell>
++    <DocHeader eyebrow="CURRENT ENGINE SPEC / 08" title="現行Engineの範囲と境界。" lead="現行Buildの起動、保存、Runtime、描画、Asset、共同制作を横断して、利用者が期待してよい範囲と制限を整理します。" meta={`ENGINE / ${engineVersion.display} · API VERSION / ${engineVersion.scriptApi} · PROJECT FORMAT / ${engineVersion.projectFormat}`} />
++    <div className="doc-badge-row"><StatusPill tone="stable">DIRECTX 12</StatusPill><StatusPill tone="stable">JOLT PHYSICS</StatusPill><StatusPill tone="partial">WINDOWS 64 BIT</StatusPill></div>
++    <Callout title="現行値を優先する" tone="note"><p>過去の評価章や追加時点の件数は履歴です。現在の基準はComponent 287種類、Runtime API 413 Entry、Script Template 26種類、Inspector 1,981 Field / 278 Componentです。</p></Callout>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">BOUNDARIES</p><h2>対応環境と保存契約</h2></div><div className="two-column-doc"><div><h3>実行環境</h3><p>Windows 64 bit、DirectX 12、Dear ImGui Docking、XAudio2、Jolt Physics、FBX/OBJ Import、C++ DLL Scriptを基準にします。Linux/macOS、Vulkan/Metal、Web Buildは対象外です。</p></div><div><h3>保存と互換</h3><p>ProjectはEngine Version、Project Format、Script API Version、Channelを持ちます。Scene保存は一時File経由で行い、未知行を保持します。Play中の編集Scene保存・通常Loadは保護されます。</p></div></div></section>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">RUNTIME / RENDERING</p><h2>1 Frameと描画の考え方</h2></div><div className="detail-card-grid"><article><span>RUNTIME</span><h3>Sceneが所有する</h3><p>Play開始時にProject Settings、Component、Script、Physics、Audio、External Systemを順に初期化し、Main ThreadでUpdateとCallbackを実行します。</p></article><article><span>RENDERING</span><h3>PassとHistoryを分ける</h3><p>Scene ViewとGame ViewのCamera、Temporal History、PostProcess、SSR、Bloom、AAを混同せず、Diagnosticsで対象Passを確認します。</p></article><article><span>ASSET</span><h3>UUIDと依存を基準にする</h3><p>PathではなくAsset UUID、Hash、依存索引を基準に移動・Reimport・Hot Reload・手動対応の要否を判断します。</p></article></div></section>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">COLLABORATION</p><h2>共同制作の境界</h2></div><p className="section-intro">共同制作はGameplayのマルチプレイではありません。ManoTeamServer、LAN/VPN、Protocol 3を使ってScene・参照Asset・Revision・TeamItemを同期し、Lock、Conflict、Backup、Trashで復旧可能性を残します。Host MigrationやPlay Session共有は対象外です。</p></section>
++  </DocsShell>;
++}
+diff --git a/app/docs/external-integration/page.tsx b/app/docs/external-integration/page.tsx
+new file mode 100644
+index 0000000..b2ccab3
+--- /dev/null
++++ b/app/docs/external-integration/page.tsx
+@@ -0,0 +1,23 @@
++import Link from "next/link";
++import { Callout, CodeBlock, DocHeader, DocsShell, StatusPill } from "../../ui";
++import { engineVersion } from "../../generated/engineVersion";
++
++const speechSample = `Speech speech(GetGameObject());
++speech.Start();
++const std::string text = speech.GetLastText();
++const float confidence = speech.GetLastConfidence();`;
++
++const onlineSample = `Online::SetPlayerIdentity("player-001", "Player");
++Online::SubmitScore("main", 12500, OnlineLeaderboardScope::Global);`;
++
++export default function ExternalIntegrationPage() {
++  return <DocsShell>
++    <DocHeader eyebrow="EXTERNAL INTEGRATION / 07" title="外部DeviceとOnlineを、ゲーム本体から分離して使う。" lead="Speech、Vision、Haptics、Online Servicesを、Component設定・Debug Window・C++ Scriptから安全に接続するための利用者向け手順です。使えない環境でもGameplayを止めない前提で説明します。" meta={`ENGINE / ${engineVersion.display} · API VERSION / ${engineVersion.scriptApi} · 4 SYSTEMS`} />
++    <div className="doc-badge-row"><StatusPill tone="partial">SPEECH</StatusPill><StatusPill tone="partial">VISION</StatusPill><StatusPill tone="partial">HAPTICS</StatusPill><StatusPill tone="partial">ONLINE</StatusPill></div>
++    <Callout title="外部機能は必須条件にしない" tone="warning"><p>マイク、Camera、FeelKit Device、Network、Backend、Model、権限は実行環境で使えないことがあります。状態が<code>Unavailable</code>や<code>Error</code>でも、通常の入力・保存・Gameplayへ代替経路を残します。</p></Callout>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">SETUP ORDER</p><h2>設定する順番</h2></div><div className="numbered-steps"><article><span>01</span><h3>Componentを追加</h3><p>SpeechRecognizer、CameraInput、ImageRecognizer、HapticSourceを対象GameObjectへ追加します。</p></article><article><span>02</span><h3>BackendとDeviceを確認</h3><p>Debug WindowでDevice、Backend、Model、権限、状態、最終Errorを確認します。自動で未対応Backendへ切り替えません。</p></article><article><span>03</span><h3>Actionへ接続</h3><p>Keyword、検出、色、動きの結果はInput ActionまたはScript Actionへ接続します。Keyboard/Gamepadの代替入力も残します。</p></article><article><span>04</span><h3>Playと配布を分けて確認</h3><p>EditorのPreviewだけで成功扱いにせず、Standalone、実Device、Worker URL、Client Keyを別々に確認します。</p></article></div></section>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">SPEECH / VISION</p><h2>認識結果を入力へ流す</h2></div><div className="two-column-doc"><div><h3>Speech</h3><p>Keywordなら認識時Actionへ流し、文字起こしの表示だけが必要な場合にScriptから確定済みの直近結果を読みます。言語、Keyword、Confidence、Action Map名を一致させます.</p><CodeBlock code={speechSample} /></div><div><h3>Vision</h3><p>CameraInputを複数のRecognizerで共有できます。色追跡・動体検出は内蔵Backend、物体・分類・顔検出は対応するONNX ModelとLabel Fileを指定します。顔ランドマークやMediaPipeは未対応です。</p></div></div></section>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">HAPTICS / ONLINE</p><h2>触覚とOnline Services</h2></div><div className="two-column-doc"><div><h3>Haptics</h3><p>HapticSourceの強さ、持続時間、Patternを設定し、必要なら再生HandleをScriptで制御します。Device未接続でもゲーム進行を成功条件にしません。</p></div><div><h3>Online</h3><p>Cloudflare WorkerのDevelopment / Production URL、Game ID、Client Key、Player IDをProject Settingsへ設定します。開発Databaseと本番Databaseを分離し、QueueとHTTP状態をDebug Windowで確認します。</p><CodeBlock code={onlineSample} /></div></div></section>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">FAILURE CONTRACT</p><h2>動かない時の確認先</h2></div><div className="detail-card-grid"><article><span>DEVICE</span><h3>権限と接続</h3><p>Windows権限、Device一覧、Capture FPS、マイク入力、FeelKit接続を確認します。</p></article><article><span>BACKEND</span><h3>Modelと状態</h3><p>Backend名、Model入力Shape、Label、Confidence、推論間隔、状態とError Codeを確認します。</p></article><article><span>NETWORK</span><h3>URLとQueue</h3><p>Active URL、HTTP Status、Pending Queue、Worker環境、Client Key、Timeoutを確認します。</p></article></div><Link className="text-link" href="/docs/troubleshooting">トラブルシューティングを見る →</Link></section>
++  </DocsShell>;
++}
+diff --git a/app/docs/page.tsx b/app/docs/page.tsx
+index 21893ea..c8fe727 100644
+--- a/app/docs/page.tsx
++++ b/app/docs/page.tsx
+@@ -41,7 +41,7 @@ const docSections = [
+   {
+     number: "06",
+     title: "C++ スクリプト",
+-    copy: "DLL作成、26種類のTemplate、高水準Wrapper、Damage Context、369件のRuntime API。",
++    copy: "DLL作成、26種類のTemplate、高水準Wrapper、Damage Context、413件のRuntime API。",
+     links: ["Template", "戻り値型", "Gameplay API"],
+     href: "/docs/cpp-scripting",
+   },
+@@ -68,6 +68,13 @@ const docSections = [
+   },
+   {
+     number: "10",
++    title: "外部連携",
++    copy: "Speech、Vision、Haptics、Online Servicesの導入、設定、Script、失敗時の確認。",
++    links: ["Speech", "Vision", "Online"],
++    href: "/docs/external-integration",
++  },
++  {
++    number: "11",
+     title: "共同制作",
+     copy: "Host / Client同期、Lock、Conflict、Backup、Asset転送の操作と制限。",
+     links: ["Host", "Conflict", "Backup"],
+diff --git a/app/docs/troubleshooting/page.tsx b/app/docs/troubleshooting/page.tsx
+index 71001cb..150012b 100644
+--- a/app/docs/troubleshooting/page.tsx
++++ b/app/docs/troubleshooting/page.tsx
+@@ -3,13 +3,13 @@
+ const checks = [
+   ["白画面・何も描画されない", "Active Camera、Priority、Near/Far、Renderer、Missing Asset、Viewportサイズ、DX12/Shader Errorを確認する。"],
+   ["当たり判定がずれる", "World位置・回転・Scale、ColliderのCenter/Size、親Transform、負Scale、Play中のJolt Shape、接触点を比較する。"],
+-  ["C++ Scriptが動かない", "DLL Path、Architecture、Runtime API Version 13、Export関数、Load結果、旧DLL継続状態を確認する。"],
++  ["C++ Scriptが動かない", "DLL Path、Architecture、Runtime API Version 14、Export関数、Load結果、旧DLL継続状態を確認する。"],
+   ["PostProcessが効かない", "PostProcess/VolumeのActive、Bloom、AA Mode、Scene/Game View、Diagnosticsの対象Passを確認する。"],
+   ["共同制作へ接続できない", "Server Host/Port、Protocol 3、Engine/Project/Script Version、Project ID、Tailscale MagicDNS、Firewallを確認する。"],
+ ] as const;
+ 
+ export default function TroubleshootingPage() {
+-  return <DocsShell><DocHeader eyebrow="TROUBLESHOOTING / 11" title="推測せず、実値から切り分ける。" lead="症状ごとの確認場所を、Console、Status、実座標、保存File、接続診断の順にまとめます。" meta="SOURCE REVIEW / 2026.09.25 · DIAGNOSTIC CHECKLIST" /><div className="doc-badge-row"><StatusPill tone="note">CONSOLE FIRST</StatusPill><StatusPill tone="partial">RUNTIME VALUES</StatusPill><StatusPill tone="stable">RECOVERY SAFE</StatusPill></div>
++  return <DocsShell><DocHeader eyebrow="TROUBLESHOOTING / 12" title="推測せず、実値から切り分ける。" lead="症状ごとの確認場所を、Console、Status、実座標、保存File、接続診断の順にまとめます。" meta="SOURCE REVIEW / 2026.09.26 · DIAGNOSTIC CHECKLIST" /><div className="doc-badge-row"><StatusPill tone="note">CONSOLE FIRST</StatusPill><StatusPill tone="partial">RUNTIME VALUES</StatusPill><StatusPill tone="stable">RECOVERY SAFE</StatusPill></div>
+     <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">SYMPTOM MAP</p><h2>症状から確認する</h2></div><div className="topic-index">{checks.map(([title, body], index) => <article key={title}><span>{String(index + 1).padStart(2, "0")}</span><h3>{title}</h3><p>{body}</p></article>)}</div></section>
+     <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">SAFE RECOVERY</p><h2>復旧前に上書きしない</h2></div><div className="two-column-doc"><div><h3>保存</h3><p>Scene保存失敗時は元Fileを削除せず、一時File、Read Only、別ProcessのLock、Project Versionを確認します。</p></div><div><h3>共同制作</h3><p><code>.team/change-log.jsonl</code>、<code>.team/backups</code>、<code>.team/trash</code>、<code>.team/conflicts</code>を確認してから採用結果を決めます。</p></div></div><Callout title="Build成功は画面表示成功の証明ではない" tone="warning"><p>Editor起動、Scene View、Game View、実音、Physics Debug、Standaloneはそれぞれ別に確認します。</p></Callout></section>
+   </DocsShell>;
+diff --git a/app/docs/user-guide/page.tsx b/app/docs/user-guide/page.tsx
+index 6ae1e8d..55a5782 100644
+--- a/app/docs/user-guide/page.tsx
++++ b/app/docs/user-guide/page.tsx
+@@ -10,9 +10,9 @@ const guideSteps = [
+ ] as const;
+ 
+ export default function UserGuidePage() {
+-  return <DocsShell><DocHeader eyebrow="USER GUIDE / 01" title="最初のProjectからBuildまで。" lead="ManoEngineを初めて使う人向けに、Launcher、Scene、Component、Play、Script、Build、共同制作の基本順序をまとめます。" meta="SOURCE REVIEW / 2026.09.25 · USER WORKFLOW" /><div className="doc-badge-row"><StatusPill tone="stable">START HERE</StatusPill><StatusPill tone="partial">PLAY CHECK</StatusPill><StatusPill tone="note">BUILD READY</StatusPill></div>
++  return <DocsShell><DocHeader eyebrow="USER GUIDE / 01" title="最初のProjectからBuildまで。" lead="ManoEngineを初めて使う人向けに、Launcher、Scene、Component、Play、Script、外部連携、Build、共同制作の基本順序をまとめます。" meta="SOURCE REVIEW / 2026.09.26 · USER WORKFLOW" /><div className="doc-badge-row"><StatusPill tone="stable">START HERE</StatusPill><StatusPill tone="partial">PLAY CHECK</StatusPill><StatusPill tone="note">BUILD READY</StatusPill></div>
+     <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">WORKFLOW</p><h2>この順番で進める</h2></div><div className="numbered-steps">{guideSteps.map(([number, title, body]) => <article key={title}><span>{number}</span><h3>{title}</h3><p>{body}</p></article>)}</div></section>
+     <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">EDITOR MAP</p><h2>画面の役割を分ける</h2></div><div className="detail-card-grid"><article className="detail-card"><h3>Scene / Game View</h3><p>Scene Viewは配置とDebug、Game ViewはCamera Componentからの実行画面です。両者のCameraとTemporal Historyを混同しません。</p></article><article className="detail-card"><h3>Inspector / Project</h3><p>Inspectorは選択Objectの値、ProjectはAsset作成・移動・Reimport・依存確認を扱います。</p></article><article className="detail-card"><h3>Console / Diagnostics</h3><p>ConsoleはErrorや状態Message、DiagnosticsはCPU/GPU、VRAM、Physics、Frame Spikeの切り分けに使います。</p></article></div></section>
+-    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">NEXT</p><h2>目的別に進む</h2></div><div className="link-grid"><Link href="/docs/components">Componentを探す →</Link><Link href="/docs/cpp-scripting">C++ APIを読む →</Link><Link href="/docs/editor-windows">Editor Windowを開く →</Link><Link href="/docs/troubleshooting">症状から直す →</Link></div><Callout title="保存してから終了するもの" tone="note"><p>Scene、Project Settings、Input Action、Animation、Effect、Material、TEAM設定、Native Script Source/DLLは明示的に保存します。Play中のHPや生成Objectは編集設定ではありません。</p></Callout></section>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">NEXT</p><h2>目的別に進む</h2></div><div className="link-grid"><Link href="/docs/components">Componentを探す →</Link><Link href="/docs/cpp-scripting">C++ APIを読む →</Link><Link href="/docs/external-integration">外部連携を設定する →</Link><Link href="/docs/editor-windows">Editor Windowを開く →</Link><Link href="/docs/troubleshooting">症状から直す →</Link></div><Callout title="保存してから終了するもの" tone="note"><p>Scene、Project Settings、Input Action、Animation、Effect、Material、TEAM設定、Native Script Source/DLLは明示的に保存します。Play中のHPや生成Objectは編集設定ではありません。</p></Callout></section>
+   </DocsShell>;
+ }
+diff --git a/app/generated/engineVersion.ts b/app/generated/engineVersion.ts
+index ec70318..58f41d6 100644
+--- a/app/generated/engineVersion.ts
++++ b/app/generated/engineVersion.ts
+@@ -8,6 +8,6 @@ export const engineVersion = {
+   projectFormat: 1,
+   sceneFormat: 1,
+   prefabFormat: 1,
+-  scriptApi: 13,
++  scriptApi: 14,
+   display: "0.9.4+171",
+-} as const;
+\ No newline at end of file
++} as const;
+diff --git a/app/page.tsx b/app/page.tsx
+index 040bd72..37c4651 100644
+--- a/app/page.tsx
++++ b/app/page.tsx
+@@ -23,9 +23,9 @@ const sampleCode = `extern "C" __declspec(dllexport) void EditorScript_Update(
+ const quickLinks = [
+   { number: "01", title: "最初のSceneを作る", copy: "起動からPlayまでを順番に進める", href: "/docs/getting-started" },
+   { number: "02", title: "Editor Windowを選ぶ", copy: "8つの常設画面と即時操作を確認", href: "/docs/editor-windows" },
+-  { number: "03", title: "Componentを探す", copy: "284種類を名前と用途から検索する", href: "/docs/components" },
++  { number: "03", title: "Componentを探す", copy: "287種類を名前と用途から検索する", href: "/docs/components" },
+   { number: "04", title: "Animationを作る", copy: "Clip、Animator、Effectを手順から確認", href: "/docs/animation-effects" },
+-  { number: "05", title: "C++で処理を書く", copy: "26 Templateと369件のAPIから探す", href: "/docs/cpp-scripting" },
++  { number: "05", title: "C++で処理を書く", copy: "26 Templateと413件のAPIから探す", href: "/docs/cpp-scripting" },
+ ];
+ 
+ const workflowLinks = [
+@@ -40,6 +40,7 @@ const workflowLinks = [
+   { title: "Asset管理", copy: "Registry、UUID、依存関係、種別別Hot Reloadと手動対応。", href: "/docs/asset-management" },
+   { title: "Lighting / GI", copy: "Shadow、Light Probe GI、SSGI、Volumetric、反射の接続と確認。", href: "/docs/lighting-gi" },
+   { title: "共同制作", copy: "Host / Client同期、Lock、Conflict、Backup、Asset転送の復旧手順。", href: "/docs/team-collaboration" },
++  { title: "外部連携", copy: "Speech、Vision、Haptics、Online Servicesの設定とScript API。", href: "/docs/external-integration" },
+   { title: "トラブルシューティング", copy: "白画面、Physics、Script、描画、共同制作を症状から切り分ける。", href: "/docs/troubleshooting" },
+ ];
+ 
+@@ -108,7 +109,7 @@ export default function Home() {
+               <p className="eyebrow">ドキュメント分類</p>
+               <h2>作業の順番に沿って探す。</h2>
+             </div>
+-            <p>編集、実行、Asset、描画、共同制作まで、ManoEngineを使う時の作業単位で10項目に整理しています。</p>
++            <p>編集、実行、Asset、描画、外部連携、共同制作まで、ManoEngineを使う時の作業単位で整理しています。</p>
+           </div>
+           <div className="workflow-grid">
+             {workflowLinks.map((item, index) => (
+@@ -130,7 +131,7 @@ export default function Home() {
+               <p>必要なComponent、書く場所、実行結果、動かない時の確認順まで掲載しています。API一覧は名前と用途から検索できます。</p>
+               <div className="status-row">
+                 <StatusPill tone="stable">API VERSION {engineVersion.scriptApi}</StatusPill>
+-                <StatusPill tone="partial">369 RUNTIME ENTRIES</StatusPill>
++                <StatusPill tone="partial">413 RUNTIME ENTRIES</StatusPill>
+               </div>
+               <Link className="text-link" href="/docs/cpp-scripting">C++スクリプトガイドを開く →</Link>
+             </div>
+diff --git a/app/runtimeApiReference.ts b/app/runtimeApiReference.ts
+index fd4854b..94dc474 100644
+--- a/app/runtimeApiReference.ts
++++ b/app/runtimeApiReference.ts
+@@ -1,5 +1,5 @@
+ ﻿export type RuntimeApiEntry = {
+-  category: "Utility" | "Input" | "Transform" | "Physics" | "Gameplay" | "State" | "Animation" | "Effect" | "GameObject" | "Scene" | "Rail";
++  category: "Utility" | "Input" | "Transform" | "Physics" | "Gameplay" | "State" | "Animation" | "Effect" | "External" | "GameObject" | "Scene" | "Rail";
+   name: string;
+   signature: string;
+   returnType: string;
+@@ -615,10 +615,12 @@ const baseRuntimeApis: RuntimeApiEntry[] = [
+ import { runtimeApiAdditions } from "./runtimeApiAdditions";
+ import { runtimeApiV7Additions } from "./runtimeApiV7Additions";
+ import { runtimeApiV13Additions } from "./runtimeApiV13Additions";
++import { runtimeApiV14Additions } from "./runtimeApiV14Additions";
+ 
+ export const runtimeApis: RuntimeApiEntry[] = [
+   ...baseRuntimeApis,
+   ...runtimeApiAdditions,
+   ...runtimeApiV7Additions,
+   ...runtimeApiV13Additions,
++  ...runtimeApiV14Additions,
+ ];
+diff --git a/app/runtimeApiV14Additions.ts b/app/runtimeApiV14Additions.ts
+new file mode 100644
+index 0000000..c7b6758
+--- /dev/null
++++ b/app/runtimeApiV14Additions.ts
+@@ -0,0 +1,59 @@
++﻿import type { RuntimeApiEntry } from "./runtimeApiReference";
++
++const seeds: Array<[RuntimeApiEntry["category"], string, string, string, string, string, string, string]> = [
++  ["External", "SpeechStartRecognition", "runtimeApi->SpeechStartRecognition(int32_t gameObjectId)", "bool", "bool result = runtimeApi->SpeechStartRecognition(int32_t gameObjectId);", "音声認識を開始・停止し、確定結果またはKeyword認識状態を取得します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "SpeechRecognizer、マイク権限、対応Backend"],
++  ["External", "SpeechStopRecognition", "runtimeApi->SpeechStopRecognition(int32_t gameObjectId)", "bool", "bool result = runtimeApi->SpeechStopRecognition(int32_t gameObjectId);", "音声認識を開始・停止し、確定結果またはKeyword認識状態を取得します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "SpeechRecognizer、マイク権限、対応Backend"],
++  ["External", "SpeechIsRecognizing", "runtimeApi->SpeechIsRecognizing(int32_t gameObjectId)", "bool", "bool result = runtimeApi->SpeechIsRecognizing(int32_t gameObjectId);", "音声認識を開始・停止し、確定結果またはKeyword認識状態を取得します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "SpeechRecognizer、マイク権限、対応Backend"],
++  ["External", "SpeechGetLastResult", "runtimeApi->SpeechGetLastResult(int32_t gameObjectId, char* text, int32_t textCapacity, float* confidence, bool* isFinal)", "bool", "bool result = runtimeApi->SpeechGetLastResult(int32_t gameObjectId, char* text, int32_t textCapacity, float* confidence, bool* isFinal);", "音声認識を開始・停止し、確定結果またはKeyword認識状態を取得します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "SpeechRecognizer、マイク権限、対応Backend"],
++  ["External", "SpeechWasKeywordRecognized", "runtimeApi->SpeechWasKeywordRecognized(int32_t gameObjectId, const char* keyword)", "bool", "bool result = runtimeApi->SpeechWasKeywordRecognized(int32_t gameObjectId, const char* keyword);", "音声認識を開始・停止し、確定結果またはKeyword認識状態を取得します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "SpeechRecognizer、マイク権限、対応Backend"],
++  ["External", "VisionStartCamera", "runtimeApi->VisionStartCamera(int32_t gameObjectId)", "bool", "bool result = runtimeApi->VisionStartCamera(int32_t gameObjectId);", "Camera入力と画像認識の状態・検出結果を取得します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "CameraInput、ImageRecognizer、Camera権限またはONNX Model"],
++  ["External", "VisionStopCamera", "runtimeApi->VisionStopCamera(int32_t gameObjectId)", "bool", "bool result = runtimeApi->VisionStopCamera(int32_t gameObjectId);", "Camera入力と画像認識の状態・検出結果を取得します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "CameraInput、ImageRecognizer、Camera権限またはONNX Model"],
++  ["External", "VisionStartRecognition", "runtimeApi->VisionStartRecognition(int32_t gameObjectId)", "bool", "bool result = runtimeApi->VisionStartRecognition(int32_t gameObjectId);", "Camera入力と画像認識の状態・検出結果を取得します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "CameraInput、ImageRecognizer、Camera権限またはONNX Model"],
++  ["External", "VisionStopRecognition", "runtimeApi->VisionStopRecognition(int32_t gameObjectId)", "bool", "bool result = runtimeApi->VisionStopRecognition(int32_t gameObjectId);", "Camera入力と画像認識の状態・検出結果を取得します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "CameraInput、ImageRecognizer、Camera権限またはONNX Model"],
++  ["External", "VisionGetState", "runtimeApi->VisionGetState(int32_t gameObjectId)", "int32_t", "int32_t result = runtimeApi->VisionGetState(int32_t gameObjectId);", "Camera入力と画像認識の状態・検出結果を取得します。", "戻り値を指定型へ格納し、状態値の意味を確認して使います。", "CameraInput、ImageRecognizer、Camera権限またはONNX Model"],
++  ["External", "VisionGetObjectCount", "runtimeApi->VisionGetObjectCount(int32_t gameObjectId)", "int32_t", "int32_t result = runtimeApi->VisionGetObjectCount(int32_t gameObjectId);", "Camera入力と画像認識の状態・検出結果を取得します。", "戻り値を指定型へ格納し、状態値の意味を確認して使います。", "CameraInput、ImageRecognizer、Camera権限またはONNX Model"],
++  ["External", "VisionGetObject", "runtimeApi->VisionGetObject(int32_t gameObjectId, int32_t objectIndex, char* label, int32_t labelCapacity, float* confidence, float* x, float* y, float* width, float* height)", "bool", "bool result = runtimeApi->VisionGetObject(int32_t gameObjectId, int32_t objectIndex, char* label, int32_t labelCapacity, float* confidence, float* x, float* y, float* width, float* height);", "Camera入力と画像認識の状態・検出結果を取得します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "CameraInput、ImageRecognizer、Camera権限またはONNX Model"],
++  ["External", "VisionGetTopClassification", "runtimeApi->VisionGetTopClassification(int32_t gameObjectId, char* label, int32_t labelCapacity, float* confidence)", "bool", "bool result = runtimeApi->VisionGetTopClassification(int32_t gameObjectId, char* label, int32_t labelCapacity, float* confidence);", "Camera入力と画像認識の状態・検出結果を取得します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "CameraInput、ImageRecognizer、Camera権限またはONNX Model"],
++  ["External", "VisionGetFaceCount", "runtimeApi->VisionGetFaceCount(int32_t gameObjectId)", "int32_t", "int32_t result = runtimeApi->VisionGetFaceCount(int32_t gameObjectId);", "Camera入力と画像認識の状態・検出結果を取得します。", "戻り値を指定型へ格納し、状態値の意味を確認して使います。", "CameraInput、ImageRecognizer、Camera権限またはONNX Model"],
++  ["External", "VisionGetFace", "runtimeApi->VisionGetFace(int32_t gameObjectId, int32_t faceIndex, float* confidence, float* x, float* y, float* width, float* height)", "bool", "bool result = runtimeApi->VisionGetFace(int32_t gameObjectId, int32_t faceIndex, float* confidence, float* x, float* y, float* width, float* height);", "Camera入力と画像認識の状態・検出結果を取得します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "CameraInput、ImageRecognizer、Camera権限またはONNX Model"],
++  ["External", "VisionGetHeadPose", "runtimeApi->VisionGetHeadPose(int32_t gameObjectId, float* yaw, float* pitch, float* roll)", "bool", "bool result = runtimeApi->VisionGetHeadPose(int32_t gameObjectId, float* yaw, float* pitch, float* roll);", "Camera入力と画像認識の状態・検出結果を取得します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "CameraInput、ImageRecognizer、Camera権限またはONNX Model"],
++  ["External", "VisionGetMotion", "runtimeApi->VisionGetMotion(int32_t gameObjectId, bool* hasMotion, float* motionMagnitude, float* centerX, float* centerY)", "bool", "bool result = runtimeApi->VisionGetMotion(int32_t gameObjectId, bool* hasMotion, float* motionMagnitude, float* centerX, float* centerY);", "Camera入力と画像認識の状態・検出結果を取得します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "CameraInput、ImageRecognizer、Camera権限またはONNX Model"],
++  ["External", "VisionGetColorTracking", "runtimeApi->VisionGetColorTracking(int32_t gameObjectId, bool* isDetected, float* centerX, float* centerY, float* areaRatio)", "bool", "bool result = runtimeApi->VisionGetColorTracking(int32_t gameObjectId, bool* isDetected, float* centerX, float* centerY, float* areaRatio);", "Camera入力と画像認識の状態・検出結果を取得します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "CameraInput、ImageRecognizer、Camera権限またはONNX Model"],
++  ["External", "HapticPlaySource", "runtimeApi->HapticPlaySource(int32_t gameObjectId)", "uint32_t", "uint32_t result = runtimeApi->HapticPlaySource(int32_t gameObjectId);", "FeelKitの触覚Sourceまたは再生Handleを制御します。", "戻り値を指定型へ格納し、状態値の意味を確認して使います。", "HapticSource、対応Device（未接続時は失敗してGameplay継続）"],
++  ["External", "HapticPlayClipAsset", "runtimeApi->HapticPlayClipAsset(const char* clipAssetPath, int32_t gameObjectId)", "uint32_t", "uint32_t result = runtimeApi->HapticPlayClipAsset(const char* clipAssetPath, int32_t gameObjectId);", "FeelKitの触覚Sourceまたは再生Handleを制御します。", "戻り値を指定型へ格納し、状態値の意味を確認して使います。", "HapticSource、対応Device（未接続時は失敗してGameplay継続）"],
++  ["External", "HapticPlayFromImpulse", "runtimeApi->HapticPlayFromImpulse(int32_t gameObjectId, float impulse)", "uint32_t", "uint32_t result = runtimeApi->HapticPlayFromImpulse(int32_t gameObjectId, float impulse);", "FeelKitの触覚Sourceまたは再生Handleを制御します。", "戻り値を指定型へ格納し、状態値の意味を確認して使います。", "HapticSource、対応Device（未接続時は失敗してGameplay継続）"],
++  ["External", "HapticStopSource", "runtimeApi->HapticStopSource(int32_t gameObjectId)", "bool", "bool result = runtimeApi->HapticStopSource(int32_t gameObjectId);", "FeelKitの触覚Sourceまたは再生Handleを制御します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "HapticSource、対応Device（未接続時は失敗してGameplay継続）"],
++  ["External", "HapticStopHandle", "runtimeApi->HapticStopHandle(uint32_t hapticHandle)", "bool", "bool result = runtimeApi->HapticStopHandle(uint32_t hapticHandle);", "FeelKitの触覚Sourceまたは再生Handleを制御します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "HapticSource、対応Device（未接続時は失敗してGameplay継続）"],
++  ["External", "HapticIsPlayingHandle", "runtimeApi->HapticIsPlayingHandle(uint32_t hapticHandle)", "bool", "bool result = runtimeApi->HapticIsPlayingHandle(uint32_t hapticHandle);", "FeelKitの触覚Sourceまたは再生Handleを制御します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "HapticSource、対応Device（未接続時は失敗してGameplay継続）"],
++  ["External", "HapticSetHandleIntensity", "runtimeApi->HapticSetHandleIntensity(uint32_t hapticHandle, float intensity)", "bool", "bool result = runtimeApi->HapticSetHandleIntensity(uint32_t hapticHandle, float intensity);", "FeelKitの触覚Sourceまたは再生Handleを制御します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "HapticSource、対応Device（未接続時は失敗してGameplay継続）"],
++  ["External", "HapticSetHandleFrequency", "runtimeApi->HapticSetHandleFrequency(uint32_t hapticHandle, float frequency)", "bool", "bool result = runtimeApi->HapticSetHandleFrequency(uint32_t hapticHandle, float frequency);", "FeelKitの触覚Sourceまたは再生Handleを制御します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "HapticSource、対応Device（未接続時は失敗してGameplay継続）"],
++  ["External", "HapticSetHandlePlaybackSpeed", "runtimeApi->HapticSetHandlePlaybackSpeed(uint32_t hapticHandle, float playbackSpeed)", "bool", "bool result = runtimeApi->HapticSetHandlePlaybackSpeed(uint32_t hapticHandle, float playbackSpeed);", "FeelKitの触覚Sourceまたは再生Handleを制御します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "HapticSource、対応Device（未接続時は失敗してGameplay継続）"],
++  ["External", "HapticSetHandleLooping", "runtimeApi->HapticSetHandleLooping(uint32_t hapticHandle, bool isLooping)", "bool", "bool result = runtimeApi->HapticSetHandleLooping(uint32_t hapticHandle, bool isLooping);", "FeelKitの触覚Sourceまたは再生Handleを制御します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "HapticSource、対応Device（未接続時は失敗してGameplay継続）"],
++  ["External", "HapticSetMasterIntensity", "runtimeApi->HapticSetMasterIntensity(float masterIntensity)", "void", "runtimeApi->HapticSetMasterIntensity(float masterIntensity);", "FeelKitの触覚Sourceまたは再生Handleを制御します。", "設定後に状態を確認し、停止時は残ったHandleやRequestを保持しません。", "HapticSource、対応Device（未接続時は失敗してGameplay継続）"],
++  ["External", "HapticGetDeviceState", "runtimeApi->HapticGetDeviceState()", "int32_t", "int32_t result = runtimeApi->HapticGetDeviceState();", "FeelKitの触覚Sourceまたは再生Handleを制御します。", "戻り値を指定型へ格納し、状態値の意味を確認して使います。", "HapticSource、対応Device（未接続時は失敗してGameplay継続）"],
++  ["External", "OnlineSetPlayerIdentity", "runtimeApi->OnlineSetPlayerIdentity(const char* playerId, const char* playerName)", "void", "runtimeApi->OnlineSetPlayerIdentity(const char* playerId, const char* playerName);", "Online Servicesの接続、Leaderboard、Player Data、Cloud Saveを操作します。", "設定後に状態を確認し、停止時は残ったHandleやRequestを保持しません。", "Project SettingsのOnline Services、Worker URL、Client Key"],
++  ["External", "OnlineGetConnectionState", "runtimeApi->OnlineGetConnectionState()", "int32_t", "int32_t result = runtimeApi->OnlineGetConnectionState();", "Online Servicesの接続、Leaderboard、Player Data、Cloud Saveを操作します。", "戻り値を指定型へ格納し、状態値の意味を確認して使います。", "Project SettingsのOnline Services、Worker URL、Client Key"],
++  ["External", "OnlineIsEnabled", "runtimeApi->OnlineIsEnabled()", "bool", "bool result = runtimeApi->OnlineIsEnabled();", "Online Servicesの接続、Leaderboard、Player Data、Cloud Saveを操作します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "Project SettingsのOnline Services、Worker URL、Client Key"],
++  ["External", "OnlineGetPendingRequestCount", "runtimeApi->OnlineGetPendingRequestCount()", "int32_t", "int32_t result = runtimeApi->OnlineGetPendingRequestCount();", "Online Servicesの接続、Leaderboard、Player Data、Cloud Saveを操作します。", "戻り値を指定型へ格納し、状態値の意味を確認して使います。", "Project SettingsのOnline Services、Worker URL、Client Key"],
++  ["External", "OnlineSubmitScore", "runtimeApi->OnlineSubmitScore(const char* boardName, int64_t score, int32_t scope)", "bool", "bool result = runtimeApi->OnlineSubmitScore(const char* boardName, int64_t score, int32_t scope);", "Online Servicesの接続、Leaderboard、Player Data、Cloud Saveを操作します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "Project SettingsのOnline Services、Worker URL、Client Key"],
++  ["External", "OnlineRequestTopScores", "runtimeApi->OnlineRequestTopScores(const char* boardName, int32_t entryCount, int32_t scope)", "bool", "bool result = runtimeApi->OnlineRequestTopScores(const char* boardName, int32_t entryCount, int32_t scope);", "Online Servicesの接続、Leaderboard、Player Data、Cloud Saveを操作します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "Project SettingsのOnline Services、Worker URL、Client Key"],
++  ["External", "OnlineGetLeaderboardCount", "runtimeApi->OnlineGetLeaderboardCount()", "int32_t", "int32_t result = runtimeApi->OnlineGetLeaderboardCount();", "Online Servicesの接続、Leaderboard、Player Data、Cloud Saveを操作します。", "戻り値を指定型へ格納し、状態値の意味を確認して使います。", "Project SettingsのOnline Services、Worker URL、Client Key"],
++  ["External", "OnlineGetLeaderboardEntry", "runtimeApi->OnlineGetLeaderboardEntry(int32_t entryIndex, char* playerId, int32_t playerIdCapacity, char* playerName, int32_t playerNameCapacity, int64_t* score, int32_t* rank)", "bool", "bool result = runtimeApi->OnlineGetLeaderboardEntry(int32_t entryIndex, char* playerId, int32_t playerIdCapacity, char* playerName, int32_t playerNameCapacity, int64_t* score, int32_t* rank);", "Online Servicesの接続、Leaderboard、Player Data、Cloud Saveを操作します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "Project SettingsのOnline Services、Worker URL、Client Key"],
++  ["External", "OnlineSetPlayerValue", "runtimeApi->OnlineSetPlayerValue(const char* key, const char* value)", "bool", "bool result = runtimeApi->OnlineSetPlayerValue(const char* key, const char* value);", "Online Servicesの接続、Leaderboard、Player Data、Cloud Saveを操作します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "Project SettingsのOnline Services、Worker URL、Client Key"],
++  ["External", "OnlineRequestPlayerData", "runtimeApi->OnlineRequestPlayerData()", "bool", "bool result = runtimeApi->OnlineRequestPlayerData();", "Online Servicesの接続、Leaderboard、Player Data、Cloud Saveを操作します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "Project SettingsのOnline Services、Worker URL、Client Key"],
++  ["External", "OnlineGetPlayerValue", "runtimeApi->OnlineGetPlayerValue(const char* key, char* value, int32_t valueCapacity)", "bool", "bool result = runtimeApi->OnlineGetPlayerValue(const char* key, char* value, int32_t valueCapacity);", "Online Servicesの接続、Leaderboard、Player Data、Cloud Saveを操作します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "Project SettingsのOnline Services、Worker URL、Client Key"],
++  ["External", "OnlineUploadCloudSave", "runtimeApi->OnlineUploadCloudSave(const char* slotName, const char* saveText)", "bool", "bool result = runtimeApi->OnlineUploadCloudSave(const char* slotName, const char* saveText);", "Online Servicesの接続、Leaderboard、Player Data、Cloud Saveを操作します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "Project SettingsのOnline Services、Worker URL、Client Key"],
++  ["External", "OnlineRequestCloudSave", "runtimeApi->OnlineRequestCloudSave(const char* slotName)", "bool", "bool result = runtimeApi->OnlineRequestCloudSave(const char* slotName);", "Online Servicesの接続、Leaderboard、Player Data、Cloud Saveを操作します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "Project SettingsのOnline Services、Worker URL、Client Key"],
++  ["External", "OnlineGetCloudSave", "runtimeApi->OnlineGetCloudSave(char* saveText, int32_t saveTextCapacity)", "bool", "bool result = runtimeApi->OnlineGetCloudSave(char* saveText, int32_t saveTextCapacity);", "Online Servicesの接続、Leaderboard、Player Data、Cloud Saveを操作します。", "戻り値がtrueの時だけ出力値や次の処理へ進みます。", "Project SettingsのOnline Services、Worker URL、Client Key"],
++];
++
++export const runtimeApiV14Additions: RuntimeApiEntry[] = seeds.map((seed) => ({
++  category: seed[0],
++  name: seed[1],
++  signature: seed[2],
++  returnType: seed[3],
++  declaration: seed[4],
++  description: seed[5],
++  afterUse: seed[6],
++  requires: seed[7],
++}));
+diff --git a/tests/rendered-html.test.mjs b/tests/rendered-html.test.mjs
+index 6829a6d..a39ad3e 100644
+--- a/tests/rendered-html.test.mjs
++++ b/tests/rendered-html.test.mjs
+@@ -39,7 +39,8 @@ test("renders the task-first documentation home", async () => {
+   assert.match(html, /href="\/docs\/gameplay-tools"/);
+   assert.match(html, /href="\/docs\/cpp-scripting"/);
+   assert.match(html, /href="\/docs\/rendering"/);
+-  assert.match(html, /369 RUNTIME ENTRIES/);
++  assert.match(html, /413 RUNTIME ENTRIES/);
++  assert.match(html, /href="\/docs\/external-integration"/);
+ });
+ 
+ test("renders the complete interactive component reference", async () => {
+@@ -47,7 +48,7 @@ test("renders the complete interactive component reference", async () => {
+   assert.equal(response.status, 200);
+ 
+   const html = await response.text();
+-  assert.match(html, /Add Componentの表示は(?:<!-- -->)?286(?:<!-- -->)?項目/);
++  assert.match(html, /Add Componentの表示は(?:<!-- -->)?289(?:<!-- -->)?項目/);
+   assert.match(html, /type="search"/);
+   assert.match(html, /aria-pressed="true"/);
+   assert.match(html, /リジッドボディ/);
+@@ -101,8 +102,10 @@ test("documents C++ storage, return types, and declarations", async () => {
+   assert.match(html, /EditorScriptVector3/);
+   assert.match(html, /型へ格納する書き方/);
+   assert.match(html, /取得後の使い方/);
+-  assert.match(html, /VERSION 13/);
+-  assert.match(html, /369(?:<!-- -->)? RUNTIME ENTRIES/);
++  assert.match(html, /VERSION 14/);
++  assert.match(html, /413(?:<!-- -->)? RUNTIME ENTRIES/);
++  assert.match(html, /id="api-speechstartrecognition"/);
++  assert.match(html, /id="api-onlinesubmitscore"/);
+   assert.match(html, /id="api-getvelocity"/);
+   assert.match(html, /id="api-getaisensorstate"/);
+   assert.match(html, /id="api-setanimatorfloat"/);
+@@ -170,10 +173,10 @@ test("keeps the component catalog aligned with the editor menu", async () => {
+   assert.ok(sourceBlock);
+ 
+   const entries = sourceBlock.split(/\r?\n/).map((line) => line.split("|"));
+-  assert.equal(entries.length, 286);
++  assert.equal(entries.length, 289);
+   assert.ok(entries.every((entry) => entry.length === 3));
+-  assert.equal(new Set(entries.map(([category]) => category)).size, 21);
+-  assert.equal(new Set(entries.map(([, , type]) => type)).size, 280);
++  assert.equal(new Set(entries.map(([category]) => category)).size, 22);
++  assert.equal(new Set(entries.map(([, , type]) => type)).size, 283);
+ });
+ 
+ test("guards the readable visual baseline", async () => {

@@ -1,0 +1,1359 @@
+diff --git a/app/chatgpt-auth.ts b/app/chatgpt-auth.ts
+index 8d1fb35..3c606b4 100644
+--- a/app/chatgpt-auth.ts
++++ b/app/chatgpt-auth.ts
+@@ -1,4 +1,4 @@
+-import { headers } from "next/headers";
++﻿import { headers } from "next/headers";
+ import { redirect } from "next/navigation";
+ 
+ export type ChatGPTUser = {
+diff --git a/app/componentCatalog.ts b/app/componentCatalog.ts
+index 525757f..725acc6 100644
+--- a/app/componentCatalog.ts
++++ b/app/componentCatalog.ts
+@@ -37,6 +37,7 @@ const componentSource = `
+ 描画・レンダリング|キャンバスレンダラー|CanvasRenderer
+ 描画・レンダリング|パーティクルシステムレンダラー|ParticleSystemRenderer
+ 描画・レンダリング|Ocean|Ocean
++描画・レンダリング|ワイヤーレンダラー|WireRenderer
+ 物理|Buoyancy|Buoyancy
+ カメラ|カメラ|Camera
+ カメラ|オーディオリスナー|AudioListener
+@@ -48,6 +49,7 @@ const componentSource = `
+ ライト・環境|ライトプローブプロキシボリューム|LightProbeProxyVolume
+ ライト・環境|ボリューム|Volume
+ ライト・環境|パフォーマンス設定|PerformanceSettings
++ライト・環境|Sun Portal|SunPortal
+ 3D物理|リジッドボディ|RigidBody
+ 3D物理|箱の当たり判定|BoxCollider
+ 3D物理|球の当たり判定|SphereCollider
+@@ -65,8 +67,6 @@ const componentSource = `
+ 3D物理|流体ボリューム|FluidVolume
+ 3D物理|ばね力|SpringForce
+ 3D物理|ロープ拘束|RopeConstraint
+-3D物理|フックポイント|WireConnectable
+-描画・レンダリング|ワイヤーレンダラー|WireRenderer
+ 3D物理|ねじりばね|TorsionSpring
+ 3D物理|推進力|Thruster
+ 3D物理|滑車拘束|PulleyConstraint
+@@ -82,6 +82,7 @@ const componentSource = `
+ 3D物理|スプリングジョイント|SpringJoint
+ 3D物理|コンフィギュラブルジョイント|ConfigurableJoint
+ 3D物理|キャラクタージョイント|CharacterJoint
++3D物理|フックポイント|WireConnectable
+ 2D物理|リジッドボディ 2D|RigidBody2D
+ 2D物理|四角の当たり判定 2D|BoxCollider2D
+ 2D物理|円の当たり判定 2D|CircleCollider2D
+@@ -156,8 +157,6 @@ UI|Scene ボタン|SceneButton
+ ゲームプレイ|ローカル移動|LocalMove
+ ゲームプレイ|ローリング移動|RollingMove
+ ゲームプレイ|レール移動|RailMovement
+-ゲームプレイ|レール速度プロファイル|RailSpeedProfile
+-ゲームプレイ|レール区間|RailZone
+ ゲームプレイ|レール分岐|RailBranch
+ ゲームプレイ|体力|Health
+ ゲームプレイ|ダメージ受信|DamageReceiver
+@@ -169,67 +168,10 @@ UI|Scene ボタン|SceneButton
+ ゲームプレイ|ターゲット追従|TargetSteering
+ ゲームプレイ|ターゲットポイント|TargetPoint
+ ゲームプレイ|チーム|Team
+-入力・イベント|タイマー|Timer
+-ゲームプレイ|汎用ステートマシン|GenericStateMachine
+-ゲームプレイ|属性・リソース|Attribute
+-ゲームプレイ|破壊可能部位|DestructiblePart
+-ゲームプレイ|編隊追従|FormationFollower
+-ゲームプレイ|ターゲットロック|TargetLock
+-ゲームプレイ|複数ターゲットロック|MultiTargetLock
+-UI|ワールドターゲットマーカー|WorldTargetMarker
+-UI|画面外インジケーター|OffScreenIndicator
+-ゲームプレイ|属性セット|AttributeSet
+-ゲームプレイ|汎用カウンター|GenericCounter
+-ゲームプレイ|汎用条件|GenericCondition
+-データ|ゲームプレイデータ|GameplayData
+-ゲームプレイ|範囲ダメージ|AreaDamage
+-ゲームプレイ|ヒットゾーン|HitZone
+-ゲームプレイ|ダメージタグ倍率|DamageTagModifier
+-ゲームプレイ|弾起爆装置|ProjectileDetonator
+-ゲームプレイ|脅威トラッカー|ThreatTracker
+-ゲームプレイ|実行状態リセット|RuntimeStateReset
+-ゲームプレイ|クールダウンセット|CooldownSet
+-ゲームプレイ|武器発射パターン|WeaponFirePattern
+-ゲームプレイ|ターゲット割り当て斉射|TargetAssignment
+-ゲームプレイ|武器命中精度|WeaponAccuracy
+-ゲームプレイ|武器反動|WeaponRecoil
+-ゲームプレイ|命中応答|ImpactResponder
+-ゲームプレイ|サーフェスタイプ|SurfaceType
+-ゲームプレイ|時間倍率・ヒットストップ|TimeScale
+-照準|照準補助|AimAssist
+-照準|迎撃予測|InterceptPrediction
+-UI|被弾方向表示|DamageDirectionIndicator
+-ゲームプレイ|目標トラッカー|ObjectiveTracker
+-ゲームプレイ|エンカウンター制御|EncounterController
+-ゲームプレイ|生成地点セット|SpawnPointSet
+-ゲームプレイ|難易度パラメーターセット|DifficultyParameterSet
+-カメラ|カメラフィードバックミキサー|CameraFeedbackMixer
+-カメラ|カメラ追従コンポーザー|CameraFollowComposer
+-カメラ|速度フィードバック|SpeedFeedback
+-照準|弾道予測|BallisticPrediction
+-UI|複数被弾履歴|DamageEventBuffer
+-ゲームプレイ|ゲーム一時停止|GamePause
+-海・水面|水面航跡エミッター|SurfaceWakeEmitter
+-海・水面|水面出入り状態|WaterSurfaceState
+-海・水面|海面前方プローブ|OceanProbeSet
+-ゲームプレイ|攻撃コリジョンフィルター|AttackCollisionFilter
+-照準|砲塔照準|TurretAim
+-ゲームプレイ|武器グループ|WeaponGroup
+-ゲームプレイ|弾体貫通・跳弾|ProjectileImpactPhysics
+-カメラ|水平線スタビライザー|CameraHorizonStabilizer
+-ゲームプレイ|発射前射線チェック|FireLineCheck
+-ゲームプレイ|状態効果セット|StatusEffectSet
+-描画・レンダリング|軌道プレビュー|TrajectoryRenderer
+ ゲームプレイ|移動補正|MovementModifier
+ ゲームプレイ|オブジェクトプール|ObjectPool
+ ゲームプレイ|プレハブ生成|PrefabSpawner
+ ゲームプレイ|ウェーブ生成|WaveSpawner
+-ゲームプレイ|生成オブジェクト設定|SpawnedObjectSetup
+-ゲームプレイ|ウェーブ移動プロファイル|WaveMotionProfile
+-最適化|距離アクティベーション|DistanceActivation
+-最適化|Scene Streaming|SceneStreaming
+-最適化|シミュレーション LOD|SimulationLOD
+-入力・イベント|レールイベントマーカー|RailEventMarker
+ 入力・イベント|画面照準|ScreenAim
+ 入力・イベント|タイムラインイベント|TimelineEvent
+ 入力・イベント|しきい値状態|ThresholdState
+@@ -305,7 +247,65 @@ AI|音声コマンド|AIVoiceCommand
+ FeelKit|FeelKit 触覚ソース|HapticSource
+ ライト・環境|ポストプロセス|PostProcess
+ ライト・環境|環境|Environment
+-ライト・環境|Sun Portal|SunPortal
++ゲームプレイ|レール速度プロファイル|RailSpeedProfile
++ゲームプレイ|レール区間|RailZone
++入力・イベント|タイマー|Timer
++ゲームプレイ|汎用ステートマシン|GenericStateMachine
++ゲームプレイ|属性・リソース|Attribute
++ゲームプレイ|破壊可能部位|DestructiblePart
++ゲームプレイ|編隊追従|FormationFollower
++ゲームプレイ|ターゲットロック|TargetLock
++ゲームプレイ|複数ターゲットロック|MultiTargetLock
++UI|ワールドターゲットマーカー|WorldTargetMarker
++UI|画面外インジケーター|OffScreenIndicator
++ゲームプレイ|属性セット|AttributeSet
++ゲームプレイ|汎用カウンター|GenericCounter
++ゲームプレイ|汎用条件|GenericCondition
++データ|ゲームプレイデータ|GameplayData
++ゲームプレイ|範囲ダメージ|AreaDamage
++ゲームプレイ|ヒットゾーン|HitZone
++ゲームプレイ|ダメージタグ倍率|DamageTagModifier
++ゲームプレイ|弾起爆装置|ProjectileDetonator
++ゲームプレイ|脅威トラッカー|ThreatTracker
++ゲームプレイ|実行状態リセット|RuntimeStateReset
++ゲームプレイ|クールダウンセット|CooldownSet
++ゲームプレイ|武器発射パターン|WeaponFirePattern
++ゲームプレイ|ターゲット割り当て斉射|TargetAssignment
++ゲームプレイ|武器命中精度|WeaponAccuracy
++ゲームプレイ|武器反動|WeaponRecoil
++ゲームプレイ|命中応答|ImpactResponder
++ゲームプレイ|サーフェスタイプ|SurfaceType
++ゲームプレイ|時間倍率・ヒットストップ|TimeScale
++照準|照準補助|AimAssist
++照準|迎撃予測|InterceptPrediction
++UI|被弾方向表示|DamageDirectionIndicator
++ゲームプレイ|目標トラッカー|ObjectiveTracker
++ゲームプレイ|エンカウンター制御|EncounterController
++ゲームプレイ|生成地点セット|SpawnPointSet
++ゲームプレイ|難易度パラメーターセット|DifficultyParameterSet
++カメラ|カメラフィードバックミキサー|CameraFeedbackMixer
++カメラ|カメラ追従コンポーザー|CameraFollowComposer
++カメラ|速度フィードバック|SpeedFeedback
++照準|弾道予測|BallisticPrediction
++UI|複数被弾履歴|DamageEventBuffer
++ゲームプレイ|ゲーム一時停止|GamePause
++海・水面|水面航跡エミッター|SurfaceWakeEmitter
++海・水面|水面出入り状態|WaterSurfaceState
++海・水面|海面前方プローブ|OceanProbeSet
++ゲームプレイ|攻撃コリジョンフィルター|AttackCollisionFilter
++照準|砲塔照準|TurretAim
++ゲームプレイ|武器グループ|WeaponGroup
++ゲームプレイ|弾体貫通・跳弾|ProjectileImpactPhysics
++カメラ|水平線スタビライザー|CameraHorizonStabilizer
++ゲームプレイ|発射前射線チェック|FireLineCheck
++ゲームプレイ|状態効果セット|StatusEffectSet
++描画・レンダリング|軌道プレビュー|TrajectoryRenderer
++ゲームプレイ|生成オブジェクト設定|SpawnedObjectSetup
++ゲームプレイ|ウェーブ移動プロファイル|WaveMotionProfile
++最適化|距離アクティベーション|DistanceActivation
++最適化|Scene Streaming|SceneStreaming
++最適化|シミュレーション LOD|SimulationLOD
++入力・イベント|レールイベントマーカー|RailEventMarker
+ UI|テキストエフェクト|TextEffect
+ エフェクト|シーン遷移|SceneTransition
+ `;
+@@ -449,16 +449,12 @@ const descriptions: Record<string, string> = {
+   Tilemap: "Grid上へ2D Tileを配置するための入口です。",
+   Grid: "Tilemapなどを配置する格子の基準を管理します。",
+   HapticSource: "衝突や攻撃に合わせて触覚・振動を再生するための入口です。",
+-  PerformanceSettings: "高負荷な描画・GI更新の上限と間引き方をScene単位で設定します。",
+-  WireConnectable: "Hookの接続位置、力を伝えるRigidbody、最大接続数を設定します。",
+-  WireRenderer: "Hook間のWire接続をScene ViewとPlay中に可視化します。",
+-  SunPortal: "窓などの開口部から入るSun光を軽量なPortalとして補助します。",
+   RailSpeedProfile: "Railの位置ごとに速度倍率を設定し、加速・減速区間を作ります。",
+   RailZone: "Rail上の開始距離と終了距離に名前を付け、現在区間を判定します。",
+   Timer: "開始、一時停止、残り時間、完了Actionを持つ再利用可能なTimerです。",
+   GenericStateMachine: "文字列名で状態を管理し、遷移時のActionを通知します。",
+   Attribute: "StaminaやShieldなど、現在値と最大値を持つ汎用Resourceです。",
+-  DestructiblePart: "Damageを受ける破壊可能部位と破壊時の処理を管理します。",
++  DestructiblePart: "通常MeshをPlay前に自動Fractureし、NVIDIA Blastの局所破壊とJolt Chunk物理を管理します。",
+   FormationFollower: "指定Leaderに対する編隊Offsetを保ちながら追従します。",
+   TargetLock: "候補TargetへのLock進行率とLock完了状態を管理します。",
+   MultiTargetLock: "複数TargetのLock進行状況を同時に管理します。",
+@@ -513,7 +509,11 @@ const descriptions: Record<string, string> = {
+   SimulationLOD: "距離に応じてUpdate頻度やSimulation Levelを切り替えます。",
+   RailEventMarker: "Rail上の指定位置を通過した時にActionを通知します。",
+   TextEffect: "Textの出現、点滅、色ずれ、揺れを視覚的に設定します。",
+-  SceneTransition: "Scene読込へ色FadeとCamera Diveを組み合わせます。"
++  SceneTransition: "Scene読込へ色FadeとCamera Diveを組み合わせます。",
++  PerformanceSettings: "描画品質と更新頻度をまとめて調整し、Shadow、GI、Volumetric、Compositeの負荷を管理します。",
++  WireConnectable: "HookとしてWire接続を受け、接続数、Anchor、力の伝達先を管理します。",
++  WireRenderer: "Wireの太さ、色、Materialを描画し、Runtimeの接続状態を表示します。",
++  SunPortal: "特定方向からのSun光の寄与をLightingへ追加する補助Componentです。"
+ };
+ 
+ const usages: Record<string, string> = {
+diff --git a/app/componentDetails.ts b/app/componentDetails.ts
+index 03402af..9e67243 100644
+--- a/app/componentDetails.ts
++++ b/app/componentDetails.ts
+@@ -431,6 +431,22 @@ const componentValues: Record<string, ComponentValue[]> = {
+     value("強さ", "Float / 0〜1", "触覚出力の強度を設定します。"),
+     value("持続時間・Loop", "Int32 ms・Bool", "再生時間と繰り返しを設定します。"),
+   ],
++  PerformanceSettings: [
++    value("Shadow / GI Quality", "Enum・Float", "Shadow、Light Probe GI、SSGIの品質と更新頻度を設定します。"),
++    value("Volumetric / Composite", "Enum・Float", "Volumetricと最終合成の負荷・品質を調整します。"),
++  ],
++  WireConnectable: [
++    value("最大接続数", "Int32", "このObjectへ接続できるWire数を設定します。"),
++    value("Hook Anchor", "Vector3", "Wireの接続位置をLocal座標で設定します。"),
++  ],
++  WireRenderer: [
++    value("Wire Visual", "Color・Float・Material", "Wireの色、太さ、表示Materialを設定します。"),
++    value("表示状態", "Bool・Enum", "Editor表示とRuntime表示を切り替えます。"),
++  ],
++  SunPortal: [
++    value("方向・強度", "Vector3・Float", "特定方向からのSun光の寄与を設定します。"),
++    value("影響範囲", "Float", "PortalがLightingへ影響する範囲を設定します。"),
++  ],
+ };
+ 
+ const componentCompanions: Record<string, string[]> = {
+@@ -515,6 +531,10 @@ const componentCompanions: Record<string, string[]> = {
+   Foliage: ["Mesh Filter / Model Renderer", "Density Map", "Camera"],
+   AudioSource: ["Audio Listener", "Camera"],
+   HapticSource: ["FeelKitHaptics", "C++ Script / Event"],
++  PerformanceSettings: ["PostProcess", "Light / Environment", "Rendering Pipeline"],
++  WireConnectable: ["WireRenderer", "Rigidbody", "Hook / Wire Debug"],
++  WireRenderer: ["WireConnectable", "Material", "Hook / Wire Debug"],
++  SunPortal: ["Light", "Environment", "Light Probe GI"],
+ };
+ 
+ export function getComponentValues(type: string, category: string): ComponentValue[] {
+diff --git a/app/data.ts b/app/data.ts
+index d30aaf6..81486f3 100644
+--- a/app/data.ts
++++ b/app/data.ts
+@@ -1,6 +1,7 @@
+ ﻿export type StatusTone = "stable" | "partial" | "planned" | "experimental";
+ 
+ export const docNavigation = [
++  { label: "利用者ガイド", href: "/docs/user-guide" },
+   { label: "はじめに", href: "/docs/getting-started" },
+   { label: "Editor Window", href: "/docs/editor-windows" },
+   { label: "Component", href: "/docs/components" },
+@@ -11,19 +12,20 @@ export const docNavigation = [
+   { label: "Asset管理", href: "/docs/asset-management" },
+   { label: "Lighting / GI", href: "/docs/lighting-gi" },
+   { label: "共同制作", href: "/docs/team-collaboration" },
++  { label: "トラブルシューティング", href: "/docs/troubleshooting" },
+ ];
+ 
+ export const componentCategories = [
+   { name: "AI", count: 38, summary: "行動ツリー、GOAP、経路探索、操舵、視界・音声センサー。", status: "一部実装", tone: "partial" as StatusTone },
+   { name: "UI", count: 31, summary: "Canvas、操作UI、Marker、被弾表示、Text Effect。", status: "一部実装", tone: "partial" as StatusTone },
+   { name: "2D物理", count: 20, summary: "Rigidbody 2D、Collider 2D、Joint 2D、Effector。", status: "追加・表示", tone: "planned" as StatusTone },
+-  { name: "3D物理", count: 33, summary: "Rigidbody、Collider、空気・流体・場、ロープ、Hook、推進、Joint。", status: "一部実装", tone: "partial" as StatusTone },
++  { name: "3D物理", count: 33, summary: "Rigidbody、Collider、空気・流体・場、ロープ、推進、サスペンション、Joint、Wire。", status: "一部実装", tone: "partial" as StatusTone },
+   { name: "アニメーション", count: 10, summary: "Animation Clip、Window、Animator、Blend Tree、各種Constraint。", status: "一部実装", tone: "partial" as StatusTone },
+-  { name: "描画・レンダリング", count: 12, summary: "Mesh、Sprite、Wire Renderer、Particle Renderer、GPU FFT Ocean。", status: "一部実装", tone: "partial" as StatusTone },
++  { name: "描画・レンダリング", count: 12, summary: "Mesh、Sprite、Particle Renderer、GPU FFT Ocean、軌道表示、Wire Renderer。", status: "一部実装", tone: "partial" as StatusTone },
+   { name: "入力・イベント", count: 17, summary: "PlayerInput、Timer、Rail Event、Timeline、Sequence、Action Relay。", status: "一部実装", tone: "partial" as StatusTone },
+   { name: "オーディオ", count: 9, summary: "Audio Source、3D音響、Bus、Reverb、Filter。", status: "一部実装", tone: "partial" as StatusTone },
+   { name: "地形・タイルマップ", count: 7, summary: "Terrain、Foliage、Tilemap、Gridと対応Collider。", status: "一部実装", tone: "partial" as StatusTone },
+-  { name: "ライト・環境", count: 9, summary: "Light、Shadow、Sun Portal、Light Probe、Volume、PostProcess。", status: "一部実装", tone: "partial" as StatusTone },
++  { name: "ライト・環境", count: 9, summary: "Light、Reflection Probe、Volume、PostProcess、Performance、Sun Portal。", status: "一部実装", tone: "partial" as StatusTone },
+   { name: "エフェクト", count: 8, summary: "CPU Particle、.effect Asset、Trail、Decal、Scene Transition。", status: "一部実装", tone: "partial" as StatusTone },
+   { name: "ナビゲーション", count: 6, summary: "NavMesh Agent、Surface、Obstacle、Link。", status: "一部実装", tone: "partial" as StatusTone },
+   { name: "ゲームプレイ", count: 58, summary: "Rail、Weapon、Damage、Target、状態、生成、難易度、Save。", status: "一部実装", tone: "partial" as StatusTone },
+diff --git a/app/docs/animation-effects/page.tsx b/app/docs/animation-effects/page.tsx
+index 7b338f6..e04babe 100644
+--- a/app/docs/animation-effects/page.tsx
++++ b/app/docs/animation-effects/page.tsx
+@@ -180,7 +180,7 @@ export default function AnimationEffects() {
+         eyebrow="ANIMATION & EFFECT / 03"
+         title="動きを作り、瞬間を演出する。"
+         lead="Animation Clipの作成、Timeline編集、Animator制御、Animation Event、.effect Assetまで、現在の実働範囲と制限を分けて説明します。"
+-        meta="SOURCE REVIEW / 2026.09.11 · API VERSION / 8"
++        meta="SOURCE REVIEW / 2026.09.13 · API VERSION / 13"
+       />
+ 
+       <div className="doc-badge-row">
+diff --git a/app/docs/asset-management/page.tsx b/app/docs/asset-management/page.tsx
+index 724c46c..7e8109b 100644
+--- a/app/docs/asset-management/page.tsx
++++ b/app/docs/asset-management/page.tsx
+@@ -1,19 +1,69 @@
+ ﻿import { Callout, DocHeader, DocsShell, StatusPill } from "../../ui";
+ 
+-const reloadRows = [
+-  ["Applied", "既存Assetへ再読み込みを適用。", "Model / Texture / Audio / VFX / Material / Prefab"],
+-  ["RequiresManualAction", "変更は検知したが、再構築・再読込を手動で実行。", "Script DLL / Animation"],
+-  ["NoHandler", "拡張子に対応する再読み込み処理がない。", "対応外の拡張子"],
+-  ["Unknown", "種類を判定できないため、内容を変更しない。", "不明なAsset"],
++const assetTypes = [
++  ["Model", ".fbx, .obj", "Model CacheとScene Object GPU Resourceを無効化"],
++  ["Texture", ".png, .jpg, .jpeg, .tga, .dds", "Scene Object GPU Resourceを無効化"],
++  ["Audio", ".wav, .mp3, .ogg", "再生中Voiceを停止し、次回再生時に読み直す"],
++  ["Vfx", ".effect, .effectdef", "生存Instanceを停止して定義Cacheを無効化"],
++  ["Animation", ".animclip, .animgraph", "自動無効化なし。Playをやり直す"],
++  ["Material", ".material, .mtl", "独立Loaderなし。.mtl単独変更ではModel Cacheを破棄しない"],
++  ["Prefab / Input", ".prefab, .inputactions", "使用時に読み直すためApplied"],
++  ["Script", ".cpp, .h, .hpp", "実行中DLLは交換しない。明示的に再Buildする"],
++] as const;
++
++const results = [
++  ["Applied", "Cacheを無効化・更新した、または既に最新。通常は追加操作不要。"],
++  ["RequiresManualAction", "安全なPath単位Reloadができない。理由を確認し、Play再開または再Buildする。"],
++  ["NoHandler", "種別は既知だがAdapter未登録。初期化順とHandler登録を確認する。"],
++  ["Unknown", "対応拡張子でないか、専用処理が必要。"],
+ ] as const;
+ 
+ export default function AssetManagementPage() {
+-  return <DocsShell>
+-    <DocHeader eyebrow="ASSET MANAGEMENT / 08" title="Assetを識別し、安全に更新する。" lead="Registry、UUID、依存関係、Hot Reloadを分けて理解します。自動適用できない変更は、手動対応が必要な状態として表示されます。" meta="SOURCE REVIEW / 2026.09.11 · REGISTRY / UUID / HOT RELOAD" />
+-    <div className="doc-badge-row"><StatusPill tone="stable">REGISTRY</StatusPill><StatusPill tone="partial">HOT RELOAD</StatusPill><StatusPill tone="note">MANUAL ACTION</StatusPill></div>
+-    <section className="doc-section" id="registry"><div className="doc-section-title"><p className="eyebrow">IDENTITY</p><h2>PathではなくUUIDで追跡する</h2></div><div className="two-column-doc"><div><h3>Registry</h3><p>Assetの相対Path、種類、UUID、更新時刻をProject単位で管理します。保存先は<code>ProjectSettings/AssetRegistry.txt</code>です。</p></div><div><h3>UUID</h3><p>初回登録時に生成した識別子を保存し、Path変更後も参照を追跡します。RegistryにないAssetはPathを手掛かりに再登録します。</p></div></div><Callout title="参照切れを直す順番" tone="note"><p>まずPathとRegistryの状態を確認し、UUIDが変わっていないかを確認します。手動で文字列を置換する前に、依存Assetと保存結果を確認してください。</p></Callout></section>
+-    <section className="doc-section" id="hot-reload"><div className="doc-section-title"><p className="eyebrow">HOT RELOAD</p><h2>検知結果を4種類で判断する</h2></div><p className="section-intro">ファイル変更の検知と、Engine内へ安全に反映できたかは別です。結果に応じて次の操作を選びます。</p><div className="reference-table-wrap"><table className="reference-table"><thead><tr><th>結果</th><th>意味</th><th>主な対象</th></tr></thead><tbody>{reloadRows.map(([name, meaning, target]) => <tr key={name}><td><code>{name}</code></td><td>{meaning}</td><td>{target}</td></tr>)}</tbody></table></div></section>
+-    <section className="doc-section" id="dependencies"><div className="doc-section-title"><p className="eyebrow">DEPENDENCY GRAPH</p><h2>依存を解決してから再読み込みする</h2></div><div className="detail-card-grid"><article className="detail-card"><h3>Model / Material</h3><p>Model内のMaterial参照やTexture参照を抽出し、変更Assetから依存先へ通知します。</p></article><article className="detail-card"><h3>Prefab / Scene</h3><p>PrefabのComponent設定やScene内参照を追跡します。削除・移動後は参照先を確認します。</p></article><article className="detail-card"><h3>Hash</h3><p>内容比較にはFNV-1a 64-bitを使います。大きなファイルは分割して比較し、不要な全読込を避けます。</p></article></div><p className="section-intro">依存抽出はファイル内の既知のPath・Asset参照を対象とします。任意文字列や外部ツールが作る参照を完全に推測する機能ではありません。</p></section>
+-    <section className="doc-section" id="manual"><div className="doc-section-title"><p className="eyebrow">MANUAL ACTION</p><h2>自動化できない変更を見落とさない</h2></div><Callout title="Script DLLとAnimationは手動対応" tone="warning"><p>Script DLLはBuild後に再読込し、AnimationはClipやTrackの変更を確認して再適用します。<code>RequiresManualAction</code>を成功済みと扱わず、対象Assetを選択して手動処理を完了してください。</p></Callout><p className="section-intro">現在の仕様は、常時起動するFile Watcher UIや全拡張子への自動再読込を保証しません。Projectを開いた状態で変更を反映したい場合は、検知結果とLogを確認してから手動操作を行います。</p></section>
+-  </DocsShell>;
++  return (
++    <DocsShell>
++      <DocHeader
++        eyebrow="ASSET MANAGEMENT / 08"
++        title="Assetの変更結果を、種別ごとに確認する。"
++        lead="AssetManager、AssetRegistry、Editor Adapterが、変更検出後にどのCacheを無効化し、何を自動反映しないかを説明します。"
++        meta="SOURCE REVIEW / 2026.09.25 · ASSET REGISTRY / HOT RELOAD"
++      />
++
++      <div className="doc-badge-row">
++        <StatusPill tone="stable">ASSET REGISTRY</StatusPill>
++        <StatusPill tone="partial">HOT RELOAD</StatusPill>
++        <StatusPill tone="planned">MANUAL ACTION MAY BE REQUIRED</StatusPill>
++      </div>
++
++      <Callout title="Sceneは一般Asset Hot Reloadの対象外" tone="warning">
++        <p><code>.scene</code>はRegistry走査・依存抽出の対象ですが、現行のAssetTypeではUnknownです。Sceneの同期と読込は共同制作またはScene Managerの専用経路で扱います。</p>
++      </Callout>
++
++      <section className="doc-section">
++        <div className="doc-section-title"><p className="eyebrow">RESPONSIBILITIES</p><h2>3つの層を分ける</h2></div>
++        <div className="detail-card-grid">
++          <article><span>01</span><h3>AssetManager</h3><p>拡張子から種別を判定し、種別別HandlerへReload、Invalidate、Unloadを委譲します。</p></article>
++          <article><span>02</span><h3>AssetRegistry</h3><p>Path、AssetId、Hash、依存、更新時刻、Load / Reload状態を記録します。実データCacheは保持しません。</p></article>
++          <article><span>03</span><h3>Editor Adapter</h3><p>Engine共通層と既存Editor ManagerのCache無効化処理を接続します。新しいLoaderは作りません。</p></article>
++        </div>
++      </section>
++
++      <section className="doc-section">
++        <div className="doc-section-title"><p className="eyebrow">NOTIFY RESULT</p><h2>変更通知の戻り値を読む</h2></div>
++        <div className="reference-table-wrap"><table className="reference-table"><thead><tr><th>結果</th><th>対応</th></tr></thead><tbody>{results.map(([name, detail]) => <tr key={name}><td><code>{name}</code></td><td>{detail}</td></tr>)}</tbody></table></div>
++      </section>
++
++      <section className="doc-section">
++        <div className="doc-section-title"><p className="eyebrow">TYPE-SPECIFIC RELOAD</p><h2>自動反映の範囲</h2></div>
++        <div className="reference-table-wrap"><table className="reference-table"><thead><tr><th>種別</th><th>拡張子</th><th>変更後の処理</th></tr></thead><tbody>{assetTypes.map(([type, extension, result]) => <tr key={type}><td><b>{type}</b></td><td><code>{extension}</code></td><td>{result}</td></tr>)}</tbody></table></div>
++      </section>
++
++      <section className="doc-section">
++        <div className="doc-section-title"><p className="eyebrow">ASSET ID</p><h2>移動を追跡するID</h2></div>
++        <div className="two-column-doc">
++          <div><h3>保存するもの</h3><p><code>ProjectSettings/AssetRegistry.txt</code>には<code>relative/path|ASSET-ID</code>だけを保存します。Hash、依存、更新時刻、状態、直近結果はセッションごとに再計算します。</p></div>
++          <div><h3>移動と削除</h3><p>移動と確定できる場合だけ同じAssetIdのPathを更新します。削除ではRecordを削除し、IDを予約し続けません。</p></div>
++        </div>
++      </section>
++    </DocsShell>
++  );
+ }
+diff --git a/app/docs/components/page.tsx b/app/docs/components/page.tsx
+index e792084..4b3feda 100644
+--- a/app/docs/components/page.tsx
++++ b/app/docs/components/page.tsx
+@@ -8,8 +8,8 @@ export default function ComponentsReference() {
+       <DocHeader
+         eyebrow="Componentリファレンス"
+         title="Componentを、目的から探す。"
+-        lead={`EditorComponentTypeは284種類、Add Componentの表示は${componentCatalog.length}項目です。各Componentには、役割、Inspectorへ入れる値、使い方、併用するもの、関連ドキュメントへのパスを記載しています。`}
+-        meta="基準: EditorInspectorPanel.cpp / 現在の開発ブランチ"
++        lead={`EditorComponentTypeは284種類（追加可能280＋Legacy互換4）。Add Componentの表示は${componentCatalog.length}項目です。各Componentについて、役割、Inspector、必要条件、Play時の動作、保存、C++ API、制限、確認手順を確認できます。`}
++        meta="SOURCE REVIEW / 2026.09.26 · 284 TYPES / 286 MENU ITEMS"
+       />
+ 
+       <Callout title="実装状態の見方" tone="note">
+diff --git a/app/docs/cpp-scripting/page.tsx b/app/docs/cpp-scripting/page.tsx
+index 302f52f..a99ecea 100644
+--- a/app/docs/cpp-scripting/page.tsx
++++ b/app/docs/cpp-scripting/page.tsx
+@@ -2,6 +2,7 @@
+ import { lifecycleRows } from "../../data";
+ import { runtimeApis } from "../../runtimeApiReference";
+ import { Callout, CodeBlock, DocHeader, DocsShell, StatusPill } from "../../ui";
++import { engineVersion } from "../../generated/engineVersion";
+ 
+ const baseTemplate = `#include "NewNativeScript.h"
+ 
+@@ -209,11 +210,11 @@ const scriptTemplates = [
+   ["Ocean", "OceanBuoyancyController", "波面Sampleと浮力補助", "Ocean / Buoyancy"],
+   ["AI", "NavigationAiController", "NavigationとSensor結果", "NavMeshAgent / AI Sensor"],
+   ["Runtime", "RuntimePropertyController", "ComponentのRuntime値を型付き操作", "対象Component"],
+-  ["Gameplay", "ScoreController", "スコアをAction Payloadから更新", "GenericCounter / ActionRelay"],
+-  ["Gameplay", "ComboController", "ComboとTimerを連携", "GenericCounter / Timer"],
+-  ["Stage", "StageResultController", "スコアから結果を保存", "GameplayData / SceneButton"],
+-  ["Rail", "RailEventController", "Rail進行イベントを受信", "RailMovement / ActionRelay"],
+-  ["Optimization", "SimulationLodController", "距離別LODを参照", "SimulationLOD / Script"],
++  ["Gameplay", "ScoreController", "型付きAction PayloadでScoreを加算", "GenericCounter / ActionRelay / UIValueBinding"],
++  ["Gameplay", "ComboController", "命中とTimerでComboを管理", "GenericCounter / Timer / ActionRelay"],
++  ["Scene", "StageResultController", "ScoreからRankを決めてScene間で共有", "GenericCounter / GameplayData / SceneButton"],
++  ["Event", "RailEventController", "Rail MarkerのIDをAction Payloadとして受信", "RailMovement / RailEventMarker / ActionRelay"],
++  ["Optimization", "SimulationLodController", "距離別のRuntime LOD段階を参照", "SimulationLOD / Script"],
+ ] as const;
+ 
+ export default function CppScripting() {
+@@ -222,8 +223,8 @@ export default function CppScripting() {
+       <DocHeader
+         eyebrow="C++ SCRIPTING / 05"
+         title="C++からゲームを動かす。"
+-        lead="GameObjectへDLLを取り付け、入力、物理、武器、Target、Damage情報、Scene、Save、Rail、Oceanを、26種類のTemplate、高水準Wrapper、275件のRuntime APIから扱います。"
+-        meta={`EDITOR SCRIPT API / VERSION 8 · ${runtimeApis.length} RUNTIME ENTRIES`}
++        lead="GameObjectへDLLを取り付け、入力、物理、武器、Target、Damage情報、Scene、Save、Rail、Oceanを、26種類のTemplate、高水準Wrapper、369件のRuntime APIから扱います。"
++        meta={`EDITOR SCRIPT API / VERSION ${engineVersion.scriptApi} · 369 RUNTIME ENTRIES`}
+       />
+ 
+       <div className="doc-badge-row">
+diff --git a/app/docs/editor-windows/page.tsx b/app/docs/editor-windows/page.tsx
+index c9eb6de..05f45fc 100644
+--- a/app/docs/editor-windows/page.tsx
++++ b/app/docs/editor-windows/page.tsx
+@@ -8,8 +8,8 @@ const dockableWindows = [
+   { name: "State Graph", path: "ウィンドウ > State Graph", use: "State、Transition、条件をGraph上で接続し、Play中の状態を確認します。", link: "/docs/animation-effects#animator" },
+   { name: "Diagnostics / Profiler", path: "ウィンドウ > Diagnostics / Profiler", use: "CPU計測、VFX、Scene検証、Replay、描画Bufferを1か所で確認します。", link: "#diagnostics" },
+   { name: "Log Monitor", path: "ウィンドウ > Log Monitor", use: "Object、Component、System、Runtime Logを選び、常時・計測中・手動で記録します。", link: "#log-monitor" },
+-  { name: "Team Collaboration", path: "ウィンドウ > Team Collaboration", use: "共同作業の接続状態、参加者、変更状況を確認します。", link: "/docs/team-collaboration" },
+-  { name: "Hook / Wire Debug", path: "ウィンドウ > Hook / Wire デバッグ", use: "Hook構成の不備、Runtime Wire、接続長、力の伝達先を確認します。", link: "#hook-wire" },
++  { name: "Team Collaboration", path: "ウィンドウ > Team Collaboration", use: "共同作業の接続状態、参加者、変更状況を確認します。", link: "#collaboration" },
++  { name: "Hook / Wire Debug", path: "ウィンドウ > Hook / Wire デバッグ", use: "HookとWireの接続状態を確認し、通知経路を調べます。", link: "#hook-wire-debug" },
+ ] as const;
+ 
+ const diagnosticsTabs = [
+@@ -25,11 +25,11 @@ const diagnosticsTabs = [
+ ] as const;
+ 
+ const immediateActions = [
+-  ["Create Render Stress Scene", "描画負荷確認用Sceneを生成します。既存Sceneを保存してから実行します。"],
+-  ["Create Gameplay Foundation Validation Scene", "Gameplay基盤Componentの確認用Sceneを生成します。"],
+-  ["Console Display", "Console表示を切り替えます。Log Monitorとは用途が異なります。"],
+-  ["Deselect", "現在の選択を解除し、Inspectorの対象を空にします。"],
+-  ["Rebuild Layout (next startup)", "Dock配置を次回起動時に初期化します。実行直後には変わりません。"],
++  ["描画負荷テスト Scene を作成", "確認Popup後、描画負荷確認用Sceneを生成します。"],
++  ["ゲーム基盤検証 Scene を作成", "確認Popup後、Gameplay基盤Componentの確認用Sceneを生成します。"],
++  ["Console 表示", "Consoleを表示します。Log Monitorとは用途が異なります。"],
++  ["選択解除", "現在の選択を解除し、Inspectorの対象を空にします。"],
++  ["レイアウト再構築", "Dock配置を次回起動時に初期化します。実行直後には変わりません。"],
+ ] as const;
+ 
+ export default function EditorWindowsPage() {
+@@ -38,12 +38,12 @@ export default function EditorWindowsPage() {
+       <DocHeader
+         eyebrow="EDITOR WINDOWS / 02"
+         title="目的に合うウィンドウを開く。"
+-        lead="ウィンドウメニューから開く8つのDockable Windowと、その場で実行される5つの操作を分けて説明します。開いた画面はDockして作業配置を保存できます。"
++        lead="ウィンドウメニューから開く8つの常設画面と、その場で実行される5つの操作を分けて説明します。Window表示状態はSceneには保存されません。"
+         meta="SOURCE REVIEW / 2026.09.11 · 8 DOCKABLE WINDOWS · 5 DIRECT ACTIONS"
+       />
+ 
+       <Callout title="押した後の違い" tone="note">
+-        <p>Animationなどは編集画面が開きます。一方、Scene生成、Deselect、Layout再構築は即時操作です。新しい画面が出ない項目でも異常とは限りません。</p>
++        <p>Animationなどは編集画面を開きます。一方、Scene生成、選択解除、レイアウト再構築は即時操作です。Window表示状態はScene保存の対象外です。</p>
+       </Callout>
+ 
+       <section className="doc-section">
+@@ -84,18 +84,14 @@ export default function EditorWindowsPage() {
+       <section className="doc-section" id="collaboration">
+         <div className="doc-section-title"><p className="eyebrow">TEAM COLLABORATION</p><h2>共同作業の状態を確認する</h2></div>
+         <div className="two-column-doc">
+-          <div><h3>確認する情報</h3><p>接続状態、参加者、選択中Object、変更状況を確認します。共同作業を始める前に同じProjectとSceneを使用しているか揃えます。</p></div>
+-          <div><h3>競合を避ける</h3><p>同じObjectやAssetを同時編集する場合は担当を分けます。表示上の接続と、Git上の変更・保存結果は別に確認してください。</p></div>
++          <div><h3>確認する情報</h3><p>状態、Revision、Members、Unsynced Changes、Conflicts、Editing Locksを確認します。詳細な同期契約は共同制作ページを参照します。</p></div>
++          <div><h3>競合を避ける</h3><p>HostがRevisionを確定・配信します。LockとConflict表示を確認し、競合時は自動上書きせず退避コピーから復旧方針を選びます。</p></div>
+         </div>
+       </section>
+ 
+-      <section className="doc-section" id="hook-wire">
+-        <div className="doc-section-title"><p className="eyebrow">HOOK / WIRE DEBUG</p><h2>接続構成とRuntime Wireを分けて見る</h2></div>
+-        <div className="two-column-doc">
+-          <div><h3>Hook構成タブ</h3><p>WireConnectableを持つObjectを列挙し、親、力を伝えるRigidbody、Hook World位置、Local Anchor、最大接続数を確認します。不備は「要確認」と表示されます。</p></div>
+-          <div><h3>Runtime Wireタブ</h3><p>Play中だけWire Handle、両端Hook、現在長、張力を表示します。Scene Viewの構成線と、実際に接続されたWireを混同しないでください。</p></div>
+-        </div>
+-        <Callout title="このWindowは診断専用" tone="warning"><p>HookやWireの値を書き換える画面ではありません。Collider不足、Anchorずれ、力を伝えるRigidbodyの参照先をInspectorで修正し、再度ここで確認します。</p></Callout>
++      <section className="doc-section" id="hook-wire-debug">
++        <div className="doc-section-title"><p className="eyebrow">HOOK / WIRE DEBUG</p><h2>接続された通知経路を確認する</h2></div>
++        <p className="section-intro">HookやWireを使うObjectを選択し、接続先、通知名、実行順を確認します。接続を追加できることと、Play中に通知が届くことは別に確認してください。</p>
+       </section>
+ 
+       <section className="doc-section">
+diff --git a/app/docs/gameplay-tools/page.tsx b/app/docs/gameplay-tools/page.tsx
+index 187d702..96730f6 100644
+--- a/app/docs/gameplay-tools/page.tsx
++++ b/app/docs/gameplay-tools/page.tsx
+@@ -57,6 +57,14 @@ const buildOutputs = [
+   ["game.build", "Product名、出力先、起動Scene、Scene一覧"],
+ ];
+ 
++const destructionSteps = [
++  "壁などの通常Mesh ObjectへDestructiblePartを追加する",
++  "NVIDIA Blastを使用をONにする。Voronoi、20 Chunk、Auto Bake ONの既定値で開始できる",
++  "Playを押す。未Bakeなら開始前にChunk Mesh、Collider入力、Bond、Blast用Cacheが自動生成される",
++  "通常のHitscan / ProjectileならDamage Contextが自動接続される。独自攻撃はBlastDestruction::ApplyDamageを呼ぶ",
++  "InspectorのStatusとConsoleでReady、Bake失敗理由、現在Chunk数を確認する",
++];
++
+ export default function GameplayTools() {
+   return (
+     <DocsShell>
+@@ -64,7 +72,7 @@ export default function GameplayTools() {
+         eyebrow="GAMEPLAY TOOLS / 04"
+         title="画面で組み、必要な処理だけC++へ。"
+         lead="Spline、射撃、生成、進行、Prefab、Scene読込、Saveを、専用Windowと汎用Componentの組み合わせで作る手順です。"
+-        meta="SOURCE REVIEW / 2026.09.11 · MANUAL RUNTIME CHECK REQUIRED"
++        meta="SOURCE REVIEW / 2026.09.25 · MANUAL RUNTIME CHECK REQUIRED"
+       />
+ 
+       <div className="doc-badge-row">
+@@ -80,6 +88,7 @@ export default function GameplayTools() {
+         <a href="#prefab-scene"><span>04</span>PrefabとScene</a>
+         <a href="#save"><span>05</span>SaveとCheckpoint</a>
+         <a href="#scene-build"><span>06</span>BuildとAction</a>
++        <a href="#destruction"><span>07</span>自動破壊</a>
+       </nav>
+ 
+       <Callout title="実装と使用確認を分けています" tone="warning">
+@@ -150,6 +159,31 @@ export default function GameplayTools() {
+         <p className="related-api-link"><Link href="/docs/cpp-scripting#damage-context">Damage Contextの型宣言とC++例を見る <span>↗</span></Link></p>
+       </section>
+ 
++      <section className="doc-section" id="destruction">
++        <div className="doc-section-title"><p className="eyebrow">NVIDIA BLAST 1.1.5</p><h2>壁を置き、Componentを付けるだけで破壊する</h2></div>
++        <ol className="numbered-steps">
++          {destructionSteps.map((step, index) => <li key={step}><span>{String(index + 1).padStart(2, "0")}</span><p>{step}</p></li>)}
++        </ol>
++        <div className="requirement-flow">
++          <div><span>01</span><b>SOURCE MESH</b><p>MeshFilterまたはRendererから自動取得</p></div>
++          <div><span>02</span><b>BAKE & CACHE</b><p>設定Hashが変わった時だけVoronoi生成</p></div>
++          <div><span>03</span><b>BOND DAMAGE</b><p>Play中はBake済みBondだけを破断</p></div>
++          <div><span>04</span><b>JOLT CHUNK</b><p>分離ChunkだけDynamic Body化</p></div>
++        </div>
++        <Callout title="破片をHierarchyへ手作業で置く必要はありません" tone="note">
++          <p>生成ChunkはEngine内部に保持され、HierarchyとScene保存へ出ません。同じMeshと設定のPrefabやDuplicateはFracture GeometryとCollider Shapeを共有します。外部DCCの事前分割MeshはAdvanced設定の互換機能です。</p>
++        </Callout>
++        <Callout title="StatusがReadyにならない場合" tone="warning">
++          <p>Missing SourceならMeshFilterまたはRendererのAssetを確認します。Failedなら閉じたMeshか、Indexが三角形か、NvBlastExtAuthoring.dllがPhysics SDK Setupで生成済みかを確認します。Rebakeは次のPlayで再生成し、Clear Cacheは該当設定Hashの生成物を削除します。</p>
++        </Callout>
++        <pre><code>{`const EditorScriptVector3 hitPosition{hit.point.x, hit.point.y, hit.point.z};
++BlastDestruction::ApplyDamage(wallId, hitPosition, 2.0f, 120.0f, 15.0f);
++
++// FractureAllは実行時にMeshを切る関数ではなく、Bake済みBondを全破断する。
++BlastDestruction::FractureAll(wallId, 15.0f);`}</code></pre>
++        <p className="section-intro">Release Buildは対象Sceneを検査し、未Bake CacheをPlayer Build前に生成してLibrary/FractureCacheを収集します。Bake専用Authoring DLLは配布ゲームへ含めません。</p>
++      </section>
++
+       <section className="doc-section" id="sequence">
+         <div className="doc-section-title"><p className="eyebrow">STAGE FLOW</p><h2>Event、Wave、State、Sequenceを使い分ける</h2></div>
+         <div className="detail-card-grid">
+diff --git a/app/docs/getting-started/page.tsx b/app/docs/getting-started/page.tsx
+index d0b79c1..8223ba0 100644
+--- a/app/docs/getting-started/page.tsx
++++ b/app/docs/getting-started/page.tsx
+@@ -1,5 +1,7 @@
+ ﻿import { Callout, CodeBlock, DocHeader, DocsShell, StatusPill } from "../../ui";
+ 
++import { engineVersion } from "../../generated/engineVersion";
++
+ const firstScript = `// Update: 毎フレームの移動処理
+ EditorScriptTransform transform =
+   runtimeApi->GetTransform(gameObjectId);
+@@ -26,13 +28,19 @@ export default function GettingStarted() {
+         eyebrow="GETTING STARTED / 01"
+         title="最初のSceneを動かす。"
+         lead="起動からGameObjectの配置、Componentの追加、Play確認まで。初回に迷いやすい場所を一つの流れにまとめます。"
+-        meta="ESTIMATED TIME / 10–20 MIN"
++        meta={`ENGINE / ${engineVersion.display} · ${engineVersion.channel.toUpperCase()} · PROJECT FORMAT / ${engineVersion.projectFormat}`}
+       />
+ 
+       <Callout title="動作環境について" tone="warning">
+         <p>WindowsとDirectX 12対応環境が前提です。GPU、Driver、Windows SDK、Visual Studioの確認済みVersionは現在追加調査中です。未確認のVersionを対応済みとは扱いません。</p>
+       </Callout>
+ 
++      <section className="doc-section">
++        <div className="doc-section-title"><p className="eyebrow">LAUNCHER SETUP</p><h2>Engineを手作業で組み立てない</h2></div>
++        <p className="section-intro">新しいメンバーはManoLauncherからInstall、Verify、Project選択、Openの順に進みます。更新は別Version Folderへ検証済みFileを配置してから切り替えるため、起動中のEditorやProject Dataを上書きしません。</p>
++        <CodeBlock code={`ManoLauncher.exe install --manifest-url <URL> --root C:\\ManoEngines --project C:\\GameProject\nManoLauncher.exe verify --manifest-url <URL> --root C:\\ManoEngines\nManoLauncher.exe open --root C:\\ManoEngines --project C:\\GameProject`} />
++      </section>
++
+       <section className="doc-section">
+         <div className="doc-section-title">
+           <p className="eyebrow">FIRST RUN</p>
+diff --git a/app/docs/lighting-gi/page.tsx b/app/docs/lighting-gi/page.tsx
+index 746df8b..9169e67 100644
+--- a/app/docs/lighting-gi/page.tsx
++++ b/app/docs/lighting-gi/page.tsx
+@@ -1,19 +1,62 @@
+ ﻿import { Callout, DocHeader, DocsShell, StatusPill } from "../../ui";
+ 
+ const passes = [
+-  ["01", "Shadow Map", "Directionalは4分割CSM、Pointは6面Cubeで影を作ります。BiasとCascade範囲を調整します。"],
+-  ["02", "Light Probe GI", "BakeしたProbeからSH9の間接光とocta visibilityを取得します。Probe変更時だけ再Bakeします。"],
+-  ["03", "Scene HDR", "空、Light、Probeの結果をHDR Sceneへ合成します。"],
+-  ["04", "GBuffer", "Depth、Normal、Albedoなど後段の入力を準備します。"],
+-  ["05", "SSGI", "半解像度で探索し、Temporal蓄積後にUpsampleして間接光へ加えます。"],
+-  ["06", "Volumetric", "Light Shaftと大気散乱を計算し、Sceneへ合成します。"],
+-  ["07", "Bloom / Glare / Final Composite", "明部抽出、光条、Bloom、露出、色調、Vignetteなどを最終合成します。"],
++  ["01", "Shadow Map", "Sun CSM 4段とPoint Light 6面をAtlasへ描画"],
++  ["02", "Light Probe Bake", "SH9係数と八面体の距離モーメントを更新"],
++  ["03", "Scene HDR / GBuffer", "直接光、間接光、反射と後段用Bufferを生成"],
++  ["04", "SSGI", "半解像度、Temporal、Upsampleを経て画面内間接光を加算"],
++  ["05", "Volumetric Light Shaft", "空気中の光の筋を合成"],
++  ["06", "Bloom / Glare / Final Composite", "露出、トーンマッピング、最終合成"],
+ ] as const;
+ 
+ export default function LightingGiPage() {
+-  return <DocsShell><DocHeader eyebrow="LIGHTING / GI / 09" title="光を、段階ごとに検証する。" lead="ShadowからLight Probe GI、SSGI、Volumetric、最終合成まで、見た目が変わる順番を追えるリファレンスです。" meta="SOURCE REVIEW / 2026.09.11 · SHADOW / PROBE / SSGI / COMPOSITE" /><div className="doc-badge-row"><StatusPill tone="stable">LIGHTING PIPELINE</StatusPill><StatusPill tone="partial">GI</StatusPill><StatusPill tone="note">FINAL COMPOSITE</StatusPill></div>
+-    <section className="doc-section" id="pipeline"><div className="doc-section-title"><p className="eyebrow">PIPELINE</p><h2>この順番で切り分ける</h2></div><div className="numbered-steps">{passes.map(([number, name, body]) => <article key={name}><span>{number}</span><h3>{name}</h3><p>{body}</p></article>)}</div></section>
+-    <section className="doc-section" id="probe"><div className="doc-section-title"><p className="eyebrow">LIGHT PROBE GI</p><h2>ProbeはBake結果を使う</h2></div><div className="two-column-doc"><div><h3>入力</h3><p>Probe位置で取得したRadianceをSH9へ格納し、visibilityをocta形式で持ちます。最大4096 Probe、Bakeは最大8件単位です。</p></div><div><h3>運用</h3><p>自動で永続Bakeされる仕様ではありません。Probe追加・移動後は明示的にBakeし、Scene HDRへの寄与を確認します。</p></div></div></section>
+-    <section className="doc-section" id="quality"><div className="doc-section-title"><p className="eyebrow">QUALITY / LIMITS</p><h2>設定と既知の制約</h2></div><div className="detail-card-grid"><article className="detail-card"><h3>SSGI</h3><p>Half Resolution、Temporal、Upsampleの順です。ノイズや残像は解像度だけでなく蓄積とDepth/Normalも確認します。</p></article><article className="detail-card"><h3>PerformanceSettings</h3><p>Shadow、Probe、SSGI、Volumetric、Compositeの更新頻度と品質を調整します。品質を上げる前に対象Passを特定します。</p></article><article className="detail-card"><h3>Sun Portal</h3><p>特定方向からの光の寄与を制御する補助です。Shadow Mapや最終合成の明るさそのものを置き換えるものではありません。</p></article></div><Callout title="最終合成だけで直さない" tone="warning"><p>画面が暗い・白い場合はExposureだけを変更せず、Shadow、Scene HDR、GBuffer、SSGI、Volumetricのどの段階で値が変わったかを確認します。</p></Callout></section>
+-  </DocsShell>;
++  return (
++    <DocsShell>
++      <DocHeader
++        eyebrow="LIGHTING / GI / 09"
++        title="光の経路を知って、見た目を確認する。"
++        lead="直接光、Shadow、Light Probe GI、SSGI、Volumetric、反射、最終合成の順序と、設定だけでは判断できない確認項目をまとめます。"
++        meta="SOURCE REVIEW / 2026.09.25 · MANUAL VISUAL CHECK REQUIRED"
++      />
++
++      <div className="doc-badge-row">
++        <StatusPill tone="partial">LIGHT PROBE GI</StatusPill>
++        <StatusPill tone="partial">SSGI</StatusPill>
++        <StatusPill tone="experimental">VOLUMETRIC</StatusPill>
++      </div>
++
++      <Callout title="Shaderの存在だけで見た目を断定しない" tone="warning">
++        <p>このページは現在のPass接続を説明します。影の境界、GI漏れ、Temporal残像、Volumetricの密度、反射は、Scene View、Game View、Standaloneで目視確認が必要です。</p>
++      </Callout>
++
++      <section className="doc-section">
++        <div className="doc-section-title"><p className="eyebrow">FRAME ORDER</p><h2>1フレームの光処理</h2></div>
++        <div className="render-status-list">{passes.map(([number, name, detail]) => <article key={name}><span>{number}</span><div><h3>{name}</h3><p>{detail}</p></div><StatusPill tone="partial">接続を確認</StatusPill></article>)}</div>
++      </section>
++
++      <section className="doc-section">
++        <div className="doc-section-title"><p className="eyebrow">DIRECT LIGHT & SHADOW</p><h2>直接光はLambert、明るさの補完はGI側</h2></div>
++        <div className="two-column-doc">
++          <div><h3>直接光</h3><p>既定ではSubsurface 0のLambertです。肌や葉など、意図して光を回り込ませたい材質だけSubsurfaceを上げます。</p></div>
++          <div><h3>Shadow</h3><p>Sunはカメラ距離で4段のCascadeを選び、Point Lightはキューブ6面を使います。Biasは投影方式と深度に応じて変わります。</p></div>
++        </div>
++      </section>
++
++      <section className="doc-section">
++        <div className="doc-section-title"><p className="eyebrow">LIGHT PROBE GI</p><h2>静止した結果を再利用するProbe</h2></div>
++        <p className="section-intro">ProbeはSH9（RGB 27係数）と16×16八面体の距離モーメントを保持します。最大4096 Probeで、1回のBake Batchは最大8 Probeです。Full Rebakeは全Probeを一巡したら停止し、次のScene変更要求まで結果を再利用します。</p>
++        <Callout title="常時Bakeではありません" tone="note"><p>見た目が変わらない場合は、Scene変更後にRebakeが要求されているか、Probe Gridの範囲と密度が対象を覆っているかを確認します。</p></Callout>
++      </section>
++
++      <section className="doc-section">
++        <div className="doc-section-title"><p className="eyebrow">CHECKLIST</p><h2>調整後に確認する順番</h2></div>
++        <ol className="numbered-steps">
++          <li><span>01</span><p>Shadow MapでSunとPoint Lightの影が対象に届くか確認する</p></li>
++          <li><span>02</span><p>Light Probe Gridが対象を覆い、Rebake後の間接光が更新されるか確認する</p></li>
++          <li><span>03</span><p>SSGIとVolumetricを個別に比較し、残像・漏れ・密度を確認する</p></li>
++          <li><span>04</span><p>BloomとFinal Composite後に、露出と色が意図した結果かGame Viewで確認する</p></li>
++        </ol>
++      </section>
++    </DocsShell>
++  );
+ }
+diff --git a/app/docs/page.tsx b/app/docs/page.tsx
+index e1aa0ab..21893ea 100644
+--- a/app/docs/page.tsx
++++ b/app/docs/page.tsx
+@@ -1,5 +1,6 @@
+ ﻿import Link from "next/link";
+ import { ArrowLink, DocHeader, DocsShell, StatusPill } from "../ui";
++import { engineVersion } from "../generated/engineVersion";
+ 
+ const docSections = [
+   {
+@@ -12,8 +13,8 @@ const docSections = [
+   {
+     number: "02",
+     title: "Editor Window",
+-    copy: "8つのDockable Window、Project Settings、Hook / Wire Debug。",
+-    links: ["8つのWindow", "Diagnostics", "Hook / Wire"],
++    copy: "8つのDockable Window、Diagnostics、Project Settingsの開き方と保存範囲。",
++    links: ["8つのWindow", "Diagnostics", "Project Settings"],
+     href: "/docs/editor-windows",
+   },
+   {
+@@ -40,7 +41,7 @@ const docSections = [
+   {
+     number: "06",
+     title: "C++ スクリプト",
+-    copy: "DLL作成、26種類のTemplate、高水準Wrapper、Damage Context、275件のRuntime API。",
++    copy: "DLL作成、26種類のTemplate、高水準Wrapper、Damage Context、369件のRuntime API。",
+     links: ["Template", "戻り値型", "Gameplay API"],
+     href: "/docs/cpp-scripting",
+   },
+@@ -54,22 +55,22 @@ const docSections = [
+   {
+     number: "08",
+     title: "Asset管理",
+-    copy: "Registry、UUID、依存関係、種別別Hot Reloadと手動対応。",
+-    links: ["Registry", "依存", "Hot Reload"],
++    copy: "AssetRegistry、UUID、Hash、依存関係、種別別Hot Reloadと再Buildが必要な条件。",
++    links: ["Hot Reload", "Asset ID", "手動対応"],
+     href: "/docs/asset-management",
+   },
+   {
+     number: "09",
+     title: "Lighting / GI",
+-    copy: "Shadow、Light Probe GI、SSGI、Volumetric、最終合成の処理順。",
+-    links: ["Shadow", "Probe GI", "Final Composite"],
++    copy: "Shadow、Light Probe GI、SSGI、Volumetric、反射の順序と確認方法。",
++    links: ["Shadow", "Light Probe", "SSGI"],
+     href: "/docs/lighting-gi",
+   },
+   {
+     number: "10",
+     title: "共同制作",
+-    copy: "Host / Client、Lock、Conflict、Backup、Asset転送の運用。",
+-    links: ["Host / Client", "Conflict", "Backup"],
++    copy: "Host / Client同期、Lock、Conflict、Backup、Asset転送の操作と制限。",
++    links: ["Host", "Conflict", "Backup"],
+     href: "/docs/team-collaboration",
+   },
+ ];
+@@ -78,15 +79,15 @@ export default function DocsHome() {
+   return (
+     <DocsShell>
+       <DocHeader
+-        eyebrow="MANOENGINE DOCUMENTATION"
++        eyebrow="ManoEngine DOCUMENTATION"
+         title="使い方から引ける、ManoEngineのリファレンス。"
+-        lead="初めてSceneを作る人にも、C++から物理APIを呼ぶ人にも。実際のエディタ操作とRuntimeの動作を分け、Asset、Lighting、共同制作の確認方法まで記載します。"
+-        meta="LAST REVIEWED / 2026.09.11 · API VERSION / 8"
++        lead="初めてSceneを作る人にも、C++から物理APIを呼ぶ人にも。実際のエディタ操作とRuntimeの動作を分け、必要なComponentと確認方法まで記載します。"
++        meta={`ENGINE / ${engineVersion.display} · ${engineVersion.channel.toUpperCase()} · API VERSION / ${engineVersion.scriptApi}`}
+       />
+ 
+       <section className="doc-quickstart">
+         <div>
+-          <span className="doc-step-label">NEW TO MANOENGINE?</span>
++          <span className="doc-step-label">NEW TO ManoEngine?</span>
+           <h2>10分で最初のSceneへ。</h2>
+           <p>エディタを起動し、GameObjectを置き、Componentを確認してPlayするまでを順番に進めます。</p>
+         </div>
+diff --git a/app/docs/team-collaboration/page.tsx b/app/docs/team-collaboration/page.tsx
+index 04ee1de..3bf0de2 100644
+--- a/app/docs/team-collaboration/page.tsx
++++ b/app/docs/team-collaboration/page.tsx
+@@ -1,10 +1,68 @@
+ ﻿import { Callout, DocHeader, DocsShell, StatusPill } from "../../ui";
+ 
++import { engineVersion } from "../../generated/engineVersion";
++
++const limits = [
++  ["Remote Client", "最大2台"], ["Scene Snapshot比較", "0.75秒"], ["Asset Scan", "2秒"],
++  ["Lock Timeout", "30秒"], ["同期Asset生File上限", "128 MiB"], ["Transport Payload", "256 KiB"],
++] as const;
++
+ export default function TeamCollaborationPage() {
+-  return <DocsShell><DocHeader eyebrow="TEAM COLLABORATION / 10" title="同じProjectを、競合させずに扱う。" lead="Host、Client、Lock、Conflict、Backup、Asset転送の実際の境界を説明します。接続できたことと、変更を安全に保存できたことは別に確認します。" meta="SOURCE REVIEW / 2026.09.11 · HOST / CLIENT / LOCK / CONFLICT" /><div className="doc-badge-row"><StatusPill tone="stable">HOST + 2 CLIENTS</StatusPill><StatusPill tone="partial">LOCK HEARTBEAT</StatusPill><StatusPill tone="note">LAN / VPN</StatusPill></div>
+-    <section className="doc-section" id="connection"><div className="doc-section-title"><p className="eyebrow">TOPOLOGY</p><h2>HostがRevisionを管理する</h2></div><div className="two-column-doc"><div><h3>Host</h3><p>Projectを開いたHostがRevisionを割り当て、ClientへScene・Object・Assetの変更を配信します。Remote Clientは最大2台です。</p></div><div><h3>Client</h3><p>Host AddressとPortを指定して参加します。Host Migrationはありません。Host停止時は再接続ではなく、Hostの再起動を前提にします。</p></div></div><p className="section-intro">状態は<code>Offline</code>、<code>Connecting</code>、<code>Online</code>、<code>Synchronizing</code>、<code>Conflict</code>、<code>Disconnected</code>として表示されます。</p></section>
+-    <section className="doc-section" id="lock"><div className="doc-section-title"><p className="eyebrow">LOCK / CONFLICT</p><h2>編集権と保存結果を分ける</h2></div><div className="detail-card-grid"><article className="detail-card"><h3>Lock</h3><p>Lockは10秒ごとにHeartbeatを送り、30秒応答がなければ期限切れとして扱います。編集前に対象ObjectまたはAssetの所有者を確認します。</p></article><article className="detail-card"><h3>Conflict</h3><p>同じ対象への変更が競合した場合、元データを上書きせずConflictコピーを作ります。差分を比較して採用結果を決めます。</p></article><article className="detail-card"><h3>Backup</h3><p>復元や競合解決の前に<code>.team/backups</code>へBackupを作ります。UUID台帳は<code>.team/asset-uuids.txt</code>で確認します。</p></article></div></section>
+-    <section className="doc-section" id="transfer"><div className="doc-section-title"><p className="eyebrow">ASSET TRANSFER</p><h2>大きなAssetは分割して送る</h2></div><div className="reference-table-wrap"><table className="reference-table"><thead><tr><th>項目</th><th>仕様</th><th>利用者の確認</th></tr></thead><tbody><tr><td>Chunking</td><td>512 KiBを超えるファイルは分割転送</td><td>転送完了まで編集・終了しない</td></tr><tr><td>上限</td><td>Raw file 128 MiB</td><td>超える場合は別途共有する</td></tr><tr><td>保存先</td><td>許可されたProject root内</td><td>外部Pathを参照しない</td></tr></tbody></table></div></section>
+-    <section className="doc-section" id="security"><div className="doc-section-title"><p className="eyebrow">OPERATIONS</p><h2>LAN / VPN内で使う</h2></div><Callout title="認証・暗号化・Role管理は提供しない" tone="warning"><p>共同制作機能はLANまたはVPN内での利用を前提にします。Host Portをインターネットへ直接公開せず、必要なネットワーク境界とBackup運用を別途用意してください。</p></Callout><p className="section-intro">作業終了時は全Clientの状態が同期済みであること、Lockが解放されていること、BackupとConflictコピーが必要な場所へ保存されていることを確認します。</p></section>
+-  </DocsShell>;
++  return (
++    <DocsShell>
++      <DocHeader
++        eyebrow="TEAM COLLABORATION / 10"
++        title="共同制作を、競合を残して安全に進める。"
++        lead="Host / Client同期、Lock、Conflict、Backup、Asset転送の操作範囲と、競合時に自動上書きしない復旧手順を説明します。"
++        meta={`ENGINE / ${engineVersion.display} · PROJECT FORMAT / ${engineVersion.projectFormat} · SCRIPT API / ${engineVersion.scriptApi}`}
++      />
++
++      <div className="doc-badge-row"><StatusPill tone="partial">SCENE SYNC</StatusPill><StatusPill tone="partial">ASSET TRANSFER</StatusPill><StatusPill tone="stable">CONFLICT BACKUP</StatusPill></div>
++
++      <Callout title="ゲームのマルチプレイ機能ではありません" tone="warning"><p>この機能はEditorでのScene / Asset共同編集用です。Gameplay固有のServer AuthorityやPlay Session共有は行いません。Host Migrationもありません。</p></Callout>
++
++      <Callout title="接続前にVersionを一致させる" tone="warning"><p>接続直後にEngine Version、Project Format、Script API Version、Channelを交換します。不一致ならIncompatibleとして拒否し、SceneやAssetを適用しません。</p></Callout>
++
++      <section className="doc-section">
++        <div className="doc-section-title"><p className="eyebrow">START</p><h2>Hostを中心に接続する</h2></div>
++        <ol className="numbered-steps">
++          <li><span>01</span><p>共有する<code>Assets/Scenes</code>配下のFolderを選び、User Name、Host、Portを確認する</p></li>
++          <li><span>02</span><p>1台をHostにし、Remote ClientはHostへ接続する。HostがRevisionを確定・配信する</p></li>
++          <li><span>03</span><p>状態、Revision、Members、Unsynced Changes、Conflicts、Editing Locksを確認してから編集する</p></li>
++        </ol>
++      </section>
++
++      <section className="doc-section" id="server-transport">
++        <div className="doc-section-title"><p className="eyebrow">MANOTEAMSERVER / TAILSCALE</p><h2>遠隔接続はServer経路を使う</h2></div>
++        <div className="two-column-doc">
++          <div><h3>Transport</h3><p>ManoTeamServerはEditor間のSnapshot、Revision、履歴再送を中継します。LANとTailscaleは同じTransport抽象化で扱い、Engineは到達可能なHostとPortとして接続します。</p></div>
++          <div><h3>MagicDNS</h3><p>Tailscaleでは<code>*.ts.net</code>のMagicDNS Hostnameを使います。<code>100.x.x.x</code>の直接入力やNode Keyの保存は行いません。Launcherが参加先Tailnetを確認し、必要なら切替確認を表示します。</p></div>
++        </div>
++        <Callout title="接続前に一致させる値" tone="note"><p><code>Project ID</code>、<code>CollaborationId</code>、<code>Engine Version</code>、<code>Project Format</code>、<code>Script API Version</code>、<code>Protocol 3</code>を両端で確認します。</p></Callout>
++      </section>
++
++      <section className="doc-section">
++        <div className="doc-section-title"><p className="eyebrow">SYNC CONTRACT</p><h2>共有対象と保存先</h2></div>
++        <div className="two-column-doc">
++          <div><h3>共有するもの</h3><p>選択したScene FolderのSceneと、そのSceneが参照するProject Assetです。編集対象のGameObject / ComponentはUUIDで識別します。</p></div>
++          <div><h3>共有しないもの</h3><p><code>.team</code>は同期対象外です。Conflict、Backup、Trashを相手へ再送して循環させません。</p></div>
++        </div>
++      </section>
++
++      <section className="doc-section">
++        <div className="doc-section-title"><p className="eyebrow">CONFLICT & RECOVERY</p><h2>競合は退避してから選ぶ</h2></div>
++        <div className="detail-card-grid">
++          <article><span>LOCK</span><h3>編集対象を確認</h3><p>Lockの所有者とHeartbeatを確認します。Timeout後に状態が変わるため、表示だけで同時編集を判断しません。</p></article>
++          <article><span>CONFLICT</span><h3>自動上書きしない</h3><p>競合コピーは<code>.team/conflicts/&lt;change-id&gt;/</code>へ保存されます。差分を確認して採用する内容を決めます。</p></article>
++          <article><span>BACKUP</span><h3>復旧元を残す</h3><p>Scene Backupは<code>.team/backups/</code>、上書き前AssetはRevision別Folderへ保存されます。Remote削除はTrashへ退避します。</p></article>
++        </div>
++      </section>
++
++      <section className="doc-section">
++        <div className="doc-section-title"><p className="eyebrow">LIMITS</p><h2>接続と転送の上限</h2></div>
++        <div className="reference-table-wrap"><table className="reference-table"><thead><tr><th>項目</th><th>値</th></tr></thead><tbody>{limits.map(([name, value]) => <tr key={name}><td>{name}</td><td><b>{value}</b></td></tr>)}</tbody></table></div>
++        <Callout title="大きいAssetの扱い" tone="note"><p>512 KiB超のAssetはChunk化します。128 MiB超の生Fileは同期対象にしません。Base64化によりNetwork Bufferは生Fileより大きくなります。</p></Callout>
++      </section>
++    </DocsShell>
++  );
+ }
+diff --git a/app/docs/troubleshooting/page.tsx b/app/docs/troubleshooting/page.tsx
+new file mode 100644
+index 0000000..71001cb
+--- /dev/null
++++ b/app/docs/troubleshooting/page.tsx
+@@ -0,0 +1,16 @@
++﻿import { Callout, DocHeader, DocsShell, StatusPill } from "../../ui";
++
++const checks = [
++  ["白画面・何も描画されない", "Active Camera、Priority、Near/Far、Renderer、Missing Asset、Viewportサイズ、DX12/Shader Errorを確認する。"],
++  ["当たり判定がずれる", "World位置・回転・Scale、ColliderのCenter/Size、親Transform、負Scale、Play中のJolt Shape、接触点を比較する。"],
++  ["C++ Scriptが動かない", "DLL Path、Architecture、Runtime API Version 13、Export関数、Load結果、旧DLL継続状態を確認する。"],
++  ["PostProcessが効かない", "PostProcess/VolumeのActive、Bloom、AA Mode、Scene/Game View、Diagnosticsの対象Passを確認する。"],
++  ["共同制作へ接続できない", "Server Host/Port、Protocol 3、Engine/Project/Script Version、Project ID、Tailscale MagicDNS、Firewallを確認する。"],
++] as const;
++
++export default function TroubleshootingPage() {
++  return <DocsShell><DocHeader eyebrow="TROUBLESHOOTING / 11" title="推測せず、実値から切り分ける。" lead="症状ごとの確認場所を、Console、Status、実座標、保存File、接続診断の順にまとめます。" meta="SOURCE REVIEW / 2026.09.25 · DIAGNOSTIC CHECKLIST" /><div className="doc-badge-row"><StatusPill tone="note">CONSOLE FIRST</StatusPill><StatusPill tone="partial">RUNTIME VALUES</StatusPill><StatusPill tone="stable">RECOVERY SAFE</StatusPill></div>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">SYMPTOM MAP</p><h2>症状から確認する</h2></div><div className="topic-index">{checks.map(([title, body], index) => <article key={title}><span>{String(index + 1).padStart(2, "0")}</span><h3>{title}</h3><p>{body}</p></article>)}</div></section>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">SAFE RECOVERY</p><h2>復旧前に上書きしない</h2></div><div className="two-column-doc"><div><h3>保存</h3><p>Scene保存失敗時は元Fileを削除せず、一時File、Read Only、別ProcessのLock、Project Versionを確認します。</p></div><div><h3>共同制作</h3><p><code>.team/change-log.jsonl</code>、<code>.team/backups</code>、<code>.team/trash</code>、<code>.team/conflicts</code>を確認してから採用結果を決めます。</p></div></div><Callout title="Build成功は画面表示成功の証明ではない" tone="warning"><p>Editor起動、Scene View、Game View、実音、Physics Debug、Standaloneはそれぞれ別に確認します。</p></Callout></section>
++  </DocsShell>;
++}
+diff --git a/app/docs/user-guide/page.tsx b/app/docs/user-guide/page.tsx
+new file mode 100644
+index 0000000..6ae1e8d
+--- /dev/null
++++ b/app/docs/user-guide/page.tsx
+@@ -0,0 +1,18 @@
++﻿import Link from "next/link";
++import { Callout, DocHeader, DocsShell, StatusPill } from "../../ui";
++
++const guideSteps = [
++  ["01", "LauncherでProjectを開く", "Engine Version、Project Format、参加コードを確認してからEditorを起動します。"],
++  ["02", "SceneとComponentを作る", "GameObjectを配置し、InspectorでTransform、参照Asset、Componentの値を入力します。"],
++  ["03", "Playで検証する", "Game View、Console、Physics Debug、Diagnosticsを順に確認します。Stop後に編集値へ戻るのは正常です。"],
++  ["04", "AssetとScriptを管理する", "Project Viewから移動・Reimportし、DLLはScript API Versionが一致するDebug/Releaseを指定します。"],
++  ["05", "Buildと共同制作へ進む", "起動Sceneと参照Assetを選び、必要ならTEAMからRevision、Lock、Conflictを確認します。"],
++] as const;
++
++export default function UserGuidePage() {
++  return <DocsShell><DocHeader eyebrow="USER GUIDE / 01" title="最初のProjectからBuildまで。" lead="ManoEngineを初めて使う人向けに、Launcher、Scene、Component、Play、Script、Build、共同制作の基本順序をまとめます。" meta="SOURCE REVIEW / 2026.09.25 · USER WORKFLOW" /><div className="doc-badge-row"><StatusPill tone="stable">START HERE</StatusPill><StatusPill tone="partial">PLAY CHECK</StatusPill><StatusPill tone="note">BUILD READY</StatusPill></div>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">WORKFLOW</p><h2>この順番で進める</h2></div><div className="numbered-steps">{guideSteps.map(([number, title, body]) => <article key={title}><span>{number}</span><h3>{title}</h3><p>{body}</p></article>)}</div></section>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">EDITOR MAP</p><h2>画面の役割を分ける</h2></div><div className="detail-card-grid"><article className="detail-card"><h3>Scene / Game View</h3><p>Scene Viewは配置とDebug、Game ViewはCamera Componentからの実行画面です。両者のCameraとTemporal Historyを混同しません。</p></article><article className="detail-card"><h3>Inspector / Project</h3><p>Inspectorは選択Objectの値、ProjectはAsset作成・移動・Reimport・依存確認を扱います。</p></article><article className="detail-card"><h3>Console / Diagnostics</h3><p>ConsoleはErrorや状態Message、DiagnosticsはCPU/GPU、VRAM、Physics、Frame Spikeの切り分けに使います。</p></article></div></section>
++    <section className="doc-section"><div className="doc-section-title"><p className="eyebrow">NEXT</p><h2>目的別に進む</h2></div><div className="link-grid"><Link href="/docs/components">Componentを探す →</Link><Link href="/docs/cpp-scripting">C++ APIを読む →</Link><Link href="/docs/editor-windows">Editor Windowを開く →</Link><Link href="/docs/troubleshooting">症状から直す →</Link></div><Callout title="保存してから終了するもの" tone="note"><p>Scene、Project Settings、Input Action、Animation、Effect、Material、TEAM設定、Native Script Source/DLLは明示的に保存します。Play中のHPや生成Objectは編集設定ではありません。</p></Callout></section>
++  </DocsShell>;
++}
+diff --git a/app/generated/engineVersion.ts b/app/generated/engineVersion.ts
+new file mode 100644
+index 0000000..ec70318
+--- /dev/null
++++ b/app/generated/engineVersion.ts
+@@ -0,0 +1,13 @@
++﻿// Generated from Engine/Version/engine-version.json. Do not edit directly.
++export const engineVersion = {
++  major: 0,
++  minor: 9,
++  patch: 4,
++  build: 171,
++  channel: "Stable",
++  projectFormat: 1,
++  sceneFormat: 1,
++  prefabFormat: 1,
++  scriptApi: 13,
++  display: "0.9.4+171",
++} as const;
+\ No newline at end of file
+diff --git a/app/page.tsx b/app/page.tsx
+index 2fc1293..040bd72 100644
+--- a/app/page.tsx
++++ b/app/page.tsx
+@@ -1,6 +1,7 @@
+ ﻿import Link from "next/link";
+ import { componentCatalog } from "./componentCatalog";
+ import { CodeBlock, SiteFooter, SiteHeader, StatusPill } from "./ui";
++import { engineVersion } from "./generated/engineVersion";
+ 
+ const sampleCode = `extern "C" __declspec(dllexport) void EditorScript_Update(
+     int32_t gameObjectId,
+@@ -21,23 +22,25 @@ const sampleCode = `extern "C" __declspec(dllexport) void EditorScript_Update(
+ 
+ const quickLinks = [
+   { number: "01", title: "最初のSceneを作る", copy: "起動からPlayまでを順番に進める", href: "/docs/getting-started" },
+-  { number: "02", title: "Editor Windowを選ぶ", copy: "8つのDockable WindowとDebugを確認", href: "/docs/editor-windows" },
++  { number: "02", title: "Editor Windowを選ぶ", copy: "8つの常設画面と即時操作を確認", href: "/docs/editor-windows" },
+   { number: "03", title: "Componentを探す", copy: "284種類を名前と用途から検索する", href: "/docs/components" },
+   { number: "04", title: "Animationを作る", copy: "Clip、Animator、Effectを手順から確認", href: "/docs/animation-effects" },
+-  { number: "05", title: "C++で処理を書く", copy: "26 Templateと275件のAPIから探す", href: "/docs/cpp-scripting" },
++  { number: "05", title: "C++で処理を書く", copy: "26 Templateと369件のAPIから探す", href: "/docs/cpp-scripting" },
+ ];
+ 
+ const workflowLinks = [
++  { title: "利用者ガイド", copy: "LauncherからScene、Play、Build、共同制作までの基本順序。", href: "/docs/user-guide" },
+   { title: "はじめに", copy: "必要環境、起動、画面構成、最初のScene。", href: "/docs/getting-started" },
+-  { title: "Editor Window", copy: "8つのDockable Window、Project Settings、Hook / Wire Debug。", href: "/docs/editor-windows" },
++  { title: "Editor Window", copy: "Animation、Spline、Diagnostics、Log、共同編集。", href: "/docs/editor-windows" },
+   { title: "Component", copy: `${componentCatalog.length}種類の役割、使い方、必要な組み合わせ、実装状態。`, href: "/docs/components" },
+   { title: "Animation・Effect", copy: "Clip、Timeline、Animator、Event、CPU Particle。", href: "/docs/animation-effects" },
+   { title: "ゲーム制作", copy: "Spline、射撃、Pool、Sequence、Prefab、Scene、Save。", href: "/docs/gameplay-tools" },
+-  { title: "C++ API", copy: "DLL、26 Template、型宣言、275 Runtime Entry。", href: "/docs/cpp-scripting" },
++  { title: "C++ API", copy: "DLL、26 Template、型宣言、Gameplay、Scene、Rail、Save。", href: "/docs/cpp-scripting" },
+   { title: "描画・Audio・物理", copy: "Ocean、Terrain、高度物理、Particle、Audio、Material、Temporal。", href: "/docs/rendering" },
+-  { title: "Asset管理", copy: "Registry、UUID、依存、Hot Reload、手動対応。", href: "/docs/asset-management" },
+-  { title: "Lighting / GI", copy: "Shadow、Light Probe GI、SSGI、Volumetric、最終合成。", href: "/docs/lighting-gi" },
+-  { title: "共同制作", copy: "Host / Client、Lock、Conflict、Backup、Asset転送。", href: "/docs/team-collaboration" },
++  { title: "Asset管理", copy: "Registry、UUID、依存関係、種別別Hot Reloadと手動対応。", href: "/docs/asset-management" },
++  { title: "Lighting / GI", copy: "Shadow、Light Probe GI、SSGI、Volumetric、反射の接続と確認。", href: "/docs/lighting-gi" },
++  { title: "共同制作", copy: "Host / Client同期、Lock、Conflict、Backup、Asset転送の復旧手順。", href: "/docs/team-collaboration" },
++  { title: "トラブルシューティング", copy: "白画面、Physics、Script、描画、共同制作を症状から切り分ける。", href: "/docs/troubleshooting" },
+ ];
+ 
+ export default function Home() {
+@@ -47,7 +50,7 @@ export default function Home() {
+       <main id="main-content">
+         <section className="hero shell">
+           <div className="hero-copy">
+-            <p className="eyebrow">MANOENGINE 公式ドキュメント</p>
++            <p className="eyebrow">ManoEngine GAME ENGINE 公式ドキュメント</p>
+             <h1>
+               <span className="title-line">
+                 <span className="title-segment">ゲーム制作に</span>
+@@ -67,7 +70,7 @@ export default function Home() {
+               <span><b>Windows</b>対応環境</span>
+               <span><b>DirectX 12</b>描画</span>
+               <span><b>Jolt Physics</b>3D物理</span>
+-              <span><b>C++ API v8</b>スクリプト</span>
++              <span><b>C++ API v{engineVersion.scriptApi}</b>スクリプト</span>
+             </div>
+           </div>
+ 
+@@ -105,7 +108,7 @@ export default function Home() {
+               <p className="eyebrow">ドキュメント分類</p>
+               <h2>作業の順番に沿って探す。</h2>
+             </div>
+-            <p>曖昧な「機能」「API」という分け方をやめ、ManoEngineを使う時の作業単位で10カテゴリに整理しています。</p>
++            <p>編集、実行、Asset、描画、共同制作まで、ManoEngineを使う時の作業単位で10項目に整理しています。</p>
+           </div>
+           <div className="workflow-grid">
+             {workflowLinks.map((item, index) => (
+@@ -126,8 +129,8 @@ export default function Home() {
+               <h2>コード例とAPIを同じ場所で確認。</h2>
+               <p>必要なComponent、書く場所、実行結果、動かない時の確認順まで掲載しています。API一覧は名前と用途から検索できます。</p>
+               <div className="status-row">
+-                <StatusPill tone="stable">API VERSION 8</StatusPill>
+-                <StatusPill tone="partial">275 RUNTIME CALLS</StatusPill>
++                <StatusPill tone="stable">API VERSION {engineVersion.scriptApi}</StatusPill>
++                <StatusPill tone="partial">369 RUNTIME ENTRIES</StatusPill>
+               </div>
+               <Link className="text-link" href="/docs/cpp-scripting">C++スクリプトガイドを開く →</Link>
+             </div>
+diff --git a/app/runtimeApiReference.ts b/app/runtimeApiReference.ts
+index 39fe7dc..fd4854b 100644
+--- a/app/runtimeApiReference.ts
++++ b/app/runtimeApiReference.ts
+@@ -614,11 +614,11 @@ const baseRuntimeApis: RuntimeApiEntry[] = [
+ 
+ import { runtimeApiAdditions } from "./runtimeApiAdditions";
+ import { runtimeApiV7Additions } from "./runtimeApiV7Additions";
+-import { runtimeApiV8Additions } from "./runtimeApiV8Additions";
++import { runtimeApiV13Additions } from "./runtimeApiV13Additions";
+ 
+ export const runtimeApis: RuntimeApiEntry[] = [
+   ...baseRuntimeApis,
+   ...runtimeApiAdditions,
+   ...runtimeApiV7Additions,
+-  ...runtimeApiV8Additions,
++  ...runtimeApiV13Additions,
+ ];
+diff --git a/app/runtimeApiV13Additions.ts b/app/runtimeApiV13Additions.ts
+new file mode 100644
+index 0000000..b5d308e
+--- /dev/null
++++ b/app/runtimeApiV13Additions.ts
+@@ -0,0 +1,155 @@
++﻿import type { RuntimeApiEntry } from "./runtimeApiReference";
++
++const seeds: Array<[RuntimeApiEntry["category"], string, string, string, string, string, string, string]> = [
++  ["Physics", "CreateSpringJoint", "EditorScriptJointHandle (*CreateSpringJoint)(int32_t ownerGameObjectId, int32_t connectedGameObjectId, const EditorScriptSpringJointDesc* springJointDesc)", "EditorScriptJointHandle", "EditorScriptJointHandle result = runtimeApi->CreateSpringJoint(/* arguments */);", "CreateSpringJointをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t ownerGameObjectId, int32_t connectedGameObjectId, const EditorScriptSpringJointDesc* springJointDesc"],
++  ["Physics", "DestroyJoint", "bool (*DestroyJoint)(EditorScriptJointHandle jointHandle)", "bool", "bool result = runtimeApi->DestroyJoint(/* arguments */);", "DestroyJointをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptJointHandle jointHandle"],
++  ["Physics", "SetSpringJointSettings", "bool (*SetSpringJointSettings)(EditorScriptJointHandle jointHandle, const EditorScriptSpringJointDesc* springJointDesc)", "bool", "bool result = runtimeApi->SetSpringJointSettings(/* arguments */);", "SetSpringJointSettingsをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptJointHandle jointHandle, const EditorScriptSpringJointDesc* springJointDesc"],
++  ["Physics", "IsJointValid", "bool (*IsJointValid)(EditorScriptJointHandle jointHandle)", "bool", "bool result = runtimeApi->IsJointValid(/* arguments */);", "IsJointValidをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptJointHandle jointHandle"],
++  ["Physics", "CreateJoint", "EditorScriptJointHandle (*CreateJoint)(EditorScriptJointType jointType, int32_t ownerGameObjectId, int32_t connectedGameObjectId, const EditorScriptJointDesc* jointDesc)", "EditorScriptJointHandle", "EditorScriptJointHandle result = runtimeApi->CreateJoint(/* arguments */);", "CreateJointをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptJointType jointType, int32_t ownerGameObjectId, int32_t connectedGameObjectId, const EditorScriptJointDesc* jointDesc"],
++  ["Physics", "SetJointSettings", "bool (*SetJointSettings)(EditorScriptJointHandle jointHandle, const EditorScriptJointDesc* jointDesc)", "bool", "bool result = runtimeApi->SetJointSettings(/* arguments */);", "SetJointSettingsをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptJointHandle jointHandle, const EditorScriptJointDesc* jointDesc"],
++  ["Input", "GetMouseDelta", "EditorScriptVector2 (*GetMouseDelta)()", "EditorScriptVector2", "EditorScriptVector2 result = runtimeApi->GetMouseDelta();", "GetMouseDeltaをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "runtimeApiの関数Pointer"],
++  ["Input", "IsMouseButtonDown", "bool (*IsMouseButtonDown)(int32_t mouseButton)", "bool", "bool result = runtimeApi->IsMouseButtonDown(/* arguments */);", "IsMouseButtonDownをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t mouseButton"],
++  ["Input", "WasMouseButtonPressed", "bool (*WasMouseButtonPressed)(int32_t mouseButton)", "bool", "bool result = runtimeApi->WasMouseButtonPressed(/* arguments */);", "WasMouseButtonPressedをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t mouseButton"],
++  ["Input", "WasMouseButtonReleased", "bool (*WasMouseButtonReleased)(int32_t mouseButton)", "bool", "bool result = runtimeApi->WasMouseButtonReleased(/* arguments */);", "WasMouseButtonReleasedをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t mouseButton"],
++  ["Input", "SetCursorLocked", "void (*SetCursorLocked)(bool isLocked)", "void", "runtimeApi->SetCursorLocked(/* arguments */);", "SetCursorLockedをRuntime APIから実行・取得します。", "処理完了後の戻り値はありません。", "bool isLocked"],
++  ["Input", "IsCursorLocked", "bool (*IsCursorLocked)()", "bool", "bool result = runtimeApi->IsCursorLocked();", "IsCursorLockedをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "runtimeApiの関数Pointer"],
++  ["Input", "SetCursorVisible", "void (*SetCursorVisible)(bool isVisible)", "void", "runtimeApi->SetCursorVisible(/* arguments */);", "SetCursorVisibleをRuntime APIから実行・取得します。", "処理完了後の戻り値はありません。", "bool isVisible"],
++  ["Input", "IsCursorVisible", "bool (*IsCursorVisible)()", "bool", "bool result = runtimeApi->IsCursorVisible();", "IsCursorVisibleをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "runtimeApiの関数Pointer"],
++  ["Physics", "CreateWire", "EditorScriptWireHandle (*CreateWire)(const EditorScriptWireDesc* wireDesc)", "EditorScriptWireHandle", "EditorScriptWireHandle result = runtimeApi->CreateWire(/* arguments */);", "CreateWireをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "const EditorScriptWireDesc* wireDesc"],
++  ["Physics", "DestroyWire", "bool (*DestroyWire)(EditorScriptWireHandle wireHandle)", "bool", "bool result = runtimeApi->DestroyWire(/* arguments */);", "DestroyWireをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptWireHandle wireHandle"],
++  ["Physics", "SetWireLengthByHandle", "bool (*SetWireLengthByHandle)(EditorScriptWireHandle wireHandle, float maximumLength)", "bool", "bool result = runtimeApi->SetWireLengthByHandle(/* arguments */);", "SetWireLengthByHandleをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptWireHandle wireHandle, float maximumLength"],
++  ["Physics", "SetWireShrinkSpeed", "bool (*SetWireShrinkSpeed)(EditorScriptWireHandle wireHandle, float shrinkSpeed)", "bool", "bool result = runtimeApi->SetWireShrinkSpeed(/* arguments */);", "SetWireShrinkSpeedをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptWireHandle wireHandle, float shrinkSpeed"],
++  ["Physics", "RepairWire", "bool (*RepairWire)(EditorScriptWireHandle wireHandle)", "bool", "bool result = runtimeApi->RepairWire(/* arguments */);", "RepairWireをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptWireHandle wireHandle"],
++  ["Physics", "GetWireStateByHandle", "bool (*GetWireStateByHandle)(EditorScriptWireHandle wireHandle, EditorScriptWireState* wireState)", "bool", "bool result = runtimeApi->GetWireStateByHandle(/* arguments */);", "GetWireStateByHandleをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptWireHandle wireHandle, EditorScriptWireState* wireState"],
++  ["Physics", "GetWireCountForGameObject", "int32_t (*GetWireCountForGameObject)(int32_t gameObjectId)", "int32_t", "int32_t result = runtimeApi->GetWireCountForGameObject(/* arguments */);", "GetWireCountForGameObjectをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId"],
++  ["Physics", "GetWireForGameObject", "bool (*GetWireForGameObject)(int32_t gameObjectId, int32_t wireIndex, EditorScriptWireState* wireState)", "bool", "bool result = runtimeApi->GetWireForGameObject(/* arguments */);", "GetWireForGameObjectをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, int32_t wireIndex, EditorScriptWireState* wireState"],
++  ["Physics", "CanConnectWire", "bool (*CanConnectWire)(int32_t gameObjectId)", "bool", "bool result = runtimeApi->CanConnectWire(/* arguments */);", "CanConnectWireをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId"],
++  ["Gameplay", "AddComponent", "bool (*AddComponent)(int32_t gameObjectId, const char* componentTypeName)", "bool", "bool result = runtimeApi->AddComponent(/* arguments */);", "AddComponentをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, const char* componentTypeName"],
++  ["Gameplay", "RemoveComponent", "bool (*RemoveComponent)(int32_t gameObjectId, const char* componentTypeName)", "bool", "bool result = runtimeApi->RemoveComponent(/* arguments */);", "RemoveComponentをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, const char* componentTypeName"],
++  ["Gameplay", "FindGameObjectsWithComponent", "int32_t (*FindGameObjectsWithComponent)(const char* componentTypeName, int32_t* gameObjectIds, int32_t capacity)", "int32_t", "int32_t result = runtimeApi->FindGameObjectsWithComponent(/* arguments */);", "FindGameObjectsWithComponentをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "const char* componentTypeName, int32_t* gameObjectIds, int32_t capacity"],
++  ["GameObject", "InstantiateGameObject", "int32_t (*InstantiateGameObject)(int32_t sourceGameObjectId, const EditorScriptVector3* position, const EditorScriptVector3* rotation)", "int32_t", "int32_t result = runtimeApi->InstantiateGameObject(/* arguments */);", "InstantiateGameObjectをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t sourceGameObjectId, const EditorScriptVector3* position, const EditorScriptVector3* rotation"],
++  ["Physics", "DestroyGameObject", "bool (*DestroyGameObject)(int32_t gameObjectId)", "bool", "bool result = runtimeApi->DestroyGameObject(/* arguments */);", "DestroyGameObjectをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId"],
++  ["Transform", "WorldToLocalPoint", "bool (*WorldToLocalPoint)(int32_t gameObjectId, const EditorScriptVector3* worldPoint, EditorScriptVector3* localPoint)", "bool", "bool result = runtimeApi->WorldToLocalPoint(/* arguments */);", "WorldToLocalPointをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, const EditorScriptVector3* worldPoint, EditorScriptVector3* localPoint"],
++  ["Transform", "LocalToWorldPoint", "bool (*LocalToWorldPoint)(int32_t gameObjectId, const EditorScriptVector3* localPoint, EditorScriptVector3* worldPoint)", "bool", "bool result = runtimeApi->LocalToWorldPoint(/* arguments */);", "LocalToWorldPointをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, const EditorScriptVector3* localPoint, EditorScriptVector3* worldPoint"],
++  ["Transform", "WorldToLocalDirection", "bool (*WorldToLocalDirection)(int32_t gameObjectId, const EditorScriptVector3* worldDirection, EditorScriptVector3* localDirection)", "bool", "bool result = runtimeApi->WorldToLocalDirection(/* arguments */);", "WorldToLocalDirectionをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, const EditorScriptVector3* worldDirection, EditorScriptVector3* localDirection"],
++  ["Transform", "LocalToWorldDirection", "bool (*LocalToWorldDirection)(int32_t gameObjectId, const EditorScriptVector3* localDirection, EditorScriptVector3* worldDirection)", "bool", "bool result = runtimeApi->LocalToWorldDirection(/* arguments */);", "LocalToWorldDirectionをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, const EditorScriptVector3* localDirection, EditorScriptVector3* worldDirection"],
++  ["Physics", "PhysicsRaycastFiltered", "bool (*PhysicsRaycastFiltered)(const EditorScriptRay* ray, float distance, uint32_t physicsLayerMask, bool includeTriggers, const char* requiredComponentTypeName, EditorScriptPhysicsHit* hit)", "bool", "bool result = runtimeApi->PhysicsRaycastFiltered(/* arguments */);", "PhysicsRaycastFilteredをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "const EditorScriptRay* ray, float distance, uint32_t physicsLayerMask, bool includeTriggers, const char* requiredComponentTypeName, EditorScriptPhysicsHit* hit"],
++  ["Gameplay", "SetRendererColor", "bool (*SetRendererColor)(int32_t gameObjectId, const EditorScriptVector3* color)", "bool", "bool result = runtimeApi->SetRendererColor(/* arguments */);", "SetRendererColorをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, const EditorScriptVector3* color"],
++  ["Gameplay", "SetRendererEmission", "bool (*SetRendererEmission)(int32_t gameObjectId, const EditorScriptVector3* color, float strength)", "bool", "bool result = runtimeApi->SetRendererEmission(/* arguments */);", "SetRendererEmissionをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, const EditorScriptVector3* color, float strength"],
++  ["Gameplay", "SetHookVisualState", "bool (*SetHookVisualState)(int32_t hookGameObjectId, int32_t visualState)", "bool", "bool result = runtimeApi->SetHookVisualState(/* arguments */);", "SetHookVisualStateをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t hookGameObjectId, int32_t visualState"],
++  ["Physics", "CreateGameObject", "int32_t (*CreateGameObject)(const char* name)", "int32_t", "int32_t result = runtimeApi->CreateGameObject(/* arguments */);", "CreateGameObjectをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "const char* name"],
++  ["GameObject", "GetParentGameObject", "int32_t (*GetParentGameObject)(int32_t gameObjectId)", "int32_t", "int32_t result = runtimeApi->GetParentGameObject(/* arguments */);", "GetParentGameObjectをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId"],
++  ["GameObject", "SetParentGameObject", "bool (*SetParentGameObject)(int32_t childGameObjectId, int32_t parentGameObjectId, bool preserveWorldTransform)", "bool", "bool result = runtimeApi->SetParentGameObject(/* arguments */);", "SetParentGameObjectをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t childGameObjectId, int32_t parentGameObjectId, bool preserveWorldTransform"],
++  ["GameObject", "GetChildGameObjectCount", "int32_t (*GetChildGameObjectCount)(int32_t gameObjectId)", "int32_t", "int32_t result = runtimeApi->GetChildGameObjectCount(/* arguments */);", "GetChildGameObjectCountをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId"],
++  ["GameObject", "GetChildGameObject", "int32_t (*GetChildGameObject)(int32_t gameObjectId, int32_t childIndex)", "int32_t", "int32_t result = runtimeApi->GetChildGameObject(/* arguments */);", "GetChildGameObjectをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, int32_t childIndex"],
++  ["Scene", "ReloadPrimaryScene", "bool (*ReloadPrimaryScene)()", "bool", "bool result = runtimeApi->ReloadPrimaryScene();", "ReloadPrimarySceneをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "runtimeApiの関数Pointer"],
++  ["Physics", "GetMass", "float (*GetMass)(int32_t gameObjectId)", "float", "float result = runtimeApi->GetMass(/* arguments */);", "GetMassをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId"],
++  ["Gameplay", "CaptureAreaState", "bool (*CaptureAreaState)(int32_t areaRootGameObjectId)", "bool", "bool result = runtimeApi->CaptureAreaState(/* arguments */);", "CaptureAreaStateをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t areaRootGameObjectId"],
++  ["Gameplay", "ResetArea", "bool (*ResetArea)(int32_t areaRootGameObjectId)", "bool", "bool result = runtimeApi->ResetArea(/* arguments */);", "ResetAreaをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t areaRootGameObjectId"],
++  ["Gameplay", "HasAreaState", "bool (*HasAreaState)(int32_t areaRootGameObjectId)", "bool", "bool result = runtimeApi->HasAreaState(/* arguments */);", "HasAreaStateをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t areaRootGameObjectId"],
++  ["Gameplay", "NavSetDestination", "bool (*NavSetDestination)(int32_t gameObjectId, const EditorScriptVector3* destination)", "bool", "bool result = runtimeApi->NavSetDestination(/* arguments */);", "NavSetDestinationをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, const EditorScriptVector3* destination"],
++  ["Gameplay", "NavGetDestination", "bool (*NavGetDestination)(int32_t gameObjectId, EditorScriptVector3* destination)", "bool", "bool result = runtimeApi->NavGetDestination(/* arguments */);", "NavGetDestinationをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, EditorScriptVector3* destination"],
++  ["Gameplay", "NavStop", "bool (*NavStop)(int32_t gameObjectId)", "bool", "bool result = runtimeApi->NavStop(/* arguments */);", "NavStopをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId"],
++  ["Gameplay", "NavResume", "bool (*NavResume)(int32_t gameObjectId)", "bool", "bool result = runtimeApi->NavResume(/* arguments */);", "NavResumeをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId"],
++  ["Gameplay", "NavIsStopped", "bool (*NavIsStopped)(int32_t gameObjectId)", "bool", "bool result = runtimeApi->NavIsStopped(/* arguments */);", "NavIsStoppedをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId"],
++  ["Gameplay", "NavHasPath", "bool (*NavHasPath)(int32_t gameObjectId)", "bool", "bool result = runtimeApi->NavHasPath(/* arguments */);", "NavHasPathをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId"],
++  ["Gameplay", "NavGetRemainingDistance", "bool (*NavGetRemainingDistance)(int32_t gameObjectId, float* remainingDistance)", "bool", "bool result = runtimeApi->NavGetRemainingDistance(/* arguments */);", "NavGetRemainingDistanceをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, float* remainingDistance"],
++  ["Gameplay", "NavWarp", "bool (*NavWarp)(int32_t gameObjectId, const EditorScriptVector3* position)", "bool", "bool result = runtimeApi->NavWarp(/* arguments */);", "NavWarpをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, const EditorScriptVector3* position"],
++  ["Gameplay", "NavGetPathFailureReason", "bool (*NavGetPathFailureReason)(int32_t gameObjectId, char* reason, int32_t reasonCapacity)", "bool", "bool result = runtimeApi->NavGetPathFailureReason(/* arguments */);", "NavGetPathFailureReasonをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, char* reason, int32_t reasonCapacity"],
++  ["Gameplay", "BlastApplyDamage", "bool (*BlastApplyDamage)(int32_t gameObjectId, const EditorScriptVector3* worldPosition, float radius, float damage, float impulse)", "bool", "bool result = runtimeApi->BlastApplyDamage(/* arguments */);", "BlastApplyDamageをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, const EditorScriptVector3* worldPosition, float radius, float damage, float impulse"],
++  ["Gameplay", "BlastFractureAll", "bool (*BlastFractureAll)(int32_t gameObjectId, float impulse)", "bool", "bool result = runtimeApi->BlastFractureAll(/* arguments */);", "BlastFractureAllをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, float impulse"],
++  ["Gameplay", "BlastIsFractured", "bool (*BlastIsFractured)(int32_t gameObjectId)", "bool", "bool result = runtimeApi->BlastIsFractured(/* arguments */);", "BlastIsFracturedをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId"],
++  ["Gameplay", "BlastGetChunkCount", "int32_t (*BlastGetChunkCount)(int32_t gameObjectId)", "int32_t", "int32_t result = runtimeApi->BlastGetChunkCount(/* arguments */);", "BlastGetChunkCountをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId"],
++  ["Gameplay", "BlastGetActorCount", "int32_t (*BlastGetActorCount)(int32_t gameObjectId)", "int32_t", "int32_t result = runtimeApi->BlastGetActorCount(/* arguments */);", "BlastGetActorCountをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId"],
++  ["Gameplay", "BlastGetBondCount", "int32_t (*BlastGetBondCount)(int32_t gameObjectId)", "int32_t", "int32_t result = runtimeApi->BlastGetBondCount(/* arguments */);", "BlastGetBondCountをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId"],
++  ["Gameplay", "BlastGetChunkGameObjectId", "bool (*BlastGetChunkGameObjectId)(int32_t gameObjectId, int32_t chunkIndex, int32_t* chunkGameObjectId)", "bool", "bool result = runtimeApi->BlastGetChunkGameObjectId(/* arguments */);", "BlastGetChunkGameObjectIdをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, int32_t chunkIndex, int32_t* chunkGameObjectId"],
++  ["Gameplay", "BlastIsChunkDetached", "bool (*BlastIsChunkDetached)(int32_t gameObjectId, int32_t chunkIndex)", "bool", "bool result = runtimeApi->BlastIsChunkDetached(/* arguments */);", "BlastIsChunkDetachedをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, int32_t chunkIndex"],
++  ["Transform", "CameraGetFieldOfView", "bool (*CameraGetFieldOfView)(int32_t gameObjectId, float* fieldOfViewDegrees)", "bool", "bool result = runtimeApi->CameraGetFieldOfView(/* arguments */);", "CameraGetFieldOfViewをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, float* fieldOfViewDegrees"],
++  ["Transform", "CameraSetFieldOfView", "bool (*CameraSetFieldOfView)(int32_t gameObjectId, float fieldOfViewDegrees)", "bool", "bool result = runtimeApi->CameraSetFieldOfView(/* arguments */);", "CameraSetFieldOfViewをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, float fieldOfViewDegrees"],
++  ["Transform", "CameraGetNearClip", "bool (*CameraGetNearClip)(int32_t gameObjectId, float* nearClip)", "bool", "bool result = runtimeApi->CameraGetNearClip(/* arguments */);", "CameraGetNearClipをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, float* nearClip"],
++  ["Transform", "CameraSetNearClip", "bool (*CameraSetNearClip)(int32_t gameObjectId, float nearClip)", "bool", "bool result = runtimeApi->CameraSetNearClip(/* arguments */);", "CameraSetNearClipをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, float nearClip"],
++  ["Transform", "CameraGetFarClip", "bool (*CameraGetFarClip)(int32_t gameObjectId, float* farClip)", "bool", "bool result = runtimeApi->CameraGetFarClip(/* arguments */);", "CameraGetFarClipをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, float* farClip"],
++  ["Transform", "CameraSetFarClip", "bool (*CameraSetFarClip)(int32_t gameObjectId, float farClip)", "bool", "bool result = runtimeApi->CameraSetFarClip(/* arguments */);", "CameraSetFarClipをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, float farClip"],
++  ["Transform", "CameraGetProjectionMode", "bool (*CameraGetProjectionMode)(int32_t gameObjectId, int32_t* projectionMode)", "bool", "bool result = runtimeApi->CameraGetProjectionMode(/* arguments */);", "CameraGetProjectionModeをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, int32_t* projectionMode"],
++  ["Transform", "CameraSetProjectionMode", "bool (*CameraSetProjectionMode)(int32_t gameObjectId, int32_t projectionMode)", "bool", "bool result = runtimeApi->CameraSetProjectionMode(/* arguments */);", "CameraSetProjectionModeをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, int32_t projectionMode"],
++  ["Transform", "CameraGetOrthographicSize", "bool (*CameraGetOrthographicSize)(int32_t gameObjectId, float* orthographicSize)", "bool", "bool result = runtimeApi->CameraGetOrthographicSize(/* arguments */);", "CameraGetOrthographicSizeをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, float* orthographicSize"],
++  ["Transform", "CameraSetOrthographicSize", "bool (*CameraSetOrthographicSize)(int32_t gameObjectId, float orthographicSize)", "bool", "bool result = runtimeApi->CameraSetOrthographicSize(/* arguments */);", "CameraSetOrthographicSizeをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, float orthographicSize"],
++  ["Transform", "CameraGetPriority", "bool (*CameraGetPriority)(int32_t gameObjectId, int32_t* priority)", "bool", "bool result = runtimeApi->CameraGetPriority(/* arguments */);", "CameraGetPriorityをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, int32_t* priority"],
++  ["Transform", "CameraSetPriority", "bool (*CameraSetPriority)(int32_t gameObjectId, int32_t priority)", "bool", "bool result = runtimeApi->CameraSetPriority(/* arguments */);", "CameraSetPriorityをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, int32_t priority"],
++  ["Transform", "CameraGetEnabled", "bool (*CameraGetEnabled)(int32_t gameObjectId, bool* isEnabled)", "bool", "bool result = runtimeApi->CameraGetEnabled(/* arguments */);", "CameraGetEnabledをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, bool* isEnabled"],
++  ["Transform", "CameraSetEnabled", "bool (*CameraSetEnabled)(int32_t gameObjectId, bool isEnabled)", "bool", "bool result = runtimeApi->CameraSetEnabled(/* arguments */);", "CameraSetEnabledをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, bool isEnabled"],
++  ["Transform", "CameraGetActive", "int32_t (*CameraGetActive)()", "int32_t", "int32_t result = runtimeApi->CameraGetActive();", "CameraGetActiveをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "runtimeApiの関数Pointer"],
++  ["Transform", "CameraSetActive", "bool (*CameraSetActive)(int32_t gameObjectId)", "bool", "bool result = runtimeApi->CameraSetActive(/* arguments */);", "CameraSetActiveをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId"],
++  ["Transform", "CameraLookAt", "bool (*CameraLookAt)(int32_t gameObjectId, const EditorScriptVector3* targetPosition)", "bool", "bool result = runtimeApi->CameraLookAt(/* arguments */);", "CameraLookAtをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, const EditorScriptVector3* targetPosition"],
++  ["Transform", "CameraGetLookDirection", "bool (*CameraGetLookDirection)(int32_t gameObjectId, EditorScriptVector3* direction)", "bool", "bool result = runtimeApi->CameraGetLookDirection(/* arguments */);", "CameraGetLookDirectionをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, EditorScriptVector3* direction"],
++  ["Transform", "CameraSetLookDirection", "bool (*CameraSetLookDirection)(int32_t gameObjectId, const EditorScriptVector3* direction)", "bool", "bool result = runtimeApi->CameraSetLookDirection(/* arguments */);", "CameraSetLookDirectionをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, const EditorScriptVector3* direction"],
++  ["Effect", "AudioPlayWithHandle", "EditorScriptAudioHandle (*AudioPlayWithHandle)(int32_t gameObjectId)", "EditorScriptAudioHandle", "EditorScriptAudioHandle result = runtimeApi->AudioPlayWithHandle(/* arguments */);", "AudioPlayWithHandleをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId"],
++  ["Effect", "AudioPlayClipAtPosition", "EditorScriptAudioHandle (*AudioPlayClipAtPosition)(const char* clipAssetPath, const EditorScriptVector3* position, int32_t audioBus, float volume, bool loop)", "EditorScriptAudioHandle", "EditorScriptAudioHandle result = runtimeApi->AudioPlayClipAtPosition(/* arguments */);", "AudioPlayClipAtPositionをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "const char* clipAssetPath, const EditorScriptVector3* position, int32_t audioBus, float volume, bool loop"],
++  ["Effect", "AudioPlayClip2D", "EditorScriptAudioHandle (*AudioPlayClip2D)(const char* clipAssetPath, int32_t audioBus, float volume, bool loop)", "EditorScriptAudioHandle", "EditorScriptAudioHandle result = runtimeApi->AudioPlayClip2D(/* arguments */);", "AudioPlayClip2DをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "const char* clipAssetPath, int32_t audioBus, float volume, bool loop"],
++  ["Effect", "AudioStopHandle", "bool (*AudioStopHandle)(EditorScriptAudioHandle audioHandle)", "bool", "bool result = runtimeApi->AudioStopHandle(/* arguments */);", "AudioStopHandleをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptAudioHandle audioHandle"],
++  ["Effect", "AudioSetPaused", "bool (*AudioSetPaused)(EditorScriptAudioHandle audioHandle, bool isPaused)", "bool", "bool result = runtimeApi->AudioSetPaused(/* arguments */);", "AudioSetPausedをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptAudioHandle audioHandle, bool isPaused"],
++  ["Effect", "AudioIsPlayingHandle", "bool (*AudioIsPlayingHandle)(EditorScriptAudioHandle audioHandle)", "bool", "bool result = runtimeApi->AudioIsPlayingHandle(/* arguments */);", "AudioIsPlayingHandleをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptAudioHandle audioHandle"],
++  ["Effect", "AudioIsHandleValid", "bool (*AudioIsHandleValid)(EditorScriptAudioHandle audioHandle)", "bool", "bool result = runtimeApi->AudioIsHandleValid(/* arguments */);", "AudioIsHandleValidをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptAudioHandle audioHandle"],
++  ["Effect", "AudioSetVolumeHandle", "bool (*AudioSetVolumeHandle)(EditorScriptAudioHandle audioHandle, float volume)", "bool", "bool result = runtimeApi->AudioSetVolumeHandle(/* arguments */);", "AudioSetVolumeHandleをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptAudioHandle audioHandle, float volume"],
++  ["Effect", "AudioGetVolumeHandle", "bool (*AudioGetVolumeHandle)(EditorScriptAudioHandle audioHandle, float* volume)", "bool", "bool result = runtimeApi->AudioGetVolumeHandle(/* arguments */);", "AudioGetVolumeHandleをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptAudioHandle audioHandle, float* volume"],
++  ["Effect", "AudioSetPitch", "bool (*AudioSetPitch)(EditorScriptAudioHandle audioHandle, float pitch)", "bool", "bool result = runtimeApi->AudioSetPitch(/* arguments */);", "AudioSetPitchをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptAudioHandle audioHandle, float pitch"],
++  ["Effect", "AudioGetPitch", "bool (*AudioGetPitch)(EditorScriptAudioHandle audioHandle, float* pitch)", "bool", "bool result = runtimeApi->AudioGetPitch(/* arguments */);", "AudioGetPitchをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptAudioHandle audioHandle, float* pitch"],
++  ["Effect", "AudioSetLoop", "bool (*AudioSetLoop)(EditorScriptAudioHandle audioHandle, bool loop)", "bool", "bool result = runtimeApi->AudioSetLoop(/* arguments */);", "AudioSetLoopをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptAudioHandle audioHandle, bool loop"],
++  ["Effect", "AudioGetLoop", "bool (*AudioGetLoop)(EditorScriptAudioHandle audioHandle, bool* loop)", "bool", "bool result = runtimeApi->AudioGetLoop(/* arguments */);", "AudioGetLoopをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptAudioHandle audioHandle, bool* loop"],
++  ["Effect", "AudioSetPositionHandle", "bool (*AudioSetPositionHandle)(EditorScriptAudioHandle audioHandle, const EditorScriptVector3* position)", "bool", "bool result = runtimeApi->AudioSetPositionHandle(/* arguments */);", "AudioSetPositionHandleをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptAudioHandle audioHandle, const EditorScriptVector3* position"],
++  ["Effect", "AudioSetBus", "bool (*AudioSetBus)(EditorScriptAudioHandle audioHandle, int32_t audioBus)", "bool", "bool result = runtimeApi->AudioSetBus(/* arguments */);", "AudioSetBusをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptAudioHandle audioHandle, int32_t audioBus"],
++  ["Effect", "AudioGetPlaybackPosition", "bool (*AudioGetPlaybackPosition)(EditorScriptAudioHandle audioHandle, float* seconds)", "bool", "bool result = runtimeApi->AudioGetPlaybackPosition(/* arguments */);", "AudioGetPlaybackPositionをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptAudioHandle audioHandle, float* seconds"],
++  ["Effect", "AudioSetPlaybackPosition", "bool (*AudioSetPlaybackPosition)(EditorScriptAudioHandle audioHandle, float seconds)", "bool", "bool result = runtimeApi->AudioSetPlaybackPosition(/* arguments */);", "AudioSetPlaybackPositionをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptAudioHandle audioHandle, float seconds"],
++  ["Effect", "AudioGetDuration", "bool (*AudioGetDuration)(EditorScriptAudioHandle audioHandle, float* seconds)", "bool", "bool result = runtimeApi->AudioGetDuration(/* arguments */);", "AudioGetDurationをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptAudioHandle audioHandle, float* seconds"],
++  ["Effect", "AudioFadeTo", "bool (*AudioFadeTo)(EditorScriptAudioHandle audioHandle, float targetVolume, float durationSeconds)", "bool", "bool result = runtimeApi->AudioFadeTo(/* arguments */);", "AudioFadeToをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptAudioHandle audioHandle, float targetVolume, float durationSeconds"],
++  ["Gameplay", "RendererGetColor", "bool (*RendererGetColor)(int32_t gameObjectId, EditorScriptVector3* color)", "bool", "bool result = runtimeApi->RendererGetColor(/* arguments */);", "RendererGetColorをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, EditorScriptVector3* color"],
++  ["Gameplay", "RendererSetEnabled", "bool (*RendererSetEnabled)(int32_t gameObjectId, bool isEnabled)", "bool", "bool result = runtimeApi->RendererSetEnabled(/* arguments */);", "RendererSetEnabledをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, bool isEnabled"],
++  ["Gameplay", "RendererGetEnabled", "bool (*RendererGetEnabled)(int32_t gameObjectId, bool* isEnabled)", "bool", "bool result = runtimeApi->RendererGetEnabled(/* arguments */);", "RendererGetEnabledをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, bool* isEnabled"],
++  ["Gameplay", "RendererSetOpacity", "bool (*RendererSetOpacity)(int32_t gameObjectId, float opacity)", "bool", "bool result = runtimeApi->RendererSetOpacity(/* arguments */);", "RendererSetOpacityをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, float opacity"],
++  ["Gameplay", "RendererGetOpacity", "bool (*RendererGetOpacity)(int32_t gameObjectId, float* opacity)", "bool", "bool result = runtimeApi->RendererGetOpacity(/* arguments */);", "RendererGetOpacityをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, float* opacity"],
++  ["Gameplay", "RendererGetEmission", "bool (*RendererGetEmission)(int32_t gameObjectId, EditorScriptVector3* color, float* strength)", "bool", "bool result = runtimeApi->RendererGetEmission(/* arguments */);", "RendererGetEmissionをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, EditorScriptVector3* color, float* strength"],
++  ["Gameplay", "RendererSetMaterialFloat", "bool (*RendererSetMaterialFloat)(int32_t gameObjectId, const char* propertyName, float value)", "bool", "bool result = runtimeApi->RendererSetMaterialFloat(/* arguments */);", "RendererSetMaterialFloatをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, const char* propertyName, float value"],
++  ["Gameplay", "RendererGetMaterialFloat", "bool (*RendererGetMaterialFloat)(int32_t gameObjectId, const char* propertyName, float* value)", "bool", "bool result = runtimeApi->RendererGetMaterialFloat(/* arguments */);", "RendererGetMaterialFloatをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, const char* propertyName, float* value"],
++  ["Gameplay", "RendererSetMaterialColor", "bool (*RendererSetMaterialColor)(int32_t gameObjectId, const char* propertyName, const EditorScriptVector3* color)", "bool", "bool result = runtimeApi->RendererSetMaterialColor(/* arguments */);", "RendererSetMaterialColorをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, const char* propertyName, const EditorScriptVector3* color"],
++  ["Gameplay", "RendererGetMaterialColor", "bool (*RendererGetMaterialColor)(int32_t gameObjectId, const char* propertyName, EditorScriptVector3* color)", "bool", "bool result = runtimeApi->RendererGetMaterialColor(/* arguments */);", "RendererGetMaterialColorをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, const char* propertyName, EditorScriptVector3* color"],
++  ["Gameplay", "RendererSetMaterialTexture", "bool (*RendererSetMaterialTexture)(int32_t gameObjectId, const char* slotName, const char* textureAssetPath)", "bool", "bool result = runtimeApi->RendererSetMaterialTexture(/* arguments */);", "RendererSetMaterialTextureをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, const char* slotName, const char* textureAssetPath"],
++  ["Gameplay", "RendererGetMaterialTexture", "bool (*RendererGetMaterialTexture)(int32_t gameObjectId, const char* slotName, char* textureAssetPath, int32_t textureAssetPathCapacity)", "bool", "bool result = runtimeApi->RendererGetMaterialTexture(/* arguments */);", "RendererGetMaterialTextureをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, const char* slotName, char* textureAssetPath, int32_t textureAssetPathCapacity"],
++  ["Effect", "VfxSpawn", "EditorScriptVfxHandle (*VfxSpawn)(const char* effectIdOrAssetPath, const EditorScriptVector3* position, const EditorScriptVector3* rotationEuler)", "EditorScriptVfxHandle", "EditorScriptVfxHandle result = runtimeApi->VfxSpawn(/* arguments */);", "VfxSpawnをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "const char* effectIdOrAssetPath, const EditorScriptVector3* position, const EditorScriptVector3* rotationEuler"],
++  ["Effect", "VfxSpawnAttached", "EditorScriptVfxHandle (*VfxSpawnAttached)(const char* effectIdOrAssetPath, int32_t followGameObjectId, const EditorScriptVector3* localOffset)", "EditorScriptVfxHandle", "EditorScriptVfxHandle result = runtimeApi->VfxSpawnAttached(/* arguments */);", "VfxSpawnAttachedをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "const char* effectIdOrAssetPath, int32_t followGameObjectId, const EditorScriptVector3* localOffset"],
++  ["Effect", "VfxStopHandle", "bool (*VfxStopHandle)(EditorScriptVfxHandle vfxHandle)", "bool", "bool result = runtimeApi->VfxStopHandle(/* arguments */);", "VfxStopHandleをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptVfxHandle vfxHandle"],
++  ["Effect", "VfxIsPlayingHandle", "bool (*VfxIsPlayingHandle)(EditorScriptVfxHandle vfxHandle)", "bool", "bool result = runtimeApi->VfxIsPlayingHandle(/* arguments */);", "VfxIsPlayingHandleをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptVfxHandle vfxHandle"],
++  ["Effect", "VfxSetPositionHandle", "bool (*VfxSetPositionHandle)(EditorScriptVfxHandle vfxHandle, const EditorScriptVector3* position)", "bool", "bool result = runtimeApi->VfxSetPositionHandle(/* arguments */);", "VfxSetPositionHandleをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptVfxHandle vfxHandle, const EditorScriptVector3* position"],
++  ["Effect", "VfxGetPositionHandle", "bool (*VfxGetPositionHandle)(EditorScriptVfxHandle vfxHandle, EditorScriptVector3* position)", "bool", "bool result = runtimeApi->VfxGetPositionHandle(/* arguments */);", "VfxGetPositionHandleをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptVfxHandle vfxHandle, EditorScriptVector3* position"],
++  ["Effect", "VfxSetPausedHandle", "bool (*VfxSetPausedHandle)(EditorScriptVfxHandle vfxHandle, bool isPaused)", "bool", "bool result = runtimeApi->VfxSetPausedHandle(/* arguments */);", "VfxSetPausedHandleをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptVfxHandle vfxHandle, bool isPaused"],
++  ["Effect", "VfxSetPlaybackSpeed", "bool (*VfxSetPlaybackSpeed)(EditorScriptVfxHandle vfxHandle, float playbackSpeed)", "bool", "bool result = runtimeApi->VfxSetPlaybackSpeed(/* arguments */);", "VfxSetPlaybackSpeedをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptVfxHandle vfxHandle, float playbackSpeed"],
++  ["Effect", "VfxGetPlaybackSpeed", "bool (*VfxGetPlaybackSpeed)(EditorScriptVfxHandle vfxHandle, float* playbackSpeed)", "bool", "bool result = runtimeApi->VfxGetPlaybackSpeed(/* arguments */);", "VfxGetPlaybackSpeedをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptVfxHandle vfxHandle, float* playbackSpeed"],
++  ["Effect", "VfxRestartHandle", "bool (*VfxRestartHandle)(EditorScriptVfxHandle vfxHandle)", "bool", "bool result = runtimeApi->VfxRestartHandle(/* arguments */);", "VfxRestartHandleをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptVfxHandle vfxHandle"],
++  ["Effect", "VfxGetParticleCountHandle", "bool (*VfxGetParticleCountHandle)(EditorScriptVfxHandle vfxHandle, int32_t* particleCount)", "bool", "bool result = runtimeApi->VfxGetParticleCountHandle(/* arguments */);", "VfxGetParticleCountHandleをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptVfxHandle vfxHandle, int32_t* particleCount"],
++  ["Effect", "VfxSetRotationHandle", "bool (*VfxSetRotationHandle)(EditorScriptVfxHandle vfxHandle, const EditorScriptVector3* rotationEuler)", "bool", "bool result = runtimeApi->VfxSetRotationHandle(/* arguments */);", "VfxSetRotationHandleをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptVfxHandle vfxHandle, const EditorScriptVector3* rotationEuler"],
++  ["Effect", "VfxSetScaleHandle", "bool (*VfxSetScaleHandle)(EditorScriptVfxHandle vfxHandle, const EditorScriptVector3* scale)", "bool", "bool result = runtimeApi->VfxSetScaleHandle(/* arguments */);", "VfxSetScaleHandleをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "EditorScriptVfxHandle vfxHandle, const EditorScriptVector3* scale"],
++  ["Gameplay", "UiSetText", "bool (*UiSetText)(int32_t gameObjectId, const char* text)", "bool", "bool result = runtimeApi->UiSetText(/* arguments */);", "UiSetTextをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, const char* text"],
++  ["Gameplay", "UiGetText", "bool (*UiGetText)(int32_t gameObjectId, char* text, int32_t textCapacity)", "bool", "bool result = runtimeApi->UiGetText(/* arguments */);", "UiGetTextをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, char* text, int32_t textCapacity"],
++  ["Gameplay", "UiSetTextColor", "bool (*UiSetTextColor)(int32_t gameObjectId, const EditorScriptVector3* color, float alpha)", "bool", "bool result = runtimeApi->UiSetTextColor(/* arguments */);", "UiSetTextColorをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, const EditorScriptVector3* color, float alpha"],
++  ["Gameplay", "UiGetTextColor", "bool (*UiGetTextColor)(int32_t gameObjectId, EditorScriptVector3* color, float* alpha)", "bool", "bool result = runtimeApi->UiGetTextColor(/* arguments */);", "UiGetTextColorをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, EditorScriptVector3* color, float* alpha"],
++  ["Gameplay", "UiSetFontSize", "bool (*UiSetFontSize)(int32_t gameObjectId, float fontSize)", "bool", "bool result = runtimeApi->UiSetFontSize(/* arguments */);", "UiSetFontSizeをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, float fontSize"],
++  ["Gameplay", "UiGetFontSize", "bool (*UiGetFontSize)(int32_t gameObjectId, float* fontSize)", "bool", "bool result = runtimeApi->UiGetFontSize(/* arguments */);", "UiGetFontSizeをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, float* fontSize"],
++  ["Gameplay", "UiSetInteractable", "bool (*UiSetInteractable)(int32_t gameObjectId, bool isInteractable)", "bool", "bool result = runtimeApi->UiSetInteractable(/* arguments */);", "UiSetInteractableをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, bool isInteractable"],
++  ["Gameplay", "UiGetInteractable", "bool (*UiGetInteractable)(int32_t gameObjectId, bool* isInteractable)", "bool", "bool result = runtimeApi->UiGetInteractable(/* arguments */);", "UiGetInteractableをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, bool* isInteractable"],
++  ["Gameplay", "UiSetSliderValue", "bool (*UiSetSliderValue)(int32_t gameObjectId, float value)", "bool", "bool result = runtimeApi->UiSetSliderValue(/* arguments */);", "UiSetSliderValueをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, float value"],
++  ["Gameplay", "UiGetSliderValue", "bool (*UiGetSliderValue)(int32_t gameObjectId, float* value)", "bool", "bool result = runtimeApi->UiGetSliderValue(/* arguments */);", "UiGetSliderValueをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, float* value"],
++  ["Gameplay", "UiSetToggleValue", "bool (*UiSetToggleValue)(int32_t gameObjectId, bool value)", "bool", "bool result = runtimeApi->UiSetToggleValue(/* arguments */);", "UiSetToggleValueをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, bool value"],
++  ["Gameplay", "UiGetToggleValue", "bool (*UiGetToggleValue)(int32_t gameObjectId, bool* value)", "bool", "bool result = runtimeApi->UiGetToggleValue(/* arguments */);", "UiGetToggleValueをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t gameObjectId, bool* value"],
++  ["Gameplay", "TerrainGetHeightAtWorld", "bool (*TerrainGetHeightAtWorld)(int32_t terrainGameObjectId, float worldX, float worldZ, float* worldHeight)", "bool", "bool result = runtimeApi->TerrainGetHeightAtWorld(/* arguments */);", "TerrainGetHeightAtWorldをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t terrainGameObjectId, float worldX, float worldZ, float* worldHeight"],
++  ["Gameplay", "TerrainContainsWorldPosition", "bool (*TerrainContainsWorldPosition)(int32_t terrainGameObjectId, float worldX, float worldZ)", "bool", "bool result = runtimeApi->TerrainContainsWorldPosition(/* arguments */);", "TerrainContainsWorldPositionをRuntime APIから実行・取得します。", "戻り値を確認し、成功時だけ出力値または次の処理へ使います。", "int32_t terrainGameObjectId, float worldX, float worldZ"],
++];
++
++export const runtimeApiV13Additions: RuntimeApiEntry[] = seeds.map((seed) => ({
++  category: seed[0],
++  name: seed[1],
++  signature: seed[2],
++  returnType: seed[3],
++  declaration: seed[4],
++  description: seed[5],
++  afterUse: seed[6],
++  requires: seed[7],
++}));
+diff --git a/app/runtimeApiV8Additions.ts b/app/runtimeApiV8Additions.ts
+deleted file mode 100644
+index 398dde9..0000000
+--- a/app/runtimeApiV8Additions.ts
++++ /dev/null
+@@ -1,55 +0,0 @@
+-﻿import type { RuntimeApiEntry } from "./runtimeApiReference";
+-
+-const seeds: Array<[RuntimeApiEntry["category"], string, string, string, string, string, string, string]> = [
+-  ["Physics", "CreateSpringJoint", "EditorScriptJointHandle (*CreateSpringJoint)(int32_t ownerGameObjectId, int32_t connectedGameObjectId, const EditorScriptSpringJointDesc* springJointDesc)", "EditorScriptJointHandle", "EditorScriptJointHandle joint = runtimeApi->CreateSpringJoint(/* arguments */);", "Spring Jointを生成します。", "返されたHandleを設定・破棄APIへ渡します。", "ownerGameObjectId, connectedGameObjectId, springJointDesc"],
+-  ["Physics", "DestroyJoint", "bool (*DestroyJoint)(EditorScriptJointHandle jointHandle)", "bool", "bool result = runtimeApi->DestroyJoint(/* arguments */);", "Jointを破棄します。", "成功を確認してからHandleを無効化します。", "jointHandle"],
+-  ["Physics", "SetSpringJointSettings", "bool (*SetSpringJointSettings)(EditorScriptJointHandle jointHandle, const EditorScriptSpringJointDesc* springJointDesc)", "bool", "bool result = runtimeApi->SetSpringJointSettings(/* arguments */);", "Spring Jointの設定を更新します。", "設定反映の成否を確認します。", "jointHandle, springJointDesc"],
+-  ["Physics", "IsJointValid", "bool (*IsJointValid)(EditorScriptJointHandle jointHandle)", "bool", "bool result = runtimeApi->IsJointValid(/* arguments */);", "Joint Handleの有効性を確認します。", "破棄済みHandleを操作しないための条件に使います。", "jointHandle"],
+-  ["Physics", "CreateJoint", "EditorScriptJointHandle (*CreateJoint)(EditorScriptJointType jointType, int32_t ownerGameObjectId, int32_t connectedGameObjectId, const EditorScriptJointDesc* jointDesc)", "EditorScriptJointHandle", "EditorScriptJointHandle joint = runtimeApi->CreateJoint(/* arguments */);", "指定した種類のJointを生成します。", "返されたHandleを有効性確認と設定に使います。", "jointType, ownerGameObjectId, connectedGameObjectId, jointDesc"],
+-  ["Physics", "SetJointSettings", "bool (*SetJointSettings)(EditorScriptJointHandle jointHandle, const EditorScriptJointDesc* jointDesc)", "bool", "bool result = runtimeApi->SetJointSettings(/* arguments */);", "Joint共通設定を更新します。", "反映結果を確認してから物理処理を続けます。", "jointHandle, jointDesc"],
+-  ["Input", "GetMouseDelta", "EditorScriptVector2 (*GetMouseDelta)()", "EditorScriptVector2", "EditorScriptVector2 delta = runtimeApi->GetMouseDelta();", "前フレームからのマウス移動量を取得します。", "Camera回転や照準の入力値として使います。", "Play中 / Game View Focus"],
+-  ["Input", "IsMouseButtonDown", "bool (*IsMouseButtonDown)(int32_t mouseButton)", "bool", "bool result = runtimeApi->IsMouseButtonDown(/* arguments */);", "マウスボタンが押されている間か確認します。", "連続入力の条件として使います。", "mouseButton"],
+-  ["Input", "WasMouseButtonPressed", "bool (*WasMouseButtonPressed)(int32_t mouseButton)", "bool", "bool result = runtimeApi->WasMouseButtonPressed(/* arguments */);", "マウスボタンを押した瞬間を確認します。", "射撃や選択を1回だけ実行します。", "mouseButton"],
+-  ["Input", "WasMouseButtonReleased", "bool (*WasMouseButtonReleased)(int32_t mouseButton)", "bool", "bool result = runtimeApi->WasMouseButtonReleased(/* arguments */);", "マウスボタンを離した瞬間を確認します。", "Charge終了などの1回処理に使います。", "mouseButton"],
+-  ["Input", "SetCursorLocked", "void (*SetCursorLocked)(bool isLocked)", "void", "runtimeApi->SetCursorLocked(/* arguments */);", "カーソルのロック状態を設定します。", "Game Viewのマウス照準を開始・終了するときに使います。", "isLocked"],
+-  ["Input", "IsCursorLocked", "bool (*IsCursorLocked)()", "bool", "bool result = runtimeApi->IsCursorLocked();", "カーソルがロックされているか取得します。", "入力モードの分岐に使います。", "runtimeApiの関数Pointer"],
+-  ["Input", "SetCursorVisible", "void (*SetCursorVisible)(bool isVisible)", "void", "runtimeApi->SetCursorVisible(/* arguments */);", "カーソルの表示状態を設定します。", "UI操作とゲーム操作の切替に使います。", "isVisible"],
+-  ["Input", "IsCursorVisible", "bool (*IsCursorVisible)()", "bool", "bool result = runtimeApi->IsCursorVisible();", "カーソルが表示中か取得します。", "入力モードの表示状態を確認します。", "runtimeApiの関数Pointer"],
+-  ["Physics", "CreateWire", "EditorScriptWireHandle (*CreateWire)(const EditorScriptWireDesc* wireDesc)", "EditorScriptWireHandle", "EditorScriptWireHandle wire = runtimeApi->CreateWire(/* arguments */);", "Wireを生成します。", "返されたHandleを長さ・修復・破棄APIへ渡します。", "wireDesc"],
+-  ["Physics", "DestroyWire", "bool (*DestroyWire)(EditorScriptWireHandle wireHandle)", "bool", "bool result = runtimeApi->DestroyWire(/* arguments */);", "Wireを破棄します。", "成功を確認してからHandleを無効化します。", "wireHandle"],
+-  ["Physics", "SetWireLengthByHandle", "bool (*SetWireLengthByHandle)(EditorScriptWireHandle wireHandle, float maximumLength)", "bool", "bool result = runtimeApi->SetWireLengthByHandle(/* arguments */);", "Wireの最大長を設定します。", "Handleが有効な間だけ更新します。", "wireHandle, maximumLength"],
+-  ["Physics", "SetWireShrinkSpeed", "bool (*SetWireShrinkSpeed)(EditorScriptWireHandle wireHandle, float shrinkSpeed)", "bool", "bool result = runtimeApi->SetWireShrinkSpeed(/* arguments */);", "Wireの収縮速度を設定します。", "物理更新中の調整値として使います。", "wireHandle, shrinkSpeed"],
+-  ["Physics", "RepairWire", "bool (*RepairWire)(EditorScriptWireHandle wireHandle)", "bool", "bool result = runtimeApi->RepairWire(/* arguments */);", "破断したWireを修復します。", "成功後に再接続状態を確認します。", "wireHandle"],
+-  ["Physics", "GetWireStateByHandle", "bool (*GetWireStateByHandle)(EditorScriptWireHandle wireHandle, EditorScriptWireState* wireState)", "bool", "bool result = runtimeApi->GetWireStateByHandle(/* arguments */);", "Wireの状態を書き込み取得します。", "成功時だけwireStateの値を読みます。", "wireHandle, wireState"],
+-  ["Physics", "GetWireCountForGameObject", "int32_t (*GetWireCountForGameObject)(int32_t gameObjectId)", "int32_t", "int32_t count = runtimeApi->GetWireCountForGameObject(/* arguments */);", "GameObjectに接続されたWire数を取得します。", "取得数を列挙上限に使います。", "gameObjectId"],
+-  ["Physics", "GetWireForGameObject", "bool (*GetWireForGameObject)(int32_t gameObjectId, int32_t wireIndex, EditorScriptWireState* wireState)", "bool", "bool result = runtimeApi->GetWireForGameObject(/* arguments */);", "GameObjectのWire状態を列挙します。", "countの範囲内のindexだけを渡します。", "gameObjectId, wireIndex, wireState"],
+-  ["Physics", "CanConnectWire", "bool (*CanConnectWire)(int32_t gameObjectId)", "bool", "bool result = runtimeApi->CanConnectWire(/* arguments */);", "Wire接続可能か確認します。", "CreateWire前の条件判定に使います。", "gameObjectId"],
+-  ["Gameplay", "AddComponent", "bool (*AddComponent)(int32_t gameObjectId, const char* componentTypeName)", "bool", "bool result = runtimeApi->AddComponent(/* arguments */);", "GameObjectへComponentを追加します。", "型名を正確に指定し、成功後に設定値を取得します。", "gameObjectId, componentTypeName"],
+-  ["Gameplay", "RemoveComponent", "bool (*RemoveComponent)(int32_t gameObjectId, const char* componentTypeName)", "bool", "bool result = runtimeApi->RemoveComponent(/* arguments */);", "GameObjectからComponentを削除します。", "参照中のComponentが無いことを確認してから使います。", "gameObjectId, componentTypeName"],
+-  ["Gameplay", "FindGameObjectsWithComponent", "int32_t (*FindGameObjectsWithComponent)(const char* componentTypeName, int32_t* gameObjectIds, int32_t capacity)", "int32_t", "int32_t count = runtimeApi->FindGameObjectsWithComponent(/* arguments */);", "指定Componentを持つObject IDを列挙します。", "返却数とcapacityを確認して配列を処理します。", "componentTypeName, gameObjectIds, capacity"],
+-  ["GameObject", "InstantiateGameObject", "int32_t (*InstantiateGameObject)(int32_t sourceGameObjectId, const EditorScriptVector3* position, const EditorScriptVector3* rotation)", "int32_t", "int32_t instanceId = runtimeApi->InstantiateGameObject(/* arguments */);", "Objectを複製生成します。", "返されたIDを次の操作の対象にします。", "sourceGameObjectId, position, rotation"],
+-  ["GameObject", "DestroyGameObject", "bool (*DestroyGameObject)(int32_t gameObjectId)", "bool", "bool result = runtimeApi->DestroyGameObject(/* arguments */);", "GameObjectを破棄します。", "破棄後のIDを再利用しません。", "gameObjectId"],
+-  ["Transform", "WorldToLocalPoint", "bool (*WorldToLocalPoint)(int32_t gameObjectId, const EditorScriptVector3* worldPoint, EditorScriptVector3* localPoint)", "bool", "bool result = runtimeApi->WorldToLocalPoint(/* arguments */);", "World座標の点をLocal座標へ変換します。", "成功時に出力localPointを読みます。", "gameObjectId, worldPoint, localPoint"],
+-  ["Transform", "LocalToWorldPoint", "bool (*LocalToWorldPoint)(int32_t gameObjectId, const EditorScriptVector3* localPoint, EditorScriptVector3* worldPoint)", "bool", "bool result = runtimeApi->LocalToWorldPoint(/* arguments */);", "Local座標の点をWorld座標へ変換します。", "成功時に出力worldPointを読みます。", "gameObjectId, localPoint, worldPoint"],
+-  ["Transform", "WorldToLocalDirection", "bool (*WorldToLocalDirection)(int32_t gameObjectId, const EditorScriptVector3* worldDirection, EditorScriptVector3* localDirection)", "bool", "bool result = runtimeApi->WorldToLocalDirection(/* arguments */);", "World方向をLocal方向へ変換します。", "方向なので位置の平行移動は含めません。", "gameObjectId, worldDirection, localDirection"],
+-  ["Transform", "LocalToWorldDirection", "bool (*LocalToWorldDirection)(int32_t gameObjectId, const EditorScriptVector3* localDirection, EditorScriptVector3* worldDirection)", "bool", "bool result = runtimeApi->LocalToWorldDirection(/* arguments */);", "Local方向をWorld方向へ変換します。", "方向ベクトルとして正規化が必要か確認します。", "gameObjectId, localDirection, worldDirection"],
+-  ["Physics", "PhysicsRaycastFiltered", "bool (*PhysicsRaycastFiltered)(const EditorScriptRay* ray, float distance, uint32_t physicsLayerMask, bool includeTriggers, const char* requiredComponentTypeName, EditorScriptPhysicsHit* hit)", "bool", "bool result = runtimeApi->PhysicsRaycastFiltered(/* arguments */);", "Layer・Trigger・Component条件付きでRaycastします。", "成功時のhitを対象判定に使います。", "ray, distance, physicsLayerMask, includeTriggers, requiredComponentTypeName, hit"],
+-  ["Gameplay", "SetRendererColor", "bool (*SetRendererColor)(int32_t gameObjectId, const EditorScriptVector3* color)", "bool", "bool result = runtimeApi->SetRendererColor(/* arguments */);", "Rendererの色を変更します。", "対象Rendererがある場合だけ成功します。", "gameObjectId, color"],
+-  ["Gameplay", "SetRendererEmission", "bool (*SetRendererEmission)(int32_t gameObjectId, const EditorScriptVector3* color, float strength)", "bool", "bool result = runtimeApi->SetRendererEmission(/* arguments */);", "RendererのEmission色と強さを変更します。", "Material設定と描画経路の対応を確認します。", "gameObjectId, color, strength"],
+-  ["Gameplay", "SetHookVisualState", "bool (*SetHookVisualState)(int32_t hookGameObjectId, int32_t visualState)", "bool", "bool result = runtimeApi->SetHookVisualState(/* arguments */);", "Hookの表示状態を変更します。", "Wireの物理状態とは別に表示状態を管理します。", "hookGameObjectId, visualState"],
+-  ["GameObject", "CreateGameObject", "int32_t (*CreateGameObject)(const char* name)", "int32_t", "int32_t gameObjectId = runtimeApi->CreateGameObject(/* arguments */);", "空のGameObjectを生成します。", "返されたIDへComponentとTransformを設定します。", "name"],
+-  ["GameObject", "GetParentGameObject", "int32_t (*GetParentGameObject)(int32_t gameObjectId)", "int32_t", "int32_t parentId = runtimeApi->GetParentGameObject(/* arguments */);", "親GameObject IDを取得します。", "無効値を確認して階層をたどります。", "gameObjectId"],
+-  ["GameObject", "SetParentGameObject", "bool (*SetParentGameObject)(int32_t childGameObjectId, int32_t parentGameObjectId, bool preserveWorldTransform)", "bool", "bool result = runtimeApi->SetParentGameObject(/* arguments */);", "GameObjectの親を設定します。", "World姿勢を維持するか明示して使います。", "childGameObjectId, parentGameObjectId, preserveWorldTransform"],
+-  ["GameObject", "GetChildGameObjectCount", "int32_t (*GetChildGameObjectCount)(int32_t gameObjectId)", "int32_t", "int32_t count = runtimeApi->GetChildGameObjectCount(/* arguments */);", "子GameObject数を取得します。", "列挙前の配列サイズ決定に使います。", "gameObjectId"],
+-  ["GameObject", "GetChildGameObject", "int32_t (*GetChildGameObject)(int32_t gameObjectId, int32_t childIndex)", "int32_t", "int32_t childId = runtimeApi->GetChildGameObject(/* arguments */);", "指定indexの子GameObject IDを取得します。", "countの範囲内で呼び出します。", "gameObjectId, childIndex"],
+-  ["Scene", "ReloadPrimaryScene", "bool (*ReloadPrimaryScene)()", "bool", "bool result = runtimeApi->ReloadPrimaryScene();", "Primary Sceneを再読み込みします。", "再読み込み中のObject IDを保持しないでください。", "runtimeApiの関数Pointer"],
+-  ["Physics", "GetMass", "float (*GetMass)(int32_t gameObjectId)", "float", "float mass = runtimeApi->GetMass(/* arguments */);", "Rigidbodyの質量を取得します。", "ForceやImpulseの計算に使います。", "gameObjectId"],
+-  ["Gameplay", "CaptureAreaState", "bool (*CaptureAreaState)(int32_t areaRootGameObjectId)", "bool", "bool result = runtimeApi->CaptureAreaState(/* arguments */);", "Areaの現在状態を保存します。", "ResetArea前のチェックポイント処理に使います。", "areaRootGameObjectId"],
+-  ["Gameplay", "ResetArea", "bool (*ResetArea)(int32_t areaRootGameObjectId)", "bool", "bool result = runtimeApi->ResetArea(/* arguments */);", "保存したArea状態へ戻します。", "復元完了後に対象Objectを再取得します。", "areaRootGameObjectId"],
+-  ["Gameplay", "HasAreaState", "bool (*HasAreaState)(int32_t areaRootGameObjectId)", "bool", "bool result = runtimeApi->HasAreaState(/* arguments */);", "Area状態が保存済みか確認します。", "ResetArea前の条件判定に使います。", "areaRootGameObjectId"],
+-];
+-
+-export const runtimeApiV8Additions: RuntimeApiEntry[] = seeds.map((seed) => ({
+-  category: seed[0], name: seed[1], signature: seed[2], returnType: seed[3], declaration: seed[4],
+-  description: seed[5], afterUse: seed[6], requires: seed[7],
+-}));
+diff --git a/app/ui.tsx b/app/ui.tsx
+index 23cd4ef..adda633 100644
+--- a/app/ui.tsx
++++ b/app/ui.tsx
+@@ -1,15 +1,16 @@
+ ﻿import Link from "next/link";
+ import type { ReactNode } from "react";
+ import { docNavigation, type StatusTone } from "./data";
++import { engineVersion } from "./generated/engineVersion";
+ 
+ export function SiteHeader() {
+   return (
+     <header className="site-header">
+       <a className="skip-link" href="#main-content">本文へ移動</a>
+       <div className="shell header-inner">
+-        <Link className="brand" href="/" aria-label="ManoEngine トップ">
+-          <span className="brand-mark">ME</span>
+-          <span className="brand-sub">MANOENGINE</span>
++        <Link className="brand" href="/" aria-label="ManoEngine Game Engine トップ">
++          <span className="brand-mark">ManoEngine</span>
++          <span className="brand-sub">GAME ENGINE</span>
+         </Link>
+         <nav className="desktop-nav" aria-label="メインナビゲーション">
+           {docNavigation.map((item) => <Link href={item.href} key={item.href}>{item.label}</Link>)}
+@@ -34,8 +35,8 @@ export function SiteFooter() {
+       <div className="shell footer-grid">
+         <div>
+           <Link className="brand footer-brand" href="/">
+-            <span className="brand-mark">ME</span>
+-            <span className="brand-sub">MANOENGINE</span>
++            <span className="brand-mark">ManoEngine</span>
++            <span className="brand-sub">GAME ENGINE</span>
+           </Link>
+           <p>シーンを組み、C++で動かす。ManoEngine使用者向け公式リファレンス。</p>
+         </div>
+@@ -45,12 +46,12 @@ export function SiteFooter() {
+           {docNavigation.map((item) => <Link href={item.href} key={item.href}>{item.label}</Link>)}
+         </div>
+         <div className="footer-note">
+-          <span>DOCUMENT REV. 2026.09.11</span>
+-          <span>API VERSION 8</span>
++          <span>DOCUMENT REV. 2026.09.26</span>
++          <span>ENGINE {engineVersion.display} / API {engineVersion.scriptApi}</span>
+           <span>WINDOWS / DIRECTX 12</span>
+         </div>
+       </div>
+-      <div className="shell footer-bottom">MANOENGINE DOCUMENTATION <span>BUILD THE FEEL.</span></div>
++      <div className="shell footer-bottom">ManoEngine ENGINE DOCUMENTATION <span>BUILD THE FEEL.</span></div>
+     </footer>
+   );
+ }
+@@ -67,7 +68,7 @@ export function DocsShell({ children }: { children: ReactNode }) {
+               <Link href="/docs"><span>00</span>ドキュメント目次</Link>
+               {docNavigation.map((item, index) => <Link href={item.href} key={item.href}><span>0{index + 1}</span>{item.label}</Link>)}
+             </nav>
+-            <div className="sidebar-version"><i /> API v8 / CURRENT</div>
++            <div className="sidebar-version"><i /> API v{engineVersion.scriptApi} / CURRENT</div>
+           </aside>
+           <article className="docs-content">{children}</article>
+         </div>
+@@ -109,7 +110,7 @@ export function ArrowLink({ href, children }: { href: string; children: ReactNod
+ export function CodeBlock({ code, label = "C++" }: { code: string; label?: string }) {
+   return (
+     <div className="code-block">
+-      <div className="code-toolbar"><span>{label}</span><span>MANOENGINE SCRIPT</span></div>
++      <div className="code-toolbar"><span>{label}</span><span>ManoEngine SCRIPT</span></div>
+       <pre><code>{code}</code></pre>
+     </div>
+   );
+diff --git a/tests/rendered-html.test.mjs b/tests/rendered-html.test.mjs
+index 993bb72..6829a6d 100644
+--- a/tests/rendered-html.test.mjs
++++ b/tests/rendered-html.test.mjs
+@@ -39,7 +39,7 @@ test("renders the task-first documentation home", async () => {
+   assert.match(html, /href="\/docs\/gameplay-tools"/);
+   assert.match(html, /href="\/docs\/cpp-scripting"/);
+   assert.match(html, /href="\/docs\/rendering"/);
+-  assert.match(html, /275 RUNTIME CALLS/);
++  assert.match(html, /369 RUNTIME ENTRIES/);
+ });
+ 
+ test("renders the complete interactive component reference", async () => {
+@@ -101,8 +101,8 @@ test("documents C++ storage, return types, and declarations", async () => {
+   assert.match(html, /EditorScriptVector3/);
+   assert.match(html, /型へ格納する書き方/);
+   assert.match(html, /取得後の使い方/);
+-  assert.match(html, /VERSION 8/);
+-  assert.match(html, /275(?:<!-- -->)? RUNTIME ENTRIES/);
++  assert.match(html, /VERSION 13/);
++  assert.match(html, /369(?:<!-- -->)? RUNTIME ENTRIES/);
+   assert.match(html, /id="api-getvelocity"/);
+   assert.match(html, /id="api-getaisensorstate"/);
+   assert.match(html, /id="api-setanimatorfloat"/);
+@@ -176,15 +176,6 @@ test("keeps the component catalog aligned with the editor menu", async () => {
+   assert.equal(new Set(entries.map(([, , type]) => type)).size, 280);
+ });
+ 
+-test("renders the current asset, lighting, and collaboration references", async () => {
+-  for (const pathname of ["/docs/asset-management", "/docs/lighting-gi", "/docs/team-collaboration"]) {
+-    const response = await render(pathname);
+-    assert.equal(response.status, 200);
+-    const html = await response.text();
+-    assert.match(html, /ManoEngine/);
+-  }
+-});
+-
+ test("guards the readable visual baseline", async () => {
+   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+ 

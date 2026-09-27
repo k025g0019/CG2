@@ -4,6 +4,8 @@
     float3 boundsExtent;
     int gameObjectId;
     uint vertexCount;
+    uint indexCount;
+    uint isIndexed;
 };
 
 StructuredBuffer<CullingObject> gCullingObjects : register(t0);

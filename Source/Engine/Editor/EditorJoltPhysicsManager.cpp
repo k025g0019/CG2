@@ -2,6 +2,7 @@
 
 #include "EditorAssetUtility.h"
 #include "EditorComponentUtility.h"
+#include "EditorTerrainHeightField.h"
 #include "EditorMeshCollision.h"
 #include "EditorSharedState.h"
 #include "Source/Engine/Core/Vector&Matrix.h"
@@ -484,6 +485,7 @@ public:
 		bodyMaterials_.clear();
 		preciseMeshCollisionBodies_.clear();
 		hydrodynamicSurfaceCache_.clear();
+		autoConvexShapeCache_.clear();
 		gameObjectIdByBodyId_.clear();
 		primaryBodyIdByGameObjectId_.clear();
 		activeContactPairs_.clear();
@@ -494,6 +496,15 @@ public:
 
 	bool IsActive() const {
 		return isActive_;
+	}
+
+	// Diagnostics 表示用。Jolt World が動いていない間は 0 を返す。
+	int32_t GetBodyCount() const {
+		if (physicsSystem_ == nullptr) {
+			return 0;
+		}
+
+		return static_cast<int32_t>(physicsSystem_->GetNumBodies());
 	}
 
 	bool RegisterRuntimeGameObject(int32_t gameObjectId) {
@@ -1513,6 +1524,7 @@ private:
 	std::unordered_map<uint32_t, PhysicsBodyMaterial> bodyMaterials_;  // Body ごとの摩擦・反発・Trigger 設定
 	std::unordered_map<uint32_t, PreciseMeshCollisionBody> preciseMeshCollisionBodies_;  // ConvexHull の接触を実メッシュ BVH で検証する
 	mutable std::unordered_map<uint32_t, std::vector<HydrodynamicSurfaceTriangle>> hydrodynamicSurfaceCache_;  // Body Shapeを最大512面へ縮約したローカル水力面
+	std::unordered_map<std::string, JPH::RefConst<JPH::Shape>> autoConvexShapeCache_;  // 同一Chunk Asset/Scale/品質の凸包をPrefab配置間で共有する
 	std::unordered_map<uint64_t, ActiveContactPair> activeContactPairs_;  // Enter 済み接触の Stay / Exit 管理
 	std::vector<PhysicsEvent> stepEvents_;  // 1 固定更新中に発生した接触イベントを Script へ渡すために保持する
 	struct RuntimeJoint {
@@ -2212,6 +2224,22 @@ private:
 		const EditorComponent& collider,
 		const EditorComponent* rigidBody,
 		bool isDynamic) {
+		const std::string shapeCacheKey = GetCollisionModelAssetPath(gameObject, collider) + "|" +
+			std::to_string((std::clamp)(collider.autoConvexMaximumHulls, 1, 16)) + "|" +
+			std::to_string(gameObject.scale.x) + "|" + std::to_string(gameObject.scale.y) + "|" +
+			std::to_string(gameObject.scale.z) + "|" + std::to_string(collider.colliderCenter.x) + "|" +
+			std::to_string(collider.colliderCenter.y) + "|" + std::to_string(collider.colliderCenter.z);
+		const auto cachedShape = autoConvexShapeCache_.find(shapeCacheKey);
+		if (cachedShape != autoConvexShapeCache_.end()) {
+			JPH::BodyCreationSettings settings(
+				cachedShape->second,
+				GetBodyPosition(gameObject, collider.colliderCenter),
+				MakeJoltRotation(gameObject.rotate),
+				isDynamic ? JPH::EMotionType::Dynamic : JPH::EMotionType::Static,
+				MakeJoltObjectLayer(collider.physicsLayer, isDynamic));
+			ApplyBodySettings(settings, collider, rigidBody, gameObject);
+			return AddBody(settings, isDynamic);
+		}
 		std::vector<JPH::Array<JPH::Vec3>> hullPointSets;
 		if (!BuildConvexHullSlicesFromModelAsset(
 				gameObject,
@@ -2300,6 +2328,7 @@ private:
 			isDynamic ? JPH::EMotionType::Dynamic : JPH::EMotionType::Static,
 			MakeJoltObjectLayer(collider.physicsLayer, isDynamic));
 		ApplyBodySettings(settings, collider, rigidBody, gameObject);
+		autoConvexShapeCache_[shapeCacheKey] = collisionShape;
 		const JPH::BodyID bodyId = AddBody(settings, isDynamic);
 
 		if (!bodyId.IsInvalid()) {
@@ -2315,6 +2344,141 @@ private:
 
 		return bodyId;
 	}
+
+
+public:
+	bool BuildAutoConvexPreviewTriangles(
+		int32_t gameObjectId,
+		std::vector<PhysicsShapeTriangle>& shapeTriangles) const {
+		shapeTriangles.clear();
+		if (editorScene_ == nullptr) {
+			return false;
+		}
+
+		const EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+		if (gameObject == nullptr) {
+			return false;
+		}
+
+		const EditorComponent* collider = EditorComponentUtility::FindComponent(
+			*gameObject,
+			EditorComponentType::AutoConvexCollision);
+		if (collider == nullptr || !collider->isActive) {
+			return false;
+		}
+
+		// Runtime の AddGameObjectBody と同じ親込み Transform を使う。
+		EditorGameObject worldGameObject = *gameObject;
+		editorScene_->GetWorldTransform(
+			gameObjectId,
+			worldGameObject.scale,
+			worldGameObject.rotate,
+			worldGameObject.translate);
+
+		std::vector<JPH::Array<JPH::Vec3>> hullPointSets;
+		if (!BuildConvexHullSlicesFromModelAsset(
+				worldGameObject,
+				*collider,
+				(std::clamp)(collider->autoConvexMaximumHulls, 1, 16),
+				hullPointSets)) {
+			return false;
+		}
+
+		std::vector<JPH::RefConst<JPH::Shape>> hullShapes;
+		hullShapes.reserve(hullPointSets.size());
+		for (const JPH::Array<JPH::Vec3>& hullPoints : hullPointSets) {
+			JPH::RefConst<JPH::Shape> hullShape = CreateConvexHullShape(hullPoints);
+			if (hullShape != nullptr) {
+				hullShapes.push_back(hullShape);
+			}
+		}
+
+		// Runtime と同様、分割した Hull の一つでも無効なら単一 Hull へフォールバックする。
+		if (hullShapes.size() != hullPointSets.size()) {
+			JPH::Array<JPH::Vec3> fallbackHullPoints;
+			hullShapes.clear();
+			if (BuildConvexHullPointsFromModelAsset(worldGameObject, *collider, fallbackHullPoints)) {
+				JPH::RefConst<JPH::Shape> fallbackHull = CreateConvexHullShape(fallbackHullPoints);
+				if (fallbackHull != nullptr) {
+					hullShapes.push_back(fallbackHull);
+				}
+			}
+		}
+
+		if (hullShapes.empty()) {
+			return false;
+		}
+
+		JPH::RefConst<JPH::Shape> previewShape = hullShapes[0u];
+		if (hullShapes.size() > 1u) {
+			JPH::StaticCompoundShapeSettings compoundSettings;
+			for (const JPH::RefConst<JPH::Shape>& hullShape : hullShapes) {
+				compoundSettings.AddShape(
+					JPH::Vec3::sZero(),
+					JPH::Quat::sIdentity(),
+					hullShape.GetPtr());
+			}
+
+			JPH::ShapeSettings::ShapeResult compoundResult = compoundSettings.Create();
+			if (!compoundResult.HasError()) {
+				previewShape = compoundResult.Get();
+			}
+			else {
+				JPH::Array<JPH::Vec3> fallbackHullPoints;
+				if (BuildConvexHullPointsFromModelAsset(worldGameObject, *collider, fallbackHullPoints)) {
+					JPH::RefConst<JPH::Shape> fallbackHull = CreateConvexHullShape(fallbackHullPoints);
+					if (fallbackHull != nullptr) {
+						previewShape = fallbackHull;
+					}
+				}
+			}
+		}
+
+		const JPH::TransformedShape transformedShape(
+			GetBodyPosition(worldGameObject, collider->colliderCenter),
+			MakeJoltRotation(worldGameObject.rotate),
+			previewShape.GetPtr(),
+			JPH::BodyID());
+		JPH::AllHitCollisionCollector<JPH::TransformedShapeCollector> leafCollector;
+		transformedShape.CollectTransformedShapes(
+			transformedShape.GetWorldSpaceBounds(),
+			leafCollector,
+			JPH::ShapeFilter());
+
+		for (const JPH::TransformedShape& leafShape : leafCollector.mHits) {
+			JPH::TransformedShape::GetTrianglesContext triangleContext{};
+			std::array<JPH::Float3, kHydrodynamicTriangleBatchCount * 3u> triangleVertices{};
+			leafShape.GetTrianglesStart(
+				triangleContext,
+				leafShape.GetWorldSpaceBounds(),
+				JPH::RVec3::sZero());
+
+			while (true) {
+				const int32_t triangleCount = leafShape.GetTrianglesNext(
+					triangleContext,
+					kHydrodynamicTriangleBatchCount,
+					triangleVertices.data());
+				if (triangleCount <= 0) {
+					break;
+				}
+
+				for (int32_t triangleIndex = 0; triangleIndex < triangleCount; ++triangleIndex) {
+					const size_t firstVertexIndex = static_cast<size_t>(triangleIndex) * 3u;
+					const JPH::Float3& first = triangleVertices[firstVertexIndex];
+					const JPH::Float3& second = triangleVertices[firstVertexIndex + 1u];
+					const JPH::Float3& third = triangleVertices[firstVertexIndex + 2u];
+					shapeTriangles.push_back({
+						{first.x, first.y, first.z},
+						{second.x, second.y, second.z},
+						{third.x, third.y, third.z}});
+				}
+			}
+		}
+
+		return !shapeTriangles.empty();
+	}
+
+private:
 
 	JPH::BodyID CreateSphereBody(
 		const EditorGameObject& gameObject,
@@ -2387,7 +2551,13 @@ private:
 		}
 
 		JPH::TriangleList triangles;
-		if (!BuildMeshTrianglesFromModelAsset(gameObject, collider, triangles)) {
+		// TerrainColliderはModel Assetを持たないため、従来は必ず箱へFallbackしていた。
+		// 高さはHeightMapにしか無いので、まずHeightMapから地形の三角形を作る。
+		const bool builtTerrainTriangles =
+			collider.type == EditorComponentType::TerrainCollider &&
+			BuildTerrainTrianglesFromHeightMap(gameObject, collider, triangles);
+
+		if (!builtTerrainTriangles && !BuildMeshTrianglesFromModelAsset(gameObject, collider, triangles)) {
 			Vector3 halfSize = {
 				GetScaledShapeSize(collider.colliderSize.x, gameObject.scale.x) * 0.5f,
 				GetScaledShapeSize(collider.colliderSize.y, gameObject.scale.y) * 0.5f,
@@ -2455,6 +2625,86 @@ private:
 		}
 
 		return bodyId;
+	}
+
+	// Terrain の当たり判定を、描画と同じ HeightMap から作る。
+	// 高さは頂点シェーダ内にしか無いため、CPU 側で同じ式を再現しないと
+	// 「見た目は山だが物理は平らな箱」という状態になる。
+	bool BuildTerrainTrianglesFromHeightMap(
+		const EditorGameObject& gameObject,
+		const EditorComponent& collider,
+		JPH::TriangleList& triangles) const {
+		const EditorComponent* terrain = EditorComponentUtility::FindComponent(
+			gameObject, EditorComponentType::Terrain);
+
+		if (terrain == nullptr || !terrain->isActive || terrain->assetPath.empty()) {
+			return false;
+		}
+
+		const EditorTerrainHeightField* heightField =
+			EditorTerrainHeightField::Acquire(terrain->assetPath);
+
+		if (heightField == nullptr) {
+			return false;
+		}
+
+		// 描画側と同じ意味付け: colliderSize は X幅 / 高低差 / Z幅。
+		const Vector2 areaSize{
+			(std::max)(terrain->colliderSize.x, 1.0f),
+			(std::max)(terrain->colliderSize.z, 1.0f)};
+		const float heightScale = (std::max)(terrain->colliderSize.y, 0.01f);
+
+		// 物理用の格子は描画の最高LODと揃える。上限はJoltのMesh生成コストとメモリのため。
+		const int32_t gridResolution = (std::clamp)(terrain->oceanGridResolution, 16, 256);
+		const int32_t vertexCountPerSide = gridResolution + 1;
+		std::vector<Vector3> gridVertices;
+		gridVertices.reserve(
+			static_cast<size_t>(vertexCountPerSide) * static_cast<size_t>(vertexCountPerSide));
+
+		for (int32_t rowIndex = 0; rowIndex < vertexCountPerSide; rowIndex++) {
+			const float rowRatio = static_cast<float>(rowIndex) / static_cast<float>(gridResolution);
+			const float localZ = (rowRatio - 0.5f) * areaSize.y;
+
+			for (int32_t columnIndex = 0; columnIndex < vertexCountPerSide; columnIndex++) {
+				const float columnRatio =
+					static_cast<float>(columnIndex) / static_cast<float>(gridResolution);
+				const float localX = (columnRatio - 0.5f) * areaSize.x;
+				const float localY = heightField->SampleLocalHeight(localX, localZ, areaSize, heightScale);
+				gridVertices.push_back(Vector3{
+					localX * gameObject.scale.x,
+					localY * gameObject.scale.y,
+					localZ * gameObject.scale.z});
+			}
+		}
+
+		triangles.clear();
+		triangles.reserve(
+			static_cast<size_t>(gridResolution) * static_cast<size_t>(gridResolution) * 2u);
+
+		for (int32_t rowIndex = 0; rowIndex < gridResolution; rowIndex++) {
+			for (int32_t columnIndex = 0; columnIndex < gridResolution; columnIndex++) {
+				const size_t topLeftIndex =
+					static_cast<size_t>(rowIndex) * static_cast<size_t>(vertexCountPerSide) +
+					static_cast<size_t>(columnIndex);
+				const size_t topRightIndex = topLeftIndex + 1u;
+				const size_t bottomLeftIndex =
+					topLeftIndex + static_cast<size_t>(vertexCountPerSide);
+				const size_t bottomRightIndex = bottomLeftIndex + 1u;
+				auto toJoltVertex = [](const Vector3& vertex) {
+					return JPH::Float3(vertex.x, vertex.y, vertex.z);
+				};
+				triangles.push_back(JPH::Triangle(
+					toJoltVertex(gridVertices[topLeftIndex]),
+					toJoltVertex(gridVertices[bottomLeftIndex]),
+					toJoltVertex(gridVertices[topRightIndex])));
+				triangles.push_back(JPH::Triangle(
+					toJoltVertex(gridVertices[topRightIndex]),
+					toJoltVertex(gridVertices[bottomLeftIndex]),
+					toJoltVertex(gridVertices[bottomRightIndex])));
+			}
+		}
+
+		return !triangles.empty();
 	}
 
 	bool BuildMeshTrianglesFromModelAsset(
@@ -3200,7 +3450,7 @@ private:
 			const JPH::Shape* bodyShape = settings.GetShape();
 
 			if (bodyShape != nullptr) {
-				// CG2が生成するConvex ShapeはJolt既定密度1000 kg/m3を使う。
+				// ManoEngineが生成するConvex ShapeはJolt既定密度1000 kg/m3を使う。
 				// Mass Propertiesから体積を戻し、物体全体の実質密度で質量を決める。
 				constexpr float kJoltDefaultShapeDensity = 1000.0f;
 				const JPH::MassProperties shapeMassProperties = bodyShape->GetMassProperties();
@@ -3889,6 +4139,10 @@ bool EditorJoltPhysicsManager::IsActive() const {
 	return impl_->IsActive();
 }
 
+int32_t EditorJoltPhysicsManager::GetBodyCount() const {
+	return impl_->GetBodyCount();
+}
+
 bool EditorJoltPhysicsManager::RegisterRuntimeGameObject(int32_t gameObjectId) {
 	return impl_->RegisterRuntimeGameObject(gameObjectId);
 }
@@ -3986,6 +4240,35 @@ bool EditorJoltPhysicsManager::GetHydrodynamicSurfaceTriangles(
 	return impl_->GetHydrodynamicSurfaceTriangles(
 		gameObjectId,
 		surfaceTriangles);
+}
+
+bool EditorJoltPhysicsManager::GetPhysicsShapeTriangles(
+	int32_t gameObjectId,
+	std::vector<PhysicsShapeTriangle>& shapeTriangles) const {
+	// Hydrodynamic 用の取得処理は Compound / ConvexHull を含む Jolt Shape の実面を
+	// World 座標で走査済みなので、Scene View でも同じ最終 Shape を使う。
+	std::vector<HydrodynamicSurfaceTriangle> surfaceTriangles;
+	if (!impl_->GetHydrodynamicSurfaceTriangles(gameObjectId, surfaceTriangles)) {
+		shapeTriangles.clear();
+		return false;
+	}
+
+	shapeTriangles.clear();
+	shapeTriangles.reserve(surfaceTriangles.size());
+	for (const HydrodynamicSurfaceTriangle& surfaceTriangle : surfaceTriangles) {
+		shapeTriangles.push_back({
+			surfaceTriangle.first,
+			surfaceTriangle.second,
+			surfaceTriangle.third});
+	}
+
+	return !shapeTriangles.empty();
+}
+
+bool EditorJoltPhysicsManager::BuildAutoConvexPreviewTriangles(
+	int32_t gameObjectId,
+	std::vector<PhysicsShapeTriangle>& shapeTriangles) const {
+	return impl_->BuildAutoConvexPreviewTriangles(gameObjectId, shapeTriangles);
 }
 
 bool EditorJoltPhysicsManager::AddForce(int32_t gameObjectId, const Vector3& force) {

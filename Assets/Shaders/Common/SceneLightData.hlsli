@@ -1,8 +1,11 @@
 ﻿// CPUのDirectionalLightと同じ配置を全描画パスで共有する。
-#ifndef CG2_SCENE_LIGHT_DATA_HLSLI
-#define CG2_SCENE_LIGHT_DATA_HLSLI
+#ifndef MANOENGINE_SCENE_LIGHT_DATA_HLSLI
+#define MANOENGINE_SCENE_LIGHT_DATA_HLSLI
 
 #include "../GI/ProbeCommon.hlsli"
+
+#define MANO_MAX_SCENE_LIGHTS 16
+#define MANO_MAX_EMISSIVE_LIGHTS 32
 
 struct DirectionalLightData
 {
@@ -49,7 +52,7 @@ struct DirectionalLightData
 
 struct DirectionalLightArray
 {
-    DirectionalLightData lights[4];
+    DirectionalLightData lights[MANO_MAX_SCENE_LIGHTS];
 };
 
 //------------------------------------------------------------
@@ -84,7 +87,7 @@ struct EmissiveLightArray
     float padding0;
     float padding1;
     float padding2;
-    EmissiveLightData lights[8];
+    EmissiveLightData lights[MANO_MAX_EMISSIVE_LIGHTS];
     int sunPortalCount;
     float sunPortalPadding0;
     float sunPortalPadding1;

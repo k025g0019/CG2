@@ -18,10 +18,11 @@ class EditorDamageManager;
 class EditorInputManager;
 class EditorAudioManager;
 class EditorEffectManager;
+class EditorPhysicsManager;
 
 class EditorRuntimePropertyManager {
 public:
-	void Initialize(EditorScene* editorScene, EditorScriptManager* scriptManager, EditorTargetingManager* targetingManager, EditorWeaponManager* weaponManager, EditorDamageManager* damageManager, EditorInputManager* inputManager, EditorAudioManager* audioManager, EditorEffectManager* effectManager);  // PropertyとActionの実行対象を接続する。
+	void Initialize(EditorScene* editorScene, EditorScriptManager* scriptManager, EditorTargetingManager* targetingManager, EditorWeaponManager* weaponManager, EditorDamageManager* damageManager, EditorInputManager* inputManager, EditorAudioManager* audioManager, EditorEffectManager* effectManager, EditorPhysicsManager* physicsManager);  // PropertyとActionの実行対象を接続する。
 	void Start();  // Tween自動再生とRelay自動実行を開始する。
 	float UpdateTimeScale(float unscaledDeltaTime);  // 実時間でTimeScaleを更新し、今フレームのゲーム時間倍率を返す。
 	void Update(float deltaTime);  // 再生中Tweenを進める。
@@ -112,6 +113,7 @@ private:
 	EditorInputManager* inputManager_ = nullptr;  // Pause時のGameplay/UI Map切替先
 	EditorAudioManager* audioManager_ = nullptr;  // Pause時に再生位置を保持してVoiceを止める
 	EditorEffectManager* effectManager_ = nullptr;  // SurfaceWakeのEmitter再生先
+	EditorPhysicsManager* physicsManager_ = nullptr;  // Transform変更をJolt Bodyへ同時反映する。
 	std::unordered_map<int32_t, TweenRuntime> tweenRuntimes_;  // Tween所有者ごとの再生状態。
 	std::unordered_map<int32_t, TargetLockRuntime> targetLockRuntimes_;  // Lock経過と喪失猶予。
 	std::unordered_map<int32_t, float> previousAttributeValues_;  // 変更Action判定用。

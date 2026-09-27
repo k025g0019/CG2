@@ -109,6 +109,22 @@ public:
 	void Reset();
 	std::vector<EditorProfilerSample> GetSortedSamples() const;
 
+	//================================================================
+	// Frame History(直近フレームの CPU / GPU 時間)
+	//================================================================
+	// 「いつ重くなったか」を見るための時系列。集計値だけでは分からないスパイクを拾う。
+	static constexpr int32_t kFrameHistoryCapacity = 240;
+
+	// 毎フレーム1回呼ぶ。CPU時間は前回呼び出しからの実時間、GPU時間はResolve済みの値を使う。
+	void PushFrameHistory(float cpuMilliseconds, float gpuMilliseconds);
+	// 古い順に並べた履歴を返す(ImGui::PlotLines へそのまま渡せる形)。
+	void GetFrameHistory(
+		std::vector<float>& outCpuMilliseconds,
+		std::vector<float>& outGpuMilliseconds) const;
+	float GetLastCpuFrameMilliseconds() const;
+	float GetLastGpuFrameMilliseconds() const;
+	float GetAverageCpuFrameMilliseconds() const;
+
 private:
 	struct PendingGpuSample {
 		std::string name;
@@ -131,6 +147,14 @@ private:
 	std::uint64_t mainThreadId_ = 0u;
 	uint32_t nextGpuQueryIndex_ = 2u;
 	std::atomic_bool isEnabled_ = false;
+
+	// Frame History はリングバッファで保持し、確保を増やさず一定量だけ残す。
+	std::vector<float> cpuFrameHistory_;
+	std::vector<float> gpuFrameHistory_;
+	int32_t frameHistoryWriteIndex_ = 0;
+	int32_t frameHistoryCount_ = 0;
+	float lastCpuFrameMilliseconds_ = 0.0f;
+	float lastGpuFrameMilliseconds_ = 0.0f;
 };
 
 void RecordEditorProfilerDrawCall();

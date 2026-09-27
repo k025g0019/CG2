@@ -48,9 +48,27 @@ VSOutput main(VSInput input, uint instanceId : SV_InstanceID)
 
     const float lifeRate = saturate(particle.lifeSize.x / max(particle.lifeSize.y, 0.0001f));
     float4 particleColor = lerp(particle.startColor, particle.endColor, lifeRate);
-    particleColor.rgb *= 1.0f + max(particle.rendering.y, 0.0f);
     const float sineRotation = sin(particle.motion2.y);
     const float cosineRotation = cos(particle.motion2.y);
+
+    // orientation.z が 0 の Particle は従来どおりフラット色のまま出す。
+    // 破壊破片のように立体として見せたい Mesh Particle だけ、法線から簡易陰影を掛ける。
+    const float meshLighting = saturate(particle.orientation.z);
+    if (meshLighting > 0.0f)
+    {
+        float3 shadingNormal = input.normal;
+        shadingNormal.xz = float2(
+            shadingNormal.x * cosineRotation - shadingNormal.z * sineRotation,
+            shadingNormal.x * sineRotation + shadingNormal.z * cosineRotation);
+        shadingNormal = normalize(shadingNormal);
+
+        const float3 lightDirection = normalize(float3(0.35f, 0.9f, 0.25f));
+        const float diffuse = saturate(dot(shadingNormal, lightDirection));
+        const float shade = 0.4f + 0.6f * diffuse;
+        particleColor.rgb *= lerp(1.0f, shade, meshLighting);
+    }
+
+    particleColor.rgb *= 1.0f + max(particle.rendering.y, 0.0f);
     float3 localPosition = input.position.xyz * particle.velocitySize.w;
     localPosition.xz = float2(
         localPosition.x * cosineRotation - localPosition.z * sineRotation,

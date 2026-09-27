@@ -98,6 +98,7 @@ struct AnimationGraphEvent {
 class AnimationGraph {
 public:
 	bool LoadFromJson(const std::string& filePath);  // .animgraph JSON を読み込み、成功した場合だけ内容を置き換える。
+	bool SaveToJson(const std::string& filePath) const;  // Animator Graph Editor で編集した内容を .animgraph へ書き戻す。
 	void BuildDefaultDirectionalGraph(
 		int32_t idleClipIndex,
 		int32_t forwardClipIndex,
@@ -115,5 +116,10 @@ public:
 bool EvaluateAnimationTransitionCondition(
 	const AnimationTransitionCondition& condition,
 	const std::unordered_map<std::string, AnimatorParameterValue>& parameters);  // Runtime Parameter と遷移条件を比較する。
+
+// JSON への保存名と Editor の Combo 表示に使う。Load 側の Parse 関数と対になる唯一の変換元にする。
+const char* GetAnimatorParameterTypeName(AnimatorParameterType parameterType);
+const char* GetAnimationConditionOperatorName(AnimationConditionOperator conditionOperator);
+const char* GetAnimationBlendTreeTypeName(AnimationBlendTreeType blendTreeType);
 
 #pragma warning(pop)

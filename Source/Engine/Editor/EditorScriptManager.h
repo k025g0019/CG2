@@ -28,6 +28,7 @@ class EditorCameraEffectManager;
 class EditorActionSequenceManager;
 class EditorDamageManager;
 class EditorObjectPoolManager;
+class EditorNavigationManager;
 class EditorProfilerManager;
 class EditorVfxManager;
 class EditorRailBranchManager;
@@ -70,6 +71,9 @@ public:
 		EditorPhysicsManager* physicsManager,
 		std::vector<std::string>* consoleMessages);  // Script 実行対象 Scene、入力、AI、物理、Console を受け取る
 	void Start();  // Play 開始時に Script / MonoBehaviour の Start を呼ぶ
+	// Additive Scene読込後に呼ぶ。既にStart済みのObjectの状態を保ったまま、
+	// 追加されたObjectのScriptだけをStartする。Play中のゲーム進行を巻き戻さないために使う。
+	void StartAdditive();
 	void RegisterRuntimeHierarchy(int32_t rootGameObjectId);  // Pool等がPlay中に複製した階層のScript Bindingを追加する
 	void Update(const uint8_t* keyState, float deltaTime);  // 毎フレームの Script 更新を呼ぶ
 	void FixedUpdate(float fixedDeltaTime);  // 固定時間更新の Script を呼ぶ
@@ -109,6 +113,7 @@ public:
 	void SetEffekseerManager(EditorEffekseerManager* effekseerManager);  // 位置指定Effekseer再生(PlayEffekseerAtPosition等)を実行系へ接続する。
 	void SetVfxManager(EditorVfxManager* vfxManager);  // .effectdefをWorld座標へ再生する新VFX経路を接続する。
 	void SetProfilerManager(EditorProfilerManager* profilerManager);  // 有効なNative Script DLLの実行時間を自動計測するProfilerを接続する。
+	void SetNavigationManager(EditorNavigationManager* navigationManager);  // NavMesh上のAgent制御をDLL Scriptへ公開する。
 	void SetGameplayManagers(
 		EditorTargetingManager* targetingManager,
 		EditorDamageManager* damageManager,
@@ -151,6 +156,8 @@ private:
 		std::filesystem::file_time_type lastWriteTime{};  // ホットリロード検出に使う更新日時
 		void* moduleHandle = nullptr;  // LoadLibraryW が返す HMODULE を void* で保持する
 		EditorScriptLoadFn loadFunction = nullptr;  // DLL 読込時の初期化関数
+		EditorScriptGetRequiredApiVersionFn getRequiredApiVersionFunction = nullptr;  // 新しいDLLがBuild時API Versionを返す任意Export
+		uint32_t loadedApiVersion = 0U;  // 実際に互換初期化へ使用したAPI Version
 		EditorScriptUnloadFn unloadFunction = nullptr;  // DLL 解放前の終了関数
 		EditorScriptStartFn startFunction = nullptr;  // Play 開始時の開始関数
 		EditorScriptUpdateFn updateFunction = nullptr;  // 毎フレーム更新関数
@@ -206,6 +213,7 @@ private:
 	EditorEffectManager* effectManager_ = nullptr;  // Effect の再生・停止・生存数 API
 	EditorEffekseerManager* effekseerManager_ = nullptr;  // GameObjectを介さない位置指定Effekseer再生API
 	EditorVfxManager* vfxManager_ = nullptr;  // EffectDefinition(.effectdef)の位置指定再生API
+	EditorNavigationManager* navigationManager_ = nullptr;  // NavMesh Agent の目的地設定・経路照会API
 	EditorAudioManager* audioManager_ = nullptr;  // AudioSource の再生・停止・Bus音量 API
 	EditorAIManager* aiManager_ = nullptr;  // AI センサー状態を読む AI API
 	EditorPhysicsManager* physicsManager_ = nullptr;  // AddForce / SetVelocity へ接続する物理 API
@@ -389,6 +397,163 @@ private:
 	static bool ScriptCaptureAreaStateBridge(int32_t areaRootGameObjectId);  // DLLからのエリア状態Captureを現在のRuntimeへ流す
 	static bool ScriptResetAreaBridge(int32_t areaRootGameObjectId);  // DLLからのエリアResetを現在のRuntimeへ流す
 	static bool ScriptHasAreaStateBridge(int32_t areaRootGameObjectId);  // Capture済みかをDLLへ返す
+	// Navigation: Enemy AI が「目的地を決めて歩く」ための最小API。
+	static bool ScriptNavSetDestinationBridge(int32_t gameObjectId, const EditorScriptVector3* destination);
+	static bool ScriptNavGetDestinationBridge(int32_t gameObjectId, EditorScriptVector3* destination);
+	static bool ScriptNavStopBridge(int32_t gameObjectId);
+	static bool ScriptNavResumeBridge(int32_t gameObjectId);
+	static bool ScriptNavIsStoppedBridge(int32_t gameObjectId);
+	static bool ScriptNavHasPathBridge(int32_t gameObjectId);
+	static bool ScriptNavGetRemainingDistanceBridge(int32_t gameObjectId, float* remainingDistance);
+	static bool ScriptNavWarpBridge(int32_t gameObjectId, const EditorScriptVector3* position);
+	static bool ScriptNavGetPathFailureReasonBridge(int32_t gameObjectId, char* reason, int32_t reasonCapacity);
+	static bool ScriptBlastApplyDamageBridge(int32_t gameObjectId, const EditorScriptVector3* worldPosition, float radius, float damage, float impulse);
+	static bool ScriptBlastFractureAllBridge(int32_t gameObjectId, float impulse);
+	static bool ScriptBlastIsFracturedBridge(int32_t gameObjectId);
+	static int32_t ScriptBlastGetChunkCountBridge(int32_t gameObjectId);
+	static int32_t ScriptBlastGetActorCountBridge(int32_t gameObjectId);
+	static int32_t ScriptBlastGetBondCountBridge(int32_t gameObjectId);
+	static bool ScriptBlastGetChunkGameObjectIdBridge(int32_t gameObjectId, int32_t chunkIndex, int32_t* chunkGameObjectId);
+	static bool ScriptBlastIsChunkDetachedBridge(int32_t gameObjectId, int32_t chunkIndex);
+	static bool ScriptCameraGetFieldOfViewBridge(int32_t gameObjectId, float* fieldOfViewDegrees);
+	static bool ScriptCameraSetFieldOfViewBridge(int32_t gameObjectId, float fieldOfViewDegrees);
+	static bool ScriptCameraGetNearClipBridge(int32_t gameObjectId, float* nearClip);
+	static bool ScriptCameraSetNearClipBridge(int32_t gameObjectId, float nearClip);
+	static bool ScriptCameraGetFarClipBridge(int32_t gameObjectId, float* farClip);
+	static bool ScriptCameraSetFarClipBridge(int32_t gameObjectId, float farClip);
+	static bool ScriptCameraGetProjectionModeBridge(int32_t gameObjectId, int32_t* projectionMode);
+	static bool ScriptCameraSetProjectionModeBridge(int32_t gameObjectId, int32_t projectionMode);
+	static bool ScriptCameraGetOrthographicSizeBridge(int32_t gameObjectId, float* orthographicSize);
+	static bool ScriptCameraSetOrthographicSizeBridge(int32_t gameObjectId, float orthographicSize);
+	static bool ScriptCameraGetPriorityBridge(int32_t gameObjectId, int32_t* priority);
+	static bool ScriptCameraSetPriorityBridge(int32_t gameObjectId, int32_t priority);
+	static bool ScriptCameraGetEnabledBridge(int32_t gameObjectId, bool* isEnabled);
+	static bool ScriptCameraSetEnabledBridge(int32_t gameObjectId, bool isEnabled);
+	static int32_t ScriptCameraGetActiveBridge();
+	static bool ScriptCameraSetActiveBridge(int32_t gameObjectId);
+	static bool ScriptCameraLookAtBridge(int32_t gameObjectId, const EditorScriptVector3* targetPosition);
+	static bool ScriptCameraGetLookDirectionBridge(int32_t gameObjectId, EditorScriptVector3* direction);
+	static bool ScriptCameraSetLookDirectionBridge(int32_t gameObjectId, const EditorScriptVector3* direction);
+	static EditorScriptAudioHandle ScriptAudioPlayWithHandleBridge(int32_t gameObjectId);
+	static EditorScriptAudioHandle ScriptAudioPlayClipAtPositionBridge(
+		const char* clipAssetPath,
+		const EditorScriptVector3* position,
+		int32_t audioBus,
+		float volume,
+		bool loop);
+	static EditorScriptAudioHandle ScriptAudioPlayClip2DBridge(
+		const char* clipAssetPath,
+		int32_t audioBus,
+		float volume,
+		bool loop);
+	static bool ScriptAudioStopHandleBridge(EditorScriptAudioHandle audioHandle);
+	static bool ScriptAudioSetPausedBridge(EditorScriptAudioHandle audioHandle, bool isPaused);
+	static bool ScriptAudioIsPlayingHandleBridge(EditorScriptAudioHandle audioHandle);
+	static bool ScriptAudioIsHandleValidBridge(EditorScriptAudioHandle audioHandle);
+	static bool ScriptAudioSetVolumeHandleBridge(EditorScriptAudioHandle audioHandle, float volume);
+	static bool ScriptAudioGetVolumeHandleBridge(EditorScriptAudioHandle audioHandle, float* volume);
+	static bool ScriptAudioSetPitchBridge(EditorScriptAudioHandle audioHandle, float pitch);
+	static bool ScriptAudioGetPitchBridge(EditorScriptAudioHandle audioHandle, float* pitch);
+	static bool ScriptAudioSetLoopBridge(EditorScriptAudioHandle audioHandle, bool loop);
+	static bool ScriptAudioGetLoopBridge(EditorScriptAudioHandle audioHandle, bool* loop);
+	static bool ScriptAudioSetPositionHandleBridge(EditorScriptAudioHandle audioHandle, const EditorScriptVector3* position);
+	static bool ScriptAudioSetBusBridge(EditorScriptAudioHandle audioHandle, int32_t audioBus);
+	static bool ScriptAudioGetPlaybackPositionBridge(EditorScriptAudioHandle audioHandle, float* seconds);
+	static bool ScriptAudioSetPlaybackPositionBridge(EditorScriptAudioHandle audioHandle, float seconds);
+	static bool ScriptAudioGetDurationBridge(EditorScriptAudioHandle audioHandle, float* seconds);
+	static bool ScriptAudioFadeToBridge(EditorScriptAudioHandle audioHandle, float targetVolume, float durationSeconds);
+	static bool ScriptRendererGetColorBridge(int32_t gameObjectId, EditorScriptVector3* color);
+	static bool ScriptRendererSetEnabledBridge(int32_t gameObjectId, bool isEnabled);
+	static bool ScriptRendererGetEnabledBridge(int32_t gameObjectId, bool* isEnabled);
+	static bool ScriptRendererSetOpacityBridge(int32_t gameObjectId, float opacity);
+	static bool ScriptRendererGetOpacityBridge(int32_t gameObjectId, float* opacity);
+	static bool ScriptRendererGetEmissionBridge(int32_t gameObjectId, EditorScriptVector3* color, float* strength);
+	static bool ScriptRendererSetMaterialFloatBridge(int32_t gameObjectId, const char* propertyName, float value);
+	static bool ScriptRendererGetMaterialFloatBridge(int32_t gameObjectId, const char* propertyName, float* value);
+	static bool ScriptRendererSetMaterialColorBridge(int32_t gameObjectId, const char* propertyName, const EditorScriptVector3* color);
+	static bool ScriptRendererGetMaterialColorBridge(int32_t gameObjectId, const char* propertyName, EditorScriptVector3* color);
+	static bool ScriptRendererSetMaterialTextureBridge(int32_t gameObjectId, const char* slotName, const char* textureAssetPath);
+	static bool ScriptRendererGetMaterialTextureBridge(int32_t gameObjectId, const char* slotName, char* textureAssetPath, int32_t textureAssetPathCapacity);
+	static EditorScriptVfxHandle ScriptVfxSpawnBridge(
+		const char* effectIdOrAssetPath,
+		const EditorScriptVector3* position,
+		const EditorScriptVector3* rotationEuler);
+	static EditorScriptVfxHandle ScriptVfxSpawnAttachedBridge(
+		const char* effectIdOrAssetPath,
+		int32_t followGameObjectId,
+		const EditorScriptVector3* localOffset);
+	static bool ScriptVfxStopHandleBridge(EditorScriptVfxHandle vfxHandle);
+	static bool ScriptVfxIsPlayingHandleBridge(EditorScriptVfxHandle vfxHandle);
+	static bool ScriptVfxSetPositionHandleBridge(EditorScriptVfxHandle vfxHandle, const EditorScriptVector3* position);
+	static bool ScriptVfxGetPositionHandleBridge(EditorScriptVfxHandle vfxHandle, EditorScriptVector3* position);
+	static bool ScriptVfxSetPausedHandleBridge(EditorScriptVfxHandle vfxHandle, bool isPaused);
+	static bool ScriptVfxSetPlaybackSpeedBridge(EditorScriptVfxHandle vfxHandle, float playbackSpeed);
+	static bool ScriptVfxGetPlaybackSpeedBridge(EditorScriptVfxHandle vfxHandle, float* playbackSpeed);
+	static bool ScriptVfxRestartHandleBridge(EditorScriptVfxHandle vfxHandle);
+	static bool ScriptVfxGetParticleCountHandleBridge(EditorScriptVfxHandle vfxHandle, int32_t* particleCount);
+	static bool ScriptVfxSetRotationHandleBridge(EditorScriptVfxHandle vfxHandle, const EditorScriptVector3* rotationEuler);
+	static bool ScriptVfxSetScaleHandleBridge(EditorScriptVfxHandle vfxHandle, const EditorScriptVector3* scale);
+	static bool ScriptUiSetTextBridge(int32_t gameObjectId, const char* text);
+	static bool ScriptUiGetTextBridge(int32_t gameObjectId, char* text, int32_t textCapacity);
+	static bool ScriptUiSetTextColorBridge(int32_t gameObjectId, const EditorScriptVector3* color, float alpha);
+	static bool ScriptUiGetTextColorBridge(int32_t gameObjectId, EditorScriptVector3* color, float* alpha);
+	static bool ScriptUiSetFontSizeBridge(int32_t gameObjectId, float fontSize);
+	static bool ScriptUiGetFontSizeBridge(int32_t gameObjectId, float* fontSize);
+	static bool ScriptUiSetInteractableBridge(int32_t gameObjectId, bool isInteractable);
+	static bool ScriptUiGetInteractableBridge(int32_t gameObjectId, bool* isInteractable);
+	static bool ScriptUiSetSliderValueBridge(int32_t gameObjectId, float value);
+	static bool ScriptUiGetSliderValueBridge(int32_t gameObjectId, float* value);
+	static bool ScriptUiSetToggleValueBridge(int32_t gameObjectId, bool value);
+	static bool ScriptUiGetToggleValueBridge(int32_t gameObjectId, bool* value);
+	static bool ScriptTerrainGetHeightAtWorldBridge(int32_t terrainGameObjectId, float worldX, float worldZ, float* worldHeight);
+	static bool ScriptTerrainContainsWorldPositionBridge(int32_t terrainGameObjectId, float worldX, float worldZ);
+	// 外部認識・オンライン連携(Speech / Vision / Haptics / Online)
+	static bool ScriptSpeechStartRecognitionBridge(int32_t gameObjectId);
+	static bool ScriptSpeechStopRecognitionBridge(int32_t gameObjectId);
+	static bool ScriptSpeechIsRecognizingBridge(int32_t gameObjectId);
+	static bool ScriptSpeechGetLastResultBridge(int32_t gameObjectId, char* text, int32_t textCapacity, float* confidence, bool* isFinal);
+	static bool ScriptSpeechWasKeywordRecognizedBridge(int32_t gameObjectId, const char* keyword);
+	static bool ScriptSpeechIsSpeakingBridge(int32_t gameObjectId);
+	static bool ScriptSpeechIsProcessingBridge(int32_t gameObjectId);
+	static bool ScriptVisionStartCameraBridge(int32_t gameObjectId);
+	static bool ScriptVisionStopCameraBridge(int32_t gameObjectId);
+	static bool ScriptVisionStartRecognitionBridge(int32_t gameObjectId);
+	static bool ScriptVisionStopRecognitionBridge(int32_t gameObjectId);
+	static int32_t ScriptVisionGetStateBridge(int32_t gameObjectId);
+	static int32_t ScriptVisionGetObjectCountBridge(int32_t gameObjectId);
+	static bool ScriptVisionGetObjectBridge(int32_t gameObjectId, int32_t objectIndex, char* label, int32_t labelCapacity, float* confidence, float* x, float* y, float* width, float* height);
+	static bool ScriptVisionGetTopClassificationBridge(int32_t gameObjectId, char* label, int32_t labelCapacity, float* confidence);
+	static int32_t ScriptVisionGetFaceCountBridge(int32_t gameObjectId);
+	static bool ScriptVisionGetFaceBridge(int32_t gameObjectId, int32_t faceIndex, float* confidence, float* x, float* y, float* width, float* height);
+	static bool ScriptVisionGetHeadPoseBridge(int32_t gameObjectId, float* yaw, float* pitch, float* roll);
+	static bool ScriptVisionGetMotionBridge(int32_t gameObjectId, bool* hasMotion, float* motionMagnitude, float* centerX, float* centerY);
+	static bool ScriptVisionGetColorTrackingBridge(int32_t gameObjectId, bool* isDetected, float* centerX, float* centerY, float* areaRatio);
+	static uint32_t ScriptHapticPlaySourceBridge(int32_t gameObjectId);
+	static uint32_t ScriptHapticPlayClipAssetBridge(const char* clipAssetPath, int32_t gameObjectId);
+	static uint32_t ScriptHapticPlayFromImpulseBridge(int32_t gameObjectId, float impulse);
+	static bool ScriptHapticStopSourceBridge(int32_t gameObjectId);
+	static bool ScriptHapticStopHandleBridge(uint32_t hapticHandle);
+	static bool ScriptHapticIsPlayingHandleBridge(uint32_t hapticHandle);
+	static bool ScriptHapticSetHandleIntensityBridge(uint32_t hapticHandle, float intensity);
+	static bool ScriptHapticSetHandleFrequencyBridge(uint32_t hapticHandle, float frequency);
+	static bool ScriptHapticSetHandlePlaybackSpeedBridge(uint32_t hapticHandle, float playbackSpeed);
+	static bool ScriptHapticSetHandleLoopingBridge(uint32_t hapticHandle, bool isLooping);
+	static void ScriptHapticSetMasterIntensityBridge(float masterIntensity);
+	static int32_t ScriptHapticGetDeviceStateBridge();
+	static void ScriptOnlineSetPlayerIdentityBridge(const char* playerId, const char* playerName);
+	static int32_t ScriptOnlineGetConnectionStateBridge();
+	static bool ScriptOnlineIsEnabledBridge();
+	static int32_t ScriptOnlineGetPendingRequestCountBridge();
+	static bool ScriptOnlineSubmitScoreBridge(const char* boardName, int64_t score, int32_t scope);
+	static bool ScriptOnlineRequestTopScoresBridge(const char* boardName, int32_t entryCount, int32_t scope);
+	static int32_t ScriptOnlineGetLeaderboardCountBridge();
+	static bool ScriptOnlineGetLeaderboardEntryBridge(int32_t entryIndex, char* playerId, int32_t playerIdCapacity, char* playerName, int32_t playerNameCapacity, int64_t* score, int32_t* rank);
+	static bool ScriptOnlineSetPlayerValueBridge(const char* key, const char* value);
+	static bool ScriptOnlineRequestPlayerDataBridge();
+	static bool ScriptOnlineGetPlayerValueBridge(const char* key, char* value, int32_t valueCapacity);
+	static bool ScriptOnlineUploadCloudSaveBridge(const char* slotName, const char* saveText);
+	static bool ScriptOnlineRequestCloudSaveBridge(const char* slotName);
+	static bool ScriptOnlineGetCloudSaveBridge(char* saveText, int32_t saveTextCapacity);
 	static bool ScriptAddForceBridge(int32_t gameObjectId, const EditorScriptVector3* force);  // DLL からの継続力要求を現在の ScriptManager へ流す
 	static bool ScriptAddForceAtPositionBridge(int32_t gameObjectId, const EditorScriptVector3* force, const EditorScriptVector3* worldPosition);  // DLL からの作用点付き継続力要求を流す
 	static bool ScriptAddImpulseBridge(int32_t gameObjectId, const EditorScriptVector3* impulse);  // DLL からの瞬間力要求を現在の ScriptManager へ流す

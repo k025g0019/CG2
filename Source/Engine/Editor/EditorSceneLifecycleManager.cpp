@@ -81,6 +81,10 @@ void EditorSceneLifecycleManager::Update() {
 	// Play していない時は Inspector 編集値をそのまま保ち、物理で Transform を動かさない。
 	if (g_editorRuntimeManager.IsPlaying()) {
 		constexpr float editorPlayDeltaTime = 1.0f / 60.0f;  // editorPlayDeltaTime は 60FPS 固定の物理更新秒数。
+		EditorProfilerManager::Scope runtimeUpdateScope(
+			g_editorRuntimeManager.GetProfilerManager(),
+			"Runtime.Update",
+			"Editor");
 		g_editorRuntimeManager.Update(g_key, editorPlayDeltaTime);  // RuntimeManager が InputManager と PhysicsManager を順番に更新する。
 	}
 
@@ -88,13 +92,25 @@ void EditorSceneLifecycleManager::Update() {
 	// GameObject と DirectX 描画用 SceneObject の同期
 	//================================================================
 
-	g_editorSceneSynchronizer.Update(g_editorTextureFilePaths, g_selectedPlacedSceneObjectIndex);  // GameObject の ModelRenderer / SpriteRenderer から SceneObject を生成・削除・更新する。
+	{
+		EditorProfilerManager::Scope sceneSynchronizerScope(
+			g_editorRuntimeManager.GetProfilerManager(),
+			"Scene Synchronizer.Update",
+			"Editor");
+		g_editorSceneSynchronizer.Update(g_editorTextureFilePaths, g_selectedPlacedSceneObjectIndex);  // GameObject の ModelRenderer / SpriteRenderer から SceneObject を生成・削除・更新する。
+	}
 
 	// 旧プレビュー用の選択番号と、新しい GameObject 選択 ID を同じ対象にそろえる。
-	g_editorSelectionManager.SyncLegacySelection(
-		g_selectedEditorGameObjectId,
-		g_selectedSceneObject,
-		g_selectedPlacedSceneObjectIndex);
+	{
+		EditorProfilerManager::Scope selectionScope(
+			g_editorRuntimeManager.GetProfilerManager(),
+			"Selection Synchronization",
+			"Editor");
+		g_editorSelectionManager.SyncLegacySelection(
+			g_selectedEditorGameObjectId,
+			g_selectedSceneObject,
+			g_selectedPlacedSceneObjectIndex);
+	}
 
 }
 

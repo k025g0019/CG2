@@ -44,6 +44,8 @@ public:
 		int32_t collisionMode = 0;  // 0=Depth、1=Physics Collider 由来の SDF。
 		int32_t billboardMode = 0;  // 板ParticleのCamera追従方式。
 		float billboardStretch = 1.0f;  // Velocity Facingの速度方向Scale。
+		float meshLighting = 0.0f;  // Mesh Particleへ法線ベースの簡易陰影を掛ける強さ。0なら従来のフラット色。
+		float updraft = 0.0f;  // 上向きへ加える加速度。寿命とともに減衰する。0なら無効。
 		std::string renderAssetPath;  // 空なら板、FBX / OBJ ならその Mesh を GPU インスタンシングする。
 	};
 
@@ -64,7 +66,12 @@ public:
 	bool HasLiveGpuParticles() const;  // GPU更新・描画が必要なParticleまたはSpawn要求があるか返す。
 	const std::vector<GpuParticleSpawn>& GetPendingGpuParticleSpawns() const;  // Renderer がこのフレームに GPU へ積む発生要求。
 	void ClearPendingGpuParticleSpawns();  // Renderer が GPU へ転送した Spawn 要求を消す。
+	void QueueGpuParticleSpawn(const GpuParticleSpawn& spawn);  // Blast GPU 破片など Emitter 以外から GPU Particle を 1 個追加する。
 	float GetLastDeltaTime() const;  // Render 側 Compute Shader に渡す直近 Update 秒。
+
+	// 外部更新された.effectのCacheを外す。ApplyEffectAssetは毎フレームCacheを引いて
+	// Componentへ値コピーするだけで生ポインタを保持しないため、いつ消しても安全。
+	void InvalidateEffectAssetCache(const std::string& assetPath);
 
 private:
 	struct EmitterRuntime {
@@ -113,17 +120,20 @@ private:
 	EditorScene* editorScene_ = nullptr;  // Effect GameObject の生成・更新先。
 	std::vector<std::string>* consoleMessages_ = nullptr;  // 再生失敗などを表示する Console。
 	std::unordered_map<uint64_t, EmitterRuntime> emitterRuntimes_;  // Emitter ごとの再生状態。
-	std::unordered_map<std::string, EffectAsset> effectAssetCache_;  // Play 中に読み込んだ共有 .effect を再利用する。
+	std::unordered_map<std::string, EffectAsset> effectAssetCache_;  // Play 中に読み込んだ共有 .effect を再利用する。.effect Source Assetの唯一のCanonical Cache。
+	int32_t effectAssetParseCount_ = 0;  // 検証用: 同一Pathの再Parseが起きていないかをConsoleで確認するための累計Parse回数。
+	std::vector<EmitterSnapshot> emitterSnapshots_;  // Emitter設定の再利用領域。毎フレームのVector確保を防ぐ。
 	std::vector<ParticleRuntime> particles_;  // 現在生存している Particle。
 	std::unordered_map<int32_t, int32_t> aliveParticleCountByOwner_;  // Emitterごとの全Particle走査を避ける生存数Cache。
 	std::vector<GpuParticleSpawn> pendingGpuParticleSpawns_;  // GPU StructuredBuffer へ追加する新規 Particle。
+	std::vector<float> externalGpuParticleLifetimes_;  // QueueGpuParticleSpawn 分の残り寿命。GPU 更新・描画の要否判定にだけ使う。
 	std::mt19937 randomEngine_{0x434732u};  // Play ごとに再現可能な乱数系列。
 	uint32_t particleSerial_ = 0u;  // 一時 GameObject 名を重複させない連番。
 	float lastDeltaTime_ = 0.0f;  // Render 側で GPU Particle を同じ秒数だけ進めるための値。
 	bool isStarted_ = false;  // Play 中だけ Update を有効にする。
 
 	static uint64_t MakeEmitterKey(int32_t gameObjectId, EditorComponentType componentType);  // GameObject と Component 種類を 1 つのキーへまとめる。
-	std::vector<EmitterSnapshot> CollectEmitterSnapshots();  // Scene 変更前に Emitter 設定をコピーし、共有 .effect を解決する。
+	const std::vector<EmitterSnapshot>& CollectEmitterSnapshots();  // Scene 変更前に Emitter 設定をコピーし、共有 .effect を解決する。
 	bool ApplyEffectAsset(EditorComponent& component);  // assetPath が .effect の場合に共有設定を実行用コピーへ反映する。
 	void UpdateEmitters(const std::vector<EmitterSnapshot>& emitters, float deltaTime);  // 発生レート・Duration・Burst を処理する。
 	void UpdateParticles(float deltaTime);  // 生存 Particle の Transform と Material を更新する。

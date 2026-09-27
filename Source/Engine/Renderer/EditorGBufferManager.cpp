@@ -34,6 +34,7 @@ bool EditorGBufferManager::Initialize(
 	UINT srvDescriptorSize,
 	ID3D12RootSignature* objectRootSignature,
 	IDxcBlob* vertexShaderBlob,
+	IDxcBlob* batchedVertexShaderBlob,
 	IDxcBlob* pixelShaderBlob,
 	const D3D12_INPUT_ELEMENT_DESC* inputElementDescs,
 	UINT inputElementCount,
@@ -45,6 +46,7 @@ bool EditorGBufferManager::Initialize(
 		srvDescriptorHeap == nullptr ||
 		objectRootSignature == nullptr ||
 		vertexShaderBlob == nullptr ||
+		batchedVertexShaderBlob == nullptr ||
 		pixelShaderBlob == nullptr ||
 		inputElementDescs == nullptr ||
 		inputElementCount == 0u) {
@@ -74,6 +76,7 @@ bool EditorGBufferManager::Initialize(
 
 	if (!CreatePipelineStates(
 		vertexShaderBlob,
+		batchedVertexShaderBlob,
 		pixelShaderBlob,
 		inputElementDescs,
 		inputElementCount)) {
@@ -168,6 +171,20 @@ void EditorGBufferManager::BindPipelineState(
 	}
 }
 
+void EditorGBufferManager::BindBatchedPipelineState(
+	ID3D12GraphicsCommandList* commandList,
+	bool isDoubleSided) const {
+	if (!isRendering_ || commandList == nullptr) {
+		return;
+	}
+	ID3D12PipelineState* targetPipelineState = isDoubleSided
+		? batchedDoubleSidedPipelineState_.Get()
+		: batchedPipelineState_.Get();
+	if (targetPipelineState != nullptr) {
+		commandList->SetPipelineState(targetPipelineState);
+	}
+}
+
 void EditorGBufferManager::End(ID3D12GraphicsCommandList* commandList) {
 	if (!isRendering_ || commandList == nullptr) {
 		return;
@@ -194,6 +211,8 @@ void EditorGBufferManager::End(ID3D12GraphicsCommandList* commandList) {
 
 void EditorGBufferManager::Finalize() {
 	ReleaseSizeDependentResources();
+	batchedDoubleSidedPipelineState_.Reset();
+	batchedPipelineState_.Reset();
 	doubleSidedPipelineState_.Reset();
 	pipelineState_.Reset();
 	objectRootSignature_.Reset();
@@ -227,7 +246,8 @@ D3D12_GPU_DESCRIPTOR_HANDLE EditorGBufferManager::GetMotionVectorSrvHandle() con
 }
 
 bool EditorGBufferManager::IsReady() const {
-	if (!isInitialized_ || pipelineState_ == nullptr || doubleSidedPipelineState_ == nullptr) {
+	if (!isInitialized_ || pipelineState_ == nullptr || doubleSidedPipelineState_ == nullptr ||
+		batchedPipelineState_ == nullptr || batchedDoubleSidedPipelineState_ == nullptr) {
 		return false;
 	}
 
@@ -242,6 +262,7 @@ bool EditorGBufferManager::IsReady() const {
 
 bool EditorGBufferManager::CreatePipelineStates(
 	IDxcBlob* vertexShaderBlob,
+	IDxcBlob* batchedVertexShaderBlob,
 	IDxcBlob* pixelShaderBlob,
 	const D3D12_INPUT_ELEMENT_DESC* inputElementDescs,
 	UINT inputElementCount) {
@@ -290,7 +311,27 @@ bool EditorGBufferManager::CreatePipelineStates(
 	pipelineResult = device_->CreateGraphicsPipelineState(
 		&pipelineStateDesc,
 		IID_PPV_ARGS(doubleSidedPipelineState_.ReleaseAndGetAddressOf()));
-	return SUCCEEDED(pipelineResult) && doubleSidedPipelineState_ != nullptr;
+	if (FAILED(pipelineResult) || doubleSidedPipelineState_ == nullptr) {
+		return false;
+	}
+
+	pipelineStateDesc.VS = {
+		batchedVertexShaderBlob->GetBufferPointer(),
+		batchedVertexShaderBlob->GetBufferSize(),
+	};
+	pipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
+	pipelineResult = device_->CreateGraphicsPipelineState(
+		&pipelineStateDesc,
+		IID_PPV_ARGS(batchedPipelineState_.ReleaseAndGetAddressOf()));
+	if (FAILED(pipelineResult) || batchedPipelineState_ == nullptr) {
+		return false;
+	}
+
+	pipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	pipelineResult = device_->CreateGraphicsPipelineState(
+		&pipelineStateDesc,
+		IID_PPV_ARGS(batchedDoubleSidedPipelineState_.ReleaseAndGetAddressOf()));
+	return SUCCEEDED(pipelineResult) && batchedDoubleSidedPipelineState_ != nullptr;
 }
 
 bool EditorGBufferManager::CreateSizeDependentResources(

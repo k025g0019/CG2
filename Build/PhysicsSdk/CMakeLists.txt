@@ -34,10 +34,79 @@ target_compile_definitions(NvBlast PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX
     "$<$<CONFIG:Debug>:NV_DEBUG=1;NV_CHECKED=1>"
     "$<$<NOT:$<CONFIG:Debug>>:NV_DEBUG=0;NV_CHECKED=0>")
 
+# Authoring各部が使うAllocator/Profilerを低レベルRuntimeから分離する。
+add_library(NvBlastGlobals SHARED
+	"${blastSdk}/common/NvBlastAssert.cpp"
+	"${blastSdk}/globals/source/NvBlastGlobals.cpp"
+	"${blastSdk}/globals/source/NvBlastProfiler.cpp")
+target_include_directories(NvBlastGlobals PUBLIC
+	"${blastSdk}/globals/include"
+	"${blastSdk}/globals/source"
+	PRIVATE "${blastSdk}/common")
+target_compile_definitions(NvBlastGlobals PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX
+	"$<$<CONFIG:Debug>:NV_DEBUG=1;NV_CHECKED=1>"
+	"$<$<NOT:$<CONFIG:Debug>>:NV_DEBUG=0;NV_CHECKED=0>")
+target_link_libraries(NvBlastGlobals PRIVATE NvBlast)
+
+# Blast authoring is editor/build-time only.  The runtime still uses the small
+# NvBlast low-level DLL, while this DLL performs deterministic Voronoi baking.
+set(blastAuthoringSource "${blastSdk}/extensions/authoring/source")
+set(blastAuthoringCommonSource "${blastSdk}/extensions/authoringCommon/source")
+
+# Blast 1.1.5 Authoring was released against PhysX 3.4.  Its public headers
+# forward-declare physx::PxVec3 as a class, which is incompatible with the
+# PxVec3T<float> alias used by the current ManoEngine PhysX runtime.  Keep the
+# runtime on the current SDK and expose 3.4 headers to this target only.
+set(blastPhysX34 "${CG2_ROOT}/ThirdParty/PhysX-3.4")
+set(blastPhysX34Include "${blastPhysX34}/PhysX_3.4/Include")
+set(blastPxSharedInclude "${blastPhysX34}/PxShared/include")
+if(NOT EXISTS "${blastPhysX34Include}/PxPhysicsAPI.h" OR
+   NOT EXISTS "${blastPxSharedInclude}/foundation/PxVec3.h")
+	message(FATAL_ERROR
+		"NvBlastExtAuthoring requires PhysX 3.4 headers at ThirdParty/PhysX-3.4 "
+		"(PhysX_3.4/Include and PxShared/include).")
+endif()
+
+add_library(NvBlastExtAuthoring SHARED
+	"${CMAKE_CURRENT_LIST_DIR}/BlastAuthoringBridge.cpp"
+	"${blastAuthoringCommonSource}/NvBlastExtAuthoringAccelerator.cpp"
+	"${blastAuthoringCommonSource}/NvBlastExtAuthoringMeshImpl.cpp"
+	"${blastAuthoringSource}/NvBlastExtAuthoringBooleanTool.cpp"
+	"${blastAuthoringSource}/NvBlastExtAuthoringCutoutImpl.cpp"
+	"${blastAuthoringSource}/NvBlastExtAuthoringFractureToolImpl.cpp"
+	"${blastAuthoringSource}/NvBlastExtAuthoringMeshNoiser.cpp"
+	"${blastAuthoringSource}/NvBlastExtAuthoringMeshUtils.cpp"
+	"${blastAuthoringSource}/NvBlastExtAuthoringTriangulator.cpp"
+	"${blastAuthoringSource}/NvBlastExtTriangleProcessor.cpp")
+target_include_directories(NvBlastExtAuthoring PRIVATE
+	"${blastSdk}/lowlevel/include"
+	"${blastSdk}/common"
+	"${blastSdk}/globals/include"
+	"${blastSdk}/extensions/common/source"
+	"${blastSdk}/extensions/authoring/include"
+	"${blastSdk}/extensions/authoring/source"
+	"${blastSdk}/extensions/authoringCommon/include"
+	"${blastSdk}/extensions/authoringCommon/source"
+	"${blastSdk}/extensions/assetutils/include"
+	"${blastSdk}/extensions/RT/source"
+	"${blastPhysX34Include}"
+	"${blastPxSharedInclude}"
+	"${blastPxSharedInclude}/foundation"
+	"${blastAuthoringSource}/VHACD/inc"
+	"${blastAuthoringSource}/VHACD/public")
+target_compile_features(NvBlastExtAuthoring PRIVATE cxx_std_17)
+target_compile_options(NvBlastExtAuthoring PRIVATE
+	/utf-8 /EHsc /FIcmath
+	/wd4005 /wd4100 /wd4239 /wd4244 /wd4245 /wd4267)
+target_compile_definitions(NvBlastExtAuthoring PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX
+	"$<$<CONFIG:Debug>:NV_DEBUG=1;NV_CHECKED=1>"
+	"$<$<NOT:$<CONFIG:Debug>>:NV_DEBUG=0;NV_CHECKED=0>")
+target_link_libraries(NvBlastExtAuthoring PRIVATE NvBlast NvBlastGlobals)
+
 # A common layout keeps MSBuild independent of upstream compiler-directory names.
 add_custom_target(CG2PhysicsSdkLibraries ALL)
 set(sdkTargets PhysX PhysXCommon PhysXFoundation PhysXCooking PhysXExtensions
-    PhysXPvdSDK PhysXCharacterKinematic PhysXVehicle PhysXVehicle2 PhysXGpu NvBlast)
+    PhysXPvdSDK PhysXCharacterKinematic PhysXVehicle PhysXVehicle2 PhysXGpu NvBlast NvBlastGlobals NvBlastExtAuthoring)
 foreach(sdkTarget IN LISTS sdkTargets)
     if(TARGET ${sdkTarget})
         add_dependencies(CG2PhysicsSdkLibraries ${sdkTarget})

@@ -7,6 +7,8 @@
 #include "EditorCameraEffectManager.h"
 #include "EditorComponentUtility.h"
 #include "EditorDamageManager.h"
+#include "EditorExternalFeatureManager.h"
+#include "EditorNavigationManager.h"
 #include "EditorObjectPoolManager.h"
 #include "EditorOceanSystem.h"
 #include "EditorProfilerManager.h"
@@ -15,11 +17,16 @@
 #include "EditorSaveManager.h"
 #include "EditorSharedState.h"
 #include "EditorTargetingManager.h"
+#include "EditorTerrainHeightField.h"
 #include "EditorWeaponManager.h"
 #include "EditorWeaponLoadoutManager.h"
 #include "EditorWaveSpawnerManager.h"
 #include "StringUtility.h"
 #include "Source/Engine/Effect/EditorVfxManager.h"
+#include "Source/Engine/Haptics/HapticSystem.h"
+#include "Source/Engine/Online/OnlineService.h"
+#include "Source/Engine/Speech/SpeechSystem.h"
+#include "Source/Engine/Vision/VisionSystem.h"
 
 #include <Windows.h>
 
@@ -28,7 +35,9 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <sstream>
+#include <tuple>
 
 namespace {
 	EditorScriptManager* gActiveScriptManager = nullptr;  // DLL API の関数ポインタから現在の ScriptManager を逆参照する。
@@ -376,6 +385,10 @@ void EditorScriptManager::SetVfxManager(EditorVfxManager* vfxManager) {
 
 void EditorScriptManager::SetProfilerManager(EditorProfilerManager* profilerManager) {
 	profilerManager_ = profilerManager;
+}
+
+void EditorScriptManager::SetNavigationManager(EditorNavigationManager* navigationManager) {
+	navigationManager_ = navigationManager;
 }
 
 void EditorScriptManager::SetGameplayManagers(
@@ -1374,6 +1387,1607 @@ bool EditorScriptManager::ScriptResetAreaBridge(int32_t areaRootGameObjectId) {
 
 bool EditorScriptManager::ScriptHasAreaStateBridge(int32_t areaRootGameObjectId) {
 	return EditorSharedState::g_editorRuntimeManager.HasAreaState(areaRootGameObjectId);
+}
+
+//================================================================
+// Navigation Bridge
+//================================================================
+
+bool EditorScriptManager::ScriptNavSetDestinationBridge(
+	int32_t gameObjectId,
+	const EditorScriptVector3* destination) {
+	if (gActiveScriptManager == nullptr ||
+		gActiveScriptManager->navigationManager_ == nullptr ||
+		destination == nullptr) {
+		return false;
+	}
+
+	return gActiveScriptManager->navigationManager_->SetDestination(
+		gameObjectId,
+		Vector3{destination->x, destination->y, destination->z});
+}
+
+bool EditorScriptManager::ScriptNavGetDestinationBridge(
+	int32_t gameObjectId,
+	EditorScriptVector3* destination) {
+	if (gActiveScriptManager == nullptr ||
+		gActiveScriptManager->navigationManager_ == nullptr ||
+		destination == nullptr) {
+		return false;
+	}
+
+	Vector3 currentDestination{};
+
+	if (!gActiveScriptManager->navigationManager_->GetDestination(gameObjectId, currentDestination)) {
+		return false;
+	}
+
+	destination->x = currentDestination.x;
+	destination->y = currentDestination.y;
+	destination->z = currentDestination.z;
+	return true;
+}
+
+bool EditorScriptManager::ScriptNavStopBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->navigationManager_ != nullptr &&
+		gActiveScriptManager->navigationManager_->StopAgent(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptNavResumeBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->navigationManager_ != nullptr &&
+		gActiveScriptManager->navigationManager_->ResumeAgent(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptNavIsStoppedBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->navigationManager_ != nullptr &&
+		gActiveScriptManager->navigationManager_->IsAgentStopped(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptNavHasPathBridge(int32_t gameObjectId) {
+	return gActiveScriptManager != nullptr &&
+		gActiveScriptManager->navigationManager_ != nullptr &&
+		gActiveScriptManager->navigationManager_->HasPath(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptNavGetRemainingDistanceBridge(
+	int32_t gameObjectId,
+	float* remainingDistance) {
+	if (gActiveScriptManager == nullptr ||
+		gActiveScriptManager->navigationManager_ == nullptr ||
+		remainingDistance == nullptr) {
+		return false;
+	}
+
+	return gActiveScriptManager->navigationManager_->GetRemainingDistance(gameObjectId, *remainingDistance);
+}
+
+bool EditorScriptManager::ScriptNavWarpBridge(int32_t gameObjectId, const EditorScriptVector3* position) {
+	if (gActiveScriptManager == nullptr ||
+		gActiveScriptManager->navigationManager_ == nullptr ||
+		position == nullptr) {
+		return false;
+	}
+
+	return gActiveScriptManager->navigationManager_->WarpAgent(
+		gameObjectId,
+		Vector3{position->x, position->y, position->z});
+}
+
+bool EditorScriptManager::ScriptNavGetPathFailureReasonBridge(
+	int32_t gameObjectId,
+	char* reason,
+	int32_t reasonCapacity) {
+	if (gActiveScriptManager == nullptr ||
+		gActiveScriptManager->navigationManager_ == nullptr ||
+		reason == nullptr ||
+		reasonCapacity <= 0) {
+		return false;
+	}
+
+	const std::string failureReason =
+		gActiveScriptManager->navigationManager_->GetLastPathFailureReason(gameObjectId);
+
+	if (failureReason.empty()) {
+		reason[0] = '\0';
+		return false;
+	}
+
+	strncpy_s(reason, static_cast<size_t>(reasonCapacity), failureReason.c_str(), _TRUNCATE);
+	return true;
+}
+
+//================================================================
+// NVIDIA Blast 1.1.5 Bridge
+//================================================================
+
+bool EditorScriptManager::ScriptBlastApplyDamageBridge(
+	int32_t gameObjectId,
+	const EditorScriptVector3* worldPosition,
+	float radius,
+	float damage,
+	float impulse) {
+	if (worldPosition == nullptr) {
+		return false;
+	}
+	return EditorSharedState::g_editorRuntimeManager.GetBlastDestructionManager().ApplyDamage(
+		gameObjectId,
+		Vector3{worldPosition->x, worldPosition->y, worldPosition->z},
+		radius,
+		damage,
+		impulse);
+}
+
+bool EditorScriptManager::ScriptBlastFractureAllBridge(int32_t gameObjectId, float impulse) {
+	return EditorSharedState::g_editorRuntimeManager.GetBlastDestructionManager().FractureAll(
+		gameObjectId,
+		impulse);
+}
+
+bool EditorScriptManager::ScriptBlastIsFracturedBridge(int32_t gameObjectId) {
+	return EditorSharedState::g_editorRuntimeManager.GetBlastDestructionManager().IsFractured(gameObjectId);
+}
+
+int32_t EditorScriptManager::ScriptBlastGetChunkCountBridge(int32_t gameObjectId) {
+	return EditorSharedState::g_editorRuntimeManager.GetBlastDestructionManager().GetChunkCount(gameObjectId);
+}
+
+int32_t EditorScriptManager::ScriptBlastGetActorCountBridge(int32_t gameObjectId) {
+	return EditorSharedState::g_editorRuntimeManager.GetBlastDestructionManager().GetActorCount(gameObjectId);
+}
+
+int32_t EditorScriptManager::ScriptBlastGetBondCountBridge(int32_t gameObjectId) {
+	return EditorSharedState::g_editorRuntimeManager.GetBlastDestructionManager().GetBondCount(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptBlastGetChunkGameObjectIdBridge(
+	int32_t gameObjectId, int32_t chunkIndex, int32_t* chunkGameObjectId) {
+	if (chunkGameObjectId == nullptr) {
+		return false;
+	}
+	return EditorSharedState::g_editorRuntimeManager.GetBlastDestructionManager().GetChunkGameObjectId(
+		gameObjectId, chunkIndex, *chunkGameObjectId);
+}
+
+bool EditorScriptManager::ScriptBlastIsChunkDetachedBridge(int32_t gameObjectId, int32_t chunkIndex) {
+	return EditorSharedState::g_editorRuntimeManager.GetBlastDestructionManager().IsChunkDetached(
+		gameObjectId, chunkIndex);
+}
+
+//================================================================
+// Camera Bridge
+//================================================================
+
+namespace {
+	// Camera / CinemachineCamera のどちらでも同じAPIから触れるようにする。
+	EditorComponent* FindScriptCameraComponent(EditorScene* editorScene, int32_t gameObjectId) {
+		if (editorScene == nullptr) {
+			return nullptr;
+		}
+
+		EditorGameObject* gameObject = editorScene->FindGameObject(gameObjectId);
+
+		if (gameObject == nullptr) {
+			return nullptr;
+		}
+
+		EditorComponent* camera = EditorComponentUtility::FindComponent(
+			*gameObject, EditorComponentType::Camera);
+
+		if (camera == nullptr) {
+			camera = EditorComponentUtility::FindComponent(
+				*gameObject, EditorComponentType::CinemachineCamera);
+		}
+
+		return camera;
+	}
+
+	EditorComponent* FindScriptCameraComponentFor(int32_t gameObjectId) {
+		return FindScriptCameraComponent(&EditorSharedState::g_editorScene, gameObjectId);
+	}
+}
+
+bool EditorScriptManager::ScriptCameraGetFieldOfViewBridge(int32_t gameObjectId, float* fieldOfViewDegrees) {
+	const EditorComponent* camera = FindScriptCameraComponentFor(gameObjectId);
+
+	if (camera == nullptr || fieldOfViewDegrees == nullptr) {
+		return false;
+	}
+
+	*fieldOfViewDegrees = camera->cameraFieldOfView;
+	return true;
+}
+
+bool EditorScriptManager::ScriptCameraSetFieldOfViewBridge(int32_t gameObjectId, float fieldOfViewDegrees) {
+	EditorComponent* camera = FindScriptCameraComponentFor(gameObjectId);
+
+	if (camera == nullptr) {
+		return false;
+	}
+
+	camera->cameraFieldOfView = (std::clamp)(fieldOfViewDegrees, 1.0f, 179.0f);
+	return true;
+}
+
+bool EditorScriptManager::ScriptCameraGetNearClipBridge(int32_t gameObjectId, float* nearClip) {
+	const EditorComponent* camera = FindScriptCameraComponentFor(gameObjectId);
+
+	if (camera == nullptr || nearClip == nullptr) {
+		return false;
+	}
+
+	*nearClip = camera->cameraNearClip;
+	return true;
+}
+
+bool EditorScriptManager::ScriptCameraSetNearClipBridge(int32_t gameObjectId, float nearClip) {
+	EditorComponent* camera = FindScriptCameraComponentFor(gameObjectId);
+
+	if (camera == nullptr) {
+		return false;
+	}
+
+	// Near >= Far は投影行列が破綻するため、必ずFarより手前へ収める。
+	const float maximumNearClip = (std::max)(camera->cameraFarClip - 0.01f, 0.01f);
+	camera->cameraNearClip = (std::clamp)(nearClip, 0.01f, maximumNearClip);
+	return true;
+}
+
+bool EditorScriptManager::ScriptCameraGetFarClipBridge(int32_t gameObjectId, float* farClip) {
+	const EditorComponent* camera = FindScriptCameraComponentFor(gameObjectId);
+
+	if (camera == nullptr || farClip == nullptr) {
+		return false;
+	}
+
+	*farClip = camera->cameraFarClip;
+	return true;
+}
+
+bool EditorScriptManager::ScriptCameraSetFarClipBridge(int32_t gameObjectId, float farClip) {
+	EditorComponent* camera = FindScriptCameraComponentFor(gameObjectId);
+
+	if (camera == nullptr) {
+		return false;
+	}
+
+	camera->cameraFarClip = (std::max)(farClip, camera->cameraNearClip + 0.01f);
+	return true;
+}
+
+bool EditorScriptManager::ScriptCameraGetProjectionModeBridge(int32_t gameObjectId, int32_t* projectionMode) {
+	const EditorComponent* camera = FindScriptCameraComponentFor(gameObjectId);
+
+	if (camera == nullptr || projectionMode == nullptr) {
+		return false;
+	}
+
+	*projectionMode = camera->cameraProjectionMode;
+	return true;
+}
+
+bool EditorScriptManager::ScriptCameraSetProjectionModeBridge(int32_t gameObjectId, int32_t projectionMode) {
+	EditorComponent* camera = FindScriptCameraComponentFor(gameObjectId);
+
+	if (camera == nullptr || projectionMode < 0 || projectionMode > 1) {
+		return false;
+	}
+
+	camera->cameraProjectionMode = projectionMode;
+	return true;
+}
+
+bool EditorScriptManager::ScriptCameraGetOrthographicSizeBridge(int32_t gameObjectId, float* orthographicSize) {
+	const EditorComponent* camera = FindScriptCameraComponentFor(gameObjectId);
+
+	if (camera == nullptr || orthographicSize == nullptr) {
+		return false;
+	}
+
+	// 旧Sceneは未保存で0のまま。Game Viewの既定値と同じ値を返す。
+	*orthographicSize = camera->cameraOrthographicSize > 0.0f ? camera->cameraOrthographicSize : 10.0f;
+	return true;
+}
+
+bool EditorScriptManager::ScriptCameraSetOrthographicSizeBridge(int32_t gameObjectId, float orthographicSize) {
+	EditorComponent* camera = FindScriptCameraComponentFor(gameObjectId);
+
+	if (camera == nullptr) {
+		return false;
+	}
+
+	camera->cameraOrthographicSize = (std::max)(orthographicSize, 0.01f);
+	return true;
+}
+
+bool EditorScriptManager::ScriptCameraGetPriorityBridge(int32_t gameObjectId, int32_t* priority) {
+	const EditorComponent* camera = FindScriptCameraComponentFor(gameObjectId);
+
+	if (camera == nullptr || priority == nullptr) {
+		return false;
+	}
+
+	*priority = camera->cameraPriority;
+	return true;
+}
+
+bool EditorScriptManager::ScriptCameraSetPriorityBridge(int32_t gameObjectId, int32_t priority) {
+	EditorComponent* camera = FindScriptCameraComponentFor(gameObjectId);
+
+	if (camera == nullptr) {
+		return false;
+	}
+
+	camera->cameraPriority = priority;
+	return true;
+}
+
+bool EditorScriptManager::ScriptCameraGetEnabledBridge(int32_t gameObjectId, bool* isEnabled) {
+	const EditorComponent* camera = FindScriptCameraComponentFor(gameObjectId);
+
+	if (camera == nullptr || isEnabled == nullptr) {
+		return false;
+	}
+
+	*isEnabled = camera->isActive;
+	return true;
+}
+
+bool EditorScriptManager::ScriptCameraSetEnabledBridge(int32_t gameObjectId, bool isEnabled) {
+	EditorComponent* camera = FindScriptCameraComponentFor(gameObjectId);
+
+	if (camera == nullptr) {
+		return false;
+	}
+
+	camera->isActive = isEnabled;
+	return true;
+}
+
+int32_t EditorScriptManager::ScriptCameraGetActiveBridge() {
+	// Game Viewの選択基準(有効ObjectかつCamera Componentが有効な中で最大Priority)へ合わせる。
+	int32_t selectedGameObjectId = -1;
+	int32_t selectedPriority = INT32_MIN;
+
+	for (const EditorGameObject& gameObject : EditorSharedState::g_editorScene.GetGameObjects()) {
+		if (!gameObject.isActive) {
+			continue;
+		}
+
+		const EditorComponent* camera = EditorComponentUtility::FindComponent(
+			gameObject, EditorComponentType::Camera);
+
+		if (camera == nullptr || !camera->isActive) {
+			camera = EditorComponentUtility::FindComponent(
+				gameObject, EditorComponentType::CinemachineCamera);
+		}
+
+		if (camera == nullptr || !camera->isActive || camera->cameraPriority <= selectedPriority) {
+			continue;
+		}
+
+		selectedPriority = camera->cameraPriority;
+		selectedGameObjectId = gameObject.id;
+	}
+
+	return selectedGameObjectId;
+}
+
+bool EditorScriptManager::ScriptCameraSetActiveBridge(int32_t gameObjectId) {
+	EditorComponent* camera = FindScriptCameraComponentFor(gameObjectId);
+
+	if (camera == nullptr) {
+		return false;
+	}
+
+	int32_t highestOtherPriority = INT32_MIN;
+
+	for (const EditorGameObject& gameObject : EditorSharedState::g_editorScene.GetGameObjects()) {
+		if (gameObject.id == gameObjectId || !gameObject.isActive) {
+			continue;
+		}
+
+		const EditorComponent* otherCamera = EditorComponentUtility::FindComponent(
+			gameObject, EditorComponentType::Camera);
+
+		if (otherCamera == nullptr || !otherCamera->isActive) {
+			otherCamera = EditorComponentUtility::FindComponent(
+				gameObject, EditorComponentType::CinemachineCamera);
+		}
+
+		if (otherCamera != nullptr && otherCamera->isActive &&
+			otherCamera->cameraPriority > highestOtherPriority) {
+			highestOtherPriority = otherCamera->cameraPriority;
+		}
+	}
+
+	camera->isActive = true;
+
+	if (highestOtherPriority != INT32_MIN && camera->cameraPriority <= highestOtherPriority) {
+		camera->cameraPriority = highestOtherPriority + 1;
+	}
+
+	return true;
+}
+
+namespace {
+	// Engineの回転はEuler(pitch=x, yaw=y)で、前方は
+	// (sin(yaw)cos(pitch), -sin(pitch), cos(yaw)cos(pitch))。Camera向けの相互変換をここへ集約する。
+	Vector3 EulerToForward(const Vector3& rotationEuler) {
+		const float cosinePitch = std::cos(rotationEuler.x);
+		return Vector3{
+			std::sin(rotationEuler.y) * cosinePitch,
+			-std::sin(rotationEuler.x),
+			std::cos(rotationEuler.y) * cosinePitch};
+	}
+
+	bool ForwardToEuler(const Vector3& direction, float& pitch, float& yaw) {
+		const float lengthSquared =
+			direction.x * direction.x + direction.y * direction.y + direction.z * direction.z;
+
+		if (lengthSquared < 0.0000001f) {
+			return false;
+		}
+
+		const float inverseLength = 1.0f / std::sqrt(lengthSquared);
+		const float normalizedX = direction.x * inverseLength;
+		const float normalizedY = direction.y * inverseLength;
+		const float normalizedZ = direction.z * inverseLength;
+		pitch = -std::asin((std::clamp)(normalizedY, -1.0f, 1.0f));
+		yaw = std::atan2(normalizedX, normalizedZ);
+		return true;
+	}
+}
+
+bool EditorScriptManager::ScriptCameraLookAtBridge(
+	int32_t gameObjectId,
+	const EditorScriptVector3* targetPosition) {
+	if (targetPosition == nullptr || FindScriptCameraComponentFor(gameObjectId) == nullptr) {
+		return false;
+	}
+
+	EditorGameObject* gameObject = EditorSharedState::g_editorScene.FindGameObject(gameObjectId);
+
+	if (gameObject == nullptr) {
+		return false;
+	}
+
+	const Vector3 direction{
+		targetPosition->x - gameObject->translate.x,
+		targetPosition->y - gameObject->translate.y,
+		targetPosition->z - gameObject->translate.z};
+	float pitch = 0.0f;
+	float yaw = 0.0f;
+
+	if (!ForwardToEuler(direction, pitch, yaw)) {
+		return false;
+	}
+
+	gameObject->rotate.x = pitch;
+	gameObject->rotate.y = yaw;
+	return true;
+}
+
+bool EditorScriptManager::ScriptCameraGetLookDirectionBridge(
+	int32_t gameObjectId,
+	EditorScriptVector3* direction) {
+	if (direction == nullptr || FindScriptCameraComponentFor(gameObjectId) == nullptr) {
+		return false;
+	}
+
+	const EditorGameObject* gameObject = EditorSharedState::g_editorScene.FindGameObject(gameObjectId);
+
+	if (gameObject == nullptr) {
+		return false;
+	}
+
+	*direction = ToScriptVector3(EulerToForward(gameObject->rotate));
+	return true;
+}
+
+bool EditorScriptManager::ScriptCameraSetLookDirectionBridge(
+	int32_t gameObjectId,
+	const EditorScriptVector3* direction) {
+	if (direction == nullptr || FindScriptCameraComponentFor(gameObjectId) == nullptr) {
+		return false;
+	}
+
+	EditorGameObject* gameObject = EditorSharedState::g_editorScene.FindGameObject(gameObjectId);
+
+	if (gameObject == nullptr) {
+		return false;
+	}
+
+	float pitch = 0.0f;
+	float yaw = 0.0f;
+
+	if (!ForwardToEuler(ToEditorVector3(*direction), pitch, yaw)) {
+		return false;
+	}
+
+	gameObject->rotate.x = pitch;
+	gameObject->rotate.y = yaw;
+	return true;
+}
+
+//================================================================
+// Audio Voice Bridge
+//================================================================
+
+EditorScriptAudioHandle EditorScriptManager::ScriptAudioPlayWithHandleBridge(int32_t gameObjectId) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->audioManager_ == nullptr) {
+		return kInvalidEditorScriptAudioHandle;
+	}
+
+	return gActiveScriptManager->audioManager_->PlayWithHandle(gameObjectId);
+}
+
+EditorScriptAudioHandle EditorScriptManager::ScriptAudioPlayClipAtPositionBridge(
+	const char* clipAssetPath,
+	const EditorScriptVector3* position,
+	int32_t audioBus,
+	float volume,
+	bool loop) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->audioManager_ == nullptr ||
+		clipAssetPath == nullptr || position == nullptr) {
+		return kInvalidEditorScriptAudioHandle;
+	}
+
+	return gActiveScriptManager->audioManager_->PlayClipAtPosition(
+		clipAssetPath, ToEditorVector3(*position), audioBus, volume, loop, 1.0f);
+}
+
+EditorScriptAudioHandle EditorScriptManager::ScriptAudioPlayClip2DBridge(
+	const char* clipAssetPath,
+	int32_t audioBus,
+	float volume,
+	bool loop) {
+	if (gActiveScriptManager == nullptr || gActiveScriptManager->audioManager_ == nullptr ||
+		clipAssetPath == nullptr) {
+		return kInvalidEditorScriptAudioHandle;
+	}
+
+	// spatialBlend=0で距離減衰もPanもしない。BGM・UI SEはこちらを使う。
+	return gActiveScriptManager->audioManager_->PlayClipAtPosition(
+		clipAssetPath, Vector3{0.0f, 0.0f, 0.0f}, audioBus, volume, loop, 0.0f);
+}
+
+bool EditorScriptManager::ScriptAudioStopHandleBridge(EditorScriptAudioHandle audioHandle) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->audioManager_ != nullptr &&
+		gActiveScriptManager->audioManager_->StopVoice(audioHandle);
+}
+
+bool EditorScriptManager::ScriptAudioSetPausedBridge(EditorScriptAudioHandle audioHandle, bool isPaused) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->audioManager_ != nullptr &&
+		gActiveScriptManager->audioManager_->SetVoicePaused(audioHandle, isPaused);
+}
+
+bool EditorScriptManager::ScriptAudioIsPlayingHandleBridge(EditorScriptAudioHandle audioHandle) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->audioManager_ != nullptr &&
+		gActiveScriptManager->audioManager_->IsVoicePlaying(audioHandle);
+}
+
+bool EditorScriptManager::ScriptAudioIsHandleValidBridge(EditorScriptAudioHandle audioHandle) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->audioManager_ != nullptr &&
+		gActiveScriptManager->audioManager_->IsVoiceValid(audioHandle);
+}
+
+bool EditorScriptManager::ScriptAudioSetVolumeHandleBridge(EditorScriptAudioHandle audioHandle, float volume) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->audioManager_ != nullptr &&
+		gActiveScriptManager->audioManager_->SetVoiceVolume(audioHandle, volume);
+}
+
+bool EditorScriptManager::ScriptAudioGetVolumeHandleBridge(EditorScriptAudioHandle audioHandle, float* volume) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->audioManager_ != nullptr &&
+		volume != nullptr &&
+		gActiveScriptManager->audioManager_->GetVoiceVolume(audioHandle, *volume);
+}
+
+bool EditorScriptManager::ScriptAudioSetPitchBridge(EditorScriptAudioHandle audioHandle, float pitch) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->audioManager_ != nullptr &&
+		gActiveScriptManager->audioManager_->SetVoicePitch(audioHandle, pitch);
+}
+
+bool EditorScriptManager::ScriptAudioGetPitchBridge(EditorScriptAudioHandle audioHandle, float* pitch) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->audioManager_ != nullptr &&
+		pitch != nullptr &&
+		gActiveScriptManager->audioManager_->GetVoicePitch(audioHandle, *pitch);
+}
+
+bool EditorScriptManager::ScriptAudioSetLoopBridge(EditorScriptAudioHandle audioHandle, bool loop) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->audioManager_ != nullptr &&
+		gActiveScriptManager->audioManager_->SetVoiceLoop(audioHandle, loop);
+}
+
+bool EditorScriptManager::ScriptAudioGetLoopBridge(EditorScriptAudioHandle audioHandle, bool* loop) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->audioManager_ != nullptr &&
+		loop != nullptr &&
+		gActiveScriptManager->audioManager_->GetVoiceLoop(audioHandle, *loop);
+}
+
+bool EditorScriptManager::ScriptAudioSetPositionHandleBridge(
+	EditorScriptAudioHandle audioHandle,
+	const EditorScriptVector3* position) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->audioManager_ != nullptr &&
+		position != nullptr &&
+		gActiveScriptManager->audioManager_->SetVoicePosition(audioHandle, ToEditorVector3(*position));
+}
+
+bool EditorScriptManager::ScriptAudioSetBusBridge(EditorScriptAudioHandle audioHandle, int32_t audioBus) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->audioManager_ != nullptr &&
+		gActiveScriptManager->audioManager_->SetVoiceBus(audioHandle, audioBus);
+}
+
+bool EditorScriptManager::ScriptAudioGetPlaybackPositionBridge(
+	EditorScriptAudioHandle audioHandle,
+	float* seconds) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->audioManager_ != nullptr &&
+		seconds != nullptr &&
+		gActiveScriptManager->audioManager_->GetVoicePlaybackPosition(audioHandle, *seconds);
+}
+
+bool EditorScriptManager::ScriptAudioSetPlaybackPositionBridge(
+	EditorScriptAudioHandle audioHandle,
+	float seconds) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->audioManager_ != nullptr &&
+		gActiveScriptManager->audioManager_->SetVoicePlaybackPosition(audioHandle, seconds);
+}
+
+bool EditorScriptManager::ScriptAudioGetDurationBridge(EditorScriptAudioHandle audioHandle, float* seconds) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->audioManager_ != nullptr &&
+		seconds != nullptr &&
+		gActiveScriptManager->audioManager_->GetVoiceDuration(audioHandle, *seconds);
+}
+
+bool EditorScriptManager::ScriptAudioFadeToBridge(
+	EditorScriptAudioHandle audioHandle,
+	float targetVolume,
+	float durationSeconds) {
+	return gActiveScriptManager != nullptr && gActiveScriptManager->audioManager_ != nullptr &&
+		gActiveScriptManager->audioManager_->FadeVoiceTo(audioHandle, targetVolume, durationSeconds);
+}
+
+//================================================================
+// UI Bridge
+//================================================================
+
+namespace {
+	// Text / Button / Toggle / Slider など、buttonLabel等のUI値を持つComponentを1つ返す。
+	// UI系は1 GameObjectへ1つ載る運用なので、最初に見つかったものを対象にする。
+	EditorComponent* FindScriptUiComponent(int32_t gameObjectId) {
+		EditorGameObject* gameObject = EditorSharedState::g_editorScene.FindGameObject(gameObjectId);
+
+		if (gameObject == nullptr) {
+			return nullptr;
+		}
+
+		static const EditorComponentType kUiComponentTypes[] = {
+			EditorComponentType::Text,
+			EditorComponentType::TextMeshProUGUI,
+			EditorComponentType::Button,
+			EditorComponentType::SceneButton,
+			EditorComponentType::Toggle,
+			EditorComponentType::Slider,
+			EditorComponentType::Scrollbar,
+			EditorComponentType::Dropdown,
+			EditorComponentType::TMPDropdown,
+			EditorComponentType::InputField,
+			EditorComponentType::TMPInputField,
+			EditorComponentType::Image,
+			EditorComponentType::RawImage};
+
+		for (const EditorComponentType uiComponentType : kUiComponentTypes) {
+			EditorComponent* uiComponent = EditorComponentUtility::FindComponent(*gameObject, uiComponentType);
+
+			if (uiComponent != nullptr) {
+				return uiComponent;
+			}
+		}
+
+		return nullptr;
+	}
+}
+
+bool EditorScriptManager::ScriptUiSetTextBridge(int32_t gameObjectId, const char* text) {
+	EditorComponent* uiComponent = FindScriptUiComponent(gameObjectId);
+
+	if (uiComponent == nullptr || text == nullptr) {
+		return false;
+	}
+
+	uiComponent->buttonLabel = text;
+	return true;
+}
+
+bool EditorScriptManager::ScriptUiGetTextBridge(int32_t gameObjectId, char* text, int32_t textCapacity) {
+	const EditorComponent* uiComponent = FindScriptUiComponent(gameObjectId);
+
+	if (uiComponent == nullptr || text == nullptr || textCapacity <= 0) {
+		return false;
+	}
+
+	strncpy_s(text, static_cast<size_t>(textCapacity), uiComponent->buttonLabel.c_str(), _TRUNCATE);
+	return true;
+}
+
+bool EditorScriptManager::ScriptUiSetTextColorBridge(
+	int32_t gameObjectId,
+	const EditorScriptVector3* color,
+	float alpha) {
+	EditorComponent* uiComponent = FindScriptUiComponent(gameObjectId);
+
+	if (uiComponent == nullptr || color == nullptr) {
+		return false;
+	}
+
+	uiComponent->color = {
+		(std::clamp)(color->x, 0.0f, 1.0f),
+		(std::clamp)(color->y, 0.0f, 1.0f),
+		(std::clamp)(color->z, 0.0f, 1.0f)};
+	uiComponent->alpha = (std::clamp)(alpha, 0.0f, 1.0f);
+	return true;
+}
+
+bool EditorScriptManager::ScriptUiGetTextColorBridge(
+	int32_t gameObjectId,
+	EditorScriptVector3* color,
+	float* alpha) {
+	const EditorComponent* uiComponent = FindScriptUiComponent(gameObjectId);
+
+	if (uiComponent == nullptr || color == nullptr || alpha == nullptr) {
+		return false;
+	}
+
+	*color = ToScriptVector3(uiComponent->color);
+	*alpha = uiComponent->alpha;
+	return true;
+}
+
+bool EditorScriptManager::ScriptUiSetFontSizeBridge(int32_t gameObjectId, float fontSize) {
+	EditorComponent* uiComponent = FindScriptUiComponent(gameObjectId);
+
+	if (uiComponent == nullptr) {
+		return false;
+	}
+
+	uiComponent->textFontSize = (std::clamp)(fontSize, 0.0f, 512.0f);
+	return true;
+}
+
+bool EditorScriptManager::ScriptUiGetFontSizeBridge(int32_t gameObjectId, float* fontSize) {
+	const EditorComponent* uiComponent = FindScriptUiComponent(gameObjectId);
+
+	if (uiComponent == nullptr || fontSize == nullptr) {
+		return false;
+	}
+
+	*fontSize = uiComponent->textFontSize;
+	return true;
+}
+
+bool EditorScriptManager::ScriptUiSetInteractableBridge(int32_t gameObjectId, bool isInteractable) {
+	EditorComponent* uiComponent = FindScriptUiComponent(gameObjectId);
+
+	if (uiComponent == nullptr) {
+		return false;
+	}
+
+	uiComponent->buttonInteractable = isInteractable;
+	return true;
+}
+
+bool EditorScriptManager::ScriptUiGetInteractableBridge(int32_t gameObjectId, bool* isInteractable) {
+	const EditorComponent* uiComponent = FindScriptUiComponent(gameObjectId);
+
+	if (uiComponent == nullptr || isInteractable == nullptr) {
+		return false;
+	}
+
+	*isInteractable = uiComponent->buttonInteractable;
+	return true;
+}
+
+bool EditorScriptManager::ScriptUiSetSliderValueBridge(int32_t gameObjectId, float value) {
+	EditorComponent* uiComponent = FindScriptUiComponent(gameObjectId);
+
+	if (uiComponent == nullptr) {
+		return false;
+	}
+
+	const float minimumValue = (std::min)(uiComponent->sliderMinValue, uiComponent->sliderMaxValue);
+	const float maximumValue = (std::max)(uiComponent->sliderMinValue, uiComponent->sliderMaxValue);
+	uiComponent->sliderValue = (std::clamp)(value, minimumValue, maximumValue);
+	return true;
+}
+
+bool EditorScriptManager::ScriptUiGetSliderValueBridge(int32_t gameObjectId, float* value) {
+	const EditorComponent* uiComponent = FindScriptUiComponent(gameObjectId);
+
+	if (uiComponent == nullptr || value == nullptr) {
+		return false;
+	}
+
+	*value = uiComponent->sliderValue;
+	return true;
+}
+
+bool EditorScriptManager::ScriptUiSetToggleValueBridge(int32_t gameObjectId, bool value) {
+	EditorComponent* uiComponent = FindScriptUiComponent(gameObjectId);
+
+	if (uiComponent == nullptr) {
+		return false;
+	}
+
+	uiComponent->toggleValue = value;
+	return true;
+}
+
+bool EditorScriptManager::ScriptUiGetToggleValueBridge(int32_t gameObjectId, bool* value) {
+	const EditorComponent* uiComponent = FindScriptUiComponent(gameObjectId);
+
+	if (uiComponent == nullptr || value == nullptr) {
+		return false;
+	}
+
+	*value = uiComponent->toggleValue;
+	return true;
+}
+
+//================================================================
+// Terrain Bridge
+//================================================================
+
+namespace {
+	// Terrainの高さをCPUで評価する。描画(頂点シェーダ)とColliderと同じHeightMap・同じ式を使う。
+	bool EvaluateTerrainHeightAtWorld(
+		int32_t terrainGameObjectId,
+		float worldX,
+		float worldZ,
+		bool requiresInside,
+		float* outWorldHeight) {
+		EditorGameObject* gameObject =
+			EditorSharedState::g_editorScene.FindGameObject(terrainGameObjectId);
+
+		if (gameObject == nullptr) {
+			return false;
+		}
+
+		const EditorComponent* terrain = EditorComponentUtility::FindComponent(
+			*gameObject, EditorComponentType::Terrain);
+
+		if (terrain == nullptr || !terrain->isActive || terrain->assetPath.empty()) {
+			return false;
+		}
+
+		const EditorTerrainHeightField* heightField =
+			EditorTerrainHeightField::Acquire(terrain->assetPath);
+
+		if (heightField == nullptr) {
+			return false;
+		}
+
+		const Vector2 areaSize{
+			(std::max)(terrain->colliderSize.x, 1.0f),
+			(std::max)(terrain->colliderSize.z, 1.0f)};
+		const float heightScale = (std::max)(terrain->colliderSize.y, 0.01f);
+		// Terrainは回転を考慮せずXZ平面へ置く前提(描画側の格子も同じ)。
+		const float scaleX = std::fabs(gameObject->scale.x) > 0.0001f ? gameObject->scale.x : 1.0f;
+		const float scaleZ = std::fabs(gameObject->scale.z) > 0.0001f ? gameObject->scale.z : 1.0f;
+		const float localX = (worldX - gameObject->translate.x) / scaleX;
+		const float localZ = (worldZ - gameObject->translate.z) / scaleZ;
+
+		if (requiresInside &&
+			(std::fabs(localX) > areaSize.x * 0.5f || std::fabs(localZ) > areaSize.y * 0.5f)) {
+			return false;
+		}
+
+		if (outWorldHeight != nullptr) {
+			const float localHeight = heightField->SampleLocalHeight(localX, localZ, areaSize, heightScale);
+			*outWorldHeight = gameObject->translate.y + localHeight * gameObject->scale.y;
+		}
+
+		return true;
+	}
+}
+
+bool EditorScriptManager::ScriptTerrainGetHeightAtWorldBridge(
+	int32_t terrainGameObjectId,
+	float worldX,
+	float worldZ,
+	float* worldHeight) {
+	if (worldHeight == nullptr) {
+		return false;
+	}
+
+	return EvaluateTerrainHeightAtWorld(terrainGameObjectId, worldX, worldZ, false, worldHeight);
+}
+
+bool EditorScriptManager::ScriptTerrainContainsWorldPositionBridge(
+	int32_t terrainGameObjectId,
+	float worldX,
+	float worldZ) {
+	return EvaluateTerrainHeightAtWorld(terrainGameObjectId, worldX, worldZ, true, nullptr);
+}
+
+//================================================================
+// Renderer / Material Bridge
+//================================================================
+
+namespace {
+	// ModelRenderer / SkinnedMeshRenderer のどちらでも同じAPIから触れるようにする。
+	EditorComponent* FindScriptRendererComponent(int32_t gameObjectId) {
+		EditorGameObject* gameObject = EditorSharedState::g_editorScene.FindGameObject(gameObjectId);
+
+		if (gameObject == nullptr) {
+			return nullptr;
+		}
+
+		EditorComponent* renderer = EditorComponentUtility::FindComponent(
+			*gameObject, EditorComponentType::ModelRenderer);
+
+		if (renderer == nullptr) {
+			renderer = EditorComponentUtility::FindComponent(
+				*gameObject, EditorComponentType::SkinnedMeshRenderer);
+		}
+
+		return renderer;
+	}
+
+	std::string ToLowerName(const char* name) {
+		std::string lowered;
+
+		if (name == nullptr) {
+			return lowered;
+		}
+
+		lowered = name;
+
+		for (char& character : lowered) {
+			character = static_cast<char>(
+				std::tolower(static_cast<unsigned char>(character)));
+		}
+
+		return lowered;
+	}
+
+	// Material Floatとして公開するComponent Field。未知名はnullptrを返して呼び出し側がfalseにする。
+	float* ResolveMaterialFloatField(EditorComponent& renderer, const char* propertyName) {
+		const std::string name = ToLowerName(propertyName);
+
+		if (name == "metallic") return &renderer.metallic;
+		if (name == "roughness") return &renderer.roughness;
+		if (name == "ior") return &renderer.ior;
+		if (name == "alpha" || name == "opacity") return &renderer.alpha;
+		if (name == "emissionstrength") return &renderer.emissionStrength;
+		if (name == "reflectionstrength") return &renderer.reflectionStrength;
+		if (name == "normalscale") return &renderer.normalScale;
+		if (name == "ambientocclusionstrength" || name == "aostrength") return &renderer.ambientOcclusionStrength;
+		if (name == "heightscale") return &renderer.heightScale;
+		if (name == "alphacutoff") return &renderer.alphaCutoff;
+		if (name == "clearcoat") return &renderer.clearCoat;
+		if (name == "clearcoatroughness") return &renderer.clearCoatRoughness;
+		if (name == "intensity") return &renderer.intensity;
+		return nullptr;
+	}
+
+	Vector3* ResolveMaterialColorField(EditorComponent& renderer, const char* propertyName) {
+		const std::string name = ToLowerName(propertyName);
+
+		if (name == "color" || name == "basecolor" || name == "albedo") return &renderer.color;
+		if (name == "emissioncolor") return &renderer.emissionColor;
+		return nullptr;
+	}
+
+	std::string* ResolveMaterialTextureField(EditorComponent& renderer, const char* slotName) {
+		const std::string name = ToLowerName(slotName);
+
+		if (name == "basecolor" || name == "albedo" || name == "texture") return &renderer.textureAssetPath;
+		if (name == "normal") return &renderer.normalTextureAssetPath;
+		if (name == "metallic") return &renderer.metallicTextureAssetPath;
+		if (name == "roughness") return &renderer.roughnessTextureAssetPath;
+		if (name == "ambientocclusion" || name == "ao") return &renderer.ambientOcclusionTextureAssetPath;
+		if (name == "emission") return &renderer.emissionTextureAssetPath;
+		if (name == "height") return &renderer.heightTextureAssetPath;
+		if (name == "opacity") return &renderer.opacityTextureAssetPath;
+		return nullptr;
+	}
+}
+
+bool EditorScriptManager::ScriptRendererGetColorBridge(int32_t gameObjectId, EditorScriptVector3* color) {
+	const EditorComponent* renderer = FindScriptRendererComponent(gameObjectId);
+
+	if (renderer == nullptr || color == nullptr) {
+		return false;
+	}
+
+	*color = ToScriptVector3(renderer->color);
+	return true;
+}
+
+bool EditorScriptManager::ScriptRendererSetEnabledBridge(int32_t gameObjectId, bool isEnabled) {
+	EditorComponent* renderer = FindScriptRendererComponent(gameObjectId);
+
+	if (renderer == nullptr) {
+		return false;
+	}
+
+	renderer->isActive = isEnabled;
+	return true;
+}
+
+bool EditorScriptManager::ScriptRendererGetEnabledBridge(int32_t gameObjectId, bool* isEnabled) {
+	const EditorComponent* renderer = FindScriptRendererComponent(gameObjectId);
+
+	if (renderer == nullptr || isEnabled == nullptr) {
+		return false;
+	}
+
+	*isEnabled = renderer->isActive;
+	return true;
+}
+
+bool EditorScriptManager::ScriptRendererSetOpacityBridge(int32_t gameObjectId, float opacity) {
+	EditorComponent* renderer = FindScriptRendererComponent(gameObjectId);
+
+	if (renderer == nullptr) {
+		return false;
+	}
+
+	renderer->alpha = (std::clamp)(opacity, 0.0f, 1.0f);
+	return true;
+}
+
+bool EditorScriptManager::ScriptRendererGetOpacityBridge(int32_t gameObjectId, float* opacity) {
+	const EditorComponent* renderer = FindScriptRendererComponent(gameObjectId);
+
+	if (renderer == nullptr || opacity == nullptr) {
+		return false;
+	}
+
+	*opacity = renderer->alpha;
+	return true;
+}
+
+bool EditorScriptManager::ScriptRendererGetEmissionBridge(
+	int32_t gameObjectId,
+	EditorScriptVector3* color,
+	float* strength) {
+	const EditorComponent* renderer = FindScriptRendererComponent(gameObjectId);
+
+	if (renderer == nullptr || color == nullptr || strength == nullptr) {
+		return false;
+	}
+
+	*color = ToScriptVector3(renderer->emissionColor);
+	*strength = renderer->emissionStrength;
+	return true;
+}
+
+bool EditorScriptManager::ScriptRendererSetMaterialFloatBridge(
+	int32_t gameObjectId,
+	const char* propertyName,
+	float value) {
+	EditorComponent* renderer = FindScriptRendererComponent(gameObjectId);
+
+	if (renderer == nullptr) {
+		return false;
+	}
+
+	float* field = ResolveMaterialFloatField(*renderer, propertyName);
+
+	if (field == nullptr) {
+		return false;
+	}
+
+	*field = value;
+	return true;
+}
+
+bool EditorScriptManager::ScriptRendererGetMaterialFloatBridge(
+	int32_t gameObjectId,
+	const char* propertyName,
+	float* value) {
+	EditorComponent* renderer = FindScriptRendererComponent(gameObjectId);
+
+	if (renderer == nullptr || value == nullptr) {
+		return false;
+	}
+
+	const float* field = ResolveMaterialFloatField(*renderer, propertyName);
+
+	if (field == nullptr) {
+		return false;
+	}
+
+	*value = *field;
+	return true;
+}
+
+bool EditorScriptManager::ScriptRendererSetMaterialColorBridge(
+	int32_t gameObjectId,
+	const char* propertyName,
+	const EditorScriptVector3* color) {
+	EditorComponent* renderer = FindScriptRendererComponent(gameObjectId);
+
+	if (renderer == nullptr || color == nullptr) {
+		return false;
+	}
+
+	Vector3* field = ResolveMaterialColorField(*renderer, propertyName);
+
+	if (field == nullptr) {
+		return false;
+	}
+
+	*field = Vector3{
+		(std::clamp)(color->x, 0.0f, 1.0f),
+		(std::clamp)(color->y, 0.0f, 1.0f),
+		(std::clamp)(color->z, 0.0f, 1.0f)};
+	return true;
+}
+
+bool EditorScriptManager::ScriptRendererGetMaterialColorBridge(
+	int32_t gameObjectId,
+	const char* propertyName,
+	EditorScriptVector3* color) {
+	EditorComponent* renderer = FindScriptRendererComponent(gameObjectId);
+
+	if (renderer == nullptr || color == nullptr) {
+		return false;
+	}
+
+	const Vector3* field = ResolveMaterialColorField(*renderer, propertyName);
+
+	if (field == nullptr) {
+		return false;
+	}
+
+	*color = ToScriptVector3(*field);
+	return true;
+}
+
+bool EditorScriptManager::ScriptRendererSetMaterialTextureBridge(
+	int32_t gameObjectId,
+	const char* slotName,
+	const char* textureAssetPath) {
+	EditorComponent* renderer = FindScriptRendererComponent(gameObjectId);
+
+	if (renderer == nullptr || textureAssetPath == nullptr) {
+		return false;
+	}
+
+	std::string* field = ResolveMaterialTextureField(*renderer, slotName);
+
+	if (field == nullptr) {
+		return false;
+	}
+
+	// 空文字は「このスロットの画像を外す」を意味する。
+	*field = textureAssetPath;
+	return true;
+}
+
+bool EditorScriptManager::ScriptRendererGetMaterialTextureBridge(
+	int32_t gameObjectId,
+	const char* slotName,
+	char* textureAssetPath,
+	int32_t textureAssetPathCapacity) {
+	EditorComponent* renderer = FindScriptRendererComponent(gameObjectId);
+
+	if (renderer == nullptr || textureAssetPath == nullptr || textureAssetPathCapacity <= 0) {
+		return false;
+	}
+
+	const std::string* field = ResolveMaterialTextureField(*renderer, slotName);
+
+	if (field == nullptr) {
+		return false;
+	}
+
+	strncpy_s(textureAssetPath, static_cast<size_t>(textureAssetPathCapacity), field->c_str(), _TRUNCATE);
+	return true;
+}
+
+//================================================================
+// VFX Instance Bridge
+//================================================================
+
+namespace {
+	// VFX Handleの内部構成。上位8bitで再生経路を分け、Script側からは1つのHandle型に見せる。
+	constexpr uint64_t kVfxBackendShift = 56ULL;
+	constexpr uint64_t kVfxBackendCpu = 1ULL;
+	constexpr uint64_t kVfxBackendEffekseer = 2ULL;
+	constexpr uint64_t kVfxPayloadMask = (1ULL << kVfxBackendShift) - 1ULL;
+	constexpr uint64_t kVfxIndexMask = 0xFFFFFFULL;
+
+	EditorScriptVfxHandle PackCpuVfxHandle(const EditorVfxManager::EffectHandle& handle) {
+		if (!handle.IsValid()) {
+			return kInvalidEditorScriptVfxHandle;
+		}
+
+		const uint64_t index = static_cast<uint64_t>(handle.index) & kVfxIndexMask;
+		const uint64_t generation = static_cast<uint64_t>(handle.generation);
+		return (kVfxBackendCpu << kVfxBackendShift) | (generation << 24) | index;
+	}
+
+	bool UnpackCpuVfxHandle(EditorScriptVfxHandle vfxHandle, EditorVfxManager::EffectHandle& handle) {
+		if ((vfxHandle >> kVfxBackendShift) != kVfxBackendCpu) {
+			return false;
+		}
+
+		const uint64_t payload = vfxHandle & kVfxPayloadMask;
+		handle.index = static_cast<int32_t>(payload & kVfxIndexMask);
+		handle.generation = static_cast<uint32_t>(payload >> 24);
+		return true;
+	}
+
+	EditorScriptVfxHandle PackEffekseerVfxHandle(int32_t effectAtId) {
+		if (effectAtId < 0) {
+			return kInvalidEditorScriptVfxHandle;
+		}
+
+		return (kVfxBackendEffekseer << kVfxBackendShift) | static_cast<uint64_t>(effectAtId);
+	}
+
+	bool UnpackEffekseerVfxHandle(EditorScriptVfxHandle vfxHandle, int32_t& effectAtId) {
+		if ((vfxHandle >> kVfxBackendShift) != kVfxBackendEffekseer) {
+			return false;
+		}
+
+		effectAtId = static_cast<int32_t>(vfxHandle & kVfxPayloadMask);
+		return true;
+	}
+
+	// .efk / .efkefc はEffekseer、それ以外は.effectdefのEffect IDとして扱う。
+	bool IsEffekseerEffectName(const char* effectIdOrAssetPath) {
+		if (effectIdOrAssetPath == nullptr) {
+			return false;
+		}
+
+		const std::string lowered = ToLowerName(effectIdOrAssetPath);
+		return lowered.size() >= 4u &&
+			(lowered.rfind(".efk") == lowered.size() - 4u ||
+			 lowered.rfind(".efkefc") == lowered.size() - 7u);
+	}
+}
+
+EditorScriptVfxHandle EditorScriptManager::ScriptVfxSpawnBridge(
+	const char* effectIdOrAssetPath,
+	const EditorScriptVector3* position,
+	const EditorScriptVector3* rotationEuler) {
+	if (gActiveScriptManager == nullptr || effectIdOrAssetPath == nullptr || position == nullptr) {
+		return kInvalidEditorScriptVfxHandle;
+	}
+
+	if (IsEffekseerEffectName(effectIdOrAssetPath)) {
+		if (gActiveScriptManager->effekseerManager_ == nullptr) {
+			return kInvalidEditorScriptVfxHandle;
+		}
+
+		const Vector3 rotation = rotationEuler != nullptr
+			? ToEditorVector3(*rotationEuler)
+			: Vector3{0.0f, 0.0f, 0.0f};
+		return PackEffekseerVfxHandle(gActiveScriptManager->effekseerManager_->PlayEffectAt(
+			effectIdOrAssetPath, ToEditorVector3(*position), rotation));
+	}
+
+	if (gActiveScriptManager->vfxManager_ == nullptr) {
+		return kInvalidEditorScriptVfxHandle;
+	}
+
+	return PackCpuVfxHandle(gActiveScriptManager->vfxManager_->PlayEffect(
+		effectIdOrAssetPath, ToEditorVector3(*position)));
+}
+
+EditorScriptVfxHandle EditorScriptManager::ScriptVfxSpawnAttachedBridge(
+	const char* effectIdOrAssetPath,
+	int32_t followGameObjectId,
+	const EditorScriptVector3* localOffset) {
+	if (gActiveScriptManager == nullptr || effectIdOrAssetPath == nullptr) {
+		return kInvalidEditorScriptVfxHandle;
+	}
+
+	const Vector3 offset = localOffset != nullptr
+		? ToEditorVector3(*localOffset)
+		: Vector3{0.0f, 0.0f, 0.0f};
+
+	// Effekseerの位置指定再生はGameObject追従を持たないため、発生時点のWorld座標へ置く。
+	if (IsEffekseerEffectName(effectIdOrAssetPath)) {
+		if (gActiveScriptManager->effekseerManager_ == nullptr ||
+			gActiveScriptManager->editorScene_ == nullptr) {
+			return kInvalidEditorScriptVfxHandle;
+		}
+
+		Vector3 worldScale{1.0f, 1.0f, 1.0f};
+		Vector3 worldRotation{0.0f, 0.0f, 0.0f};
+		Vector3 worldPosition{0.0f, 0.0f, 0.0f};
+
+		if (!gActiveScriptManager->editorScene_->GetWorldTransform(
+				followGameObjectId, worldScale, worldRotation, worldPosition)) {
+			return kInvalidEditorScriptVfxHandle;
+		}
+
+		const Vector3 spawnPosition{
+			worldPosition.x + offset.x,
+			worldPosition.y + offset.y,
+			worldPosition.z + offset.z};
+		return PackEffekseerVfxHandle(gActiveScriptManager->effekseerManager_->PlayEffectAt(
+			effectIdOrAssetPath, spawnPosition, worldRotation));
+	}
+
+	if (gActiveScriptManager->vfxManager_ == nullptr) {
+		return kInvalidEditorScriptVfxHandle;
+	}
+
+	return PackCpuVfxHandle(gActiveScriptManager->vfxManager_->PlayEffect(
+		effectIdOrAssetPath, followGameObjectId, offset));
+}
+
+bool EditorScriptManager::ScriptVfxStopHandleBridge(EditorScriptVfxHandle vfxHandle) {
+	if (gActiveScriptManager == nullptr) {
+		return false;
+	}
+
+	EditorVfxManager::EffectHandle cpuHandle{};
+
+	if (UnpackCpuVfxHandle(vfxHandle, cpuHandle)) {
+		if (gActiveScriptManager->vfxManager_ == nullptr ||
+			!gActiveScriptManager->vfxManager_->IsEffectPlaying(cpuHandle)) {
+			return false;
+		}
+
+		gActiveScriptManager->vfxManager_->StopEffect(cpuHandle);
+		return true;
+	}
+
+	int32_t effectAtId = -1;
+
+	if (UnpackEffekseerVfxHandle(vfxHandle, effectAtId)) {
+		if (gActiveScriptManager->effekseerManager_ == nullptr ||
+			!gActiveScriptManager->effekseerManager_->IsEffectPlayingAt(effectAtId)) {
+			return false;
+		}
+
+		gActiveScriptManager->effekseerManager_->StopEffectAt(effectAtId);
+		return true;
+	}
+
+	return false;
+}
+
+bool EditorScriptManager::ScriptVfxIsPlayingHandleBridge(EditorScriptVfxHandle vfxHandle) {
+	if (gActiveScriptManager == nullptr) {
+		return false;
+	}
+
+	EditorVfxManager::EffectHandle cpuHandle{};
+
+	if (UnpackCpuVfxHandle(vfxHandle, cpuHandle)) {
+		return gActiveScriptManager->vfxManager_ != nullptr &&
+			gActiveScriptManager->vfxManager_->IsEffectPlaying(cpuHandle);
+	}
+
+	int32_t effectAtId = -1;
+
+	if (UnpackEffekseerVfxHandle(vfxHandle, effectAtId)) {
+		return gActiveScriptManager->effekseerManager_ != nullptr &&
+			gActiveScriptManager->effekseerManager_->IsEffectPlayingAt(effectAtId);
+	}
+
+	return false;
+}
+
+bool EditorScriptManager::ScriptVfxSetPositionHandleBridge(
+	EditorScriptVfxHandle vfxHandle,
+	const EditorScriptVector3* position) {
+	if (gActiveScriptManager == nullptr || position == nullptr) {
+		return false;
+	}
+
+	EditorVfxManager::EffectHandle cpuHandle{};
+
+	if (UnpackCpuVfxHandle(vfxHandle, cpuHandle)) {
+		if (gActiveScriptManager->vfxManager_ == nullptr ||
+			!gActiveScriptManager->vfxManager_->IsEffectPlaying(cpuHandle)) {
+			return false;
+		}
+
+		gActiveScriptManager->vfxManager_->SetEffectPosition(cpuHandle, ToEditorVector3(*position));
+		return true;
+	}
+
+	int32_t effectAtId = -1;
+
+	if (UnpackEffekseerVfxHandle(vfxHandle, effectAtId)) {
+		if (gActiveScriptManager->effekseerManager_ == nullptr ||
+			!gActiveScriptManager->effekseerManager_->IsEffectPlayingAt(effectAtId)) {
+			return false;
+		}
+
+		gActiveScriptManager->effekseerManager_->SetEffectPositionAt(
+			effectAtId, ToEditorVector3(*position));
+		return true;
+	}
+
+	return false;
+}
+
+bool EditorScriptManager::ScriptVfxGetPositionHandleBridge(
+	EditorScriptVfxHandle vfxHandle,
+	EditorScriptVector3* position) {
+	if (gActiveScriptManager == nullptr || position == nullptr) {
+		return false;
+	}
+
+	Vector3 resolvedPosition{0.0f, 0.0f, 0.0f};
+	EditorVfxManager::EffectHandle cpuHandle{};
+
+	if (UnpackCpuVfxHandle(vfxHandle, cpuHandle)) {
+		if (gActiveScriptManager->vfxManager_ == nullptr ||
+			!gActiveScriptManager->vfxManager_->GetEffectPosition(cpuHandle, resolvedPosition)) {
+			return false;
+		}
+
+		*position = ToScriptVector3(resolvedPosition);
+		return true;
+	}
+
+	int32_t effectAtId = -1;
+
+	if (UnpackEffekseerVfxHandle(vfxHandle, effectAtId)) {
+		if (gActiveScriptManager->effekseerManager_ == nullptr ||
+			!gActiveScriptManager->effekseerManager_->GetEffectPositionAt(effectAtId, resolvedPosition)) {
+			return false;
+		}
+
+		*position = ToScriptVector3(resolvedPosition);
+		return true;
+	}
+
+	return false;
+}
+
+bool EditorScriptManager::ScriptVfxSetPausedHandleBridge(EditorScriptVfxHandle vfxHandle, bool isPaused) {
+	if (gActiveScriptManager == nullptr) {
+		return false;
+	}
+
+	EditorVfxManager::EffectHandle cpuHandle{};
+
+	if (UnpackCpuVfxHandle(vfxHandle, cpuHandle)) {
+		return gActiveScriptManager->vfxManager_ != nullptr &&
+			gActiveScriptManager->vfxManager_->SetEffectPaused(cpuHandle, isPaused);
+	}
+
+	int32_t effectAtId = -1;
+
+	if (UnpackEffekseerVfxHandle(vfxHandle, effectAtId)) {
+		return gActiveScriptManager->effekseerManager_ != nullptr &&
+			gActiveScriptManager->effekseerManager_->SetEffectPausedAt(effectAtId, isPaused);
+	}
+
+	return false;
+}
+
+bool EditorScriptManager::ScriptVfxSetPlaybackSpeedBridge(
+	EditorScriptVfxHandle vfxHandle,
+	float playbackSpeed) {
+	if (gActiveScriptManager == nullptr) {
+		return false;
+	}
+
+	EditorVfxManager::EffectHandle cpuHandle{};
+
+	if (UnpackCpuVfxHandle(vfxHandle, cpuHandle)) {
+		return gActiveScriptManager->vfxManager_ != nullptr &&
+			gActiveScriptManager->vfxManager_->SetEffectPlaybackSpeed(cpuHandle, playbackSpeed);
+	}
+
+	int32_t effectAtId = -1;
+
+	if (UnpackEffekseerVfxHandle(vfxHandle, effectAtId)) {
+		return gActiveScriptManager->effekseerManager_ != nullptr &&
+			gActiveScriptManager->effekseerManager_->SetEffectSpeedAt(effectAtId, playbackSpeed);
+	}
+
+	return false;
+}
+
+bool EditorScriptManager::ScriptVfxGetPlaybackSpeedBridge(
+	EditorScriptVfxHandle vfxHandle,
+	float* playbackSpeed) {
+	if (gActiveScriptManager == nullptr || playbackSpeed == nullptr) {
+		return false;
+	}
+
+	EditorVfxManager::EffectHandle cpuHandle{};
+
+	if (UnpackCpuVfxHandle(vfxHandle, cpuHandle)) {
+		return gActiveScriptManager->vfxManager_ != nullptr &&
+			gActiveScriptManager->vfxManager_->GetEffectPlaybackSpeed(cpuHandle, *playbackSpeed);
+	}
+
+	// Effekseerは設定した速度を読み戻すAPIを持たないため、Get非対応としてfalseを返す。
+	return false;
+}
+
+bool EditorScriptManager::ScriptVfxRestartHandleBridge(EditorScriptVfxHandle vfxHandle) {
+	if (gActiveScriptManager == nullptr) {
+		return false;
+	}
+
+	EditorVfxManager::EffectHandle cpuHandle{};
+
+	if (UnpackCpuVfxHandle(vfxHandle, cpuHandle)) {
+		return gActiveScriptManager->vfxManager_ != nullptr &&
+			gActiveScriptManager->vfxManager_->RestartEffect(cpuHandle);
+	}
+
+	int32_t effectAtId = -1;
+
+	if (UnpackEffekseerVfxHandle(vfxHandle, effectAtId)) {
+		return gActiveScriptManager->effekseerManager_ != nullptr &&
+			gActiveScriptManager->effekseerManager_->RestartEffectAt(effectAtId);
+	}
+
+	return false;
+}
+
+bool EditorScriptManager::ScriptVfxGetParticleCountHandleBridge(
+	EditorScriptVfxHandle vfxHandle,
+	int32_t* particleCount) {
+	if (gActiveScriptManager == nullptr || particleCount == nullptr) {
+		return false;
+	}
+
+	EditorVfxManager::EffectHandle cpuHandle{};
+
+	if (UnpackCpuVfxHandle(vfxHandle, cpuHandle)) {
+		return gActiveScriptManager->vfxManager_ != nullptr &&
+			gActiveScriptManager->vfxManager_->GetEffectParticleCount(cpuHandle, *particleCount);
+	}
+
+	// Effekseerは公式Runtime側でParticle数を公開しないため、Instance単位の取得は非対応。
+	return false;
+}
+
+bool EditorScriptManager::ScriptVfxSetRotationHandleBridge(
+	EditorScriptVfxHandle vfxHandle,
+	const EditorScriptVector3* rotationEuler) {
+	if (gActiveScriptManager == nullptr || rotationEuler == nullptr) {
+		return false;
+	}
+
+	int32_t effectAtId = -1;
+
+	if (UnpackEffekseerVfxHandle(vfxHandle, effectAtId)) {
+		return gActiveScriptManager->effekseerManager_ != nullptr &&
+			gActiveScriptManager->effekseerManager_->SetEffectRotationAt(
+				effectAtId, ToEditorVector3(*rotationEuler));
+	}
+
+	// CPU VFX(.effectdef)はInstance単位のTransformを持たないため非対応。
+	return false;
+}
+
+bool EditorScriptManager::ScriptVfxSetScaleHandleBridge(
+	EditorScriptVfxHandle vfxHandle,
+	const EditorScriptVector3* scale) {
+	if (gActiveScriptManager == nullptr || scale == nullptr) {
+		return false;
+	}
+
+	int32_t effectAtId = -1;
+
+	if (UnpackEffekseerVfxHandle(vfxHandle, effectAtId)) {
+		return gActiveScriptManager->effekseerManager_ != nullptr &&
+			gActiveScriptManager->effekseerManager_->SetEffectScaleAt(
+				effectAtId, ToEditorVector3(*scale));
+	}
+
+	return false;
 }
 
 void EditorScriptManager::ScriptSetAngularVelocityBridge(int32_t gameObjectId, const EditorScriptVector3* angularVelocity) {
@@ -4155,6 +5769,146 @@ void EditorScriptManager::BuildRuntimeApi() {
 	runtimeApi_.CaptureAreaState = ScriptCaptureAreaStateBridge;
 	runtimeApi_.ResetArea = ScriptResetAreaBridge;
 	runtimeApi_.HasAreaState = ScriptHasAreaStateBridge;
+	runtimeApi_.NavSetDestination = ScriptNavSetDestinationBridge;
+	runtimeApi_.NavGetDestination = ScriptNavGetDestinationBridge;
+	runtimeApi_.NavStop = ScriptNavStopBridge;
+	runtimeApi_.NavResume = ScriptNavResumeBridge;
+	runtimeApi_.NavIsStopped = ScriptNavIsStoppedBridge;
+	runtimeApi_.NavHasPath = ScriptNavHasPathBridge;
+	runtimeApi_.NavGetRemainingDistance = ScriptNavGetRemainingDistanceBridge;
+	runtimeApi_.NavWarp = ScriptNavWarpBridge;
+	runtimeApi_.NavGetPathFailureReason = ScriptNavGetPathFailureReasonBridge;
+	runtimeApi_.BlastApplyDamage = ScriptBlastApplyDamageBridge;
+	runtimeApi_.BlastFractureAll = ScriptBlastFractureAllBridge;
+	runtimeApi_.BlastIsFractured = ScriptBlastIsFracturedBridge;
+	runtimeApi_.BlastGetChunkCount = ScriptBlastGetChunkCountBridge;
+	runtimeApi_.BlastGetActorCount = ScriptBlastGetActorCountBridge;
+	runtimeApi_.BlastGetBondCount = ScriptBlastGetBondCountBridge;
+	runtimeApi_.BlastGetChunkGameObjectId = ScriptBlastGetChunkGameObjectIdBridge;
+	runtimeApi_.BlastIsChunkDetached = ScriptBlastIsChunkDetachedBridge;
+	runtimeApi_.CameraGetFieldOfView = ScriptCameraGetFieldOfViewBridge;
+	runtimeApi_.CameraSetFieldOfView = ScriptCameraSetFieldOfViewBridge;
+	runtimeApi_.CameraGetNearClip = ScriptCameraGetNearClipBridge;
+	runtimeApi_.CameraSetNearClip = ScriptCameraSetNearClipBridge;
+	runtimeApi_.CameraGetFarClip = ScriptCameraGetFarClipBridge;
+	runtimeApi_.CameraSetFarClip = ScriptCameraSetFarClipBridge;
+	runtimeApi_.CameraGetProjectionMode = ScriptCameraGetProjectionModeBridge;
+	runtimeApi_.CameraSetProjectionMode = ScriptCameraSetProjectionModeBridge;
+	runtimeApi_.CameraGetOrthographicSize = ScriptCameraGetOrthographicSizeBridge;
+	runtimeApi_.CameraSetOrthographicSize = ScriptCameraSetOrthographicSizeBridge;
+	runtimeApi_.CameraGetPriority = ScriptCameraGetPriorityBridge;
+	runtimeApi_.CameraSetPriority = ScriptCameraSetPriorityBridge;
+	runtimeApi_.CameraGetEnabled = ScriptCameraGetEnabledBridge;
+	runtimeApi_.CameraSetEnabled = ScriptCameraSetEnabledBridge;
+	runtimeApi_.CameraGetActive = ScriptCameraGetActiveBridge;
+	runtimeApi_.CameraSetActive = ScriptCameraSetActiveBridge;
+	runtimeApi_.CameraLookAt = ScriptCameraLookAtBridge;
+	runtimeApi_.CameraGetLookDirection = ScriptCameraGetLookDirectionBridge;
+	runtimeApi_.CameraSetLookDirection = ScriptCameraSetLookDirectionBridge;
+	runtimeApi_.AudioPlayWithHandle = ScriptAudioPlayWithHandleBridge;
+	runtimeApi_.AudioPlayClipAtPosition = ScriptAudioPlayClipAtPositionBridge;
+	runtimeApi_.AudioPlayClip2D = ScriptAudioPlayClip2DBridge;
+	runtimeApi_.AudioStopHandle = ScriptAudioStopHandleBridge;
+	runtimeApi_.AudioSetPaused = ScriptAudioSetPausedBridge;
+	runtimeApi_.AudioIsPlayingHandle = ScriptAudioIsPlayingHandleBridge;
+	runtimeApi_.AudioIsHandleValid = ScriptAudioIsHandleValidBridge;
+	runtimeApi_.AudioSetVolumeHandle = ScriptAudioSetVolumeHandleBridge;
+	runtimeApi_.AudioGetVolumeHandle = ScriptAudioGetVolumeHandleBridge;
+	runtimeApi_.AudioSetPitch = ScriptAudioSetPitchBridge;
+	runtimeApi_.AudioGetPitch = ScriptAudioGetPitchBridge;
+	runtimeApi_.AudioSetLoop = ScriptAudioSetLoopBridge;
+	runtimeApi_.AudioGetLoop = ScriptAudioGetLoopBridge;
+	runtimeApi_.AudioSetPositionHandle = ScriptAudioSetPositionHandleBridge;
+	runtimeApi_.AudioSetBus = ScriptAudioSetBusBridge;
+	runtimeApi_.AudioGetPlaybackPosition = ScriptAudioGetPlaybackPositionBridge;
+	runtimeApi_.AudioSetPlaybackPosition = ScriptAudioSetPlaybackPositionBridge;
+	runtimeApi_.AudioGetDuration = ScriptAudioGetDurationBridge;
+	runtimeApi_.AudioFadeTo = ScriptAudioFadeToBridge;
+	runtimeApi_.RendererGetColor = ScriptRendererGetColorBridge;
+	runtimeApi_.RendererSetEnabled = ScriptRendererSetEnabledBridge;
+	runtimeApi_.RendererGetEnabled = ScriptRendererGetEnabledBridge;
+	runtimeApi_.RendererSetOpacity = ScriptRendererSetOpacityBridge;
+	runtimeApi_.RendererGetOpacity = ScriptRendererGetOpacityBridge;
+	runtimeApi_.RendererGetEmission = ScriptRendererGetEmissionBridge;
+	runtimeApi_.RendererSetMaterialFloat = ScriptRendererSetMaterialFloatBridge;
+	runtimeApi_.RendererGetMaterialFloat = ScriptRendererGetMaterialFloatBridge;
+	runtimeApi_.RendererSetMaterialColor = ScriptRendererSetMaterialColorBridge;
+	runtimeApi_.RendererGetMaterialColor = ScriptRendererGetMaterialColorBridge;
+	runtimeApi_.RendererSetMaterialTexture = ScriptRendererSetMaterialTextureBridge;
+	runtimeApi_.RendererGetMaterialTexture = ScriptRendererGetMaterialTextureBridge;
+	runtimeApi_.VfxSpawn = ScriptVfxSpawnBridge;
+	runtimeApi_.VfxSpawnAttached = ScriptVfxSpawnAttachedBridge;
+	runtimeApi_.VfxStopHandle = ScriptVfxStopHandleBridge;
+	runtimeApi_.VfxIsPlayingHandle = ScriptVfxIsPlayingHandleBridge;
+	runtimeApi_.VfxSetPositionHandle = ScriptVfxSetPositionHandleBridge;
+	runtimeApi_.VfxGetPositionHandle = ScriptVfxGetPositionHandleBridge;
+	runtimeApi_.VfxSetPausedHandle = ScriptVfxSetPausedHandleBridge;
+	runtimeApi_.VfxSetPlaybackSpeed = ScriptVfxSetPlaybackSpeedBridge;
+	runtimeApi_.VfxGetPlaybackSpeed = ScriptVfxGetPlaybackSpeedBridge;
+	runtimeApi_.VfxRestartHandle = ScriptVfxRestartHandleBridge;
+	runtimeApi_.VfxGetParticleCountHandle = ScriptVfxGetParticleCountHandleBridge;
+	runtimeApi_.VfxSetRotationHandle = ScriptVfxSetRotationHandleBridge;
+	runtimeApi_.VfxSetScaleHandle = ScriptVfxSetScaleHandleBridge;
+	runtimeApi_.UiSetText = ScriptUiSetTextBridge;
+	runtimeApi_.UiGetText = ScriptUiGetTextBridge;
+	runtimeApi_.UiSetTextColor = ScriptUiSetTextColorBridge;
+	runtimeApi_.UiGetTextColor = ScriptUiGetTextColorBridge;
+	runtimeApi_.UiSetFontSize = ScriptUiSetFontSizeBridge;
+	runtimeApi_.UiGetFontSize = ScriptUiGetFontSizeBridge;
+	runtimeApi_.UiSetInteractable = ScriptUiSetInteractableBridge;
+	runtimeApi_.UiGetInteractable = ScriptUiGetInteractableBridge;
+	runtimeApi_.UiSetSliderValue = ScriptUiSetSliderValueBridge;
+	runtimeApi_.UiGetSliderValue = ScriptUiGetSliderValueBridge;
+	runtimeApi_.UiSetToggleValue = ScriptUiSetToggleValueBridge;
+	runtimeApi_.UiGetToggleValue = ScriptUiGetToggleValueBridge;
+	runtimeApi_.TerrainGetHeightAtWorld = ScriptTerrainGetHeightAtWorldBridge;
+	runtimeApi_.TerrainContainsWorldPosition = ScriptTerrainContainsWorldPositionBridge;
+	runtimeApi_.SpeechStartRecognition = ScriptSpeechStartRecognitionBridge;
+	runtimeApi_.SpeechStopRecognition = ScriptSpeechStopRecognitionBridge;
+	runtimeApi_.SpeechIsRecognizing = ScriptSpeechIsRecognizingBridge;
+	runtimeApi_.SpeechGetLastResult = ScriptSpeechGetLastResultBridge;
+	runtimeApi_.SpeechWasKeywordRecognized = ScriptSpeechWasKeywordRecognizedBridge;
+	runtimeApi_.VisionStartCamera = ScriptVisionStartCameraBridge;
+	runtimeApi_.VisionStopCamera = ScriptVisionStopCameraBridge;
+	runtimeApi_.VisionStartRecognition = ScriptVisionStartRecognitionBridge;
+	runtimeApi_.VisionStopRecognition = ScriptVisionStopRecognitionBridge;
+	runtimeApi_.VisionGetState = ScriptVisionGetStateBridge;
+	runtimeApi_.VisionGetObjectCount = ScriptVisionGetObjectCountBridge;
+	runtimeApi_.VisionGetObject = ScriptVisionGetObjectBridge;
+	runtimeApi_.VisionGetTopClassification = ScriptVisionGetTopClassificationBridge;
+	runtimeApi_.VisionGetFaceCount = ScriptVisionGetFaceCountBridge;
+	runtimeApi_.VisionGetFace = ScriptVisionGetFaceBridge;
+	runtimeApi_.VisionGetHeadPose = ScriptVisionGetHeadPoseBridge;
+	runtimeApi_.VisionGetMotion = ScriptVisionGetMotionBridge;
+	runtimeApi_.VisionGetColorTracking = ScriptVisionGetColorTrackingBridge;
+	runtimeApi_.HapticPlaySource = ScriptHapticPlaySourceBridge;
+	runtimeApi_.HapticPlayClipAsset = ScriptHapticPlayClipAssetBridge;
+	runtimeApi_.HapticPlayFromImpulse = ScriptHapticPlayFromImpulseBridge;
+	runtimeApi_.HapticStopSource = ScriptHapticStopSourceBridge;
+	runtimeApi_.HapticStopHandle = ScriptHapticStopHandleBridge;
+	runtimeApi_.HapticIsPlayingHandle = ScriptHapticIsPlayingHandleBridge;
+	runtimeApi_.HapticSetHandleIntensity = ScriptHapticSetHandleIntensityBridge;
+	runtimeApi_.HapticSetHandleFrequency = ScriptHapticSetHandleFrequencyBridge;
+	runtimeApi_.HapticSetHandlePlaybackSpeed = ScriptHapticSetHandlePlaybackSpeedBridge;
+	runtimeApi_.HapticSetHandleLooping = ScriptHapticSetHandleLoopingBridge;
+	runtimeApi_.HapticSetMasterIntensity = ScriptHapticSetMasterIntensityBridge;
+	runtimeApi_.HapticGetDeviceState = ScriptHapticGetDeviceStateBridge;
+	runtimeApi_.OnlineSetPlayerIdentity = ScriptOnlineSetPlayerIdentityBridge;
+	runtimeApi_.OnlineGetConnectionState = ScriptOnlineGetConnectionStateBridge;
+	runtimeApi_.OnlineIsEnabled = ScriptOnlineIsEnabledBridge;
+	runtimeApi_.OnlineGetPendingRequestCount = ScriptOnlineGetPendingRequestCountBridge;
+	runtimeApi_.OnlineSubmitScore = ScriptOnlineSubmitScoreBridge;
+	runtimeApi_.OnlineRequestTopScores = ScriptOnlineRequestTopScoresBridge;
+	runtimeApi_.OnlineGetLeaderboardCount = ScriptOnlineGetLeaderboardCountBridge;
+	runtimeApi_.OnlineGetLeaderboardEntry = ScriptOnlineGetLeaderboardEntryBridge;
+	runtimeApi_.OnlineSetPlayerValue = ScriptOnlineSetPlayerValueBridge;
+	runtimeApi_.OnlineRequestPlayerData = ScriptOnlineRequestPlayerDataBridge;
+	runtimeApi_.OnlineGetPlayerValue = ScriptOnlineGetPlayerValueBridge;
+	runtimeApi_.OnlineUploadCloudSave = ScriptOnlineUploadCloudSaveBridge;
+	runtimeApi_.OnlineRequestCloudSave = ScriptOnlineRequestCloudSaveBridge;
+	runtimeApi_.OnlineGetCloudSave = ScriptOnlineGetCloudSaveBridge;
+	runtimeApi_.SpeechIsSpeaking = ScriptSpeechIsSpeakingBridge;
+	runtimeApi_.SpeechIsProcessing = ScriptSpeechIsProcessingBridge;
 }
 
 bool EditorScriptManager::ScriptAddComponentBridge(
@@ -4319,6 +6073,94 @@ bool EditorScriptManager::ScriptPhysicsRaycastFilteredBridge(
 			includeTriggers,
 			requiredComponentTypeName,
 			*hit);
+}
+
+void EditorScriptManager::StartAdditive() {
+	if (editorScene_ == nullptr) {
+		return;
+	}
+
+	// Additive読込では、既にPlay中のObjectのScriptを再Startしてはいけない。
+	// BuildScriptBindingsはbindingを作り直すため、先に現在のinstanceとhasStartedを退避し、
+	// (gameObjectId, componentIndex, dllPath)が一致するbindingへ引き継ぐ。
+	// これをしないと、Chunkを1枚読むたびに全ScriptのStartが走り、HPやスコアが初期化される。
+	struct PreservedBindingState {
+		void* instance = nullptr;
+		size_t synchronizedFieldHash = 0U;
+		bool hasSynchronizedFieldHash = false;
+		bool hasStarted = false;
+		float updateIntervalRemaining = 0.0f;
+		float accumulatedUpdateDeltaTime = 0.0f;
+	};
+
+	std::map<std::tuple<int32_t, size_t, std::string>, PreservedBindingState> preservedStates;
+
+	for (const ScriptBinding& scriptBinding : scriptBindings_) {
+		PreservedBindingState preserved{};
+		preserved.instance = scriptBinding.instance;
+		preserved.synchronizedFieldHash = scriptBinding.synchronizedFieldHash;
+		preserved.hasSynchronizedFieldHash = scriptBinding.hasSynchronizedFieldHash;
+		preserved.hasStarted = scriptBinding.hasStarted;
+		preserved.updateIntervalRemaining = scriptBinding.updateIntervalRemaining;
+		preserved.accumulatedUpdateDeltaTime = scriptBinding.accumulatedUpdateDeltaTime;
+		preservedStates.emplace(
+			std::make_tuple(scriptBinding.gameObjectId, scriptBinding.componentIndex, scriptBinding.dllPath),
+			preserved);
+	}
+
+	BuildScriptBindings();
+	BuildRuntimeApi();
+
+	for (ScriptBinding& scriptBinding : scriptBindings_) {
+		const auto preservedIterator = preservedStates.find(
+			std::make_tuple(scriptBinding.gameObjectId, scriptBinding.componentIndex, scriptBinding.dllPath));
+
+		if (preservedIterator == preservedStates.end()) {
+			continue;
+		}
+
+		scriptBinding.instance = preservedIterator->second.instance;
+		scriptBinding.synchronizedFieldHash = preservedIterator->second.synchronizedFieldHash;
+		scriptBinding.hasSynchronizedFieldHash = preservedIterator->second.hasSynchronizedFieldHash;
+		scriptBinding.hasStarted = preservedIterator->second.hasStarted;
+		scriptBinding.updateIntervalRemaining = preservedIterator->second.updateIntervalRemaining;
+		scriptBinding.accumulatedUpdateDeltaTime = preservedIterator->second.accumulatedUpdateDeltaTime;
+		preservedStates.erase(preservedIterator);
+	}
+
+	// 引き継ぎ先が無かったbinding = Additive Unload等で消えたObject。
+	// instanceを作ったDLLへ返さないと、Play中にUnloadを繰り返すだけでリークする。
+	for (auto& [preservedKey, preservedState] : preservedStates) {
+		if (preservedState.instance == nullptr) {
+			continue;
+		}
+
+		const auto scriptModuleIterator = scriptModules_.find(std::get<2>(preservedKey));
+
+		if (scriptModuleIterator != scriptModules_.end() &&
+			UsesInstanceApi(scriptModuleIterator->second)) {
+			ScriptModule& scriptModule = scriptModuleIterator->second;
+
+			if (scriptModule.stopFunction != nullptr) {
+				scriptModule.stopFunction(std::get<0>(preservedKey));
+			}
+
+			scriptModule.destroyInstanceFunction(preservedState.instance);
+		}
+
+		preservedState.instance = nullptr;
+	}
+
+	for (const ScriptBinding& scriptBinding : scriptBindings_) {
+		LoadModule(scriptBinding.dllPath);
+	}
+
+	// hasStartedを引き継いだbindingはStartBindingIfNeededが弾くため、新規Objectだけが起動する。
+	for (auto& scriptModulePair : scriptModules_) {
+		StartBindingsForModule(scriptModulePair.second);
+	}
+
+	isStarted_ = true;
 }
 
 void EditorScriptManager::StartBindingsForModule(ScriptModule& scriptModule) {
@@ -4940,6 +6782,20 @@ void EditorScriptManager::HotReloadChangedModules() {
 			continue;
 		}
 
+		// DLL を先に別名コピーで LoadLibrary して、壊れた出力をここで止める。
+		// 旧 Module を先に Unload すると、ビルド失敗中の半端な DLL に更新日時だけが
+		// 付いた場合に Play 中の Script まで失われるため、検証成功までは旧 Module を保持する。
+		ScriptMetadata candidateMetadata{};
+		if (!ReadMetadataFromDll(scriptModule.sourceDllPath, candidateMetadata)) {
+			scriptModule.lastWriteTime = currentWriteTime;
+			moduleStatusMessages_[scriptModule.sourceDllPath] =
+				"DLL 再読み込み失敗: 新しいDLLを検証できないため旧DLLを継続使用";
+			PushConsoleMessage(
+				"DLL 再読み込み失敗（旧DLLを継続）: " + scriptModule.sourceDllPath);
+			continue;
+		}
+
+		scriptMetadataCache_[scriptModule.sourceDllPath] = candidateMetadata;
 		StopBindingsForModule(scriptModule);
 		UnloadModule(scriptModule);
 		if (LoadModule(scriptModule.sourceDllPath)) {
@@ -5026,6 +6882,9 @@ bool EditorScriptManager::LoadModule(const std::string& dllPath) {
 #pragma warning(disable : 4191)
 	scriptModule.loadFunction =
 		reinterpret_cast<EditorScriptLoadFn>(GetProcAddress(moduleHandle, "EditorScript_Load"));
+	scriptModule.getRequiredApiVersionFunction =
+		reinterpret_cast<EditorScriptGetRequiredApiVersionFn>(
+			GetProcAddress(moduleHandle, "EditorScript_GetRequiredApiVersion"));
 	scriptModule.unloadFunction =
 		reinterpret_cast<EditorScriptUnloadFn>(GetProcAddress(moduleHandle, "EditorScript_Unload"));
 	scriptModule.startFunction =
@@ -5092,16 +6951,43 @@ bool EditorScriptManager::LoadModule(const std::string& dllPath) {
 		return false;
 	}
 
-	if (scriptModule.loadFunction == nullptr || !scriptModule.loadFunction(kEditorScriptApiVersion, &runtimeApi_)) {
-		moduleStatusMessages_[dllPath] = "DLL 初期化失敗";
-		PushConsoleMessage("DLL 初期化失敗: " + dllPath);
+	bool isApiInitialized = false;
+	uint32_t compatibleApiVersion = 0U;
+
+	if (scriptModule.loadFunction != nullptr) {
+		if (scriptModule.getRequiredApiVersionFunction != nullptr) {
+			const uint32_t requiredApiVersion = scriptModule.getRequiredApiVersionFunction();
+			if (requiredApiVersion > 0U && requiredApiVersion <= kEditorScriptApiVersion) {
+				isApiInitialized = scriptModule.loadFunction(requiredApiVersion, &runtimeApi_);
+				if (isApiInitialized) compatibleApiVersion = requiredApiVersion;
+			}
+		}
+		else {
+			// Version Exportが無い既存DLLは、末尾追加ABIの範囲で新しいVersionから順に探索する。
+			// 旧Generated.cppは完全一致判定なので、Build時Versionに到達した時だけ成功する。
+			for (uint32_t candidateVersion = kEditorScriptApiVersion;
+				candidateVersion > 0U && !isApiInitialized;
+				--candidateVersion) {
+				isApiInitialized = scriptModule.loadFunction(candidateVersion, &runtimeApi_);
+				if (isApiInitialized) compatibleApiVersion = candidateVersion;
+			}
+		}
+	}
+
+	if (!isApiInitialized) {
+		moduleStatusMessages_[dllPath] = "DLL 初期化失敗: 対応するScript API Versionがありません";
+		PushConsoleMessage("DLL 初期化失敗（Script API非互換）: " + dllPath);
 		UnloadModule(scriptModule);
 		return false;
 	}
 
+	scriptModule.loadedApiVersion = compatibleApiVersion;
 	scriptModule.isLoaded = true;
-	moduleStatusMessages_[dllPath] = "DLL 読み込み成功";
-	PushConsoleMessage("DLL 読み込み: " + dllPath);
+	const std::string compatibilityText = compatibleApiVersion == kEditorScriptApiVersion
+		? ""
+		: "（旧Script API " + std::to_string(compatibleApiVersion) + "互換）";
+	moduleStatusMessages_[dllPath] = "DLL 読み込み成功" + compatibilityText;
+	PushConsoleMessage("DLL 読み込み: " + dllPath + compatibilityText);
 	return true;
 }
 
@@ -5121,6 +7007,8 @@ void EditorScriptManager::UnloadModule(ScriptModule& scriptModule) {
 
 	scriptModule.moduleHandle = nullptr;
 	scriptModule.loadFunction = nullptr;
+	scriptModule.getRequiredApiVersionFunction = nullptr;
+	scriptModule.loadedApiVersion = 0U;
 	scriptModule.unloadFunction = nullptr;
 	scriptModule.startFunction = nullptr;
 	scriptModule.updateFunction = nullptr;
@@ -5370,6 +7258,23 @@ void EditorScriptManager::SetTransformInternal(int32_t gameObjectId, const Edito
 	gameObject->translate = ToEditorVector3(transform.position);
 	gameObject->rotate = ToEditorVector3(transform.rotation);
 	gameObject->scale = ToEditorVector3(transform.scale);
+
+	// Dynamic Rigidbody はこの後の Physics Update で Body 姿勢を Scene へ書き戻す。
+	// Scene 側だけを変更すると API の値が同じ Frame 中に消えるため、親階層を
+	// 合成した World 姿勢を Jolt Body にも即時反映する。
+	if (physicsManager_ != nullptr) {
+		Vector3 worldScale{};
+		Vector3 worldRotation{};
+		Vector3 worldPosition{};
+
+		if (editorScene_->GetWorldTransform(
+			gameObjectId,
+			worldScale,
+			worldRotation,
+			worldPosition)) {
+			physicsManager_->SetGameObjectTransform(gameObjectId, worldPosition, worldRotation);
+		}
+	}
 }
 
 EditorScriptVector3 EditorScriptManager::GetVelocityInternal(int32_t gameObjectId) const {
@@ -6660,4 +8565,524 @@ bool EditorScriptManager::RequestSceneLoadByBuildIndexInternal(int32_t sceneInde
 
 	return RequestSceneLoadInternal(
 		EditorSharedState::g_gameBuildScenePaths[static_cast<size_t>(sceneIndex)]);
+}
+
+//================================================================
+// 外部認識・オンライン連携 Bridge
+//================================================================
+// Component 設定が必要な操作は EditorExternalFeatureManager、状態取得は
+// 各 System(Speech / Vision / Haptics / Online)へそのまま流す。
+
+namespace {
+	// 外部機能の実行担当を返す。Play していない間も Editor 側の実体は存在する。
+	EditorExternalFeatureManager& GetScriptExternalFeatureManager() {
+		return EditorSharedState::g_editorRuntimeManager.GetExternalFeatureManager();
+	}
+
+	bool CopyTextToScriptBuffer(const std::string& text, char* buffer, int32_t bufferCapacity) {
+		if (buffer == nullptr || bufferCapacity <= 0) {
+			return false;
+		}
+
+		strncpy_s(buffer, static_cast<size_t>(bufferCapacity), text.c_str(), _TRUNCATE);
+		return true;
+	}
+}
+
+bool EditorScriptManager::ScriptSpeechStartRecognitionBridge(int32_t gameObjectId) {
+	return GetScriptExternalFeatureManager().StartSpeechRecognition(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptSpeechStopRecognitionBridge(int32_t gameObjectId) {
+	return GetScriptExternalFeatureManager().StopSpeechRecognition(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptSpeechIsRecognizingBridge(int32_t gameObjectId) {
+	return SpeechSystem::Get().IsRecognizing(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptSpeechGetLastResultBridge(
+	int32_t gameObjectId,
+	char* text,
+	int32_t textCapacity,
+	float* confidence,
+	bool* isFinal) {
+	SpeechResult result{};
+
+	if (!SpeechSystem::Get().TryGetLatestResult(gameObjectId, result)) {
+		return false;
+	}
+
+	if (!CopyTextToScriptBuffer(result.text, text, textCapacity)) {
+		return false;
+	}
+
+	if (confidence != nullptr) {
+		*confidence = result.confidence;
+	}
+
+	if (isFinal != nullptr) {
+		*isFinal = result.isFinal;
+	}
+
+	return true;
+}
+
+bool EditorScriptManager::ScriptSpeechWasKeywordRecognizedBridge(
+	int32_t gameObjectId,
+	const char* keyword) {
+	if (keyword == nullptr) {
+		return false;
+	}
+
+	return SpeechSystem::Get().WasKeywordRecognized(gameObjectId, keyword);
+}
+
+bool EditorScriptManager::ScriptSpeechIsSpeakingBridge(int32_t gameObjectId) {
+	const SpeechRuntimeStatus status = SpeechSystem::Get().GetStatus();
+	return SpeechSystem::Get().IsRecognizing(gameObjectId) && status.isSpeaking;
+}
+
+bool EditorScriptManager::ScriptSpeechIsProcessingBridge(int32_t gameObjectId) {
+	const SpeechRuntimeStatus status = SpeechSystem::Get().GetStatus();
+	return SpeechSystem::Get().IsRecognizing(gameObjectId) && status.isProcessing;
+}
+
+bool EditorScriptManager::ScriptVisionStartCameraBridge(int32_t gameObjectId) {
+	return GetScriptExternalFeatureManager().StartCameraCapture(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptVisionStopCameraBridge(int32_t gameObjectId) {
+	return GetScriptExternalFeatureManager().StopCameraCapture(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptVisionStartRecognitionBridge(int32_t gameObjectId) {
+	return GetScriptExternalFeatureManager().StartImageRecognition(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptVisionStopRecognitionBridge(int32_t gameObjectId) {
+	return GetScriptExternalFeatureManager().StopImageRecognition(gameObjectId);
+}
+
+int32_t EditorScriptManager::ScriptVisionGetStateBridge(int32_t gameObjectId) {
+	VisionResult result{};
+
+	if (!VisionSystem::Get().TryGetResult(gameObjectId, result)) {
+		return static_cast<int32_t>(ExternalFeatureState::Unavailable);
+	}
+
+	return static_cast<int32_t>(result.state);
+}
+
+int32_t EditorScriptManager::ScriptVisionGetObjectCountBridge(int32_t gameObjectId) {
+	VisionResult result{};
+
+	if (!VisionSystem::Get().TryGetResult(gameObjectId, result)) {
+		return 0;
+	}
+
+	return static_cast<int32_t>(result.objects.size());
+}
+
+bool EditorScriptManager::ScriptVisionGetObjectBridge(
+	int32_t gameObjectId,
+	int32_t objectIndex,
+	char* label,
+	int32_t labelCapacity,
+	float* confidence,
+	float* x,
+	float* y,
+	float* width,
+	float* height) {
+	VisionResult result{};
+
+	if (!VisionSystem::Get().TryGetResult(gameObjectId, result) ||
+		objectIndex < 0 ||
+		objectIndex >= static_cast<int32_t>(result.objects.size())) {
+		return false;
+	}
+
+	const ObjectDetectionResult& object = result.objects[static_cast<size_t>(objectIndex)];
+	CopyTextToScriptBuffer(object.label, label, labelCapacity);
+
+	if (confidence != nullptr) {
+		*confidence = object.confidence;
+	}
+
+	if (x != nullptr) {
+		*x = object.x;
+	}
+
+	if (y != nullptr) {
+		*y = object.y;
+	}
+
+	if (width != nullptr) {
+		*width = object.width;
+	}
+
+	if (height != nullptr) {
+		*height = object.height;
+	}
+
+	return true;
+}
+
+bool EditorScriptManager::ScriptVisionGetTopClassificationBridge(
+	int32_t gameObjectId,
+	char* label,
+	int32_t labelCapacity,
+	float* confidence) {
+	VisionResult result{};
+
+	if (!VisionSystem::Get().TryGetResult(gameObjectId, result) || result.classifications.empty()) {
+		return false;
+	}
+
+	const ImageClassificationResult& classification = result.classifications.front();
+	CopyTextToScriptBuffer(classification.label, label, labelCapacity);
+
+	if (confidence != nullptr) {
+		*confidence = classification.confidence;
+	}
+
+	return true;
+}
+
+int32_t EditorScriptManager::ScriptVisionGetFaceCountBridge(int32_t gameObjectId) {
+	VisionResult result{};
+
+	if (!VisionSystem::Get().TryGetResult(gameObjectId, result)) {
+		return 0;
+	}
+
+	return static_cast<int32_t>(result.faces.size());
+}
+
+bool EditorScriptManager::ScriptVisionGetFaceBridge(
+	int32_t gameObjectId,
+	int32_t faceIndex,
+	float* confidence,
+	float* x,
+	float* y,
+	float* width,
+	float* height) {
+	VisionResult result{};
+
+	if (!VisionSystem::Get().TryGetResult(gameObjectId, result) ||
+		faceIndex < 0 ||
+		faceIndex >= static_cast<int32_t>(result.faces.size())) {
+		return false;
+	}
+
+	const FaceDetectionResult& face = result.faces[static_cast<size_t>(faceIndex)];
+
+	if (confidence != nullptr) {
+		*confidence = face.confidence;
+	}
+
+	if (x != nullptr) {
+		*x = face.x;
+	}
+
+	if (y != nullptr) {
+		*y = face.y;
+	}
+
+	if (width != nullptr) {
+		*width = face.width;
+	}
+
+	if (height != nullptr) {
+		*height = face.height;
+	}
+
+	return true;
+}
+
+bool EditorScriptManager::ScriptVisionGetHeadPoseBridge(
+	int32_t gameObjectId,
+	float* yaw,
+	float* pitch,
+	float* roll) {
+	VisionResult result{};
+
+	if (!VisionSystem::Get().TryGetResult(gameObjectId, result) || !result.headPose.isValid) {
+		return false;
+	}
+
+	if (yaw != nullptr) {
+		*yaw = result.headPose.yaw;
+	}
+
+	if (pitch != nullptr) {
+		*pitch = result.headPose.pitch;
+	}
+
+	if (roll != nullptr) {
+		*roll = result.headPose.roll;
+	}
+
+	return true;
+}
+
+bool EditorScriptManager::ScriptVisionGetMotionBridge(
+	int32_t gameObjectId,
+	bool* hasMotion,
+	float* motionMagnitude,
+	float* centerX,
+	float* centerY) {
+	VisionResult result{};
+
+	if (!VisionSystem::Get().TryGetResult(gameObjectId, result) || !result.isValid) {
+		return false;
+	}
+
+	if (hasMotion != nullptr) {
+		*hasMotion = result.motion.motion;
+	}
+
+	if (motionMagnitude != nullptr) {
+		*motionMagnitude = result.motion.motionMagnitude;
+	}
+
+	if (centerX != nullptr) {
+		*centerX = result.motion.centerX;
+	}
+
+	if (centerY != nullptr) {
+		*centerY = result.motion.centerY;
+	}
+
+	return true;
+}
+
+bool EditorScriptManager::ScriptVisionGetColorTrackingBridge(
+	int32_t gameObjectId,
+	bool* isDetected,
+	float* centerX,
+	float* centerY,
+	float* areaRatio) {
+	VisionResult result{};
+
+	if (!VisionSystem::Get().TryGetResult(gameObjectId, result) || !result.isValid) {
+		return false;
+	}
+
+	if (isDetected != nullptr) {
+		*isDetected = result.colorTracking.isDetected;
+	}
+
+	if (centerX != nullptr) {
+		*centerX = result.colorTracking.centerX;
+	}
+
+	if (centerY != nullptr) {
+		*centerY = result.colorTracking.centerY;
+	}
+
+	if (areaRatio != nullptr) {
+		*areaRatio = result.colorTracking.areaRatio;
+	}
+
+	return true;
+}
+
+uint32_t EditorScriptManager::ScriptHapticPlaySourceBridge(int32_t gameObjectId) {
+	return GetScriptExternalFeatureManager().PlayHapticSource(gameObjectId);
+}
+
+uint32_t EditorScriptManager::ScriptHapticPlayClipAssetBridge(
+	const char* clipAssetPath,
+	int32_t gameObjectId) {
+	if (clipAssetPath == nullptr) {
+		return kInvalidHapticHandle;
+	}
+
+	return HapticSystem::Get().PlayClipAsset(clipAssetPath, gameObjectId);
+}
+
+uint32_t EditorScriptManager::ScriptHapticPlayFromImpulseBridge(int32_t gameObjectId, float impulse) {
+	return GetScriptExternalFeatureManager().PlayHapticFromImpulse(gameObjectId, impulse);
+}
+
+bool EditorScriptManager::ScriptHapticStopSourceBridge(int32_t gameObjectId) {
+	return GetScriptExternalFeatureManager().StopHapticSource(gameObjectId);
+}
+
+bool EditorScriptManager::ScriptHapticStopHandleBridge(uint32_t hapticHandle) {
+	return HapticSystem::Get().Stop(hapticHandle);
+}
+
+bool EditorScriptManager::ScriptHapticIsPlayingHandleBridge(uint32_t hapticHandle) {
+	return HapticSystem::Get().IsPlaying(hapticHandle);
+}
+
+bool EditorScriptManager::ScriptHapticSetHandleIntensityBridge(uint32_t hapticHandle, float intensity) {
+	return HapticSystem::Get().SetIntensity(hapticHandle, intensity);
+}
+
+bool EditorScriptManager::ScriptHapticSetHandleFrequencyBridge(uint32_t hapticHandle, float frequency) {
+	return HapticSystem::Get().SetFrequency(hapticHandle, frequency);
+}
+
+bool EditorScriptManager::ScriptHapticSetHandlePlaybackSpeedBridge(
+	uint32_t hapticHandle,
+	float playbackSpeed) {
+	return HapticSystem::Get().SetPlaybackSpeed(hapticHandle, playbackSpeed);
+}
+
+bool EditorScriptManager::ScriptHapticSetHandleLoopingBridge(uint32_t hapticHandle, bool isLooping) {
+	return HapticSystem::Get().SetLooping(hapticHandle, isLooping);
+}
+
+void EditorScriptManager::ScriptHapticSetMasterIntensityBridge(float masterIntensity) {
+	HapticSystem::Get().SetMasterIntensity(masterIntensity);
+}
+
+int32_t EditorScriptManager::ScriptHapticGetDeviceStateBridge() {
+	return static_cast<int32_t>(HapticSystem::Get().GetDeviceInfo().state);
+}
+
+void EditorScriptManager::ScriptOnlineSetPlayerIdentityBridge(
+	const char* playerId,
+	const char* playerName) {
+	OnlineService::Get().SetPlayerIdentity(
+		playerId != nullptr ? playerId : "",
+		playerName != nullptr ? playerName : "");
+}
+
+int32_t EditorScriptManager::ScriptOnlineGetConnectionStateBridge() {
+	return static_cast<int32_t>(OnlineService::Get().GetConnectionState());
+}
+
+bool EditorScriptManager::ScriptOnlineIsEnabledBridge() {
+	return OnlineService::Get().IsEnabled();
+}
+
+int32_t EditorScriptManager::ScriptOnlineGetPendingRequestCountBridge() {
+	return OnlineService::Get().GetPendingQueueCount();
+}
+
+bool EditorScriptManager::ScriptOnlineSubmitScoreBridge(
+	const char* boardName,
+	int64_t score,
+	int32_t scope) {
+	if (boardName == nullptr) {
+		return false;
+	}
+
+	const LeaderboardScope leaderboardScope =
+		static_cast<LeaderboardScope>((std::clamp)(scope, 0, 4));
+	// 送信系は Pending Queue へ残るため、通信できない時も要求受付として true を返す。
+	OnlineService::Get().SubmitScore(boardName, score, leaderboardScope);
+	return true;
+}
+
+bool EditorScriptManager::ScriptOnlineRequestTopScoresBridge(
+	const char* boardName,
+	int32_t entryCount,
+	int32_t scope) {
+	if (boardName == nullptr) {
+		return false;
+	}
+
+	const LeaderboardScope leaderboardScope =
+		static_cast<LeaderboardScope>((std::clamp)(scope, 0, 4));
+	OnlineService::Get().RequestTopScoresCached(boardName, entryCount, leaderboardScope);
+	return true;
+}
+
+int32_t EditorScriptManager::ScriptOnlineGetLeaderboardCountBridge() {
+	return static_cast<int32_t>(OnlineService::Get().GetCachedLeaderboard().size());
+}
+
+bool EditorScriptManager::ScriptOnlineGetLeaderboardEntryBridge(
+	int32_t entryIndex,
+	char* playerId,
+	int32_t playerIdCapacity,
+	char* playerName,
+	int32_t playerNameCapacity,
+	int64_t* score,
+	int32_t* rank) {
+	const std::vector<LeaderboardEntry>& entries = OnlineService::Get().GetCachedLeaderboard();
+
+	if (entryIndex < 0 || entryIndex >= static_cast<int32_t>(entries.size())) {
+		return false;
+	}
+
+	const LeaderboardEntry& entry = entries[static_cast<size_t>(entryIndex)];
+	CopyTextToScriptBuffer(entry.playerId, playerId, playerIdCapacity);
+	CopyTextToScriptBuffer(entry.playerName, playerName, playerNameCapacity);
+
+	if (score != nullptr) {
+		*score = entry.score;
+	}
+
+	if (rank != nullptr) {
+		*rank = entry.rank;
+	}
+
+	return true;
+}
+
+bool EditorScriptManager::ScriptOnlineSetPlayerValueBridge(const char* key, const char* value) {
+	if (key == nullptr || value == nullptr) {
+		return false;
+	}
+
+	OnlineService::Get().SetPlayerValue(key, value);
+	return true;
+}
+
+bool EditorScriptManager::ScriptOnlineRequestPlayerDataBridge() {
+	OnlineService::Get().RequestPlayerDataCached();
+	return true;
+}
+
+bool EditorScriptManager::ScriptOnlineGetPlayerValueBridge(
+	const char* key,
+	char* value,
+	int32_t valueCapacity) {
+	if (key == nullptr) {
+		return false;
+	}
+
+	std::string cachedValue;
+
+	if (!OnlineService::Get().TryGetCachedPlayerValue(key, cachedValue)) {
+		return false;
+	}
+
+	return CopyTextToScriptBuffer(cachedValue, value, valueCapacity);
+}
+
+bool EditorScriptManager::ScriptOnlineUploadCloudSaveBridge(
+	const char* slotName,
+	const char* saveText) {
+	if (slotName == nullptr || saveText == nullptr) {
+		return false;
+	}
+
+	OnlineService::Get().UploadCloudSave(slotName, saveText);
+	return true;
+}
+
+bool EditorScriptManager::ScriptOnlineRequestCloudSaveBridge(const char* slotName) {
+	if (slotName == nullptr) {
+		return false;
+	}
+
+	OnlineService::Get().RequestCloudSaveCached(slotName);
+	return true;
+}
+
+bool EditorScriptManager::ScriptOnlineGetCloudSaveBridge(char* saveText, int32_t saveTextCapacity) {
+	const std::string& cachedSaveText = OnlineService::Get().GetCachedCloudSave();
+
+	if (cachedSaveText.empty()) {
+		return false;
+	}
+
+	return CopyTextToScriptBuffer(cachedSaveText, saveText, saveTextCapacity);
 }

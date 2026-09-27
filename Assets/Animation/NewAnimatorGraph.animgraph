@@ -1,0 +1,24 @@
+﻿{
+  "entryState": 0,
+  "parameters": [
+    { "name": "Speed", "type": "Float", "float": 0.000000, "int": 0, "bool": false }
+  ],
+  "states": [
+    {
+      "name": "Idle",
+      "clip": 0,
+      "speed": 1.000000,
+      "loop": true,
+      "blendType": "Clip",
+      "parameter": "Speed",
+      "parameterX": "MoveX",
+      "parameterY": "MoveY",
+      "samples": [
+      ]
+    }
+  ],
+  "transitions": [
+  ],
+  "events": [
+  ]
+}

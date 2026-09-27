@@ -4,10 +4,12 @@
 #include "EditorAnimationManager.h"
 #include "EditorAIManager.h"
 #include "EditorAudioManager.h"
+#include "EditorBlastDestructionManager.h"
 #include "EditorCameraEffectManager.h"
 #include "EditorFreeTransformManager.h"
 #include "EditorConstraintManager.h"
 #include "EditorDamageManager.h"
+#include "EditorExternalFeatureManager.h"
 #include "Source/Engine/Effect/EditorEffectManager.h"
 #include "Source/Engine/Effect/EditorEffekseerManager.h"
 #include "Source/Engine/Effect/EditorVfxManager.h"
@@ -73,12 +75,18 @@ public:
 	const EditorRailMovementManager& GetRailMovementManager() const;  // 読み取り専用のレール実行状態を返す。
 	EditorPhysicsManager& GetPhysicsManager();  // SceneView が接触点と Cast 履歴を可視化するために返す。
 	const EditorPhysicsManager& GetPhysicsManager() const;  // 読み取り専用の物理デバッグ情報を返す。
+	EditorNavigationManager& GetNavigationManager();  // Scene View が実行中 NavMesh の経路・Linkを可視化するために返す。
+	const EditorNavigationManager& GetNavigationManager() const;  // 読み取り専用の Navigation デバッグ情報を返す。
+	EditorBlastDestructionManager& GetBlastDestructionManager();  // Script APIとDiagnosticsへBlast Runtimeを公開する。
+	const EditorBlastDestructionManager& GetBlastDestructionManager() const;
 	EditorProfilerManager& GetProfilerManager();  // Diagnostics WindowへRuntime各系統のCPU時間を公開する。
 	const EditorProfilerManager& GetProfilerManager() const;  // 読み取り専用Profiler。
 	EditorLogMonitorManager& GetLogMonitorManager();  // Log Monitor PanelがWatch Entryを編集するために返す。
 	const EditorLogMonitorManager& GetLogMonitorManager() const;  // 読み取り専用版。
 	EditorReplayManager& GetReplayManager();  // Diagnostics Windowから入力記録・再生を操作する。
 	const EditorReplayManager& GetReplayManager() const;  // 読み取り専用Replay状態。
+	EditorExternalFeatureManager& GetExternalFeatureManager();  // 音声認識/画像認識/Haptics/OnlineをScript APIとDebug Windowへ公開する。
+	const EditorExternalFeatureManager& GetExternalFeatureManager() const;  // 読み取り専用版。
 	bool PlayEffect(int32_t gameObjectId);  // .effect と .efk を拡張子に応じて再生する。
 	void StopEffect(int32_t gameObjectId);  // 内蔵 GPU Particle と Effekseer の両方を停止する。
 	int32_t GetAliveEffectCount(int32_t gameObjectId) const;  // 両実行系の生存数を合算する。
@@ -141,13 +149,14 @@ private:
 	EditorUiBindingManager uiBindingManager_;  // 汎用値をCanvasのTextとSliderへ反映する担当
 	EditorRollingMoveManager rollingMoveManager_;  // 転がり移動 Component の実行担当
 	EditorNavigationManager navigationManager_;  // NavigationAgent / NavMesh 系 Component の実行担当
+	EditorBlastDestructionManager blastDestructionManager_;  // NvBlastのBond破断とJolt Chunk化を接続する担当
 	EditorPhysicsManager physicsManager_;  // RigidBody / Collider の実行担当
 	EditorProfilerManager profilerManager_;  // Runtime各系統のCPU時間、平均、Peakを保持する担当
 	EditorLogMonitorManager logMonitorManager_;  // GameObject/Component/System横断の汎用ログ・監視担当
 	EditorReplayManager replayManager_;  // Keyboard入力とdeltaTimeを記録し、同じScene開始状態から再生する担当
 	EditorSaveManager saveManager_;  // Saveable登録、Slot、Checkpointの保存・復元担当
 	EditorSceneOptimizationManager sceneOptimizationManager_;  // 距離実体化とSimulation LODの統合担当
-	std::unordered_map<int32_t, float> hapticLoopTimers_;  // ループ振動を GameObject ごとに管理する。
+	EditorExternalFeatureManager externalFeatureManager_;  // 音声認識、画像認識、Haptics、Online連携の実行担当
 	bool isPlaying_ = false;  // Play 中なら true
 	bool hasSceneBackup_ = false;  // sceneBackup_ が有効なら true
 
@@ -194,10 +203,7 @@ private:
 
 	void StartRuntimeSystems(bool shouldReinitializeScript);  // 現在 Scene の各 Runtime を開始する。
 	void StopRuntimeSystems();  // Scene 切替前または Play 停止時に各 Runtime を止める。
-	void StartHapticSources();  // 自動再生が有効な HapticSource を開始する。
-	void UpdateHapticSources(float deltaTime);  // ループ指定の HapticSource を再発生させる。
-	void StopHapticSources();  // Play 停止時に振動を確実に止める。
-	bool PlayHapticSource(const EditorGameObject& gameObject, const EditorComponent& component);  // 1 つの触覚設定を再生する。
+	// HapticSource の再生は HapticSystem + EditorExternalFeatureManager が担当する。
 	bool LoadSceneForPlay(const std::string& scenePath);  // Play 状態を維持したまま Scene を安全に差し替える。
 	bool UpdateSceneLoading();  // Future完了時にSceneを反映し、反映したフレームはtrueを返す。
 	bool ApplyLoadedScene(const std::string& scenePath, bool isAdditive, EditorScene&& loadedScene);  // 読込済みSceneを安全なフレーム境界で適用する。

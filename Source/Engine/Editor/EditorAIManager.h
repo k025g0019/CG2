@@ -2,8 +2,10 @@
 
 #include "EditorPhysicsManager.h"
 #include "EditorScene.h"
+#include "Source/Engine/Speech/WindowsSpeechApiBackend.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -70,10 +72,16 @@ private:
 	std::unordered_map<int64_t, float> aiAccumulatedDeltaSeconds_;  // 間引いた時間を次回思考へまとめて渡す。
 	std::unordered_map<int64_t, Vector3> cachedAgentDirections_;  // 思考の間も移動補間を続けるための直近方向。
 	std::unordered_map<int64_t, EditorComponent> cachedRuntimeAgents_;  // Definition適用済み設定を思考間で再利用する。
+	std::unique_ptr<WindowsSpeechApiBackend> voiceCommandBackend_;  // 登録語だけを音響判定する独立 SAPI Backend。
+	std::unordered_map<int64_t, float> voiceCommandCooldownRemaining_;  // 同じ Command の連続発火を抑える残り時間。
 	bool isStarted_ = false;  // Play 中の AI が開始済みなら true。
 
 	void UpdateAgent(EditorGameObject& gameObject, EditorComponent& aiComponent, float deltaTime);  // 行動系 AI を 1 つ更新する。
 	void UpdateVisionSensor(const EditorGameObject& gameObject, EditorComponent& sensorComponent, float deltaTime);  // 視界センサーを 1 つ更新する。
+	void StartVoiceCommandRecognition();  // Scene 内の登録語を限定語彙 Grammar として音響認識を開始する。
+	void UpdateVoiceCommands(float deltaTime);  // 1位Scoreと2位との差から音声 Command を確定する。
+	void UpdateTextVoiceCommands();  // 任意の文字類似・完全一致Modeは既存SpeechRecognizer結果を使う。
+	void StopVoiceCommandRecognition();  // 音声 Command 専用 Backend を停止する。
 	Vector3 MakeDesiredDirection(const EditorGameObject& gameObject, const EditorComponent& aiComponent, const EditorGameObject* targetGameObject, float deltaTime);  // 行動モードから移動方向を作る。
 	Vector3 MakeBehaviorTreeDirection(const EditorGameObject& gameObject, const EditorComponent& aiComponent, const EditorGameObject* targetGameObject, float deltaTime);  // 条件評価で行動を選ぶ。
 	Vector3 MakeStateMachineDirection(const EditorGameObject& gameObject, const EditorComponent& aiComponent, const EditorGameObject* targetGameObject, float deltaTime);  // 待機 / 追跡 / 攻撃の状態を切り替える。

@@ -41,6 +41,12 @@ public:
 		float areaScale = 1.0f;  // 面数縮約時に元の表面積を保つ重み
 	};
 
+	struct PhysicsShapeTriangle {
+		Vector3 first = {0.0f, 0.0f, 0.0f};  // Jolt が最終生成した Shape の World 空間第1頂点
+		Vector3 second = {0.0f, 0.0f, 0.0f};  // Jolt が最終生成した Shape の World 空間第2頂点
+		Vector3 third = {0.0f, 0.0f, 0.0f};  // Jolt が最終生成した Shape の World 空間第3頂点
+	};
+
 	enum class RuntimeJointType : int32_t {
 		Fixed = 0,
 		Hinge = 1,
@@ -98,6 +104,7 @@ public:
 	void Start();  // Scene の Component から Jolt Body を作って物理 World を開始する
 	void Update(float deltaTime);  // Jolt の PhysicsSystem を進め、結果を GameObject へ戻す
 	void Stop();  // Jolt Body と PhysicsSystem を破棄する
+	int32_t GetBodyCount() const;  // Diagnostics 表示用。現在 Jolt World にある Body 数を返す
 	bool IsActive() const;  // Jolt World が Play 用に作成済みか返す
 	bool RegisterRuntimeGameObject(int32_t gameObjectId);  // Play中に追加されたGameObjectのColliderをJolt Worldへ登録する
 	bool SetGameObjectSimulationActive(int32_t gameObjectId, bool isActive);  // 出現待ち Object の Body を物理 Worldへ出し入れする
@@ -116,6 +123,8 @@ public:
 	bool GetBodyDiagnostics(int32_t gameObjectId, Vector3& bodyPosition, bool& isAddedToWorld) const;
 	bool GetSubmergedVolume(int32_t gameObjectId, const Vector3& surfacePosition, const Vector3& surfaceNormal, SubmergedVolumeInfo& volumeInfo) const;  // 実 Physics Shape を水面 Plane で切り、体積と浮心を返す
 	bool GetHydrodynamicSurfaceTriangles(int32_t gameObjectId, std::vector<HydrodynamicSurfaceTriangle>& surfaceTriangles) const;  // 実Shape表面を面積分布保持パネルとしてWorld空間で返す
+	bool GetPhysicsShapeTriangles(int32_t gameObjectId, std::vector<PhysicsShapeTriangle>& shapeTriangles) const;  // Scene View用に、最終生成済みPhysics Shapeの表面をWorld空間で返す
+	bool BuildAutoConvexPreviewTriangles(int32_t gameObjectId, std::vector<PhysicsShapeTriangle>& shapeTriangles) const;  // Play前でもRuntimeと同じAutoConvex生成を行い、最終凸包面を返す
 	bool AddForce(int32_t gameObjectId, const Vector3& force);  // Dynamic Rigidbody に継続力を加える
 	bool AddForceAtPosition(int32_t gameObjectId, const Vector3& force, const Vector3& worldPosition);  // World 位置へ力を加え、重心との差から回転も発生させる
 	bool AddImpulse(int32_t gameObjectId, const Vector3& impulse);  // Dynamic Rigidbody に瞬間力を加える

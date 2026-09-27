@@ -8,6 +8,7 @@
 #include "EditorAnimationWindowManager.h"
 #include "EditorDockingManager.h"
 #include "EditorDiagnosticsWindowManager.h"
+#include "EditorExternalFeatureWindowManager.h"
 #include "EditorFrameInputManager.h"
 #include "EditorGameBuildManager.h"
 #include "EditorGameViewManager.h"
@@ -55,6 +56,7 @@ private:
 	EditorAnimationWindowManager animationWindowManager_;  // Timeline、Keyframe、Preview、Animation Event の編集を扱う Manager。
 	EditorGameplayToolsWindowManager gameplayToolsWindowManager_;  // 汎用Spline、Event Timeline、State Graphを扱うManager。
 	EditorDiagnosticsWindowManager diagnosticsWindowManager_;  // Runtime ProfilerとScene静的検査を扱うManager。
+	EditorExternalFeatureWindowManager externalFeatureWindowManager_;  // 音声認識/画像認識/オンライン/HapticsのDebug表示を扱うManager。
 	EditorLogMonitorWindowManager logMonitorWindowManager_;  // GameObject/Component/System横断の汎用ログ・監視選択UIを扱うManager。
 	EditorTeamCollaborationManager teamCollaborationManager_;  // 3人共同制作のRevision、変更ログ、TCP同期を扱うManager。
 	EditorHookWireDebugWindowManager hookWireDebugWindowManager_;  // Hook構成の設定不備とRuntime Wireを検査するManager。

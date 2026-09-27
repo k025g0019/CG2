@@ -83,7 +83,7 @@ private:
 	void ResetRailMovement(
 		int32_t gameObjectId,
 		const Vector3& formationOffset,
-		float railStartNormalizedOverride) const;  // Pool再利用時のレール進行と編隊Offsetを初期化する。OverrideはWave側の設定。-1なら生成物自身の値
+		const EditorComponent& waveComponent) const;  // Pool再利用時のレール進行と編隊Offsetを初期化する。Wave側の前方生成設定も反映する。
 	void ApplySpawnedObjectSetup(
 		int32_t ownerGameObjectId,
 		int32_t spawnedGameObjectId,

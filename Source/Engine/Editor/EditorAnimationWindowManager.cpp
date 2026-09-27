@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <initializer_list>
 #include <utility>
 
 using namespace EditorSharedState;
@@ -92,6 +93,7 @@ void EditorAnimationWindowManager::Update() {
 	}
 
 	SynchronizeSelectedAsset();
+	SynchronizeSelectedGraphAsset();
 
 	if (isPreviewPlaying_) {
 		currentTime_ += (std::clamp)(deltaTime, 0.0f, 0.1f);
@@ -124,23 +126,36 @@ void EditorAnimationWindowManager::Draw() {
 		return;
 	}
 
-	DrawToolbar();
-	ImGui::Separator();
+	if (ImGui::BeginTabBar("AnimationWindowTabs")) {
+		if (ImGui::BeginTabItem("Clip (.animclip)")) {
+			DrawToolbar();
+			ImGui::Separator();
 
-	const float trackPanelWidth = (std::clamp)(ImGui::GetContentRegionAvail().x * 0.32f, 240.0f, 420.0f);
-	if (ImGui::BeginChild("AnimationTrackPanel", ImVec2(trackPanelWidth, 330.0f), true)) {
-		DrawTrackList();
+			const float trackPanelWidth = (std::clamp)(ImGui::GetContentRegionAvail().x * 0.32f, 240.0f, 420.0f);
+			if (ImGui::BeginChild("AnimationTrackPanel", ImVec2(trackPanelWidth, 330.0f), true)) {
+				DrawTrackList();
+			}
+			ImGui::EndChild();
+			ImGui::SameLine();
+
+			if (ImGui::BeginChild("AnimationTimelinePanel", ImVec2(0.0f, 330.0f), true, ImGuiWindowFlags_HorizontalScrollbar)) {
+				DrawTimeline();
+			}
+			ImGui::EndChild();
+
+			DrawSelectedKeyEditor();
+			DrawEventEditor();
+			ImGui::EndTabItem();
+		}
+
+		if (ImGui::BeginTabItem("Animator Graph (.animgraph)")) {
+			DrawAnimatorGraphTab();
+			ImGui::EndTabItem();
+		}
+
+		ImGui::EndTabBar();
 	}
-	ImGui::EndChild();
-	ImGui::SameLine();
 
-	if (ImGui::BeginChild("AnimationTimelinePanel", ImVec2(0.0f, 330.0f), true, ImGuiWindowFlags_HorizontalScrollbar)) {
-		DrawTimeline();
-	}
-	ImGui::EndChild();
-
-	DrawSelectedKeyEditor();
-	DrawEventEditor();
 	ImGui::End();
 #endif
 }
@@ -1129,4 +1144,904 @@ bool EditorAnimationWindowManager::WriteProperty(
 
 void EditorAnimationWindowManager::SynchronizeRenderedScene() {
 	g_editorSceneSynchronizer.Update(g_editorTextureFilePaths, g_selectedPlacedSceneObjectIndex);
+}
+
+//================================================================
+// Animator Graph (.animgraph) 編集
+//================================================================
+
+void EditorAnimationWindowManager::SynchronizeSelectedGraphAsset() {
+	std::string requestedPath;
+
+	if (EditorAssetUtility::HasExtension(g_selectedAssetPath, ".animgraph")) {
+		requestedPath = g_selectedAssetPath;
+	}
+	else {
+		const EditorGameObject* gameObject = g_editorScene.FindGameObject(g_selectedEditorGameObjectId);
+		if (gameObject != nullptr) {
+			const EditorComponent* animatorComponent = EditorComponentUtility::FindComponent(
+				*gameObject,
+				EditorComponentType::Animator);
+
+			if (animatorComponent != nullptr &&
+				EditorAssetUtility::HasExtension(animatorComponent->assetPath, ".animgraph")) {
+				requestedPath = animatorComponent->assetPath;
+			}
+		}
+	}
+
+	// 未保存の編集を選択変更で破棄しない。保存するまで現在の Graph を保持する。
+	if (!requestedPath.empty() && requestedPath != animationGraphPath_ && !isGraphDirty_) {
+		LoadAnimationGraph(requestedPath);
+	}
+
+	RefreshGraphClipNames();
+}
+
+void EditorAnimationWindowManager::RefreshGraphClipNames() {
+	graphClipNames_.clear();
+	const EditorGameObject* gameObject = g_editorScene.FindGameObject(g_selectedEditorGameObjectId);
+
+	if (gameObject == nullptr) {
+		return;
+	}
+
+	// Animator が実行時に Clip を読む経路（ModelRenderer -> SkinnedMeshRenderer -> MeshFilter）と
+	// 同じ優先順で Model を特定し、Editor でも同じ Clip 番号を見せる。
+	std::string modelAssetPath;
+	for (const EditorComponentType componentType : {
+			EditorComponentType::ModelRenderer,
+			EditorComponentType::SkinnedMeshRenderer,
+			EditorComponentType::MeshFilter}) {
+		const EditorComponent* component = EditorComponentUtility::FindComponent(*gameObject, componentType);
+
+		if (component != nullptr && !component->assetPath.empty()) {
+			modelAssetPath = component->assetPath;
+			break;
+		}
+	}
+
+	if (modelAssetPath.empty()) {
+		return;
+	}
+
+	const ModelData* modelData = EditorAssetUtility::GetSharedModelAssetData(modelAssetPath, true);
+	if (modelData == nullptr) {
+		return;
+	}
+
+	for (const ModelAnimationClipData& clip : modelData->animationClips) {
+		graphClipNames_.push_back(clip.name);
+	}
+}
+
+bool EditorAnimationWindowManager::LoadAnimationGraph(const std::string& filePath) {
+	AnimationGraph loadedGraph{};
+
+	if (!loadedGraph.LoadFromJson(filePath)) {
+		// 壊れた .animgraph を選んでも編集中の内容は壊さず、UI 側で理由を出すだけにする。
+		animationGraphPath_ = filePath;
+		hasGraphLoadFailed_ = true;
+		g_editorConsoleMessages.push_back("Animator Graph: 読み込み失敗: " + filePath);
+		return false;
+	}
+
+	animationGraph_ = std::move(loadedGraph);
+	animationGraphPath_ = filePath;
+	selectedStateIndex_ = animationGraph_.states.empty() ? -1 : 0;
+	selectedTransitionIndex_ = animationGraph_.transitions.empty() ? -1 : 0;
+	selectedParameterIndex_ = animationGraph_.parameters.empty() ? -1 : 0;
+	isGraphDirty_ = false;
+	hasGraphLoadFailed_ = false;
+	g_editorConsoleMessages.push_back("Animator Graph: 開きました: " + filePath);
+	return true;
+}
+
+void EditorAnimationWindowManager::SaveAnimationGraph() {
+	if (animationGraphPath_.empty()) {
+		g_editorConsoleMessages.push_back("Animator Graph: 保存先 .animgraph が選択されていません");
+		return;
+	}
+
+	if (animationGraph_.SaveToJson(animationGraphPath_)) {
+		isGraphDirty_ = false;
+		hasGraphLoadFailed_ = false;
+		g_editorConsoleMessages.push_back("Animator Graph: 保存しました: " + animationGraphPath_);
+	}
+	else {
+		g_editorConsoleMessages.push_back("Animator Graph: 保存失敗: " + animationGraphPath_);
+	}
+}
+
+void EditorAnimationWindowManager::CreateAnimationGraph() {
+	const std::filesystem::path animationDirectory = std::filesystem::path("Assets") / "Animation";
+	std::error_code fileSystemError;
+	std::filesystem::create_directories(animationDirectory, fileSystemError);
+
+	if (fileSystemError) {
+		g_editorConsoleMessages.push_back("Animator Graph: Assets/Animation フォルダーを作成できません");
+		return;
+	}
+
+	std::filesystem::path graphPath = animationDirectory / "NewAnimatorGraph.animgraph";
+	int32_t duplicateNumber = 1;
+
+	while (std::filesystem::exists(graphPath)) {
+		graphPath = animationDirectory /
+			("NewAnimatorGraph_" + std::to_string(duplicateNumber) + ".animgraph");
+		++duplicateNumber;
+	}
+
+	// Idle 1 State と Speed Parameter だけの、そのまま Play できる最小構成から始める。
+	AnimationGraph newGraph{};
+	newGraph.entryState = 0;
+
+	AnimationGraphParameter speedParameter{};
+	speedParameter.name = "Speed";
+	speedParameter.defaultValue.type = AnimatorParameterType::Float;
+	newGraph.parameters.push_back(speedParameter);
+
+	AnimationGraphState idleState{};
+	idleState.name = "Idle";
+	idleState.clipIndex = 0;
+	idleState.loop = true;
+	newGraph.states.push_back(idleState);
+
+	animationGraph_ = std::move(newGraph);
+	animationGraphPath_ = graphPath.generic_string();
+	selectedStateIndex_ = 0;
+	selectedTransitionIndex_ = -1;
+	selectedParameterIndex_ = 0;
+	hasGraphLoadFailed_ = false;
+
+	if (!animationGraph_.SaveToJson(animationGraphPath_)) {
+		g_editorConsoleMessages.push_back("Animator Graph: 新規 Graph を保存できません: " + animationGraphPath_);
+		animationGraphPath_.clear();
+		return;
+	}
+
+	isGraphDirty_ = false;
+	g_selectedAssetPath = animationGraphPath_;
+	AssignGraphToSelectedGameObject();
+	g_editorConsoleMessages.push_back("Animator Graph: 新規作成しました: " + animationGraphPath_);
+}
+
+void EditorAnimationWindowManager::AssignGraphToSelectedGameObject() {
+	if (animationGraphPath_.empty() || g_selectedEditorGameObjectId < 0) {
+		return;
+	}
+
+	EditorGameObject* gameObject = g_editorScene.FindGameObject(g_selectedEditorGameObjectId);
+	if (gameObject == nullptr) {
+		return;
+	}
+
+	if (EditorComponentUtility::FindComponent(*gameObject, EditorComponentType::Animator) == nullptr) {
+		g_editorScene.AddComponent(gameObject->id, EditorComponentType::Animator);
+	}
+
+	EditorComponent* animatorComponent = EditorComponentUtility::FindComponent(
+		*gameObject,
+		EditorComponentType::Animator);
+
+	if (animatorComponent != nullptr) {
+		animatorComponent->assetPath = animationGraphPath_;
+		g_editorConsoleMessages.push_back(
+			"Animator Graph: " + gameObject->name + " へ設定しました: " + animationGraphPath_);
+	}
+}
+
+void EditorAnimationWindowManager::DeleteGraphState(int32_t stateIndex) {
+	if (stateIndex < 0 || stateIndex >= static_cast<int32_t>(animationGraph_.states.size())) {
+		return;
+	}
+
+	// State が 0 個の Graph は読み直せなくなるため、最後の 1 つは消させない。
+	if (animationGraph_.states.size() <= 1u) {
+		g_editorConsoleMessages.push_back("Animator Graph: State は最低 1 つ必要です");
+		return;
+	}
+
+	animationGraph_.states.erase(animationGraph_.states.begin() + stateIndex);
+
+	// 削除した State を参照する Transition を落とし、後ろの State を指す番号を 1 つ前へ詰める。
+	for (auto transitionIterator = animationGraph_.transitions.begin();
+		 transitionIterator != animationGraph_.transitions.end();) {
+		if (transitionIterator->sourceState == stateIndex ||
+			transitionIterator->destinationState == stateIndex) {
+			transitionIterator = animationGraph_.transitions.erase(transitionIterator);
+			continue;
+		}
+
+		if (transitionIterator->sourceState > stateIndex) {
+			transitionIterator->sourceState--;
+		}
+
+		if (transitionIterator->destinationState > stateIndex) {
+			transitionIterator->destinationState--;
+		}
+
+		++transitionIterator;
+	}
+
+	if (animationGraph_.entryState == stateIndex) {
+		animationGraph_.entryState = 0;
+	}
+	else if (animationGraph_.entryState > stateIndex) {
+		animationGraph_.entryState--;
+	}
+
+	selectedStateIndex_ = (std::min)(stateIndex, static_cast<int32_t>(animationGraph_.states.size()) - 1);
+	selectedTransitionIndex_ = animationGraph_.transitions.empty() ? -1 : 0;
+	isGraphDirty_ = true;
+}
+
+void EditorAnimationWindowManager::DrawClipIndexRow(const char* label, int32_t& clipIndex) {
+#ifdef USE_IMGUI
+	const int32_t clipCount = static_cast<int32_t>(graphClipNames_.size());
+
+	if (clipCount <= 0) {
+		// Model 未設定・Clip 無しでも番号だけは編集できるようにする（後から Model を差す運用があるため）。
+		if (ImGui::DragInt(label, &clipIndex, 1.0f, 0, 1024)) {
+			clipIndex = (std::max)(clipIndex, 0);
+			isGraphDirty_ = true;
+		}
+		return;
+	}
+
+	const std::string previewLabel = clipIndex >= 0 && clipIndex < clipCount
+		? std::to_string(clipIndex) + ": " + graphClipNames_[static_cast<size_t>(clipIndex)]
+		: std::to_string(clipIndex) + ": (Clip が見つかりません)";
+
+	if (ImGui::BeginCombo(label, previewLabel.c_str())) {
+		for (int32_t candidateIndex = 0; candidateIndex < clipCount; ++candidateIndex) {
+			const std::string itemLabel =
+				std::to_string(candidateIndex) + ": " + graphClipNames_[static_cast<size_t>(candidateIndex)];
+
+			if (ImGui::Selectable(itemLabel.c_str(), candidateIndex == clipIndex)) {
+				clipIndex = candidateIndex;
+				isGraphDirty_ = true;
+			}
+		}
+
+		ImGui::EndCombo();
+	}
+
+	if (clipIndex < 0 || clipIndex >= clipCount) {
+		ImGui::TextColored(
+			ImVec4(1.0f, 0.55f, 0.35f, 1.0f),
+			"Clip 番号 %d は Model に存在しません（実行時は Pose なしとして安全に無視されます）",
+			clipIndex);
+	}
+#else
+	(void)label;
+	(void)clipIndex;
+#endif
+}
+
+void EditorAnimationWindowManager::DrawAnimatorGraphTab() {
+#ifdef USE_IMGUI
+	DrawGraphToolbar();
+	ImGui::Separator();
+
+	const float leftPanelWidth = (std::clamp)(ImGui::GetContentRegionAvail().x * 0.34f, 260.0f, 460.0f);
+
+	if (ImGui::BeginChild("AnimatorGraphLeftPanel", ImVec2(leftPanelWidth, 420.0f), true)) {
+		DrawGraphParameterList();
+		ImGui::Separator();
+		DrawGraphStateList();
+		ImGui::Separator();
+		DrawGraphTransitionList();
+	}
+	ImGui::EndChild();
+	ImGui::SameLine();
+
+	if (ImGui::BeginChild("AnimatorGraphRightPanel", ImVec2(0.0f, 420.0f), true)) {
+		DrawGraphStateEditor();
+		ImGui::Separator();
+		DrawGraphTransitionEditor();
+		ImGui::Separator();
+		DrawGraphEventList();
+	}
+	ImGui::EndChild();
+#endif
+}
+
+void EditorAnimationWindowManager::DrawGraphEventList() {
+#ifdef USE_IMGUI
+	if (!ImGui::CollapsingHeader("Animation Event")) {
+		return;
+	}
+
+	ImGui::TextDisabled("指定 Clip の再生がこの時刻を通過した瞬間に、C++ Script と Effect へ通知します。");
+
+	if (ImGui::Button("イベント追加")) {
+		AnimationGraphEvent animationEvent{};
+		animationEvent.name = "AnimationEvent";
+		animationEvent.clipIndex = selectedStateIndex_ >= 0 &&
+			selectedStateIndex_ < static_cast<int32_t>(animationGraph_.states.size())
+			? animationGraph_.states[static_cast<size_t>(selectedStateIndex_)].clipIndex
+			: 0;
+		animationGraph_.events.push_back(animationEvent);
+		isGraphDirty_ = true;
+	}
+
+	for (int32_t eventIndex = 0;
+		 eventIndex < static_cast<int32_t>(animationGraph_.events.size());
+		 ++eventIndex) {
+		AnimationGraphEvent& animationEvent = animationGraph_.events[static_cast<size_t>(eventIndex)];
+		ImGui::PushID(3000 + eventIndex);
+		ImGui::Separator();
+
+		char nameBuffer[128]{};
+		strncpy_s(nameBuffer, animationEvent.name.c_str(), _TRUNCATE);
+
+		if (ImGui::InputText("イベント名", nameBuffer, sizeof(nameBuffer))) {
+			animationEvent.name = nameBuffer;
+			isGraphDirty_ = true;
+		}
+
+		DrawClipIndexRow("対象 Clip", animationEvent.clipIndex);
+
+		if (ImGui::DragFloat("発火時刻 (秒)", &animationEvent.time, 0.01f, 0.0f, 600.0f)) {
+			animationEvent.time = (std::max)(animationEvent.time, 0.0f);
+			isGraphDirty_ = true;
+		}
+
+		char effectPathBuffer[260]{};
+		strncpy_s(effectPathBuffer, animationEvent.effectAssetPath.c_str(), _TRUNCATE);
+
+		if (ImGui::InputText("再生 Effect (.effect)", effectPathBuffer, sizeof(effectPathBuffer))) {
+			animationEvent.effectAssetPath = effectPathBuffer;
+			isGraphDirty_ = true;
+		}
+
+		if (EditorAssetUtility::HasExtension(g_selectedAssetPath, ".effect") &&
+			ImGui::Button("選択中 Effect を設定")) {
+			animationEvent.effectAssetPath = g_selectedAssetPath;
+			isGraphDirty_ = true;
+		}
+
+		if (ImGui::DragFloat3("発生位置オフセット", &animationEvent.localOffset.x, 0.01f)) {
+			isGraphDirty_ = true;
+		}
+
+		if (ImGui::Button("このイベントを削除")) {
+			animationGraph_.events.erase(animationGraph_.events.begin() + eventIndex);
+			isGraphDirty_ = true;
+			ImGui::PopID();
+			break;
+		}
+
+		ImGui::PopID();
+	}
+#endif
+}
+
+void EditorAnimationWindowManager::DrawGraphToolbar() {
+#ifdef USE_IMGUI
+	ImGui::Text(
+		"Graph: %s%s",
+		animationGraphPath_.empty() ? "未選択" : animationGraphPath_.c_str(),
+		isGraphDirty_ ? " *" : "");
+
+	if (hasGraphLoadFailed_) {
+		ImGui::TextColored(
+			ImVec4(1.0f, 0.4f, 0.35f, 1.0f),
+			"この .animgraph は読み込めませんでした（JSON が壊れている可能性があります）。"
+			"新規作成するか、保存で上書きできます。");
+	}
+
+	if (ImGui::Button("新規Graph", ImVec2(100.0f, 0.0f))) {
+		CreateAnimationGraph();
+	}
+	ImGui::SameLine();
+
+	if (ImGui::Button("保存", ImVec2(80.0f, 0.0f))) {
+		SaveAnimationGraph();
+	}
+	ImGui::SameLine();
+
+	if (ImGui::Button("再読込", ImVec2(80.0f, 0.0f)) && !animationGraphPath_.empty()) {
+		isGraphDirty_ = false;
+		LoadAnimationGraph(animationGraphPath_);
+	}
+	ImGui::SameLine();
+
+	if (ImGui::Button("選択オブジェクトへ設定", ImVec2(180.0f, 0.0f))) {
+		AssignGraphToSelectedGameObject();
+	}
+
+	// Play 中は実行側の現在 State を並べて出し、条件が意図通り効いているかをその場で確認できるようにする。
+	if (g_editorRuntimeManager.IsPlaying() && g_selectedEditorGameObjectId >= 0) {
+		const std::string runtimeStateName =
+			g_editorRuntimeManager.GetAnimationManager().GetAnimatorStateName(g_selectedEditorGameObjectId);
+		ImGui::TextColored(
+			ImVec4(0.55f, 0.85f, 1.0f, 1.0f),
+			"実行中 State: %s",
+			runtimeStateName.empty() ? "(Animator なし)" : runtimeStateName.c_str());
+		ImGui::TextDisabled("実行中パラメータの確認と変更は Inspector の Animator から行えます。");
+	}
+#endif
+}
+
+void EditorAnimationWindowManager::DrawGraphParameterList() {
+#ifdef USE_IMGUI
+	ImGui::TextUnformatted("パラメータ");
+
+	if (ImGui::Button("パラメータ追加", ImVec2(-1.0f, 0.0f))) {
+		AnimationGraphParameter parameter{};
+		parameter.name = "NewParameter" + std::to_string(animationGraph_.parameters.size());
+		parameter.defaultValue.type = AnimatorParameterType::Float;
+		animationGraph_.parameters.push_back(parameter);
+		selectedParameterIndex_ = static_cast<int32_t>(animationGraph_.parameters.size()) - 1;
+		isGraphDirty_ = true;
+	}
+
+	for (int32_t parameterIndex = 0;
+		 parameterIndex < static_cast<int32_t>(animationGraph_.parameters.size());
+		 ++parameterIndex) {
+		AnimationGraphParameter& parameter = animationGraph_.parameters[static_cast<size_t>(parameterIndex)];
+		ImGui::PushID(parameterIndex);
+
+		const std::string parameterLabel =
+			parameter.name + "  [" + GetAnimatorParameterTypeName(parameter.defaultValue.type) + "]";
+
+		if (ImGui::Selectable(parameterLabel.c_str(), selectedParameterIndex_ == parameterIndex)) {
+			selectedParameterIndex_ = parameterIndex;
+		}
+
+		ImGui::PopID();
+	}
+
+	if (selectedParameterIndex_ >= 0 &&
+		selectedParameterIndex_ < static_cast<int32_t>(animationGraph_.parameters.size())) {
+		AnimationGraphParameter& parameter =
+			animationGraph_.parameters[static_cast<size_t>(selectedParameterIndex_)];
+
+		char nameBuffer[128]{};
+		strncpy_s(nameBuffer, parameter.name.c_str(), _TRUNCATE);
+
+		if (ImGui::InputText("名前", nameBuffer, sizeof(nameBuffer))) {
+			parameter.name = nameBuffer;
+			isGraphDirty_ = true;
+		}
+
+		int32_t parameterType = static_cast<int32_t>(parameter.defaultValue.type);
+		const char* parameterTypeItems[] = {"Float", "Int", "Bool", "Trigger", "Vector2", "Vector3"};
+
+		if (ImGui::Combo("型", &parameterType, parameterTypeItems, _countof(parameterTypeItems))) {
+			parameter.defaultValue.type = static_cast<AnimatorParameterType>(parameterType);
+			isGraphDirty_ = true;
+		}
+
+		switch (parameter.defaultValue.type) {
+		case AnimatorParameterType::Int:
+			if (ImGui::DragInt("既定値", &parameter.defaultValue.intValue)) {
+				isGraphDirty_ = true;
+			}
+			break;
+		case AnimatorParameterType::Bool:
+		case AnimatorParameterType::Trigger:
+			if (ImGui::Checkbox("既定値", &parameter.defaultValue.boolValue)) {
+				isGraphDirty_ = true;
+			}
+			break;
+		case AnimatorParameterType::Vector2:
+			if (ImGui::DragFloat2("既定値", &parameter.defaultValue.vector2Value.x, 0.01f)) {
+				isGraphDirty_ = true;
+			}
+			break;
+		case AnimatorParameterType::Vector3:
+			if (ImGui::DragFloat3("既定値", &parameter.defaultValue.vector3Value.x, 0.01f)) {
+				isGraphDirty_ = true;
+			}
+			break;
+		case AnimatorParameterType::Float:
+		default:
+			if (ImGui::DragFloat("既定値", &parameter.defaultValue.floatValue, 0.01f)) {
+				isGraphDirty_ = true;
+			}
+			break;
+		}
+
+		if (ImGui::Button("このパラメータを削除", ImVec2(-1.0f, 0.0f))) {
+			animationGraph_.parameters.erase(
+				animationGraph_.parameters.begin() + selectedParameterIndex_);
+			selectedParameterIndex_ = animationGraph_.parameters.empty()
+				? -1
+				: (std::min)(selectedParameterIndex_, static_cast<int32_t>(animationGraph_.parameters.size()) - 1);
+			isGraphDirty_ = true;
+		}
+	}
+#endif
+}
+
+void EditorAnimationWindowManager::DrawGraphStateList() {
+#ifdef USE_IMGUI
+	ImGui::TextUnformatted("State");
+
+	if (ImGui::Button("State 追加", ImVec2(-1.0f, 0.0f))) {
+		AnimationGraphState state{};
+		state.name = "NewState" + std::to_string(animationGraph_.states.size());
+		state.clipIndex = 0;
+		state.loop = true;
+		animationGraph_.states.push_back(state);
+		selectedStateIndex_ = static_cast<int32_t>(animationGraph_.states.size()) - 1;
+		isGraphDirty_ = true;
+	}
+
+	for (int32_t stateIndex = 0;
+		 stateIndex < static_cast<int32_t>(animationGraph_.states.size());
+		 ++stateIndex) {
+		const AnimationGraphState& state = animationGraph_.states[static_cast<size_t>(stateIndex)];
+		ImGui::PushID(stateIndex);
+
+		const std::string stateLabel = std::to_string(stateIndex) + ": " + state.name +
+			(stateIndex == animationGraph_.entryState ? "  [Entry]" : "") +
+			"  (" + GetAnimationBlendTreeTypeName(state.blendTreeType) + ")";
+
+		if (ImGui::Selectable(stateLabel.c_str(), selectedStateIndex_ == stateIndex)) {
+			selectedStateIndex_ = stateIndex;
+		}
+
+		ImGui::PopID();
+	}
+#endif
+}
+
+void EditorAnimationWindowManager::DrawGraphStateEditor() {
+#ifdef USE_IMGUI
+	if (selectedStateIndex_ < 0 ||
+		selectedStateIndex_ >= static_cast<int32_t>(animationGraph_.states.size())) {
+		ImGui::TextDisabled("左の一覧から State を選ぶと、ここで Clip と Blend Tree を編集できます。");
+		return;
+	}
+
+	AnimationGraphState& state = animationGraph_.states[static_cast<size_t>(selectedStateIndex_)];
+	ImGui::Text("State %d の設定", selectedStateIndex_);
+
+	char nameBuffer[128]{};
+	strncpy_s(nameBuffer, state.name.c_str(), _TRUNCATE);
+
+	if (ImGui::InputText("State 名", nameBuffer, sizeof(nameBuffer))) {
+		state.name = nameBuffer;
+		isGraphDirty_ = true;
+	}
+
+	bool isEntryState = animationGraph_.entryState == selectedStateIndex_;
+	if (ImGui::Checkbox("Entry State にする", &isEntryState) && isEntryState) {
+		animationGraph_.entryState = selectedStateIndex_;
+		isGraphDirty_ = true;
+	}
+
+	if (ImGui::DragFloat("再生速度", &state.playbackSpeed, 0.01f, -10.0f, 10.0f)) {
+		isGraphDirty_ = true;
+	}
+
+	if (ImGui::Checkbox("ループ", &state.loop)) {
+		isGraphDirty_ = true;
+	}
+
+	int32_t blendTreeType = static_cast<int32_t>(state.blendTreeType);
+	const char* blendTreeItems[] = {
+		"単一 Clip",
+		"1D Blend",
+		"2D 方向 Blend",
+		"2D 座標 Blend",
+		"Direct Blend"};
+
+	if (ImGui::Combo("Blend Tree", &blendTreeType, blendTreeItems, _countof(blendTreeItems))) {
+		state.blendTreeType = static_cast<AnimationBlendTreeType>(blendTreeType);
+		isGraphDirty_ = true;
+	}
+
+	if (state.blendTreeType == AnimationBlendTreeType::Clip) {
+		DrawClipIndexRow("再生 Clip", state.clipIndex);
+	}
+	else {
+		char blendParameterBuffer[128]{};
+
+		if (state.blendTreeType == AnimationBlendTreeType::Blend1D) {
+			strncpy_s(blendParameterBuffer, state.blendParameter.c_str(), _TRUNCATE);
+			if (ImGui::InputText("Blend パラメータ", blendParameterBuffer, sizeof(blendParameterBuffer))) {
+				state.blendParameter = blendParameterBuffer;
+				isGraphDirty_ = true;
+			}
+			ImGui::TextDisabled("Sample は X 座標を Blend 値として昇順に評価します。");
+		}
+		else if (state.blendTreeType == AnimationBlendTreeType::Blend2DDirectional ||
+			state.blendTreeType == AnimationBlendTreeType::Blend2DCartesian) {
+			strncpy_s(blendParameterBuffer, state.blendParameterX.c_str(), _TRUNCATE);
+			if (ImGui::InputText("X パラメータ", blendParameterBuffer, sizeof(blendParameterBuffer))) {
+				state.blendParameterX = blendParameterBuffer;
+				isGraphDirty_ = true;
+			}
+
+			strncpy_s(blendParameterBuffer, state.blendParameterY.c_str(), _TRUNCATE);
+			if (ImGui::InputText("Y パラメータ", blendParameterBuffer, sizeof(blendParameterBuffer))) {
+				state.blendParameterY = blendParameterBuffer;
+				isGraphDirty_ = true;
+			}
+		}
+		else {
+			ImGui::TextDisabled("Direct Blend は Sample ごとの Weight パラメータを直接ウェイトとして使います。");
+		}
+
+		if (ImGui::Button("Blend Sample 追加")) {
+			AnimationBlendSample sample{};
+			sample.clipIndex = state.clipIndex;
+			state.blendSamples.push_back(sample);
+			isGraphDirty_ = true;
+		}
+
+		for (int32_t sampleIndex = 0;
+			 sampleIndex < static_cast<int32_t>(state.blendSamples.size());
+			 ++sampleIndex) {
+			AnimationBlendSample& sample = state.blendSamples[static_cast<size_t>(sampleIndex)];
+			ImGui::PushID(sampleIndex);
+			ImGui::Separator();
+			ImGui::Text("Sample %d", sampleIndex);
+			DrawClipIndexRow("Clip", sample.clipIndex);
+
+			if (state.blendTreeType == AnimationBlendTreeType::Blend1D) {
+				if (ImGui::DragFloat("Blend 位置", &sample.position.x, 0.01f)) {
+					isGraphDirty_ = true;
+				}
+			}
+			else if (state.blendTreeType == AnimationBlendTreeType::Direct) {
+				char weightParameterBuffer[128]{};
+				strncpy_s(weightParameterBuffer, sample.weightParameter.c_str(), _TRUNCATE);
+
+				if (ImGui::InputText("Weight パラメータ", weightParameterBuffer, sizeof(weightParameterBuffer))) {
+					sample.weightParameter = weightParameterBuffer;
+					isGraphDirty_ = true;
+				}
+			}
+			else {
+				if (ImGui::DragFloat2("Blend 位置 (X, Y)", &sample.position.x, 0.01f)) {
+					isGraphDirty_ = true;
+				}
+			}
+
+			if (ImGui::DragFloat("再生速度", &sample.playbackSpeed, 0.01f, -10.0f, 10.0f)) {
+				isGraphDirty_ = true;
+			}
+
+			if (ImGui::Button("この Sample を削除")) {
+				state.blendSamples.erase(state.blendSamples.begin() + sampleIndex);
+				isGraphDirty_ = true;
+				ImGui::PopID();
+				break;
+			}
+
+			ImGui::PopID();
+		}
+	}
+
+	ImGui::Separator();
+
+	if (ImGui::Button("この State を削除", ImVec2(-1.0f, 0.0f))) {
+		DeleteGraphState(selectedStateIndex_);
+	}
+#endif
+}
+
+void EditorAnimationWindowManager::DrawGraphTransitionList() {
+#ifdef USE_IMGUI
+	ImGui::TextUnformatted("Transition");
+
+	const bool canAddTransition = animationGraph_.states.size() >= 1u;
+
+	if (canAddTransition && ImGui::Button("Transition 追加", ImVec2(-1.0f, 0.0f))) {
+		AnimationGraphTransition transition{};
+		transition.sourceState = (std::max)(selectedStateIndex_, 0);
+		transition.destinationState =
+			(std::min)(transition.sourceState + 1, static_cast<int32_t>(animationGraph_.states.size()) - 1);
+		animationGraph_.transitions.push_back(transition);
+		selectedTransitionIndex_ = static_cast<int32_t>(animationGraph_.transitions.size()) - 1;
+		isGraphDirty_ = true;
+	}
+
+	for (int32_t transitionIndex = 0;
+		 transitionIndex < static_cast<int32_t>(animationGraph_.transitions.size());
+		 ++transitionIndex) {
+		const AnimationGraphTransition& transition =
+			animationGraph_.transitions[static_cast<size_t>(transitionIndex)];
+		ImGui::PushID(1000 + transitionIndex);
+
+		const auto stateNameOf = [this](int32_t stateIndex) -> std::string {
+			if (stateIndex < 0) {
+				return "Any State";
+			}
+
+			if (stateIndex >= static_cast<int32_t>(animationGraph_.states.size())) {
+				return "(不明)";
+			}
+
+			return animationGraph_.states[static_cast<size_t>(stateIndex)].name;
+		};
+
+		const std::string transitionLabel =
+			stateNameOf(transition.sourceState) + " -> " + stateNameOf(transition.destinationState) +
+			"  (条件 " + std::to_string(transition.conditions.size()) + ")";
+
+		if (ImGui::Selectable(transitionLabel.c_str(), selectedTransitionIndex_ == transitionIndex)) {
+			selectedTransitionIndex_ = transitionIndex;
+		}
+
+		ImGui::PopID();
+	}
+#endif
+}
+
+void EditorAnimationWindowManager::DrawGraphTransitionEditor() {
+#ifdef USE_IMGUI
+	if (selectedTransitionIndex_ < 0 ||
+		selectedTransitionIndex_ >= static_cast<int32_t>(animationGraph_.transitions.size())) {
+		ImGui::TextDisabled("左の一覧から Transition を選ぶと、ここで遷移条件を編集できます。");
+		return;
+	}
+
+	AnimationGraphTransition& transition =
+		animationGraph_.transitions[static_cast<size_t>(selectedTransitionIndex_)];
+	ImGui::Text("Transition %d の設定", selectedTransitionIndex_);
+
+	std::vector<std::string> stateNames;
+	stateNames.reserve(animationGraph_.states.size());
+	for (int32_t stateIndex = 0;
+		 stateIndex < static_cast<int32_t>(animationGraph_.states.size());
+		 ++stateIndex) {
+		stateNames.push_back(
+			std::to_string(stateIndex) + ": " + animationGraph_.states[static_cast<size_t>(stateIndex)].name);
+	}
+
+	// 遷移元だけは Any State(-1) を選べる。Runtime は sourceState < 0 を
+	// 「どの State からでも遷移可」として扱うため、Jump / Attack をここで表現できる。
+	const auto drawStateCombo = [&](const char* label, int32_t& stateIndex, bool allowAnyState) {
+		std::string preview = "(不明な State)";
+
+		if (allowAnyState && stateIndex < 0) {
+			preview = "Any State (どの State からでも)";
+		}
+		else if (stateIndex >= 0 && stateIndex < static_cast<int32_t>(stateNames.size())) {
+			preview = stateNames[static_cast<size_t>(stateIndex)];
+		}
+
+		if (ImGui::BeginCombo(label, preview.c_str())) {
+			if (allowAnyState &&
+				ImGui::Selectable("Any State (どの State からでも)", stateIndex < 0)) {
+				stateIndex = -1;
+				isGraphDirty_ = true;
+			}
+
+			for (int32_t candidateIndex = 0;
+				 candidateIndex < static_cast<int32_t>(stateNames.size());
+				 ++candidateIndex) {
+				if (ImGui::Selectable(
+						stateNames[static_cast<size_t>(candidateIndex)].c_str(),
+						candidateIndex == stateIndex)) {
+					stateIndex = candidateIndex;
+					isGraphDirty_ = true;
+				}
+			}
+
+			ImGui::EndCombo();
+		}
+	};
+
+	drawStateCombo("遷移元", transition.sourceState, true);
+	drawStateCombo("遷移先", transition.destinationState, false);
+
+	if (ImGui::DragFloat("遷移秒 (Cross Fade)", &transition.blendDuration, 0.01f, 0.0f, 5.0f)) {
+		transition.blendDuration = (std::max)(transition.blendDuration, 0.0f);
+		isGraphDirty_ = true;
+	}
+
+	if (ImGui::Checkbox("Exit Time を使う", &transition.hasExitTime)) {
+		isGraphDirty_ = true;
+	}
+
+	if (transition.hasExitTime) {
+		if (ImGui::DragFloat("Exit Time (再生比率)", &transition.exitTime, 0.01f, 0.0f, 10.0f)) {
+			transition.exitTime = (std::max)(transition.exitTime, 0.0f);
+			isGraphDirty_ = true;
+		}
+	}
+
+	if (ImGui::Checkbox("遷移中でも割り込み可能", &transition.canInterrupt)) {
+		isGraphDirty_ = true;
+	}
+
+	ImGui::Separator();
+	ImGui::TextUnformatted("遷移条件 (すべて満たしたときに遷移)");
+
+	if (ImGui::Button("条件を追加")) {
+		AnimationTransitionCondition condition{};
+		condition.parameterName = animationGraph_.parameters.empty()
+			? std::string("Speed")
+			: animationGraph_.parameters.front().name;
+		transition.conditions.push_back(condition);
+		isGraphDirty_ = true;
+	}
+
+	for (int32_t conditionIndex = 0;
+		 conditionIndex < static_cast<int32_t>(transition.conditions.size());
+		 ++conditionIndex) {
+		AnimationTransitionCondition& condition =
+			transition.conditions[static_cast<size_t>(conditionIndex)];
+		ImGui::PushID(2000 + conditionIndex);
+		ImGui::Separator();
+
+		// Parameter 名は Graph に宣言済みのものから選ばせ、綴り間違いで条件が効かない事故を防ぐ。
+		const std::string parameterPreview =
+			condition.parameterName.empty() ? "(未設定)" : condition.parameterName;
+
+		if (ImGui::BeginCombo("パラメータ", parameterPreview.c_str())) {
+			for (const AnimationGraphParameter& parameter : animationGraph_.parameters) {
+				if (ImGui::Selectable(parameter.name.c_str(), parameter.name == condition.parameterName)) {
+					condition.parameterName = parameter.name;
+					isGraphDirty_ = true;
+				}
+			}
+
+			// Inspector 側が常に用意する標準 Parameter も選べるようにする。
+			for (const char* standardParameterName : {"MoveX", "MoveY", "Speed"}) {
+				if (ImGui::Selectable(standardParameterName, condition.parameterName == standardParameterName)) {
+					condition.parameterName = standardParameterName;
+					isGraphDirty_ = true;
+				}
+			}
+
+			ImGui::EndCombo();
+		}
+
+		int32_t conditionOperator = static_cast<int32_t>(condition.conditionOperator);
+		const char* conditionOperatorItems[] = {
+			"より大きい (Greater)",
+			"より小さい (Less)",
+			"等しい (Equal)",
+			"等しくない (NotEqual)",
+			"True",
+			"False",
+			"Trigger 発火 (Triggered)"};
+
+		if (ImGui::Combo("条件", &conditionOperator, conditionOperatorItems, _countof(conditionOperatorItems))) {
+			condition.conditionOperator = static_cast<AnimationConditionOperator>(conditionOperator);
+			isGraphDirty_ = true;
+		}
+
+		if (condition.conditionOperator == AnimationConditionOperator::Greater ||
+			condition.conditionOperator == AnimationConditionOperator::Less ||
+			condition.conditionOperator == AnimationConditionOperator::Equal ||
+			condition.conditionOperator == AnimationConditionOperator::NotEqual) {
+			if (ImGui::DragFloat("Float しきい値", &condition.floatThreshold, 0.01f)) {
+				isGraphDirty_ = true;
+			}
+
+			if (ImGui::DragInt("Int しきい値", &condition.intThreshold)) {
+				isGraphDirty_ = true;
+			}
+		}
+
+		if (ImGui::Button("この条件を削除")) {
+			transition.conditions.erase(transition.conditions.begin() + conditionIndex);
+			isGraphDirty_ = true;
+			ImGui::PopID();
+			break;
+		}
+
+		ImGui::PopID();
+	}
+
+	ImGui::Separator();
+
+	if (ImGui::Button("この Transition を削除", ImVec2(-1.0f, 0.0f))) {
+		animationGraph_.transitions.erase(animationGraph_.transitions.begin() + selectedTransitionIndex_);
+		selectedTransitionIndex_ = animationGraph_.transitions.empty()
+			? -1
+			: (std::min)(selectedTransitionIndex_, static_cast<int32_t>(animationGraph_.transitions.size()) - 1);
+		isGraphDirty_ = true;
+	}
+#endif
 }

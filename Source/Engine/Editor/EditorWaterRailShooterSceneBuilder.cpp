@@ -9,7 +9,7 @@
 #include <vector>
 
 namespace {
-	constexpr const char* kScenePath = "Assets/Scenes/WaterRailShooter_0817.scene";
+	constexpr const char* kScenePath = "Assets/Scenes/WaterRailShooter/WaterRailShooter_0817.scene";
 	constexpr const char* kSmallBoatPrefabPath = "Assets/Prefabs/SmallBoat_0817.prefab";
 	constexpr const char* kMissileBoatPrefabPath = "Assets/Prefabs/MissileBoat_0817.prefab";
 	constexpr const char* kScriptDllPath =
@@ -721,6 +721,7 @@ namespace {
 		float spacing,
 		float railStartNormalized,
 		int32_t stageControllerGameObjectId,
+		int32_t playerGameObjectId,
 		int32_t parentGameObjectId) {
 		const int32_t waveGameObjectId = CreateGameObject(
 			editorScene,
@@ -754,6 +755,9 @@ namespace {
 				railStartNormalized + enemySpawnLeadNormalized,
 				0.0f,
 				0.98f);
+			waveSpawner->waveSpawnAheadOfSource = true;
+			waveSpawner->waveSpawnProgressSourceGameObjectId = playerGameObjectId;
+			waveSpawner->waveSpawnAheadNormalized = enemySpawnLeadNormalized;
 			waveSpawner->waveActionTargetGameObjectId = stageControllerGameObjectId;
 		}
 
@@ -1684,6 +1688,7 @@ bool EditorWaterRailShooterSceneBuilder::Generate(std::string& resultMessage) {
 		7.0f,
 		430.0f / 4762.0f,
 		stageControllerGameObjectId,
+		playerGameObjectId,
 		wavesRootGameObjectId);
 
 	const int32_t battleAWave2GameObjectId = CreateWave(
@@ -1696,6 +1701,7 @@ bool EditorWaterRailShooterSceneBuilder::Generate(std::string& resultMessage) {
 		8.0f,
 		930.0f / 4762.0f,
 		stageControllerGameObjectId,
+		playerGameObjectId,
 		wavesRootGameObjectId);
 
 	const int32_t battleBWave1GameObjectId = CreateWave(
@@ -1708,6 +1714,7 @@ bool EditorWaterRailShooterSceneBuilder::Generate(std::string& resultMessage) {
 		7.0f,
 		1660.0f / 4762.0f,
 		stageControllerGameObjectId,
+		playerGameObjectId,
 		wavesRootGameObjectId);
 
 	const int32_t battleBWave2GameObjectId = CreateWave(
@@ -1720,6 +1727,7 @@ bool EditorWaterRailShooterSceneBuilder::Generate(std::string& resultMessage) {
 		10.0f,
 		2070.0f / 4762.0f,
 		stageControllerGameObjectId,
+		playerGameObjectId,
 		wavesRootGameObjectId);
 
 	const int32_t battleAEncounterGameObjectId = CreateGameObject(

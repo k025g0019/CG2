@@ -32,7 +32,9 @@ private:
 	int32_t selectedRenderTargetIndex_ = 0;
 
 	void ValidateScene();
+	void RunSceneSerializationSmokeTest();  // Scene保存→読込往復でTransform/代表Componentの値が保持されるかを確認する回帰テスト
 	void DrawProfiler();
+	void DrawPhysics();  // 接触点・ShapeCast・レイヤー除外理由を同じ画面で確認する。
 	void DrawVfx();
 	void DrawSceneValidation();
 	void DrawReplay();

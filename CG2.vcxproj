@@ -13,7 +13,7 @@
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{e2675a88-50e0-460f-b75f-9f665cc7968c}</ProjectGuid>
+    <ProjectGuid>{787c711c-3419-4aeb-ba52-ce282fe125ff}</ProjectGuid>
     <RootNamespace>CG2</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
@@ -44,13 +44,13 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\Effekseer;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\EffekseerRendererDX12;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\EffekseerRendererCommon;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\EffekseerRendererLLGI;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\3rdParty\LLGI\src;C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\include;$(IncludePath)</IncludePath>
-    <LibraryPath>$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\Effekseer\Debug;$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\EffekseerRendererDX12\Debug;$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\3rdParty\LLGI\src\Debug;C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release;C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\Effekseer;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\EffekseerRendererDX12;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\EffekseerRendererCommon;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\EffekseerRendererLLGI;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\3rdParty\LLGI\src;C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;$(ProjectDir)ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\Effekseer\Debug;$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\EffekseerRendererDX12\Debug;$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\3rdParty\LLGI\src\Debug;C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release;$(ProjectDir)ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\Effekseer;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\EffekseerRendererDX12;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\EffekseerRendererCommon;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\EffekseerRendererLLGI;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\3rdParty\LLGI\src;C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\include;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\Effekseer;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\EffekseerRendererDX12;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\EffekseerRendererCommon;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\EffekseerRendererLLGI;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\3rdParty\LLGI\src;C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;$(ProjectDir)ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\include;$(IncludePath)</IncludePath>
     <ExternalIncludePath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;$(ExternalIncludePath)</ExternalIncludePath>
-    <LibraryPath>$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\Effekseer\Release;$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\EffekseerRendererDX12\Release;$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\3rdParty\LLGI\src\Release;C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release;C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib;$(LibraryPath)</LibraryPath>
+    <LibraryPath>$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\Effekseer\Release;$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\EffekseerRendererDX12\Release;$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\3rdParty\LLGI\src\Release;C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release;$(ProjectDir)ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
@@ -72,7 +72,7 @@
       <EntryPointSymbol>WinMainCRTStartup</EntryPointSymbol>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <TreatLinkerWarningAsErrors>false</TreatLinkerWarningAsErrors>
-      <AdditionalDependencies>EffekseerRendererDX12.lib;Effekseer.lib;LLGI.lib;libfbxsdk.lib;onnxruntime.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>EffekseerRendererDX12.lib;Effekseer.lib;LLGI.lib;libfbxsdk.lib;onnxruntime.lib;winhttp.lib;mfplat.lib;mfreadwrite.lib;mfuuid.lib;mf.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <EnableDpiAwareness>PerMonitorHighDPIAware</EnableDpiAwareness>
@@ -81,13 +81,17 @@
       <Command>copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxcompiler.dll" "$(TargetDir)dxcompiler.dll"
 copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dxil.dll"
 copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.dll" "$(TargetDir)libfbxsdk.dll"
-copy "C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib\onnxruntime.dll" "$(TargetDir)onnxruntime.dll"
+copy "$(ProjectDir)ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib\onnxruntime.dll" "$(TargetDir)onnxruntime.dll"
 xcopy "$(ProjectDir)Assets" "$(TargetDir)Assets" /E /I /Y
 xcopy "$(ProjectDir)resources" "$(TargetDir)resources" /E /I /Y
+xcopy "$(ProjectDir)Tools\Whisper" "$(TargetDir)Tools\Whisper" /E /I /Y /D
 xcopy "$(ProjectDir)ThirdParty\Shader\lygia" "$(TargetDir)ThirdParty\Shader\lygia" /E /I /Y
 xcopy "$(ProjectDir)ThirdParty\Shader\NoiseShader-3.0.1\Packages\jp.keijiro.noiseshader\Shader" "$(TargetDir)ThirdParty\Shader\NoiseShader-3.0.1\Packages\jp.keijiro.noiseshader\Shader" /E /I /Y
 xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\bin\shaders" "$(TargetDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\bin\shaders" /E /I /Y
-xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(TargetDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" /E /I /Y</Command>
+xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(TargetDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" /E /I /Y
+if not exist "$(TargetDir)ScriptApi" mkdir "$(TargetDir)ScriptApi"
+copy /Y "$(ProjectDir)Source\Engine\Core\EditorNativeScript.h" "$(TargetDir)ScriptApi\EditorNativeScript.h"
+copy /Y "$(ProjectDir)Source\Engine\Core\EditorScriptApi.h" "$(TargetDir)ScriptApi\EditorScriptApi.h"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -112,7 +116,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>EffekseerRendererDX12.lib;Effekseer.lib;LLGI.lib;libfbxsdk.lib;onnxruntime.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>EffekseerRendererDX12.lib;Effekseer.lib;LLGI.lib;libfbxsdk.lib;onnxruntime.lib;winhttp.lib;mfplat.lib;mfreadwrite.lib;mfuuid.lib;mf.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <EnableDpiAwareness>PerMonitorHighDPIAware</EnableDpiAwareness>
@@ -121,13 +125,17 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
       <Command>copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxcompiler.dll" "$(TargetDir)dxcompiler.dll"
 copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dxil.dll"
 copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.dll" "$(TargetDir)libfbxsdk.dll"
-copy "C:\kogakuin\LE1\CG2\ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib\onnxruntime.dll" "$(TargetDir)onnxruntime.dll"
+copy "$(ProjectDir)ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib\onnxruntime.dll" "$(TargetDir)onnxruntime.dll"
 xcopy "$(ProjectDir)Assets" "$(TargetDir)Assets" /E /I /Y
 xcopy "$(ProjectDir)resources" "$(TargetDir)resources" /E /I /Y
+xcopy "$(ProjectDir)Tools\Whisper" "$(TargetDir)Tools\Whisper" /E /I /Y /D
 xcopy "$(ProjectDir)ThirdParty\Shader\lygia" "$(TargetDir)ThirdParty\Shader\lygia" /E /I /Y
 xcopy "$(ProjectDir)ThirdParty\Shader\NoiseShader-3.0.1\Packages\jp.keijiro.noiseshader\Shader" "$(TargetDir)ThirdParty\Shader\NoiseShader-3.0.1\Packages\jp.keijiro.noiseshader\Shader" /E /I /Y
 xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\bin\shaders" "$(TargetDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\bin\shaders" /E /I /Y
-xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(TargetDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" /E /I /Y</Command>
+xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(TargetDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" /E /I /Y
+if not exist "$(TargetDir)ScriptApi" mkdir "$(TargetDir)ScriptApi"
+copy /Y "$(ProjectDir)Source\Engine\Core\EditorNativeScript.h" "$(TargetDir)ScriptApi\EditorNativeScript.h"
+copy /Y "$(ProjectDir)Source\Engine\Core\EditorScriptApi.h" "$(TargetDir)ScriptApi\EditorScriptApi.h"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -222,6 +230,9 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
   </ItemGroup>
   <ItemGroup>
 	<ClCompile Include="Source\Engine\Animation\AnimationGraph.cpp" />
+	<ClCompile Include="Source\Engine\Core\EngineVersion.cpp" />
+	<ClCompile Include="Source\Engine\Core\ProjectVersionManager.cpp" />
+	<ClCompile Include="Source\Engine\Core\EngineEnvironmentCheck.cpp" />
 	<ClCompile Include="Source\Engine\Animation\PropertyAnimationClip.cpp" />
 	<ClCompile Include="Source\Engine\Editor\EditorAnimationWindowManager.cpp" />
 	<ClCompile Include="Source\Engine\Editor\EditorDiagnosticsWindowManager.cpp" />
@@ -235,7 +246,13 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
 	<ClCompile Include="Source\Engine\Editor\EditorProfilerAllocationTracker.cpp" />
 	<ClCompile Include="Source\Engine\Editor\EditorTeamUuid.cpp" />
 	<ClCompile Include="Source\Engine\Editor\EditorTeamCollaborationManager.cpp" />
+	<ClCompile Include="Source\Engine\Collaboration\TcpCollaborationTransport.cpp" />
 	<ClCompile Include="Source\Engine\Editor\EditorReplayManager.cpp" />
+	<ClCompile Include="Source\Engine\Asset\AssetManager.cpp" />
+	<ClCompile Include="Source\Engine\Asset\AssetRegistry.cpp" />
+	<ClCompile Include="Source\Engine\Asset\AssetImportSettings.cpp" />
+	<ClCompile Include="Source\Engine\Core\ProjectSettings.cpp" />
+	<ClCompile Include="Source\Engine\Core\GamepadInput.cpp" />
 	<ClCompile Include="Source\Engine\Effect\EffectAsset.cpp" />
 	<ClCompile Include="Source\Engine\Effect\EditorEffectManager.cpp" />
 	<ClCompile Include="Source\Engine\Effect\EffectDefinition.cpp" />
@@ -245,6 +262,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
     <ClCompile Include="Source\Engine\Physics\BoxCollision.cpp" />
     <ClCompile Include="Source\Engine\Core\CrashHandler.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorAssetFactory.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorAssetManagerAdapters.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorAssetUtility.cpp">
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
@@ -468,7 +486,8 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
-    <ClCompile Include="Source\Engine\Editor\EditorAnimationManager.cpp" />
+      <ClCompile Include="Source\Engine\Editor\EditorAnimationManager.cpp" />
+	  <ClCompile Include="Source\Engine\Editor\EditorBlastDestructionManager.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorConstraintManager.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorNavigationManager.cpp">
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
@@ -492,6 +511,21 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorRuntimeManager.cpp" />
+    <ClCompile Include="Source\Engine\External\ExternalFeature.cpp" />
+    <ClCompile Include="Source\Engine\Speech\SpeechSystem.cpp" />
+	<ClCompile Include="Source\Engine\Speech\WhisperSpeechBackend.cpp" />
+    <ClCompile Include="Source\Engine\Speech\WindowsSpeechApiBackend.cpp" />
+    <ClCompile Include="Source\Engine\Vision\VisionSystem.cpp" />
+    <ClCompile Include="Source\Engine\Vision\MediaFoundationCameraSource.cpp" />
+    <ClCompile Include="Source\Engine\Vision\BuiltinVisionBackend.cpp" />
+    <ClCompile Include="Source\Engine\Vision\OnnxVisionBackend.cpp" />
+    <ClCompile Include="Source\Engine\Online\OnlineJson.cpp" />
+    <ClCompile Include="Source\Engine\Online\OnlineService.cpp" />
+    <ClCompile Include="Source\Engine\Online\WinHttpOnlineBackend.cpp" />
+    <ClCompile Include="Source\Engine\Haptics\HapticSystem.cpp" />
+    <ClCompile Include="Source\Engine\Haptics\FeelKitHapticBackend.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorExternalFeatureManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorExternalFeatureWindowManager.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorAudioManager.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorFreeTransformManager.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorScene.cpp" />
@@ -500,6 +534,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
     <ClCompile Include="Source\Engine\Editor\EditorSceneObjectManager.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorSceneSynchronizer.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorSceneViewManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorTerrainHeightField.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorSelectionManager.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorScriptManager.cpp" />
     <ClCompile Include="Source\Engine\Editor\EditorPlatformManager.cpp" />
@@ -608,7 +643,16 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
 	<ClInclude Include="Source\Engine\Editor\EditorProfilerAllocationTracker.h" />
 	<ClInclude Include="Source\Engine\Editor\EditorTeamUuid.h" />
 	<ClInclude Include="Source\Engine\Editor\EditorTeamCollaborationManager.h" />
+	<ClInclude Include="Source\Engine\Collaboration\ICollaborationTransport.h" />
+	<ClInclude Include="Source\Engine\Collaboration\TcpCollaborationTransport.h" />
+	<ClInclude Include="Source\Engine\Collaboration\CollaborationProtocol.h" />
 	<ClInclude Include="Source\Engine\Editor\EditorReplayManager.h" />
+	<ClInclude Include="Source\Engine\Asset\AssetType.h" />
+	<ClInclude Include="Source\Engine\Asset\AssetManager.h" />
+	<ClInclude Include="Source\Engine\Asset\AssetRegistry.h" />
+	<ClInclude Include="Source\Engine\Asset\AssetImportSettings.h" />
+	<ClInclude Include="Source\Engine\Core\ProjectSettings.h" />
+	<ClInclude Include="Source\Engine\Core\GamepadInput.h" />
 	<ClInclude Include="Source\Engine\Effect\EffectAsset.h" />
 	<ClInclude Include="Source\Engine\Effect\EditorEffectManager.h" />
 	<ClInclude Include="Source\Engine\Effect\EffectDefinition.h" />
@@ -617,7 +661,12 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
     <ClInclude Include="Source\Engine\Core\ApplicationWindow.h" />
     <ClInclude Include="Source\Engine\Physics\BoxCollision.h" />
     <ClInclude Include="Source\Engine\Core\CrashHandler.h" />
+    <ClInclude Include="Source\Engine\Core\EngineVersion.h" />
+    <ClInclude Include="Source\Engine\Core\EngineVersion.generated.h" />
+    <ClInclude Include="Source\Engine\Core\ProjectVersionManager.h" />
+    <ClInclude Include="Source\Engine\Core\EngineEnvironmentCheck.h" />
     <ClInclude Include="Source\Engine\Editor\EditorAssetFactory.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorAssetManagerAdapters.h" />
     <ClInclude Include="Source\Engine\Editor\EditorAssetUtility.h" />
     <ClInclude Include="Source\Engine\Editor\EditorAIManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorBottomPanel.h" />
@@ -657,7 +706,8 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
     <ClInclude Include="Source\Engine\Editor\EditorFreeTransformManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorMainMenuBar.h" />
     <ClInclude Include="Source\Engine\Editor\EditorMainMenuManager.h" />
-    <ClInclude Include="Source\Engine\Editor\EditorMeshCollision.h" />
+      <ClInclude Include="Source\Engine\Editor\EditorMeshCollision.h" />
+	  <ClInclude Include="Source\Engine\Editor\EditorBlastDestructionManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorNativeScriptAssetManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorNavigationManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorOceanSystem.h" />
@@ -675,6 +725,31 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
 	<ClInclude Include="Source\Engine\Renderer\EditorPlanarReflectionManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorRollingMoveManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorRuntimeManager.h" />
+    <ClInclude Include="Source\Engine\External\ExternalFeature.h" />
+    <ClInclude Include="Source\Engine\Speech\SpeechTypes.h" />
+    <ClInclude Include="Source\Engine\Speech\ISpeechBackend.h" />
+    <ClInclude Include="Source\Engine\Speech\NullSpeechBackend.h" />
+    <ClInclude Include="Source\Engine\Speech\SpeechSystem.h" />
+	<ClInclude Include="Source\Engine\Speech\WhisperSpeechBackend.h" />
+    <ClInclude Include="Source\Engine\Speech\WindowsSpeechApiBackend.h" />
+    <ClInclude Include="Source\Engine\Vision\VisionTypes.h" />
+    <ClInclude Include="Source\Engine\Vision\IVisionBackend.h" />
+    <ClInclude Include="Source\Engine\Vision\ICameraSource.h" />
+    <ClInclude Include="Source\Engine\Vision\VisionSystem.h" />
+    <ClInclude Include="Source\Engine\Vision\MediaFoundationCameraSource.h" />
+    <ClInclude Include="Source\Engine\Vision\BuiltinVisionBackend.h" />
+    <ClInclude Include="Source\Engine\Vision\OnnxVisionBackend.h" />
+    <ClInclude Include="Source\Engine\Online\OnlineTypes.h" />
+    <ClInclude Include="Source\Engine\Online\IOnlineBackend.h" />
+    <ClInclude Include="Source\Engine\Online\OnlineJson.h" />
+    <ClInclude Include="Source\Engine\Online\OnlineService.h" />
+    <ClInclude Include="Source\Engine\Online\WinHttpOnlineBackend.h" />
+    <ClInclude Include="Source\Engine\Haptics\HapticTypes.h" />
+    <ClInclude Include="Source\Engine\Haptics\IHapticBackend.h" />
+    <ClInclude Include="Source\Engine\Haptics\HapticSystem.h" />
+    <ClInclude Include="Source\Engine\Haptics\FeelKitHapticBackend.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorExternalFeatureManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorExternalFeatureWindowManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorScene.h" />
     <ClInclude Include="Source\Engine\Editor\EditorSceneCameraController.h" />
     <ClInclude Include="Source\Engine\Editor\EditorSceneLifecycleManager.h" />
@@ -682,6 +757,7 @@ xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(Targ
     <ClInclude Include="Source\Engine\Editor\EditorSceneObjectManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorSceneSynchronizer.h" />
     <ClInclude Include="Source\Engine\Editor\EditorSceneViewManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorTerrainHeightField.h" />
     <ClInclude Include="Source\Engine\Editor\EditorSelectionManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorScriptManager.h" />
     <ClInclude Include="Source\Engine\Core\EditorNativeScript.h" />

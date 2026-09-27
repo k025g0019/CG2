@@ -88,9 +88,11 @@ void EditorEffectManager::Initialize(
 void EditorEffectManager::Start() {
 	emitterRuntimes_.clear();
 	effectAssetCache_.clear();
+	emitterSnapshots_.clear();
 	particles_.clear();
 	aliveParticleCountByOwner_.clear();
 	pendingGpuParticleSpawns_.clear();
+	externalGpuParticleLifetimes_.clear();
 	particleSerial_ = 0u;
 	lastDeltaTime_ = 0.0f;
 	randomEngine_.seed(0x434732u);
@@ -136,9 +138,20 @@ void EditorEffectManager::Update(float deltaTime) {
 
 	lastDeltaTime_ = deltaTime;
 
+	// QueueGpuParticleSpawn 分は Scene 上の実体を持たないため、寿命だけを数えて GPU 更新の要否を判断する。
+	for (float& remainingLifetime : externalGpuParticleLifetimes_) {
+		remainingLifetime -= deltaTime;
+	}
+	externalGpuParticleLifetimes_.erase(
+		std::remove_if(
+			externalGpuParticleLifetimes_.begin(),
+			externalGpuParticleLifetimes_.end(),
+			[](float remainingLifetime) { return remainingLifetime <= 0.0f; }),
+		externalGpuParticleLifetimes_.end());
+
 	// Particle を先に進めることで、このフレームで生成した Particle の寿命を減らさない。
 	UpdateParticles(deltaTime);
-	const std::vector<EmitterSnapshot> emitters = CollectEmitterSnapshots();
+	const std::vector<EmitterSnapshot>& emitters = CollectEmitterSnapshots();
 	UpdateEmitters(emitters, deltaTime);
 }
 
@@ -154,7 +167,9 @@ void EditorEffectManager::Stop() {
 	particles_.clear();
 	aliveParticleCountByOwner_.clear();
 	pendingGpuParticleSpawns_.clear();
+	externalGpuParticleLifetimes_.clear();
 	emitterRuntimes_.clear();
+	emitterSnapshots_.clear();
 	effectAssetCache_.clear();
 	lastDeltaTime_ = 0.0f;
 	isStarted_ = false;
@@ -164,14 +179,32 @@ void EditorEffectManager::Draw() {
 }
 
 bool EditorEffectManager::PlayEffect(int32_t gameObjectId) {
+	if (!isStarted_ || editorScene_ == nullptr) {
+		return false;
+	}
+
+	const EditorGameObject* ownerGameObject = editorScene_->FindGameObject(gameObjectId);
+
+	if (ownerGameObject == nullptr || !ownerGameObject->isActive) {
+		return false;
+	}
+
+	// 撃破時は対象ObjectのEmitterだけを再生する。
+	// Scene全体のEmitterSnapshotを作ると、Component文字列のコピーと一時Vectorが
+	// 毎回発生するため、通常のUpdateで使う全体収集経路とは分ける。
 	bool hasEmitter = false;
 
-	for (const EmitterSnapshot& emitter : CollectEmitterSnapshots()) {
-		if (emitter.ownerGameObjectId != gameObjectId) {
+	for (const EditorComponent& component : ownerGameObject->components) {
+		const bool isEffectComponent =
+			component.type == EditorComponentType::ParticleSystem ||
+			component.type == EditorComponentType::VisualEffect ||
+			component.type == EditorComponentType::TrailRenderer;
+
+		if (!isEffectComponent || !component.isActive || IsEffekseerAssetPath(component.assetPath)) {
 			continue;
 		}
 
-		EmitterRuntime& runtime = emitterRuntimes_[emitter.key];
+		EmitterRuntime& runtime = emitterRuntimes_[MakeEmitterKey(gameObjectId, component.type)];
 		runtime = {};
 		runtime.isPlaying = true;
 		hasEmitter = true;
@@ -247,7 +280,8 @@ int32_t EditorEffectManager::GetAliveParticleCount(int32_t gameObjectId) const {
 }
 
 bool EditorEffectManager::HasLiveGpuParticles() const {
-	return !particles_.empty() || !pendingGpuParticleSpawns_.empty();
+	return !particles_.empty() || !pendingGpuParticleSpawns_.empty() ||
+		!externalGpuParticleLifetimes_.empty();
 }
 
 const std::vector<EditorEffectManager::GpuParticleSpawn>& EditorEffectManager::GetPendingGpuParticleSpawns() const {
@@ -256,6 +290,12 @@ const std::vector<EditorEffectManager::GpuParticleSpawn>& EditorEffectManager::G
 
 void EditorEffectManager::ClearPendingGpuParticleSpawns() {
 	pendingGpuParticleSpawns_.clear();
+}
+
+void EditorEffectManager::QueueGpuParticleSpawn(const GpuParticleSpawn& spawn) {
+	// Emitter を持たない発生要求。Renderer が転送するまで pending へ積み、寿命だけ別に数える。
+	pendingGpuParticleSpawns_.push_back(spawn);
+	externalGpuParticleLifetimes_.push_back((std::max)(spawn.lifetime, 0.01f));
 }
 
 float EditorEffectManager::GetLastDeltaTime() const {
@@ -270,11 +310,12 @@ uint64_t EditorEffectManager::MakeEmitterKey(
 	return (ownerValue << 32u) | componentValue;
 }
 
-std::vector<EditorEffectManager::EmitterSnapshot> EditorEffectManager::CollectEmitterSnapshots() {
-	std::vector<EmitterSnapshot> emitters;
+const std::vector<EditorEffectManager::EmitterSnapshot>& EditorEffectManager::CollectEmitterSnapshots() {
+	size_t emitterIndex = 0u;
 
 	if (editorScene_ == nullptr) {
-		return emitters;
+		emitterSnapshots_.clear();
+		return emitterSnapshots_;
 	}
 
 	for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
@@ -296,7 +337,12 @@ std::vector<EditorEffectManager::EmitterSnapshot> EditorEffectManager::CollectEm
 				continue;
 			}
 
-			EmitterSnapshot emitter{};
+			if (emitterIndex >= emitterSnapshots_.size()) {
+				emitterSnapshots_.emplace_back();
+			}
+
+			EmitterSnapshot& emitter = emitterSnapshots_[emitterIndex];
+			emitterIndex++;
 			emitter.key = MakeEmitterKey(gameObject.id, component.type);
 			emitter.ownerGameObjectId = gameObject.id;
 			Vector3 worldScale{};
@@ -332,11 +378,15 @@ std::vector<EditorEffectManager::EmitterSnapshot> EditorEffectManager::CollectEm
 				emitter.component.particleStartAlpha = particleRenderer->alpha;
 				emitter.component.particleEmissionStrength = particleRenderer->emissionStrength;
 			}
-			emitters.push_back(emitter);
 		}
 	}
 
-	return emitters;
+	emitterSnapshots_.resize(emitterIndex);
+	return emitterSnapshots_;
+}
+
+void EditorEffectManager::InvalidateEffectAssetCache(const std::string& assetPath) {
+	effectAssetCache_.erase(assetPath);
 }
 
 bool EditorEffectManager::ApplyEffectAsset(EditorComponent& component) {
@@ -344,7 +394,7 @@ bool EditorEffectManager::ApplyEffectAsset(EditorComponent& component) {
 		return false;
 	}
 
-	const std::string effectAssetPath = component.assetPath;
+	const std::string& effectAssetPath = component.assetPath;
 	auto effectAssetIterator = effectAssetCache_.find(effectAssetPath);
 	if (effectAssetIterator == effectAssetCache_.end()) {
 		EffectAsset effectAsset{};
@@ -353,6 +403,11 @@ bool EditorEffectManager::ApplyEffectAsset(EditorComponent& component) {
 			PushConsoleMessage("Effect: Effect Asset を読み込めません: " + effectAssetPath);
 			return false;
 		}
+
+		effectAssetParseCount_++;
+		PushConsoleMessage(
+			"Effect: Effect Asset を読み込みました(Canonical Cache登録): " + effectAssetPath +
+			" 累計Parse回数=" + std::to_string(effectAssetParseCount_));
 
 		effectAssetIterator = effectAssetCache_.emplace(effectAssetPath, std::move(effectAsset)).first;
 	}

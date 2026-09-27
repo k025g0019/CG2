@@ -394,6 +394,75 @@ void EditorProfilerManager::Reset() {
 	completedMeasurementSeconds_ = 0.0f;
 }
 
+void EditorProfilerManager::PushFrameHistory(float cpuMilliseconds, float gpuMilliseconds) {
+	std::lock_guard<std::mutex> lock(samplesMutex_);
+
+	if (cpuFrameHistory_.empty()) {
+		cpuFrameHistory_.assign(static_cast<size_t>(kFrameHistoryCapacity), 0.0f);
+		gpuFrameHistory_.assign(static_cast<size_t>(kFrameHistoryCapacity), 0.0f);
+	}
+
+	cpuFrameHistory_[static_cast<size_t>(frameHistoryWriteIndex_)] = cpuMilliseconds;
+	gpuFrameHistory_[static_cast<size_t>(frameHistoryWriteIndex_)] = gpuMilliseconds;
+	frameHistoryWriteIndex_ = (frameHistoryWriteIndex_ + 1) % kFrameHistoryCapacity;
+	frameHistoryCount_ = (std::min)(frameHistoryCount_ + 1, kFrameHistoryCapacity);
+	lastCpuFrameMilliseconds_ = cpuMilliseconds;
+	lastGpuFrameMilliseconds_ = gpuMilliseconds;
+}
+
+void EditorProfilerManager::GetFrameHistory(
+	std::vector<float>& outCpuMilliseconds,
+	std::vector<float>& outGpuMilliseconds) const {
+	std::lock_guard<std::mutex> lock(samplesMutex_);
+	outCpuMilliseconds.clear();
+	outGpuMilliseconds.clear();
+
+	if (frameHistoryCount_ <= 0) {
+		return;
+	}
+
+	outCpuMilliseconds.reserve(static_cast<size_t>(frameHistoryCount_));
+	outGpuMilliseconds.reserve(static_cast<size_t>(frameHistoryCount_));
+
+	// リングバッファを古い順へ並べ直して返す。
+	const int32_t startIndex = frameHistoryCount_ < kFrameHistoryCapacity
+		? 0
+		: frameHistoryWriteIndex_;
+
+	for (int32_t historyIndex = 0; historyIndex < frameHistoryCount_; ++historyIndex) {
+		const size_t bufferIndex =
+			static_cast<size_t>((startIndex + historyIndex) % kFrameHistoryCapacity);
+		outCpuMilliseconds.push_back(cpuFrameHistory_[bufferIndex]);
+		outGpuMilliseconds.push_back(gpuFrameHistory_[bufferIndex]);
+	}
+}
+
+float EditorProfilerManager::GetLastCpuFrameMilliseconds() const {
+	std::lock_guard<std::mutex> lock(samplesMutex_);
+	return lastCpuFrameMilliseconds_;
+}
+
+float EditorProfilerManager::GetLastGpuFrameMilliseconds() const {
+	std::lock_guard<std::mutex> lock(samplesMutex_);
+	return lastGpuFrameMilliseconds_;
+}
+
+float EditorProfilerManager::GetAverageCpuFrameMilliseconds() const {
+	std::lock_guard<std::mutex> lock(samplesMutex_);
+
+	if (frameHistoryCount_ <= 0) {
+		return 0.0f;
+	}
+
+	float totalMilliseconds = 0.0f;
+
+	for (int32_t historyIndex = 0; historyIndex < frameHistoryCount_; ++historyIndex) {
+		totalMilliseconds += cpuFrameHistory_[static_cast<size_t>(historyIndex)];
+	}
+
+	return totalMilliseconds / static_cast<float>(frameHistoryCount_);
+}
+
 std::vector<EditorProfilerSample> EditorProfilerManager::GetSortedSamples() const {
 	std::vector<EditorProfilerSample> sortedSamples;
 	std::lock_guard<std::mutex> sampleLock(samplesMutex_);

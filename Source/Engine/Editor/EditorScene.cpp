@@ -3,6 +3,9 @@
 #include "EditorAssetUtility.h"
 #include "EditorComponentUtility.h"
 #include "EditorTeamUuid.h"
+#include "Source/Engine/Asset/AssetRegistry.h"
+#include "Source/Engine/Core/EngineVersion.h"
+#include "Source/Engine/Core/ProjectVersionManager.h"
 #include "Vector&Matrix.h"
 
 #include <algorithm>
@@ -87,6 +90,82 @@ namespace {
 
 		return true;
 	}
+
+	bool IsNearlyEqual(float first, float second) {
+		return std::fabs(first - second) <= kTransformEpsilon;
+	}
+
+	bool IsNearlyEqual(const Vector3& first, const Vector3& second) {
+		return IsNearlyEqual(first.x, second.x) &&
+			IsNearlyEqual(first.y, second.y) &&
+			IsNearlyEqual(first.z, second.z);
+	}
+
+	Vector3 GetLegacyPrimitiveColliderSize(EditorModelMeshType meshType) {
+		// 旧 AssetFactory が FBX 頂点を見ずに設定していた固定値。
+		// Scene 読込時の移行判定だけに使い、利用者が編集した Collider は変更しない。
+		switch (meshType) {
+		case EditorModelMeshType::Box:
+			return {1.6f, 0.7f, 1.0f};
+		case EditorModelMeshType::Torus:
+			return {1.1f, 0.35f, 1.1f};
+		case EditorModelMeshType::Ico:
+			return {1.2f, 1.2f, 1.2f};
+		case EditorModelMeshType::Sphere:
+		case EditorModelMeshType::Cube:
+		case EditorModelMeshType::Cylinder:
+		case EditorModelMeshType::Cone:
+		case EditorModelMeshType::Plane:
+		case EditorModelMeshType::Count:
+		default:
+			return {1.0f, 1.0f, 1.0f};
+		}
+	}
+
+	std::string GetRenderModelPath(const EditorGameObject& gameObject) {
+		const EditorComponentType renderComponentTypes[] = {
+			EditorComponentType::ModelRenderer,
+			EditorComponentType::SkinnedMeshRenderer,
+			EditorComponentType::MeshFilter};
+
+		for (EditorComponentType componentType : renderComponentTypes) {
+			const EditorComponent* component =
+				EditorComponentUtility::FindComponent(gameObject, componentType);
+			if (component != nullptr && !component->assetPath.empty()) {
+				return component->assetPath;
+			}
+		}
+
+		return {};
+	}
+
+	void UpgradeLegacyPrimitiveBoxCollider(EditorGameObject& gameObject) {
+		EditorComponent* boxCollider =
+			EditorComponentUtility::FindComponent(gameObject, EditorComponentType::BoxCollider);
+		if (boxCollider == nullptr) {
+			return;
+		}
+
+		const std::string modelPath = GetRenderModelPath(gameObject);
+		if (modelPath.empty() || !EditorAssetUtility::IsBuiltInPrimitiveAssetPath(modelPath)) {
+			return;
+		}
+
+		// 中心0かつ旧固定サイズのままなら、自動生成後に手編集されていない旧データと判断する。
+		const EditorModelMeshType meshType = EditorAssetUtility::GetModelMeshType(modelPath);
+		if (!IsNearlyEqual(boxCollider->colliderCenter, {0.0f, 0.0f, 0.0f}) ||
+			!IsNearlyEqual(boxCollider->colliderSize, GetLegacyPrimitiveColliderSize(meshType))) {
+			return;
+		}
+
+		Vector3 modelColliderCenter{};
+		Vector3 modelColliderSize{};
+		if (EditorAssetUtility::GetModelColliderBounds(modelPath, modelColliderCenter, modelColliderSize)) {
+			boxCollider->colliderCenter = modelColliderCenter;
+			boxCollider->colliderSize = modelColliderSize;
+		}
+	}
+
 	constexpr const char* kEditorComponentTypeNames[] = {
 		"Transform",
 		"ModelRenderer",
@@ -371,6 +450,10 @@ namespace {
 		"WireConnectable",
 		"WireRenderer",
 		"SunPortal",
+		"PerformanceSettings",
+		"SpeechRecognizer",
+		"CameraInput",
+		"ImageRecognizer",
 	};
 	constexpr int32_t kEditorComponentTypeCount =
 		static_cast<int32_t>(sizeof(kEditorComponentTypeNames) / sizeof(kEditorComponentTypeNames[0]));
@@ -565,6 +648,7 @@ namespace {
 		RemapGameObjectReference(component.cameraBlendSourceGameObjectId, remappedIds, clearIfNotFound);
 		RemapGameObjectReference(component.cameraBlendTargetGameObjectId, remappedIds, clearIfNotFound);
 		RemapGameObjectReference(component.cameraInputTargetGameObjectId, remappedIds, clearIfNotFound);
+		RemapGameObjectReference(component.visionCameraGameObjectId, remappedIds, clearIfNotFound);
 		RemapGameObjectReference(component.railBranchFollowerGameObjectId, remappedIds, clearIfNotFound);
 		RemapGameObjectReference(component.railBranchTargetPathGameObjectId, remappedIds, clearIfNotFound);
 		RemapGameObjectReference(component.railBranchActionTargetGameObjectId, remappedIds, clearIfNotFound);
@@ -591,6 +675,54 @@ namespace {
 	float ToFloat(const std::string& text) {
 		// Scene ファイルの文字列を float に変換する
 		return std::stof(text);
+	}
+
+	// assetId(恒久識別子)を基準にassetPath(現在位置)を解決する。Sceneファイル自体には
+	// Pathしか書かれていない場合があるため、ここでAssetRegistryとの整合を都度取り直す。
+	//
+	//   assetIdがある場合         : Registryの現在Pathへ上書きする(移動・Rename後もここで追従する)。
+	//   assetIdが無い/解決不能な場合: assetPathからRegistryを引き、見つかればassetIdを補完する
+	//                                (旧Scene・旧Prefabの移行経路)。Registryにも無ければ、実在する
+	//                                Fileなら新規登録してassetIdを補完し、存在しなければ
+	//                                Missing Assetとして何もせず既存のPathをそのまま残す
+	//                                (呼び出し側の各Loader・Player側で「開けなければ何もしない」
+	//                                既存の安全な失敗経路に委ねる。ここで空文字へ書き換えたり
+	//                                例外を投げたりはしない)。
+	void ResolveComponentAssetReference(EditorComponent& component) {
+		if (component.assetPath.empty()) {
+			return;
+		}
+
+		if (!component.assetId.empty()) {
+			const AssetRecord* recordById = AssetRegistry::Get().FindById(component.assetId);
+
+			if (recordById != nullptr) {
+				component.assetPath = recordById->path;
+				return;
+			}
+		}
+
+		const AssetRecord* recordByPath = AssetRegistry::Get().FindByPath(component.assetPath);
+
+		if (recordByPath != nullptr) {
+			component.assetId = recordByPath->id;
+			return;
+		}
+
+		std::error_code fileExistsError;
+		if (std::filesystem::exists(component.assetPath, fileExistsError)) {
+			// Registryがまだこの実在Fileを知らない(RefreshFromDisk未実行、または新規追加直後)。
+			// ここで登録し、以後の移動・Renameから追跡できる状態にする。
+			const AssetRecord* newRecord = AssetRegistry::Get().NotifyAssetAdded(component.assetPath);
+
+			if (newRecord != nullptr) {
+				component.assetId = newRecord->id;
+			}
+		}
+
+		// Fileが実在しない場合はMissing Assetとして、Pathも空にせずそのまま残す。
+		// Model/Audio等の各Loaderは元々「開けなければnullptr/falseを返すだけ」で安全に失敗するため、
+		// ここで追加のError処理は行わない。
 	}
 
 	void ResetPhysicsSettings(EditorPhysicsSettings& physicsSettings) {
@@ -1011,9 +1143,11 @@ bool EditorScene::AddComponent(int32_t gameObjectId, EditorComponentType type) {
 
 	gameObject->components.push_back(CreateComponent(type));
 
-	// メッシュ系の当たり判定は、後から Component を付けた場合もモデル配置時と同じく
-	// 描画メッシュ（ModelRenderer / SkinnedMeshRenderer / MeshFilter）から自動的に流用する。
-	if (type == EditorComponentType::MeshCollider ||
+	// モデル用の当たり判定は、後から Component を付けた場合もモデル配置時と同じく
+	// 描画メッシュ（ModelRenderer / SkinnedMeshRenderer / MeshFilter）の実境界から初期化する。
+	// BoxCollider もサイズだけでなく中心を合わせないと、原点が中央でない FBX で見た目とずれる。
+	if (type == EditorComponentType::BoxCollider ||
+		type == EditorComponentType::MeshCollider ||
 		type == EditorComponentType::AutoConvexCollision) {
 		EditorComponent& addedCollider = gameObject->components.back();
 		if (addedCollider.assetPath.empty()) {
@@ -1039,7 +1173,9 @@ bool EditorScene::AddComponent(int32_t gameObjectId, EditorComponentType type) {
 			}
 
 			if (!renderModelPath.empty()) {
-				addedCollider.assetPath = renderModelPath;
+				if (type != EditorComponentType::BoxCollider) {
+					addedCollider.assetPath = renderModelPath;
+				}
 				Vector3 modelColliderCenter{};
 				Vector3 modelColliderSize{};
 				if (EditorAssetUtility::GetModelColliderBounds(renderModelPath, modelColliderCenter, modelColliderSize)) {
@@ -1096,7 +1232,17 @@ bool EditorScene::HasComponent(int32_t gameObjectId, EditorComponentType type) c
 //============================================================
 
 bool EditorScene::SaveScene(const std::string& filePath) const {
-	std::ofstream file(filePath, std::ios::binary | std::ios::trunc);  // Scene を UTF-8 BOM 付きの | 区切りテキストとして保存する
+	// 新しいProjectを古いEditorで開いた場合は、未知Fieldを消す保存を絶対に許可しない。
+	if (!ProjectVersionManager::IsCurrentProjectWriteAllowed()) {
+		return false;
+	}
+	// 既存ファイルを直接truncateすると、書き込み途中の失敗(容量不足・ロック・切断)で
+	// 元のSceneが消える。必ず一時ファイルへ書き切ってから置き換える。
+	// Prefab保存と共同編集の保存もこの関数を通るため、ここ1箇所で全経路が守られる。
+	const std::filesystem::path destinationPath(filePath);
+	std::filesystem::path temporaryPath = destinationPath;
+	temporaryPath += ".savetmp";
+	std::ofstream file(temporaryPath, std::ios::binary | std::ios::trunc);  // Scene を UTF-8 BOM 付きの | 区切りテキストとして保存する
 	if (!file.is_open()) {
 		return false;
 	}
@@ -1104,6 +1250,9 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 	file.write(
 		reinterpret_cast<const char*>(kSceneUtf8Bom),
 		static_cast<std::streamsize>(sizeof(kSceneUtf8Bom)));
+	const bool isPrefab = destinationPath.extension() == ".prefab";
+	file << "FormatVersion|" << (isPrefab ? "Prefab" : "Scene") << "|"
+		 << (isPrefab ? GetManoPrefabFormatVersion() : GetManoSceneFormatVersion()) << "\n";
 
 	file << "SceneUuid|" << sceneUuid_ << "\n";
 	file << "PhysicsSettings|"
@@ -1129,6 +1278,10 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 	file << "\n";
 
 	for (const EditorGameObject& gameObject : gameObjects_) {
+		// Play中だけ存在する内部ChunkはHierarchyだけでなくScene Assetにも永続化しない。
+		if (gameObject.name.rfind("__BlastChunk_", 0U) == 0U) {
+			continue;
+		}
 		// GameObject 行には ID / 親 / 名前 / Transform を保存する
 		file << "GameObject|"
 		     << gameObject.id << "|"
@@ -1764,7 +1917,9 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 			     << "|" << component.electromagneticSourceCharge
 			     << "|" << component.electromagneticCoulombConstant
 			     << "|" << component.electromagneticMinimumDistance
-			     << "|" << component.electromagneticInfluenceRadius;
+			     << "|" << component.electromagneticInfluenceRadius
+			     << "|" << component.glareSampleRatio
+			     << "|" << component.assetId;
 
 			file << "\n";
 
@@ -2054,6 +2209,23 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 				     << "\n";
 			}
 
+			// パフォーマンス設定はScene単位の運用値なので独立行へ保存し、旧Component列を壊さない。
+			if (component.type == EditorComponentType::PerformanceSettings) {
+				file << "PerformanceSettingsExtension"
+				     << "|" << gameObject.id
+				     << "|" << (component.performanceAdaptiveQuality ? 1 : 0)
+				     << "|" << component.performanceTargetFps
+				     << "|" << component.performanceViewRenderMode
+				     << "|" << (component.performanceAllowShadowThrottle ? 1 : 0)
+				     << "|" << (component.performanceAllowReflectionThrottle ? 1 : 0)
+				     << "|" << (component.performanceAllowBakeThrottle ? 1 : 0)
+				     << "|" << component.performanceShadowUpdateInterval
+				     << "|" << component.performanceReflectionUpdateInterval
+				     << "|" << component.performanceGlareSampleRatio
+				     << "|" << component.performanceOceanFftUpdateInterval
+				     << "\n";
+			}
+
 			// 高度材質は独立行へ保存し、既存Renderer列とMaterial定数バッファの互換性を維持する。
 			if (component.type == EditorComponentType::ModelRenderer ||
 				component.type == EditorComponentType::SkinnedMeshRenderer) {
@@ -2173,6 +2345,9 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 				     << "|" << EncodeSceneToken(component.waveAllDefeatedActionName)
 				     << "|" << component.waveSpawnMaximumPerFrame
 				     << "|" << component.waveSpawnRailStartNormalized
+				     << "|" << (component.waveSpawnAheadOfSource ? 1 : 0)
+				     << "|" << component.waveSpawnProgressSourceGameObjectId
+				     << "|" << component.waveSpawnAheadNormalized
 				     << "\n";
 			}
 
@@ -2314,6 +2489,58 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 				     << "|" << gameObject.id
 				     << "|" << component.hitZoneHealthGameObjectId
 				     << "|" << component.hitZoneDamageMultiplier
+				     << "\n";
+			}
+
+			// Blast設定は既存Component本体行へ値を差し込まず、後方互換な拡張行として保存する。
+			if (component.type == EditorComponentType::DestructiblePart) {
+				file << "BlastDestructibleExtension"
+				     << "|" << gameObject.id
+				     << "|" << (component.destructibleBlastEnabled ? 1 : 0)
+				     << "|" << component.destructibleBlastBondHealth
+				     << "|" << component.destructibleBlastDamageRadius
+				     << "|" << component.destructibleBlastImpulse
+				     << "|" << component.destructibleBlastChunkMass
+				     << "|" << component.destructibleBlastBondNeighborCount
+				     << "|" << (component.destructibleBlastHideChunksUntilFracture ? 1 : 0)
+				     << "|" << component.destructibleBlastFractureMethod
+				     << "|" << component.destructibleBlastChunkCount
+				     << "|" << component.destructibleBlastRandomSeed
+				     << "|" << component.destructibleBlastCollisionQuality
+				     << "|" << (component.destructibleBlastAutoBake ? 1 : 0)
+				     << "|" << (component.destructibleBlastUsePrefracturedChildren ? 1 : 0)
+				     << "\n";
+			}
+
+			// 破片予算設定は後から追加したため、既存拡張行の列位置を変えず独立した拡張行へ保存する。
+			if (component.type == EditorComponentType::DestructiblePart) {
+				file << "BlastDebrisBudgetExtension"
+				     << "|" << gameObject.id
+				     << "|" << (component.destructibleBlastOptimizeEnabled ? 1 : 0)
+				     << "|" << component.destructibleBlastMaxPhysicsChunks
+				     << "|" << (component.destructibleBlastUseClusterPhysics ? 1 : 0)
+				     << "|" << component.destructibleBlastClusterSize
+				     << "|" << component.destructibleBlastClusterScatterDelay
+				     << "|" << component.destructibleBlastClusterScatterDistance
+				     << "|" << (component.destructibleBlastUseGpuDebris ? 1 : 0)
+				     << "|" << component.destructibleBlastPhysicsLifetime
+				     << "|" << component.destructibleBlastGpuDebrisLifetime
+				     << "|" << component.destructibleBlastGpuDebrisGravity
+				     << "|" << component.destructibleBlastGpuDebrisDrag
+				     << "|" << component.destructibleBlastGpuDebrisWind
+				     << "|" << component.destructibleBlastGpuDebrisSpin
+				     << "|" << component.destructibleBlastGpuDebrisMeshLimit
+				     << "|" << (component.destructibleBlastUseDistanceLod ? 1 : 0)
+				     << "|" << component.destructibleBlastLodNearDistance
+				     << "|" << component.destructibleBlastLodFarDistance
+				     << "|" << component.destructibleBlastLodFarDebrisCount
+				     << "|" << component.destructibleBlastDebrisSinkDelay
+				     << "|" << component.destructibleBlastDebrisSinkDuration
+				     << "|" << component.destructibleBlastDebrisSinkDistance
+				     << "|" << component.destructibleBlastGpuDebrisMotionType
+				     << "|" << component.destructibleBlastGpuDebrisRadialAcceleration
+				     << "|" << component.destructibleBlastGpuDebrisUpdraft
+				     << "|" << component.destructibleBlastGpuDebrisAngularSpeed
 				     << "\n";
 			}
 
@@ -2844,8 +3071,25 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 
 			if (component.type == EditorComponentType::Text ||
 				component.type == EditorComponentType::TextMeshProUGUI) {
+				// 旧形式は3列。以降は末尾へ追記し、読込側は列数で判定して旧Sceneを壊さない。
 				file << "TextFontExtension|" << gameObject.id
 				     << "|" << component.textFontIndex
+				     << "|" << EncodeSceneToken(component.textFontAssetPath)
+				     << "|" << component.textFontSize
+				     << "|" << component.textHorizontalAlign
+				     << "|" << component.textVerticalAlign
+				     << "|" << (component.textWordWrap ? 1 : 0)
+				     << "|" << component.textOverflowMode
+				     << "|" << component.textOutlineWidth
+				     << "|" << component.textOutlineColor.x
+				     << "|" << component.textOutlineColor.y
+				     << "|" << component.textOutlineColor.z
+				     << "|" << (component.textShadowEnabled ? 1 : 0)
+				     << "|" << component.textShadowOffsetX
+				     << "|" << component.textShadowOffsetY
+				     << "|" << component.textShadowColor.x
+				     << "|" << component.textShadowColor.y
+				     << "|" << component.textShadowColor.z
 				     << "\n";
 			}
 
@@ -2915,6 +3159,113 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 				     << "|" << component.wireRendererWorldRadius
 				     << "|" << component.wireRendererRadialSegments
 				     << "|" << component.wireRendererEmissionStrength
+				     << "\n";
+			}
+
+			if (component.type == EditorComponentType::SpeechRecognizer) {
+				file << "SpeechRecognizerExtension|" << gameObject.id
+				     << "|" << component.speechRecognitionMode
+				     << "|" << component.speechBackendKind
+				     << "|" << component.speechConfidenceThreshold
+				     << "|" << (component.speechContinuousRecognition ? 1 : 0)
+				     << "|" << (component.speechStartOnPlay ? 1 : 0)
+				     << "|" << EncodeSceneToken(component.speechLanguage)
+				     << "|" << EncodeSceneToken(component.speechMicrophoneDevice)
+				     << "|" << EncodeSceneToken(component.speechModelAssetPath)
+				     << "|" << EncodeSceneToken(component.speechInputActionMapName)
+				     << "|" << EncodeSceneToken(component.speechRecognizedActionName)
+				     << "|" << component.speechKeywords.size();
+
+				// Keyword と対応 Action 名を対で保存する。Action 名が足りない分は空扱い。
+				for (size_t keywordIndex = 0u; keywordIndex < component.speechKeywords.size(); ++keywordIndex) {
+					const std::string actionName =
+						keywordIndex < component.speechKeywordActionNames.size()
+							? component.speechKeywordActionNames[keywordIndex]
+							: std::string();
+					file << "|" << EncodeSceneToken(component.speechKeywords[keywordIndex])
+					     << "|" << EncodeSceneToken(actionName);
+				}
+
+				file << "\n";
+			}
+
+			if (component.type == EditorComponentType::SpeechRecognizer) {
+				file << "SpeechRecognizerWhisperTimingExtension|" << gameObject.id
+				     << "|" << (component.speechWhisperEndOnSilence ? 1 : 0)
+				     << "|" << component.speechWhisperMaximumCaptureSeconds
+				     << "|" << component.speechWhisperSilenceSeconds
+				     << "|" << component.speechWhisperVoiceThreshold
+				     << "\n";
+			}
+
+			if (component.type == EditorComponentType::AIVoiceCommand) {
+				file << "AIVoiceCommandExtension|" << gameObject.id
+				     << "|" << component.voiceCommandMatchMode
+				     << "|" << component.voiceCommandCorrectionStrength
+				     << "|" << component.voiceCommandThreshold
+				     << "|" << component.voiceCommandMinimumMargin
+				     << "|" << component.voiceCommandCooldownSeconds
+				     << "|" << EncodeSceneToken(component.voiceCommandLanguage)
+				     << "|" << EncodeSceneToken(component.voiceCommandMicrophoneDevice)
+				     << "|" << component.voiceCommandPhrases.size();
+
+				for (const std::string& phrase : component.voiceCommandPhrases) {
+					file << "|" << EncodeSceneToken(phrase);
+				}
+
+				file << "\n";
+			}
+
+			if (component.type == EditorComponentType::CameraInput) {
+				file << "CameraInputDeviceExtension|" << gameObject.id
+				     << "|" << component.cameraInputWidth
+				     << "|" << component.cameraInputHeight
+				     << "|" << component.cameraInputFrameRateLimit
+				     << "|" << (component.cameraInputStartOnPlay ? 1 : 0)
+				     << "|" << (component.cameraInputDebugPreview ? 1 : 0)
+				     << "|" << EncodeSceneToken(component.cameraInputDeviceName)
+				     << "\n";
+			}
+
+			if (component.type == EditorComponentType::ImageRecognizer) {
+				file << "ImageRecognizerExtension|" << gameObject.id
+				     << "|" << component.visionRecognitionMode
+				     << "|" << component.visionBackendKind
+				     << "|" << component.visionConfidenceThreshold
+				     << "|" << component.visionRecognitionInterval
+				     << "|" << component.visionCameraGameObjectId
+				     << "|" << (component.visionStartOnPlay ? 1 : 0)
+				     << "|" << (component.visionDebugPreview ? 1 : 0)
+				     << "|" << component.visionTargetColor.x
+				     << "|" << component.visionTargetColor.y
+				     << "|" << component.visionTargetColor.z
+				     << "|" << component.visionColorTolerance
+				     << "|" << component.visionMinimumAreaRatio
+				     << "|" << component.visionMotionThreshold
+				     << "|" << component.visionInputTriggerMode
+				     << "|" << component.visionInputAngleThreshold
+				     << "|" << EncodeSceneToken(component.visionModelAssetPath)
+				     << "|" << EncodeSceneToken(component.visionLabelAssetPath)
+				     << "|" << EncodeSceneToken(component.visionInputActionMapName)
+				     << "|" << EncodeSceneToken(component.visionInputActionName)
+				     << "|" << EncodeSceneToken(component.visionInputTriggerLabel)
+				     << "|" << EncodeSceneToken(component.visionDetectedActionName)
+				     << "\n";
+			}
+
+			if (component.type == EditorComponentType::HapticSource) {
+				file << "HapticSourceExtension|" << gameObject.id
+				     << "|" << component.hapticPattern
+				     << "|" << component.hapticChannel
+				     << "|" << component.hapticFrequency
+				     << "|" << (component.hapticAudioReactive ? 1 : 0)
+				     << "|" << component.hapticAudioFrequencyRange
+				     << "|" << component.hapticAudioSensitivity
+				     << "|" << component.hapticAudioIntensityScale
+				     << "|" << (component.hapticPhysicsReactive ? 1 : 0)
+				     << "|" << component.hapticMaximumImpulse
+				     << "|" << component.hapticTargetDevice
+				     << "|" << EncodeSceneToken(component.hapticClipAssetPath)
 				     << "\n";
 			}
 
@@ -3136,6 +3487,13 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 				     << "|" << static_cast<int32_t>(component.type)
 				     << "|" << component.particleBillboardMode
 				     << "|" << component.particleBillboardStretch << "\n";
+			}
+
+			if (component.type == EditorComponentType::Camera ||
+				component.type == EditorComponentType::CinemachineCamera) {
+				file << "CameraProjectionExtension|" << gameObject.id
+				     << "|" << static_cast<int32_t>(component.type)
+				     << "|" << component.cameraOrthographicSize << "\n";
 			}
 
 			// 汎用ゲームプレイ基盤は独立行へ保存し、巨大な既存Component行の列位置を変更しない。
@@ -3437,10 +3795,53 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 		}
 	}
 
+	// 読込時に解釈できなかった行を最後へ戻す。新しいBuildが書いた行を古いBuildで保存し直しても消えない。
+	for (const std::string& unknownLine : unknownSceneLines_) {
+		file << unknownLine << "\n";
+	}
+
+	// 書き込みエラーはstreamへ溜まるだけで例外にならないため、必ずflush後に状態を確認する。
+	file.flush();
+	const bool hasWrittenSuccessfully = file.good();
+	file.close();
+
+	if (!hasWrittenSuccessfully) {
+		std::error_code removeError;
+		std::filesystem::remove(temporaryPath, removeError);
+		return false;
+	}
+
+	// 置き換えに失敗した場合も、元ファイルと一時ファイルの両方を残して復旧できるようにする。
+	std::error_code replaceError;
+	std::filesystem::rename(temporaryPath, destinationPath, replaceError);
+
+	if (replaceError) {
+		// 同名ファイルが存在するとrenameが失敗する環境があるため、copy+removeで再試行する。
+		std::error_code copyError;
+		std::filesystem::copy_file(
+			temporaryPath,
+			destinationPath,
+			std::filesystem::copy_options::overwrite_existing,
+			copyError);
+
+		if (copyError) {
+			return false;
+		}
+
+		std::error_code removeError;
+		std::filesystem::remove(temporaryPath, removeError);
+	}
+
 	return true;
 }
 
 bool EditorScene::LoadScene(const std::string& filePath) {
+	const std::filesystem::path sourcePath(filePath);
+	std::string formatError;
+	if (!ProjectVersionManager::IsAssetFormatSupported(
+			sourcePath, sourcePath.extension() == ".prefab", &formatError)) {
+		return false;
+	}
 	std::ifstream file(filePath, std::ios::binary);  // BOM の有無に関係なく旧形式と新形式を読み込む
 	if (!file.is_open()) {
 		return false;
@@ -3451,6 +3852,7 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 	std::string loadedSceneUuid = CreateEditorTeamUuid();
 	EditorPhysicsSettings loadedPhysicsSettings = physicsSettings_;  // 古い Scene に設定行がない場合は現在の既定値を使う
 	bool hasSceneData = false;  // 空 Scene 保存も許可するため、GameObject が 0 件でも有効な Scene 行を読んだかを記録する
+	std::vector<std::string> loadedUnknownLines;  // このBuildが解釈できなかった行。保存時へそのまま戻す
 	std::string line;
 	bool isFirstLine = true;
 
@@ -3468,7 +3870,11 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 			continue;
 		}
 
-		if (elements[0] == "SceneUuid" && elements.size() >= 2) {
+		if (elements[0] == "FormatVersion" && elements.size() >= 3) {
+			// Load前にProjectVersionManagerが互換性を検査済み。既知Metadataは未知行へ残さない。
+			continue;
+		}
+		else if (elements[0] == "SceneUuid" && elements.size() >= 2) {
 			if (IsEditorTeamUuidValid(elements[1])) {
 				loadedSceneUuid = elements[1];
 			}
@@ -4370,6 +4776,25 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 					component.electromagneticInfluenceRadius = ToFloat(elements[advancedPhysicsCursor + 42u]);
 				}
 
+				// Glare品質は共通行の末尾へ追加し、旧Sceneでは最高品質を維持する。
+				const size_t postProcessQualityCursor = advancedPhysicsCursor + 43u;
+				if (elements.size() >= postProcessQualityCursor + 1u) {
+					component.glareSampleRatio = (std::clamp)(
+						ToFloat(elements[postProcessQualityCursor]),
+						0.25f,
+						1.0f);
+				}
+
+				// assetIdも共通行の末尾へ追加。旧Sceneには列自体が無いため、その場合は空のまま
+				// 残し、assetPathからの解決(ResolveComponentAssetReference)へ委ねる。
+				const size_t assetIdCursor = postProcessQualityCursor + 1u;
+				if (elements.size() >= assetIdCursor + 1u) {
+					component.assetId = elements[assetIdCursor];
+				}
+
+				// Path移動・Rename後もassetIdを基準に現在Pathへ追従させる(旧データはここでRegistryへ補完登録)。
+				ResolveComponentAssetReference(component);
+
 				gameObject.components.push_back(component);
 			break;
 			}
@@ -4793,6 +5218,44 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 				break;
 			}
 		}
+		else if (elements[0] == "PerformanceSettingsExtension" && elements.size() >= 11u) {
+			const int32_t ownerId = ToInt(elements[1]);
+
+			for (EditorGameObject& gameObject : loadedGameObjects) {
+				if (gameObject.id != ownerId) {
+					continue;
+				}
+
+				for (EditorComponent& component : gameObject.components) {
+					if (component.type != EditorComponentType::PerformanceSettings) {
+						continue;
+					}
+
+					component.performanceAdaptiveQuality = ToInt(elements[2]) != 0;
+					component.performanceTargetFps = (std::clamp)(ToInt(elements[3]), 15, 240);
+					component.performanceViewRenderMode = (std::clamp)(ToInt(elements[4]), 0, 3);
+					component.performanceAllowShadowThrottle = ToInt(elements[5]) != 0;
+					component.performanceAllowReflectionThrottle = ToInt(elements[6]) != 0;
+					component.performanceAllowBakeThrottle = ToInt(elements[7]) != 0;
+					component.performanceShadowUpdateInterval = (std::clamp)(ToInt(elements[8]), 0, 8);
+					component.performanceReflectionUpdateInterval = (std::clamp)(ToInt(elements[9]), 0, 8);
+					component.performanceGlareSampleRatio = (std::clamp)(
+						ToFloat(elements[10]),
+						0.25f,
+						1.0f);
+
+					if (elements.size() >= 12u) {
+						component.performanceOceanFftUpdateInterval = (std::clamp)(
+							ToInt(elements[11]),
+							0,
+							8);
+					}
+					break;
+				}
+
+				break;
+			}
+		}
 		else if (elements[0] == "MaterialVisualExtension" && elements.size() >= 7u) {
 			const int32_t ownerId = ToInt(elements[1]);
 			const EditorComponentType componentType = ComponentTypeFromIndex(ToInt(elements[2]));
@@ -5056,6 +5519,15 @@ if (elements.size() >= 13u) {
 					component.waveSpawnRailStartNormalized = ToFloat(elements[13]);
 				}
 
+				if (elements.size() >= 17u) {
+					component.waveSpawnAheadOfSource = ToInt(elements[14]) != 0;
+					component.waveSpawnProgressSourceGameObjectId = ToInt(elements[15]);
+					component.waveSpawnAheadNormalized = (std::clamp)(
+						ToFloat(elements[16]),
+						0.0f,
+						1.0f);
+				}
+
 					break;
 				}
 				break;
@@ -5273,6 +5745,84 @@ if (elements.size() >= 13u) {
 					if (component.type != EditorComponentType::HitZone) continue;
 					component.hitZoneHealthGameObjectId = ToInt(elements[2]);
 					component.hitZoneDamageMultiplier = ToFloat(elements[3]);
+					break;
+				}
+				break;
+			}
+		}
+		else if (elements[0] == "BlastDestructibleExtension" && elements.size() >= 9u) {
+			const int32_t ownerId = ToInt(elements[1]);
+
+			for (EditorGameObject& gameObject : loadedGameObjects) {
+				if (gameObject.id != ownerId) continue;
+
+				for (EditorComponent& component : gameObject.components) {
+					if (component.type != EditorComponentType::DestructiblePart) continue;
+					component.destructibleBlastEnabled = ToInt(elements[2]) != 0;
+					component.destructibleBlastBondHealth = (std::max)(ToFloat(elements[3]), 0.001f);
+					component.destructibleBlastDamageRadius = (std::max)(ToFloat(elements[4]), 0.001f);
+					component.destructibleBlastImpulse = (std::max)(ToFloat(elements[5]), 0.0f);
+					component.destructibleBlastChunkMass = (std::max)(ToFloat(elements[6]), 0.001f);
+					component.destructibleBlastBondNeighborCount = (std::clamp)(ToInt(elements[7]), 1, 16);
+					component.destructibleBlastHideChunksUntilFracture = ToInt(elements[8]) != 0;
+					if (elements.size() >= 15u) {
+						component.destructibleBlastFractureMethod = (std::clamp)(ToInt(elements[9]), 0, 0);
+						component.destructibleBlastChunkCount = (std::clamp)(ToInt(elements[10]), 2, 256);
+						component.destructibleBlastRandomSeed = ToInt(elements[11]);
+						component.destructibleBlastCollisionQuality = (std::clamp)(ToInt(elements[12]), 0, 2);
+						component.destructibleBlastAutoBake = ToInt(elements[13]) != 0;
+						component.destructibleBlastUsePrefracturedChildren = ToInt(elements[14]) != 0;
+					}
+					else {
+						// 旧Sceneは直下の子Chunk方式だけを持っていたため、読込時だけAdvanced互換へ移す。
+						component.destructibleBlastUsePrefracturedChildren = true;
+					}
+					component.destructibleBlastBakeStatus = "Needs Bake";
+					component.destructibleBlastBakeError.clear();
+					break;
+				}
+				break;
+			}
+		}
+		else if (elements[0] == "BlastDebrisBudgetExtension" && elements.size() >= 20u) {
+			const int32_t ownerId = ToInt(elements[1]);
+
+			for (EditorGameObject& gameObject : loadedGameObjects) {
+				if (gameObject.id != ownerId) continue;
+
+				for (EditorComponent& component : gameObject.components) {
+					if (component.type != EditorComponentType::DestructiblePart) continue;
+					component.destructibleBlastOptimizeEnabled = ToInt(elements[2]) != 0;
+					component.destructibleBlastMaxPhysicsChunks = (std::clamp)(ToInt(elements[3]), 0, 256);
+					component.destructibleBlastUseClusterPhysics = ToInt(elements[4]) != 0;
+					component.destructibleBlastClusterSize = (std::clamp)(ToInt(elements[5]), 1, 256);
+					component.destructibleBlastClusterScatterDelay = (std::max)(ToFloat(elements[6]), 0.0f);
+					component.destructibleBlastClusterScatterDistance = (std::clamp)(ToFloat(elements[7]), 0.0f, 1000.0f);
+					component.destructibleBlastUseGpuDebris = ToInt(elements[8]) != 0;
+					component.destructibleBlastPhysicsLifetime = (std::max)(ToFloat(elements[9]), 0.0f);
+					component.destructibleBlastGpuDebrisLifetime = (std::clamp)(ToFloat(elements[10]), 0.01f, 600.0f);
+					component.destructibleBlastGpuDebrisGravity = (std::clamp)(ToFloat(elements[11]), -1000.0f, 1000.0f);
+					component.destructibleBlastGpuDebrisDrag = (std::max)(ToFloat(elements[12]), 0.0f);
+					component.destructibleBlastGpuDebrisWind = (std::max)(ToFloat(elements[13]), 0.0f);
+					component.destructibleBlastGpuDebrisSpin = (std::clamp)(ToFloat(elements[14]), -36000.0f, 36000.0f);
+					component.destructibleBlastGpuDebrisMeshLimit = (std::clamp)(ToInt(elements[15]), 0, 256);
+					component.destructibleBlastUseDistanceLod = ToInt(elements[16]) != 0;
+					component.destructibleBlastLodNearDistance = (std::max)(ToFloat(elements[17]), 0.0f);
+					component.destructibleBlastLodFarDistance = (std::max)(ToFloat(elements[18]), 0.0f);
+					component.destructibleBlastLodFarDebrisCount = (std::max)(ToInt(elements[19]), 0);
+					// 沈下設定はさらに後から足した列。無い旧行は既定値のままにする。
+					if (elements.size() >= 23u) {
+						component.destructibleBlastDebrisSinkDelay = (std::max)(ToFloat(elements[20]), 0.0f);
+						component.destructibleBlastDebrisSinkDuration = (std::clamp)(ToFloat(elements[21]), 0.01f, 600.0f);
+						component.destructibleBlastDebrisSinkDistance = (std::clamp)(ToFloat(elements[22]), 0.0f, 1000.0f);
+					}
+					// GPU破片の運動設定はさらに後から足した列。無い旧行は直線運動のままにする。
+					if (elements.size() >= 27u) {
+						component.destructibleBlastGpuDebrisMotionType = (std::clamp)(ToInt(elements[23]), 0, 2);
+						component.destructibleBlastGpuDebrisRadialAcceleration = (std::clamp)(ToFloat(elements[24]), 0.0f, 1000.0f);
+						component.destructibleBlastGpuDebrisUpdraft = (std::clamp)(ToFloat(elements[25]), 0.0f, 1000.0f);
+						component.destructibleBlastGpuDebrisAngularSpeed = (std::clamp)(ToFloat(elements[26]), -36000.0f, 36000.0f);
+					}
 					break;
 				}
 				break;
@@ -5997,6 +6547,24 @@ if (elements.size() >= 13u) {
 					if (component.type == EditorComponentType::Text ||
 						component.type == EditorComponentType::TextMeshProUGUI) {
 						component.textFontIndex = ToInt(elements[2]);
+
+						// 旧Sceneは3列止まり。その場合は体裁設定を既定(従来描画)のまま残す。
+						if (elements.size() >= 19u) {
+							component.textFontAssetPath = DecodeSceneToken(elements[3]);
+							component.textFontSize = ToFloat(elements[4]);
+							component.textHorizontalAlign = (std::clamp)(ToInt(elements[5]), 0, 2);
+							component.textVerticalAlign = (std::clamp)(ToInt(elements[6]), 0, 2);
+							component.textWordWrap = ToInt(elements[7]) != 0;
+							component.textOverflowMode = (std::clamp)(ToInt(elements[8]), 0, 2);
+							component.textOutlineWidth = (std::max)(ToFloat(elements[9]), 0.0f);
+							component.textOutlineColor = {
+								ToFloat(elements[10]), ToFloat(elements[11]), ToFloat(elements[12])};
+							component.textShadowEnabled = ToInt(elements[13]) != 0;
+							component.textShadowOffsetX = ToFloat(elements[14]);
+							component.textShadowOffsetY = ToFloat(elements[15]);
+							component.textShadowColor = {
+								ToFloat(elements[16]), ToFloat(elements[17]), ToFloat(elements[18])};
+						}
 					}
 				}
 			}
@@ -6060,6 +6628,134 @@ if (elements.size() >= 13u) {
 						component.wireRendererRadialSegments = ToInt(elements[17]);
 						component.wireRendererEmissionStrength = ToFloat(elements[18]);
 					}
+				}
+			}
+		}
+		else if (elements[0] == "SpeechRecognizerExtension" && elements.size() >= 13u) {
+			const int32_t ownerId = ToInt(elements[1]);
+			for (EditorGameObject& object : loadedGameObjects) if (object.id == ownerId) {
+				for (EditorComponent& component : object.components) if (component.type == EditorComponentType::SpeechRecognizer) {
+					component.speechRecognitionMode = (std::clamp)(ToInt(elements[2]), 0, 1);
+					component.speechBackendKind = (std::clamp)(ToInt(elements[3]), 0, 4);
+					component.speechConfidenceThreshold = (std::clamp)(ToFloat(elements[4]), 0.0f, 1.0f);
+					component.speechContinuousRecognition = ToInt(elements[5]) != 0;
+					component.speechStartOnPlay = ToInt(elements[6]) != 0;
+					component.speechLanguage = DecodeSceneToken(elements[7]);
+					component.speechMicrophoneDevice = DecodeSceneToken(elements[8]);
+					component.speechModelAssetPath = DecodeSceneToken(elements[9]);
+					component.speechInputActionMapName = DecodeSceneToken(elements[10]);
+					component.speechRecognizedActionName = DecodeSceneToken(elements[11]);
+
+					component.speechKeywords.clear();
+					component.speechKeywordActionNames.clear();
+					const int32_t keywordCount = (std::max)(ToInt(elements[12]), 0);
+
+					for (int32_t keywordIndex = 0; keywordIndex < keywordCount; ++keywordIndex) {
+						const size_t keywordElement = 13u + static_cast<size_t>(keywordIndex) * 2u;
+
+						if (keywordElement + 1u >= elements.size()) {
+							break;
+						}
+
+						component.speechKeywords.push_back(DecodeSceneToken(elements[keywordElement]));
+						component.speechKeywordActionNames.push_back(
+							DecodeSceneToken(elements[keywordElement + 1u]));
+					}
+				}
+			}
+		}
+		else if (elements[0] == "SpeechRecognizerWhisperTimingExtension" && elements.size() >= 6u) {
+			const int32_t ownerId = ToInt(elements[1]);
+			for (EditorGameObject& object : loadedGameObjects) if (object.id == ownerId) {
+				for (EditorComponent& component : object.components) if (component.type == EditorComponentType::SpeechRecognizer) {
+					component.speechWhisperEndOnSilence = ToInt(elements[2]) != 0;
+					component.speechWhisperMaximumCaptureSeconds = (std::clamp)(ToFloat(elements[3]), 0.5f, 30.0f);
+					component.speechWhisperSilenceSeconds = (std::clamp)(ToFloat(elements[4]), 0.1f, 3.0f);
+					component.speechWhisperVoiceThreshold = (std::clamp)(ToFloat(elements[5]), 0.001f, 1.0f);
+				}
+			}
+		}
+		else if (elements[0] == "AIVoiceCommandExtension" && elements.size() >= 10u) {
+			const int32_t ownerId = ToInt(elements[1]);
+			for (EditorGameObject& object : loadedGameObjects) if (object.id == ownerId) {
+				for (EditorComponent& component : object.components) if (component.type == EditorComponentType::AIVoiceCommand) {
+					component.voiceCommandMatchMode = (std::clamp)(ToInt(elements[2]), 0, 2);
+					component.voiceCommandCorrectionStrength = (std::clamp)(ToFloat(elements[3]), 0.0f, 1.0f);
+					component.voiceCommandThreshold = (std::clamp)(ToFloat(elements[4]), 0.0f, 1.0f);
+					component.voiceCommandMinimumMargin = (std::clamp)(ToFloat(elements[5]), 0.0f, 1.0f);
+					component.voiceCommandCooldownSeconds = (std::max)(ToFloat(elements[6]), 0.0f);
+					component.voiceCommandLanguage = DecodeSceneToken(elements[7]);
+					component.voiceCommandMicrophoneDevice = DecodeSceneToken(elements[8]);
+					component.voiceCommandPhrases.clear();
+					const int32_t phraseCount = (std::max)(ToInt(elements[9]), 0);
+
+					for (int32_t phraseIndex = 0; phraseIndex < phraseCount; ++phraseIndex) {
+						const size_t elementIndex = 10u + static_cast<size_t>(phraseIndex);
+						if (elementIndex >= elements.size()) break;
+						component.voiceCommandPhrases.push_back(DecodeSceneToken(elements[elementIndex]));
+					}
+				}
+			}
+		}
+		// PR #12 の初期形式では Camera Component と同じ CameraInputExtension 名を使っていた。
+		// 8列の旧形式だけを CameraInput Device として受け付け、23列以上の Camera 制御設定とは分離する。
+		else if (
+			(elements[0] == "CameraInputDeviceExtension" && elements.size() >= 8u) ||
+			(elements[0] == "CameraInputExtension" && elements.size() >= 8u && elements.size() < 23u)) {
+			const int32_t ownerId = ToInt(elements[1]);
+			for (EditorGameObject& object : loadedGameObjects) if (object.id == ownerId) {
+				for (EditorComponent& component : object.components) if (component.type == EditorComponentType::CameraInput) {
+					component.cameraInputWidth = (std::clamp)(ToInt(elements[2]), 64, 4096);
+					component.cameraInputHeight = (std::clamp)(ToInt(elements[3]), 64, 4096);
+					component.cameraInputFrameRateLimit = (std::clamp)(ToInt(elements[4]), 0, 240);
+					component.cameraInputStartOnPlay = ToInt(elements[5]) != 0;
+					component.cameraInputDebugPreview = ToInt(elements[6]) != 0;
+					component.cameraInputDeviceName = DecodeSceneToken(elements[7]);
+				}
+			}
+		}
+		else if (elements[0] == "ImageRecognizerExtension" && elements.size() >= 23u) {
+			const int32_t ownerId = ToInt(elements[1]);
+			for (EditorGameObject& object : loadedGameObjects) if (object.id == ownerId) {
+				for (EditorComponent& component : object.components) if (component.type == EditorComponentType::ImageRecognizer) {
+					component.visionRecognitionMode = (std::clamp)(ToInt(elements[2]), 0, 6);
+					component.visionBackendKind = (std::clamp)(ToInt(elements[3]), 0, 5);
+					component.visionConfidenceThreshold = (std::clamp)(ToFloat(elements[4]), 0.0f, 1.0f);
+					component.visionRecognitionInterval = (std::clamp)(ToFloat(elements[5]), 0.0f, 10.0f);
+					component.visionCameraGameObjectId = ToInt(elements[6]);
+					component.visionStartOnPlay = ToInt(elements[7]) != 0;
+					component.visionDebugPreview = ToInt(elements[8]) != 0;
+					component.visionTargetColor = {
+						ToFloat(elements[9]), ToFloat(elements[10]), ToFloat(elements[11])};
+					component.visionColorTolerance = (std::clamp)(ToFloat(elements[12]), 0.0f, 1.0f);
+					component.visionMinimumAreaRatio = (std::clamp)(ToFloat(elements[13]), 0.0f, 1.0f);
+					component.visionMotionThreshold = (std::clamp)(ToFloat(elements[14]), 0.0f, 1.0f);
+					component.visionInputTriggerMode = (std::clamp)(ToInt(elements[15]), 0, 6);
+					component.visionInputAngleThreshold = ToFloat(elements[16]);
+					component.visionModelAssetPath = DecodeSceneToken(elements[17]);
+					component.visionLabelAssetPath = DecodeSceneToken(elements[18]);
+					component.visionInputActionMapName = DecodeSceneToken(elements[19]);
+					component.visionInputActionName = DecodeSceneToken(elements[20]);
+					component.visionInputTriggerLabel = DecodeSceneToken(elements[21]);
+					component.visionDetectedActionName = DecodeSceneToken(elements[22]);
+				}
+			}
+		}
+		else if (elements[0] == "HapticSourceExtension" && elements.size() >= 13u) {
+			const int32_t ownerId = ToInt(elements[1]);
+			for (EditorGameObject& object : loadedGameObjects) if (object.id == ownerId) {
+				for (EditorComponent& component : object.components) if (component.type == EditorComponentType::HapticSource) {
+					component.hapticPattern = (std::clamp)(ToInt(elements[2]), 0, 4);
+					component.hapticChannel = (std::clamp)(ToInt(elements[3]), 0, 2);
+					component.hapticFrequency = (std::clamp)(ToFloat(elements[4]), 0.0f, 200.0f);
+					component.hapticAudioReactive = ToInt(elements[5]) != 0;
+					component.hapticAudioFrequencyRange = (std::clamp)(ToInt(elements[6]), 0, 2);
+					component.hapticAudioSensitivity = (std::max)(ToFloat(elements[7]), 0.0f);
+					component.hapticAudioIntensityScale = (std::max)(ToFloat(elements[8]), 0.0f);
+					component.hapticPhysicsReactive = ToInt(elements[9]) != 0;
+					component.hapticMaximumImpulse = (std::max)(ToFloat(elements[10]), 0.0001f);
+					component.hapticTargetDevice = (std::clamp)(ToInt(elements[11]), 0, 2);
+					component.hapticClipAssetPath = DecodeSceneToken(elements[12]);
 				}
 			}
 		}
@@ -6375,6 +7071,26 @@ if (elements.size() >= 13u) {
 
 					component.particleBillboardMode = (std::clamp)(ToInt(elements[3]), 0, 3);
 					component.particleBillboardStretch = (std::max)(ToFloat(elements[4]), 0.01f);
+				}
+			}
+		}
+		else if (elements[0] == "CameraProjectionExtension" && elements.size() >= 4u) {
+			const int32_t ownerId = ToInt(elements[1]);
+			const EditorComponentType componentType = ComponentTypeFromIndex(ToInt(elements[2]));
+
+			for (EditorGameObject& object : loadedGameObjects) {
+				if (object.id != ownerId) {
+					continue;
+				}
+
+				for (EditorComponent& component : object.components) {
+					if (component.type != componentType ||
+						(component.type != EditorComponentType::Camera &&
+						 component.type != EditorComponentType::CinemachineCamera)) {
+						continue;
+					}
+
+					component.cameraOrthographicSize = (std::max)(ToFloat(elements[3]), 0.01f);
 				}
 			}
 		}
@@ -6739,6 +7455,9 @@ if (elements.size() >= 13u) {
 				for (EditorComponent& component : gameObject.components) {
 					if (component.type == componentType) {
 						component.assetPath = DecodeSceneToken(elements[3]);
+						// このOverrideはPathしか保存しないため、Move・Rename後も追従できるよう
+						// 都度AssetRegistryとの整合を取り直す(通常のComponent行と同じ扱い)。
+						ResolveComponentAssetReference(component);
 						break;
 					}
 				}
@@ -6802,6 +7521,12 @@ if (elements.size() >= 13u) {
 				break;
 			}
 		}
+		else {
+			// 知らない行種別（新しいBuildが書いた行、将来の機能、要素数が足りない壊れた行）は
+			// 捨てずに保持し、保存時へそのまま書き戻す。捨てると、古いBuildで開いて保存し直した
+			// だけでチームメイトのデータが消える。
+			loadedUnknownLines.push_back(line);
+		}
 	}
 
 	if (!hasSceneData) {
@@ -6813,9 +7538,11 @@ if (elements.size() >= 13u) {
 		for (EditorComponent& component : gameObject.components) {
 			AddDefaultInputEventBindings(component);
 		}
+		UpgradeLegacyPrimitiveBoxCollider(gameObject);
 	}
 
 	gameObjects_ = loadedGameObjects;  // 読み込み成功後だけ現在 Scene を差し替える
+	unknownSceneLines_ = std::move(loadedUnknownLines);
 	sceneUuid_ = std::move(loadedSceneUuid);
 	EnsurePersistentUuids();
 	physicsSettings_ = loadedPhysicsSettings;
@@ -7051,6 +7778,10 @@ bool EditorScene::MergeScene(
 	}
 
 	RebuildChildren();
+	// Additive元Sceneは自分のUUIDをそのまま持ち込むため、同じSceneを2枚読む、
+	// またはPrimaryと同じ祖先Sceneから派生している場合にUUIDが衝突する。
+	// 衝突したまま保存/共同編集するとUUIDキーの参照が別Objectへ当たるので、ここで必ず解消する。
+	EnsurePersistentUuids();
 	return true;
 }
 
@@ -7195,7 +7926,10 @@ bool EditorScene::ApplyCollaborationChange(
 	}
 
 	EditorComponent sourceComponent = *sourceComponentIterator;
-	RemapComponentGameObjectReferences(sourceComponent, remappedIds);
+	// clearIfNotFound=falseにする理由: SetProperty系の差分は対象GameObject 1つだけを含む
+	// 断片Sceneで届くため、remappedIdsにはその1件しか入らない。trueのままだと、Component内の
+	// 他GameObjectへの正当な参照(ターゲット指定等)まで毎回kInvalidGameObjectIdへ壊れてしまう。
+	RemapComponentGameObjectReferences(sourceComponent, remappedIds, false);
 
 	if (operation == "AddComponent" &&
 		targetComponentIterator == targetGameObject->components.end()) {
@@ -7212,12 +7946,50 @@ bool EditorScene::ApplyCollaborationChange(
 	return false;
 }
 
+bool EditorScene::SaveGameObjectFragment(
+	const std::string& objectUuid,
+	const std::string& filePath) const {
+	const EditorGameObject* sourceGameObject = nullptr;
+
+	for (const EditorGameObject& gameObject : gameObjects_) {
+		if (gameObject.uuid == objectUuid) {
+			sourceGameObject = &gameObject;
+			break;
+		}
+	}
+
+	if (sourceGameObject == nullptr || filePath.empty()) {
+		return false;
+	}
+
+	// Transform / Active / ComponentDataのような値だけの変更は、Scene全体ではなく
+	// 対象GameObject 1つだけを含む断片Sceneとして送ることで通信量を大きく減らせる。
+	// 子は含めない(親子構造そのものはSetParent/CreateObjectが別途Scene全体で同期する)。
+	EditorScene fragmentScene;
+	fragmentScene.sceneUuid_ = sceneUuid_;
+	fragmentScene.physicsSettings_ = physicsSettings_;
+	fragmentScene.gameObjects_.push_back(*sourceGameObject);
+	fragmentScene.gameObjects_.back().children.clear();
+	fragmentScene.RebuildChildren();
+	fragmentScene.RefreshNextGameObjectId();
+	return fragmentScene.SaveScene(filePath);
+}
+
 //============================================================
 // Undo / Redo
 //============================================================
 
 void EditorScene::PushUndo() {
 	undoStack_.push_back(gameObjects_);  // 現在の GameObject 配列を丸ごと保存する
+
+	// 1エントリがGameObject配列の完全コピーのため、長時間編集し続けるとメモリを使い切り、
+	// 未保存の作業ごとクラッシュで失う。古い履歴から捨てて上限を設ける。
+	constexpr size_t kMaximumUndoEntryCount = 64u;
+
+	while (undoStack_.size() > kMaximumUndoEntryCount) {
+		undoStack_.erase(undoStack_.begin());
+	}
+
 	redoStack_.clear();  // 新しい編集が入ったら Redo 履歴は無効になる
 }
 
@@ -7413,6 +8185,52 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.hapticStrength = 1.0f;
 		component.hapticDurationMs = 120;
 		component.hapticLoop = false;
+		component.hapticPattern = 0;
+		component.hapticChannel = 0;
+		component.hapticFrequency = 12.0f;
+		component.hapticAudioReactive = false;
+		component.hapticAudioFrequencyRange = 1;
+		component.hapticAudioSensitivity = 1.0f;
+		component.hapticAudioIntensityScale = 1.0f;
+		component.hapticPhysicsReactive = false;
+		component.hapticMaximumImpulse = 40.0f;
+		component.hapticTargetDevice = 0;
+		component.speechRecognitionMode = 0;
+		component.speechBackendKind = 0;
+		component.speechLanguage = "ja-JP";
+		component.speechConfidenceThreshold = 0.5f;
+		component.speechWhisperEndOnSilence = true;
+		component.speechWhisperMaximumCaptureSeconds = 4.0f;
+		component.speechWhisperSilenceSeconds = 0.45f;
+		component.speechWhisperVoiceThreshold = 0.01f;
+		component.speechContinuousRecognition = true;
+		component.speechStartOnPlay = true;
+		component.speechInputActionMapName = "Player";
+		component.voiceCommandMatchMode = 0;
+		component.voiceCommandCorrectionStrength = 1.0f;
+		component.voiceCommandThreshold = 0.72f;
+		component.voiceCommandMinimumMargin = 0.15f;
+		component.voiceCommandCooldownSeconds = 0.5f;
+		component.voiceCommandLanguage = "ja-JP";
+		component.cameraInputWidth = 640;
+		component.cameraInputHeight = 480;
+		component.cameraInputFrameRateLimit = 30;
+		component.cameraInputStartOnPlay = true;
+		component.cameraInputDebugPreview = true;
+		component.visionRecognitionMode = 6;
+		component.visionBackendKind = 0;
+		component.visionConfidenceThreshold = 0.5f;
+		component.visionRecognitionInterval = 0.2f;
+		component.visionCameraGameObjectId = -1;
+		component.visionStartOnPlay = true;
+		component.visionDebugPreview = true;
+		component.visionTargetColor = {1.0f, 0.0f, 0.0f};
+		component.visionColorTolerance = 0.25f;
+		component.visionMinimumAreaRatio = 0.002f;
+		component.visionMotionThreshold = 0.06f;
+		component.visionInputActionMapName = "Player";
+		component.visionInputTriggerMode = 0;
+		component.visionInputAngleThreshold = 20.0f;
 		component.audioVolume = 1.0f;
 		component.audioPitch = 1.0f;
 		component.audioLoop = false;
@@ -7979,6 +8797,9 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.waveCompletedActionName = "OnWaveCompleted";
 		component.waveAllDefeatedActionName = "OnWaveAllDefeated";
 		component.waveSpawnRailStartNormalized = -1.0f;
+		component.waveSpawnAheadOfSource = false;
+		component.waveSpawnProgressSourceGameObjectId = -1;
+		component.waveSpawnAheadNormalized = 0.04f;
 		// 既定は0=従来どおり一括生成。既存Sceneの挙動を変えない。
 		component.waveTargetAliveCount = 0;
 		component.waveSpawnPointSetGameObjectId = -1;
@@ -8014,6 +8835,20 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.sliderMinValue = 0.0f;
 		component.sliderMaxValue = 1.0f;
 		component.sliderOnValueChangedFunction = "OnValueChanged";
+		// Textの体裁。既定は従来描画と同じ(Rect高さ＝文字サイズ、左上寄せ、折返しなし、装飾なし)。
+		component.textFontAssetPath.clear();
+		component.textFontSize = 0.0f;
+		component.textHorizontalAlign = 0;
+		component.textVerticalAlign = 0;
+		component.textWordWrap = false;
+		component.textOverflowMode = 0;
+		component.textOutlineWidth = 0.0f;
+		component.textOutlineColor = {0.0f, 0.0f, 0.0f};
+		// 影の既定ONは従来描画の再現。旧Sceneは体裁列を持たないため、既定値がそのまま見た目になる。
+		component.textShadowEnabled = true;
+		component.textShadowOffsetX = 2.0f;
+		component.textShadowOffsetY = 2.0f;
+		component.textShadowColor = {0.0f, 0.0f, 0.0f};
 		component.scriptProperties.clear();
 		component.inputEventBindings.clear();
 		AddDefaultInputEventBindings(component);
@@ -8037,6 +8872,7 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.glareFade = 0.85f;
 		component.glareColorModulation = 0.15f;
 		component.glareCenter = {0.5f, 0.5f, 0.0f};
+		component.glareSampleRatio = 1.0f;
 		component.filterMode = 0;
 		component.filterModeMask = 0;
 		component.filterStrength = 1.0f;
@@ -8074,6 +8910,20 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.compositeColorLutAssetPath.clear();
 		component.compositeColorLutStrength = 1.0f;
 		component.compositeDebugView = 0;
+	}
+
+	if (type == EditorComponentType::PerformanceSettings) {
+		// Gameplayの動きは既定で触らず、描画側の高コスト項目だけ調整対象にする。
+		component.performanceAdaptiveQuality = true;
+		component.performanceTargetFps = 60;
+		component.performanceViewRenderMode = 0;
+		component.performanceAllowShadowThrottle = true;
+		component.performanceAllowReflectionThrottle = true;
+		component.performanceAllowBakeThrottle = true;
+		component.performanceShadowUpdateInterval = 0;
+		component.performanceReflectionUpdateInterval = 0;
+		component.performanceOceanFftUpdateInterval = 0;
+		component.performanceGlareSampleRatio = 0.75f;
 	}
 
 	if (type == EditorComponentType::Environment) {
@@ -8120,6 +8970,25 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.metallic = 0.92f;  // 時間平滑(ヒステリシス)
 	}
 
+	if (type == EditorComponentType::SpeechRecognizer) {
+		// Keyword Mode で始め、登録語は Inspector から足す前提にする。
+		component.speechRecognitionMode = 0;
+		component.speechKeywords.clear();
+		component.speechKeywordActionNames.clear();
+	}
+
+	if (type == EditorComponentType::CameraInput) {
+		component.cameraInputWidth = 640;
+		component.cameraInputHeight = 480;
+		component.cameraInputFrameRateLimit = 30;
+	}
+
+	if (type == EditorComponentType::ImageRecognizer) {
+		// 追加ライブラリ無しで動く動体検出を既定にする。
+		component.visionRecognitionMode = 6;
+		component.visionBackendKind = 0;
+	}
+
 	if (type == EditorComponentType::SunPortal) {
 		component.color = {1.0f, 1.0f, 1.0f};
 		component.intensity = 1.0f;
@@ -8133,6 +9002,7 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.cameraNearClip = 0.3f;
 		component.cameraFarClip = 1000.0f;
 		component.cameraProjectionMode = 0;
+		component.cameraOrthographicSize = 10.0f;
 		component.cameraDofEnabled = false;
 		component.cameraDofFocusDistance = 10.0f;
 		component.cameraDofAperture = 0.1f;
@@ -8634,6 +9504,48 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 	component.destructibleActionTargetGameObjectId = -1;
 	component.destructibleDestroyedActionName = "OnPartDestroyed";
 	component.destructibleDestroyed = false;
+	component.destructibleBlastEnabled = true;
+	component.destructibleBlastFractureMethod = 0;
+	component.destructibleBlastChunkCount = 20;
+	component.destructibleBlastRandomSeed = 1234;
+	component.destructibleBlastBondHealth = 100.0f;
+	component.destructibleBlastDamageRadius = 2.0f;
+	component.destructibleBlastImpulse = 12.0f;
+	component.destructibleBlastChunkMass = 1.0f;
+	component.destructibleBlastBondNeighborCount = 3;
+	component.destructibleBlastCollisionQuality = 1;
+	component.destructibleBlastAutoBake = true;
+	component.destructibleBlastUsePrefracturedChildren = false;
+	component.destructibleBlastHideChunksUntilFracture = true;
+	component.destructibleBlastBakeStatus = "Needs Bake";
+	component.destructibleBlastBakeError.clear();
+	component.destructibleBlastForceRebake = false;
+	component.destructibleBlastClearCacheRequested = false;
+	component.destructibleBlastDebrisSinkDelay = 0.0f;
+	component.destructibleBlastDebrisSinkDuration = 1.5f;
+	component.destructibleBlastDebrisSinkDistance = 1.0f;
+	component.destructibleBlastOptimizeEnabled = false;
+	component.destructibleBlastMaxPhysicsChunks = 5;
+	component.destructibleBlastUseClusterPhysics = true;
+	component.destructibleBlastClusterSize = 5;
+	component.destructibleBlastClusterScatterDelay = 2.0f;
+	component.destructibleBlastClusterScatterDistance = 0.15f;
+	component.destructibleBlastPhysicsLifetime = 0.0f;
+	component.destructibleBlastUseGpuDebris = true;
+	component.destructibleBlastGpuDebrisLifetime = 4.0f;
+	component.destructibleBlastGpuDebrisGravity = 9.8f;
+	component.destructibleBlastGpuDebrisDrag = 0.2f;
+	component.destructibleBlastGpuDebrisWind = 0.5f;
+	component.destructibleBlastGpuDebrisMotionType = 1;
+	component.destructibleBlastGpuDebrisRadialAcceleration = 4.0f;
+	component.destructibleBlastGpuDebrisUpdraft = 6.0f;
+	component.destructibleBlastGpuDebrisAngularSpeed = 90.0f;
+	component.destructibleBlastGpuDebrisSpin = 180.0f;
+	component.destructibleBlastGpuDebrisMeshLimit = 4;
+	component.destructibleBlastUseDistanceLod = false;
+	component.destructibleBlastLodNearDistance = 25.0f;
+	component.destructibleBlastLodFarDistance = 80.0f;
+	component.destructibleBlastLodFarDebrisCount = 8;
 	component.formationLeaderGameObjectId = -1;
 	component.formationLocalOffset = {};
 	component.formationPositionSpeed = 8.0f;

@@ -1,5 +1,5 @@
-﻿#ifndef CG2_HISTORY_CLAMP_HLSLI
-#define CG2_HISTORY_CLAMP_HLSLI
+﻿#ifndef MANOENGINE_HISTORY_CLAMP_HLSLI
+#define MANOENGINE_HISTORY_CLAMP_HLSLI
 
 void GetNeighborhoodBounds(
     Texture2D<float4> currentTexture,

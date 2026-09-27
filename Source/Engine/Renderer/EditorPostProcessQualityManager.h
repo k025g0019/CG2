@@ -56,7 +56,8 @@ public:
 		float colorR,
 		float colorG,
 		float colorB,
-		bool preserveSource);
+		bool preserveSource,
+		float sampleRatio);
 	bool ExecuteFilter(
 		ID3D12GraphicsCommandList* commandList,
 		D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle,

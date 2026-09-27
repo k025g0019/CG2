@@ -383,8 +383,289 @@ void EditorNavigationManager::Stop() {
 	links_.clear();
 	agentVelocities_.clear();
 	agentDestinations_.clear();
+	scriptDestinations_.clear();
+	stoppedAgents_.clear();
+	pathFailureReasons_.clear();
 	navigationRebuildRemainingSeconds_ = 0.0f;
 	isStarted_ = false;
+}
+
+//================================================================
+// Runtime Navigation API
+//================================================================
+
+bool EditorNavigationManager::SetDestination(int32_t gameObjectId, const Vector3& destination) {
+	if (editorScene_ == nullptr || editorScene_->FindGameObject(gameObjectId) == nullptr) {
+		return false;
+	}
+
+	Vector3 clampedDestination = destination;
+
+	// Surface 外を指定された場合は最寄りの Surface 上へ寄せる。
+	// 「到達できない座標を渡しても Agent が固まらない」ことを優先する。
+	if (!TryClampToSurface(clampedDestination, 0.0f)) {
+		pathFailureReasons_[gameObjectId] = "目的地がNavMesh Surfaceの範囲外です";
+		return false;
+	}
+
+	scriptDestinations_[gameObjectId] = clampedDestination;
+	agentDestinations_[gameObjectId] = clampedDestination;
+	pathFailureReasons_.erase(gameObjectId);
+	stoppedAgents_[gameObjectId] = false;
+	return true;
+}
+
+bool EditorNavigationManager::GetDestination(int32_t gameObjectId, Vector3& outDestination) const {
+	const auto destinationIterator = agentDestinations_.find(gameObjectId);
+
+	if (destinationIterator == agentDestinations_.end()) {
+		return false;
+	}
+
+	outDestination = destinationIterator->second;
+	return true;
+}
+
+bool EditorNavigationManager::StopAgent(int32_t gameObjectId) {
+	if (editorScene_ == nullptr || editorScene_->FindGameObject(gameObjectId) == nullptr) {
+		return false;
+	}
+
+	stoppedAgents_[gameObjectId] = true;
+	agentVelocities_[gameObjectId] = {0.0f, 0.0f, 0.0f};
+	return true;
+}
+
+bool EditorNavigationManager::ResumeAgent(int32_t gameObjectId) {
+	if (editorScene_ == nullptr || editorScene_->FindGameObject(gameObjectId) == nullptr) {
+		return false;
+	}
+
+	stoppedAgents_[gameObjectId] = false;
+	return true;
+}
+
+bool EditorNavigationManager::IsAgentStopped(int32_t gameObjectId) const {
+	const auto stoppedIterator = stoppedAgents_.find(gameObjectId);
+	return stoppedIterator != stoppedAgents_.end() && stoppedIterator->second;
+}
+
+bool EditorNavigationManager::HasPath(int32_t gameObjectId) const {
+	if (editorScene_ == nullptr) {
+		return false;
+	}
+
+	Vector3 destination{};
+	if (!GetDestination(gameObjectId, destination)) {
+		return false;
+	}
+
+	const EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+	if (gameObject == nullptr) {
+		return false;
+	}
+
+	const EditorComponent* agent =
+		EditorComponentUtility::FindComponent(*gameObject, EditorComponentType::NavigationAgent);
+	const float agentRadius = agent != nullptr ? agent->navAgentRadius : 0.5f;
+	std::vector<Vector3> pathPoints;
+	return CalculatePath(gameObject->translate, destination, agentRadius, pathPoints);
+}
+
+std::string EditorNavigationManager::GetLastPathFailureReason(int32_t gameObjectId) const {
+	const auto reasonIterator = pathFailureReasons_.find(gameObjectId);
+	return reasonIterator != pathFailureReasons_.end() ? reasonIterator->second : std::string();
+}
+
+bool EditorNavigationManager::GetRemainingDistance(int32_t gameObjectId, float& outDistance) const {
+	if (editorScene_ == nullptr) {
+		return false;
+	}
+
+	Vector3 destination{};
+	if (!GetDestination(gameObjectId, destination)) {
+		return false;
+	}
+
+	const EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+	if (gameObject == nullptr) {
+		return false;
+	}
+
+	const float deltaX = destination.x - gameObject->translate.x;
+	const float deltaZ = destination.z - gameObject->translate.z;
+	outDistance = std::sqrt(deltaX * deltaX + deltaZ * deltaZ);
+	return true;
+}
+
+bool EditorNavigationManager::WarpAgent(int32_t gameObjectId, const Vector3& position) {
+	if (editorScene_ == nullptr) {
+		return false;
+	}
+
+	EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+	if (gameObject == nullptr) {
+		return false;
+	}
+
+	Vector3 clampedPosition = position;
+	TryClampToSurface(clampedPosition, 0.0f);
+	gameObject->translate.x = clampedPosition.x;
+	gameObject->translate.z = clampedPosition.z;
+	agentVelocities_[gameObjectId] = {0.0f, 0.0f, 0.0f};
+	return true;
+}
+
+bool EditorNavigationManager::CalculatePath(
+	const Vector3& startPosition,
+	const Vector3& endPosition,
+	float agentRadius,
+	std::vector<Vector3>& outPathPoints) const {
+	outPathPoints.clear();
+
+	if (surfaces_.empty()) {
+		return false;
+	}
+
+	Vector3 clampedStart = startPosition;
+	Vector3 clampedEnd = endPosition;
+
+	if (!TryClampToSurface(clampedStart, agentRadius) || !TryClampToSurface(clampedEnd, agentRadius)) {
+		return false;
+	}
+
+	// Surface は XZ 平面の矩形集合で、Agent は直進 + Obstacle 回避で動く実装になっている。
+	// ここでもそれに合わせ、直線を分割して Obstacle と重なる区間を横へ逃がした折れ線を返す。
+	// 完全な A* ではないが、「経路が取れるか」「どの辺りを通るか」を Script と Debug 表示へ返せる。
+	constexpr int32_t kPathSampleCount = 16;
+	outPathPoints.push_back(clampedStart);
+
+	for (int32_t sampleIndex = 1; sampleIndex <= kPathSampleCount; ++sampleIndex) {
+		const float ratio = static_cast<float>(sampleIndex) / static_cast<float>(kPathSampleCount);
+		Vector3 samplePoint{
+			clampedStart.x + (clampedEnd.x - clampedStart.x) * ratio,
+			clampedStart.y + (clampedEnd.y - clampedStart.y) * ratio,
+			clampedStart.z + (clampedEnd.z - clampedStart.z) * ratio};
+
+		// Surface から外れる点は最寄りへ寄せる。寄せられない場合は経路失敗とする。
+		if (!TryClampToSurface(samplePoint, agentRadius)) {
+			outPathPoints.clear();
+			return false;
+		}
+
+		// Obstacle と重なる点は、既存の回避処理と同じ判定で押し出す。
+		bool isBlocked = false;
+
+		for (const NavigationObstacle& obstacle : obstacles_) {
+			if (!obstacle.canCarve) {
+				continue;
+			}
+
+			const float deltaX = samplePoint.x - obstacle.center.x;
+			const float deltaZ = samplePoint.z - obstacle.center.z;
+			const float blockRadius = obstacle.radius + agentRadius;
+			const float distanceSquared = deltaX * deltaX + deltaZ * deltaZ;
+
+			if (distanceSquared >= blockRadius * blockRadius || distanceSquared <= 0.000001f) {
+				continue;
+			}
+
+			const float distance = std::sqrt(distanceSquared);
+			samplePoint.x = obstacle.center.x + (deltaX / distance) * blockRadius;
+			samplePoint.z = obstacle.center.z + (deltaZ / distance) * blockRadius;
+			isBlocked = true;
+		}
+
+		if (isBlocked && !TryClampToSurface(samplePoint, agentRadius)) {
+			outPathPoints.clear();
+			return false;
+		}
+
+		outPathPoints.push_back(samplePoint);
+	}
+
+	return true;
+}
+
+void EditorNavigationManager::BuildDebugLines(std::vector<NavigationDebugLine>& outLines) const {
+	outLines.clear();
+
+	// Surface の外周(緑)。NavMesh がどこに張れているかを一目で分かるようにする。
+	for (const NavigationSurface& surface : surfaces_) {
+		const EditorGameObject* surfaceGameObject =
+			editorScene_ != nullptr ? editorScene_->FindGameObject(surface.gameObjectId) : nullptr;
+		const float surfaceY = surfaceGameObject != nullptr ? surfaceGameObject->translate.y + 0.02f : 0.02f;
+		const Vector3 color{0.2f, 0.9f, 0.4f};
+		const Vector3 corner0{surface.minX, surfaceY, surface.minZ};
+		const Vector3 corner1{surface.maxX, surfaceY, surface.minZ};
+		const Vector3 corner2{surface.maxX, surfaceY, surface.maxZ};
+		const Vector3 corner3{surface.minX, surfaceY, surface.maxZ};
+		outLines.push_back({corner0, corner1, color});
+		outLines.push_back({corner1, corner2, color});
+		outLines.push_back({corner2, corner3, color});
+		outLines.push_back({corner3, corner0, color});
+	}
+
+	// Obstacle の回避半径(赤)。
+	for (const NavigationObstacle& obstacle : obstacles_) {
+		if (!obstacle.canCarve) {
+			continue;
+		}
+
+		constexpr int32_t kCircleSegmentCount = 12;
+		const Vector3 color{0.95f, 0.35f, 0.3f};
+
+		for (int32_t segmentIndex = 0; segmentIndex < kCircleSegmentCount; ++segmentIndex) {
+			const float startAngle =
+				6.2831853f * static_cast<float>(segmentIndex) / static_cast<float>(kCircleSegmentCount);
+			const float endAngle =
+				6.2831853f * static_cast<float>(segmentIndex + 1) / static_cast<float>(kCircleSegmentCount);
+			outLines.push_back({
+				Vector3{
+					obstacle.center.x + std::cos(startAngle) * obstacle.radius,
+					obstacle.center.y + 0.05f,
+					obstacle.center.z + std::sin(startAngle) * obstacle.radius},
+				Vector3{
+					obstacle.center.x + std::cos(endAngle) * obstacle.radius,
+					obstacle.center.y + 0.05f,
+					obstacle.center.z + std::sin(endAngle) * obstacle.radius},
+				color});
+		}
+	}
+
+	// Off-Mesh Link(青)。
+	for (const NavigationLink& link : links_) {
+		outLines.push_back({link.start, link.end, Vector3{0.35f, 0.6f, 1.0f}});
+	}
+
+	// 各 Agent の現在経路(黄)。実際に通る予定の線を見せる。
+	if (editorScene_ == nullptr) {
+		return;
+	}
+
+	for (const auto& destinationPair : agentDestinations_) {
+		const EditorGameObject* gameObject = editorScene_->FindGameObject(destinationPair.first);
+
+		if (gameObject == nullptr) {
+			continue;
+		}
+
+		const EditorComponent* agent =
+			EditorComponentUtility::FindComponent(*gameObject, EditorComponentType::NavigationAgent);
+		const float agentRadius = agent != nullptr ? agent->navAgentRadius : 0.5f;
+		std::vector<Vector3> pathPoints;
+
+		if (!CalculatePath(gameObject->translate, destinationPair.second, agentRadius, pathPoints)) {
+			continue;
+		}
+
+		for (size_t pointIndex = 1u; pointIndex < pathPoints.size(); ++pointIndex) {
+			outLines.push_back({
+				pathPoints[pointIndex - 1u],
+				pathPoints[pointIndex],
+				Vector3{1.0f, 0.85f, 0.25f}});
+		}
+	}
 }
 
 void EditorNavigationManager::BuildNavigationData(bool shouldLog) {
@@ -499,27 +780,63 @@ void EditorNavigationManager::BuildNavigationData(bool shouldLog) {
 }
 
 void EditorNavigationManager::UpdateAgent(EditorGameObject& gameObject, EditorComponent& agent, float deltaTime) {
-	if (agent.connectedGameObjectId == kNavigationInvalidGameObjectId) {
+	// Runtime API で停止指示中は、目的地を保持したまま動かさない。
+	if (IsAgentStopped(gameObject.id)) {
 		agentVelocities_[gameObject.id] = {0.0f, 0.0f, 0.0f};
 		return;
 	}
 
-	const EditorGameObject* targetGameObject = editorScene_->FindGameObject(agent.connectedGameObjectId);
-	if (targetGameObject == nullptr || !targetGameObject->isActive) {
+	// SetDestination で明示指定された目的地は、Component の接続先 GameObject より優先する。
+	const auto scriptDestinationIterator = scriptDestinations_.find(gameObject.id);
+	const bool hasScriptDestination = scriptDestinationIterator != scriptDestinations_.end();
+
+	if (!hasScriptDestination && agent.connectedGameObjectId == kNavigationInvalidGameObjectId) {
 		agentVelocities_[gameObject.id] = {0.0f, 0.0f, 0.0f};
 		return;
 	}
 
-	Vector3 targetPosition = targetGameObject->translate;  // Agent が向かう最終目的地。
-	if (!agent.navAutoRepath) {
-		if (agentDestinations_.find(gameObject.id) == agentDestinations_.end()) {
-			agentDestinations_[gameObject.id] = targetPosition;
-		}
+	Vector3 targetPosition{};
 
-		targetPosition = agentDestinations_[gameObject.id];
+	if (hasScriptDestination) {
+		targetPosition = scriptDestinationIterator->second;
+		agentDestinations_[gameObject.id] = targetPosition;
 	}
 	else {
-		agentDestinations_[gameObject.id] = targetPosition;
+		const EditorGameObject* targetGameObject = editorScene_->FindGameObject(agent.connectedGameObjectId);
+		if (targetGameObject == nullptr || !targetGameObject->isActive) {
+			agentVelocities_[gameObject.id] = {0.0f, 0.0f, 0.0f};
+			pathFailureReasons_[gameObject.id] = "追従先GameObjectが無効です";
+			return;
+		}
+
+		targetPosition = targetGameObject->translate;  // Agent が向かう最終目的地。
+
+		if (!agent.navAutoRepath) {
+			if (agentDestinations_.find(gameObject.id) == agentDestinations_.end()) {
+				agentDestinations_[gameObject.id] = targetPosition;
+			}
+
+			targetPosition = agentDestinations_[gameObject.id];
+		}
+		else {
+			agentDestinations_[gameObject.id] = targetPosition;
+		}
+	}
+
+	// Surface が1つも無い / 目的地を Surface へ寄せられない場合は、理由を残してその場で止める。
+	// 「なぜ動かないのか分からない」状態を作らないことを優先する。
+	if (surfaces_.empty()) {
+		pathFailureReasons_[gameObject.id] = "NavMesh Surfaceがありません";
+	}
+	else {
+		Vector3 reachabilityCheckPosition = targetPosition;
+
+		if (!TryClampToSurface(reachabilityCheckPosition, agent.navAgentRadius)) {
+			pathFailureReasons_[gameObject.id] = "目的地がNavMesh Surfaceの範囲外です";
+		}
+		else {
+			pathFailureReasons_.erase(gameObject.id);
+		}
 	}
 
 	TryClampToSurface(targetPosition, agent.navAgentRadius);

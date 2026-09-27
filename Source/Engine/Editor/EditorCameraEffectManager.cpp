@@ -97,6 +97,7 @@ void EditorCameraEffectManager::Initialize(EditorScene* editorScene) {
 	cameraInputYaw_ = 0.0f;
 	cameraInputPitch_ = 0.0f;
 	cameraInputOrbitDistance_ = 0.0f;
+	cameraInputFreeMoveOffset_ = {0.0f, 0.0f, 0.0f};
 	cameraInputInitialized_ = false;
 	cameraInputOwnsCursorLock_ = false;
 	cameraInputOwnsCursorVisibility_ = false;
@@ -283,6 +284,7 @@ void EditorCameraEffectManager::Stop() {
 	cameraControllerWasActive_ = false;
 	cameraInputOwnerGameObjectId_ = -1;
 	cameraInputInitialized_ = false;
+	cameraInputFreeMoveOffset_ = {0.0f, 0.0f, 0.0f};
 	ReleaseCameraInputCursor();
 	g_runtimeGameCameraOverrideActive = false;
 	g_runtimeGameCameraPositionOffset = {0.0f, 0.0f, 0.0f};
@@ -568,6 +570,7 @@ bool EditorCameraEffectManager::UpdateCameraInput(float deltaTime, const uint8_t
 			cameraComponent->cameraInputOrbitDistance,
 			minimumDistance,
 			maximumDistance);
+		cameraInputFreeMoveOffset_ = {0.0f, 0.0f, 0.0f};
 		cameraInputOwnerGameObjectId_ = cameraGameObject->id;
 		cameraInputInitialized_ = true;
 	}
@@ -657,7 +660,9 @@ bool EditorCameraEffectManager::UpdateCameraInput(float deltaTime, const uint8_t
 			orbitPivot,
 			MultiplyVector3(cameraInputOrbitDistance_, cameraForward));
 	}
-	else if (isCursorAvailable && cameraComponent->cameraInputMovementEnabled) {
+	else {
+		// FreeLookでも追従対象の移動には毎フレーム追従し、WASD/QE入力は追従位置からのOffsetとして保持する。
+		// 初期化時だけ追従位置を読むと、Playの途中から対象が動いても付いていかない。
 		Vector3 movementDirection{0.0f, 0.0f, 0.0f};
 
 		if (IsKeyDown(keyState, 0x11)) {
@@ -686,17 +691,21 @@ bool EditorCameraEffectManager::UpdateCameraInput(float deltaTime, const uint8_t
 
 		const float movementLength = LengthVector3(movementDirection);
 
-		if (movementLength > 0.0f) {
+		if (isCursorAvailable && cameraComponent->cameraInputMovementEnabled && movementLength > 0.0f) {
 			const bool isFastMove = IsKeyDown(keyState, 0x2A) || IsKeyDown(keyState, 0x36);
 			const float fastMultiplier = isFastMove
 				? (std::max)(cameraComponent->cameraInputFastMultiplier, 1.0f)
 				: 1.0f;
 			const float movementScale = cameraComponent->cameraInputMoveSpeed *
 				fastMultiplier * (std::max)(deltaTime, 0.0f) / movementLength;
-			cameraInputRuntimeTransform_.translate = AddVector3(
-				cameraInputRuntimeTransform_.translate,
+			cameraInputFreeMoveOffset_ = AddVector3(
+				cameraInputFreeMoveOffset_,
 				MultiplyVector3(movementScale, movementDirection));
 		}
+
+		cameraInputRuntimeTransform_.translate = AddVector3(
+			ResolveFollowedCameraTransform(*cameraGameObject, *cameraComponent).translate,
+			cameraInputFreeMoveOffset_);
 	}
 
 	cameraInputRuntimeTransform_.rotate = {cameraInputPitch_, cameraInputYaw_, 0.0f};

@@ -9,6 +9,32 @@ param(
 $ErrorActionPreference = 'Stop'
 $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $sdkRoot = Join-Path $projectRoot 'ThirdParty\PhysicsSdk'
+$blastPhysX34Root = Join-Path $projectRoot 'ThirdParty\PhysX-3.4'
+
+# Blast 1.1.5 Authoringだけはリリース時と同じPhysX 3.4型定義を必要とする。
+# ManoEngine Runtime用の現行PhysXと混ぜるとPxVec3の型衝突が起きるため、配置を先に検証する。
+$blastPhysX34Include = Join-Path $blastPhysX34Root 'PhysX_3.4\Include'
+$blastPxSharedInclude = Join-Path $blastPhysX34Root 'PxShared\include'
+if (!(Test-Path -LiteralPath $blastPhysX34Root -PathType Container)) {
+    $gitCommand = Get-Command git.exe -ErrorAction SilentlyContinue
+    if (!$gitCommand) {
+        throw 'Git is required to acquire NVIDIA PhysX 3.4 for Blast Authoring.'
+    }
+
+    Write-Host 'Downloading NVIDIA PhysX 3.4 for Blast 1.1.5 Authoring...'
+    & $gitCommand.Source clone --depth 1 `
+        'https://github.com/NVIDIAGameWorks/PhysX-3.4.git' `
+        $blastPhysX34Root
+    if ($LASTEXITCODE -ne 0) {
+        throw 'PhysX 3.4 download failed. Remove an incomplete ThirdParty\PhysX-3.4 folder before retrying.'
+    }
+}
+
+if (!(Test-Path -LiteralPath $blastPhysX34Include -PathType Container) -or
+    !(Test-Path -LiteralPath $blastPxSharedInclude -PathType Container) -or
+    !(Test-Path -LiteralPath (Join-Path $blastPxSharedInclude 'foundation\PxVec3.h') -PathType Leaf)) {
+    throw 'Blast Authoring requires ThirdParty\PhysX-3.4 (PhysX_3.4\Include and PxShared\include).'
+}
 
 # SDK の原本を保持し、CG2 内のコピーだけをビルドする。
 function Copy-SdkTree([string]$sourcePath, [string]$destinationPath) {
@@ -74,4 +100,4 @@ foreach ($buildConfiguration in $Configuration) {
     }
 
 }
-Write-Host 'PhysX CPU/GPU SDK and Blast low-level SDK are ready for CG2.'
+Write-Host 'PhysX CPU/GPU SDK and Blast runtime/authoring SDK are ready for ManoEngine.'

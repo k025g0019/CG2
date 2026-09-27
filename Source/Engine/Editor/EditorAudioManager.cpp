@@ -5,6 +5,9 @@
 #include "EditorComponentUtility.h"
 #include "EditorPhysicsManager.h"
 #include "EditorSharedState.h"
+#include "Source/Engine/Asset/AssetImportSettings.h"
+#include "Source/Engine/Asset/AssetRegistry.h"
+#include "Source/Engine/Core/ProjectSettings.h"
 
 #include <cmath>
 #include <cstring>
@@ -107,6 +110,37 @@ void EditorAudioManager::Start() {
 	isPaused_ = false;
 	lastPlaybackTimeByGameObjectId_.clear();
 
+	// Project Settings の初期音量を Play 開始時に反映する。
+	// Play 中に Inspector から変更した値は、次の Play で再びここから開始する。
+	const ProjectSettingsData& projectSettings = ProjectSettings::Get().GetData();
+	masterVolume_ = projectSettings.masterVolume;
+	busVolumes_[static_cast<size_t>(EditorAudioBus::Sfx)] = projectSettings.sfxVolume;
+	busVolumes_[static_cast<size_t>(EditorAudioBus::Bgm)] = projectSettings.bgmVolume;
+	busVolumes_[static_cast<size_t>(EditorAudioBus::Ambience)] = projectSettings.ambienceVolume;
+	busVolumes_[static_cast<size_t>(EditorAudioBus::Ui)] = projectSettings.uiVolume;
+	busVolumes_[static_cast<size_t>(EditorAudioBus::Voice)] = projectSettings.voiceVolume;
+
+	// Import Settingsでpreload指定されたAudio ClipをPlay開始時に一度先読みし、
+	// 初回再生時のFile読込による遅延を減らす(音は鳴らさない)。
+	for (const auto& gameObject : editorScene_->GetGameObjects()) {
+		const auto* preloadAudioSource = EditorComponentUtility::FindComponent(
+			gameObject, EditorComponentType::AudioSource);
+
+		if (preloadAudioSource == nullptr || preloadAudioSource->assetPath.empty()) {
+			continue;
+		}
+
+		const AssetRecord* preloadRecord = AssetRegistry::Get().FindByPath(preloadAudioSource->assetPath);
+		if (preloadRecord == nullptr) {
+			continue;
+		}
+
+		const AssetImportMetadata* preloadMetadata = AssetImportSettingsStore::Get().Find(preloadRecord->id);
+		if (preloadMetadata != nullptr && preloadMetadata->audio.preloadOnPlayStart) {
+			PreloadClip(preloadAudioSource->assetPath);
+		}
+	}
+
 	for (auto& gameObject : editorScene_->GetGameObjects()) {
 		if (!gameObject.isActive) {
 			continue;
@@ -126,8 +160,12 @@ void EditorAudioManager::Start() {
 }
 
 bool EditorAudioManager::Play(int32_t gameObjectId) {
+	return PlayWithHandle(gameObjectId) != kInvalidAudioVoiceHandle;
+}
+
+AudioVoiceHandle EditorAudioManager::PlayWithHandle(int32_t gameObjectId) {
 	if (editorScene_ == nullptr || xAudio2_ == nullptr) {
-		return false;
+		return kInvalidAudioVoiceHandle;
 	}
 
 	const EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
@@ -140,7 +178,7 @@ bool EditorAudioManager::Play(int32_t gameObjectId) {
 		audioSource == nullptr ||
 		!audioSource->isActive ||
 		audioSource->assetPath.empty()) {
-		return false;
+		return kInvalidAudioVoiceHandle;
 	}
 
 	const float retriggerInterval = (std::max)(audioSource->audioRetriggerInterval, 0.0f);
@@ -148,7 +186,7 @@ bool EditorAudioManager::Play(int32_t gameObjectId) {
 
 	if (lastPlaybackIterator != lastPlaybackTimeByGameObjectId_.end() &&
 		playbackClock_ - lastPlaybackIterator->second < retriggerInterval) {
-		return false;
+		return kInvalidAudioVoiceHandle;
 	}
 
 	AudioClip* clip = LoadClip(audioSource->assetPath);
@@ -160,7 +198,7 @@ bool EditorAudioManager::Play(int32_t gameObjectId) {
 		clip->sampleRate == 0u ||
 		clip->blockAlign == 0u ||
 		(clip->formatTag != WAVE_FORMAT_PCM && clip->formatTag != WAVE_FORMAT_IEEE_FLOAT)) {
-		return false;
+		return kInvalidAudioVoiceHandle;
 	}
 
 	ActiveAudio active{};
@@ -171,7 +209,8 @@ bool EditorAudioManager::Play(int32_t gameObjectId) {
 	active.spatialBlend = audioSource->audioSpatialBlend;
 	active.minDistance = audioSource->audioMinDistance;
 	active.maxDistance = audioSource->audioMaxDistance;
-	active.audioBus = (std::clamp)(audioSource->audioBus, 0, 3);
+	active.audioBus = (std::clamp)(
+		audioSource->audioBus, 0, static_cast<int32_t>(EditorAudioBus::Count) - 1);
 	active.loop = audioSource->audioLoop;
 	active.filterComponentId = -1;
 
@@ -197,6 +236,41 @@ bool EditorAudioManager::Play(int32_t gameObjectId) {
 		activeAudios_.erase(oldestVoiceIterator);
 	}
 
+	// 同じGameObjectからの再生数はaudioMaxVoicesで抑えられるが、多数のGameObjectが
+	// それぞれ同じSEを1回ずつ鳴らすケース(弾着弾の乱発等)はここでは防げない。
+	// Scene全体のVoice総数をここで別途上限し、一番古いVoiceを追い出して無制限増加を防ぐ。
+	if (static_cast<int32_t>(activeAudios_.size()) >= maxGlobalVoiceCount_) {
+		auto globalOldestIterator = activeAudios_.begin();
+
+		for (auto activeIterator = activeAudios_.begin(); activeIterator != activeAudios_.end(); activeIterator++) {
+			if (activeIterator->playbackAge > globalOldestIterator->playbackAge) {
+				globalOldestIterator = activeIterator;
+			}
+		}
+
+		if (globalOldestIterator != activeAudios_.end()) {
+			StopClip(*globalOldestIterator);
+			activeAudios_.erase(globalOldestIterator);
+		}
+	}
+
+	const AudioVoiceHandle handle = StartVoice(active, audioSource->audioPitch);
+
+	if (handle == kInvalidAudioVoiceHandle) {
+		return kInvalidAudioVoiceHandle;
+	}
+
+	lastPlaybackTimeByGameObjectId_[gameObjectId] = playbackClock_;
+	return handle;
+}
+
+AudioVoiceHandle EditorAudioManager::StartVoice(ActiveAudio& prepared, float initialPitch) {
+	AudioClip* clip = prepared.clip;
+
+	if (xAudio2_ == nullptr || clip == nullptr) {
+		return kInvalidAudioVoiceHandle;
+	}
+
 	WAVEFORMATEX format{};
 	format.wFormatTag = clip->formatTag;
 	format.nChannels = clip->channelCount;
@@ -210,30 +284,90 @@ bool EditorAudioManager::Play(int32_t gameObjectId) {
 	HRESULT hr = xAudio2_->CreateSourceVoice(&voice, &format, XAUDIO2_VOICE_USEFILTER);
 
 	if (FAILED(hr) || voice == nullptr) {
-		return false;
+		return kInvalidAudioVoiceHandle;
 	}
 
-	active.voice = voice;
+	prepared.voice = voice;
 	XAUDIO2_BUFFER buffer{};
 	buffer.AudioBytes = clip->bufferSize;
 	buffer.pAudioData = static_cast<const BYTE*>(clip->pBuffer);
 	buffer.Flags = XAUDIO2_END_OF_STREAM;
-	buffer.LoopCount = active.loop ? XAUDIO2_LOOP_INFINITE : 0u;
+	buffer.LoopCount = prepared.loop ? XAUDIO2_LOOP_INFINITE : 0u;
 	hr = voice->SubmitSourceBuffer(&buffer);
 
 	if (FAILED(hr)) {
 		voice->DestroyVoice();
-		return false;
+		prepared.voice = nullptr;
+		return kInvalidAudioVoiceHandle;
 	}
 
-	voice->SetVolume(GetMixedVolume(active));
-	voice->SetFrequencyRatio((std::clamp)(audioSource->audioPitch, 0.01f, 2.0f));
+	prepared.pitch = initialPitch;
+	prepared.handle = nextVoiceHandle_++;
+	voice->SetVolume(GetMixedVolume(prepared));
+	voice->SetFrequencyRatio((std::clamp)(initialPitch, 0.01f, 2.0f));
+
 	if (!isPaused_) {
 		voice->Start(0u);
 	}
-	activeAudios_.push_back(active);
-	lastPlaybackTimeByGameObjectId_[gameObjectId] = playbackClock_;
-	return true;
+
+	activeAudios_.push_back(prepared);
+	return prepared.handle;
+}
+
+AudioVoiceHandle EditorAudioManager::PlayClipAtPosition(
+	const std::string& assetPath,
+	const Vector3& position,
+	int32_t audioBus,
+	float volume,
+	bool loop,
+	float spatialBlend) {
+	if (xAudio2_ == nullptr || assetPath.empty()) {
+		return kInvalidAudioVoiceHandle;
+	}
+
+	AudioClip* clip = LoadClip(assetPath);
+
+	if (clip == nullptr ||
+		clip->pBuffer == nullptr ||
+		clip->bufferSize == 0u ||
+		clip->channelCount == 0u ||
+		clip->sampleRate == 0u ||
+		clip->blockAlign == 0u ||
+		(clip->formatTag != WAVE_FORMAT_PCM && clip->formatTag != WAVE_FORMAT_IEEE_FLOAT)) {
+		return kInvalidAudioVoiceHandle;
+	}
+
+	// Scene全体のVoice上限はAudioSource経由と同じ基準で守る。
+	if (static_cast<int32_t>(activeAudios_.size()) >= maxGlobalVoiceCount_) {
+		auto globalOldestIterator = activeAudios_.begin();
+
+		for (auto activeIterator = activeAudios_.begin(); activeIterator != activeAudios_.end(); activeIterator++) {
+			if (activeIterator->playbackAge > globalOldestIterator->playbackAge) {
+				globalOldestIterator = activeIterator;
+			}
+		}
+
+		if (globalOldestIterator != activeAudios_.end()) {
+			StopClip(*globalOldestIterator);
+			activeAudios_.erase(globalOldestIterator);
+		}
+	}
+
+	ActiveAudio active{};
+	active.gameObjectId = -1;
+	active.clip = clip;
+	active.isDetached = true;
+	active.detachedPosition = position;
+	active.volume = (std::clamp)(volume, 0.0f, 1.0f);
+	active.hasScriptVolume = true;
+	active.hasScriptPitch = true;
+	active.spatialBlend = (std::clamp)(spatialBlend, 0.0f, 1.0f);
+	active.minDistance = 1.0f;
+	active.maxDistance = 50.0f;
+	active.audioBus = (std::clamp)(audioBus, 0, static_cast<int32_t>(EditorAudioBus::Count) - 1);
+	active.loop = loop;
+	active.filterComponentId = -1;
+	return StartVoice(active, 1.0f);
 }
 
 void EditorAudioManager::Update(float deltaTime) {
@@ -249,6 +383,29 @@ void EditorAudioManager::Update(float deltaTime) {
 
 	for (auto it = activeAudios_.begin(); it != activeAudios_.end();) {
 		it->playbackAge += (std::max)(deltaTime, 0.0f);
+		UpdateVoiceFade(*it, deltaTime);
+
+		if (it->voice == nullptr) {
+			// Fade Out完了で停止済み。Slotだけ回収する。
+			it = activeAudios_.erase(it);
+			continue;
+		}
+
+		if (it->isDetached) {
+			XAUDIO2_VOICE_STATE detachedState;
+			it->voice->GetState(&detachedState);
+
+			if (!it->loop && !it->isVoicePaused && detachedState.BuffersQueued == 0) {
+				StopClip(*it);
+				it = activeAudios_.erase(it);
+				continue;
+			}
+
+			UpdateDetachedVoice(*it);
+			++it;
+			continue;
+		}
+
 		const auto* gameObject = editorScene_->FindGameObject(it->gameObjectId);
 		const auto* audioSource = gameObject != nullptr
 			? EditorComponentUtility::FindComponent(*gameObject, EditorComponentType::AudioSource)
@@ -269,14 +426,16 @@ void EditorAudioManager::Update(float deltaTime) {
 			continue;
 		}
 
-		if (it->volume != audioSource->audioVolume) {
+		// Scriptが個別音量を指定したVoiceは、Component値で毎フレーム上書きしない。
+		if (!it->hasScriptVolume && it->volume != audioSource->audioVolume) {
 			it->volume = audioSource->audioVolume;
 		}
 
 		it->spatialBlend = (std::clamp)(audioSource->audioSpatialBlend, 0.0f, 1.0f);
 		it->minDistance = (std::max)(audioSource->audioMinDistance, 0.01f);
 		it->maxDistance = (std::max)(audioSource->audioMaxDistance, it->minDistance + 0.01f);
-		it->audioBus = (std::clamp)(audioSource->audioBus, 0, 3);
+		it->audioBus = (std::clamp)(
+			audioSource->audioBus, 0, static_cast<int32_t>(EditorAudioBus::Count) - 1);
 
 		// 3D音源は距離、方向、遮蔽、相対速度、左右定位を同じ経路で評価する。
 		if (it->spatialBlend > 0.0f && it->voice != nullptr) {
@@ -373,7 +532,9 @@ void EditorAudioManager::Update(float deltaTime) {
 			it->previousSourcePosition = gameObject->translate;
 			it->previousListenerPosition = listenerPos;
 			it->hasPreviousSpatialPosition = true;
-			it->pitch = audioSource->audioPitch;
+			if (!it->hasScriptPitch) {
+				it->pitch = audioSource->audioPitch;
+			}
 			const float dopplerLevel = (std::clamp)(audioSource->audioDopplerLevel, 0.0f, 5.0f);
 			const float dopplerPitch = 1.0f + (dopplerRatio - 1.0f) * dopplerLevel;
 			it->voice->SetFrequencyRatio((std::clamp)(it->pitch * dopplerPitch, 0.01f, 2.0f));
@@ -397,7 +558,9 @@ void EditorAudioManager::Update(float deltaTime) {
 		}
 		else {
 			it->voice->SetVolume(GetMixedVolume(*it));
-			it->pitch = audioSource->audioPitch;
+			if (!it->hasScriptPitch) {
+				it->pitch = audioSource->audioPitch;
+			}
 			it->voice->SetFrequencyRatio((std::clamp)(it->pitch, 0.01f, 2.0f));
 			it->occlusion = 0.0f;
 		}
@@ -415,6 +578,58 @@ void EditorAudioManager::Stop() {
 	isPaused_ = false;
 }
 
+void EditorAudioManager::InvalidateClip(const std::string& assetPath) {
+	const auto clipIterator = clips_.find(assetPath);
+	if (clipIterator == clips_.end()) {
+		return;
+	}
+
+	AudioClip* invalidatedClip = &clipIterator->second;
+	for (auto activeIterator = activeAudios_.begin(); activeIterator != activeAudios_.end();) {
+		if (activeIterator->clip != invalidatedClip) {
+			++activeIterator;
+			continue;
+		}
+
+		StopClip(*activeIterator);
+		activeIterator = activeAudios_.erase(activeIterator);
+	}
+
+	delete[] static_cast<unsigned char*>(clipIterator->second.pBuffer);
+	clipIterator->second.pBuffer = nullptr;
+	clips_.erase(clipIterator);
+}
+
+int32_t EditorAudioManager::GetActiveVoiceCount() const {
+	return static_cast<int32_t>(activeAudios_.size());
+}
+
+int32_t EditorAudioManager::GetLoadedClipCount() const {
+	return static_cast<int32_t>(clips_.size());
+}
+
+AudioClipInfo EditorAudioManager::GetClipInfo(const std::string& path) {
+	AudioClipInfo info{};
+	const AudioClip* clip = LoadClip(path);
+
+	if (clip == nullptr || clip->pBuffer == nullptr) {
+		return info;
+	}
+
+	info.isLoaded = true;
+	info.channelCount = static_cast<int32_t>(clip->channelCount);
+	info.sampleRate = clip->sampleRate;
+	info.bitsPerSample = clip->bitsPerSample;
+	info.durationSeconds = clip->averageBytesPerSecond > 0u
+		? static_cast<float>(clip->bufferSize) / static_cast<float>(clip->averageBytesPerSecond)
+		: 0.0f;
+	return info;
+}
+
+bool EditorAudioManager::PreloadClip(const std::string& path) {
+	return LoadClip(path) != nullptr;
+}
+
 void EditorAudioManager::SetPaused(bool isPaused) {
 	if (isPaused_ == isPaused) {
 		return;
@@ -430,7 +645,8 @@ void EditorAudioManager::SetPaused(bool isPaused) {
 		if (isPaused_) {
 			audio.voice->Stop(0u);
 		}
-		else {
+		else if (!audio.isVoicePaused) {
+			// Scriptが個別Pauseしたままのvoiceは、全体Resumeでも鳴らさない。
 			audio.voice->Start(0u);
 		}
 	}
@@ -481,6 +697,37 @@ float EditorAudioManager::GetBusVolume(EditorAudioBus audioBus) const {
 	}
 
 	return busVolumes_[audioBusIndex];
+}
+
+void EditorAudioManager::SetMasterMute(bool isMuted) {
+	masterMuted_ = isMuted;
+}
+
+bool EditorAudioManager::IsMasterMuted() const {
+	return masterMuted_;
+}
+
+void EditorAudioManager::SetBusMute(EditorAudioBus audioBus, bool isMuted) {
+	const size_t audioBusIndex = static_cast<size_t>(audioBus);
+
+	if (audioBusIndex >= busMutes_.size()) {
+		return;
+	}
+
+	busMutes_[audioBusIndex] = isMuted;
+}
+
+bool EditorAudioManager::IsBusMuted(EditorAudioBus audioBus) const {
+	const size_t audioBusIndex = static_cast<size_t>(audioBus);
+	return audioBusIndex < busMutes_.size() && busMutes_[audioBusIndex];
+}
+
+void EditorAudioManager::SetMaxGlobalVoiceCount(int32_t maxVoiceCount) {
+	maxGlobalVoiceCount_ = (std::max)(maxVoiceCount, 1);
+}
+
+int32_t EditorAudioManager::GetMaxGlobalVoiceCount() const {
+	return maxGlobalVoiceCount_;
 }
 
 void EditorAudioManager::ApplyVoiceFilter(ActiveAudio& audio, int32_t filterGameObjectId) const {
@@ -719,7 +966,17 @@ float EditorAudioManager::GetListenerReverbAmount() const {
 }
 
 float EditorAudioManager::GetMixedVolume(const ActiveAudio& audio) const {
-	const size_t audioBusIndex = static_cast<size_t>((std::clamp)(audio.audioBus, 0, 3));
+	if (masterMuted_) {
+		return 0.0f;
+	}
+
+	const size_t audioBusIndex = static_cast<size_t>((std::clamp)(
+		audio.audioBus, 0, static_cast<int32_t>(EditorAudioBus::Count) - 1));
+
+	if (busMutes_[audioBusIndex]) {
+		return 0.0f;
+	}
+
 	return
 		(std::clamp)(audio.volume, 0.0f, 1.0f) *
 		masterVolume_ *
@@ -944,6 +1201,338 @@ AudioClip* EditorAudioManager::LoadClip(const std::string& path) {
 
 	auto result = clips_.emplace(path, std::move(clip));
 	return &result.first->second;
+}
+
+ActiveAudio* EditorAudioManager::FindVoice(AudioVoiceHandle handle) {
+	if (handle == kInvalidAudioVoiceHandle) {
+		return nullptr;
+	}
+
+	for (ActiveAudio& audio : activeAudios_) {
+		if (audio.handle == handle && audio.voice != nullptr) {
+			return &audio;
+		}
+	}
+
+	return nullptr;
+}
+
+const ActiveAudio* EditorAudioManager::FindVoice(AudioVoiceHandle handle) const {
+	if (handle == kInvalidAudioVoiceHandle) {
+		return nullptr;
+	}
+
+	for (const ActiveAudio& audio : activeAudios_) {
+		if (audio.handle == handle && audio.voice != nullptr) {
+			return &audio;
+		}
+	}
+
+	return nullptr;
+}
+
+void EditorAudioManager::UpdateDetachedVoice(ActiveAudio& audio) {
+	if (audio.voice == nullptr) {
+		return;
+	}
+
+	const float mixedVolume = GetMixedVolume(audio);
+
+	if (audio.spatialBlend <= 0.0f) {
+		audio.voice->SetVolume(mixedVolume);
+		audio.voice->SetFrequencyRatio((std::clamp)(audio.pitch, 0.01f, 2.0f));
+		return;
+	}
+
+	const Vector3 listenerPosition = GetListenerPosition();
+	const float dx = audio.detachedPosition.x - listenerPosition.x;
+	const float dy = audio.detachedPosition.y - listenerPosition.y;
+	const float dz = audio.detachedPosition.z - listenerPosition.z;
+	const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+	const float minimumDistance = (std::max)(audio.minDistance, 0.01f);
+	const float maximumDistance = (std::max)(audio.maxDistance, minimumDistance + 0.01f);
+	const float normalized = (std::clamp)(
+		(distance - minimumDistance) / (maximumDistance - minimumDistance), 0.0f, 1.0f);
+	const float smoothDistance = normalized * normalized * (3.0f - 2.0f * normalized);
+	const float distanceAttenuation = 1.0f - smoothDistance;
+	const float volume3d = mixedVolume * distanceAttenuation;
+	audio.voice->SetVolume(mixedVolume * (1.0f - audio.spatialBlend) + volume3d * audio.spatialBlend);
+	audio.voice->SetFrequencyRatio((std::clamp)(audio.pitch, 0.01f, 2.0f));
+
+	if (audio.clip != nullptr && audio.clip->channelCount == 1u) {
+		const Vector3 listenerRight = GetListenerRight();
+		const float horizontalLength = std::sqrt(dx * dx + dz * dz);
+		const float pan = horizontalLength > 0.0001f
+			? (std::clamp)((dx * listenerRight.x + dz * listenerRight.z) / horizontalLength, -1.0f, 1.0f)
+			: 0.0f;
+		const float leftFactor = std::sqrt((1.0f - pan) * 0.5f);
+		const float rightFactor = std::sqrt((1.0f + pan) * 0.5f);
+		const float matrix[2] = {
+			1.0f * (1.0f - audio.spatialBlend) + leftFactor * audio.spatialBlend,
+			1.0f * (1.0f - audio.spatialBlend) + rightFactor * audio.spatialBlend};
+		audio.voice->SetOutputMatrix(nullptr, 1, 2, matrix);
+	}
+}
+
+void EditorAudioManager::UpdateVoiceFade(ActiveAudio& audio, float deltaTime) {
+	if (audio.fadeRemainingSeconds <= 0.0f || audio.voice == nullptr) {
+		return;
+	}
+
+	audio.fadeRemainingSeconds -= (std::max)(deltaTime, 0.0f);
+
+	if (audio.fadeRemainingSeconds <= 0.0f) {
+		audio.fadeRemainingSeconds = 0.0f;
+		audio.volume = audio.fadeTargetVolume;
+
+		// Fade Outし切ったVoiceは鳴らし続けても無音なので解放する。
+		if (audio.fadeTargetVolume <= 0.0f) {
+			StopClip(audio);
+			return;
+		}
+	}
+	else {
+		const float elapsedRatio = audio.fadeTotalSeconds > 0.0f
+			? (std::clamp)(1.0f - audio.fadeRemainingSeconds / audio.fadeTotalSeconds, 0.0f, 1.0f)
+			: 1.0f;
+		audio.volume = audio.fadeStartVolume + (audio.fadeTargetVolume - audio.fadeStartVolume) * elapsedRatio;
+	}
+
+	audio.voice->SetVolume(GetMixedVolume(audio));
+}
+
+bool EditorAudioManager::StopVoice(AudioVoiceHandle handle) {
+	for (auto activeIterator = activeAudios_.begin(); activeIterator != activeAudios_.end(); ++activeIterator) {
+		if (activeIterator->handle != handle || handle == kInvalidAudioVoiceHandle) {
+			continue;
+		}
+
+		StopClip(*activeIterator);
+		activeAudios_.erase(activeIterator);
+		return true;
+	}
+
+	return false;
+}
+
+bool EditorAudioManager::SetVoicePaused(AudioVoiceHandle handle, bool isPaused) {
+	ActiveAudio* audio = FindVoice(handle);
+
+	if (audio == nullptr) {
+		return false;
+	}
+
+	audio->isVoicePaused = isPaused;
+
+	// 全体Pause中は個別Resumeで鳴らさない(再開はSetPaused(false)側でまとめて行う)。
+	if (isPaused) {
+		audio->voice->Stop(0u);
+	}
+	else if (!isPaused_) {
+		audio->voice->Start(0u);
+	}
+
+	return true;
+}
+
+bool EditorAudioManager::IsVoicePlaying(AudioVoiceHandle handle) const {
+	const ActiveAudio* audio = FindVoice(handle);
+	return audio != nullptr && !audio->isVoicePaused;
+}
+
+bool EditorAudioManager::IsVoiceValid(AudioVoiceHandle handle) const {
+	return FindVoice(handle) != nullptr;
+}
+
+bool EditorAudioManager::SetVoiceVolume(AudioVoiceHandle handle, float volume) {
+	ActiveAudio* audio = FindVoice(handle);
+
+	if (audio == nullptr) {
+		return false;
+	}
+
+	audio->volume = (std::clamp)(volume, 0.0f, 1.0f);
+	audio->hasScriptVolume = true;
+	audio->fadeRemainingSeconds = 0.0f;  // 明示指定はFadeより優先する
+	audio->voice->SetVolume(GetMixedVolume(*audio));
+	return true;
+}
+
+bool EditorAudioManager::GetVoiceVolume(AudioVoiceHandle handle, float& volume) const {
+	const ActiveAudio* audio = FindVoice(handle);
+
+	if (audio == nullptr) {
+		return false;
+	}
+
+	volume = audio->volume;
+	return true;
+}
+
+bool EditorAudioManager::SetVoicePitch(AudioVoiceHandle handle, float pitch) {
+	ActiveAudio* audio = FindVoice(handle);
+
+	if (audio == nullptr) {
+		return false;
+	}
+
+	audio->pitch = (std::clamp)(pitch, 0.01f, 2.0f);
+	audio->hasScriptPitch = true;
+	audio->voice->SetFrequencyRatio(audio->pitch);
+	return true;
+}
+
+bool EditorAudioManager::GetVoicePitch(AudioVoiceHandle handle, float& pitch) const {
+	const ActiveAudio* audio = FindVoice(handle);
+
+	if (audio == nullptr) {
+		return false;
+	}
+
+	pitch = audio->pitch;
+	return true;
+}
+
+bool EditorAudioManager::SetVoiceLoop(AudioVoiceHandle handle, bool loop) {
+	ActiveAudio* audio = FindVoice(handle);
+
+	if (audio == nullptr) {
+		return false;
+	}
+
+	// XAudio2のLoopCountは投入済みBufferの属性なので、Loop解除は「今の再生が終わったら止まる」、
+	// Loop開始は「今の再生が終わった後は続かない」。区別が要る場面ではStop後に再生し直す。
+	if (!loop && audio->loop) {
+		audio->voice->ExitLoop(0u);
+	}
+
+	audio->loop = loop;
+	return true;
+}
+
+bool EditorAudioManager::GetVoiceLoop(AudioVoiceHandle handle, bool& loop) const {
+	const ActiveAudio* audio = FindVoice(handle);
+
+	if (audio == nullptr) {
+		return false;
+	}
+
+	loop = audio->loop;
+	return true;
+}
+
+bool EditorAudioManager::SetVoicePosition(AudioVoiceHandle handle, const Vector3& position) {
+	ActiveAudio* audio = FindVoice(handle);
+
+	if (audio == nullptr || !audio->isDetached) {
+		// AudioSource経由のVoiceはGameObjectのTransformが位置なので、ここでは動かさない。
+		return false;
+	}
+
+	audio->detachedPosition = position;
+	UpdateDetachedVoice(*audio);
+	return true;
+}
+
+bool EditorAudioManager::SetVoiceBus(AudioVoiceHandle handle, int32_t audioBus) {
+	ActiveAudio* audio = FindVoice(handle);
+
+	if (audio == nullptr) {
+		return false;
+	}
+
+	audio->audioBus = (std::clamp)(audioBus, 0, static_cast<int32_t>(EditorAudioBus::Count) - 1);
+	audio->voice->SetVolume(GetMixedVolume(*audio));
+	return true;
+}
+
+bool EditorAudioManager::GetVoicePlaybackPosition(AudioVoiceHandle handle, float& seconds) const {
+	const ActiveAudio* audio = FindVoice(handle);
+
+	if (audio == nullptr || audio->clip == nullptr || audio->clip->sampleRate == 0u) {
+		return false;
+	}
+
+	XAUDIO2_VOICE_STATE state;
+	audio->voice->GetState(&state);
+	seconds = static_cast<float>(state.SamplesPlayed) / static_cast<float>(audio->clip->sampleRate);
+	return true;
+}
+
+bool EditorAudioManager::SetVoicePlaybackPosition(AudioVoiceHandle handle, float seconds) {
+	ActiveAudio* audio = FindVoice(handle);
+
+	if (audio == nullptr || audio->clip == nullptr || audio->clip->blockAlign == 0u ||
+		audio->clip->sampleRate == 0u) {
+		return false;
+	}
+
+	const uint32_t totalSampleCount = audio->clip->bufferSize / audio->clip->blockAlign;
+	const float clampedSeconds = (std::max)(seconds, 0.0f);
+	const uint32_t requestedSample = static_cast<uint32_t>(
+		clampedSeconds * static_cast<float>(audio->clip->sampleRate));
+
+	if (totalSampleCount == 0u || requestedSample >= totalSampleCount) {
+		return false;
+	}
+
+	// XAudio2は再生中Bufferの途中シークを持たないため、投入し直して開始位置を指定する。
+	audio->voice->Stop(0u);
+	audio->voice->FlushSourceBuffers();
+
+	XAUDIO2_BUFFER buffer{};
+	buffer.AudioBytes = audio->clip->bufferSize;
+	buffer.pAudioData = static_cast<const BYTE*>(audio->clip->pBuffer);
+	buffer.Flags = XAUDIO2_END_OF_STREAM;
+	buffer.PlayBegin = requestedSample;
+	buffer.LoopCount = audio->loop ? XAUDIO2_LOOP_INFINITE : 0u;
+
+	if (FAILED(audio->voice->SubmitSourceBuffer(&buffer))) {
+		return false;
+	}
+
+	if (!isPaused_ && !audio->isVoicePaused) {
+		audio->voice->Start(0u);
+	}
+
+	return true;
+}
+
+bool EditorAudioManager::GetVoiceDuration(AudioVoiceHandle handle, float& seconds) const {
+	const ActiveAudio* audio = FindVoice(handle);
+
+	if (audio == nullptr || audio->clip == nullptr || audio->clip->blockAlign == 0u ||
+		audio->clip->sampleRate == 0u) {
+		return false;
+	}
+
+	const uint32_t totalSampleCount = audio->clip->bufferSize / audio->clip->blockAlign;
+	seconds = static_cast<float>(totalSampleCount) / static_cast<float>(audio->clip->sampleRate);
+	return true;
+}
+
+bool EditorAudioManager::FadeVoiceTo(AudioVoiceHandle handle, float targetVolume, float durationSeconds) {
+	ActiveAudio* audio = FindVoice(handle);
+
+	if (audio == nullptr) {
+		return false;
+	}
+
+	const float clampedTarget = (std::clamp)(targetVolume, 0.0f, 1.0f);
+	audio->hasScriptVolume = true;
+
+	if (durationSeconds <= 0.0f) {
+		audio->fadeRemainingSeconds = 0.0f;
+		audio->volume = clampedTarget;
+		audio->voice->SetVolume(GetMixedVolume(*audio));
+		return true;
+	}
+
+	audio->fadeStartVolume = audio->volume;
+	audio->fadeTargetVolume = clampedTarget;
+	audio->fadeTotalSeconds = durationSeconds;
+	audio->fadeRemainingSeconds = durationSeconds;
+	return true;
 }
 
 void EditorAudioManager::StopClip(ActiveAudio& audio) {

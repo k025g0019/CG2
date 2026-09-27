@@ -1,5 +1,5 @@
-﻿#ifndef CG2_SMAA_COMMON_HLSLI
-#define CG2_SMAA_COMMON_HLSLI
+﻿#ifndef MANOENGINE_SMAA_COMMON_HLSLI
+#define MANOENGINE_SMAA_COMMON_HLSLI
 
 float Luma(float3 color)
 {

@@ -3,7 +3,7 @@ WinMain
 WindowProc
 DirectX
 DirectXGameClass
-CG2WindowClass
+ManoEngineWindowClass
 WNDCLASS
 RegisterClass
 OutputDebugStringW

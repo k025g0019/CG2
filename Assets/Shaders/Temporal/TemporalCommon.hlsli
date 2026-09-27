@@ -1,5 +1,5 @@
-﻿#ifndef CG2_TEMPORAL_COMMON_HLSLI
-#define CG2_TEMPORAL_COMMON_HLSLI
+﻿#ifndef MANOENGINE_TEMPORAL_COMMON_HLSLI
+#define MANOENGINE_TEMPORAL_COMMON_HLSLI
 
 cbuffer TemporalConstants : register(b0)
 {

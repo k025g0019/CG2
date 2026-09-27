@@ -1,4 +1,4 @@
-#include "EditorLightProbeManager.h"
+﻿#include "EditorLightProbeManager.h"
 
 #pragma warning(push, 0)
 #include <algorithm>
@@ -710,20 +710,38 @@ void EditorLightProbeManager::UpdateGrid(const GridSettings& settings) {
 	}
 }
 
+void EditorLightProbeManager::RequestFullRebake() {
+	if (!settings_.isEnabled || !IsReady()) {
+		return;
+	}
+
+	nextBakeProbeIndex_ = 0u;
+	needsFullRebake_ = true;
+}
+
 bool EditorLightProbeManager::PrepareBakeBatch(
 	uint32_t& outBaseProbeIndex,
 	uint32_t& outProbeCount) {
 	outBaseProbeIndex = 0u;
 	outProbeCount = 0u;
 
-	if (!IsReady()) {
+	// GI無効時のDummy ProbeはDescriptorを有効に保つためだけに存在する。
+	// DummyをBakeするとScene内の全Objectを6面へ毎フレーム再描画してしまうため、
+	// 設定が無効ならCapture自体を開始しない。
+	if (!settings_.isEnabled || !IsReady()) {
+		return false;
+	}
+
+	// Bake要求がない停止フレームでは、Sceneを6面へ再描画しない。
+	if (!needsFullRebake_) {
 		return false;
 	}
 
 	if (nextBakeProbeIndex_ >= probeCount_) {
-		// 一巡したら先頭へ戻り、動く光にも追従し続ける。
+		// 全Probeを一巡したら完了。次のScene変更要求まで結果を再利用する。
 		nextBakeProbeIndex_ = 0u;
 		needsFullRebake_ = false;
+		return false;
 	}
 
 	outBaseProbeIndex = nextBakeProbeIndex_;

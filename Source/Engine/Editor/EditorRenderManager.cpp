@@ -8,6 +8,7 @@
 #include "EditorSharedState.h"
 #include "EditorPlanarReflectionManager.h"
 #include "Log.h"
+#include "Source/Engine/Core/ProjectSettings.h"
 
 #include <algorithm>
 #include <array>
@@ -485,7 +486,7 @@ namespace {
 	}
 
 	int32_t CollectSceneLights(DirectionalLight* lightsOut) {
-		for (int32_t i = 0; i < kMaxShadowLights; i++) {
+		for (int32_t i = 0; i < kMaxSceneLights; i++) {
 			ClearDisabledSceneLight(lightsOut[i]);
 		}
 
@@ -535,7 +536,7 @@ namespace {
 
 		const int32_t count = static_cast<int32_t>((std::min)(
 			lightCandidates.size(),
-			static_cast<size_t>(kMaxShadowLights)));
+			static_cast<size_t>(kMaxSceneLights)));
 
 		for (int32_t lightIndex = 0; lightIndex < count; lightIndex++) {
 			const SceneLightCandidate& candidate = lightCandidates[static_cast<size_t>(lightIndex)];
@@ -1014,6 +1015,7 @@ namespace {
 		float glareFade = 0.85f;
 		float glareColorModulation = 0.15f;
 		Vector3 glareCenter = {0.5f, 0.5f, 0.0f};
+		float glareSampleRatio = 1.0f;
 		std::array<float, 8> glareIntensityByMode{};
 		std::array<float, 8> glareSizeByMode{};
 		std::array<float, 8> glareAngleByMode{};
@@ -1070,6 +1072,20 @@ namespace {
 		float environmentHeatHorizonWidth = 0.16f;
 		float environmentHeatSunInfluence = 0.55f;
 		float environmentHeatDistortionScale = 0.65f;
+	};
+
+	struct PerformanceSettings {
+		bool hasComponent = false;  // PerformanceSettings Component がある時だけScene設定で上書きする。
+		bool adaptiveQuality = true;
+		int32_t targetFps = 60;
+		int32_t viewRenderMode = 0;  // 0=Auto、1=Sceneのみ、2=Gameのみ、3=両方
+		bool allowShadowThrottle = true;
+		bool allowReflectionThrottle = true;
+		bool allowBakeThrottle = true;
+		int32_t shadowUpdateInterval = 0;  // 0=Auto
+		int32_t reflectionUpdateInterval = 0;  // 0=Auto
+		int32_t oceanFftUpdateInterval = 0;  // 0=Auto
+		float glareSampleRatio = 1.0f;
 	};
 
 	void InitializePostProcessModeDefaults(PostProcessSettings& settings) {
@@ -1132,6 +1148,7 @@ namespace {
 				settings.glareFade = pp->glareFade;
 				settings.glareColorModulation = pp->glareColorModulation;
 				settings.glareCenter = pp->glareCenter;
+				settings.glareSampleRatio = (std::clamp)(pp->glareSampleRatio, 0.25f, 1.0f);
 				settings.glareIntensityByMode = pp->glareIntensityByMode;
 				settings.glareSizeByMode = pp->glareSizeByMode;
 				settings.glareAngleByMode = pp->glareAngleByMode;
@@ -1219,6 +1236,50 @@ namespace {
 		}
 		return settings;
 	}
+
+	PerformanceSettings GetPerformanceSettings() {
+		PerformanceSettings settings;
+
+		for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
+			if (!gameObject.isActive) {
+				continue;
+			}
+
+			const EditorComponent* performanceComponent =
+				EditorComponentUtility::FindComponent(gameObject, EditorComponentType::PerformanceSettings);
+
+			if (performanceComponent == nullptr || !performanceComponent->isActive) {
+				continue;
+			}
+
+			settings.hasComponent = true;
+			settings.adaptiveQuality = performanceComponent->performanceAdaptiveQuality;
+			settings.targetFps = (std::clamp)(performanceComponent->performanceTargetFps, 15, 240);
+			settings.viewRenderMode = (std::clamp)(performanceComponent->performanceViewRenderMode, 0, 3);
+			settings.allowShadowThrottle = performanceComponent->performanceAllowShadowThrottle;
+			settings.allowReflectionThrottle = performanceComponent->performanceAllowReflectionThrottle;
+			settings.allowBakeThrottle = performanceComponent->performanceAllowBakeThrottle;
+			settings.shadowUpdateInterval = (std::clamp)(
+				performanceComponent->performanceShadowUpdateInterval,
+				0,
+				8);
+			settings.reflectionUpdateInterval = (std::clamp)(
+				performanceComponent->performanceReflectionUpdateInterval,
+				0,
+				8);
+			settings.oceanFftUpdateInterval = (std::clamp)(
+				performanceComponent->performanceOceanFftUpdateInterval,
+				0,
+				8);
+			settings.glareSampleRatio = (std::clamp)(
+				performanceComponent->performanceGlareSampleRatio,
+				0.25f,
+				1.0f);
+			break;
+		}
+
+		return settings;
+	}
 }
 
 void EditorRenderManager::Initialize() {
@@ -1228,17 +1289,34 @@ void EditorRenderManager::Update() {
 }
 
 void EditorRenderManager::Draw() {
+	const std::chrono::steady_clock::time_point frameStartTime =
+		std::chrono::steady_clock::now();
+	uint32_t batchInstanceCursor = 0u;
 	static bool hasLoggedFirstRenderEnter = false; // 隴崢陋ｻ譏ｴ繝ｻ Draw 邵 E E E ・ E E E 陷茨 E E E  E E E 郢 E E E 蠕娯螺邵 E E E 荵晢 E E E ・1 陜玲 E E E  E E E 笁E E  E 邵 E E E 鬘鯉ｽ E E E 蛟ｬ鮖ｸ邵 E E E 蜷 E E E ・狗ｸ E E E 繝ｻ
 	static bool hasLoggedFirstPresent = false;
 	static bool hasSubmittedShadowMap = false;
 	static std::uint64_t submittedShadowStateHash = 0u;
+	static bool hasSubmittedLightProbeState = false;
+	static std::uint64_t submittedLightProbeStateHash = 0u;
 	static bool hasSubmittedPlanarReflection = false;
 	static std::uint64_t submittedPlanarReflectionStateHash = 0u;
 	static ID3D12Resource* submittedPlanarReflectionTarget = nullptr;
+	static uint32_t shadowUpdateFrameIndex = 0u;
+	static bool wasPlaying = false;
 	static uint32_t oceanReflectionUpdateFrameIndex = 0u;
 	static uint32_t temporalJitterFrameIndex = 0u;
+	const bool isPlaying = g_editorRuntimeManager.IsPlaying();
+
+	// Play開始/停止時は前モードの影Atlasをそのまま使わず、最初のDrawで必ず再生成する。
+	if (isPlaying != wasPlaying) {
+		hasSubmittedShadowMap = false;
+		shadowUpdateFrameIndex = 0u;
+		oceanReflectionUpdateFrameIndex = 0u;
+		wasPlaying = isPlaying;
+	}
+
 	// Editor待機中は波面を静止させ、同じFFTを毎フレーム22 Dispatchしない。Play中は物理と同じ共通時刻を使う。
-	const float oceanElapsedTime = g_editorRuntimeManager.IsPlaying()
+	const float oceanElapsedTime = isPlaying
 		? GetEditorOceanElapsedTime()
 		: 0.0f;
 	// 隴崢陋ｻ譏ｴ繝ｻ Present 邵 E E E ・ E E E 邵 E E E ・ E E E 陋ｻ・ E E E 鬩墓鱒 E E E E 邵 E E E 貁E E  E  E 郢 E E E 繝ｻ1 陜玲 E E E  E E E 笁E E  E 邵 E E E 鬘鯉ｽ E E E 蛟ｬ鮖ｸ邵 E E E 蜷 E E E ・狗ｸ E E E 繝ｻ
@@ -1542,11 +1620,32 @@ void EditorRenderManager::Draw() {
 	// cameraMatrix 邵 E E E ・ E E E  SceneView 郢 E E E ・ E E E 郢晢 E E E  E E E 郢晢 E E E  E E E 邵 E E E ・ E E E  Transform 邵 E E E 荵晢 E E E 芽抁E E  E 奁E E  E 狗ｹ晢 E E E  E E E 郢晢 E E E  E E E 郢晢 E E E  E E E 郢晁歓 E E E E 謔溘 E邵 E E E 繝ｻ
 	viewMatrix = Inverse(cameraMatrix);
 	// viewMatrix 邵 E E E ・ E E E  cameraMatrix 邵 E E E ・ E E E 鬨 E E E 繝ｻ・ E E E 謔溘 E邵 E E E 繝ｻD 郢晢 E E E  E E E 郢昴・ E E E 晉 E E  E E E 蛛ｵ縺咲 E E E 晢 E E E  E E E 郢晢 E E E  E E E 驕ｨ・ E E E 鬮 E E E 阮吮・驕假 E E E  E E E 邵 E E E 蜷 E E E  E E E 繝ｻ
-	const Vector3 activeCameraPosition = g_isSceneViewVisible
+	const PerformanceSettings performanceSettings = GetPerformanceSettings();
+	bool shouldRenderGameView =
+		g_isGameViewVisible && (isPlaying || !g_isSceneViewVisible);
+	bool shouldRenderSceneView =
+		g_isSceneViewVisible && !shouldRenderGameView;
+
+	if (performanceSettings.viewRenderMode == 1) {
+		shouldRenderGameView = false;
+		shouldRenderSceneView = g_isSceneViewVisible;
+	}
+	else if (performanceSettings.viewRenderMode == 2) {
+		shouldRenderGameView = g_isGameViewVisible;
+		shouldRenderSceneView = false;
+	}
+	else if (performanceSettings.viewRenderMode == 3) {
+		shouldRenderGameView = g_isGameViewVisible;
+		shouldRenderSceneView = g_isSceneViewVisible;
+	}
+
+	const bool hasActiveRenderView =
+		shouldRenderSceneView || shouldRenderGameView;
+	const Vector3 activeCameraPosition = shouldRenderSceneView
 		? cameraTransform.translate
 		: g_gameCameraPosition;
 
-	for (int32_t lightIndex = 0; lightIndex < kMaxShadowLights; lightIndex++) {
+	for (int32_t lightIndex = 0; lightIndex < kMaxSceneLights; lightIndex++) {
 		directionalLightData[lightIndex].cameraPosition = activeCameraPosition;
 	}
 	// PBR 邵 E E E ・ E E E 髫穂ｹ滂ｽ E E E 螢 E E E 蟀 E E E 陷 E E E 莉｣ E E E ・把eneView 陷・ E E E  E E E 陷亥現 E E E ・嫗meView 陷雁E E  E E E 蟲 E E E 隴弱 E E E E E  E  E  Camera Component 郢 E E E 蜑 E E E E  E E E ・ E E E 邵 E E E 繝ｻ E E E 繝ｻ
@@ -1561,16 +1660,25 @@ void EditorRenderManager::Draw() {
 	// spriteWorldViewProjectionMatrix 邵 E E E ・ E E E  Sprite 邵 E E E ・ E E E  World 邵 E E E ・ E E E  2D 雎 E E E E  E E E 陝 E・・ E E E ・ E E E 郢 E E E 雋樒ｲ玖ｬ瑚 E・ E E E 邵 E E E 繝ｻWVP邵 E E E 繝ｻ
 	Matrix4x4 worldMatrix = MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
 	// worldMatrix 邵 E E E ・ E E E 隴鯉ｽ E E E  3D 郢晢 E E E  E E E 郢昴・ E E E 晉 E E 晏干 E E E 樒ｹ晁侭 E E E 礼 E E E 晢 E E E  E E E 邵 E E E ・ E E E  Transform 郢 E E E 螳夲 E E E  E E E 謔溘 E陋ｹ謔ｶ・ E E E 邵 E E E 貁E E  E  E E E らｸ E E E ・ E E E 邵 E E E 繝ｻ
-	const PostProcessSettings ppSettings = GetPostProcessSettings();
+	PostProcessSettings ppSettings = GetPostProcessSettings();
+	ppSettings.glareSampleRatio = (std::min)(
+		ppSettings.glareSampleRatio,
+		performanceSettings.glareSampleRatio);
+	const float performanceTargetFrameMilliseconds =
+		1000.0f / static_cast<float>((std::max)(performanceSettings.targetFps, 1));
+	const float performanceSoftBudgetMilliseconds =
+		performanceTargetFrameMilliseconds * 0.85f;
+	const float performanceHardBudgetMilliseconds =
+		performanceTargetFrameMilliseconds * 1.20f;
 	const bool shouldApplyTemporalJitter =
 		ppSettings.hasPostProcessComponent &&
-		(g_isSceneViewVisible || g_isGameViewVisible) &&
+		hasActiveRenderView &&
 		ppSettings.aaMode == 3;
 	Matrix4x4 sceneRenderProjectionMatrix = projectionMatrix;
 	Matrix4x4 gameRenderProjectionMatrix = g_gameProjectionMatrix;
 
 	if (shouldApplyTemporalJitter) {
-		if (g_isSceneViewVisible) {
+		if (shouldRenderSceneView) {
 			sceneRenderProjectionMatrix = ApplyTemporalProjectionJitter(
 				projectionMatrix,
 				MakeTemporalJitterNdc(
@@ -1579,7 +1687,7 @@ void EditorRenderManager::Draw() {
 					g_editorSceneHeight));
 		}
 
-		if (g_isGameViewVisible) {
+		if (shouldRenderGameView) {
 			gameRenderProjectionMatrix = ApplyTemporalProjectionJitter(
 				g_gameProjectionMatrix,
 				MakeTemporalJitterNdc(
@@ -1635,7 +1743,11 @@ void EditorRenderManager::Draw() {
 
 	// 少数オブジェクトでは全画面 Hi-Z 生成と readback の方が高コストになる。
 	constexpr size_t kGpuCullingMinimumObjectCount = 256u;
+	// Scene View / Game Viewは別々の可視判定Bufferを持つため、片方のCamera結果を
+	// もう片方へ誤適用せずにGPU Cullingを利用できる。
+	constexpr bool kGpuCullingEnabled = true;
 	const bool shouldUseGpuCulling =
+		kGpuCullingEnabled &&
 		gpuCullingCandidateCount >= kGpuCullingMinimumObjectCount;
 
 	EditorPlanarReflectionManager planarManager;
@@ -1670,10 +1782,10 @@ void EditorRenderManager::Draw() {
 	//================================================================
 
 	constexpr uint32_t kSunCascadeCount = 4u;
-	// 最悪ケースは「Sunが無く、全灯がPoint LightでCube化される」場合の
-	// kMaxShadowLights * 6面。Sunありの 4 + 3*6 = 22 もこの中に収まる。
+	// 通常ライトは16灯まで評価するが、影は5x5 Atlasに収まる分だけ描画する。
+	// Atlasを使い切った後のライトは照明のみ有効にし、影だけを無効化する。
 	constexpr uint32_t kMaxShadowRenderPassCount =
-		static_cast<uint32_t>(kMaxShadowLights) * kCubeFaceCount;
+		static_cast<uint32_t>(kShadowAtlasTiles) * static_cast<uint32_t>(kShadowAtlasTiles);
 	struct ShadowRenderPass {
 		Matrix4x4 viewProjection;
 		uint32_t tileIndex;
@@ -1681,7 +1793,7 @@ void EditorRenderManager::Draw() {
 	};
 	std::array<ShadowRenderPass, kMaxShadowRenderPassCount> shadowRenderPasses{};
 	uint32_t shadowRenderPassCount = 0u;
-	std::array<Matrix4x4, kMaxShadowLights> lightViewProjectionMatrixPerLight{};
+	std::array<Matrix4x4, kMaxSceneLights> lightViewProjectionMatrixPerLight{};
 
 	for (Matrix4x4& lightViewProjectionMatrix : lightViewProjectionMatrixPerLight) {
 		lightViewProjectionMatrix = MakeIdentity4x4();
@@ -1696,10 +1808,10 @@ void EditorRenderManager::Draw() {
 		}
 	}
 
-	const Matrix4x4& activeCameraMatrix = g_isSceneViewVisible
+	const Matrix4x4& activeCameraMatrix = shouldRenderSceneView
 		? cameraMatrix
 		: g_gameCameraMatrix;
-	const Matrix4x4& activeCameraProjectionMatrix = g_isSceneViewVisible
+	const Matrix4x4& activeCameraProjectionMatrix = shouldRenderSceneView
 		? projectionMatrix
 		: g_gameProjectionMatrix;
 	Vector3 activeCameraForward = Normalize(Vector3{
@@ -1849,6 +1961,21 @@ void EditorRenderManager::Draw() {
 			continue;
 		}
 
+		// Point Lightは6面すべて揃わない状態で1面だけ描くと光漏れになるため、
+		// Atlasに6面を確保できない場合は影だけを無効化する。
+		if (isPointLightShadow) {
+			light.shadowEnabled = 0.0f;
+			continue;
+		}
+
+		// Spot / Directional Lightの影は1タイル使用する。通常ライト数を増やしても
+		// Atlas外のViewportやUVを生成しないよう、満杯なら影だけを無効化する。
+		if (nextLocalShadowTileIndex >= totalAtlasTileCount ||
+			shadowRenderPassCount >= kMaxShadowRenderPassCount) {
+			light.shadowEnabled = 0.0f;
+			continue;
+		}
+
 		const Matrix4x4 lightViewProjection = MakeLightViewProjectionMatrix(
 			editorSceneObjects,
 			transform,
@@ -1966,8 +2093,29 @@ void EditorRenderManager::Draw() {
 			sizeof(D3D12_VERTEX_BUFFER_VIEW));
 	}
 
+	// 敵が動くPlay中は影Atlasを毎フレーム全タイル描画すると、敵数に比例して
+	// Shadow Mapが急増する。2～3フレームに1回更新し、間のフレームは前回の影を
+	// 再利用する。静止中と軽いフレームは従来どおり毎フレーム更新する。
+	uint32_t shadowUpdateInterval = 1u;
+
+	if (isPlaying && performanceSettings.allowShadowThrottle) {
+		if (performanceSettings.shadowUpdateInterval > 0) {
+			shadowUpdateInterval = static_cast<uint32_t>(
+				(std::clamp)(performanceSettings.shadowUpdateInterval, 1, 8));
+		}
+		else if (performanceSettings.adaptiveQuality) {
+			shadowUpdateInterval = renderProfile.gpuFrameMilliseconds > performanceHardBudgetMilliseconds
+				? 3u
+				: (renderProfile.gpuFrameMilliseconds > performanceSoftBudgetMilliseconds ? 2u : 1u);
+		}
+	}
+
+	const bool isShadowUpdateFrame =
+		(shadowUpdateFrameIndex % shadowUpdateInterval) == 0u;
+	shadowUpdateFrameIndex++;
 	const bool shouldRenderShadowMap =
-		!hasSubmittedShadowMap || shadowStateHash != submittedShadowStateHash;
+		(!hasSubmittedShadowMap || shadowStateHash != submittedShadowStateHash) &&
+		isShadowUpdateFrame;
 	bool hasRecordedShadowMapUpdate = false;
 
 	Matrix4x4 uvTransformMatrix = MakeAffineMatrix(uvTransform.scale, uvTransform.rotate, uvTransform.translate);
@@ -2274,11 +2422,17 @@ void EditorRenderManager::Draw() {
 		}
 	}
 
-	if (primaryOceanSceneObject != nullptr &&
+	if (primaryOceanSceneObject != nullptr) {
+		EditorOceanRenderSettings oceanSettings = primaryOceanSceneObject->ocean;
+		oceanSettings.fftUpdateInterval = performanceSettings.oceanFftUpdateInterval;
+
 		g_oceanFftManager.Execute(
 			commandList.Get(),
-			primaryOceanSceneObject->ocean,
-			oceanElapsedTime)) {
+			oceanSettings,
+			oceanElapsedTime);
+	}
+
+	if (primaryOceanSceneObject != nullptr) {
 		for (EditorSceneObject& sceneObject : editorSceneObjects) {
 			g_oceanFftManager.ApplyToSceneObject(sceneObject);
 		}
@@ -2428,7 +2582,109 @@ void EditorRenderManager::Draw() {
 	// backBufferIndex 邵 E E E ・ E E E 闔蛾宦螻楢 E E E  E E E 蜀怜 E邵 E E E 蜷 E E E ・・SwapChain buffer 邵 E E E ・ E E E 騾 E E E ・ E E E 陷 E E E ・ E E E 邵 E E E 繝ｻ
 
 	auto drawShadowObjects = [&](const Matrix4x4& shadowViewProjection) {
+		static std::vector<std::vector<const EditorSceneObject*>> shadowBatches;
+		static std::vector<int32_t> batchedShadowObjectIds;
+		shadowBatches.clear();
+		batchedShadowObjectIds.clear();
+
 		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
+			if (sceneObject.type != EditorSceneObjectType::Model ||
+				sceneObject.ocean.isEnabled || sceneObject.usesSkinning ||
+				sceneObject.surface.mode != 0 || sceneObject.transformationData == nullptr ||
+				sceneObject.materialData == nullptr || sceneObject.materialData->alphaMode != 0 ||
+				!IsSceneObjectInsideViewFrustum(sceneObject, shadowViewProjection)) {
+				continue;
+			}
+
+			bool addedToBatch = false;
+			for (std::vector<const EditorSceneObject*>& batch : shadowBatches) {
+				const EditorSceneObject& firstObject = *batch.front();
+				const bool sameCull = (firstObject.cullMode == 2 || firstObject.materialData->doubleSided != 0) ==
+					(sceneObject.cullMode == 2 || sceneObject.materialData->doubleSided != 0);
+				const bool sameMesh = firstObject.usesCustomMesh == sceneObject.usesCustomMesh &&
+					(firstObject.usesCustomMesh
+						? firstObject.customMeshVertexBufferView.BufferLocation ==
+							sceneObject.customMeshVertexBufferView.BufferLocation &&
+							firstObject.customMeshIndexBufferView.BufferLocation ==
+							sceneObject.customMeshIndexBufferView.BufferLocation
+						: firstObject.meshType == sceneObject.meshType);
+				if (sameCull && sameMesh) {
+					batch.push_back(&sceneObject);
+					addedToBatch = true;
+					break;
+				}
+			}
+			if (!addedToBatch) {
+				shadowBatches.push_back({&sceneObject});
+			}
+		}
+
+		for (const std::vector<const EditorSceneObject*>& batch : shadowBatches) {
+			if (batch.size() < 2u || g_batchInstanceData == nullptr || g_batchInstanceResource == nullptr ||
+				batchInstanceCursor + batch.size() > kEditorBatchInstanceCapacity) {
+				continue;
+			}
+			const uint32_t firstInstanceIndex = batchInstanceCursor;
+			for (const EditorSceneObject* sceneObject : batch) {
+				EditorBatchInstanceData& instanceData = g_batchInstanceData[batchInstanceCursor++];
+				instanceData.WVP = sceneObject->transformationData->WVP;
+				instanceData.World = sceneObject->transformationData->World;
+				instanceData.lightWVP = sceneObject->transformationData->lightWVP;
+				instanceData.previousWVP = sceneObject->transformationData->previousWVP;
+				instanceData.temporalParams = sceneObject->transformationData->temporalParams;
+				batchedShadowObjectIds.push_back(sceneObject->gameObjectId);
+			}
+
+			const EditorSceneObject& firstObject = *batch.front();
+			const bool isDoubleSided = firstObject.cullMode == 2 ||
+				firstObject.materialData->doubleSided != 0;
+			commandList->SetPipelineState(isDoubleSided
+				? g_batchedShadowCullNonePipelineState.Get()
+				: g_batchedShadowPipelineState.Get());
+			commandList->SetGraphicsRootShaderResourceView(
+				kCurrentSkinMatrixRootParameter,
+				g_batchInstanceResource->GetGPUVirtualAddress());
+
+			if (firstObject.usesCustomMesh) {
+				commandList->IASetVertexBuffers(0, 1, &firstObject.customMeshVertexBufferView);
+				if (firstObject.customMeshIndexResource != nullptr && firstObject.customMeshIndexCount > 0u) {
+					commandList->IASetIndexBuffer(&firstObject.customMeshIndexBufferView);
+					RecordEditorProfilerDrawCall();
+					commandList->DrawIndexedInstanced(
+						firstObject.customMeshIndexCount,
+						static_cast<UINT>(batch.size()),
+						0u, 0, firstInstanceIndex);
+				}
+				else {
+					RecordEditorProfilerDrawCall();
+					commandList->DrawInstanced(
+						firstObject.customMeshVertexCount,
+						static_cast<UINT>(batch.size()),
+						0u, firstInstanceIndex);
+				}
+			}
+			else {
+				size_t meshTypeIndex = static_cast<size_t>(firstObject.meshType);
+				if (meshTypeIndex >= kEditorModelMeshTypeCount) {
+					meshTypeIndex = static_cast<size_t>(EditorModelMeshType::Plane);
+				}
+				commandList->IASetVertexBuffers(0, 1, &primitiveVertexBufferViews[meshTypeIndex]);
+				RecordEditorProfilerDrawCall();
+				commandList->DrawInstanced(
+					primitiveVertexCounts[meshTypeIndex],
+					static_cast<UINT>(batch.size()),
+					0u, firstInstanceIndex);
+			}
+		}
+		BindSceneObjectSkinningResources(commandList.Get(), nullptr);
+
+		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
+			if (std::find(
+				batchedShadowObjectIds.begin(),
+				batchedShadowObjectIds.end(),
+				sceneObject.gameObjectId) != batchedShadowObjectIds.end()) {
+				continue;
+			}
 			if (sceneObject.type != EditorSceneObjectType::Model ||
 				sceneObject.ocean.isEnabled ||
 				sceneObject.transformationResource == nullptr ||
@@ -2445,6 +2701,8 @@ void EditorRenderManager::Draw() {
 
 			const bool isAlphaCutout =
 				sceneObject.materialData != nullptr &&
+				sceneObject.transformationData != nullptr &&
+				sceneObject.gameTransformationData != nullptr &&
 				sceneObject.materialData->alphaMode == 1;
 			const bool isDoubleSided =
 				sceneObject.cullMode == 2 ||
@@ -2472,7 +2730,7 @@ void EditorRenderManager::Draw() {
 
 			commandList->SetGraphicsRootConstantBufferView(
 				1,
-				sceneObject.transformationResource->GetGPUVirtualAddress());
+				sceneObject.transformationGpuAddress);
 			const D3D12_GPU_DESCRIPTOR_HANDLE fallbackHeightHandle =
 				sceneObject.customTextureSrvGpuHandle.ptr != 0u
 				? sceneObject.customTextureSrvGpuHandle
@@ -2499,7 +2757,7 @@ void EditorRenderManager::Draw() {
 
 				commandList->SetGraphicsRootConstantBufferView(
 					0,
-					sceneObject.materialResource->GetGPUVirtualAddress());
+					sceneObject.materialGpuAddress);
 				commandList->SetGraphicsRootDescriptorTable(3, baseColorHandle);
 				commandList->SetGraphicsRootDescriptorTable(17, opacityHandle);
 			}
@@ -2562,10 +2820,10 @@ void EditorRenderManager::Draw() {
 
 			commandList->SetGraphicsRootConstantBufferView(
 				0,
-				sceneObject.materialResource->GetGPUVirtualAddress());
+				sceneObject.materialGpuAddress);
 			commandList->SetGraphicsRootConstantBufferView(
 				1,
-				sceneObject.transformationResource->GetGPUVirtualAddress());
+				sceneObject.transformationGpuAddress);
 			const D3D12_GPU_DESCRIPTOR_HANDLE baseColorHandle =
 				sceneObject.customTextureSrvGpuHandle.ptr != 0u
 				? sceneObject.customTextureSrvGpuHandle
@@ -2648,14 +2906,14 @@ void EditorRenderManager::Draw() {
 			D3D12_RECT clearRects[] = {shadowScissorRect};
 			commandList->ClearDepthStencilView(shadowDsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 1, clearRects);
 
-// 各Cascade / Cube面の行列をコマンドへコピーする。
-// 同じCBVのlightWVPを書き換えると、GPUは最後の値で全タイルを描いてしまう。
-commandList->SetGraphicsRoot32BitConstants(
-        24u,
-        16u,
-        &shadowRenderPass.viewProjection,
-        0u);
-drawShadowObjects(shadowRenderPass.viewProjection);
+			// 各Cascade / Cube面の行列をコマンドへコピーする。
+			// 同じCBVのlightWVPを書き換えると、GPUは最後の値で全タイルを描いてしまう。
+			commandList->SetGraphicsRoot32BitConstants(
+				24u,
+				16u,
+				&shadowRenderPass.viewProjection,
+				0u);
+			drawShadowObjects(shadowRenderPass.viewProjection);
 		}
 
 		shadowBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
@@ -2683,8 +2941,28 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 
 	uint32_t bakeBaseProbeIndex = 0u;
 	uint32_t bakeProbeCount = 0u;
+	static uint32_t lightProbeBakeThrottleFrameIndex = 0u;
 
-	if (g_lightProbeManager.PrepareBakeBatch(bakeBaseProbeIndex, bakeProbeCount)) {
+	// Shadowと同じScene・Light状態ハッシュを使い、内容が変わった時だけProbeを焼き直す。
+	if (!g_editorRuntimeManager.IsPlaying() &&
+		g_lightProbeManager.IsReady() &&
+		(!hasSubmittedLightProbeState || submittedLightProbeStateHash != shadowStateHash)) {
+		g_lightProbeManager.RequestFullRebake();
+		submittedLightProbeStateHash = shadowStateHash;
+		hasSubmittedLightProbeState = true;
+	}
+
+	bool shouldPrepareLightProbeBake = true;
+	if (performanceSettings.hasComponent && performanceSettings.allowBakeThrottle) {
+		shouldPrepareLightProbeBake = (lightProbeBakeThrottleFrameIndex % 2u) == 0u;
+		lightProbeBakeThrottleFrameIndex++;
+	}
+	else {
+		lightProbeBakeThrottleFrameIndex = 0u;
+	}
+
+	if (shouldPrepareLightProbeBake &&
+		g_lightProbeManager.PrepareBakeBatch(bakeBaseProbeIndex, bakeProbeCount)) {
 		g_lightProbeManager.BeginCapture(commandList.Get());
 		commandList->SetGraphicsRootSignature(rootSignature.Get());
 		BindSceneObjectSkinningResources(commandList.Get(), nullptr);
@@ -2976,8 +3254,11 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 		const bool isPlanarReflectionDraw = targetRtvHandle.ptr == planarReflectionRtvHandle.ptr;
 		const bool useGpuCullingForPass = shouldUseGpuCulling &&
 			!isPlanarReflectionDraw &&
-			((!isGameViewPass && g_isSceneViewVisible) ||
-			(isGameViewPass && !g_isSceneViewVisible && g_isGameViewVisible));
+			((!isGameViewPass && shouldRenderSceneView) ||
+			(isGameViewPass && shouldRenderGameView));
+		const EditorGpuCullingView gpuCullingView = isGameViewPass
+			? EditorGpuCullingView::Game
+			: EditorGpuCullingView::Scene;
 		const Matrix4x4& activeViewProjectionMatrix =
 			cullingOverrideViewProjectionMatrix != nullptr
 				? *cullingOverrideViewProjectionMatrix
@@ -3074,8 +3355,188 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 			transparentSceneObjects.begin(),
 			transparentSceneObjects.end());
 
+		// 同一Mesh/Materialの静的不透明Modelを自動的に1 Drawへまとめる。
+		// 特殊頂点処理を持つObjectは従来経路へ残し、描画結果を変えない。
+		static std::vector<std::vector<const EditorSceneObject*>> automaticBatches;
+		static std::vector<int32_t> batchedGameObjectIds;
+		automaticBatches.clear();
+		batchedGameObjectIds.clear();
+
+		auto canUseAutomaticBatch = [&](const EditorSceneObject& sceneObject) {
+			return drawFilter != SceneObjectDrawFilter::Transparent &&
+				drawFilter != SceneObjectDrawFilter::Refractive &&
+				sceneObject.type == EditorSceneObjectType::Model &&
+				sceneObject.gameObjectId != skipGameObjectId &&
+				sceneObject.gameObjectId != planarSurfaceGameObjectId &&
+				!sceneObject.usesSkinning &&
+				!sceneObject.ocean.isEnabled &&
+				sceneObject.surface.mode == 0 &&
+				sceneObject.materialData != nullptr &&
+				sceneObject.materialData->oceanEnabled < 0.5f &&
+				sceneObject.materialData->alphaMode == 0 &&
+				IsSceneObjectInsideViewFrustum(sceneObject, activeViewProjectionMatrix);
+		};
+
+		auto hasSameBatchState = [](const EditorSceneObject& left, const EditorSceneObject& right) {
+			if (left.usesCustomMesh != right.usesCustomMesh ||
+				left.cullMode != right.cullMode ||
+				left.textureIndex != right.textureIndex ||
+				left.customTextureSrvGpuHandle.ptr != right.customTextureSrvGpuHandle.ptr ||
+				std::memcmp(left.materialData, right.materialData, sizeof(Material)) != 0) {
+				return false;
+			}
+			for (size_t textureSlotIndex = 0u;
+				textureSlotIndex < kEditorMaterialTextureSlotCount;
+				textureSlotIndex++) {
+				if (left.materialTextureSrvGpuHandles[textureSlotIndex].ptr !=
+					right.materialTextureSrvGpuHandles[textureSlotIndex].ptr) {
+					return false;
+				}
+			}
+			if (!left.usesCustomMesh) {
+				return left.meshType == right.meshType;
+			}
+			return left.customMeshVertexBufferView.BufferLocation ==
+					right.customMeshVertexBufferView.BufferLocation &&
+				left.customMeshVertexCount == right.customMeshVertexCount &&
+				left.customMeshIndexBufferView.BufferLocation ==
+					right.customMeshIndexBufferView.BufferLocation &&
+				left.customMeshIndexCount == right.customMeshIndexCount;
+		};
+
+		for (const EditorSceneObject* sceneObject : orderedSceneObjects) {
+			if (sceneObject == nullptr || !canUseAutomaticBatch(*sceneObject)) {
+				continue;
+			}
+			bool addedToBatch = false;
+			for (std::vector<const EditorSceneObject*>& batch : automaticBatches) {
+				if (!batch.empty() && hasSameBatchState(*batch.front(), *sceneObject)) {
+					batch.push_back(sceneObject);
+					addedToBatch = true;
+					break;
+				}
+			}
+			if (!addedToBatch) {
+				automaticBatches.push_back({sceneObject});
+			}
+		}
+
+		for (const std::vector<const EditorSceneObject*>& batch : automaticBatches) {
+			if (batch.size() < 2u || g_batchInstanceResource == nullptr || g_batchInstanceData == nullptr ||
+				batchInstanceCursor + batch.size() > kEditorBatchInstanceCapacity) {
+				continue;
+			}
+
+			const EditorSceneObject& firstObject = *batch.front();
+			ID3D12Resource* firstTransformResource = isGameViewPass
+				? firstObject.gameTransformationResource
+				: firstObject.transformationResource;
+			if (firstTransformResource == nullptr) {
+				continue;
+			}
+
+			const uint32_t firstInstanceIndex = batchInstanceCursor;
+			for (const EditorSceneObject* batchObject : batch) {
+				const TransformationMatrix* transformData = isGameViewPass
+					? batchObject->gameTransformationData
+					: batchObject->transformationData;
+				if (transformData == nullptr) {
+					continue;
+				}
+				EditorBatchInstanceData& instanceData = g_batchInstanceData[batchInstanceCursor++];
+				instanceData.WVP = transformData->WVP;
+				instanceData.World = transformData->World;
+				instanceData.lightWVP = transformData->lightWVP;
+				instanceData.previousWVP = transformData->previousWVP;
+				instanceData.temporalParams = transformData->temporalParams;
+				batchedGameObjectIds.push_back(batchObject->gameObjectId);
+			}
+
+			ID3D12PipelineState* batchedPipelineState = firstObject.cullMode == 1
+				? g_batchedCullFrontPipelineState.Get()
+				: (firstObject.cullMode == 2
+					? g_batchedCullNonePipelineState.Get()
+					: g_batchedGraphicsPipelineState.Get());
+			if (batchedPipelineState == nullptr) {
+				batchInstanceCursor = firstInstanceIndex;
+				continue;
+			}
+
+			commandList->SetPipelineState(batchedPipelineState);
+			commandList->SetGraphicsRootConstantBufferView(
+				0,
+				firstObject.materialGpuAddress);
+			commandList->SetGraphicsRootConstantBufferView(
+				1,
+				isGameViewPass
+					? firstObject.gameTransformationGpuAddress
+					: firstObject.transformationGpuAddress);
+			commandList->SetGraphicsRootShaderResourceView(
+				kCurrentSkinMatrixRootParameter,
+				g_batchInstanceResource->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootShaderResourceView(
+				kPreviousSkinMatrixRootParameter,
+				g_identitySkinMatrixResource->GetGPUVirtualAddress());
+
+			D3D12_GPU_DESCRIPTOR_HANDLE textureHandle =
+				firstObject.customTextureSrvGpuHandle.ptr != 0u
+					? firstObject.customTextureSrvGpuHandle
+					: textureSrvHandlesGPU[2];
+			commandList->SetGraphicsRootDescriptorTable(3, textureHandle);
+			commandList->SetGraphicsRootDescriptorTable(6, environmentSrvHandleGPU);
+			commandList->SetGraphicsRootDescriptorTable(7, iblIrradianceSrvHandleGPU);
+			commandList->SetGraphicsRootDescriptorTable(8, iblPrefilterSrvHandleGPU);
+			commandList->SetGraphicsRootDescriptorTable(9, iblEnvironmentSrvHandleGPU);
+			commandList->SetGraphicsRootDescriptorTable(10, iblBrdfLutSrvHandleGPU);
+			bindMaterialTextureHandles(firstObject, textureHandle);
+
+			if (firstObject.usesCustomMesh) {
+				commandList->IASetVertexBuffers(0, 1, &firstObject.customMeshVertexBufferView);
+				if (firstObject.customMeshIndexResource != nullptr &&
+					firstObject.customMeshIndexCount > 0u) {
+					commandList->IASetIndexBuffer(&firstObject.customMeshIndexBufferView);
+					RecordEditorProfilerDrawCall();
+					commandList->DrawIndexedInstanced(
+						firstObject.customMeshIndexCount,
+						static_cast<UINT>(batch.size()),
+						0u,
+						0,
+						firstInstanceIndex);
+				}
+				else {
+					RecordEditorProfilerDrawCall();
+					commandList->DrawInstanced(
+						firstObject.customMeshVertexCount,
+						static_cast<UINT>(batch.size()),
+						0u,
+						firstInstanceIndex);
+				}
+			}
+			else {
+				size_t meshTypeIndex = static_cast<size_t>(firstObject.meshType);
+				if (meshTypeIndex >= kEditorModelMeshTypeCount) {
+					meshTypeIndex = static_cast<size_t>(EditorModelMeshType::Plane);
+				}
+				commandList->IASetVertexBuffers(0, 1, &primitiveVertexBufferViews[meshTypeIndex]);
+				RecordEditorProfilerDrawCall();
+				commandList->DrawInstanced(
+					primitiveVertexCounts[meshTypeIndex],
+					static_cast<UINT>(batch.size()),
+					0u,
+					firstInstanceIndex);
+			}
+		}
+
+		BindSceneObjectSkinningResources(commandList.Get(), nullptr);
+
 		for (const EditorSceneObject* sceneObjectPointer : orderedSceneObjects) {
 			const EditorSceneObject& sceneObject = *sceneObjectPointer;
+			if (std::find(
+				batchedGameObjectIds.begin(),
+				batchedGameObjectIds.end(),
+				sceneObject.gameObjectId) != batchedGameObjectIds.end()) {
+				continue;
+			}
 			const bool isOcean =
 				sceneObject.ocean.isEnabled ||
 				(sceneObject.materialData != nullptr && sceneObject.materialData->oceanEnabled >= 0.5f);
@@ -3103,20 +3564,32 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 			ID3D12Resource* transformationResource = isGameViewPass
 				                                         ? sceneObject.gameTransformationResource
 				                                         : sceneObject.transformationResource;
+			const D3D12_GPU_VIRTUAL_ADDRESS transformationGpuAddress = isGameViewPass
+				? sceneObject.gameTransformationGpuAddress
+				: sceneObject.transformationGpuAddress;
 			if (transformationResource == nullptr) {
 				continue;
 			}
 
 			ID3D12Resource* materialResource = sceneObject.materialResource;
+			D3D12_GPU_VIRTUAL_ADDRESS materialGpuAddress = sceneObject.materialGpuAddress;
 			if (materialResource == nullptr) {
 				materialResource = sceneObject.type == EditorSceneObjectType::Sprite
 					                   ? spriteMaterialResource
 					                   : sphereMaterialResource;
+				materialGpuAddress = materialResource->GetGPUVirtualAddress();
 			}
 
+			const bool canUseIndirectDraw = useGpuCullingForPass &&
+				sceneObject.type == EditorSceneObjectType::Model &&
+				sceneObject.surface.mode == 0;
 			const bool hasGpuPredicate = useGpuCullingForPass &&
+				!canUseIndirectDraw &&
 				!sceneObject.ocean.isEnabled &&
-				g_gpuCullingManager.BeginPredication(commandList.Get(), sceneObject.gameObjectId);
+				g_gpuCullingManager.BeginPredication(
+					commandList.Get(),
+					gpuCullingView,
+					sceneObject.gameObjectId);
 
 			if (sceneObject.type == EditorSceneObjectType::Sprite) {
 				// 平行投影で頂点の表裏が反転しても Sprite 全体が破棄されないよう、両面 PSO を使う。
@@ -3145,10 +3618,10 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 					sceneObject.customTextureSrvGpuHandle.ptr != 0u
 						? sceneObject.customTextureSrvGpuHandle
 						: textureSrvHandlesGPU[textureIndex];
-				commandList->SetGraphicsRootConstantBufferView(0, materialResource->GetGPUVirtualAddress());
+				commandList->SetGraphicsRootConstantBufferView(0, materialGpuAddress);
 				commandList->SetGraphicsRootConstantBufferView(
 					1,
-					transformationResource->GetGPUVirtualAddress());
+					transformationGpuAddress);
 				commandList->SetGraphicsRootDescriptorTable(3, textureHandle);
 				commandList->SetGraphicsRootDescriptorTable(6, environmentSrvHandleGPU);
 				commandList->SetGraphicsRootDescriptorTable(7, iblIrradianceSrvHandleGPU);
@@ -3222,15 +3695,15 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 					commandList->SetPipelineState(defaultDrawPso);
 				}
 
-				commandList->SetGraphicsRootConstantBufferView(0, materialResource->GetGPUVirtualAddress());
+				commandList->SetGraphicsRootConstantBufferView(0, materialGpuAddress);
 				commandList->SetGraphicsRootConstantBufferView(
 					1,
-					transformationResource->GetGPUVirtualAddress());
+					transformationGpuAddress);
 
 				if (useOceanTessellation) {
 					commandList->SetGraphicsRootConstantBufferView(
 						kOceanTessellationTransformRootParameter,
-						transformationResource->GetGPUVirtualAddress());
+						transformationGpuAddress);
 					commandList->IASetPrimitiveTopology(
 						D3D_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
 				}
@@ -3248,20 +3721,46 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 				if (sceneObject.usesCustomMesh &&
 					sceneObject.customMeshVertexResource != nullptr &&
 					sceneObject.customMeshVertexCount > 0u) {
-					DrawCustomSceneMesh(
-						commandList.Get(),
-						sceneObject,
-						&targetCameraPosition,
-						false);
+					bool usedIndirectDraw = false;
+					if (canUseIndirectDraw) {
+						BindSceneObjectSkinningResources(commandList.Get(), &sceneObject);
+						commandList->IASetVertexBuffers(0, 1, &sceneObject.customMeshVertexBufferView);
+						if (sceneObject.customMeshIndexResource != nullptr &&
+							sceneObject.customMeshIndexCount > 0u) {
+							commandList->IASetIndexBuffer(&sceneObject.customMeshIndexBufferView);
+							usedIndirectDraw = g_gpuCullingManager.ExecuteIndirectDrawIndexed(
+								commandList.Get(), gpuCullingView, sceneObject.gameObjectId);
+						}
+						else {
+							usedIndirectDraw = g_gpuCullingManager.ExecuteIndirectDraw(
+								commandList.Get(), gpuCullingView, sceneObject.gameObjectId);
+						}
+						if (usedIndirectDraw) {
+							RecordEditorProfilerDrawCall();
+						}
+					}
+					if (!usedIndirectDraw) {
+						DrawCustomSceneMesh(
+							commandList.Get(),
+							sceneObject,
+							&targetCameraPosition,
+							false);
+					}
 				}
 				else {
 					commandList->IASetVertexBuffers(0, 1, &primitiveVertexBufferViews[meshTypeIndex]);
 					RecordEditorProfilerDrawCall();
-					commandList->DrawInstanced(
-						primitiveVertexCounts[meshTypeIndex],
-						GetSceneObjectInstanceCount(sceneObject),
-						0,
-						0);
+					if (!canUseIndirectDraw ||
+						!g_gpuCullingManager.ExecuteIndirectDraw(
+							commandList.Get(),
+							gpuCullingView,
+							sceneObject.gameObjectId)) {
+						commandList->DrawInstanced(
+							primitiveVertexCounts[meshTypeIndex],
+							GetSceneObjectInstanceCount(sceneObject),
+							0,
+							0);
+					}
 				}
 
 				if (useOceanTessellation) {
@@ -3316,13 +3815,18 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 			ID3D12Resource* transformationResource = isGameViewPass
 				                                         ? sceneObject.gameTransformationResource
 				                                         : sceneObject.transformationResource;
+			const D3D12_GPU_VIRTUAL_ADDRESS transformationGpuAddress = isGameViewPass
+				? sceneObject.gameTransformationGpuAddress
+				: sceneObject.transformationGpuAddress;
 			if (transformationResource == nullptr) {
 				continue;
 			}
 
 			ID3D12Resource* materialResource = sceneObject.materialResource;
+			D3D12_GPU_VIRTUAL_ADDRESS materialGpuAddress = sceneObject.materialGpuAddress;
 			if (materialResource == nullptr) {
 				materialResource = sphereMaterialResource;
+				materialGpuAddress = materialResource->GetGPUVirtualAddress();
 			}
 
 			size_t meshTypeIndex = static_cast<size_t>(sceneObject.meshType);
@@ -3331,8 +3835,8 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 				meshTypeIndex = static_cast<size_t>(EditorModelMeshType::Plane);
 			}
 
-			commandList->SetGraphicsRootConstantBufferView(0, materialResource->GetGPUVirtualAddress());
-			commandList->SetGraphicsRootConstantBufferView(1, transformationResource->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootConstantBufferView(0, materialGpuAddress);
+			commandList->SetGraphicsRootConstantBufferView(1, transformationGpuAddress);
 			const D3D12_GPU_DESCRIPTOR_HANDLE textureHandle =
 				sceneObject.customTextureSrvGpuHandle.ptr != 0u
 				? sceneObject.customTextureSrvGpuHandle
@@ -3388,7 +3892,15 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 		commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, &dsvHandle);
 
 		if (g_editorRuntimeManager.GetEffectManager().HasLiveGpuParticles()) {
+			const uint32_t gpuParticleDrawEvent = profilerManager.BeginGpuEvent(
+				commandList.Get(),
+				renderTimestampQueryHeap.Get(),
+				"GPU Particle Billboard");
 			g_gpuParticleManager.Draw(commandList.Get(), targetViewProjectionMatrix, targetViewMatrix);
+			profilerManager.EndGpuEvent(
+				commandList.Get(),
+				renderTimestampQueryHeap.Get(),
+				gpuParticleDrawEvent);
 		}
 
 		g_editorRuntimeManager.GetEffekseerManager().Draw(
@@ -3437,19 +3949,23 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 		commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, &dsvHandle);
 	};
 
+	// ImGui の画面座標(ViewportsEnable 中はデスクトップ基準)を back buffer 基準へ戻す。
+	const float gameRenderX = g_editorGameX - g_editorRenderOriginX;
+	const float gameRenderY = g_editorGameY - g_editorRenderOriginY;
+
 	D3D12_VIEWPORT gameViewport{};
-	gameViewport.TopLeftX = g_editorGameX;
-	gameViewport.TopLeftY = g_editorGameY;
+	gameViewport.TopLeftX = gameRenderX;
+	gameViewport.TopLeftY = gameRenderY;
 	gameViewport.Width = g_editorGameWidth;
 	gameViewport.Height = g_editorGameHeight;
 	gameViewport.MinDepth = 0.0f;
 	gameViewport.MaxDepth = 1.0f;
 
 	D3D12_RECT gameScissorRect{};
-	gameScissorRect.left = static_cast<LONG>(g_editorGameX);
-	gameScissorRect.top = static_cast<LONG>(g_editorGameY);
-	gameScissorRect.right = static_cast<LONG>(g_editorGameX + g_editorGameWidth);
-	gameScissorRect.bottom = static_cast<LONG>(g_editorGameY + g_editorGameHeight);
+	gameScissorRect.left = static_cast<LONG>(gameRenderX);
+	gameScissorRect.top = static_cast<LONG>(gameRenderY);
+	gameScissorRect.right = static_cast<LONG>(gameRenderX + g_editorGameWidth);
+	gameScissorRect.bottom = static_cast<LONG>(gameRenderY + g_editorGameHeight);
 
 	const float planarClearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 	const bool hasPlanarReflectionResources =
@@ -3458,16 +3974,16 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 		planarScenePipelineState != nullptr &&
 		planarReflectionPipelineState != nullptr &&
 		materialMaskRenderTarget != nullptr &&
-		(g_isSceneViewVisible || g_isGameViewVisible);
+		hasActiveRenderView;
 	std::uint64_t planarReflectionStateHash = 14695981039346656037ull;
 	AppendHashBytes(
 		planarReflectionStateHash,
-		&g_isSceneViewVisible,
-		sizeof(g_isSceneViewVisible));
+		&shouldRenderSceneView,
+		sizeof(shouldRenderSceneView));
 	AppendHashBytes(
 		planarReflectionStateHash,
-		&g_isGameViewVisible,
-		sizeof(g_isGameViewVisible));
+		&shouldRenderGameView,
+		sizeof(shouldRenderGameView));
 
 	if (scenePlanarView != nullptr) {
 		AppendHashBytes(
@@ -3531,16 +4047,24 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 		submittedPlanarReflectionTarget = nullptr;
 	}
 
-	const bool isPlaying = g_editorRuntimeManager.IsPlaying();
-	const bool isAutomaticOceanReflection =
-		!planarViews.empty() && !planarManager.HasCompositeProbes();
-	const bool shouldThrottleOceanReflection =
-		isPlaying &&
-		isAutomaticOceanReflection &&
-		renderProfile.gpuFrameMilliseconds > 14.0f;
+	// Play中の平面反射は前回結果を再利用し、GPUが重い時だけ更新頻度を下げる。
+	uint32_t oceanReflectionUpdateInterval = 1u;
+
+	if (isPlaying && performanceSettings.allowReflectionThrottle) {
+		if (performanceSettings.reflectionUpdateInterval > 0) {
+			oceanReflectionUpdateInterval = static_cast<uint32_t>(
+				(std::clamp)(performanceSettings.reflectionUpdateInterval, 1, 8));
+		}
+		else if (performanceSettings.adaptiveQuality) {
+			oceanReflectionUpdateInterval = renderProfile.gpuFrameMilliseconds > performanceHardBudgetMilliseconds
+				? 4u
+				: (renderProfile.gpuFrameMilliseconds > performanceSoftBudgetMilliseconds ? 3u : 2u);
+		}
+	}
+
 	const bool isOceanReflectionUpdateFrame =
-		!shouldThrottleOceanReflection ||
-		(oceanReflectionUpdateFrameIndex % 2u) == 0u;
+		!isPlaying ||
+		(oceanReflectionUpdateFrameIndex % oceanReflectionUpdateInterval) == 0u;
 	const bool hasPlanarReflectionTargetChanged =
 		!hasSubmittedPlanarReflection ||
 		submittedPlanarReflectionTarget != planarReflectionRenderTarget;
@@ -3550,7 +4074,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 		 (!isPlaying && submittedPlanarReflectionStateHash != planarReflectionStateHash) ||
 		 (isPlaying && isOceanReflectionUpdateFrame));
 
-	if (isPlaying && isAutomaticOceanReflection) {
+	if (isPlaying && !planarViews.empty()) {
 		oceanReflectionUpdateFrameIndex++;
 	} else {
 		oceanReflectionUpdateFrameIndex = 0u;
@@ -3589,7 +4113,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 		// 合成はメインシーンの色・深度・同じ反射面 ID のマスクが完成した後に行う。
 		commandList->ClearRenderTargetView(planarReflectionRtvHandle, hdrClearColor, 0, nullptr);
 
-		if (g_isSceneViewVisible && scenePlanarView != nullptr) {
+		if (shouldRenderSceneView && scenePlanarView != nullptr) {
 			const EditorPlanarReflectionManager::ProbeView& planarView = *scenePlanarView;
 			const PlanarReflectionCamera& reflectionCamera = planarView.sceneCam;
 			const Vector3 savedCameraPosition = directionalLightData->cameraPosition;
@@ -3648,7 +4172,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 			directionalLightData->cameraPosition = savedCameraPosition;
 		}
 
-		if (g_isGameViewVisible && gamePlanarView != nullptr) {
+		if (shouldRenderGameView && gamePlanarView != nullptr) {
 			const EditorPlanarReflectionManager::ProbeView& planarView = *gamePlanarView;
 			const PlanarReflectionCamera& reflectionCamera = planarView.gameCam;
 			const Vector3 savedCameraPosition = directionalLightData->cameraPosition;
@@ -3781,7 +4305,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 		commandList->ClearRenderTargetView(g_oitRtvHandles[1], revealageClearColor, 0, nullptr);
 	}
 
-	if (g_isSceneViewVisible || g_isGameViewVisible) {
+	if (hasActiveRenderView) {
 		if (depthStencilResource != nullptr && !hasPlanarReflectionCapture) {
 			D3D12_RESOURCE_BARRIER mainDepthBarrier{};
 			mainDepthBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -3793,7 +4317,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 		}
 	}
 
-	if (g_isSceneViewVisible) {
+	if (shouldRenderSceneView) {
 		commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 1, &scissorRect);
 		commandList->RSSetViewports(1, &viewport);
 		commandList->RSSetScissorRects(1, &scissorRect);
@@ -3828,7 +4352,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 			SceneObjectDrawFilter::Opaque);
 	}
 
-	if (g_isGameViewVisible) {
+	if (shouldRenderGameView) {
 		commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 1, &gameScissorRect);
 		commandList->RSSetViewports(1, &gameViewport);
 		commandList->RSSetScissorRects(1, &gameScissorRect);
@@ -3980,7 +4504,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 		commandList->SetGraphicsRootDescriptorTable(22, hdrCompositeSrvHandleGPU);
 		commandList->SetGraphicsRootDescriptorTable(23, opaqueDepthCopySrvHandleGPU);
 
-		if (g_isSceneViewVisible) {
+		if (shouldRenderSceneView) {
 			commandList->RSSetViewports(1, &viewport);
 			commandList->RSSetScissorRects(1, &scissorRect);
 			bindWaterViewConstants(
@@ -4003,7 +4527,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 				SceneObjectDrawFilter::Water);
 		}
 
-		if (g_isGameViewVisible) {
+		if (shouldRenderGameView) {
 			commandList->RSSetViewports(1, &gameViewport);
 			commandList->RSSetScissorRects(1, &gameScissorRect);
 			bindWaterViewConstants(
@@ -4102,7 +4626,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 		commandList->SetGraphicsRootDescriptorTable(22, hdrCompositeSrvHandleGPU);
 		commandList->SetGraphicsRootDescriptorTable(23, depthSrvHandleGPU);
 
-		if (g_isSceneViewVisible) {
+		if (shouldRenderSceneView) {
 			commandList->RSSetViewports(1, &viewport);
 			commandList->RSSetScissorRects(1, &scissorRect);
 			bindRefractiveViewConstants(inverseViewProjectionMatrix, viewport);
@@ -4119,7 +4643,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 				SceneObjectDrawFilter::Refractive);
 		}
 
-		if (g_isGameViewVisible) {
+		if (shouldRenderGameView) {
 			commandList->RSSetViewports(1, &gameViewport);
 			commandList->RSSetScissorRects(1, &gameScissorRect);
 			bindRefractiveViewConstants(inverseGameViewProjectionMatrix, gameViewport);
@@ -4142,7 +4666,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 	}
 
 	// 通常半透明と Effect は水面の後に描き、Weighted OIT の対象を水と分離する。
-	if (g_isSceneViewVisible) {
+	if (shouldRenderSceneView) {
 		commandList->RSSetViewports(1, &viewport);
 		commandList->RSSetScissorRects(1, &scissorRect);
 		const int32_t firstReflectorId = scenePlanarView == nullptr
@@ -4168,7 +4692,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 		drawReflectionMaskObjects(false, firstReflectorId);
 	}
 
-	if (g_isGameViewVisible) {
+	if (shouldRenderGameView) {
 		commandList->RSSetViewports(1, &gameViewport);
 		commandList->RSSetScissorRects(1, &gameScissorRect);
 		const int32_t firstReflectorId = gamePlanarView == nullptr
@@ -4205,7 +4729,133 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 	//================================================================
 
 	auto drawGBufferObjects = [&](bool isGameViewPass) {
+		static std::vector<std::vector<const EditorSceneObject*>> gBufferBatches;
+		static std::vector<int32_t> batchedGBufferObjectIds;
+		gBufferBatches.clear();
+		batchedGBufferObjectIds.clear();
+		const Matrix4x4& gBufferViewProjection = isGameViewPass
+			? gameViewProjectionMatrix
+			: sceneViewProjectionMatrix;
+
 		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
+			if (sceneObject.type != EditorSceneObjectType::Model || sceneObject.cullMode == 1 ||
+				sceneObject.ocean.isEnabled || sceneObject.usesSkinning || sceneObject.surface.mode != 0 ||
+				sceneObject.materialData == nullptr || sceneObject.materialResource == nullptr ||
+				sceneObject.materialData->oceanEnabled >= 0.5f || sceneObject.materialData->alphaMode == 2 ||
+				sceneObject.transformationData == nullptr || sceneObject.gameTransformationData == nullptr ||
+				!IsSceneObjectInsideViewFrustum(sceneObject, gBufferViewProjection)) {
+				continue;
+			}
+
+			bool addedToBatch = false;
+			for (std::vector<const EditorSceneObject*>& batch : gBufferBatches) {
+				const EditorSceneObject& firstObject = *batch.front();
+				bool sameState = firstObject.usesCustomMesh == sceneObject.usesCustomMesh &&
+					firstObject.cullMode == sceneObject.cullMode &&
+					firstObject.textureIndex == sceneObject.textureIndex &&
+					firstObject.customTextureSrvGpuHandle.ptr == sceneObject.customTextureSrvGpuHandle.ptr &&
+					std::memcmp(firstObject.materialData, sceneObject.materialData, sizeof(Material)) == 0;
+				for (size_t textureSlotIndex = 0u;
+					sameState && textureSlotIndex < kEditorMaterialTextureSlotCount;
+					textureSlotIndex++) {
+					sameState = firstObject.materialTextureSrvGpuHandles[textureSlotIndex].ptr ==
+						sceneObject.materialTextureSrvGpuHandles[textureSlotIndex].ptr;
+				}
+				if (sameState) {
+					sameState = firstObject.usesCustomMesh
+						? firstObject.customMeshVertexBufferView.BufferLocation ==
+							sceneObject.customMeshVertexBufferView.BufferLocation &&
+							firstObject.customMeshIndexBufferView.BufferLocation ==
+							sceneObject.customMeshIndexBufferView.BufferLocation
+						: firstObject.meshType == sceneObject.meshType;
+				}
+				if (sameState) {
+					batch.push_back(&sceneObject);
+					addedToBatch = true;
+					break;
+				}
+			}
+			if (!addedToBatch) {
+				gBufferBatches.push_back({&sceneObject});
+			}
+		}
+
+		for (const std::vector<const EditorSceneObject*>& batch : gBufferBatches) {
+			if (batch.size() < 2u || g_batchInstanceData == nullptr || g_batchInstanceResource == nullptr ||
+				batchInstanceCursor + batch.size() > kEditorBatchInstanceCapacity) {
+				continue;
+			}
+			const uint32_t firstInstanceIndex = batchInstanceCursor;
+			for (const EditorSceneObject* sceneObject : batch) {
+				const TransformationMatrix* transformData = isGameViewPass
+					? sceneObject->gameTransformationData
+					: sceneObject->transformationData;
+				EditorBatchInstanceData& instanceData = g_batchInstanceData[batchInstanceCursor++];
+				instanceData.WVP = transformData->WVP;
+				instanceData.World = transformData->World;
+				instanceData.lightWVP = transformData->lightWVP;
+				instanceData.previousWVP = transformData->previousWVP;
+				instanceData.temporalParams = transformData->temporalParams;
+				batchedGBufferObjectIds.push_back(sceneObject->gameObjectId);
+			}
+
+			const EditorSceneObject& firstObject = *batch.front();
+			g_gBufferManager.BindBatchedPipelineState(commandList.Get(), firstObject.cullMode == 2);
+			commandList->SetGraphicsRootConstantBufferView(
+				0, firstObject.materialGpuAddress);
+			commandList->SetGraphicsRootConstantBufferView(
+				1, isGameViewPass
+					? firstObject.gameTransformationGpuAddress
+					: firstObject.transformationGpuAddress);
+			commandList->SetGraphicsRootConstantBufferView(
+				2, directionalLightResource->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootShaderResourceView(
+				kCurrentSkinMatrixRootParameter,
+				g_batchInstanceResource->GetGPUVirtualAddress());
+			const D3D12_GPU_DESCRIPTOR_HANDLE textureHandle =
+				firstObject.customTextureSrvGpuHandle.ptr != 0u
+					? firstObject.customTextureSrvGpuHandle
+					: textureSrvHandlesGPU[2];
+			commandList->SetGraphicsRootDescriptorTable(3, textureHandle);
+			bindMaterialTextureHandles(firstObject, textureHandle);
+
+			if (firstObject.usesCustomMesh) {
+				commandList->IASetVertexBuffers(0, 1, &firstObject.customMeshVertexBufferView);
+				if (firstObject.customMeshIndexResource != nullptr && firstObject.customMeshIndexCount > 0u) {
+					commandList->IASetIndexBuffer(&firstObject.customMeshIndexBufferView);
+					RecordEditorProfilerDrawCall();
+					commandList->DrawIndexedInstanced(
+						firstObject.customMeshIndexCount, static_cast<UINT>(batch.size()),
+						0u, 0, firstInstanceIndex);
+				}
+				else {
+					RecordEditorProfilerDrawCall();
+					commandList->DrawInstanced(
+						firstObject.customMeshVertexCount, static_cast<UINT>(batch.size()),
+						0u, firstInstanceIndex);
+				}
+			}
+			else {
+				size_t meshTypeIndex = static_cast<size_t>(firstObject.meshType);
+				if (meshTypeIndex >= kEditorModelMeshTypeCount) {
+					meshTypeIndex = static_cast<size_t>(EditorModelMeshType::Plane);
+				}
+				commandList->IASetVertexBuffers(0, 1, &primitiveVertexBufferViews[meshTypeIndex]);
+				RecordEditorProfilerDrawCall();
+				commandList->DrawInstanced(
+					primitiveVertexCounts[meshTypeIndex], static_cast<UINT>(batch.size()),
+					0u, firstInstanceIndex);
+			}
+		}
+		BindSceneObjectSkinningResources(commandList.Get(), nullptr);
+
+		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
+			if (std::find(
+				batchedGBufferObjectIds.begin(),
+				batchedGBufferObjectIds.end(),
+				sceneObject.gameObjectId) != batchedGBufferObjectIds.end()) {
+				continue;
+			}
 			if (sceneObject.type != EditorSceneObjectType::Model ||
 				sceneObject.cullMode == 1 ||
 				sceneObject.ocean.isEnabled ||
@@ -4218,6 +4868,9 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 			ID3D12Resource* transformationResource = isGameViewPass
 				? sceneObject.gameTransformationResource
 				: sceneObject.transformationResource;
+			const D3D12_GPU_VIRTUAL_ADDRESS transformationGpuAddress = isGameViewPass
+				? sceneObject.gameTransformationGpuAddress
+				: sceneObject.transformationGpuAddress;
 
 			if (transformationResource == nullptr || sceneObject.materialResource == nullptr) {
 				continue;
@@ -4235,10 +4888,10 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 				sceneObject.cullMode == 2);
 			commandList->SetGraphicsRootConstantBufferView(
 				0,
-				sceneObject.materialResource->GetGPUVirtualAddress());
+				sceneObject.materialGpuAddress);
 			commandList->SetGraphicsRootConstantBufferView(
 				1,
-				transformationResource->GetGPUVirtualAddress());
+				transformationGpuAddress);
 			commandList->SetGraphicsRootConstantBufferView(
 				2,
 				directionalLightResource->GetGPUVirtualAddress());
@@ -4275,19 +4928,19 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 	};
 
 	if (shouldRenderGBuffer &&
-		(g_isSceneViewVisible || g_isGameViewVisible) &&
+		hasActiveRenderView &&
 		g_gBufferManager.Begin(commandList.Get(), dsvHandle)) {
 		commandList->SetDescriptorHeaps(1, descriptorHeaps);
 		BindSceneObjectSkinningResources(commandList.Get(), nullptr);
 		g_oceanFftManager.BindGraphicsResources(commandList.Get());
 
-		if (g_isSceneViewVisible) {
+		if (shouldRenderSceneView) {
 			commandList->RSSetViewports(1, &viewport);
 			commandList->RSSetScissorRects(1, &scissorRect);
 			drawGBufferObjects(false);
 		}
 
-		if (g_isGameViewVisible) {
+		if (shouldRenderGameView) {
 			commandList->RSSetViewports(1, &gameViewport);
 			commandList->RSSetScissorRects(1, &gameScissorRect);
 			drawGBufferObjects(true);
@@ -4309,7 +4962,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 
 	// Depth 郢 E E E 繝ｻDEPTH_WRITE 遶翫・PIXEL_SHADER_RESOURCE 邵 E E E ・ E E E 鬩匁E E  E  E E E 驕假 E E E  E E E  (SSR 邵 E E E ・ E E E  SSAO 邵 E E E 迹夲 E E E  E E E ・ E E E 郢 E E E 竏夲 E E E 狗ｹ E E E 蛹 E E E 竕ｧ邵 E E E ・ E E E )
 	if (depthStencilResource != nullptr &&
-		(!planarViews.empty() || g_isSceneViewVisible || g_isGameViewVisible)) {
+		(!planarViews.empty() || hasActiveRenderView)) {
 		D3D12_RESOURCE_BARRIER depthBarrier{};
 		depthBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		depthBarrier.Transition.pResource = depthStencilResource;
@@ -4389,7 +5042,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 			commandList->DrawInstanced(3, 1, 0, 0);
 		};
 
-		if (g_isSceneViewVisible && scenePlanarView != nullptr) {
+		if (shouldRenderSceneView && scenePlanarView != nullptr) {
 			const EditorPlanarReflectionManager::ProbeView& planarView = *scenePlanarView;
 			drawPlanarComposite(
 				viewport,
@@ -4400,7 +5053,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 				planarView.sceneCam.clipPlane);
 		}
 
-		if (g_isGameViewVisible && gamePlanarView != nullptr) {
+		if (shouldRenderGameView && gamePlanarView != nullptr) {
 			const EditorPlanarReflectionManager::ProbeView& planarView = *gamePlanarView;
 			drawPlanarComposite(
 				gameViewport,
@@ -4429,7 +5082,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 
 	if (shouldBuildDepthHierarchy &&
 		depthStencilResource != nullptr &&
-		(!planarViews.empty() || g_isSceneViewVisible || g_isGameViewVisible)) {
+		(!planarViews.empty() || hasActiveRenderView)) {
 		const D3D12_RESOURCE_STATES computeReadableDepthState = static_cast<D3D12_RESOURCE_STATES>(
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
 			D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -4449,7 +5102,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 			EditorVfxManager& vfxManagerForGpuSpawns = g_editorRuntimeManager.GetVfxManager();
 			static std::vector<EditorGpuParticleManager::CollisionProxy> collisionProxies;
 			CollectParticleCollisionProxies(collisionProxies);
-			const bool useGameCollisionCamera = g_isGameViewVisible;
+			const bool useGameCollisionCamera = shouldRenderGameView;
 			const Matrix4x4& collisionViewProjection = useGameCollisionCamera
 				? gameViewProjectionMatrix
 				: sceneViewProjectionMatrix;
@@ -4468,6 +5121,10 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 			combinedGpuParticleSpawns.reserve(effectManagerSpawns.size() + vfxManagerSpawns.size());
 			combinedGpuParticleSpawns.insert(combinedGpuParticleSpawns.end(), effectManagerSpawns.begin(), effectManagerSpawns.end());
 			combinedGpuParticleSpawns.insert(combinedGpuParticleSpawns.end(), vfxManagerSpawns.begin(), vfxManagerSpawns.end());
+			const uint32_t gpuParticleUpdateEvent = profilerManager.BeginGpuEvent(
+				commandList.Get(),
+				renderTimestampQueryHeap.Get(),
+				"GPU Particle Update");
 			g_gpuParticleManager.Update(
 				commandList.Get(),
 				combinedGpuParticleSpawns,
@@ -4479,11 +5136,15 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 				g_renderHeight,
 				collisionViewport,
 				collisionProxies);
+			profilerManager.EndGpuEvent(
+				commandList.Get(),
+				renderTimestampQueryHeap.Get(),
+				gpuParticleUpdateEvent);
 			effectManager.ClearPendingGpuParticleSpawns();
 			vfxManagerForGpuSpawns.ClearPendingGpuParticleSpawns();
 		}
 
-		const Matrix4x4& depthInverseViewProjection = g_isSceneViewVisible
+		const Matrix4x4& depthInverseViewProjection = shouldRenderSceneView
 			? inverseViewProjectionMatrix
 			: inverseGameViewProjectionMatrix;
 		g_depthHierarchyManager.Generate(
@@ -4560,7 +5221,9 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 					(worldMaximum.y - worldMinimum.y) * 0.5f,
 					(worldMaximum.z - worldMinimum.z) * 0.5f,
 					sceneObject.gameObjectId,
-					vertexCount
+					vertexCount,
+					sceneObject.customMeshIndexCount,
+					sceneObject.usesCustomMesh && sceneObject.customMeshIndexCount > 0u ? 1u : 0u
 				});
 			}
 
@@ -4568,26 +5231,33 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 
 			if (depthLevelCount > 0u) {
 				const uint32_t cullingDepthLevel = (std::min)(4u, depthLevelCount - 1u);
-				const Matrix4x4& cullingViewProjection = g_isSceneViewVisible
-					? sceneViewProjectionMatrix
-					: gameViewProjectionMatrix;
-				const D3D12_VIEWPORT& cullingViewport = g_isSceneViewVisible
-					? viewport
-					: gameViewport;
 				const float inverseRenderWidth = 1.0f / static_cast<float>((std::max)(g_renderWidth, 1u));
 				const float inverseRenderHeight = 1.0f / static_cast<float>((std::max)(g_renderHeight, 1u));
 
-				g_gpuCullingManager.Execute(
-					commandList.Get(),
-					gpuCullingInputs,
-					g_depthHierarchyManager.GetDepthPyramidSrvHandle(cullingDepthLevel),
-					&cullingViewProjection.matrix[0][0],
-					g_depthHierarchyManager.GetDepthPyramidWidth(cullingDepthLevel),
-					g_depthHierarchyManager.GetDepthPyramidHeight(cullingDepthLevel),
-					cullingViewport.TopLeftX * inverseRenderWidth,
-					cullingViewport.TopLeftY * inverseRenderHeight,
-					cullingViewport.Width * inverseRenderWidth,
-					cullingViewport.Height * inverseRenderHeight);
+				auto executeViewCulling = [&](
+					EditorGpuCullingView cullingView,
+					const Matrix4x4& cullingViewProjection,
+					const D3D12_VIEWPORT& cullingViewport) {
+					g_gpuCullingManager.Execute(
+						commandList.Get(),
+						cullingView,
+						gpuCullingInputs,
+						g_depthHierarchyManager.GetDepthPyramidSrvHandle(cullingDepthLevel),
+						&cullingViewProjection.matrix[0][0],
+						g_depthHierarchyManager.GetDepthPyramidWidth(cullingDepthLevel),
+						g_depthHierarchyManager.GetDepthPyramidHeight(cullingDepthLevel),
+						cullingViewport.TopLeftX * inverseRenderWidth,
+						cullingViewport.TopLeftY * inverseRenderHeight,
+						cullingViewport.Width * inverseRenderWidth,
+						cullingViewport.Height * inverseRenderHeight);
+				};
+
+				if (shouldRenderSceneView) {
+					executeViewCulling(EditorGpuCullingView::Scene, sceneViewProjectionMatrix, viewport);
+				}
+				if (shouldRenderGameView) {
+					executeViewCulling(EditorGpuCullingView::Game, gameViewProjectionMatrix, gameViewport);
+				}
 			}
 		}
 
@@ -4804,11 +5474,11 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 			commandList->DrawInstanced(3, 1, 0, 0);
 		};
 
-		if (g_isSceneViewVisible) {
+		if (shouldRenderSceneView) {
 			drawSsgiViewport(viewport, inverseViewProjectionMatrix);
 		}
 
-		if (g_isGameViewVisible) {
+		if (shouldRenderGameView) {
 			drawSsgiViewport(gameViewport, inverseGameViewProjectionMatrix);
 		}
 
@@ -4863,11 +5533,11 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 			commandList->DrawInstanced(3, 1, 0, 0);
 		};
 
-		if (g_isSceneViewVisible) {
+		if (shouldRenderSceneView) {
 			drawSsgiTemporalViewport(viewport);
 		}
 
-		if (g_isGameViewVisible) {
+		if (shouldRenderGameView) {
 			drawSsgiTemporalViewport(gameViewport);
 		}
 
@@ -4911,11 +5581,11 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 			commandList->DrawInstanced(3, 1, 0, 0);
 		};
 
-		if (g_isSceneViewVisible) {
+		if (shouldRenderSceneView) {
 			drawSsgiUpsampleViewport(viewport, scissorRect);
 		}
 
-		if (g_isGameViewVisible) {
+		if (shouldRenderGameView) {
 			drawSsgiUpsampleViewport(gameViewport, gameScissorRect);
 		}
 
@@ -4991,11 +5661,11 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 			commandList->DrawInstanced(3, 1, 0, 0);
 		};
 
-		if (g_isSceneViewVisible) {
+		if (shouldRenderSceneView) {
 			drawVolumetricLightShaftViewport(viewport, scissorRect, inverseViewProjectionMatrix);
 		}
 
-		if (g_isGameViewVisible) {
+		if (shouldRenderGameView) {
 			drawVolumetricLightShaftViewport(gameViewport, gameScissorRect, inverseGameViewProjectionMatrix);
 		}
 
@@ -5018,7 +5688,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 		hdrPostSourceResource != nullptr &&
 		depthStencilResource != nullptr &&
 		materialMaskRenderTarget != nullptr &&
-		(g_isSceneViewVisible || g_isGameViewVisible)) {
+		hasActiveRenderView) {
 		const D3D12_RESOURCE_STATES shaderReadState = static_cast<D3D12_RESOURCE_STATES>(
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
 			D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -5093,7 +5763,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 
 		bool isTemporalRenderingExecuted = false;
 
-		if (g_isSceneViewVisible) {
+		if (shouldRenderSceneView) {
 			isTemporalRenderingExecuted = executeTemporalView(
 				inverseViewProjectionMatrix,
 				sceneViewProjectionMatrix,
@@ -5103,7 +5773,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 				true);
 		}
 
-		if (g_isGameViewVisible) {
+		if (shouldRenderGameView) {
 			isTemporalRenderingExecuted = executeTemporalView(
 				inverseGameViewProjectionMatrix,
 				gameViewProjectionMatrix,
@@ -5348,7 +6018,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 			commandList->DrawInstanced(3, 1, 0, 0);
 		};
 
-		if (g_isSceneViewVisible) {
+		if (shouldRenderSceneView) {
 			EditorSceneObject* sceneOceanSceneObject =
 				findUnderwaterOcean(cameraTransform.translate);
 
@@ -5362,7 +6032,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 			}
 		}
 
-		if (g_isGameViewVisible) {
+		if (shouldRenderGameView) {
 			EditorSceneObject* gameOceanSceneObject =
 				findUnderwaterOcean(g_gameCameraPosition);
 
@@ -5450,7 +6120,8 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 				ppSettings.glareColorByMode[glareArrayIndex].x,
 				ppSettings.glareColorByMode[glareArrayIndex].y,
 				ppSettings.glareColorByMode[glareArrayIndex].z,
-				preserveGlareSource);
+				preserveGlareSource,
+				ppSettings.glareSampleRatio);
 
 			if (isGlareExecuted) {
 				finalBloomSrvHandle = g_postProcessQualityManager.GetGlareSrvHandle();
@@ -5472,12 +6143,12 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 	//================================================================
 	const float inverseRenderWidth = 1.0f / (std::max)(static_cast<float>(g_renderWidth), 1.0f);
 	const float inverseRenderHeight = 1.0f / (std::max)(static_cast<float>(g_renderHeight), 1.0f);
-	const float gameViewportOriginU = g_editorGameX * inverseRenderWidth;
-	const float gameViewportOriginV = g_editorGameY * inverseRenderHeight;
+	const float gameViewportOriginU = gameRenderX * inverseRenderWidth;
+	const float gameViewportOriginV = gameRenderY * inverseRenderHeight;
 	const float gameViewportWidthUv = g_editorGameWidth * inverseRenderWidth;
 	const float gameViewportHeightUv = g_editorGameHeight * inverseRenderHeight;
 
-	if (g_isGameViewVisible &&
+	if (shouldRenderGameView &&
 		ppSettings.cameraDofEnabled &&
 		dofPipelineState != nullptr &&
 		hdrRenderTarget != nullptr &&
@@ -5549,7 +6220,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 	// Motion Blur: velocity を使って移動ブラー
 	// 現在の HDR 入力とは別の RenderTarget へ書き、読み書き競合を防ぐ。
 	//================================================================
-	if (g_isGameViewVisible &&
+	if (shouldRenderGameView &&
 		ppSettings.cameraMotionBlurEnabled &&
 		ppSettings.aaMode == 3 &&
 		motionBlurPipelineState != nullptr &&
@@ -5635,7 +6306,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 			1.0f / 240.0f,
 			0.1f);
 		previousExposureTime = currentExposureTime;
-		const D3D12_VIEWPORT& exposureViewport = g_isGameViewVisible
+		const D3D12_VIEWPORT& exposureViewport = shouldRenderGameView
 			? gameViewport
 			: viewport;
 		const float inverseRenderWidth =
@@ -5698,7 +6369,7 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 			const Vector3 sunWorldPosition = Add(
 				activeCameraPosition,
 				Multiply(10000.0f, sunWorldDirection));
-			const Matrix4x4& activeViewProjectionMatrix = g_isSceneViewVisible
+			const Matrix4x4& activeViewProjectionMatrix = shouldRenderSceneView
 				? sceneViewProjectionMatrix
 				: gameViewProjectionMatrix;
 			const ClipSpacePoint sunClipPosition = TransformToClipSpace(
@@ -5957,7 +6628,9 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 		hasSubmittedShadowMap = true;
 	}
 
-	hr = swapChain->Present(1, 0); // Present 邵 E E E ・ E E E 隰 E E E 蜀怜 E雋ょ現竏ｩ back buffer 郢 E E E 繝ｻWindow 邵 E E E ・ E E E 髯 E E E ・ E E E 驕会ｽ E E E 邵 E E E 蜷 E E E ・狗ｸ E E E 繝ｻ
+	// Project Settings の VSync 設定をそのまま同期間隔へ渡す(1 = 垂直同期あり、0 = なし)。
+	const UINT presentSyncInterval = ProjectSettings::Get().GetData().vsyncEnabled ? 1u : 0u;
+	hr = swapChain->Present(presentSyncInterval, 0); // Present で back buffer を Window へ出す
 	if (FAILED(hr)) {
 		Log(g_logStream, std::format("SwapChain Present failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
 		g_isDrawRequested = false;
@@ -6041,6 +6714,17 @@ drawShadowObjects(shadowRenderPass.viewProjection);
 
 	g_gpuCullingManager.ResolveReadback();
 	g_oceanFftManager.ResolveReadback();
+
+	const std::chrono::steady_clock::time_point frameEndTime =
+		std::chrono::steady_clock::now();
+	const float measuredFrameMilliseconds = static_cast<float>(
+		std::chrono::duration<double, std::milli>(frameEndTime - frameStartTime).count());
+	renderProfile.frameMilliseconds = renderProfile.frameMilliseconds <= 0.0f
+		? measuredFrameMilliseconds
+		: renderProfile.frameMilliseconds * 0.90f + measuredFrameMilliseconds * 0.10f;
+	renderProfile.frameRate = renderProfile.frameMilliseconds > 0.0001f
+		? 1000.0f / renderProfile.frameMilliseconds
+		: 0.0f;
 
 	g_isDrawRequested = false;
 	// 闔 E E E E  E E E 繝ｵ郢晢 E E E  E E E 郢晢 E E E  E E E 郢晢 E E E  E E E 邵 E E E ・ E E E 隰 E E E 蜀怜 E髫補扱・ E E E 繧・ E E E 定ｱ E E E 驛 E E E E  E E E ・ E E E 邵 E E E 蜉ｱ笳・ E E E  E E E ・ E E E 邵 E E E ・ E E E 邵 E E E 竏ｵ・ E E E ・ E E E 邵 E E E ・ E E E  ImGui::Render 邵 E E E ・ E E E 邵 E E E ・ E E E  Renderer 郢 E E E 蜻茨 E E E  E E E ・ E E E 郢 E E E 竏夲 E E E 狗ｸ E E E 繝ｻ

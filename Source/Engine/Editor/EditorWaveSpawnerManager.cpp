@@ -453,7 +453,7 @@ int32_t EditorWaveSpawnerManager::SpawnNext(
 	ResetRailMovement(
 		spawnedGameObjectId,
 		formationOffset,
-		component.waveSpawnRailStartNormalized);
+		component);
 	waveRuntime.nextSpawnIndex++;
 	waveRuntime.spawnRecords.push_back({
 		spawnedGameObjectId,
@@ -514,7 +514,7 @@ Vector3 EditorWaveSpawnerManager::CalculateFormationOffset(
 void EditorWaveSpawnerManager::ResetRailMovement(
 	int32_t gameObjectId,
 	const Vector3& formationOffset,
-	float railStartNormalizedOverride) const {
+	const EditorComponent& waveComponent) const {
 	if (editorScene_ == nullptr || railMovementManager_ == nullptr) {
 		return;
 	}
@@ -528,12 +528,30 @@ void EditorWaveSpawnerManager::ResetRailMovement(
 		return;
 	}
 
+	float railStartNormalized = waveComponent.waveSpawnRailStartNormalized >= 0.0f
+		? waveComponent.waveSpawnRailStartNormalized
+		: railMovementComponent->railStartNormalized;
+
+	if (waveComponent.waveSpawnAheadOfSource &&
+		waveComponent.waveSpawnProgressSourceGameObjectId >= 0) {
+		float sourceNormalizedProgress = 0.0f;
+		const bool hasSourceProgress = railMovementManager_->GetNormalizedProgress(
+			waveComponent.waveSpawnProgressSourceGameObjectId,
+			sourceNormalizedProgress);
+
+		if (hasSourceProgress) {
+			// Playerなど基準RailFollowerの少し前に出す。敵が背後へ湧くのを防ぐため、
+			// 固定値より後ろへ戻さず、進行済みの場合だけ前方へ押し出す。
+			railStartNormalized = (std::max)(
+				railStartNormalized,
+				sourceNormalizedProgress + (std::max)(waveComponent.waveSpawnAheadNormalized, 0.0f));
+		}
+	}
+
 	railMovementManager_->SetNormalizedProgress(
 		gameObjectId,
 		(std::clamp)(
-			railStartNormalizedOverride >= 0.0f
-				? railStartNormalizedOverride
-				: railMovementComponent->railStartNormalized,
+			railStartNormalized,
 			0.0f,
 			1.0f));
 	railMovementManager_->SetOffset(

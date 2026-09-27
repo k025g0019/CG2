@@ -65,6 +65,15 @@ public:
 	void SetEffectPosition(EffectHandle handle, const Vector3& position);  // World固定Effectの位置を更新する。
 	bool IsEffectPlaying(EffectHandle handle) const;
 
+	// --- Script向けInstance操作。無効・解放済みHandleは全てfalseを返すだけで何もしない。 ---
+	bool GetEffectPosition(EffectHandle handle, Vector3& position) const;  // 追従中Effectも含めた現在のWorld座標。
+	bool SetEffectPaused(EffectHandle handle, bool isPaused);  // Simulationを止める(Particleは残したまま)。
+	bool IsEffectPaused(EffectHandle handle) const;
+	bool SetEffectPlaybackSpeed(EffectHandle handle, float playbackSpeed);  // Simulationの進む速さ倍率。
+	bool GetEffectPlaybackSpeed(EffectHandle handle, float& playbackSpeed) const;
+	bool RestartEffect(EffectHandle handle);  // 既存Particleを捨て、同じ定義を最初から再生し直す。
+	bool GetEffectParticleCount(EffectHandle handle, int32_t& particleCount) const;
+
 	// EditorRenderManagerが毎フレーム呼び、CPUで計算したVertexをRendererへ積んでBatchを作る。
 	void BuildDrawBatches(
 		EditorVfxRenderer& renderer,
@@ -75,6 +84,10 @@ public:
 		std::vector<EditorVfxRenderer::VfxBatch>& outBatches);
 
 	DebugStats GetDebugStats() const;
+
+	// 外部更新されたEffect定義をCacheから外す。再生中Instanceがある場合は
+	// DefinitionへのポインタがダングリングになるのをUpdate()前に防ぐため、強制的に停止・解放する。
+	void InvalidateEffectDefinition(const std::string& assetPath);
 
 	// Stage2: GPU Compute Particle(useGpuSimulation)/MeshParticleの発生要求。
 	// EditorRenderManagerがEditorEffectManager分と合成してEditorGpuParticleManager::Updateへ渡す。
@@ -132,6 +145,8 @@ private:
 		Vector3 hitNormal{0.0f, 1.0f, 0.0f};
 		float age = 0.0f;
 		bool stopped = false;
+		bool paused = false;  // Scriptが止めている間はSimulationを進めない
+		float playbackSpeed = 1.0f;  // Simulationへ渡すdeltaTimeの倍率
 		float lodSpawnMultiplier = 1.0f;
 		std::vector<NodeRuntime> nodes;
 	};
@@ -146,7 +161,8 @@ private:
 
 	EditorScene* editorScene_ = nullptr;
 	std::vector<std::string>* consoleMessages_ = nullptr;
-	std::unordered_map<std::string, EffectDefinition> definitionCache_;
+	std::unordered_map<std::string, EffectDefinition> definitionCache_;  // .effectdef Source Assetの唯一のCanonical Cache。.effectはEditorEffectManager::effectAssetCache_側が単独で持つため、ここには入れない。
+	int32_t definitionParseCount_ = 0;  // 検証用: 同一Pathの再Parseが起きていないかをConsoleで確認するための累計Parse回数。
 	std::vector<EffectInstanceSlot> instances_;   // Object Pool本体。Play中はサイズを変えない。
 	std::vector<int32_t> freeIndices_;            // 再利用可能なInstance番号。
 	std::unordered_map<std::string, int32_t> activeCountByEffectId_;  // maxConcurrentInstances判定用。

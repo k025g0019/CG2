@@ -1,4 +1,4 @@
-## Goal
+﻿## Goal
 - **Connect existing component settings → rendering paths** (Bloom/AA/Composite/SSR)
 - Scene View / Game View temporal separation
 - GPU Culling completion or cleanup
@@ -48,3 +48,22 @@ Data-layer complete (FOV/near/far/projection/DOF/motionBlur/exposure) and wired 
 
 ## Build
 Pre-existing `/WX` errors from VS 2022 v17.14 + Win SDK 10.0.26100.0 (C4820 padding, C5045 Spectre). Not caused by our changes.
+
+## 外部認識・オンライン連携（新規モジュール）
+
+音声認識 / 画像認識 / Cloudflare オンライン / FeelKit Haptics を 4 つの独立モジュールとして追加。
+詳細は `docs/engine-internals.md`。
+
+- `Source/Engine/External` 共通状態・Error・Console ログ
+- `Source/Engine/Speech` SAPI 実装（Keyword / Dictation）。Whisper / ONNX は未実装で Unavailable
+- `Source/Engine/Vision` Media Foundation 取り込み + 内蔵（色 / 動き）+ ONNX（検出 / 分類 / 顔）。Landmark / HeadPose は未対応
+- `Source/Engine/Online` WinHTTP 非同期 + Leaderboard / PlayerData / CloudSave / 再送 Queue
+- `Source/Engine/Haptics` FeelKit Backend + Clip Asset + Audio / Physics 連携
+- `Tools/CloudflareWorker` Worker 参照実装（D1 / KV / R2、サーバー側検証つき）
+
+Component は `SpeechRecognizer` / `CameraInput` / `ImageRecognizer` を追加し、`HapticSource` を拡張。
+Scene 保存は既存の列位置を変えず `*Extension` 行で追記する。
+Script API は `EditorScriptApi.h` 末尾へ追加（`kEditorScriptApiVersion` 13 → 14）。
+
+**設計の約束**: Backend が使えない機能は勝手に別処理へ置き換えず `Unavailable` を返す。
+Device 未接続でもゲームロジックは止めない。

@@ -125,7 +125,11 @@ void EditorAssetFactory::CreateModelGameObject(
 				component.lightingMode = 2;  // 配置直後から面の向きが分かる Half Lambert を使う。
 			}
 			else if (component.type == EditorComponentType::BoxCollider) {
-				component.colliderSize = GetPrimitiveColliderSize(meshType);
+				// FBX の原点が形状中心とは限らないため、固定サイズだけでなく実頂点の中心も使う。
+				// これを行わないと、モデルと BoxCollider が同じ大きさでも一定量ずれたままになる。
+				if (!EditorAssetUtility::GetModelColliderBounds(assetPath, component.colliderCenter, component.colliderSize)) {
+					component.colliderSize = GetPrimitiveColliderSize(meshType);
+				}
 			}
 			else if (component.type == EditorComponentType::SphereCollider) {
 				component.colliderRadius = 0.5f;  // 内部 Sphere メッシュは半径 0.5f で作る。

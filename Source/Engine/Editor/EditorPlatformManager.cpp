@@ -701,50 +701,11 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		return;
 	}
 
-	SoundData soundData = SoundLoadWave("resources/sound/maou_19_12345.wav");
-	// soundData は起動確認用 wav の PCM チE�Eタとフォーマット情報、E
-	IXAudio2SourceVoice* sourceVoice = nullptr; // sourceVoice は soundData を�E生キューへ積�E Voice、E
-	if (soundData.pBuffer == nullptr ||
-		soundData.bufferSize == 0u ||
-		soundData.wfex.nChannels == 0u ||
-		soundData.wfex.nSamplesPerSec == 0u ||
-		soundData.wfex.nBlockAlign == 0u ||
-		soundData.wfex.wBitsPerSample == 0u ||
-		soundData.wfex.nAvgBytesPerSec == 0u) {
-		SoundUnload(&soundData);
-		masterVoice->DestroyVoice();
-		xAudio2->Release();
-		RequestInitializationFailure();
-		return;
-	}
-
-	hr = xAudio2->CreateSourceVoice(&sourceVoice, &soundData.wfex);
-	assert(SUCCEEDED(hr));
-
-	// sourceVoice 作�E失敗時は読み込んだ wav と Voice を解放して終亁E��る、E
-	if (FAILED(hr) || sourceVoice == nullptr) {
-		SoundUnload(&soundData);
-		masterVoice->DestroyVoice();
-		xAudio2->Release();
-		RequestInitializationFailure();
-		return;
-	}
-
-	// soundBuffer は sourceVoice に渡す�E生データの篁E��と終端フラグ、E
-	XAUDIO2_BUFFER soundBuffer{};
-	soundBuffer.pAudioData = soundData.pBuffer;
-	soundBuffer.AudioBytes = soundData.bufferSize;
-	soundBuffer.Flags = XAUDIO2_END_OF_STREAM;
-	hr = sourceVoice->SubmitSourceBuffer(&soundBuffer);
-	assert(SUCCEEDED(hr));
-	if (FAILED(hr)) {
-		sourceVoice->DestroyVoice();
-		SoundUnload(&soundData);
-		masterVoice->DestroyVoice();
-		xAudio2->Release();
-		RequestInitializationFailure();
-		return;
-	}
+	// 空の Project でも Editor を開けるよう、起動確認用の WAV は再生しない。
+	// Project が必要とする音声は Audio Component / Runtime 側で個別に読み込む。
+	// Finalize の既存解放処理と所有関係を揃えるため、未使用の状態だけ保持する。
+	SoundData soundData{};
+	IXAudio2SourceVoice* sourceVoice = nullptr;
 
 	//================================================================
 	// DirectX12 の初期匁E
@@ -945,7 +906,11 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	// srvDescriptorHeap は Texture SRV と ImGui 用 SRV めEShader から参�Eする Heap、E
 	ID3D12DescriptorHeap* srvDescriptorHeap =
-		CreateDescriptorHeap(device.Get(), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1024, true);
+		CreateDescriptorHeap(
+			device.Get(),
+			D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+			kRuntimeSrvDescriptorHeapCapacity,
+			true);
 
 	// dsvDescriptorHeap は DepthStencil を参照する Heap、E
 	ID3D12DescriptorHeap* dsvDescriptorHeap =
@@ -1336,9 +1301,14 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	assert(SUCCEEDED(hr));
 
 	// vertexShaderBlob は VS main のコンパイル済みバイトコード、E
+	// 途中の1件で打ち切らず全Shaderを検査し、失敗一覧を最後にまとめて通知する。
+	g_shaderCompilationFailures.clear();
 	ComPtr<IDxcBlob> vertexShaderBlob = CompileShader(
 		L"Assets/Shaders/Object3d.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
+	ComPtr<IDxcBlob> batchedVertexShaderBlob = CompileShader(
+		L"Assets/Shaders/Instancing/BatchedObject.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(), logStream);
 
 	// pixelShaderBlob は PS main のコンパイル済みバイトコード、E
 	ComPtr<IDxcBlob> pixelShaderBlob = CompileShader(
@@ -1368,6 +1338,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	ComPtr<IDxcBlob> gBufferVertexShaderBlob = CompileShader(
 		L"Assets/Shaders/GBuffer/GBuffer.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
+	ComPtr<IDxcBlob> batchedGBufferVertexShaderBlob = CompileShader(
+		L"Assets/Shaders/Instancing/BatchedGBuffer.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(), logStream);
 	ComPtr<IDxcBlob> gBufferPixelShaderBlob = CompileShader(
 		L"Assets/Shaders/GBuffer/GBuffer.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
@@ -1380,6 +1353,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	ComPtr<IDxcBlob> shadowVertexShaderBlob = CompileShader(
 		L"Assets/Shaders/ShadowDepth.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
+	ComPtr<IDxcBlob> batchedShadowVertexShaderBlob = CompileShader(
+		L"Assets/Shaders/Instancing/BatchedShadow.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
+		includeHandler.Get(), logStream);
 	ComPtr<IDxcBlob> alphaCutoutShadowPixelShaderBlob = CompileShader(
 		L"Assets/Shaders/Shadow/AlphaCutoutShadowDepth.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(),
 		includeHandler.Get(),
@@ -1651,11 +1627,14 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		logStream);
 
 	if (vertexShaderBlob == nullptr ||
+		batchedVertexShaderBlob == nullptr ||
 		pixelShaderBlob == nullptr ||
 		objectReflectionMaskPixelShaderBlob == nullptr ||
 		gBufferVertexShaderBlob == nullptr ||
+		batchedGBufferVertexShaderBlob == nullptr ||
 		gBufferPixelShaderBlob == nullptr ||
 		shadowVertexShaderBlob == nullptr ||
+		batchedShadowVertexShaderBlob == nullptr ||
 		alphaCutoutShadowPixelShaderBlob == nullptr ||
 		fullscreenVertexShaderBlob == nullptr ||
 		toneMappingPixelShaderBlob == nullptr ||
@@ -1716,6 +1695,25 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		oceanFftRowShaderBlob == nullptr ||
 		oceanFftTransposeShaderBlob == nullptr ||
 		oceanFftFinalizeShaderBlob == nullptr) {
+		std::ostringstream failureText;
+		failureText << "Engine同梱Shaderの検査で " << g_shaderCompilationFailures.size()
+			<< " 件失敗しました。\n\n";
+		constexpr std::size_t kDisplayedFailureCount = 12U;
+		for (std::size_t index = 0U;
+			index < (std::min)(g_shaderCompilationFailures.size(), kDisplayedFailureCount);
+			++index) {
+			std::string item = g_shaderCompilationFailures[index];
+			if (item.size() > 500U) item.resize(500U);
+			failureText << "- " << item << '\n';
+		}
+		if (g_shaderCompilationFailures.size() > kDisplayedFailureCount) {
+			failureText << "\nほか " << (g_shaderCompilationFailures.size() - kDisplayedFailureCount) << " 件";
+		}
+		failureText << "\n\nこのEngineは配布内容が不完全です。Launcherの修復を実行してください。";
+		const std::string failureMessage = failureText.str();
+		Log(logStream, failureMessage);
+		const std::wstring wideFailureMessage = ConvertString(failureMessage);
+		MessageBoxW(windowHandle, wideFailureMessage.c_str(), L"ManoEngine - Engine Resource Error", MB_OK | MB_ICONERROR);
 		RequestInitializationFailure(); // �K�{�V�F�[�_�[�� 1 �ł��������� PSO �쐬�֐i�߂Ȃ��B
 		return;
 	}
@@ -2008,12 +2006,12 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	sphereMaterialData->uvTransform = MakeIdentity4x4();
 
 	ID3D12Resource* directionalLightResource = CreateBufferResource(device.Get(),
-	                                                                sizeof(DirectionalLight) * kMaxShadowLights);
+	                                                                sizeof(DirectionalLight) * kMaxSceneLights);
 	// directionalLightResource は PixelShader に渡す平行�E源定数バッファ、E
 	DirectionalLight* directionalLightData = nullptr;
 	// directionalLightData は Inspector から色・向き・強さを書き換える mapped ポインタ、E
 	directionalLightResource->Map(0, nullptr, reinterpret_cast<void**>(&directionalLightData));
-	for (uint32_t i = 0; i < kMaxShadowLights; i++) {
+	for (uint32_t i = 0; i < kMaxSceneLights; i++) {
 		directionalLightData[i].color = {0.0f, 0.0f, 0.0f, 1.0f};
 		directionalLightData[i].direction = {0.0f, -1.0f, 0.0f};
 		directionalLightData[i].intensity = 0.0f;
@@ -2102,6 +2100,21 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	}
 
 	*identitySkinMatrixData = MakeIdentity4x4();
+
+	ID3D12Resource* batchInstanceResource = CreateBufferResource(
+		device.Get(),
+		sizeof(EditorBatchInstanceData) * kEditorBatchInstanceCapacity);
+	EditorBatchInstanceData* batchInstanceData = nullptr;
+	if (batchInstanceResource == nullptr ||
+		FAILED(batchInstanceResource->Map(
+			0,
+			nullptr,
+			reinterpret_cast<void**>(&batchInstanceData))) ||
+		batchInstanceData == nullptr) {
+		Log(logStream, "Batch instance buffer creation failed.");
+		RequestInitializationFailure();
+		return;
+	}
 	Log(logStream, "Init Stage: material and transform buffers completed");
 
 	// RootSignature は Shader がどの Resource をどのスロチE��で読むかを固定する、E
@@ -2298,6 +2311,46 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	}
 
 	Log(logStream, "Init Stage: cull none pso created");
+
+	// 静的Modelの自動Batch用。Root Parameter 20(t16)をBone行列ではなく
+	// EditorBatchInstanceDataとして読み、同一Mesh/Materialを1 Drawへまとめる。
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC batchedPipelineStateDesc = graphicsPipelineStateDesc;
+	batchedPipelineStateDesc.VS = {
+		batchedVertexShaderBlob->GetBufferPointer(),
+		batchedVertexShaderBlob->GetBufferSize()
+	};
+	ComPtr<ID3D12PipelineState> batchedGraphicsPipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&batchedPipelineStateDesc,
+		IID_PPV_ARGS(batchedGraphicsPipelineState.GetAddressOf()));
+	if (FAILED(hr) || batchedGraphicsPipelineState == nullptr) {
+		Log(logStream, "Batched Object3d PSO Create failed.");
+		RequestInitializationFailure();
+		return;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC batchedCullFrontPipelineStateDesc = batchedPipelineStateDesc;
+	batchedCullFrontPipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_FRONT;
+	batchedCullFrontPipelineStateDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+	ComPtr<ID3D12PipelineState> batchedCullFrontPipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&batchedCullFrontPipelineStateDesc,
+		IID_PPV_ARGS(batchedCullFrontPipelineState.GetAddressOf()));
+	if (FAILED(hr) || batchedCullFrontPipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC batchedCullNonePipelineStateDesc = batchedPipelineStateDesc;
+	batchedCullNonePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	ComPtr<ID3D12PipelineState> batchedCullNonePipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&batchedCullNonePipelineStateDesc,
+		IID_PPV_ARGS(batchedCullNonePipelineState.GetAddressOf()));
+	if (FAILED(hr) || batchedCullNonePipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
 
 	// 半透明は Source Alpha で HDR 色を合成し、背後を隠さないよう Depth 書き込みを止める。
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC transparentPipelineStateDesc = graphicsPipelineStateDesc;
@@ -2537,6 +2590,31 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	if (FAILED(hr) || shadowCullNonePipelineState == nullptr) {
 		Log(logStream, std::format("Shadow CullNone PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+		RequestInitializationFailure();
+		return;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC batchedShadowPipelineStateDesc = shadowPipelineStateDesc;
+	batchedShadowPipelineStateDesc.VS = {
+		batchedShadowVertexShaderBlob->GetBufferPointer(),
+		batchedShadowVertexShaderBlob->GetBufferSize()
+	};
+	ComPtr<ID3D12PipelineState> batchedShadowPipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&batchedShadowPipelineStateDesc,
+		IID_PPV_ARGS(batchedShadowPipelineState.GetAddressOf()));
+	if (FAILED(hr) || batchedShadowPipelineState == nullptr) {
+		RequestInitializationFailure();
+		return;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC batchedShadowCullNonePipelineStateDesc = batchedShadowPipelineStateDesc;
+	batchedShadowCullNonePipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	ComPtr<ID3D12PipelineState> batchedShadowCullNonePipelineState;
+	hr = device->CreateGraphicsPipelineState(
+		&batchedShadowCullNonePipelineStateDesc,
+		IID_PPV_ARGS(batchedShadowCullNonePipelineState.GetAddressOf()));
+	if (FAILED(hr) || batchedShadowCullNonePipelineState == nullptr) {
 		RequestInitializationFailure();
 		return;
 	}
@@ -2908,6 +2986,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		srvSize,
 		rootSignature.Get(),
 		gBufferVertexShaderBlob.Get(),
+		batchedGBufferVertexShaderBlob.Get(),
 		gBufferPixelShaderBlob.Get(),
 		inputElementDescs,
 		_countof(inputElementDescs),
@@ -3074,7 +3153,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	}
 
 	if (modelData.material.textureFilePath.empty() ||
-		!std::filesystem::exists(modelData.material.textureFilePath)) {
+		!std::filesystem::exists(ResolveEngineOrProjectFilePath(modelData.material.textureFilePath))) {
 		modelData.material.textureFilePath = "resources/editorDefault/uvChecker.png";
 	}
 
@@ -3346,7 +3425,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	};
 	const std::wstring fallbackTextureFilePath = L"resources/editorDefault/uvChecker.png";
 	for (std::wstring& textureFilePath : textureFilePaths) {
-		if (textureFilePath.empty() || !std::filesystem::exists(textureFilePath)) {
+		if (textureFilePath.empty() || !std::filesystem::exists(ResolveEngineOrProjectFilePath(textureFilePath))) {
 			Log(logStream, std::format(
 				"Texture '{}' is missing; using resources/editorDefault/uvChecker.png.",
 				ConvertString(textureFilePath)));
@@ -3645,7 +3724,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	// DDS が存在すれば読み込む
 	auto loadIblCube = [&](const std::wstring& path, ID3D12Resource*& outRes, D3D12_CPU_DESCRIPTOR_HANDLE srvCPU,
 	                       uint32_t* mipCount) {
-		if (!std::filesystem::exists(path)) {
+		if (!std::filesystem::exists(ResolveEngineOrProjectFilePath(path))) {
 			return;
 		}
 		DirectX::ScratchImage img = LoadTexture(path);
@@ -4260,8 +4339,13 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	ImGuiIO& io = ImGui::GetIO(); // io は Docking 有効化や Font 設定を行う ImGui の入出力設定、E
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable; // DockingEnable でウィンドウのドラチE��移動�Eドッキングを許可する、E
+	io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // タブをメイン Window 外へ出した時、個別の OS Window として表示する。
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+	// Game ViewのUI(Button/Toggle/Slider)をGamepadの十字キー・スティックで選択できるようにする。
+	// Editor側のWindow操作も同じ経路で動くが、入力はImGuiのNav処理内で完結する。
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
 	io.ConfigDockingWithShift = false; // Shift なしで Docking できるようにして Unity 風の操作感にする、E
+	io.ConfigViewportsNoTaskBarIcon = true; // 分離した Editor タブをタスクバーへ個別に並べない。
 	io.ConfigWindowsMoveFromTitleBarOnly = true;
 	const float editorUiScale = GetEditorUiScale(windowHandle);
 	ApplyEditorVisualTheme(editorUiScale);
@@ -4672,6 +4756,11 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_shadowCullNonePipelineState = shadowCullNonePipelineState;
 	g_alphaCutoutShadowPipelineState = alphaCutoutShadowPipelineState;
 	g_alphaCutoutShadowCullNonePipelineState = alphaCutoutShadowCullNonePipelineState;
+	g_batchedGraphicsPipelineState = batchedGraphicsPipelineState;
+	g_batchedCullFrontPipelineState = batchedCullFrontPipelineState;
+	g_batchedCullNonePipelineState = batchedCullNonePipelineState;
+	g_batchedShadowPipelineState = batchedShadowPipelineState;
+	g_batchedShadowCullNonePipelineState = batchedShadowCullNonePipelineState;
 	g_postProcessRootSignature = postProcessRootSignature;
 	g_toneMappingPipelineState = toneMappingPipelineState;
 	g_bloomExtractPipelineState = bloomExtractPipelineState;
@@ -4723,6 +4812,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_sphereTransformationMatrixData = sphereTransformationMatrixData;
 	g_identitySkinMatrixResource = identitySkinMatrixResource;
 	g_identitySkinMatrixData = identitySkinMatrixData;
+	g_batchInstanceResource = batchInstanceResource;
+	g_batchInstanceData = batchInstanceData;
 	g_modelData = std::move(modelData);
 	for (size_t meshTypeIndex = 0; meshTypeIndex < kEditorModelMeshTypeCount; meshTypeIndex++) {
 		g_editorPrimitiveModelData[meshTypeIndex] = std::move(primitiveModelData[meshTypeIndex]);
@@ -4905,6 +4996,8 @@ int EditorPlatformManager::Finalize() {
 	auto& sphereTransformationMatrixData = g_sphereTransformationMatrixData;
 	auto& identitySkinMatrixResource = g_identitySkinMatrixResource;
 	auto& identitySkinMatrixData = g_identitySkinMatrixData;
+	auto& batchInstanceResource = g_batchInstanceResource;
+	auto& batchInstanceData = g_batchInstanceData;
 	auto& modelData = g_modelData;
 	auto& editorPrimitiveVertexResources = g_editorPrimitiveVertexResources;
 	auto& vertices = g_vertices;
@@ -5062,6 +5155,11 @@ int EditorPlatformManager::Finalize() {
 		identitySkinMatrixResource->Release();
 		identitySkinMatrixResource = nullptr;
 		identitySkinMatrixData = nullptr;
+	}
+	if (batchInstanceResource != nullptr) {
+		batchInstanceResource->Release();
+		batchInstanceResource = nullptr;
+		batchInstanceData = nullptr;
 	}
 	spriteIndexResource->Release();
 	spriteVertexResource->Release();

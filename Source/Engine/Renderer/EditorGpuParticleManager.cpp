@@ -676,8 +676,8 @@ EditorGpuParticleManager::GpuParticleData EditorGpuParticleManager::ConvertSpawn
 	particle.orientation = {
 		static_cast<float>((std::clamp)(spawn.billboardMode, 0, 3)),
 		(std::max)(spawn.billboardStretch, 0.01f),
-		0.0f,
-		0.0f};
+		(std::clamp)(spawn.meshLighting, 0.0f, 1.0f),
+		(std::max)(spawn.updraft, 0.0f)};
 	return particle;
 }
 

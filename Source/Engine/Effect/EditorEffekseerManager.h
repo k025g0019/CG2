@@ -21,7 +21,7 @@
 // Effekseer Runtime
 //================================================================
 
-// Effekseer 1.70e の .efk / .efkefc を CG2 の DirectX12 描画へ接続する。
+// Effekseer 1.70e の .efk / .efkefc を ManoEngine の DirectX12 描画へ接続する。
 // 内蔵 GPU Particle とは別系統にし、公式 Runtime の Sprite / Ribbon / Ring / Track / Model を保持する。
 class EditorEffekseerManager {
 public:
@@ -54,6 +54,15 @@ public:
 	void SetEffectPositionAt(int32_t effectAtId, const Vector3& position);  // 発生後にWorld座標を追従させたい場合に呼ぶ。
 	void StopEffectAt(int32_t effectAtId);  // 指定Slotの再生を止め、Slotを解放する。
 
+	// --- Script向けInstance操作。未知Slot・再生終了済みSlotは全てfalseを返すだけで何もしない。 ---
+	bool IsEffectPlayingAt(int32_t effectAtId) const;
+	bool GetEffectPositionAt(int32_t effectAtId, Vector3& position) const;
+	bool SetEffectPausedAt(int32_t effectAtId, bool isPaused);
+	bool SetEffectSpeedAt(int32_t effectAtId, float playbackSpeed);
+	bool SetEffectRotationAt(int32_t effectAtId, const Vector3& rotationEuler);
+	bool SetEffectScaleAt(int32_t effectAtId, const Vector3& scale);
+	bool RestartEffectAt(int32_t effectAtId);  // 同じAssetを同じ位置・回転で再生し直す。
+
 private:
 	struct EffectInstance {
 		uint64_t componentKey = 0u;  // GameObject ID と Component 種類を合わせた識別子。
@@ -68,7 +77,7 @@ private:
 	Effekseer::Backend::GraphicsDeviceRef graphicsDevice_;  // Effekseer が D3D12 Device を扱うラッパー。
 	EffekseerRenderer::RendererRef renderer_;  // Sprite / Model を現在の RenderTarget へ描く Renderer。
 	Effekseer::RefPtr<EffekseerRenderer::SingleFrameMemoryPool> memoryPool_;  // 1 フレーム内の定数Bufferを再利用するPool。
-	Effekseer::RefPtr<EffekseerRenderer::CommandList> effekseerCommandList_;  // CG2 の CommandList を Effekseer へ渡すアダプタ。
+	Effekseer::RefPtr<EffekseerRenderer::CommandList> effekseerCommandList_;  // ManoEngine の CommandList を Effekseer へ渡すアダプタ。
 	Effekseer::ManagerRef manager_;  // Effect の読み込み、再生、更新、停止を管理する本体。
 	std::unordered_map<std::string, Effekseer::EffectRef> effectCache_;  // 同じ Effect Asset の二重読み込みを防ぐ。
 	std::unordered_map<uint64_t, EffectInstance> instances_;  // Component ごとの再生状態。
@@ -78,6 +87,7 @@ private:
 		Effekseer::Handle handle = -1;  // Effekseer Managerが返した再生Handle。
 		Vector3 position{0.0f, 0.0f, 0.0f};  // 直近に設定したWorld座標。
 		Vector3 rotationEuler{0.0f, 0.0f, 0.0f};  // 再生開始時の回転(Euler角)。
+		std::string assetPath;  // Restart時に同じEffectを引き直すためのAsset Path。
 	};
 	std::unordered_map<int32_t, AnonymousEffectInstance> anonymousInstances_;  // PlayEffectAtが払い出したSlot一覧。
 	int32_t nextAnonymousInstanceId_ = 1;  // PlayEffectAtが返すSlot IDの発行カウンタ(0/-1は無効値として予約)。

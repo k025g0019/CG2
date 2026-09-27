@@ -2,6 +2,7 @@
 
 #include "EditorSceneViewManager.h"
 
+#include "EditorAssetUtility.h"
 #include "EditorComponentUtility.h"
 #include "EditorSharedState.h"
 #include "EditorTeamCollaborationManager.h"
@@ -66,6 +67,83 @@ namespace {
 		}
 
 		return projectedPoint.screenPosition;
+	}
+
+	bool TryGetSceneCursorWorldPosition(Vector3& worldPosition) {
+		if (g_editorSceneWidth <= 0.0f || g_editorSceneHeight <= 0.0f) {
+			return false;
+		}
+		const ImVec2 mousePosition = ImGui::GetMousePos();
+		const float ndcX = ((mousePosition.x - g_editorSceneX) / g_editorSceneWidth) * 2.0f - 1.0f;
+		const float ndcY = 1.0f - ((mousePosition.y - g_editorSceneY) / g_editorSceneHeight) * 2.0f;
+		const Matrix4x4 inverseViewProjection = Inverse(Multiply(g_viewMatrix, g_projectionMatrix));
+		const Vector3 rayNear = Transform(Vector3{ndcX, ndcY, 0.0f}, inverseViewProjection);
+		const Vector3 rayFar = Transform(Vector3{ndcX, ndcY, 1.0f}, inverseViewProjection);
+		const Vector3 rayDirection = Normalize(Subtract(rayFar, rayNear));
+		if (Length(rayDirection) <= kProjectionEpsilon) {
+			return false;
+		}
+
+		// Scene座標付箋は編集用グリッド(Y=0)との交点へ置く。平行視点では前方10mを使用する。
+		if (std::fabs(rayDirection.y) > kProjectionEpsilon) {
+			const float distance = -rayNear.y / rayDirection.y;
+			if (distance >= 0.0f) {
+				worldPosition = Add(rayNear, Multiply(distance, rayDirection));
+				return true;
+			}
+		}
+		worldPosition = Add(rayNear, Multiply(10.0f, rayDirection));
+		return true;
+	}
+
+	bool DrawTeamItemSceneMarkers(ImDrawList* sceneDrawList) {
+		const std::vector<EditorTeamSceneMarker> markers = GetEditorTeamSceneMarkers();
+		const ImVec2 mousePosition = ImGui::GetMousePos();
+		bool isMarkerHot = false;
+		for (const EditorTeamSceneMarker& marker : markers) {
+			ProjectedScenePoint projected{};
+			if (!TryProjectWorldPosition(
+					Vector3{marker.worldPosition[0], marker.worldPosition[1], marker.worldPosition[2]},
+					projected)) {
+				continue;
+			}
+			if (std::fabs(projected.ndcX) > 1.1f || std::fabs(projected.ndcY) > 1.1f) {
+				continue;
+			}
+
+			const bool isPing = marker.pingAnimationSeconds >= 0.0f;
+			const float pulse = isPing
+				? 4.0f + 3.0f * (0.5f + 0.5f * std::sin(marker.pingAnimationSeconds * 8.0f))
+				: 0.0f;
+			const ImU32 color = marker.color != 0u ? marker.color : IM_COL32(255, 210, 70, 255);
+			sceneDrawList->AddCircleFilled(projected.screenPosition, 8.0f, color);
+			if (isPing) {
+				sceneDrawList->AddCircle(projected.screenPosition, 14.0f + pulse, color, 24, 2.0f);
+			}
+			char markerText[96]{};
+			std::snprintf(
+				markerText,
+				sizeof(markerText),
+				"%s %d%s%s",
+				isPing ? "Ping" : "Note",
+				marker.summary.GetTotalCount(),
+				marker.creatorName.empty() ? "" : " / ",
+				marker.creatorName.c_str());
+			sceneDrawList->AddText(
+				ImVec2(projected.screenPosition.x + 12.0f, projected.screenPosition.y - 8.0f),
+				color,
+				markerText);
+
+			const float deltaX = mousePosition.x - projected.screenPosition.x;
+			const float deltaY = mousePosition.y - projected.screenPosition.y;
+			if (deltaX * deltaX + deltaY * deltaY <= 14.0f * 14.0f) {
+				isMarkerHot = true;
+				if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+					OpenEditorTeamTargetItems(marker.targetType, marker.targetId, false);
+				}
+			}
+		}
+		return isMarkerHot;
 	}
 
 	Vector3 GetModelDropPosition() {
@@ -249,7 +327,6 @@ namespace {
 			componentType == EditorComponentType::BoxCollider ||
 			componentType == EditorComponentType::SphereCollider ||
 			componentType == EditorComponentType::CapsuleCollider ||
-			componentType == EditorComponentType::MeshCollider ||
 			componentType == EditorComponentType::TerrainCollider ||
 			componentType == EditorComponentType::WheelCollider ||
 			componentType == EditorComponentType::CharacterController;
@@ -845,9 +922,18 @@ namespace {
 			{0, 1}, {1, 2}, {2, 3}, {3, 0},
 			{4, 5}, {5, 6}, {6, 7}, {7, 4},
 			{0, 4}, {1, 5}, {2, 6}, {3, 7}};
+		Vector3 worldCorners[8]{};
+		for (int32_t cornerIndex = 0; cornerIndex < 8; cornerIndex++) {
+			worldCorners[cornerIndex] = TransformColliderPoint(gameObject, corners[cornerIndex]);
+		}
 
-		for (const int32_t(&edge)[2] : edges) {
-			DrawProjectedLine(sceneDrawList, gameObject, corners[edge[0]], corners[edge[1]], color, 1.5f);
+		for (int32_t edgeIndex = 0; edgeIndex < 12; edgeIndex++) {
+			DrawWorldProjectedLine(
+				sceneDrawList,
+				worldCorners[edges[edgeIndex][0]],
+				worldCorners[edges[edgeIndex][1]],
+				color,
+				1.5f);
 		}
 	}
 
@@ -902,6 +988,33 @@ namespace {
 			1.5f);
 	}
 
+	bool DrawAutoConvexColliderDebug(
+		ImDrawList* sceneDrawList,
+		const EditorGameObject& gameObject,
+		ImU32 color) {
+		// 毎フレームの Debug 表示で一時配列を再確保しない。Scene View は単一スレッドで描く。
+		static std::vector<EditorJoltPhysicsManager::PhysicsShapeTriangle> shapeTriangles;
+		const bool hasRuntimeShape = g_editorRuntimeManager.GetPhysicsManager().GetPhysicsShapeTriangles(
+				gameObject.id,
+				shapeTriangles);
+		const bool hasPreviewShape = !hasRuntimeShape &&
+			g_editorRuntimeManager.GetPhysicsManager().BuildAutoConvexPreviewTriangles(
+				gameObject.id,
+				shapeTriangles);
+		if (!hasRuntimeShape && !hasPreviewShape) {
+			return false;
+		}
+
+		// Play中は Jolt Body、Edit中は同じ設定から組み立てた一時Shapeの最終面を描く。
+		for (const EditorJoltPhysicsManager::PhysicsShapeTriangle& shapeTriangle : shapeTriangles) {
+			DrawWorldProjectedLine(sceneDrawList, shapeTriangle.first, shapeTriangle.second, color, 1.0f);
+			DrawWorldProjectedLine(sceneDrawList, shapeTriangle.second, shapeTriangle.third, color, 1.0f);
+			DrawWorldProjectedLine(sceneDrawList, shapeTriangle.third, shapeTriangle.first, color, 1.0f);
+		}
+
+		return true;
+	}
+
 	void DrawColliderDebug(ImDrawList* sceneDrawList, const EditorGameObject& gameObject) {
 		for (const EditorComponent& collider : gameObject.components) {
 			if (!collider.isActive || !IsPhysicsDebugColliderType(collider.type)) {
@@ -919,8 +1032,14 @@ namespace {
 			else if (collider.type == EditorComponentType::WheelCollider) {
 				DrawWheelColliderDebug(sceneDrawList, gameObject, collider, debugColor);
 			}
+			else if (collider.type == EditorComponentType::AutoConvexCollision) {
+				// Play / Edit のどちらでも、Runtime と同じ規則で生成した最終凸包を表示する。
+				if (!DrawAutoConvexColliderDebug(sceneDrawList, gameObject, debugColor)) {
+					DrawBoxColliderDebug(sceneDrawList, gameObject, collider, debugColor);
+				}
+			}
 			else {
-				// 複雑形状 Collider は生成元メッシュの外枠を Scene View の目安として表示する。
+				// Terrain など、専用ワイヤーフレームを持たない Collider は Bounds を目安として表示する。
 				DrawBoxColliderDebug(sceneDrawList, gameObject, collider, debugColor);
 			}
 		}
@@ -1731,6 +1850,30 @@ namespace {
 		}
 	}
 
+	// Navigation は Runtime が実際に使っている Surface / Obstacle / Link / 経路を描く。
+	// 編集用の近似ではなく、UpdateAgent / CalculatePath と同じ NavigationManager のデータを使う。
+	void DrawNavigationDebug(ImDrawList* sceneDrawList) {
+		if (!g_editorRuntimeManager.IsPlaying()) {
+			return;
+		}
+
+		static std::vector<EditorNavigationManager::NavigationDebugLine> navigationLines;
+		g_editorRuntimeManager.GetNavigationManager().BuildDebugLines(navigationLines);
+		for (const EditorNavigationManager::NavigationDebugLine& navigationLine : navigationLines) {
+			const ImU32 color = ImGui::ColorConvertFloat4ToU32(ImVec4(
+				(std::clamp)(navigationLine.color.x, 0.0f, 1.0f),
+				(std::clamp)(navigationLine.color.y, 0.0f, 1.0f),
+				(std::clamp)(navigationLine.color.z, 0.0f, 1.0f),
+				1.0f));
+			DrawWorldProjectedLine(
+				sceneDrawList,
+				navigationLine.start,
+				navigationLine.end,
+				color,
+				2.0f);
+		}
+	}
+
 	bool IsProjectedPointInsideScene(const ImVec2& screenPosition, float margin) {
 		return
 			screenPosition.x >= g_editorSceneX - margin &&
@@ -2090,15 +2233,20 @@ void EditorSceneViewManager::Draw() {
 	g_editorSceneHeight = (std::max)(sceneContentSize.y, 180.0f);
 	g_isSceneViewVisible = true;
 
-	g_viewport.TopLeftX = g_editorSceneX;  // viewport は DirectX12 の NDC から画面座標への変換範囲。
-	g_viewport.TopLeftY = g_editorSceneY;
+	// ImGui の画面座標は ViewportsEnable 中デスクトップ基準になるため、
+	// back buffer 基準へ戻してから viewport へ渡す。引き忘れると 3D だけが枠の分だけ右下へずれる。
+	const float sceneRenderX = g_editorSceneX - g_editorRenderOriginX;
+	const float sceneRenderY = g_editorSceneY - g_editorRenderOriginY;
+
+	g_viewport.TopLeftX = sceneRenderX;  // viewport は DirectX12 の NDC から画面座標への変換範囲。
+	g_viewport.TopLeftY = sceneRenderY;
 	g_viewport.Width = g_editorSceneWidth;
 	g_viewport.Height = g_editorSceneHeight;
 
-	g_scissorRect.left = static_cast<LONG>(g_editorSceneX);  // scissorRect は DirectX12 が SceneView の外へ描かないための切り取り矩形。
-	g_scissorRect.top = static_cast<LONG>(g_editorSceneY);
-	g_scissorRect.right = static_cast<LONG>(g_editorSceneX + g_editorSceneWidth);
-	g_scissorRect.bottom = static_cast<LONG>(g_editorSceneY + g_editorSceneHeight);
+	g_scissorRect.left = static_cast<LONG>(sceneRenderX);  // scissorRect は DirectX12 が SceneView の外へ描かないための切り取り矩形。
+	g_scissorRect.top = static_cast<LONG>(sceneRenderY);
+	g_scissorRect.right = static_cast<LONG>(sceneRenderX + g_editorSceneWidth);
+	g_scissorRect.bottom = static_cast<LONG>(sceneRenderY + g_editorSceneHeight);
 
 	// 3D 用透視投影。アスペクト比は Docking 後の SceneView サイズから毎フレーム更新する。
 	g_projectionMatrix = MakePerspectiveFovMatrix(
@@ -2115,14 +2263,6 @@ void EditorSceneViewManager::Draw() {
 		g_editorWindowHeight,
 		0.0f,
 		100.0f);
-
-	// cameraMatrix はエディターカメラの Transform から作るワールド行列。
-	g_cameraMatrix = MakeAffineMatrix(
-		g_cameraTransform.scale,
-		g_cameraTransform.rotate,
-		g_cameraTransform.translate);
-
-	g_viewMatrix = Inverse(g_cameraMatrix);  // viewMatrix はカメラ行列の逆行列。ワールド座標をカメラ空間へ移す。
 
 	// 左端 42px はツールバー領域として扱い、Scene 操作のクリック判定から外す。
 	ImVec2 sceneInteractionMin{g_editorSceneX + 42.0f, g_editorSceneY};
@@ -2214,6 +2354,14 @@ void EditorSceneViewManager::Draw() {
 		g_editorCameraPanSpeed,
 		g_editorCameraWheelMoveSpeed);
 
+	// ホイール・パン・回転で更新されたカメラを、このフレームの補助表示にも即座に反映する。
+	// ここが操作前の行列のままだと、後段の3D描画だけが最新カメラを使い、Collider枠などが1フレームずれる。
+	g_cameraMatrix = MakeAffineMatrix(
+		g_cameraTransform.scale,
+		g_cameraTransform.rotate,
+		g_cameraTransform.translate);
+	g_viewMatrix = Inverse(g_cameraMatrix);
+
 	ImDrawList* sceneDrawList = ImGui::GetWindowDrawList();  // sceneDrawList は SceneView 上にガイド線・アイコン・選択矩形を重ねるための DrawList。
 	bool canUseToolShortcut =
 		isSceneHovered &&
@@ -2236,8 +2384,8 @@ void EditorSceneViewManager::Draw() {
 		"Perspective");
 
 	char sceneFpsText[192]{};
-	const float sceneFrameRate = ImGui::GetIO().Framerate;
-	const float sceneFrameTimeMilliseconds = sceneFrameRate > 0.0f ? 1000.0f / sceneFrameRate : 0.0f;
+	const float sceneFrameRate = g_renderProfile.frameRate;
+	const float sceneFrameTimeMilliseconds = g_renderProfile.frameMilliseconds;
 	constexpr double bytesPerMegabyte = 1024.0 * 1024.0;
 	const double localVideoMemoryUsageMegabytes =
 		static_cast<double>(g_renderProfile.localVideoMemoryUsage) / bytesPerMegabyte;
@@ -2246,7 +2394,7 @@ void EditorSceneViewManager::Draw() {
 	std::snprintf(
 		sceneFpsText,
 		_countof(sceneFpsText),
-		"%.1f FPS  CPU %.2f ms  GPU %.2f ms\nVRAM %.0f / %.0f MB  Obj %u  Inst %u",
+		"%.1f FPS  Frame %.2f ms  GPU %.2f ms\nVRAM %.0f / %.0f MB  Obj %u  Inst %u",
 		sceneFrameRate,
 		sceneFrameTimeMilliseconds,
 		g_renderProfile.gpuFrameMilliseconds,
@@ -2274,6 +2422,7 @@ void EditorSceneViewManager::Draw() {
 		IM_COL32(210, 245, 210, 255),
 		sceneFpsText);
 
+	bool isTeamItemMarkerHot = false;
 	// Scene タブだけ床グリッドを表示する。Game / Asset Store では補助線を出さない。
 	if (isSceneTabActive) {
 		sceneDrawList->PushClipRect(
@@ -2321,12 +2470,14 @@ void EditorSceneViewManager::Draw() {
 		DrawRailPathDebug(sceneDrawList);
 		DrawTrajectoryPreviewDebug(sceneDrawList);
 		DrawPhysicsDebug(sceneDrawList);
+		isTeamItemMarkerHot = DrawTeamItemSceneMarkers(sceneDrawList);
+		DrawNavigationDebug(sceneDrawList);
 		DrawHookWireDebug(sceneDrawList);
 
 		sceneDrawList->PopClipRect();
 	}
 
-	bool isGizmoHovered = false;  // isGizmoHovered はギズモ上クリックを範囲選択として扱わないためのフラグ。
+	bool isGizmoHovered = isTeamItemMarkerHot;  // TeamItemマーカーのクリックも範囲選択として扱わない。
 	bool isGizmoActive = false;  // isGizmoActive はギズモ操作中に Scene 選択を開始しないためのフラグ。
 	Transforms* selectedGizmoTransform = nullptr;  // selectedGizmoTransform は現在ギズモで動かす Transform の実体。
 	EditorGameObject* selectedGameObjectGizmo = nullptr;  // Light / Camera など描画メッシュを持たない GameObject を直接動かす対象。
@@ -2431,6 +2582,35 @@ void EditorSceneViewManager::Draw() {
 				g_isGizmoSnapEnabled ? g_gizmoSnapValues : nullptr);
 			isGizmoHovered = isGizmoHovered || ImGuizmo::IsOver(gizmoOperation);
 			isGizmoActive = isGizmoActive || ImGuizmo::IsUsing();
+
+			if (ImGuizmo::IsUsing()) {
+				// Scene ViewのTransformギズモ操作は、InspectorのTransformComponentロックと同じ粒度で保護する。
+				// GameObject全体ではなくTransform Componentだけロックするため、他ユーザーは同じGameObjectの
+				// 別Componentを並行して編集できる。
+				auto requestTransformEditingLock = [](int32_t gameObjectId) {
+					const EditorGameObject* gameObject = g_editorScene.FindGameObject(gameObjectId);
+
+					if (gameObject == nullptr) {
+						return;
+					}
+
+					const EditorComponent* transformComponent = EditorComponentUtility::FindComponent(
+						*gameObject,
+						EditorComponentType::Transform);
+					RequestEditorTeamEditingLock(
+						gameObjectId,
+						transformComponent != nullptr ? transformComponent->uuid : std::string("Transform"));
+				};
+
+				if (g_selectedEditorGameObjectIds.size() >= 2) {
+					for (const int32_t selectedGameObjectId : g_selectedEditorGameObjectIds) {
+						requestTransformEditingLock(selectedGameObjectId);
+					}
+				}
+				else if (g_selectedEditorGameObjectId >= 0) {
+					requestTransformEditingLock(g_selectedEditorGameObjectId);
+				}
+			}
 
 			if (isManipulated) {
 				// ImGuizmo が返した行列を Transform の translate / rotate / scale に戻すための一時配列。
@@ -2781,7 +2961,49 @@ void EditorSceneViewManager::Draw() {
 		}
 	}
 
+	// 右クリックだけ（カメラ回転ドラッグではない）の時にScene座標または選択Objectへ直接TeamItemを作る。
+	static Vector3 teamItemContextWorldPosition{};
+	if (isSceneHovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+		const ImVec2 rightDragDelta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Right);
+		if (std::fabs(rightDragDelta.x) < 2.0f && std::fabs(rightDragDelta.y) < 2.0f &&
+			TryGetSceneCursorWorldPosition(teamItemContextWorldPosition)) {
+			ImGui::OpenPopup("SceneViewTeamItemContext");
+		}
+	}
+	if (ImGui::BeginPopup("SceneViewTeamItemContext")) {
+		if (ImGui::MenuItem("このScene座標へ付箋")) {
+			OpenEditorTeamScenePositionItems(
+				{teamItemContextWorldPosition.x, teamItemContextWorldPosition.y, teamItemContextWorldPosition.z},
+				true,
+				"Note");
+		}
+		if (ImGui::MenuItem("このScene座標へPing")) {
+			OpenEditorTeamScenePositionItems(
+				{teamItemContextWorldPosition.x, teamItemContextWorldPosition.y, teamItemContextWorldPosition.z},
+				true,
+				"Ping");
+		}
+		if (g_selectedEditorGameObjectId >= 0) {
+			const EditorGameObject* selectedObject = g_editorScene.FindGameObject(g_selectedEditorGameObjectId);
+			if (selectedObject != nullptr) {
+				ImGui::Separator();
+				if (ImGui::MenuItem("選択GameObjectへ付箋")) {
+					OpenEditorTeamTargetItems("GameObject", selectedObject->uuid, true, "Note");
+				}
+				if (ImGui::MenuItem("選択GameObjectへPing")) {
+					OpenEditorTeamTargetItems("GameObject", selectedObject->uuid, true, "Ping");
+				}
+			}
+		}
+		ImGui::EndPopup();
+	}
+
 	drawSceneDropTarget();  // SceneView 最後にドロップターゲットを処理して、Project からのアセット配置を受ける。
+	if (isSceneHovered) {
+		ReportEditorTeamActivity(
+			"Scene View",
+			isGizmoActive ? "Gizmo操作中" : "閲覧中");
+	}
 	ImGui::End();
 #endif
 }

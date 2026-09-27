@@ -6,7 +6,7 @@
 // DLL Script と Editor 本体が共有する C 互換 API
 //================================================================
 
-constexpr uint32_t kEditorScriptApiVersion = 8U;  // 末尾拡張で旧DLL互換を維持する。
+constexpr uint32_t kEditorScriptApiVersion = 15U;  // Entryは末尾追加。旧DLLは使用していたVersion範囲のまま互換Loadできる。
 
 enum EditorScriptPhysicsEventType : int32_t {
 	EditorScriptPhysicsEventTypeCollisionEnter = 0,
@@ -470,6 +470,16 @@ struct EditorScriptWireEvent {
 using EditorScriptJointHandle = uint64_t;
 constexpr EditorScriptJointHandle kInvalidEditorScriptJointHandle = 0ULL;
 
+// 再生中のAudio Voice 1本を指す。内部のIXAudio2 Voiceポインタは公開せず、
+// 再生ごとに発番した通し番号だけをScriptへ渡す。再生終了後のHandleは無効値として扱われる。
+using EditorScriptAudioHandle = uint64_t;
+constexpr EditorScriptAudioHandle kInvalidEditorScriptAudioHandle = 0ULL;
+
+// 再生中のVFX Instance 1個を指す。内部が.effectdef(CPU VFX)かEffekseerかはHandleへ埋め込むため、
+// Script側は再生経路の違いを意識せず同じ操作APIを使える。
+using EditorScriptVfxHandle = uint64_t;
+constexpr EditorScriptVfxHandle kInvalidEditorScriptVfxHandle = 0ULL;
+
 enum class EditorScriptJointType : int32_t {
 	Fixed = 0,
 	Hinge = 1,
@@ -863,10 +873,247 @@ struct EditorScriptRuntimeApi {
 	bool (*CaptureAreaState)(int32_t areaRootGameObjectId);
 	bool (*ResetArea)(int32_t areaRootGameObjectId);
 	bool (*HasAreaState)(int32_t areaRootGameObjectId);
+	// ABI互換のため、Navigation APIは必ず構造体末尾へ追加する。
+	// Enemy が「Playerを探す → Pathを取る → 移動する」を Script から書けるようにする。
+	bool (*NavSetDestination)(int32_t gameObjectId, const EditorScriptVector3* destination);
+	bool (*NavGetDestination)(int32_t gameObjectId, EditorScriptVector3* destination);
+	bool (*NavStop)(int32_t gameObjectId);
+	bool (*NavResume)(int32_t gameObjectId);
+	bool (*NavIsStopped)(int32_t gameObjectId);
+	// 目的地へ到達できる見込みがあるか。false の場合は NavGetPathFailureReason で理由を取れる。
+	bool (*NavHasPath)(int32_t gameObjectId);
+	bool (*NavGetRemainingDistance)(int32_t gameObjectId, float* remainingDistance);
+	bool (*NavWarp)(int32_t gameObjectId, const EditorScriptVector3* position);
+	bool (*NavGetPathFailureReason)(int32_t gameObjectId, char* reason, int32_t reasonCapacity);
+	// ABI互換のため、NVIDIA Blast 1.1.5 Runtime破壊APIは必ず構造体末尾へ追加する。
+	bool (*BlastApplyDamage)(int32_t gameObjectId, const EditorScriptVector3* worldPosition, float radius, float damage, float impulse);
+	bool (*BlastFractureAll)(int32_t gameObjectId, float impulse);
+	bool (*BlastIsFractured)(int32_t gameObjectId);
+	int32_t (*BlastGetChunkCount)(int32_t gameObjectId);
+	int32_t (*BlastGetActorCount)(int32_t gameObjectId);
+	// ABI互換のため、末尾へ追加。分裂後に個々のChunkへ演出・スコア加算等を紐付けるための照会。
+	int32_t (*BlastGetBondCount)(int32_t gameObjectId);
+	bool (*BlastGetChunkGameObjectId)(int32_t gameObjectId, int32_t chunkIndex, int32_t* chunkGameObjectId);
+	bool (*BlastIsChunkDetached)(int32_t gameObjectId, int32_t chunkIndex);
+
+	// ABI互換のため、Camera / Audio / Renderer / VFX の基本操作APIは必ず構造体末尾へ追加する。
+	// gameObjectIdはCamera または CinemachineCamera Componentを持つObjectを指す。
+	bool (*CameraGetFieldOfView)(int32_t gameObjectId, float* fieldOfViewDegrees);
+	bool (*CameraSetFieldOfView)(int32_t gameObjectId, float fieldOfViewDegrees);
+	bool (*CameraGetNearClip)(int32_t gameObjectId, float* nearClip);
+	bool (*CameraSetNearClip)(int32_t gameObjectId, float nearClip);
+	bool (*CameraGetFarClip)(int32_t gameObjectId, float* farClip);
+	bool (*CameraSetFarClip)(int32_t gameObjectId, float farClip);
+	bool (*CameraGetProjectionMode)(int32_t gameObjectId, int32_t* projectionMode);  // 0=Perspective、1=Orthographic
+	bool (*CameraSetProjectionMode)(int32_t gameObjectId, int32_t projectionMode);
+	bool (*CameraGetOrthographicSize)(int32_t gameObjectId, float* orthographicSize);
+	bool (*CameraSetOrthographicSize)(int32_t gameObjectId, float orthographicSize);
+	bool (*CameraGetPriority)(int32_t gameObjectId, int32_t* priority);
+	bool (*CameraSetPriority)(int32_t gameObjectId, int32_t priority);
+	bool (*CameraGetEnabled)(int32_t gameObjectId, bool* isEnabled);
+	bool (*CameraSetEnabled)(int32_t gameObjectId, bool isEnabled);
+	int32_t (*CameraGetActive)();  // Game Viewが今使う最優先Cameraを返す。無ければ-1。
+	bool (*CameraSetActive)(int32_t gameObjectId);  // 他の有効Cameraより高いPriorityを与えて切り替える。
+	bool (*CameraLookAt)(int32_t gameObjectId, const EditorScriptVector3* targetPosition);
+	bool (*CameraGetLookDirection)(int32_t gameObjectId, EditorScriptVector3* direction);
+	bool (*CameraSetLookDirection)(int32_t gameObjectId, const EditorScriptVector3* direction);
+
+	// Audio: Bus全体ではなく再生Instance 1本を操作する。無効Handleは常にfalse/無効値を返す。
+	EditorScriptAudioHandle (*AudioPlayWithHandle)(int32_t gameObjectId);
+	EditorScriptAudioHandle (*AudioPlayClipAtPosition)(
+		const char* clipAssetPath,
+		const EditorScriptVector3* position,
+		int32_t audioBus,
+		float volume,
+		bool loop);
+	EditorScriptAudioHandle (*AudioPlayClip2D)(const char* clipAssetPath, int32_t audioBus, float volume, bool loop);
+	bool (*AudioStopHandle)(EditorScriptAudioHandle audioHandle);
+	bool (*AudioSetPaused)(EditorScriptAudioHandle audioHandle, bool isPaused);
+	bool (*AudioIsPlayingHandle)(EditorScriptAudioHandle audioHandle);
+	bool (*AudioIsHandleValid)(EditorScriptAudioHandle audioHandle);
+	bool (*AudioSetVolumeHandle)(EditorScriptAudioHandle audioHandle, float volume);
+	bool (*AudioGetVolumeHandle)(EditorScriptAudioHandle audioHandle, float* volume);
+	bool (*AudioSetPitch)(EditorScriptAudioHandle audioHandle, float pitch);
+	bool (*AudioGetPitch)(EditorScriptAudioHandle audioHandle, float* pitch);
+	bool (*AudioSetLoop)(EditorScriptAudioHandle audioHandle, bool loop);
+	bool (*AudioGetLoop)(EditorScriptAudioHandle audioHandle, bool* loop);
+	bool (*AudioSetPositionHandle)(EditorScriptAudioHandle audioHandle, const EditorScriptVector3* position);
+	bool (*AudioSetBus)(EditorScriptAudioHandle audioHandle, int32_t audioBus);
+	bool (*AudioGetPlaybackPosition)(EditorScriptAudioHandle audioHandle, float* seconds);
+	bool (*AudioSetPlaybackPosition)(EditorScriptAudioHandle audioHandle, float seconds);
+	bool (*AudioGetDuration)(EditorScriptAudioHandle audioHandle, float* seconds);
+	bool (*AudioFadeTo)(EditorScriptAudioHandle audioHandle, float targetVolume, float durationSeconds);
+
+	// Renderer / Material: ModelRenderer または SkinnedMeshRenderer を対象にする。
+	bool (*RendererGetColor)(int32_t gameObjectId, EditorScriptVector3* color);
+	bool (*RendererSetEnabled)(int32_t gameObjectId, bool isEnabled);
+	bool (*RendererGetEnabled)(int32_t gameObjectId, bool* isEnabled);
+	bool (*RendererSetOpacity)(int32_t gameObjectId, float opacity);
+	bool (*RendererGetOpacity)(int32_t gameObjectId, float* opacity);
+	bool (*RendererGetEmission)(int32_t gameObjectId, EditorScriptVector3* color, float* strength);
+	// propertyName / slotNameは大文字小文字を区別しない。未知の名前はfalseを返す。
+	bool (*RendererSetMaterialFloat)(int32_t gameObjectId, const char* propertyName, float value);
+	bool (*RendererGetMaterialFloat)(int32_t gameObjectId, const char* propertyName, float* value);
+	bool (*RendererSetMaterialColor)(int32_t gameObjectId, const char* propertyName, const EditorScriptVector3* color);
+	bool (*RendererGetMaterialColor)(int32_t gameObjectId, const char* propertyName, EditorScriptVector3* color);
+	bool (*RendererSetMaterialTexture)(int32_t gameObjectId, const char* slotName, const char* textureAssetPath);
+	bool (*RendererGetMaterialTexture)(int32_t gameObjectId, const char* slotName, char* textureAssetPath, int32_t textureAssetPathCapacity);
+
+	// VFX: .effectdef の Effect ID も .efk / .efkefc の Asset Path も同じ関数へ渡せる。
+	EditorScriptVfxHandle (*VfxSpawn)(
+		const char* effectIdOrAssetPath,
+		const EditorScriptVector3* position,
+		const EditorScriptVector3* rotationEuler);
+	EditorScriptVfxHandle (*VfxSpawnAttached)(
+		const char* effectIdOrAssetPath,
+		int32_t followGameObjectId,
+		const EditorScriptVector3* localOffset);
+	bool (*VfxStopHandle)(EditorScriptVfxHandle vfxHandle);
+	bool (*VfxIsPlayingHandle)(EditorScriptVfxHandle vfxHandle);
+	bool (*VfxSetPositionHandle)(EditorScriptVfxHandle vfxHandle, const EditorScriptVector3* position);
+	bool (*VfxGetPositionHandle)(EditorScriptVfxHandle vfxHandle, EditorScriptVector3* position);
+	bool (*VfxSetPausedHandle)(EditorScriptVfxHandle vfxHandle, bool isPaused);
+	bool (*VfxSetPlaybackSpeed)(EditorScriptVfxHandle vfxHandle, float playbackSpeed);
+	bool (*VfxGetPlaybackSpeed)(EditorScriptVfxHandle vfxHandle, float* playbackSpeed);
+	bool (*VfxRestartHandle)(EditorScriptVfxHandle vfxHandle);
+	bool (*VfxGetParticleCountHandle)(EditorScriptVfxHandle vfxHandle, int32_t* particleCount);
+	// 回転と拡縮はEffekseer Instanceのみ対応する(CPU VFXはInstance Transformを持たないためfalse)。
+	bool (*VfxSetRotationHandle)(EditorScriptVfxHandle vfxHandle, const EditorScriptVector3* rotationEuler);
+	bool (*VfxSetScaleHandle)(EditorScriptVfxHandle vfxHandle, const EditorScriptVector3* scale);
+
+	// ABI互換のため、UI操作APIは必ず構造体末尾へ追加する。
+	// 表示文字列はstd::stringのため汎用Field API(float/int/bool/Vector)では扱えず、専用Entryが要る。
+	bool (*UiSetText)(int32_t gameObjectId, const char* text);
+	bool (*UiGetText)(int32_t gameObjectId, char* text, int32_t textCapacity);
+	bool (*UiSetTextColor)(int32_t gameObjectId, const EditorScriptVector3* color, float alpha);
+	bool (*UiGetTextColor)(int32_t gameObjectId, EditorScriptVector3* color, float* alpha);
+	bool (*UiSetFontSize)(int32_t gameObjectId, float fontSize);  // 0以下でRect高さ基準の自動サイズ
+	bool (*UiGetFontSize)(int32_t gameObjectId, float* fontSize);
+	bool (*UiSetInteractable)(int32_t gameObjectId, bool isInteractable);
+	bool (*UiGetInteractable)(int32_t gameObjectId, bool* isInteractable);
+	bool (*UiSetSliderValue)(int32_t gameObjectId, float value);
+	bool (*UiGetSliderValue)(int32_t gameObjectId, float* value);
+	bool (*UiSetToggleValue)(int32_t gameObjectId, bool value);
+	bool (*UiGetToggleValue)(int32_t gameObjectId, bool* value);
+
+	// Terrainの高さ取得。描画と同じHeightMapをCPUで評価するため、当たり判定と一致する。
+	// 接地判定・設置・AIの経路判断など、Raycastを撃つまでもない用途で使う。
+	bool (*TerrainGetHeightAtWorld)(
+		int32_t terrainGameObjectId,
+		float worldX,
+		float worldZ,
+		float* worldHeight);
+	// 指定World XZが、そのTerrainのXZ範囲内かどうか。
+	bool (*TerrainContainsWorldPosition)(int32_t terrainGameObjectId, float worldX, float worldZ);
+
+	//================================================================
+	// 外部認識・オンライン連携(ABI互換のため必ず構造体末尾へ追加する)
+	//================================================================
+	// 音声認識(SpeechRecognizerComponent)
+	bool (*SpeechStartRecognition)(int32_t gameObjectId);
+	bool (*SpeechStopRecognition)(int32_t gameObjectId);
+	bool (*SpeechIsRecognizing)(int32_t gameObjectId);
+	// 直近の確定結果を受け取る。text は UTF-8。
+	bool (*SpeechGetLastResult)(
+		int32_t gameObjectId,
+		char* text,
+		int32_t textCapacity,
+		float* confidence,
+		bool* isFinal);
+	// このフレームに登録キーワードを認識したか。
+	bool (*SpeechWasKeywordRecognized)(int32_t gameObjectId, const char* keyword);
+
+	// 画像認識(CameraInputComponent / ImageRecognizerComponent)
+	bool (*VisionStartCamera)(int32_t gameObjectId);
+	bool (*VisionStopCamera)(int32_t gameObjectId);
+	bool (*VisionStartRecognition)(int32_t gameObjectId);
+	bool (*VisionStopRecognition)(int32_t gameObjectId);
+	int32_t (*VisionGetState)(int32_t gameObjectId);  // 0=Unavailable,1=Ready,2=Running,3=Error
+	int32_t (*VisionGetObjectCount)(int32_t gameObjectId);
+	bool (*VisionGetObject)(
+		int32_t gameObjectId,
+		int32_t objectIndex,
+		char* label,
+		int32_t labelCapacity,
+		float* confidence,
+		float* x,
+		float* y,
+		float* width,
+		float* height);
+	bool (*VisionGetTopClassification)(
+		int32_t gameObjectId,
+		char* label,
+		int32_t labelCapacity,
+		float* confidence);
+	int32_t (*VisionGetFaceCount)(int32_t gameObjectId);
+	bool (*VisionGetFace)(
+		int32_t gameObjectId,
+		int32_t faceIndex,
+		float* confidence,
+		float* x,
+		float* y,
+		float* width,
+		float* height);
+	bool (*VisionGetHeadPose)(int32_t gameObjectId, float* yaw, float* pitch, float* roll);
+	bool (*VisionGetMotion)(
+		int32_t gameObjectId,
+		bool* hasMotion,
+		float* motionMagnitude,
+		float* centerX,
+		float* centerY);
+	bool (*VisionGetColorTracking)(
+		int32_t gameObjectId,
+		bool* isDetected,
+		float* centerX,
+		float* centerY,
+		float* areaRatio);
+
+	// Haptics(HapticSourceComponent / HapticSystem)
+	uint32_t (*HapticPlaySource)(int32_t gameObjectId);
+	uint32_t (*HapticPlayClipAsset)(const char* clipAssetPath, int32_t gameObjectId);
+	uint32_t (*HapticPlayFromImpulse)(int32_t gameObjectId, float impulse);
+	bool (*HapticStopSource)(int32_t gameObjectId);
+	bool (*HapticStopHandle)(uint32_t hapticHandle);
+	bool (*HapticIsPlayingHandle)(uint32_t hapticHandle);
+	bool (*HapticSetHandleIntensity)(uint32_t hapticHandle, float intensity);
+	bool (*HapticSetHandleFrequency)(uint32_t hapticHandle, float frequency);
+	bool (*HapticSetHandlePlaybackSpeed)(uint32_t hapticHandle, float playbackSpeed);
+	bool (*HapticSetHandleLooping)(uint32_t hapticHandle, bool isLooping);
+	void (*HapticSetMasterIntensity)(float masterIntensity);
+	int32_t (*HapticGetDeviceState)();  // 0=Unavailable,1=Disconnected,2=Connected,3=Error
+
+	// Online(OnlineService)
+	void (*OnlineSetPlayerIdentity)(const char* playerId, const char* playerName);
+	int32_t (*OnlineGetConnectionState)();  // 0=Offline,1=Connecting,2=Online,3=Error
+	bool (*OnlineIsEnabled)();
+	int32_t (*OnlineGetPendingRequestCount)();
+	bool (*OnlineSubmitScore)(const char* boardName, int64_t score, int32_t scope);
+	bool (*OnlineRequestTopScores)(const char* boardName, int32_t entryCount, int32_t scope);
+	int32_t (*OnlineGetLeaderboardCount)();
+	bool (*OnlineGetLeaderboardEntry)(
+		int32_t entryIndex,
+		char* playerId,
+		int32_t playerIdCapacity,
+		char* playerName,
+		int32_t playerNameCapacity,
+		int64_t* score,
+		int32_t* rank);
+	bool (*OnlineSetPlayerValue)(const char* key, const char* value);
+	bool (*OnlineRequestPlayerData)();
+	bool (*OnlineGetPlayerValue)(const char* key, char* value, int32_t valueCapacity);
+	bool (*OnlineUploadCloudSave)(const char* slotName, const char* saveText);
+	bool (*OnlineRequestCloudSave)(const char* slotName);
+	bool (*OnlineGetCloudSave)(char* saveText, int32_t saveTextCapacity);
+
+	// Speech UI状態。ABI互換のためVersion 15で構造体末尾へ追加。
+	bool (*SpeechIsSpeaking)(int32_t gameObjectId);
+	bool (*SpeechIsProcessing)(int32_t gameObjectId);
 };
 
 extern "C" {
 	typedef bool(__cdecl* EditorScriptLoadFn)(uint32_t apiVersion, const EditorScriptRuntimeApi* runtimeApi);
+	// 新しい生成Scriptは必要なAPI Versionを公開する。旧DLLは未Exportでも互換探索で読み込める。
+	typedef uint32_t(__cdecl* EditorScriptGetRequiredApiVersionFn)();
 	typedef void(__cdecl* EditorScriptUnloadFn)();
 	typedef void(__cdecl* EditorScriptStartFn)(int32_t gameObjectId);
 	typedef void(__cdecl* EditorScriptUpdateFn)(int32_t gameObjectId, float deltaTime);

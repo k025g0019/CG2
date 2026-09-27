@@ -5,6 +5,7 @@
 
 #include "EditorSharedState.h"
 #include "Log.h"
+#include "ProjectSettings.h"
 
 #pragma comment(lib, "comdlg32.lib")
 
@@ -77,24 +78,50 @@ HWND CreateMainWindow(HINSTANCE instanceHandle, std::ostream& logStream) {
 	}
 	Log(logStream, "window class registered");
 
-	// 描画したいクライアント領域の左上と右下
-	RECT windowRect{0, 0, kClientWidth, kClientHeight};
-	// タイトルバーなどを含めた実際のウィンドウサイズへ調整する
-	if (AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE) == 0) {
-		Log(logStream, "AdjustWindowRect failed");
-		return nullptr;
-	}
-	Log(logStream, "window rect adjusted");
+	// Project Settings の解像度 / Window Mode をここで実際に反映する。
+	// SwapChain はこのクライアント領域から作られるため、ここが描画解像度そのものになる。
+	const ProjectSettingsData& projectSettings = ProjectSettings::Get().GetData();
+	const bool isBorderlessFullscreen =
+		projectSettings.windowMode == ProjectWindowMode::BorderlessFullscreen;
+	const int32_t requestedWidth = projectSettings.gameWidth > 0 ? projectSettings.gameWidth : kClientWidth;
+	const int32_t requestedHeight = projectSettings.gameHeight > 0 ? projectSettings.gameHeight : kClientHeight;
 
-	// AdjustWindowRect 後のサイズを使い、描画領域が kClientWidth / kClientHeight になるように作る
+	int32_t windowPositionX = CW_USEDEFAULT;
+	int32_t windowPositionY = CW_USEDEFAULT;
+	int32_t windowWidth = requestedWidth;
+	int32_t windowHeight = requestedHeight;
+	DWORD windowStyle = WS_OVERLAPPEDWINDOW;
+
+	if (isBorderlessFullscreen) {
+		// 枠なしでモニター全域へ広げる。排他Fullscreenより Alt+Tab や Editor 併用が安定する。
+		windowStyle = WS_POPUP;
+		windowPositionX = 0;
+		windowPositionY = 0;
+		windowWidth = GetSystemMetrics(SM_CXSCREEN);
+		windowHeight = GetSystemMetrics(SM_CYSCREEN);
+	}
+	else {
+		// 描画したいクライアント領域の左上と右下
+		RECT windowRect{0, 0, requestedWidth, requestedHeight};
+		// タイトルバーなどを含めた実際のウィンドウサイズへ調整する
+		if (AdjustWindowRect(&windowRect, windowStyle, FALSE) == 0) {
+			Log(logStream, "AdjustWindowRect failed");
+			return nullptr;
+		}
+		Log(logStream, "window rect adjusted");
+		windowWidth = windowRect.right - windowRect.left;
+		windowHeight = windowRect.bottom - windowRect.top;
+	}
+
+	// 調整後のサイズを使い、描画領域が Project Settings の解像度になるように作る
 	HWND windowHandle = CreateWindow(
 		windowClass.lpszClassName,
 		EditorSharedState::g_isStandaloneGame ? standaloneWindowTitle.c_str() : kWindowTitle,
-		WS_OVERLAPPEDWINDOW,
-		CW_USEDEFAULT,
-		CW_USEDEFAULT,
-		windowRect.right - windowRect.left,
-		windowRect.bottom - windowRect.top,
+		windowStyle,
+		windowPositionX,
+		windowPositionY,
+		windowWidth,
+		windowHeight,
 		nullptr,
 		nullptr,
 		windowClass.hInstance,
@@ -136,20 +163,24 @@ LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPAR
 		}
 
 		std::string savePath = g_currentScenePath;
+		bool shouldSaveScene = false;
 
-		if (g_isEditorSceneInitialized && savePath.empty()) {
-			// 未保存シーン: 保存するか確認する
+		if (g_isEditorSceneInitialized && !g_isStandaloneGame) {
+			// Scene Path の有無に関係なく確認する。Launcher から作った Project は
+			// 最初から Scene Path があるため、未保存Sceneだけを対象にすると確認が出ない。
 			const int answer = MessageBoxW(
 				windowHandle,
-				L"未保存のシーンがあります。保存しますか？",
-				L"CG2 Editor",
+				L"シーンを保存して終了しますか？",
+				L"ManoEngine Editor",
 				MB_YESNOCANCEL | MB_ICONQUESTION | MB_DEFBUTTON1);
 
 			if (answer == IDCANCEL) {
 				return 0;  // キャンセル: 閉じない
 			}
 
-			if (answer == IDYES) {
+			shouldSaveScene = answer == IDYES;
+
+			if (shouldSaveScene && savePath.empty()) {
 				// 保存先を選ばせる
 				wchar_t fileBuffer[MAX_PATH] = L"NewScene.scene";
 				OPENFILENAMEW ofn{};
@@ -176,14 +207,14 @@ LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPAR
 			}
 		}
 
-		if (g_isEditorSceneInitialized && !savePath.empty()) {
+		if (shouldSaveScene && !savePath.empty()) {
 			const std::filesystem::path parentPath = std::filesystem::path(savePath).parent_path();
 			if (!parentPath.empty()) {
 				std::filesystem::create_directories(parentPath);
 			}
 
 			if (!g_editorScene.SaveScene(savePath)) {
-				MessageBoxW(windowHandle, L"シーンの保存に失敗しました。", L"CG2 Editor", MB_OK | MB_ICONERROR);
+				MessageBoxW(windowHandle, L"シーンの保存に失敗しました。", L"ManoEngine Editor", MB_OK | MB_ICONERROR);
 				return 0;  // 保存失敗時は閉じない
 			}
 

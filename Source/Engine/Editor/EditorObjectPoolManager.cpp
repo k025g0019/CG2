@@ -31,6 +31,7 @@ void EditorObjectPoolManager::Initialize(
 	poolOwnerByItemId_.clear();
 	spawnVersions_.clear();
 	originalActiveStates_.clear();
+	originalTransformStates_.clear();
 	spawnerRuntimes_.clear();
 	isStarted_ = false;
 	runtimeResetCallback_ = {};
@@ -41,6 +42,7 @@ void EditorObjectPoolManager::PreparePools() {
 	poolOwnerByItemId_.clear();
 	spawnVersions_.clear();
 	originalActiveStates_.clear();
+	originalTransformStates_.clear();
 	spawnerRuntimes_.clear();
 
 	if (editorScene_ == nullptr) {
@@ -84,6 +86,7 @@ void EditorObjectPoolManager::PreparePools() {
 		for (const int32_t itemGameObjectId : poolRuntime.itemGameObjectIds) {
 			poolOwnerByItemId_[itemGameObjectId] = poolSpecification.ownerGameObjectId;
 			spawnVersions_[itemGameObjectId] = 0u;
+			CaptureItemTransformState(itemGameObjectId);
 		}
 
 		poolRuntimes_[poolSpecification.ownerGameObjectId] = std::move(poolRuntime);
@@ -180,6 +183,7 @@ void EditorObjectPoolManager::Stop() {
 	poolOwnerByItemId_.clear();
 	spawnVersions_.clear();
 	originalActiveStates_.clear();
+	originalTransformStates_.clear();
 	spawnerRuntimes_.clear();
 	isStarted_ = false;
 }
@@ -245,6 +249,7 @@ int32_t EditorObjectPoolManager::CreatePoolItem(PoolRuntime& poolRuntime, int32_
 	poolRuntime.itemGameObjectIds.push_back(itemGameObjectId);
 	poolOwnerByItemId_[itemGameObjectId] = ownerGameObjectId;
 	spawnVersions_[itemGameObjectId] = 0u;
+	CaptureItemTransformState(itemGameObjectId);
 	return itemGameObjectId;
 }
 
@@ -294,6 +299,15 @@ int32_t EditorObjectPoolManager::Spawn(
 	}
 
 	EditorGameObject* itemGameObject = editorScene_->FindGameObject(itemGameObjectId);
+	if (itemGameObject == nullptr) {
+		return -1;
+	}
+
+	// 前回貸出中にProjectileの曳光ScaleやTargetSteeringの姿勢が変わっている可能性がある。
+	// 新しい貸出の前にTemplate由来の姿勢へ戻し、Spawn位置と回転だけをこの呼び出しで上書きする。
+	RestoreItemTransformState(itemGameObjectId);
+	itemGameObject = editorScene_->FindGameObject(itemGameObjectId);
+
 	if (itemGameObject == nullptr) {
 		return -1;
 	}
@@ -400,6 +414,7 @@ bool EditorObjectPoolManager::Release(int32_t gameObjectId) {
 	PoolRuntime& poolRuntime = poolRuntimeIterator->second;
 	poolRuntime.activeGameObjectIds.erase(gameObjectId);
 	SetItemActive(gameObjectId, false);
+	RestoreItemTransformState(gameObjectId);
 	return true;
 }
 
@@ -501,6 +516,66 @@ void EditorObjectPoolManager::SetItemActive(int32_t gameObjectId, bool isActive)
 
 	for (const int32_t childGameObjectId : childGameObjectIds) {
 		SetItemActive(childGameObjectId, isActive);
+	}
+}
+
+void EditorObjectPoolManager::CaptureItemTransformState(int32_t gameObjectId) {
+	if (editorScene_ == nullptr) {
+		return;
+	}
+
+	const EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+
+	if (gameObject == nullptr) {
+		return;
+	}
+
+	originalTransformStates_[gameObjectId] = TransformState{
+		gameObject->translate,
+		gameObject->rotate,
+		gameObject->scale};
+
+	for (const int32_t childGameObjectId : gameObject->children) {
+		CaptureItemTransformState(childGameObjectId);
+	}
+}
+
+void EditorObjectPoolManager::RestoreItemTransformState(int32_t gameObjectId) {
+	if (editorScene_ == nullptr) {
+		return;
+	}
+
+	EditorGameObject* gameObject = editorScene_->FindGameObject(gameObjectId);
+
+	if (gameObject == nullptr) {
+		return;
+	}
+
+	const auto transformIterator = originalTransformStates_.find(gameObjectId);
+
+	if (transformIterator != originalTransformStates_.end()) {
+		gameObject->translate = transformIterator->second.translate;
+		gameObject->rotate = transformIterator->second.rotate;
+		gameObject->scale = transformIterator->second.scale;
+
+		if (physicsManager_ != nullptr) {
+			Vector3 worldScale = gameObject->scale;
+			Vector3 worldRotation = gameObject->rotate;
+			Vector3 worldPosition = gameObject->translate;
+			editorScene_->GetWorldTransform(
+				gameObjectId,
+				worldScale,
+				worldRotation,
+				worldPosition);
+			(void)worldScale;
+			physicsManager_->SetGameObjectTransform(gameObjectId, worldPosition, worldRotation);
+		}
+	}
+
+	const std::vector<int32_t> childGameObjectIds = gameObject->children;
+
+	for (const int32_t childGameObjectId : childGameObjectIds) {
+		RestoreItemTransformState(childGameObjectId);
 	}
 }
 

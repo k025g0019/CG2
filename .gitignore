@@ -239,7 +239,7 @@ ClientBin/
 *.pfx
 *.publishsettings
 
-# CG2 Team Collaboration local state
+# ManoEngine Team Collaboration local state
 .team/
 ProjectSettings/TeamCollaboration.settings
 orleans.codegen.cs
@@ -376,6 +376,31 @@ externals/
 logs/
 Library/AutoSave/
 Tools/
+# 配布LauncherとVersion正本同期は製品Sourceなので追跡する。Build生成物は対象外。
+!Tools/
+Tools/*
+!Tools/ManoLauncher/
+!Tools/ManoLauncher/*.cpp
+!Tools/ManoLauncher/*.h
+!Tools/ManoLauncher/*.vcxproj
+# 共同制作の中継Server。Launcherと同じく製品Sourceなので追跡する。
+!Tools/ManoTeamServer/
+!Tools/ManoTeamServer/*.cpp
+!Tools/ManoTeamServer/*.h
+!Tools/ManoTeamServer/*.vcxproj
+!Tools/ManoTeamServer/*.py
+# Online Services の Cloudflare Worker 参照実装。
+!Tools/CloudflareWorker/
+!Tools/CloudflareWorker/README.md
+!Tools/CloudflareWorker/wrangler.toml
+!Tools/CloudflareWorker/schema.sql
+!Tools/CloudflareWorker/src/
+!Tools/CloudflareWorker/src/*.js
+!Tools/Whisper/
+Tools/Whisper/*
+!Tools/Whisper/README.md
+!Tools/Versioning/
+!Tools/Versioning/*.ps1
 .vs/
 .git/
 .codex/

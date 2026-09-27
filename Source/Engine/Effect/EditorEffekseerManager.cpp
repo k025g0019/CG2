@@ -303,6 +303,7 @@ int32_t EditorEffekseerManager::PlayEffectAt(
 	instance.handle = handle;
 	instance.position = position;
 	instance.rotationEuler = rotationEuler;
+	instance.assetPath = assetPath;
 
 	const int32_t effectAtId = nextAnonymousInstanceId_++;
 	anonymousInstances_.emplace(effectAtId, instance);
@@ -326,6 +327,133 @@ void EditorEffekseerManager::SetEffectPositionAt(int32_t effectAtId, const Vecto
 
 	instance.position = position;
 	manager_->SetLocation(instance.handle, position.x, position.y, position.z);
+}
+
+bool EditorEffekseerManager::IsEffectPlayingAt(int32_t effectAtId) const {
+	if (manager_ == nullptr) {
+		return false;
+	}
+
+	const auto anonymousInstanceIterator = anonymousInstances_.find(effectAtId);
+	return anonymousInstanceIterator != anonymousInstances_.end() &&
+		manager_->Exists(anonymousInstanceIterator->second.handle);
+}
+
+bool EditorEffekseerManager::GetEffectPositionAt(int32_t effectAtId, Vector3& position) const {
+	const auto anonymousInstanceIterator = anonymousInstances_.find(effectAtId);
+
+	if (anonymousInstanceIterator == anonymousInstances_.end()) {
+		return false;
+	}
+
+	position = anonymousInstanceIterator->second.position;
+	return true;
+}
+
+bool EditorEffekseerManager::SetEffectPausedAt(int32_t effectAtId, bool isPaused) {
+	if (manager_ == nullptr) {
+		return false;
+	}
+
+	const auto anonymousInstanceIterator = anonymousInstances_.find(effectAtId);
+
+	if (anonymousInstanceIterator == anonymousInstances_.end() ||
+		!manager_->Exists(anonymousInstanceIterator->second.handle)) {
+		return false;
+	}
+
+	manager_->SetPaused(anonymousInstanceIterator->second.handle, isPaused);
+	return true;
+}
+
+bool EditorEffekseerManager::SetEffectSpeedAt(int32_t effectAtId, float playbackSpeed) {
+	if (manager_ == nullptr) {
+		return false;
+	}
+
+	const auto anonymousInstanceIterator = anonymousInstances_.find(effectAtId);
+
+	if (anonymousInstanceIterator == anonymousInstances_.end() ||
+		!manager_->Exists(anonymousInstanceIterator->second.handle)) {
+		return false;
+	}
+
+	manager_->SetSpeed(
+		anonymousInstanceIterator->second.handle,
+		(std::clamp)(playbackSpeed, 0.0f, 16.0f));
+	return true;
+}
+
+bool EditorEffekseerManager::SetEffectRotationAt(int32_t effectAtId, const Vector3& rotationEuler) {
+	if (manager_ == nullptr) {
+		return false;
+	}
+
+	const auto anonymousInstanceIterator = anonymousInstances_.find(effectAtId);
+
+	if (anonymousInstanceIterator == anonymousInstances_.end() ||
+		!manager_->Exists(anonymousInstanceIterator->second.handle)) {
+		return false;
+	}
+
+	anonymousInstanceIterator->second.rotationEuler = rotationEuler;
+	manager_->SetRotation(
+		anonymousInstanceIterator->second.handle,
+		rotationEuler.x,
+		rotationEuler.y,
+		rotationEuler.z);
+	return true;
+}
+
+bool EditorEffekseerManager::SetEffectScaleAt(int32_t effectAtId, const Vector3& scale) {
+	if (manager_ == nullptr) {
+		return false;
+	}
+
+	const auto anonymousInstanceIterator = anonymousInstances_.find(effectAtId);
+
+	if (anonymousInstanceIterator == anonymousInstances_.end() ||
+		!manager_->Exists(anonymousInstanceIterator->second.handle)) {
+		return false;
+	}
+
+	manager_->SetScale(anonymousInstanceIterator->second.handle, scale.x, scale.y, scale.z);
+	return true;
+}
+
+bool EditorEffekseerManager::RestartEffectAt(int32_t effectAtId) {
+	if (!isPlaying_ || manager_ == nullptr) {
+		return false;
+	}
+
+	const auto anonymousInstanceIterator = anonymousInstances_.find(effectAtId);
+
+	if (anonymousInstanceIterator == anonymousInstances_.end()) {
+		return false;
+	}
+
+	AnonymousEffectInstance& instance = anonymousInstanceIterator->second;
+	Effekseer::EffectRef effect = LoadEffect(instance.assetPath);
+
+	if (effect == nullptr) {
+		return false;
+	}
+
+	if (manager_->Exists(instance.handle)) {
+		manager_->StopEffect(instance.handle);
+	}
+
+	const Effekseer::Handle handle = manager_->Play(
+		effect, instance.position.x, instance.position.y, instance.position.z);
+
+	if (handle < 0) {
+		return false;
+	}
+
+	manager_->SetRotation(
+		handle, instance.rotationEuler.x, instance.rotationEuler.y, instance.rotationEuler.z);
+	instance.handle = handle;
+	return true;
 }
 
 void EditorEffekseerManager::StopEffectAt(int32_t effectAtId) {

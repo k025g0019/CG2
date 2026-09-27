@@ -12,9 +12,12 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <numbers>
 #include <sstream>
 #include <string>
+#include <system_error>
+#include <unordered_map>
 #include <vector>
 
 using namespace EditorSharedState;
@@ -182,6 +185,44 @@ namespace {
 		return gameCameraTransform;
 	}
 
+	// gameCameraStatusText は Game View 左上へ出す「今どの Camera が選ばれているか」の説明。
+	// 同じ優先度の Camera が複数あるとシーンの並び順で勝者が決まり、Inspector からは見えないため表示する。
+	std::string gameCameraStatusText;
+
+	void UpdateGameCameraStatusText(
+		const EditorGameObject* selectedCameraGameObject,
+		const EditorComponent* selectedCameraComponent,
+		int32_t samePriorityCameraCount) {
+		if (selectedCameraGameObject == nullptr || selectedCameraComponent == nullptr) {
+			gameCameraStatusText = "Camera: Scene カメラ代用";
+			return;
+		}
+
+		gameCameraStatusText = "Camera: " + selectedCameraGameObject->name +
+			" (優先度 " + std::to_string(selectedCameraComponent->cameraPriority) + ")";
+
+		if (samePriorityCameraCount > 1) {
+			gameCameraStatusText += "\n同優先度 " + std::to_string(samePriorityCameraCount) +
+				" 台: 並び順で決定中";
+		}
+
+		if (selectedCameraComponent->connectedGameObjectId < 0) {
+			gameCameraStatusText += "\n追従: 未設定";
+		}
+		else {
+			const EditorGameObject* followTarget =
+				g_editorScene.FindGameObject(selectedCameraComponent->connectedGameObjectId);
+			gameCameraStatusText += followTarget != nullptr && followTarget->isActive
+				? "\n追従: " + followTarget->name
+				: "\n追従: 対象が見つからない (ID " +
+					std::to_string(selectedCameraComponent->connectedGameObjectId) + ")";
+		}
+
+		if (g_runtimeGameCameraOverrideActive) {
+			gameCameraStatusText += "\n姿勢を上書き中 (視点操作 / Blend / Composer)";
+		}
+	}
+
 	void UpdateGameCameraMatrices() {
 		Transforms gameCameraTransform = GetGameCameraTransform();  // GameView は Camera Component を優先し、なければ Scene カメラを使う。
 		g_gameCameraPosition = gameCameraTransform.translate;  // PixelShader の視線方向計算で使う GameView カメラ位置。
@@ -196,8 +237,10 @@ namespace {
 		float nearZ = 0.1f;
 		float farZ = 1000.0f;
 		int32_t projectionMode = 0;
+		float orthographicSize = 10.0f;
 
 		// Camera Component をPriority順で検索して投影パラメータを上書き
+		const EditorGameObject* selectedProjectionGameObject = nullptr;
 		const EditorComponent* selectedProjectionCamera = nullptr;
 		int32_t selectedProjectionPriority = INT32_MIN;
 		for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
@@ -209,19 +252,44 @@ namespace {
 				continue;
 			}
 
+			selectedProjectionGameObject = &gameObject;
 			selectedProjectionCamera = cameraComponent;
 			selectedProjectionPriority = cameraComponent->cameraPriority;
 		}
+
+		// 勝者と同じ優先度が何台あるかを数え、並び順任せになっていることを表示で気付けるようにする。
+		int32_t samePriorityCameraCount = 0;
+		if (selectedProjectionCamera != nullptr) {
+			for (const EditorGameObject& gameObject : g_editorScene.GetGameObjects()) {
+				if (!gameObject.isActive) {
+					continue;
+				}
+				const EditorComponent* cameraComponent = FindRuntimeCameraComponent(gameObject);
+				if (cameraComponent != nullptr &&
+					cameraComponent->cameraPriority == selectedProjectionPriority) {
+					samePriorityCameraCount++;
+				}
+			}
+		}
+
+		UpdateGameCameraStatusText(
+			selectedProjectionGameObject,
+			selectedProjectionCamera,
+			samePriorityCameraCount);
 
 		if (selectedProjectionCamera != nullptr) {
 			fovY = selectedProjectionCamera->cameraFieldOfView * (std::numbers::pi_v<float> / 180.0f);
 			nearZ = selectedProjectionCamera->cameraNearClip;
 			farZ = selectedProjectionCamera->cameraFarClip;
 			projectionMode = selectedProjectionCamera->cameraProjectionMode;
+			// 旧Sceneには保存が無く0のままなので、その場合は従来の固定値を使う。
+			if (selectedProjectionCamera->cameraOrthographicSize > 0.0f) {
+				orthographicSize = selectedProjectionCamera->cameraOrthographicSize;
+			}
 		}
 
 		if (projectionMode == 1) {
-			const float orthoHeight = 10.0f;
+			const float orthoHeight = orthographicSize;
 			const float aspect = g_editorGameWidth / g_editorGameHeight;
 			const float orthoWidth = orthoHeight * aspect;
 			g_gameProjectionMatrix = MakeOrthographicMatrix(
@@ -252,6 +320,263 @@ namespace {
 
 		ImFont* resolvedFont = EditorSharedState::g_uiFontVariants[static_cast<size_t>(fontIndex)];
 		return resolvedFont != nullptr ? resolvedFont : ImGui::GetFont();
+	}
+
+	// Project内Font Assetの読み込み結果。読み込めなかったPathもnullptrで覚え、毎フレーム再試行しない。
+	// ImGui 1.92の動的Font Atlas(ImGuiBackendFlags_RendererHasTextures)により、
+	// 実行中にAddFontFromFileTTFしてもAtlasは自動で作り直される。サイズは描画時に指定する。
+	std::unordered_map<std::string, ImFont*>& GetProjectFontCache() {
+		static std::unordered_map<std::string, ImFont*> projectFontCache;
+		return projectFontCache;
+	}
+
+	ImFont* ResolveProjectFont(const std::string& fontAssetPath) {
+		if (fontAssetPath.empty()) {
+			return nullptr;
+		}
+
+		std::unordered_map<std::string, ImFont*>& cache = GetProjectFontCache();
+		const auto cachedIterator = cache.find(fontAssetPath);
+
+		if (cachedIterator != cache.end()) {
+			return cachedIterator->second;
+		}
+
+		ImFont* loadedFont = nullptr;
+		std::error_code fileError;
+
+		if (std::filesystem::is_regular_file(std::filesystem::path(fontAssetPath), fileError)) {
+			ImFontConfig fontConfig{};
+			fontConfig.OversampleH = 0;
+			fontConfig.OversampleV = 0;
+			fontConfig.PixelSnapH = false;
+			// 日本語Glyphを含むFontをそのまま使えるよう、常に日本語Rangeを要求する。
+			loadedFont = ImGui::GetIO().Fonts->AddFontFromFileTTF(
+				fontAssetPath.c_str(),
+				0.0f,
+				&fontConfig,
+				ImGui::GetIO().Fonts->GetGlyphRangesJapanese());
+		}
+
+		cache.emplace(fontAssetPath, loadedFont);
+		return loadedFont;
+	}
+
+	// Text Componentが使うFontを決める。Project Font Assetを最優先し、
+	// 読めない場合はSystem Font候補→既定Fontへ落とす(描画が消えるより既定で出す方が事故が少ない)。
+	ImFont* ResolveTextFont(const EditorComponent& textComponent) {
+		ImFont* projectFont = ResolveProjectFont(textComponent.textFontAssetPath);
+		return projectFont != nullptr ? projectFont : ResolveUiFont(textComponent.textFontIndex);
+	}
+
+	// 実際に描く文字サイズ(px)。0以下なら従来どおりRect高さから決める。
+	float ResolveTextFontSize(const EditorComponent& textComponent, float rectHeightPixels, float uiScale) {
+		const float baseSize = textComponent.textFontSize > 0.0f
+			? textComponent.textFontSize * uiScale
+			: rectHeightPixels;
+		return (std::clamp)(baseSize, 0.0f, 512.0f);
+	}
+
+	// UTF-8の1文字分の byte 数。日本語などのMulti Byte文字を途中で切らないために使う。
+	int32_t GetUtf8SequenceLength(unsigned char leadByte) {
+		if (leadByte < 0x80u) return 1;
+		if ((leadByte & 0xE0u) == 0xC0u) return 2;
+		if ((leadByte & 0xF0u) == 0xE0u) return 3;
+		if ((leadByte & 0xF8u) == 0xF0u) return 4;
+		return 1;  // 不正Byteは1つ進めて無限Loopを防ぐ
+	}
+
+	// 折返し後の各行。textへのIndex範囲で持ち、部分文字列のコピーを避ける。
+	struct TextLineRange {
+		size_t begin = 0u;
+		size_t end = 0u;
+		float width = 0.0f;
+	};
+
+	float MeasureTextWidth(ImFont* font, float fontSize, const char* begin, const char* end) {
+		return font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, begin, end).x;
+	}
+
+	// 改行文字で区切り、必要ならmaxWidthで折り返す。
+	// 半角空白があればそこで、無ければ文字単位で折る(日本語は空白が無いため文字単位が必須)。
+	std::vector<TextLineRange> BuildTextLines(
+		const std::string& text,
+		ImFont* font,
+		float fontSize,
+		bool wordWrap,
+		float maximumWidth) {
+		std::vector<TextLineRange> lines;
+
+		if (text.empty() || font == nullptr || fontSize <= 0.0f) {
+			return lines;
+		}
+
+		const char* textBegin = text.c_str();
+		size_t lineStart = 0u;
+
+		while (lineStart <= text.size()) {
+			const size_t hardBreak = text.find('\n', lineStart);
+			const size_t paragraphEnd = hardBreak == std::string::npos ? text.size() : hardBreak;
+
+			if (!wordWrap || maximumWidth <= 0.0f) {
+				TextLineRange line{};
+				line.begin = lineStart;
+				line.end = paragraphEnd;
+				line.width = MeasureTextWidth(font, fontSize, textBegin + line.begin, textBegin + line.end);
+				lines.push_back(line);
+			}
+			else {
+				size_t segmentStart = lineStart;
+
+				while (segmentStart < paragraphEnd) {
+					size_t cursor = segmentStart;
+					size_t lastBreakCandidate = std::string::npos;
+					size_t fittingEnd = segmentStart;
+
+					while (cursor < paragraphEnd) {
+						const int32_t characterLength = GetUtf8SequenceLength(
+							static_cast<unsigned char>(text[cursor]));
+						const size_t nextCursor = (std::min)(
+							cursor + static_cast<size_t>(characterLength), paragraphEnd);
+						const float candidateWidth = MeasureTextWidth(
+							font, fontSize, textBegin + segmentStart, textBegin + nextCursor);
+
+						if (candidateWidth > maximumWidth && fittingEnd > segmentStart) {
+							break;
+						}
+
+						fittingEnd = nextCursor;
+
+						if (text[cursor] == ' ') {
+							lastBreakCandidate = nextCursor;
+						}
+
+						cursor = nextCursor;
+					}
+
+					// 空白位置で折れるならそこを優先し、単語の途中切断を避ける。
+					size_t lineEnd = fittingEnd;
+
+					if (fittingEnd < paragraphEnd && lastBreakCandidate != std::string::npos &&
+						lastBreakCandidate > segmentStart) {
+						lineEnd = lastBreakCandidate;
+					}
+
+					TextLineRange line{};
+					line.begin = segmentStart;
+					line.end = lineEnd;
+					line.width = MeasureTextWidth(font, fontSize, textBegin + line.begin, textBegin + line.end);
+					lines.push_back(line);
+					segmentStart = lineEnd;
+
+					// 行頭の空白は次行へ持ち越さない。
+					while (segmentStart < paragraphEnd && text[segmentStart] == ' ') {
+						segmentStart++;
+					}
+				}
+
+				if (segmentStart >= paragraphEnd && lines.empty()) {
+					lines.push_back(TextLineRange{lineStart, paragraphEnd, 0.0f});
+				}
+			}
+
+			if (hardBreak == std::string::npos) {
+				break;
+			}
+
+			lineStart = hardBreak + 1u;
+
+			// 末尾が改行で終わる場合も空行として1行出す。
+			if (lineStart > text.size()) {
+				break;
+			}
+
+			if (lineStart == text.size()) {
+				lines.push_back(TextLineRange{lineStart, lineStart, 0.0f});
+				break;
+			}
+		}
+
+		return lines;
+	}
+
+	// Rect内でのX開始位置を揃える。0=左, 1=中央, 2=右。
+	float ResolveHorizontalOffset(int32_t alignMode, float rectWidth, float lineWidth) {
+		if (alignMode == 1) {
+			return (rectWidth - lineWidth) * 0.5f;
+		}
+
+		if (alignMode == 2) {
+			return rectWidth - lineWidth;
+		}
+
+		return 0.0f;
+	}
+
+	float ResolveVerticalOffset(int32_t alignMode, float rectHeight, float totalTextHeight) {
+		if (alignMode == 1) {
+			return (rectHeight - totalTextHeight) * 0.5f;
+		}
+
+		if (alignMode == 2) {
+			return rectHeight - totalTextHeight;
+		}
+
+		return 0.0f;
+	}
+
+	// 影→縁取り→本体の順に重ねる。縁取りは8方向へずらして描く簡易方式で、
+	// Font Atlasを作り直さずに読みやすさを確保する(ゲームUIの実用上はこれで足りる)。
+	void DrawDecoratedTextLine(
+		ImDrawList* drawList,
+		ImFont* font,
+		float fontSize,
+		const ImVec2& position,
+		ImU32 textColor,
+		const EditorComponent& textComponent,
+		float alpha,
+		float uiScale,
+		const char* lineBegin,
+		const char* lineEnd) {
+		if (lineBegin == lineEnd) {
+			return;
+		}
+
+		if (textComponent.textShadowEnabled) {
+			const ImU32 shadowColor = ImGui::ColorConvertFloat4ToU32(
+				ToImGuiColor(textComponent.textShadowColor, alpha * 0.75f));
+			const ImVec2 shadowPosition{
+				position.x + textComponent.textShadowOffsetX * uiScale,
+				position.y + textComponent.textShadowOffsetY * uiScale};
+			drawList->AddText(font, fontSize, shadowPosition, shadowColor, lineBegin, lineEnd);
+		}
+
+		const float outlineWidth = textComponent.textOutlineWidth * uiScale;
+
+		if (outlineWidth > 0.0f) {
+			const ImU32 outlineColor = ImGui::ColorConvertFloat4ToU32(
+				ToImGuiColor(textComponent.textOutlineColor, alpha));
+			constexpr float kDiagonal = 0.7071f;  // 斜め方向は縁幅が伸びないよう1/√2にする
+			const ImVec2 outlineOffsets[8] = {
+				{-outlineWidth, 0.0f}, {outlineWidth, 0.0f},
+				{0.0f, -outlineWidth}, {0.0f, outlineWidth},
+				{-outlineWidth * kDiagonal, -outlineWidth * kDiagonal},
+				{outlineWidth * kDiagonal, -outlineWidth * kDiagonal},
+				{-outlineWidth * kDiagonal, outlineWidth * kDiagonal},
+				{outlineWidth * kDiagonal, outlineWidth * kDiagonal}};
+
+			for (const ImVec2& outlineOffset : outlineOffsets) {
+				drawList->AddText(
+					font,
+					fontSize,
+					ImVec2{position.x + outlineOffset.x, position.y + outlineOffset.y},
+					outlineColor,
+					lineBegin,
+					lineEnd);
+			}
+		}
+
+		drawList->AddText(font, fontSize, position, textColor, lineBegin, lineEnd);
 	}
 
 	// Rainbow/Wave演出用に1文字ずつ位置・色をずらして描画する。通常のAddTextと違い、
@@ -1433,12 +1758,10 @@ namespace {
 						drawLabel = effectLabelBuffer.c_str();
 					}
 
-					const float fontSize = (std::clamp)(
-						resolvedSize.y * fontScale * appearScaleMultiplier,
-						0.0f,
-						512.0f);
+					const float fontSize = ResolveTextFontSize(
+						*uiComponent, resolvedSize.y * fontScale, fontScale) * appearScaleMultiplier;
 					const float effectiveAlpha = (std::clamp)(renderAlpha * appearAlphaMultiplier, 0.0f, 1.0f);
-					ImFont* resolvedFont = ResolveUiFont(uiComponent->textFontIndex);
+					ImFont* resolvedFont = ResolveTextFont(*uiComponent);
 					const ImVec2 textCenterOffset{
 						resolvedSize.x * uiScaleX * 0.5f * (1.0f - appearScaleMultiplier),
 						resolvedSize.y * uiScaleY * 0.5f * (1.0f - appearScaleMultiplier)};
@@ -1489,21 +1812,90 @@ namespace {
 								continuousElapsed);
 						}
 						else {
+							// 通常描画: 折返し→行揃え→はみ出し処理→影/縁取り付きで1行ずつ描く。
 							const ImU32 textColor = ImGui::ColorConvertFloat4ToU32(
 								ToImGuiColor(renderColor, effectiveAlpha));
-							const ImU32 shadowColor = IM_COL32(0, 0, 0, static_cast<int>(190 * effectiveAlpha));
-							drawList->AddText(
+							const std::string drawText = drawLabel;
+							const float rectWidth = resolvedSize.x * uiScaleX;
+							const float rectHeight = resolvedSize.y * uiScaleY;
+							const std::vector<TextLineRange> textLines = BuildTextLines(
+								drawText,
 								resolvedFont,
 								fontSize,
-								ImVec2(scaledPosition.x + 2.0f, scaledPosition.y + 2.0f),
-								shadowColor,
-								drawLabel);
-							drawList->AddText(
-								resolvedFont,
-								fontSize,
-								scaledPosition,
-								textColor,
-								drawLabel);
+								uiComponent->textWordWrap,
+								rectWidth);
+							const float lineHeight = fontSize;
+							const float totalTextHeight = lineHeight * static_cast<float>(textLines.size());
+							const float verticalOffset = ResolveVerticalOffset(
+								uiComponent->textVerticalAlign, rectHeight, totalTextHeight);
+							// 「Rectで切り取る」はClip Rectで実現する。Mask Clipと二重に積んでも問題ない。
+							const bool clipsToRect = uiComponent->textOverflowMode == 1;
+
+							if (clipsToRect) {
+								ImGui::PushClipRect(
+									scaledPosition,
+									ImVec2{scaledPosition.x + rectWidth, scaledPosition.y + rectHeight},
+									true);
+							}
+
+							for (size_t lineIndex = 0u; lineIndex < textLines.size(); lineIndex++) {
+								const TextLineRange& line = textLines[lineIndex];
+								const char* lineBegin = drawText.c_str() + line.begin;
+								const char* lineEnd = drawText.c_str() + line.end;
+								std::string ellipsisBuffer;
+
+								// 「末尾を…にする」は幅超過行だけを詰める。折返しONなら既に収まっている。
+								if (uiComponent->textOverflowMode == 2 && line.width > rectWidth && rectWidth > 0.0f) {
+									const float ellipsisWidth = MeasureTextWidth(
+										resolvedFont, fontSize, "...", nullptr);
+									size_t keepEnd = line.begin;
+									size_t cursor = line.begin;
+
+									while (cursor < line.end) {
+										const int32_t characterLength = GetUtf8SequenceLength(
+											static_cast<unsigned char>(drawText[cursor]));
+										const size_t nextCursor = (std::min)(
+											cursor + static_cast<size_t>(characterLength), line.end);
+										const float candidateWidth = MeasureTextWidth(
+											resolvedFont,
+											fontSize,
+											drawText.c_str() + line.begin,
+											drawText.c_str() + nextCursor);
+
+										if (candidateWidth + ellipsisWidth > rectWidth) {
+											break;
+										}
+
+										keepEnd = nextCursor;
+										cursor = nextCursor;
+									}
+
+									ellipsisBuffer = drawText.substr(line.begin, keepEnd - line.begin) + "...";
+									lineBegin = ellipsisBuffer.c_str();
+									lineEnd = ellipsisBuffer.c_str() + ellipsisBuffer.size();
+								}
+
+								const float lineWidth = MeasureTextWidth(resolvedFont, fontSize, lineBegin, lineEnd);
+								const ImVec2 linePosition{
+									scaledPosition.x + ResolveHorizontalOffset(
+										uiComponent->textHorizontalAlign, rectWidth, lineWidth),
+									scaledPosition.y + verticalOffset + lineHeight * static_cast<float>(lineIndex)};
+								DrawDecoratedTextLine(
+									drawList,
+									resolvedFont,
+									fontSize,
+									linePosition,
+									textColor,
+									*uiComponent,
+									effectiveAlpha,
+									fontScale,
+									lineBegin,
+									lineEnd);
+							}
+
+							if (clipsToRect) {
+								ImGui::PopClipRect();
+							}
 						}
 					}
 					if (hasMaskClip) {
@@ -1757,10 +2149,16 @@ void EditorGameViewManager::Draw() {
 	gameDrawList->AddRect(gameMin, gameMax, IM_COL32(75, 95, 120, 255));
 
 	const char* playStateText = g_editorRuntimeManager.IsPlaying() ? "Play中" : "停止中";
-	const char* cameraText = g_isGameViewUsingSceneCamera ? "Camera: Scene カメラ代用" : "Camera: Camera Component";
+	// どの Camera が選ばれ、何が追従先で、姿勢を上書きしている物があるかまで出す。
+	const std::string cameraText = g_isGameViewUsingSceneCamera
+		? std::string("Camera: Scene カメラ代用")
+		: gameCameraStatusText;
+	const ImVec2 cameraTextSize = ImGui::CalcTextSize(cameraText.c_str());
 	gameDrawList->AddRectFilled(
 		ImVec2(g_editorGameX + 10.0f, g_editorGameY + 10.0f),
-		ImVec2(g_editorGameX + 270.0f, g_editorGameY + 58.0f),
+		ImVec2(
+			g_editorGameX + (std::max)(260.0f, cameraTextSize.x + 30.0f),
+			g_editorGameY + 46.0f + cameraTextSize.y),
 		IM_COL32(16, 22, 30, 185),
 		6.0f);
 	gameDrawList->AddText(
@@ -1770,11 +2168,11 @@ void EditorGameViewManager::Draw() {
 	gameDrawList->AddText(
 		ImVec2(g_editorGameX + 20.0f, g_editorGameY + 38.0f),
 		g_isGameViewUsingSceneCamera ? IM_COL32(255, 210, 130, 255) : IM_COL32(170, 215, 255, 255),
-		cameraText);
+		cameraText.c_str());
 
 	char gameFpsText[192]{};
-	const float gameFrameRate = ImGui::GetIO().Framerate;
-	const float gameFrameTimeMilliseconds = gameFrameRate > 0.0f ? 1000.0f / gameFrameRate : 0.0f;
+	const float gameFrameRate = g_renderProfile.frameRate;
+	const float gameFrameTimeMilliseconds = g_renderProfile.frameMilliseconds;
 	constexpr double bytesPerMegabyte = 1024.0 * 1024.0;
 	const double localVideoMemoryUsageMegabytes =
 		static_cast<double>(g_renderProfile.localVideoMemoryUsage) / bytesPerMegabyte;
@@ -1783,7 +2181,7 @@ void EditorGameViewManager::Draw() {
 	std::snprintf(
 		gameFpsText,
 		_countof(gameFpsText),
-		"%.1f FPS  CPU %.2f ms  GPU %.2f ms\nVRAM %.0f / %.0f MB  Obj %u  Inst %u",
+		"%.1f FPS  Frame %.2f ms  GPU %.2f ms\nVRAM %.0f / %.0f MB  Obj %u  Inst %u",
 		gameFrameRate,
 		gameFrameTimeMilliseconds,
 		g_renderProfile.gpuFrameMilliseconds,

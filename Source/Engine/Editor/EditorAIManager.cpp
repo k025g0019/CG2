@@ -2,6 +2,7 @@
 
 #include "EditorAssetUtility.h"
 #include "EditorComponentUtility.h"
+#include "Source/Engine/Speech/SpeechSystem.h"
 
 #include <algorithm>
 #include <array>
@@ -152,6 +153,78 @@ namespace {
 		const uint64_t objectPart = static_cast<uint32_t>(gameObjectId);
 		const uint64_t componentPart = static_cast<uint32_t>(sensorComponentType);
 		return static_cast<int64_t>((objectPart << 32) | componentPart);
+	}
+
+	int32_t FindVoiceCommandIndex(const std::vector<std::string>& commands, const std::string& recognizedText) {
+		for (size_t commandIndex = 0u; commandIndex < commands.size(); ++commandIndex) {
+			if (!commands[commandIndex].empty() && commands[commandIndex] == recognizedText) {
+				return static_cast<int32_t>(commandIndex);
+			}
+		}
+
+		return -1;
+	}
+
+	std::vector<uint32_t> MakeComparableText(const std::string& text) {
+		std::vector<uint32_t> codePoints;
+		for (size_t byteIndex = 0u; byteIndex < text.size();) {
+			const uint8_t firstByte = static_cast<uint8_t>(text[byteIndex]);
+			uint32_t codePoint = firstByte;
+			size_t byteCount = 1u;
+			if ((firstByte & 0xe0u) == 0xc0u) {
+				codePoint = firstByte & 0x1fu;
+				byteCount = 2u;
+			}
+			else if ((firstByte & 0xf0u) == 0xe0u) {
+				codePoint = firstByte & 0x0fu;
+				byteCount = 3u;
+			}
+			else if ((firstByte & 0xf8u) == 0xf0u) {
+				codePoint = firstByte & 0x07u;
+				byteCount = 4u;
+			}
+
+			if (byteIndex + byteCount > text.size()) byteCount = 1u;
+			for (size_t continuationIndex = 1u; continuationIndex < byteCount; ++continuationIndex) {
+				codePoint = (codePoint << 6u) | (static_cast<uint8_t>(text[byteIndex + continuationIndex]) & 0x3fu);
+			}
+			byteIndex += byteCount;
+
+			const bool isIgnored =
+				codePoint == 0x20u || codePoint == 0x3000u ||
+				codePoint == 0x3001u || codePoint == 0x3002u ||
+				codePoint == 0xff01u || codePoint == 0xff1fu;
+			if (isIgnored) continue;
+			if (codePoint >= static_cast<uint32_t>('A') && codePoint <= static_cast<uint32_t>('Z')) {
+				codePoint += static_cast<uint32_t>('a' - 'A');
+			}
+			codePoints.push_back(codePoint);
+		}
+		return codePoints;
+	}
+
+	float CalculateTextSimilarity(const std::string& firstText, const std::string& secondText) {
+		const std::vector<uint32_t> first = MakeComparableText(firstText);
+		const std::vector<uint32_t> second = MakeComparableText(secondText);
+		if (first.empty() || second.empty()) return first == second ? 1.0f : 0.0f;
+
+		std::vector<size_t> previous(second.size() + 1u);
+		std::vector<size_t> current(second.size() + 1u);
+		for (size_t index = 0u; index <= second.size(); ++index) previous[index] = index;
+		for (size_t firstIndex = 1u; firstIndex <= first.size(); ++firstIndex) {
+			current[0] = firstIndex;
+			for (size_t secondIndex = 1u; secondIndex <= second.size(); ++secondIndex) {
+				const size_t replacementCost = first[firstIndex - 1u] == second[secondIndex - 1u] ? 0u : 1u;
+				current[secondIndex] = (std::min)({
+					previous[secondIndex] + 1u,
+					current[secondIndex - 1u] + 1u,
+					previous[secondIndex - 1u] + replacementCost});
+			}
+			previous.swap(current);
+		}
+
+		const float maximumLength = static_cast<float>((std::max)(first.size(), second.size()));
+		return 1.0f - static_cast<float>(previous[second.size()]) / maximumLength;
 	}
 
 	float Clamp01(float value) {
@@ -728,14 +801,226 @@ void EditorAIManager::Start() {
 	aiAccumulatedDeltaSeconds_.clear();
 	cachedAgentDirections_.clear();
 	cachedRuntimeAgents_.clear();
+	voiceCommandCooldownRemaining_.clear();
 	isStarted_ = true;
+	StartVoiceCommandRecognition();
 	PushConsoleMessage("AI: ThirdParty/AI の AI Component を開始しました。");
+}
+
+void EditorAIManager::StartVoiceCommandRecognition() {
+	StopVoiceCommandRecognition();
+	if (editorScene_ == nullptr) return;
+
+	SpeechConfig config{};
+	config.mode = SpeechRecognitionMode::Keyword;
+	config.backendKind = SpeechBackendKind::WindowsSpeechApi;
+	config.confidenceThreshold = 0.0f;  // 採否は Component ごとの可変設定で行う。
+	config.isContinuous = true;
+	bool hasVoiceCommandComponent = false;
+
+	for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
+		if (!gameObject.isActive) continue;
+		for (const EditorComponent& component : gameObject.components) {
+			if (!component.isActive || component.type != EditorComponentType::AIVoiceCommand ||
+				component.voiceCommandMatchMode != 0) {
+				continue;
+			}
+
+			if (!hasVoiceCommandComponent) {
+				config.language = component.voiceCommandLanguage.empty() ? "ja-JP" : component.voiceCommandLanguage;
+				config.microphoneDeviceName = component.voiceCommandMicrophoneDevice;
+				hasVoiceCommandComponent = true;
+			}
+
+			for (const std::string& phrase : component.voiceCommandPhrases) {
+				if (phrase.empty() || std::find(config.keywords.begin(), config.keywords.end(), phrase) != config.keywords.end()) {
+					continue;
+				}
+				config.keywords.push_back(phrase);
+			}
+		}
+	}
+
+	if (!hasVoiceCommandComponent || config.keywords.empty()) return;
+
+	voiceCommandBackend_ = std::make_unique<WindowsSpeechApiBackend>();
+	voiceCommandBackend_->ApplyConfig(config);
+	if (!voiceCommandBackend_->Initialize()) {
+		const ExternalFeatureError error = voiceCommandBackend_->GetLastError();
+		PushConsoleMessage("音声コマンド: 音響認識を開始できませんでした: " + error.message);
+		voiceCommandBackend_.reset();
+		return;
+	}
+
+	voiceCommandBackend_->StartRecognition();
+	if (!voiceCommandBackend_->IsRecognizing()) {
+		const ExternalFeatureError error = voiceCommandBackend_->GetLastError();
+		PushConsoleMessage("音声コマンド: マイク認識を開始できませんでした: " + error.message);
+		voiceCommandBackend_->Shutdown();
+		voiceCommandBackend_.reset();
+		return;
+	}
+
+	PushConsoleMessage("音声コマンド: 登録語の音響認識を開始しました。");
+}
+
+void EditorAIManager::UpdateVoiceCommands(float deltaTime) {
+	for (auto& cooldownEntry : voiceCommandCooldownRemaining_) {
+		cooldownEntry.second = (std::max)(0.0f, cooldownEntry.second - deltaTime);
+	}
+
+	// Command は発話したフレームだけ true になる。前回結果を保持して誤発火させない。
+	for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
+		for (const EditorComponent& component : gameObject.components) {
+			if (component.type == EditorComponentType::AIVoiceCommand) {
+				sensorResults_[MakeSensorKey(gameObject.id, component.type)] = EditorAiSensorResult{};
+			}
+		}
+	}
+
+	UpdateTextVoiceCommands();
+
+	if (voiceCommandBackend_ == nullptr || !voiceCommandBackend_->IsRecognizing()) return;
+
+	voiceCommandBackend_->Update();
+	const std::vector<SpeechResult> speechResults = voiceCommandBackend_->GetResults();
+	for (const SpeechResult& speechResult : speechResults) {
+		if (!speechResult.isFinal || speechResult.text.empty()) continue;
+
+		for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
+			if (!gameObject.isActive) continue;
+			for (const EditorComponent& component : gameObject.components) {
+				if (!component.isActive || component.type != EditorComponentType::AIVoiceCommand ||
+					component.voiceCommandMatchMode != 0) {
+					continue;
+				}
+
+				const int32_t commandIndex = FindVoiceCommandIndex(component.voiceCommandPhrases, speechResult.text);
+				if (commandIndex < 0) continue;
+
+				const int64_t sensorKey = MakeSensorKey(gameObject.id, component.type);
+				if (voiceCommandCooldownRemaining_[sensorKey] > 0.0f) continue;
+
+				float secondScore = 0.0f;
+				for (const SpeechAlternative& alternative : speechResult.alternatives) {
+					const int32_t alternativeIndex = FindVoiceCommandIndex(component.voiceCommandPhrases, alternative.text);
+					if (alternativeIndex >= 0 && alternativeIndex != commandIndex) {
+						secondScore = (std::max)(secondScore, Clamp01(alternative.confidence));
+					}
+				}
+
+				const float correctionStrength = Clamp01(component.voiceCommandCorrectionStrength);
+				const float configuredThreshold = Clamp01(component.voiceCommandThreshold);
+				const float configuredMargin = Clamp01(component.voiceCommandMinimumMargin);
+				// 0 は Score=1・候補差=1 の厳格判定。1 に近づくほど Inspector の許容値まで連続的に緩和する。
+				const float effectiveThreshold = 1.0f + (configuredThreshold - 1.0f) * correctionStrength;
+				const float effectiveMargin = 1.0f + (configuredMargin - 1.0f) * correctionStrength;
+				const float topScore = Clamp01(speechResult.confidence);
+				const float scoreMargin = topScore - secondScore;
+				const bool isAccepted = topScore >= effectiveThreshold && scoreMargin >= effectiveMargin;
+				std::ostringstream scoreLog;
+				scoreLog << "音声コマンド候補: " << component.voiceCommandPhrases[static_cast<size_t>(commandIndex)]
+				         << " (1位=" << topScore << ", 2位=" << secondScore << ", 差=" << scoreMargin
+				         << ", 必要Score=" << effectiveThreshold << ", 必要差=" << effectiveMargin
+				         << ", 補正強度=" << correctionStrength << ") " << (isAccepted ? "採用" : "棄却");
+				PushConsoleMessage(scoreLog.str());
+				if (!isAccepted) continue;
+
+				EditorAiSensorResult commandResult{};
+				commandResult.isDetected = true;
+				commandResult.hasDetails = true;
+				commandResult.commandId = commandIndex;
+				commandResult.confidence = topScore;
+				commandResult.text = speechResult.text;
+				commandResult.command = component.voiceCommandPhrases[static_cast<size_t>(commandIndex)];
+				sensorResults_[sensorKey] = commandResult;
+				voiceCommandCooldownRemaining_[sensorKey] = (std::max)(0.0f, component.voiceCommandCooldownSeconds);
+
+			}
+		}
+	}
+}
+
+void EditorAIManager::UpdateTextVoiceCommands() {
+	for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
+		if (!gameObject.isActive) continue;
+		const std::vector<SpeechResult>& speechResults = SpeechSystem::Get().GetFrameResults(gameObject.id);
+		if (speechResults.empty()) continue;
+
+		for (const EditorComponent& component : gameObject.components) {
+			if (!component.isActive || component.type != EditorComponentType::AIVoiceCommand ||
+				component.voiceCommandMatchMode == 0 ||
+				component.voiceCommandPhrases.empty()) {
+				continue;
+			}
+
+			const int64_t sensorKey = MakeSensorKey(gameObject.id, component.type);
+			if (voiceCommandCooldownRemaining_[sensorKey] > 0.0f) continue;
+
+			for (const SpeechResult& speechResult : speechResults) {
+				if (!speechResult.isFinal || speechResult.text.empty()) continue;
+
+				int32_t topCommandIndex = -1;
+				float topScore = 0.0f;
+				float secondScore = 0.0f;
+				for (size_t commandIndex = 0u; commandIndex < component.voiceCommandPhrases.size(); ++commandIndex) {
+					const std::string& command = component.voiceCommandPhrases[commandIndex];
+					if (command.empty()) continue;
+					const float score = component.voiceCommandMatchMode == 2
+						? (MakeComparableText(speechResult.text) == MakeComparableText(command) ? 1.0f : 0.0f)
+						: CalculateTextSimilarity(speechResult.text, command);
+					if (score > topScore) {
+						secondScore = topScore;
+						topScore = score;
+						topCommandIndex = static_cast<int32_t>(commandIndex);
+					}
+					else if (score > secondScore) {
+						secondScore = score;
+					}
+				}
+
+				if (topCommandIndex < 0) continue;
+				const float correctionStrength = Clamp01(component.voiceCommandCorrectionStrength);
+				const float effectiveThreshold = 1.0f + (Clamp01(component.voiceCommandThreshold) - 1.0f) * correctionStrength;
+				const float effectiveMargin = 1.0f + (Clamp01(component.voiceCommandMinimumMargin) - 1.0f) * correctionStrength;
+				const float scoreMargin = topScore - secondScore;
+				const bool isAccepted = topScore >= effectiveThreshold && scoreMargin >= effectiveMargin;
+				std::ostringstream scoreLog;
+				scoreLog << "音声コマンド文字候補: " << component.voiceCommandPhrases[static_cast<size_t>(topCommandIndex)]
+				         << " (Score=" << topScore << ", 2位=" << secondScore << ", 差=" << scoreMargin
+				         << ", 必要Score=" << effectiveThreshold << ", 必要差=" << effectiveMargin
+				         << ", 補正強度=" << correctionStrength << ") " << (isAccepted ? "採用" : "棄却");
+				PushConsoleMessage(scoreLog.str());
+				if (!isAccepted) continue;
+
+				EditorAiSensorResult commandResult{};
+				commandResult.isDetected = true;
+				commandResult.hasDetails = true;
+				commandResult.commandId = topCommandIndex;
+				commandResult.confidence = topScore;
+				commandResult.text = speechResult.text;
+				commandResult.command = component.voiceCommandPhrases[static_cast<size_t>(topCommandIndex)];
+				sensorResults_[sensorKey] = commandResult;
+				voiceCommandCooldownRemaining_[sensorKey] = (std::max)(0.0f, component.voiceCommandCooldownSeconds);
+				break;
+			}
+		}
+	}
+}
+
+void EditorAIManager::StopVoiceCommandRecognition() {
+	if (voiceCommandBackend_ == nullptr) return;
+	voiceCommandBackend_->StopRecognition();
+	voiceCommandBackend_->Shutdown();
+	voiceCommandBackend_.reset();
 }
 
 void EditorAIManager::Update(float deltaTime) {
 	if (!isStarted_ || editorScene_ == nullptr || deltaTime <= 0.0f) {
 		return;
 	}
+
+	UpdateVoiceCommands(deltaTime);
 
 	for (EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
 		if (!gameObject.isActive) {
@@ -806,6 +1091,12 @@ void EditorAIManager::Update(float deltaTime) {
 					deltaTime);
 			}
 			else if (IsAiSensorType(component.type)) {
+				// 音声コマンドは限定語彙の音響認識を毎フレーム処理済み。
+				// 汎用 Sensor 更新へ通すと結果が false で上書きされるため除外する。
+				if (component.type == EditorComponentType::AIVoiceCommand) {
+					continue;
+				}
+
 				const int64_t updateKey = MakeSensorKey(gameObject.id, component.type);
 				float& remainingSeconds = aiUpdateRemainingSeconds_[updateKey];
 				float& accumulatedSeconds = aiAccumulatedDeltaSeconds_[updateKey];
@@ -830,6 +1121,7 @@ void EditorAIManager::Draw() {
 }
 
 void EditorAIManager::Stop() {
+	StopVoiceCommandRecognition();
 	agentVelocities_.clear();
 	patrolOrigins_.clear();
 	agentTimers_.clear();
@@ -843,6 +1135,7 @@ void EditorAIManager::Stop() {
 	aiAccumulatedDeltaSeconds_.clear();
 	cachedAgentDirections_.clear();
 	cachedRuntimeAgents_.clear();
+	voiceCommandCooldownRemaining_.clear();
 	isStarted_ = false;
 }
 
@@ -1203,12 +1496,12 @@ Vector3 EditorAIManager::MakeGoapDirection(
 	}
 
 	const float distance = DistanceXZ(gameObject.translate, targetGameObject->translate);
-	goap::WorldState startState("CG2_Start");
+	goap::WorldState startState("ManoEngine_Start");
 	startState.setVariable(kGoapHasTarget, true);
 	startState.setVariable(kGoapHasPath, true);
 	startState.setVariable(kGoapInRange, distance <= (std::max)(aiComponent.navStoppingDistance, 0.0f));
 
-	goap::WorldState goalState("CG2_Goal");
+	goap::WorldState goalState("ManoEngine_Goal");
 	goalState.setVariable(kGoapInRange, true);
 
 	std::vector<goap::Action> actions;

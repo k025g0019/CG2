@@ -1617,7 +1617,7 @@ float4 main(PixelShaderInput input) : SV_TARGET0
     float3 debugMediumReferenceLobe = float3(0.0f, 0.0f, 0.0f);
 
     [unroll]
-    for (int lightIndex = 0; lightIndex < 4; lightIndex++)
+    for (int lightIndex = 0; lightIndex < MANO_MAX_SCENE_LIGHTS; lightIndex++)
     {
         const DirectionalLightData light = gDirectionalLight.lights[lightIndex];
 

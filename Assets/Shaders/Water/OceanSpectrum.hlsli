@@ -1,5 +1,5 @@
-﻿#ifndef CG2_OCEAN_SPECTRUM_HLSLI
-#define CG2_OCEAN_SPECTRUM_HLSLI
+﻿#ifndef MANOENGINE_OCEAN_SPECTRUM_HLSLI
+#define MANOENGINE_OCEAN_SPECTRUM_HLSLI
 
 static const uint kOceanWaveCount = 16u;
 

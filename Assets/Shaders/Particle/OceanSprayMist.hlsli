@@ -1,5 +1,5 @@
-﻿#ifndef CG2_OCEAN_SPRAY_MIST_HLSLI
-#define CG2_OCEAN_SPRAY_MIST_HLSLI
+﻿#ifndef MANOENGINE_OCEAN_SPRAY_MIST_HLSLI
+#define MANOENGINE_OCEAN_SPRAY_MIST_HLSLI
 
 float HashSprayCoordinate(float2 coordinate)
 {

@@ -119,46 +119,8 @@ void EditorPlanarReflectionManager::CollectProbes(
 		views_.push_back(probeView);
 	}
 
-	// 明示的な鏡面 Probe がない Scene では、Ocean を反射 Capture 面の候補として使う。
-	// 既存 Probe がある場合は従来の選択と全画面合成を優先し、挙動を変えない。
-	if (!views_.empty()) {
-		return;
-	}
-
-	for (const EditorGameObject& gameObject : scene.GetGameObjects()) {
-		if (!gameObject.isActive) {
-			continue;
-		}
-
-		const EditorComponent* oceanComponent = EditorComponentUtility::FindComponent(
-			gameObject,
-			EditorComponentType::Ocean);
-
-		if (oceanComponent == nullptr || !oceanComponent->isActive) {
-			continue;
-		}
-
-		const EditorSceneObject* sceneObject = nullptr;
-
-		for (const EditorSceneObject& candidate : sceneObjects) {
-			if (candidate.gameObjectId == gameObject.id && candidate.ocean.isEnabled) {
-				sceneObject = &candidate;
-				break;
-			}
-		}
-
-		if (sceneObject == nullptr || sceneObject->ocean.reflectionStrength <= 0.001f) {
-			continue;
-		}
-
-		ProbeView oceanView{};
-		oceanView.sourceId = gameObject.id;
-		oceanView.isOceanSurface = true;
-		oceanView.gameObject = &gameObject;
-		oceanView.component = oceanComponent;
-		oceanView.sceneObject = sceneObject;
-		views_.push_back(oceanView);
-	}
+	// Ocean は水面シェーダー側で扱う。ここで暗黙のPlanar Reflectionにすると、
+	// 水面があるだけでScene全体の反射Captureが毎フレーム増える。
 }
 
 void EditorPlanarReflectionManager::UpdateCameras(

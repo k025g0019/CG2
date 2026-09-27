@@ -97,12 +97,15 @@ bool EditorOceanFftManager::Execute(
 	}
 
 	activeSettings_ = oceanSettings;
+	const int32_t requestedUpdateInterval = oceanSettings.fftUpdateInterval;
+	const uint32_t updateInterval = requestedUpdateInterval <= 0
+		? 2u
+		: static_cast<uint32_t>((std::clamp)(requestedUpdateInterval, 1, 8));
 	const bool shouldUpdateThisFrame =
 		!hasValidOutput_ ||
 		needsSpectrumRebuild ||
 		hasSimulationSettingsChanged ||
-		fftResolution_ < kMaximumFftResolution ||
-		(updateFrameCounter_ % 2u) == 0u;
+		(updateFrameCounter_ % updateInterval) == 0u;
 	updateFrameCounter_++;
 
 	if (!shouldUpdateThisFrame) {

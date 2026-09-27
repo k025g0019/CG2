@@ -306,7 +306,8 @@ bool EditorPostProcessQualityManager::ExecuteGlare(
 	float colorR,
 	float colorG,
 	float colorB,
-	bool preserveSource) {
+	bool preserveSource,
+	float sampleRatio) {
 
 	if (!isInitialized_ || commandList == nullptr || sourceColorSrvHandle.ptr == 0u || glareMode <= 1) {
 		return false;
@@ -316,6 +317,13 @@ bool EditorPostProcessQualityManager::ExecuteGlare(
 	// Bloom で抽出済みの明部から、選択した Glare 形状を作る
 	//================================================================
 
+	const ResourceType destinationResourceType =
+		sourceColorSrvHandle.ptr == srvHandles_[static_cast<size_t>(ResourceType::GlareOutputA)].ptr
+		? ResourceType::GlareOutputB
+		: ResourceType::GlareOutputA;
+	// Bloom の明部テクスチャは半解像度なので、Glare も同じ解像度のまま処理する。
+	// ぼかし成分をフル解像度へ先に拡大すると、画質差が小さいままピクセル数だけ4倍になる。
+	// サンプリング間隔は従来のフル解像度基準を維持し、光条の幅と長さを変えない。
 	std::array<float, kRootConstantCount> constants{};
 	constants[0] = 1.0f / static_cast<float>(renderWidth_);
 	constants[1] = 1.0f / static_cast<float>(renderHeight_);
@@ -332,11 +340,7 @@ bool EditorPostProcessQualityManager::ExecuteGlare(
 	constants[12] = (std::max)(colorR, 0.0f);
 	constants[13] = (std::max)(colorG, 0.0f);
 	constants[14] = (std::max)(colorB, 0.0f);
-
-	const ResourceType destinationResourceType =
-		sourceColorSrvHandle.ptr == srvHandles_[static_cast<size_t>(ResourceType::GlareOutputA)].ptr
-		? ResourceType::GlareOutputB
-		: ResourceType::GlareOutputA;
+	constants[15] = (std::clamp)(sampleRatio, 0.25f, 1.0f);
 
 	const bool isGlareExecuted = DrawPass(
 		commandList,
@@ -848,8 +852,8 @@ bool EditorPostProcessQualityManager::CreateSizeDependentResources(
 		bloomWidth0,
 		(std::max)(1u, bloomWidth0 / 2u),
 		(std::max)(1u, bloomWidth0 / 4u),
-		renderWidth,
-		renderWidth,
+		bloomWidth0,
+		bloomWidth0,
 		renderWidth,
 		renderWidth,
 		renderWidth,
@@ -866,8 +870,8 @@ bool EditorPostProcessQualityManager::CreateSizeDependentResources(
 		bloomHeight0,
 		(std::max)(1u, bloomHeight0 / 2u),
 		(std::max)(1u, bloomHeight0 / 4u),
-		renderHeight,
-		renderHeight,
+		bloomHeight0,
+		bloomHeight0,
 		renderHeight,
 		renderHeight,
 		renderHeight,

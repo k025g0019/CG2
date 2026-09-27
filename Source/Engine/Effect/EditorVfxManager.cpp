@@ -1,6 +1,7 @@
-#include "EditorVfxManager.h"
+﻿#include "EditorVfxManager.h"
 
 #include "Source/Engine/Core/EditorSharedState.h"
+#include "Source/Engine/Editor/EditorAssetUtility.h"
 #include "Source/Engine/Editor/EditorScene.h"
 
 #include <algorithm>
@@ -106,6 +107,7 @@ void EditorVfxManager::Start() {
 	activeCountByEffectId_.clear();
 	pendingGpuParticleSpawns_.clear();
 	decalRuntimes_.clear();
+	hasEverSpawnedGpuParticles_ = false;
 	isStarted_ = true;
 }
 
@@ -114,6 +116,7 @@ void EditorVfxManager::Stop() {
 	freeIndices_.clear();
 	activeCountByEffectId_.clear();
 	pendingGpuParticleSpawns_.clear();
+	hasEverSpawnedGpuParticles_ = false;
 
 	if (editorScene_ != nullptr) {
 		for (const DecalRuntime& decal : decalRuntimes_) {
@@ -135,6 +138,15 @@ const EffectDefinition* EditorVfxManager::ResolveDefinition(const std::string& e
 		filePath = "Assets/Effects/" + effectId + ".effectdef";
 	}
 
+	// .effect は旧Particle Asset(EditorEffectManager::effectAssetCache_)が単独で読込・Cacheする
+	// Source Assetであり、Schemaも異なる(nodes配列を持たない)。ここでParseを許すと同一.effectが
+	// 2箇所で別々にCacheされてしまうため、フルPathで渡された場合も含めて明示的に拒否する。
+	if (EditorAssetUtility::HasExtension(filePath, ".effect")) {
+		PushConsoleMessage(
+			"Vfx: .effect はStage1 VFXの対象外です(EditorEffectManagerが担当): " + filePath);
+		return nullptr;
+	}
+
 	if (!std::filesystem::exists(filePath)) {
 		PushConsoleMessage("Vfx: Effect Definition が見つかりません: " + filePath);
 		return nullptr;
@@ -150,7 +162,47 @@ const EffectDefinition* EditorVfxManager::ResolveDefinition(const std::string& e
 		definition.id = effectId;
 	}
 
+	definitionParseCount_++;
+	PushConsoleMessage(
+		"Vfx: Effect Definition を読み込みました(Canonical Cache登録): " + filePath +
+		" 累計Parse回数=" + std::to_string(definitionParseCount_));
+
 	return &definitionCache_.emplace(effectId, std::move(definition)).first->second;
+}
+
+void EditorVfxManager::InvalidateEffectDefinition(const std::string& assetPath) {
+	for (auto cacheIterator = definitionCache_.begin(); cacheIterator != definitionCache_.end();) {
+		const std::string& effectId = cacheIterator->first;
+		std::string resolvedPath = effectId;
+
+		if (resolvedPath.find('/') == std::string::npos && resolvedPath.find('\\') == std::string::npos) {
+			resolvedPath = "Assets/Effects/" + effectId + ".effectdef";
+		}
+
+		if (resolvedPath != assetPath) {
+			++cacheIterator;
+			continue;
+		}
+
+		// 再生中Instance/NodeはこのDefinitionへ生ポインタを持っているため、
+		// Cacheを消す前に強制的にInstanceを解放し、ダングリングポインタ参照を防ぐ。
+		for (int32_t index = 0; index < static_cast<int32_t>(instances_.size()); index++) {
+			EffectInstanceSlot& instance = instances_[static_cast<size_t>(index)];
+
+			if (!instance.inUse || instance.effectId != effectId) {
+				continue;
+			}
+
+			auto activeCountIterator = activeCountByEffectId_.find(effectId);
+			if (activeCountIterator != activeCountByEffectId_.end()) {
+				activeCountIterator->second = (std::max)(activeCountIterator->second - 1, 0);
+			}
+
+			ReleaseInstanceSlot(index);
+		}
+
+		cacheIterator = definitionCache_.erase(cacheIterator);
+	}
 }
 
 int32_t EditorVfxManager::AcquireInstanceSlot() {
@@ -208,6 +260,8 @@ EditorVfxManager::EffectHandle EditorVfxManager::PlayEffect(const std::string& e
 	instance.worldPosition = position;
 	instance.age = 0.0f;
 	instance.stopped = false;
+	instance.paused = false;
+	instance.playbackSpeed = 1.0f;
 	instance.lodSpawnMultiplier = 1.0f;
 	instance.hitNormal = {0.0f, 1.0f, 0.0f};
 	instance.nodes.clear();
@@ -336,6 +390,123 @@ bool EditorVfxManager::IsEffectPlaying(EffectHandle handle) const {
 	return instance.inUse && instance.generation == handle.generation;
 }
 
+namespace {
+	// Handleが今も同じInstanceを指しているかを1か所で判定する。
+	// Pool再利用でgenerationが進んだ古いHandleはここで弾く。
+	template <typename SlotType>
+	SlotType* ResolveInstanceSlot(
+		std::vector<SlotType>& instances,
+		int32_t index,
+		uint32_t generation) {
+		if (index < 0 || index >= static_cast<int32_t>(instances.size())) {
+			return nullptr;
+		}
+
+		SlotType& instance = instances[static_cast<size_t>(index)];
+
+		if (!instance.inUse || instance.generation != generation) {
+			return nullptr;
+		}
+
+		return &instance;
+	}
+}
+
+bool EditorVfxManager::GetEffectPosition(EffectHandle handle, Vector3& position) const {
+	const EffectInstanceSlot* instance = ResolveInstanceSlot(
+		const_cast<std::vector<EffectInstanceSlot>&>(instances_), handle.index, handle.generation);
+
+	if (instance == nullptr) {
+		return false;
+	}
+
+	position = instance->worldPosition;
+	return true;
+}
+
+bool EditorVfxManager::SetEffectPaused(EffectHandle handle, bool isPaused) {
+	EffectInstanceSlot* instance = ResolveInstanceSlot(instances_, handle.index, handle.generation);
+
+	if (instance == nullptr) {
+		return false;
+	}
+
+	instance->paused = isPaused;
+	return true;
+}
+
+bool EditorVfxManager::IsEffectPaused(EffectHandle handle) const {
+	const EffectInstanceSlot* instance = ResolveInstanceSlot(
+		const_cast<std::vector<EffectInstanceSlot>&>(instances_), handle.index, handle.generation);
+	return instance != nullptr && instance->paused;
+}
+
+bool EditorVfxManager::SetEffectPlaybackSpeed(EffectHandle handle, float playbackSpeed) {
+	EffectInstanceSlot* instance = ResolveInstanceSlot(instances_, handle.index, handle.generation);
+
+	if (instance == nullptr) {
+		return false;
+	}
+
+	instance->playbackSpeed = (std::clamp)(playbackSpeed, 0.0f, 16.0f);
+	return true;
+}
+
+bool EditorVfxManager::GetEffectPlaybackSpeed(EffectHandle handle, float& playbackSpeed) const {
+	const EffectInstanceSlot* instance = ResolveInstanceSlot(
+		const_cast<std::vector<EffectInstanceSlot>&>(instances_), handle.index, handle.generation);
+
+	if (instance == nullptr) {
+		return false;
+	}
+
+	playbackSpeed = instance->playbackSpeed;
+	return true;
+}
+
+bool EditorVfxManager::RestartEffect(EffectHandle handle) {
+	EffectInstanceSlot* instance = ResolveInstanceSlot(instances_, handle.index, handle.generation);
+
+	if (instance == nullptr) {
+		return false;
+	}
+
+	instance->age = 0.0f;
+	instance->stopped = false;
+	instance->paused = false;
+
+	for (NodeRuntime& node : instance->nodes) {
+		node.particles.clear();
+		node.ribbonHistory.clear();
+		node.spawnAccumulator = 0.0f;
+		node.burstDone = false;
+		node.ribbonDistanceAccumulator = 0.0f;
+		node.ribbonScrollOffset = 0.0f;
+		node.ring = RingRuntime{};
+	}
+
+	return true;
+}
+
+bool EditorVfxManager::GetEffectParticleCount(EffectHandle handle, int32_t& particleCount) const {
+	const EffectInstanceSlot* instance = ResolveInstanceSlot(
+		const_cast<std::vector<EffectInstanceSlot>&>(instances_), handle.index, handle.generation);
+
+	if (instance == nullptr) {
+		return false;
+	}
+
+	int32_t total = 0;
+
+	for (const NodeRuntime& node : instance->nodes) {
+		total += static_cast<int32_t>(node.particles.size());
+		total += static_cast<int32_t>(node.ribbonHistory.size());
+	}
+
+	particleCount = total;
+	return true;
+}
+
 float EditorVfxManager::ComputeLodSpawnMultiplier(const EffectDefinition& definition, float distanceToCamera) const {
 	if (definition.lodLevels.empty()) {
 		return 1.0f;
@@ -400,24 +571,34 @@ void EditorVfxManager::Update(float deltaTime) {
 		instance.lodSpawnMultiplier = instance.definition != nullptr
 			? ComputeLodSpawnMultiplier(*instance.definition, distanceToCamera)
 			: 1.0f;
-		instance.age += deltaTime;
+
+		// Pause中と速度0のInstanceは追従だけ続け、Simulationを進めない。
+		const float instanceDeltaTime = instance.paused
+			? 0.0f
+			: deltaTime * (std::max)(instance.playbackSpeed, 0.0f);
+
+		if (instanceDeltaTime <= 0.0f) {
+			continue;
+		}
+
+		instance.age += instanceDeltaTime;
 
 		for (NodeRuntime& node : instance.nodes) {
 			switch (node.kind) {
 				case NodeKind::Billboard:
-					UpdateBillboardNode(instance, node, deltaTime);
+					UpdateBillboardNode(instance, node, instanceDeltaTime);
 					break;
 				case NodeKind::GpuBillboard:
-					UpdateGpuBillboardNode(instance, node, deltaTime);
+					UpdateGpuBillboardNode(instance, node, instanceDeltaTime);
 					break;
 				case NodeKind::MeshParticle:
-					UpdateMeshParticleNode(instance, node, deltaTime);
+					UpdateMeshParticleNode(instance, node, instanceDeltaTime);
 					break;
 				case NodeKind::Ribbon:
-					UpdateRibbonNode(instance, node, deltaTime);
+					UpdateRibbonNode(instance, node, instanceDeltaTime);
 					break;
 				case NodeKind::Ring:
-					UpdateRingNode(instance, node, deltaTime);
+					UpdateRingNode(instance, node, instanceDeltaTime);
 					break;
 				default:
 					break;

@@ -251,10 +251,11 @@ bool EditorVfxRenderer::CreateVertexBuffer(ID3D12Device* device) {
 
 bool EditorVfxRenderer::UploadTextureImmediate(const std::string& texturePath, TextureEntry& entry) {
 	using namespace EditorSharedState;
+	const std::filesystem::path resolvedTexturePath = ResolveEngineOrProjectFilePath(texturePath);
 
 	if (device_ == nullptr ||
 		texturePath.empty() ||
-		!std::filesystem::exists(texturePath) ||
+		!std::filesystem::exists(resolvedTexturePath) ||
 		g_commandAllocator == nullptr ||
 		g_commandList == nullptr ||
 		g_commandQueue == nullptr ||

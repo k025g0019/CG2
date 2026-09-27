@@ -7,13 +7,10 @@
 #include <cstring>
 
 namespace {
-	constexpr uint32_t kObjectSrvDescriptorIndex = 83u;
-	constexpr uint32_t kFrustumVisibilitySrvDescriptorIndex = 84u;
-	constexpr uint32_t kFrustumVisibilityUavDescriptorIndex = 85u;
-	constexpr uint32_t kVisibilitySrvDescriptorIndex = 86u;
-	constexpr uint32_t kVisibilityUavDescriptorIndex = 87u;
-	constexpr uint32_t kDrawArgumentsSrvDescriptorIndex = 88u;
-	constexpr uint32_t kDrawArgumentsUavDescriptorIndex = 89u;
+	constexpr uint32_t kSceneViewDescriptorStartIndex = 83u;
+	// Temporalは160～197を使うため、その直後をGame View専用領域にする。
+	constexpr uint32_t kGameViewDescriptorStartIndex = 198u;
+	constexpr uint32_t kDescriptorsPerView = 7u;
 	constexpr uint32_t kComputeConstantCount = 24u;
 	constexpr uint32_t kThreadGroupSize = 64u;
 }
@@ -44,7 +41,30 @@ bool EditorGpuCullingManager::Initialize(
 		return false;
 	}
 
-	if (!CreateBuffers()) {
+	if (!CreateBuffers(EditorGpuCullingView::Scene) ||
+		!CreateBuffers(EditorGpuCullingView::Game)) {
+		Finalize();
+		return false;
+	}
+
+	D3D12_INDIRECT_ARGUMENT_DESC indirectArgument{};
+	indirectArgument.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW;
+	D3D12_COMMAND_SIGNATURE_DESC commandSignatureDescription{};
+	commandSignatureDescription.ByteStride = sizeof(IndirectArguments);
+	commandSignatureDescription.NumArgumentDescs = 1u;
+	commandSignatureDescription.pArgumentDescs = &indirectArgument;
+	if (FAILED(device_->CreateCommandSignature(
+		&commandSignatureDescription,
+		nullptr,
+		IID_PPV_ARGS(drawCommandSignature_.ReleaseAndGetAddressOf())))) {
+		Finalize();
+		return false;
+	}
+	indirectArgument.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED;
+	if (FAILED(device_->CreateCommandSignature(
+		&commandSignatureDescription,
+		nullptr,
+		IID_PPV_ARGS(drawIndexedCommandSignature_.ReleaseAndGetAddressOf())))) {
 		Finalize();
 		return false;
 	}
@@ -55,6 +75,7 @@ bool EditorGpuCullingManager::Initialize(
 
 bool EditorGpuCullingManager::Execute(
 	ID3D12GraphicsCommandList* commandList,
+	EditorGpuCullingView view,
 	const std::vector<EditorGpuCullingInput>& cullingInputs,
 	D3D12_GPU_DESCRIPTOR_HANDLE depthPyramidSrvHandle,
 	const float* viewProjectionMatrix,
@@ -65,7 +86,8 @@ bool EditorGpuCullingManager::Execute(
 	float viewportUvScaleX,
 	float viewportUvScaleY) {
 
-	if (!isInitialized_ || commandList == nullptr || depthPyramidSrvHandle.ptr == 0u ||
+	ViewResources* resources = GetViewResources(view);
+	if (!isInitialized_ || resources == nullptr || commandList == nullptr || depthPyramidSrvHandle.ptr == 0u ||
 		viewProjectionMatrix == nullptr || depthPyramidWidth == 0u || depthPyramidHeight == 0u ||
 		viewportUvScaleX <= 0.0f || viewportUvScaleY <= 0.0f) {
 		return false;
@@ -76,8 +98,8 @@ bool EditorGpuCullingManager::Execute(
 		kMaximumObjectCount);
 
 	if (objectCount == 0u) {
-		submittedObjectCount_ = 0u;
-		submittedObjectIndexByGameObjectId_.clear();
+		resources->submittedObjectCount = 0u;
+		resources->submittedObjectIndexByGameObjectId.clear();
 		return true;
 	}
 
@@ -87,7 +109,7 @@ bool EditorGpuCullingManager::Execute(
 
 	void* mappedObjectData = nullptr;
 	D3D12_RANGE noReadRange{0u, 0u};
-	HRESULT result = objectUploadResource_->Map(0u, &noReadRange, &mappedObjectData);
+	HRESULT result = resources->objectUploadResource->Map(0u, &noReadRange, &mappedObjectData);
 
 	if (FAILED(result) || mappedObjectData == nullptr) {
 		return false;
@@ -97,15 +119,15 @@ bool EditorGpuCullingManager::Execute(
 		mappedObjectData,
 		cullingInputs.data(),
 		static_cast<size_t>(objectCount) * sizeof(EditorGpuCullingInput));
-	objectUploadResource_->Unmap(0u, nullptr);
+	resources->objectUploadResource->Unmap(0u, nullptr);
 
-	submittedGameObjectIds_.resize(objectCount);
-	submittedObjectIndexByGameObjectId_.clear();
-	submittedObjectIndexByGameObjectId_.reserve(objectCount);
+	resources->submittedGameObjectIds.resize(objectCount);
+	resources->submittedObjectIndexByGameObjectId.clear();
+	resources->submittedObjectIndexByGameObjectId.reserve(objectCount);
 
 	for (uint32_t objectIndex = 0u; objectIndex < objectCount; objectIndex++) {
-		submittedGameObjectIds_[objectIndex] = cullingInputs[objectIndex].gameObjectId;
-		submittedObjectIndexByGameObjectId_[cullingInputs[objectIndex].gameObjectId] = objectIndex;
+		resources->submittedGameObjectIds[objectIndex] = cullingInputs[objectIndex].gameObjectId;
+		resources->submittedObjectIndexByGameObjectId[cullingInputs[objectIndex].gameObjectId] = objectIndex;
 	}
 
 	std::array<uint32_t, kComputeConstantCount> constants{};
@@ -133,24 +155,24 @@ bool EditorGpuCullingManager::Execute(
 
 	D3D12_RESOURCE_BARRIER frustumVisibilityBarrier{};
 	frustumVisibilityBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-	frustumVisibilityBarrier.Transition.pResource = frustumVisibilityResource_.Get();
+	frustumVisibilityBarrier.Transition.pResource = resources->frustumVisibilityResource.Get();
 	frustumVisibilityBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 	frustumVisibilityBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 	frustumVisibilityBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 	commandList->ResourceBarrier(1u, &frustumVisibilityBarrier);
 
 	commandList->SetPipelineState(frustumCullingPipelineState_.Get());
-	commandList->SetComputeRootDescriptorTable(0u, objectSrvHandle_);
+	commandList->SetComputeRootDescriptorTable(0u, resources->objectSrvHandle);
 	commandList->SetComputeRootDescriptorTable(1u, depthPyramidSrvHandle);
-	commandList->SetComputeRootDescriptorTable(2u, visibilitySrvHandle_);
-	commandList->SetComputeRootDescriptorTable(3u, frustumVisibilityUavHandle_);
+	commandList->SetComputeRootDescriptorTable(2u, resources->visibilitySrvHandle);
+	commandList->SetComputeRootDescriptorTable(3u, resources->frustumVisibilityUavHandle);
 	commandList->SetComputeRoot32BitConstants(4u, kComputeConstantCount, constants.data(), 0u);
 	RecordEditorProfilerDispatch();
 	commandList->Dispatch((objectCount + kThreadGroupSize - 1u) / kThreadGroupSize, 1u, 1u);
 
 	D3D12_RESOURCE_BARRIER frustumVisibilityUnorderedAccessBarrier{};
 	frustumVisibilityUnorderedAccessBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-	frustumVisibilityUnorderedAccessBarrier.UAV.pResource = frustumVisibilityResource_.Get();
+	frustumVisibilityUnorderedAccessBarrier.UAV.pResource = resources->frustumVisibilityResource.Get();
 	commandList->ResourceBarrier(1u, &frustumVisibilityUnorderedAccessBarrier);
 
 	frustumVisibilityBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
@@ -163,24 +185,24 @@ bool EditorGpuCullingManager::Execute(
 
 	D3D12_RESOURCE_BARRIER visibilityBarrier{};
 	visibilityBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-	visibilityBarrier.Transition.pResource = visibilityResource_.Get();
+	visibilityBarrier.Transition.pResource = resources->visibilityResource.Get();
 	visibilityBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 	visibilityBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 	visibilityBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 	commandList->ResourceBarrier(1u, &visibilityBarrier);
 
 	commandList->SetPipelineState(occlusionCullingPipelineState_.Get());
-	commandList->SetComputeRootDescriptorTable(0u, objectSrvHandle_);
+	commandList->SetComputeRootDescriptorTable(0u, resources->objectSrvHandle);
 	commandList->SetComputeRootDescriptorTable(1u, depthPyramidSrvHandle);
-	commandList->SetComputeRootDescriptorTable(2u, frustumVisibilitySrvHandle_);
-	commandList->SetComputeRootDescriptorTable(3u, visibilityUavHandle_);
+	commandList->SetComputeRootDescriptorTable(2u, resources->frustumVisibilitySrvHandle);
+	commandList->SetComputeRootDescriptorTable(3u, resources->visibilityUavHandle);
 	commandList->SetComputeRoot32BitConstants(4u, kComputeConstantCount, constants.data(), 0u);
 	RecordEditorProfilerDispatch();
 	commandList->Dispatch((objectCount + kThreadGroupSize - 1u) / kThreadGroupSize, 1u, 1u);
 
 	D3D12_RESOURCE_BARRIER visibilityUnorderedAccessBarrier{};
 	visibilityUnorderedAccessBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-	visibilityUnorderedAccessBarrier.UAV.pResource = visibilityResource_.Get();
+	visibilityUnorderedAccessBarrier.UAV.pResource = resources->visibilityResource.Get();
 	commandList->ResourceBarrier(1u, &visibilityUnorderedAccessBarrier);
 
 	visibilityBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
@@ -193,31 +215,31 @@ bool EditorGpuCullingManager::Execute(
 
 	D3D12_RESOURCE_BARRIER drawArgumentsBarrier{};
 	drawArgumentsBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-	drawArgumentsBarrier.Transition.pResource = drawArgumentsResource_.Get();
+	drawArgumentsBarrier.Transition.pResource = resources->drawArgumentsResource.Get();
 	drawArgumentsBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 	drawArgumentsBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PREDICATION;
 	drawArgumentsBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 	commandList->ResourceBarrier(1u, &drawArgumentsBarrier);
 
 	commandList->SetPipelineState(buildIndirectArgsPipelineState_.Get());
-	commandList->SetComputeRootDescriptorTable(0u, objectSrvHandle_);
-	commandList->SetComputeRootDescriptorTable(1u, visibilitySrvHandle_);
-	commandList->SetComputeRootDescriptorTable(2u, visibilitySrvHandle_);
-	commandList->SetComputeRootDescriptorTable(3u, drawArgumentsUavHandle_);
+	commandList->SetComputeRootDescriptorTable(0u, resources->objectSrvHandle);
+	commandList->SetComputeRootDescriptorTable(1u, resources->visibilitySrvHandle);
+	commandList->SetComputeRootDescriptorTable(2u, resources->visibilitySrvHandle);
+	commandList->SetComputeRootDescriptorTable(3u, resources->drawArgumentsUavHandle);
 	commandList->SetComputeRoot32BitConstants(4u, kComputeConstantCount, constants.data(), 0u);
 	RecordEditorProfilerDispatch();
 	commandList->Dispatch((objectCount + kThreadGroupSize - 1u) / kThreadGroupSize, 1u, 1u);
 
 	D3D12_RESOURCE_BARRIER drawArgumentsUnorderedAccessBarrier{};
 	drawArgumentsUnorderedAccessBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-	drawArgumentsUnorderedAccessBarrier.UAV.pResource = drawArgumentsResource_.Get();
+	drawArgumentsUnorderedAccessBarrier.UAV.pResource = resources->drawArgumentsResource.Get();
 	commandList->ResourceBarrier(1u, &drawArgumentsUnorderedAccessBarrier);
 
 	drawArgumentsBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 	drawArgumentsBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PREDICATION;
 	commandList->ResourceBarrier(1u, &drawArgumentsBarrier);
 
-	submittedObjectCount_ = objectCount;
+	resources->submittedObjectCount = objectCount;
 	return true;
 }
 
@@ -226,10 +248,11 @@ void EditorGpuCullingManager::ResolveReadback() {
 }
 
 void EditorGpuCullingManager::Finalize() {
-	drawArgumentsResource_.Reset();
-	visibilityResource_.Reset();
-	frustumVisibilityResource_.Reset();
-	objectUploadResource_.Reset();
+	for (ViewResources& resources : viewResources_) {
+		resources = {};
+	}
+	drawCommandSignature_.Reset();
+	drawIndexedCommandSignature_.Reset();
 	buildIndirectArgsPipelineState_.Reset();
 	occlusionCullingPipelineState_.Reset();
 	frustumCullingPipelineState_.Reset();
@@ -237,36 +260,113 @@ void EditorGpuCullingManager::Finalize() {
 	device_.Reset();
 	srvDescriptorHeap_ = nullptr;
 	srvDescriptorSize_ = 0u;
-	submittedGameObjectIds_.clear();
-	submittedObjectIndexByGameObjectId_.clear();
-	submittedObjectCount_ = 0u;
 	isInitialized_ = false;
 }
 
-bool EditorGpuCullingManager::IsVisible(int32_t gameObjectId) const {
+bool EditorGpuCullingManager::IsVisible(EditorGpuCullingView view, int32_t gameObjectId) const {
+	(void)view;
 	(void)gameObjectId;
 	return true;
 }
 
+bool EditorGpuCullingManager::GetSubmittedObjectIndex(
+	EditorGpuCullingView view,
+	int32_t gameObjectId,
+	uint32_t& objectIndex) const {
+	const ViewResources* resources = GetViewResources(view);
+	if (!isInitialized_ || resources == nullptr) {
+		return false;
+	}
+	const auto iterator = resources->submittedObjectIndexByGameObjectId.find(gameObjectId);
+	if (iterator == resources->submittedObjectIndexByGameObjectId.end()) {
+		return false;
+	}
+	objectIndex = iterator->second;
+	return true;
+}
+
+D3D12_GPU_VIRTUAL_ADDRESS EditorGpuCullingManager::GetVisibilityGpuAddress(
+	EditorGpuCullingView view) const {
+	const ViewResources* resources = GetViewResources(view);
+	return resources != nullptr && resources->visibilityResource != nullptr
+		? resources->visibilityResource->GetGPUVirtualAddress()
+		: 0u;
+}
+
 bool EditorGpuCullingManager::BeginPredication(
 	ID3D12GraphicsCommandList* commandList,
+	EditorGpuCullingView view,
 	int32_t gameObjectId) const {
-	if (!isInitialized_ || commandList == nullptr || drawArgumentsResource_ == nullptr) {
+	const ViewResources* resources = GetViewResources(view);
+	if (!isInitialized_ || resources == nullptr || commandList == nullptr ||
+		resources->drawArgumentsResource == nullptr) {
 		return false;
 	}
 
-	const auto objectIndexIterator = submittedObjectIndexByGameObjectId_.find(gameObjectId);
+	const auto objectIndexIterator = resources->submittedObjectIndexByGameObjectId.find(gameObjectId);
 
-	if (objectIndexIterator == submittedObjectIndexByGameObjectId_.end()) {
+	if (objectIndexIterator == resources->submittedObjectIndexByGameObjectId.end()) {
 		return false;
 	}
 
 	const UINT64 predicateOffset =
-		static_cast<UINT64>(objectIndexIterator->second) * sizeof(DrawArguments);
+		static_cast<UINT64>(objectIndexIterator->second) * sizeof(IndirectArguments);
 	commandList->SetPredication(
-		drawArgumentsResource_.Get(),
+		resources->drawArgumentsResource.Get(),
 		predicateOffset,
 		D3D12_PREDICATION_OP_NOT_EQUAL_ZERO);
+	return true;
+}
+
+bool EditorGpuCullingManager::ExecuteIndirectDraw(
+	ID3D12GraphicsCommandList* commandList,
+	EditorGpuCullingView view,
+	int32_t gameObjectId) const {
+	const ViewResources* resources = GetViewResources(view);
+	if (!isInitialized_ || resources == nullptr || commandList == nullptr ||
+		drawCommandSignature_ == nullptr || resources->drawArgumentsResource == nullptr) {
+		return false;
+	}
+
+	const auto objectIndexIterator = resources->submittedObjectIndexByGameObjectId.find(gameObjectId);
+	if (objectIndexIterator == resources->submittedObjectIndexByGameObjectId.end()) {
+		return false;
+	}
+
+	const UINT64 argumentOffset =
+		static_cast<UINT64>(objectIndexIterator->second) * sizeof(IndirectArguments);
+	commandList->ExecuteIndirect(
+		drawCommandSignature_.Get(),
+		1u,
+		resources->drawArgumentsResource.Get(),
+		argumentOffset,
+		nullptr,
+		0u);
+	return true;
+}
+
+bool EditorGpuCullingManager::ExecuteIndirectDrawIndexed(
+	ID3D12GraphicsCommandList* commandList,
+	EditorGpuCullingView view,
+	int32_t gameObjectId) const {
+	const ViewResources* resources = GetViewResources(view);
+	if (!isInitialized_ || resources == nullptr || commandList == nullptr ||
+		drawIndexedCommandSignature_ == nullptr || resources->drawArgumentsResource == nullptr) {
+		return false;
+	}
+	const auto objectIndexIterator = resources->submittedObjectIndexByGameObjectId.find(gameObjectId);
+	if (objectIndexIterator == resources->submittedObjectIndexByGameObjectId.end()) {
+		return false;
+	}
+	const UINT64 argumentOffset =
+		static_cast<UINT64>(objectIndexIterator->second) * sizeof(IndirectArguments);
+	commandList->ExecuteIndirect(
+		drawIndexedCommandSignature_.Get(),
+		1u,
+		resources->drawArgumentsResource.Get(),
+		argumentOffset,
+		nullptr,
+		0u);
 	return true;
 }
 
@@ -372,13 +472,30 @@ bool EditorGpuCullingManager::CreateRootSignatureAndPipelineStates(
 	return SUCCEEDED(result) && buildIndirectArgsPipelineState_ != nullptr;
 }
 
-bool EditorGpuCullingManager::CreateBuffers() {
+bool EditorGpuCullingManager::CreateBuffers(EditorGpuCullingView view) {
+	ViewResources* resources = GetViewResources(view);
+	if (resources == nullptr) {
+		return false;
+	}
+
+	const uint32_t descriptorStartIndex = view == EditorGpuCullingView::Scene
+		? kSceneViewDescriptorStartIndex
+		: kGameViewDescriptorStartIndex;
+	const uint32_t objectSrvDescriptorIndex = descriptorStartIndex;
+	const uint32_t frustumVisibilitySrvDescriptorIndex = descriptorStartIndex + 1u;
+	const uint32_t frustumVisibilityUavDescriptorIndex = descriptorStartIndex + 2u;
+	const uint32_t visibilitySrvDescriptorIndex = descriptorStartIndex + 3u;
+	const uint32_t visibilityUavDescriptorIndex = descriptorStartIndex + 4u;
+	const uint32_t drawArgumentsSrvDescriptorIndex = descriptorStartIndex + 5u;
+	const uint32_t drawArgumentsUavDescriptorIndex = descriptorStartIndex + 6u;
+	static_assert(kDescriptorsPerView == 7u);
+
 	const UINT64 objectBufferSize =
 		static_cast<UINT64>(kMaximumObjectCount) * sizeof(EditorGpuCullingInput);
 	const UINT64 visibilityBufferSize =
 		static_cast<UINT64>(kMaximumObjectCount) * sizeof(uint32_t);
 	const UINT64 drawArgumentsBufferSize =
-		static_cast<UINT64>(kMaximumObjectCount) * sizeof(DrawArguments);
+		static_cast<UINT64>(kMaximumObjectCount) * sizeof(IndirectArguments);
 
 	auto createBuffer = [this](
 		UINT64 bufferSize,
@@ -413,9 +530,9 @@ bool EditorGpuCullingManager::CreateBuffers() {
 		D3D12_HEAP_TYPE_UPLOAD,
 		D3D12_RESOURCE_FLAG_NONE,
 		D3D12_RESOURCE_STATE_GENERIC_READ,
-		objectUploadResource_);
+		resources->objectUploadResource);
 
-	if (FAILED(result) || objectUploadResource_ == nullptr) {
+	if (FAILED(result) || resources->objectUploadResource == nullptr) {
 		return false;
 	}
 
@@ -424,9 +541,9 @@ bool EditorGpuCullingManager::CreateBuffers() {
 		D3D12_HEAP_TYPE_DEFAULT,
 		D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
 		D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-		frustumVisibilityResource_);
+		resources->frustumVisibilityResource);
 
-	if (FAILED(result) || frustumVisibilityResource_ == nullptr) {
+	if (FAILED(result) || resources->frustumVisibilityResource == nullptr) {
 		return false;
 	}
 
@@ -435,9 +552,9 @@ bool EditorGpuCullingManager::CreateBuffers() {
 		D3D12_HEAP_TYPE_DEFAULT,
 		D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
 		D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-		visibilityResource_);
+		resources->visibilityResource);
 
-	if (FAILED(result) || visibilityResource_ == nullptr) {
+	if (FAILED(result) || resources->visibilityResource == nullptr) {
 		return false;
 	}
 
@@ -446,9 +563,9 @@ bool EditorGpuCullingManager::CreateBuffers() {
 		D3D12_HEAP_TYPE_DEFAULT,
 		D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
 		D3D12_RESOURCE_STATE_PREDICATION,
-		drawArgumentsResource_);
+		resources->drawArgumentsResource);
 
-	if (FAILED(result) || drawArgumentsResource_ == nullptr) {
+	if (FAILED(result) || resources->drawArgumentsResource == nullptr) {
 		return false;
 	}
 
@@ -459,9 +576,9 @@ bool EditorGpuCullingManager::CreateBuffers() {
 	objectSrvDescription.Buffer.NumElements = kMaximumObjectCount;
 	objectSrvDescription.Buffer.StructureByteStride = sizeof(EditorGpuCullingInput);
 	device_->CreateShaderResourceView(
-		objectUploadResource_.Get(),
+		resources->objectUploadResource.Get(),
 		&objectSrvDescription,
-		GetCpuDescriptorHandle(kObjectSrvDescriptorIndex));
+		GetCpuDescriptorHandle(objectSrvDescriptorIndex));
 
 	D3D12_SHADER_RESOURCE_VIEW_DESC frustumVisibilitySrvDescription{};
 	frustumVisibilitySrvDescription.Format = DXGI_FORMAT_UNKNOWN;
@@ -470,9 +587,9 @@ bool EditorGpuCullingManager::CreateBuffers() {
 	frustumVisibilitySrvDescription.Buffer.NumElements = kMaximumObjectCount;
 	frustumVisibilitySrvDescription.Buffer.StructureByteStride = sizeof(uint32_t);
 	device_->CreateShaderResourceView(
-		frustumVisibilityResource_.Get(),
+		resources->frustumVisibilityResource.Get(),
 		&frustumVisibilitySrvDescription,
-		GetCpuDescriptorHandle(kFrustumVisibilitySrvDescriptorIndex));
+		GetCpuDescriptorHandle(frustumVisibilitySrvDescriptorIndex));
 
 	D3D12_UNORDERED_ACCESS_VIEW_DESC frustumVisibilityUavDescription{};
 	frustumVisibilityUavDescription.Format = DXGI_FORMAT_UNKNOWN;
@@ -480,10 +597,10 @@ bool EditorGpuCullingManager::CreateBuffers() {
 	frustumVisibilityUavDescription.Buffer.NumElements = kMaximumObjectCount;
 	frustumVisibilityUavDescription.Buffer.StructureByteStride = sizeof(uint32_t);
 	device_->CreateUnorderedAccessView(
-		frustumVisibilityResource_.Get(),
+		resources->frustumVisibilityResource.Get(),
 		nullptr,
 		&frustumVisibilityUavDescription,
-		GetCpuDescriptorHandle(kFrustumVisibilityUavDescriptorIndex));
+		GetCpuDescriptorHandle(frustumVisibilityUavDescriptorIndex));
 
 	D3D12_SHADER_RESOURCE_VIEW_DESC visibilitySrvDescription{};
 	visibilitySrvDescription.Format = DXGI_FORMAT_UNKNOWN;
@@ -492,9 +609,9 @@ bool EditorGpuCullingManager::CreateBuffers() {
 	visibilitySrvDescription.Buffer.NumElements = kMaximumObjectCount;
 	visibilitySrvDescription.Buffer.StructureByteStride = sizeof(uint32_t);
 	device_->CreateShaderResourceView(
-		visibilityResource_.Get(),
+		resources->visibilityResource.Get(),
 		&visibilitySrvDescription,
-		GetCpuDescriptorHandle(kVisibilitySrvDescriptorIndex));
+		GetCpuDescriptorHandle(visibilitySrvDescriptorIndex));
 
 	D3D12_UNORDERED_ACCESS_VIEW_DESC visibilityUavDescription{};
 	visibilityUavDescription.Format = DXGI_FORMAT_UNKNOWN;
@@ -502,40 +619,52 @@ bool EditorGpuCullingManager::CreateBuffers() {
 	visibilityUavDescription.Buffer.NumElements = kMaximumObjectCount;
 	visibilityUavDescription.Buffer.StructureByteStride = sizeof(uint32_t);
 	device_->CreateUnorderedAccessView(
-		visibilityResource_.Get(),
+		resources->visibilityResource.Get(),
 		nullptr,
 		&visibilityUavDescription,
-		GetCpuDescriptorHandle(kVisibilityUavDescriptorIndex));
+		GetCpuDescriptorHandle(visibilityUavDescriptorIndex));
 
 	D3D12_SHADER_RESOURCE_VIEW_DESC drawArgumentsSrvDescription{};
 	drawArgumentsSrvDescription.Format = DXGI_FORMAT_UNKNOWN;
 	drawArgumentsSrvDescription.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 	drawArgumentsSrvDescription.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
 	drawArgumentsSrvDescription.Buffer.NumElements = kMaximumObjectCount;
-	drawArgumentsSrvDescription.Buffer.StructureByteStride = sizeof(DrawArguments);
+	drawArgumentsSrvDescription.Buffer.StructureByteStride = sizeof(IndirectArguments);
 	device_->CreateShaderResourceView(
-		drawArgumentsResource_.Get(),
+		resources->drawArgumentsResource.Get(),
 		&drawArgumentsSrvDescription,
-		GetCpuDescriptorHandle(kDrawArgumentsSrvDescriptorIndex));
+		GetCpuDescriptorHandle(drawArgumentsSrvDescriptorIndex));
 
 	D3D12_UNORDERED_ACCESS_VIEW_DESC drawArgumentsUavDescription{};
 	drawArgumentsUavDescription.Format = DXGI_FORMAT_UNKNOWN;
 	drawArgumentsUavDescription.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
 	drawArgumentsUavDescription.Buffer.NumElements = kMaximumObjectCount;
-	drawArgumentsUavDescription.Buffer.StructureByteStride = sizeof(DrawArguments);
+	drawArgumentsUavDescription.Buffer.StructureByteStride = sizeof(IndirectArguments);
 	device_->CreateUnorderedAccessView(
-		drawArgumentsResource_.Get(),
+		resources->drawArgumentsResource.Get(),
 		nullptr,
 		&drawArgumentsUavDescription,
-		GetCpuDescriptorHandle(kDrawArgumentsUavDescriptorIndex));
+		GetCpuDescriptorHandle(drawArgumentsUavDescriptorIndex));
 
-	objectSrvHandle_ = GetGpuDescriptorHandle(kObjectSrvDescriptorIndex);
-	frustumVisibilitySrvHandle_ = GetGpuDescriptorHandle(kFrustumVisibilitySrvDescriptorIndex);
-	frustumVisibilityUavHandle_ = GetGpuDescriptorHandle(kFrustumVisibilityUavDescriptorIndex);
-	visibilitySrvHandle_ = GetGpuDescriptorHandle(kVisibilitySrvDescriptorIndex);
-	visibilityUavHandle_ = GetGpuDescriptorHandle(kVisibilityUavDescriptorIndex);
-	drawArgumentsUavHandle_ = GetGpuDescriptorHandle(kDrawArgumentsUavDescriptorIndex);
+	resources->objectSrvHandle = GetGpuDescriptorHandle(objectSrvDescriptorIndex);
+	resources->frustumVisibilitySrvHandle = GetGpuDescriptorHandle(frustumVisibilitySrvDescriptorIndex);
+	resources->frustumVisibilityUavHandle = GetGpuDescriptorHandle(frustumVisibilityUavDescriptorIndex);
+	resources->visibilitySrvHandle = GetGpuDescriptorHandle(visibilitySrvDescriptorIndex);
+	resources->visibilityUavHandle = GetGpuDescriptorHandle(visibilityUavDescriptorIndex);
+	resources->drawArgumentsUavHandle = GetGpuDescriptorHandle(drawArgumentsUavDescriptorIndex);
 	return true;
+}
+
+EditorGpuCullingManager::ViewResources* EditorGpuCullingManager::GetViewResources(
+	EditorGpuCullingView view) {
+	const size_t viewIndex = static_cast<size_t>(view);
+	return viewIndex < viewResources_.size() ? &viewResources_[viewIndex] : nullptr;
+}
+
+const EditorGpuCullingManager::ViewResources* EditorGpuCullingManager::GetViewResources(
+	EditorGpuCullingView view) const {
+	const size_t viewIndex = static_cast<size_t>(view);
+	return viewIndex < viewResources_.size() ? &viewResources_[viewIndex] : nullptr;
 }
 
 D3D12_CPU_DESCRIPTOR_HANDLE EditorGpuCullingManager::GetCpuDescriptorHandle(

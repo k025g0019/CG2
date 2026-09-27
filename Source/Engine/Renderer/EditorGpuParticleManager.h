@@ -74,7 +74,7 @@ private:
 		GpuFloat4 motion1;  // xyz: 運動中心 / w: 波周波数。
 		GpuFloat4 motion2;  // x: 吸引力 / y: 現在回転 / z: 回転速度。
 		GpuFloat4 rendering;  // x: 描画モデルのグループ番号 / y: 放射強度。0 は板ポリゴン。
-		GpuFloat4 orientation;  // x: Billboard方式 / y: Velocity方向Scale。
+		GpuFloat4 orientation;  // x: Billboard方式 / y: Velocity方向Scale / z: Mesh簡易ライティング強度 / w: 上昇気流。
 	};
 
 	struct ParticleDrawConstants {

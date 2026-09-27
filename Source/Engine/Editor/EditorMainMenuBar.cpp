@@ -5,6 +5,10 @@
 #include "EditorAssetUtility.h"
 #include "EditorGameBuildManager.h"
 #include "EditorSharedState.h"
+#include "EditorTeamCollaborationManager.h"
+#include "Source/Engine/Core/EngineEnvironmentCheck.h"
+#include "Source/Engine/Core/EngineVersion.h"
+#include "Source/Engine/Core/ProjectVersionManager.h"
 
 #include <Windows.h>
 
@@ -28,6 +32,14 @@ namespace {
 	constexpr unsigned char kUtf8Bom[] = {0xEFu, 0xBBu, 0xBFu};  // 作成テキストアセットは UTF-8 BOM 付きで保存する
 	constexpr char kDefaultSceneDirectory[] = "Assets/Scenes";  // Project 内で Scene Asset をまとめる標準フォルダー。
 	constexpr char kEditorSettingsPath[] = "ProjectSettings/EditorSettings.cg2";
+
+	std::filesystem::path GetRunningExecutableDirectory() {
+		std::wstring executablePath(32768U, L'\0');
+		const DWORD length = GetModuleFileNameW(nullptr, executablePath.data(), static_cast<DWORD>(executablePath.size()));
+		if (length == 0U || length >= executablePath.size()) return std::filesystem::current_path();
+		executablePath.resize(length);
+		return std::filesystem::path(executablePath).parent_path();
+	}
 	constexpr char kAutoSaveDirectory[] = "Library/AutoSave";
 	constexpr char kUnsavedSceneAutoSavePath[] = "Library/AutoSave/UnsavedScene.scene";
 
@@ -39,7 +51,7 @@ namespace {
 
 	std::string MakeDefaultPlayerInputActionsText() {
 		return
-			"# CG2 PlayerInput Actions\r\n"
+			"# ManoEngine PlayerInput Actions\r\n"
 			"# Action|ActionMap|ActionName|ValueType|BindingType|...\r\n"
 			"Action|Player|Move|Vector2|2DVector|W|S|A|D\r\n"
 			"Action|Player|Jump|Button|Key|Space\r\n"
@@ -230,6 +242,11 @@ namespace {
 		return EditorAssetUtility::HasExtension(assetPath, ".scene");
 	}
 
+	bool IsArchivedScenePath(const std::string& assetPath) {
+		return assetPath.starts_with("Assets/Scenes/_Archive/") ||
+			assetPath.find("/_Archive/") != std::string::npos;
+	}
+
 	std::string GetSceneAssetCreateDirectory(const std::string& selectedAssetPath) {
 		// Scene は Assets/Scenes 配下へ集約し、選択中の Scene サブフォルダーだけ維持する。
 		if (!selectedAssetPath.empty() &&
@@ -251,7 +268,26 @@ namespace {
 	}
 
 	std::string BuildDefaultScenePath() {
-		const std::filesystem::path baseDirectoryPath(GetSceneAssetCreateDirectory(g_selectedAssetPath));
+		std::filesystem::path baseDirectoryPath(GetSceneAssetCreateDirectory(g_selectedAssetPath));
+
+		if (baseDirectoryPath.generic_string() == kDefaultSceneDirectory) {
+			for (int32_t gameIndex = 0; gameIndex < 1000; gameIndex++) {
+				std::string gameFolderName = "NewGame";
+
+				if (gameIndex > 0) {
+					gameFolderName += std::to_string(gameIndex);
+				}
+
+				const std::filesystem::path candidateDirectory =
+					baseDirectoryPath / gameFolderName;
+
+				if (!std::filesystem::exists(candidateDirectory)) {
+					baseDirectoryPath = candidateDirectory;
+					break;
+				}
+			}
+		}
+
 		std::filesystem::create_directories(baseDirectoryPath);
 
 		for (int32_t sceneIndex = 0; sceneIndex < 1000; sceneIndex++) {
@@ -322,7 +358,8 @@ namespace {
 				}
 
 				const std::string assetPath = entry.path().generic_string();
-				if (IsSceneAssetPath(assetPath)) {
+				// ArchiveはProjectから手動で開けるが、通常のScene一覧やBuild候補には混ぜない。
+				if (IsSceneAssetPath(assetPath) && !IsArchivedScenePath(assetPath)) {
 					scenePaths.push_back(assetPath);
 				}
 			}
@@ -1371,7 +1408,7 @@ namespace {
 		}
 
 		const std::string defaultText =
-			"# CG2 Gameplay Data\r\n"
+			"# ManoEngine Gameplay Data\r\n"
 			"# Entry|Key|Type(0=String,1=Int,2=Float,3=Bool,4=AssetPath)|Value\r\n"
 			"Entry|DisplayName|0|New Data\r\n";
 
@@ -1462,7 +1499,7 @@ void EditorMainMenuBar::LoadAutoSaveSettings() {
 
 void EditorMainMenuBar::SaveAutoSaveSettings() const {
 	std::ostringstream settingsText;
-	settingsText << "CG2EditorSettings|1\r\n"
+	settingsText << "ManoEngineEditorSettings|1\r\n"
 	             << "AutoSaveEnabled|" << (isAutoSaveEnabled_ ? 1 : 0) << "\r\n"
 	             << "AutoSaveIntervalSeconds|" << autoSaveIntervalSeconds_ << "\r\n";
 	WriteUtf8BomTextFile(kEditorSettingsPath, settingsText.str());
@@ -1557,10 +1594,13 @@ void EditorMainMenuBar::Draw(
 	static bool shouldOpenRenderStressPopup = false;  // 現在 Scene を負荷検証用 Scene へ置き換える確認要求
 	static bool shouldOpenGameplayValidationPopup = false;  // 汎用ゲーム基盤の検証Scene作成確認
 	static bool shouldOpenGameBuildPopup = false;  // ゲーム書き出し設定を次フレームで開く要求
+	static bool shouldOpenAboutPopup = false;
+	static bool shouldOpenProjectInfoPopup = false;
+	static std::string environmentReportText;
 	static char sceneSavePathBuffer[260] = {};  // 名前を付けて保存の入力欄
 	static char sceneLoadPathBuffer[260] = {};  // 読込候補一覧での直接入力欄
-	static char productNameBuffer[128] = "CG2Game";  // 書き出す exe の名前
-	static char outputDirectoryBuffer[260] = "Builds/CG2Game";  // Player の出力先
+	static char productNameBuffer[128] = "ManoEngineGame";  // 書き出す exe の名前
+	static char outputDirectoryBuffer[260] = "Builds/ManoEngineGame";  // Player の出力先
 	static EditorGameBuildSettings gameBuildSettings{};  // Build Settings モーダルの編集状態
 
 	// MainMenuBar が開けないフレームはメニュー描画を行わない
@@ -1696,7 +1736,10 @@ void EditorMainMenuBar::Draw(
 		ImGui::Separator();
 
 		if (ImGui::MenuItem("終了")) {
-			PostQuitMessage(0);  // 上部メニューからも通常の終了導線へ流す
+			// WM_CLOSE に集約し、Window の×ボタンと同じ保存確認を必ず通す。
+			if (g_windowHandle != nullptr) {
+				PostMessageW(g_windowHandle, WM_CLOSE, 0u, 0);
+			}
 		}
 
 		ImGui::EndMenu();
@@ -1879,6 +1922,7 @@ void EditorMainMenuBar::Draw(
 		ImGui::MenuItem("Event Timeline", nullptr, &g_isGameplayTimelineWindowVisible);
 		ImGui::MenuItem("State Graph", nullptr, &g_isStateGraphWindowVisible);
 		ImGui::MenuItem("診断・Profiler", nullptr, &g_isDiagnosticsWindowVisible);
+		ImGui::MenuItem("外部認識・オンライン", nullptr, &g_isExternalFeatureWindowVisible);
 		ImGui::MenuItem("ログ監視", nullptr, &g_isLogMonitorWindowVisible);
 		ImGui::MenuItem("共同制作", nullptr, &g_isTeamCollaborationWindowVisible);
 		ImGui::MenuItem("Hook / Wire デバッグ", nullptr, &g_isHookWireDebugWindowVisible);
@@ -1905,6 +1949,85 @@ void EditorMainMenuBar::Draw(
 		}
 
 		ImGui::EndMenu();
+	}
+
+	if (ImGui::BeginMenu("ヘルプ")) {
+		if (ImGui::MenuItem("Project / Version情報")) shouldOpenProjectInfoPopup = true;
+		if (ImGui::MenuItem("ManoEngineについて")) shouldOpenAboutPopup = true;
+		ImGui::EndMenu();
+	}
+
+	if (shouldOpenAboutPopup) {
+		ImGui::OpenPopup("ManoEngineAboutPopup");
+		shouldOpenAboutPopup = false;
+	}
+	if (ImGui::BeginPopupModal("ManoEngineAboutPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::Text("ManoEngine %s", GetManoEngineDisplayVersion().c_str());
+		ImGui::Text("Channel: %s", GetEngineUpdateChannelText(GetManoEngineUpdateChannel()));
+		ImGui::Text("Project / Scene / Prefab Format: %u / %u / %u",
+			GetManoProjectFormatVersion(), GetManoSceneFormatVersion(), GetManoPrefabFormatVersion());
+		ImGui::Text("C++ Script API: %u", GetManoScriptApiVersion());
+		if (ImGui::Button("閉じる", ImVec2(120.0f, 0.0f))) ImGui::CloseCurrentPopup();
+		ImGui::EndPopup();
+	}
+
+	if (shouldOpenProjectInfoPopup) {
+		ImGui::OpenPopup("ProjectVersionInfoPopup");
+		shouldOpenProjectInfoPopup = false;
+	}
+	if (ImGui::BeginPopupModal("ProjectVersionInfoPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+		static ProjectVersionSettings projectVersion = ProjectVersionManager::CreateCurrentDefaults();
+		static bool hasLoadedProjectVersion = false;
+		static std::string projectVersionMessage;
+		if (!hasLoadedProjectVersion) {
+			ProjectVersionManager::Load(std::filesystem::current_path(), projectVersion, projectVersionMessage);
+			hasLoadedProjectVersion = true;
+		}
+		ImGui::Text("Engine: %s", GetManoEngineDisplayVersion().c_str());
+		ImGui::Text("Required Engine: %s (%s)", projectVersion.requiredEngineVersion.ToString().c_str(),
+			projectVersion.engineVersionPolicy == ProjectEngineVersionPolicy::Pinned ? "Pinned" : "Minimum");
+		ImGui::Text("Project / Scene / Prefab Format: %u / %u / %u",
+			projectVersion.projectFormatVersion, projectVersion.sceneFormatVersion, projectVersion.prefabFormatVersion);
+		// Project側のScript APIはProjectVersion.cg2へ保存される値で、Engine側と別物である。
+		// 共同制作の参加判定はProject側の値を見るため、ずれていることが分かるよう両方出す。
+		ImGui::Text("Script API: Project %u / Engine %u",
+			projectVersion.requiredScriptApiVersion, GetManoScriptApiVersion());
+		if (projectVersion.requiredScriptApiVersion != GetManoScriptApiVersion()) {
+			ImGui::TextColored(
+				ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
+				"%s",
+				"Project側Script APIが現在Engineと違います。固定し直すと現在値へ更新されます。");
+		}
+		int channelIndex = static_cast<int>(projectVersion.updateChannel);
+		const char* channels[] = {"Stable", "Beta", "Dev"};
+		if (ImGui::Combo("Project Update Channel", &channelIndex, channels, IM_ARRAYSIZE(channels)))
+			projectVersion.updateChannel = static_cast<EngineUpdateChannel>(channelIndex);
+		bool pinsVersion = projectVersion.engineVersionPolicy == ProjectEngineVersionPolicy::Pinned;
+		if (ImGui::Checkbox("このProjectを現在Engine Versionへ固定", &pinsVersion)) {
+			projectVersion.engineVersionPolicy = pinsVersion ? ProjectEngineVersionPolicy::Pinned : ProjectEngineVersionPolicy::Minimum;
+
+			// Engine Versionだけ更新するとScript APIが旧Engineの値のまま残り、
+			// 「両方とも同じVersionなのに不一致」と言われる状態になる。Engine由来の値はまとめて合わせる。
+			if (pinsVersion) {
+				projectVersion.requiredEngineVersion = GetManoEngineVersion();
+				projectVersion.requiredScriptApiVersion = GetManoScriptApiVersion();
+			}
+		}
+		if (ImGui::Button("Version設定を保存")) {
+			ProjectVersionManager::Save(std::filesystem::current_path(), projectVersion, projectVersionMessage);
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("環境診断")) {
+			environmentReportText = EngineEnvironmentCheck::Run(
+				GetRunningExecutableDirectory(), EnvironmentCheckMode::EditorUser).ToText();
+		}
+		if (!projectVersionMessage.empty()) ImGui::TextWrapped("%s", projectVersionMessage.c_str());
+		if (!environmentReportText.empty()) ImGui::TextWrapped("%s", environmentReportText.c_str());
+		if (ImGui::Button("閉じる", ImVec2(120.0f, 0.0f))) {
+			hasLoadedProjectVersion = false;
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
 	}
 
 	if (shouldOpenNewScenePopup) {
@@ -2072,7 +2195,14 @@ void EditorMainMenuBar::Draw(
 		ImGui::Text("ゲーム書き出し設定");
 		ImGui::InputText("ゲーム名", productNameBuffer, sizeof(productNameBuffer));
 		ImGui::InputText("出力先", outputDirectoryBuffer, sizeof(outputDirectoryBuffer));
-		ImGui::TextDisabled("Release ビルド済みの実行ファイルと最新 Assets を出力します");
+		int32_t buildConfiguration = static_cast<int32_t>(gameBuildSettings.configuration);
+		const char* buildConfigurationNames[] = {"Development (Debug)", "Release"};
+		if (ImGui::Combo("ビルド構成", &buildConfiguration, buildConfigurationNames, IM_ARRAYSIZE(buildConfigurationNames))) {
+			gameBuildSettings.configuration = buildConfiguration == 0
+				? EditorGameBuildConfiguration::Development
+				: EditorGameBuildConfiguration::Release;
+		}
+		ImGui::TextDisabled("Development は調査用、Release は配布用の最適化ビルドです");
 		ImGui::Checkbox("参照されるAssetだけを出力", &gameBuildSettings.includeOnlyReferencedAssets);
 		ImGui::TextDisabled("共通Shader、ThirdParty、既定Fallbackは常に含まれます");
 		ImGui::Separator();
@@ -2147,10 +2277,12 @@ void EditorMainMenuBar::Draw(
 				g_gameBuildScenePaths = gameBuildSettings.scenePaths;
 			}
 
+			SetEditorTeamBuildActivity(wasSettingsSaved);
 			const bool wasGameExported = wasSettingsSaved &&
 				EditorGameBuildManager::ExportReleaseGame(
 					gameBuildSettings,
 					buildMessage);
+			SetEditorTeamBuildActivity(false);
 
 			if (!wasSettingsSaved) {
 				buildMessage = "Build: ProjectSettings を保存できません";

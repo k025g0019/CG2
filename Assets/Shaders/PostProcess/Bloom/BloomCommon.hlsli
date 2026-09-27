@@ -1,5 +1,5 @@
-﻿#ifndef CG2_BLOOM_COMMON_HLSLI
-#define CG2_BLOOM_COMMON_HLSLI
+﻿#ifndef MANOENGINE_BLOOM_COMMON_HLSLI
+#define MANOENGINE_BLOOM_COMMON_HLSLI
 
 float Luminance(float3 color)
 {

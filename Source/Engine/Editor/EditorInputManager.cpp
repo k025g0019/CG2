@@ -4,6 +4,7 @@
 
 #include "EditorComponentUtility.h"
 #include "EditorSharedState.h"
+#include "Source/Engine/Core/GamepadInput.h"
 
 #include <Windows.h>
 
@@ -22,17 +23,22 @@ namespace {
 			int32_t downKey = 0;  // 2DVector Composite の負方向 Y。
 			int32_t leftKey = 0;  // 2DVector Composite の負方向 X。
 			int32_t rightKey = 0;  // 2DVector Composite の正方向 X。
-			std::string bindingPath;  // Keyboard/2DVector(W,S,A,D) のような表示用 Path。
+			bool usesGamepadStick = false;  // true なら Keyboard ではなく Gamepad Stick / DPad を読む。
+			GamepadStick gamepadStick = GamepadStick::Left;
+			std::string bindingPath;  // Keyboard/2DVector(W,S,A,D) や Gamepad/LeftStick のような表示用 Path。
 		};
-		std::unordered_map<std::string, Vector2Binding> vector2Bindings;  // Move / Look / Steer など任意名の Vector2 Action。
+		// 1つのActionへ Keyboard と Gamepad を同時に割り当てられるよう、複数Bindingを保持する。
+		std::unordered_map<std::string, std::vector<Vector2Binding>> vector2Bindings;
 
 		struct ButtonBinding {
 			bool usesMouse = false;  // true ならキーではなくマウスボタンを使う。
+			bool usesGamepad = false;  // true なら Gamepad ボタンを読む。
 			int32_t key = 0;  // キー入力の DirectInput 番号。
 			int32_t mouseButton = -1;  // マウス入力のボタン番号。
-			std::string bindingPath;  // Keyboard/Space または Mouse/LeftButton。
+			GamepadButton gamepadButton = GamepadButton::None;
+			std::string bindingPath;  // Keyboard/Space、Mouse/LeftButton、Gamepad/A。
 		};
-		std::unordered_map<std::string, ButtonBinding> buttonBindings;  // Jump / Fire / Submit / LeftClick など任意の Button Action を保持する。
+		std::unordered_map<std::string, std::vector<ButtonBinding>> buttonBindings;
 	};
 
 	std::string MakeActionStateKey(int32_t gameObjectId, const std::string& actionMapName, const std::string& actionName) {
@@ -129,7 +135,15 @@ namespace {
 				vector2Binding.rightKey = DikCodeFromName(elements[8]);
 				vector2Binding.bindingPath =
 					"Keyboard/2DVector(" + elements[5] + "," + elements[6] + "," + elements[7] + "," + elements[8] + ")";
-				actionDefinition.vector2Bindings[actionName] = vector2Binding;
+				actionDefinition.vector2Bindings[actionName].push_back(vector2Binding);
+			}
+			else if (valueType == "Vector2" && bindingType == "GamepadStick" && elements.size() >= 6) {
+				// 例: Action|Player|Move|Vector2|GamepadStick|Left
+				PlayerInputActionDefinition::Vector2Binding vector2Binding{};
+				vector2Binding.usesGamepadStick = true;
+				vector2Binding.gamepadStick = GamepadInput::ParseStickName(elements[5]);
+				vector2Binding.bindingPath = "Gamepad/" + elements[5] + "Stick";
+				actionDefinition.vector2Bindings[actionName].push_back(vector2Binding);
 			}
 			else if (valueType == "Button") {
 				PlayerInputActionDefinition::ButtonBinding buttonBinding{};
@@ -142,9 +156,17 @@ namespace {
 					buttonBinding.mouseButton = MouseButtonFromName(elements[5]);
 					buttonBinding.bindingPath = "Mouse/" + elements[5];
 				}
+				else if (bindingType == "Gamepad" && elements.size() >= 6) {
+					// 例: Action|Player|Jump|Button|Gamepad|A
+					buttonBinding.usesGamepad = true;
+					buttonBinding.gamepadButton = GamepadInput::ParseButtonName(elements[5]);
+					buttonBinding.bindingPath = "Gamepad/" + elements[5];
+				}
 
-				if (buttonBinding.key != 0 || buttonBinding.mouseButton >= 0) {
-					actionDefinition.buttonBindings[actionName] = buttonBinding;
+				if (buttonBinding.key != 0 ||
+					buttonBinding.mouseButton >= 0 ||
+					buttonBinding.gamepadButton != GamepadButton::None) {
+					actionDefinition.buttonBindings[actionName].push_back(buttonBinding);
 				}
 			}
 		}
@@ -159,6 +181,7 @@ void EditorInputManager::Initialize(EditorScene* editorScene, std::vector<std::s
 	actionPressedStates_.clear();
 	actionVector2States_.clear();
 	actionButtonStates_.clear();
+	externalActionPressedStates_.clear();
 	isGamePaused_ = false;
 	pausedGameplayInputMap_ = "Gameplay";
 	pausedUiInputMap_ = "UI";
@@ -258,40 +281,86 @@ void EditorInputManager::Update(const uint8_t* keyState, float deltaTime) {
 
 				for (const auto& vector2BindingPair : actionDefinition.vector2Bindings) {
 					const std::string& actionName = vector2BindingPair.first;
-					const PlayerInputActionDefinition::Vector2Binding& vector2Binding = vector2BindingPair.second;
 					float moveInputX = 0.0f;  // DLL Script から参照する Unity 風 Move Vector2 の X。
 					float moveInputY = 0.0f;  // DLL Script から参照する Unity 風 Move Vector2 の Y。
+					std::string activeBindingPath;
 
-					if (IsKeyPressed(keyState, vector2Binding.upKey)) {
-						moveInputY += 1.0f;
+					// 同じActionに複数Binding(Keyboard + Gamepad 等)がある場合は、
+					// 実際に入力が入っているBindingを採用する。両方同時なら後勝ちにせず合算する。
+					for (const PlayerInputActionDefinition::Vector2Binding& vector2Binding : vector2BindingPair.second) {
+						float bindingX = 0.0f;
+						float bindingY = 0.0f;
+
+						if (vector2Binding.usesGamepadStick) {
+							GamepadInput::Get().GetStick(vector2Binding.gamepadStick, -1, bindingX, bindingY);
+						}
+						else {
+							if (IsKeyPressed(keyState, vector2Binding.upKey)) {
+								bindingY += 1.0f;
+							}
+
+							if (IsKeyPressed(keyState, vector2Binding.downKey)) {
+								bindingY -= 1.0f;
+							}
+
+							if (IsKeyPressed(keyState, vector2Binding.leftKey)) {
+								bindingX -= 1.0f;
+							}
+
+							if (IsKeyPressed(keyState, vector2Binding.rightKey)) {
+								bindingX += 1.0f;
+							}
+						}
+
+						if (std::fabs(bindingX) > 0.0001f || std::fabs(bindingY) > 0.0001f) {
+							moveInputX += bindingX;
+							moveInputY += bindingY;
+							activeBindingPath = vector2Binding.bindingPath;
+						}
+						else if (activeBindingPath.empty()) {
+							activeBindingPath = vector2Binding.bindingPath;
+						}
 					}
 
-					if (IsKeyPressed(keyState, vector2Binding.downKey)) {
-						moveInputY -= 1.0f;
-					}
-
-					if (IsKeyPressed(keyState, vector2Binding.leftKey)) {
-						moveInputX -= 1.0f;
-					}
-
-					if (IsKeyPressed(keyState, vector2Binding.rightKey)) {
-						moveInputX += 1.0f;
-					}
+					moveInputX = (std::clamp)(moveInputX, -1.0f, 1.0f);
+					moveInputY = (std::clamp)(moveInputY, -1.0f, 1.0f);
 
 					ActionVector2State moveState{};
 					moveState.x = moveInputX;
 					moveState.y = moveInputY;
 					moveState.isActive = true;
-					moveState.bindingPath = vector2Binding.bindingPath;
+					moveState.bindingPath = activeBindingPath;
 					actionVector2States_[MakeActionStateKey(gameObject.id, playerInput->inputActionMapName, actionName)] = moveState;
 				}
 
 				for (const auto& buttonBindingPair : actionDefinition.buttonBindings) {
 					const std::string& actionName = buttonBindingPair.first;
-					const PlayerInputActionDefinition::ButtonBinding& buttonBinding = buttonBindingPair.second;
-					const bool isPressed = buttonBinding.usesMouse
-						                       ? IsMouseButtonPressed(buttonBinding.mouseButton)
-						                       : IsKeyPressed(keyState, buttonBinding.key);
+					bool isPressed = false;
+					std::string activeBindingPath;
+
+					// どれか1つのBindingが押されていれば押下扱いにする(Keyboard と Gamepad の併用)。
+					for (const PlayerInputActionDefinition::ButtonBinding& buttonBinding : buttonBindingPair.second) {
+						bool isBindingPressed = false;
+
+						if (buttonBinding.usesGamepad) {
+							isBindingPressed = GamepadInput::Get().IsButtonPressed(buttonBinding.gamepadButton, -1);
+						}
+						else if (buttonBinding.usesMouse) {
+							isBindingPressed = IsMouseButtonPressed(buttonBinding.mouseButton);
+						}
+						else {
+							isBindingPressed = IsKeyPressed(keyState, buttonBinding.key);
+						}
+
+						if (isBindingPressed) {
+							isPressed = true;
+							activeBindingPath = buttonBinding.bindingPath;
+						}
+						else if (activeBindingPath.empty()) {
+							activeBindingPath = buttonBinding.bindingPath;
+						}
+					}
+
 					const std::string actionStateKey =
 						MakeActionStateKey(gameObject.id, playerInput->inputActionMapName, actionName);
 					const bool wasPressed = actionPressedStates_[actionStateKey];
@@ -301,10 +370,9 @@ void EditorInputManager::Update(const uint8_t* keyState, float deltaTime) {
 					buttonState.wasJustPressed = isPressed && !wasPressed;
 					buttonState.wasJustReleased = !isPressed && wasPressed;
 					buttonState.isActive = true;
-					buttonState.bindingPath = buttonBinding.bindingPath;
+					buttonState.bindingPath = activeBindingPath;
 					actionButtonStates_[actionStateKey] = buttonState;
 					actionPressedStates_[actionStateKey] = isPressed;
-
 				}
 			}
 		}
@@ -481,6 +549,64 @@ void EditorInputManager::SetPauseInputMaps(
 	actionPressedStates_.clear();
 	actionVector2States_.clear();
 	actionButtonStates_.clear();
+}
+
+void EditorInputManager::InjectActionButton(
+	int32_t gameObjectId,
+	const std::string& actionMapName,
+	const std::string& actionName,
+	bool isPressed,
+	const std::string& bindingPath) {
+	if (actionName.empty()) {
+		return;
+	}
+
+	const std::string resolvedMapName = actionMapName.empty() ? std::string("Player") : actionMapName;
+	const std::string actionStateKey = MakeActionStateKey(gameObjectId, resolvedMapName, actionName);
+	const bool wasPressedByExternal = externalActionPressedStates_[actionStateKey];
+	externalActionPressedStates_[actionStateKey] = isPressed;
+
+	ActionButtonState& buttonState = actionButtonStates_[actionStateKey];
+	// Keyboard / Gamepad 側の結果を消さないよう、押下は OR で合成する。
+	buttonState.isPressed = buttonState.isPressed || isPressed;
+	buttonState.wasJustPressed = buttonState.wasJustPressed || (isPressed && !wasPressedByExternal);
+	buttonState.wasJustReleased = buttonState.wasJustReleased || (!isPressed && wasPressedByExternal);
+	buttonState.isActive = true;
+
+	if (isPressed && !bindingPath.empty()) {
+		buttonState.bindingPath = bindingPath;
+	}
+}
+
+void EditorInputManager::InjectActionVector2(
+	int32_t gameObjectId,
+	const std::string& actionMapName,
+	const std::string& actionName,
+	float x,
+	float y,
+	const std::string& bindingPath) {
+	if (actionName.empty()) {
+		return;
+	}
+
+	const std::string resolvedMapName = actionMapName.empty() ? std::string("Player") : actionMapName;
+	const std::string actionStateKey = MakeActionStateKey(gameObjectId, resolvedMapName, actionName);
+	ActionVector2State& vectorState = actionVector2States_[actionStateKey];
+
+	// 既に Keyboard 側の入力がある場合は、絶対値が大きい方を残す。
+	if (std::fabs(x) >= std::fabs(vectorState.x)) {
+		vectorState.x = x;
+	}
+
+	if (std::fabs(y) >= std::fabs(vectorState.y)) {
+		vectorState.y = y;
+	}
+
+	vectorState.isActive = true;
+
+	if (!bindingPath.empty()) {
+		vectorState.bindingPath = bindingPath;
+	}
 }
 
 bool EditorInputManager::IsKeyPressed(const uint8_t* keyState, int32_t keyIndex) const {

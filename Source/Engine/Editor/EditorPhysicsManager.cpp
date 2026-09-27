@@ -657,6 +657,10 @@ bool EditorPhysicsManager::SetGameObjectTransform(
 	return wasTransformSet;
 }
 
+int32_t EditorPhysicsManager::GetPhysicsBodyCount() const {
+	return joltPhysicsManager_.GetBodyCount();
+}
+
 bool EditorPhysicsManager::Raycast(
 	const Vector3& origin,
 	const Vector3& direction,
@@ -757,6 +761,18 @@ bool EditorPhysicsManager::GetBodyDiagnostics(
 	Vector3& bodyPosition,
 	bool& isAddedToWorld) const {
 	return joltPhysicsManager_.GetBodyDiagnostics(gameObjectId, bodyPosition, isAddedToWorld);
+}
+
+bool EditorPhysicsManager::GetPhysicsShapeTriangles(
+	int32_t gameObjectId,
+	std::vector<EditorJoltPhysicsManager::PhysicsShapeTriangle>& shapeTriangles) const {
+	return joltPhysicsManager_.GetPhysicsShapeTriangles(gameObjectId, shapeTriangles);
+}
+
+bool EditorPhysicsManager::BuildAutoConvexPreviewTriangles(
+	int32_t gameObjectId,
+	std::vector<EditorJoltPhysicsManager::PhysicsShapeTriangle>& shapeTriangles) const {
+	return joltPhysicsManager_.BuildAutoConvexPreviewTriangles(gameObjectId, shapeTriangles);
 }
 
 bool EditorPhysicsManager::GetBodyMass(int32_t gameObjectId, float& bodyMass) const {

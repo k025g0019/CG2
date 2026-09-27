@@ -3,6 +3,8 @@
 #include "EditorSharedState.h"
 #include "Matrix.h"
 #include "StringUtility.h"
+#include "Source/Engine/Asset/AssetImportSettings.h"
+#include "Source/Engine/Asset/AssetRegistry.h"
 
 #include <algorithm>
 #include <cctype>
@@ -12,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <unordered_set>
 
 #pragma warning(disable : 5045)
 
@@ -253,6 +256,7 @@ namespace {
 
 void EditorSceneObjectManager::Initialize(ID3D12Device* device) {
 	device_ = device;  // CreateObject で ConstantBuffer を作るため Device を保持する
+	InitializeObjectBufferPools();
 }
 
 void EditorSceneObjectManager::Update() {
@@ -286,12 +290,35 @@ int32_t EditorSceneObjectManager::CreateObject(
 	sceneObject.name = name;
 	sceneObject.assetPath.clear();
 	sceneObject.textureAssetPath.clear();
-	sceneObject.transformationResource = CreateTransformationResource();
-	sceneObject.transformationData = nullptr;
-	sceneObject.gameTransformationResource = CreateTransformationResource();
-	sceneObject.gameTransformationData = nullptr;
-	sceneObject.materialResource = CreateMaterialResource();
-	sceneObject.materialData = nullptr;
+	uint32_t objectBufferSlot = 0u;
+	if (!AcquireObjectBufferSlot(objectBufferSlot)) {
+		return -1;
+	}
+	constexpr size_t transformationStride =
+		(sizeof(TransformationMatrix) + kConstantBufferAlignment - 1u) & ~(kConstantBufferAlignment - 1u);
+	constexpr size_t materialStride =
+		(sizeof(Material) + kConstantBufferAlignment - 1u) & ~(kConstantBufferAlignment - 1u);
+	const size_t transformationOffset = static_cast<size_t>(objectBufferSlot) * transformationStride;
+	const size_t materialOffset = static_cast<size_t>(objectBufferSlot) * materialStride;
+	sceneObject.transformationResource = transformationPoolResource_;
+	sceneObject.transformationData = reinterpret_cast<TransformationMatrix*>(
+		transformationPoolData_ + transformationOffset);
+	sceneObject.gameTransformationResource = gameTransformationPoolResource_;
+	sceneObject.gameTransformationData = reinterpret_cast<TransformationMatrix*>(
+		gameTransformationPoolData_ + transformationOffset);
+	sceneObject.materialResource = materialPoolResource_;
+	sceneObject.materialData = reinterpret_cast<Material*>(materialPoolData_ + materialOffset);
+	sceneObject.transformationGpuAddress =
+		transformationPoolResource_->GetGPUVirtualAddress() + transformationOffset;
+	sceneObject.gameTransformationGpuAddress =
+		gameTransformationPoolResource_->GetGPUVirtualAddress() + transformationOffset;
+	sceneObject.materialGpuAddress = materialPoolResource_->GetGPUVirtualAddress() + materialOffset;
+	sceneObject.objectBufferSlot = objectBufferSlot;
+	sceneObject.usesSharedObjectBuffers = true;
+	// Materialのpaddingも0へ揃え、同値Materialをmemcmpで安全にBatch判定できるようにする。
+	std::memset(sceneObject.transformationData, 0, sizeof(TransformationMatrix));
+	std::memset(sceneObject.gameTransformationData, 0, sizeof(TransformationMatrix));
+	std::memset(sceneObject.materialData, 0, sizeof(Material));
 	sceneObject.customTextureResource = nullptr;
 	sceneObject.customTextureUploadResource = nullptr;
 	sceneObject.customTextureSrvGpuHandle = {};
@@ -307,6 +334,7 @@ int32_t EditorSceneObjectManager::CreateObject(
 	sceneObject.customMeshIndexResource = nullptr;
 	sceneObject.customMeshIndexBufferView = {};
 	sceneObject.customMeshIndexCount = 0u;
+	sceneObject.usesSharedCustomMesh = false;
 	sceneObject.currentSkinMatrixResource = nullptr;
 	sceneObject.currentSkinMatrixData = nullptr;
 	sceneObject.previousSkinMatrixResource = nullptr;
@@ -317,59 +345,6 @@ int32_t EditorSceneObjectManager::CreateObject(
 	sceneObject.usesSkinning = false;
 	sceneObject.customMeshLocalBoundsCenter = {0.0f, 0.0f, 0.0f};
 	sceneObject.customMeshLocalBoundsSize = {1.0f, 1.0f, 1.0f};
-
-	// 行列用 ConstantBuffer の作成に失敗した場合は無効番号を返す
-	if (sceneObject.transformationResource == nullptr ||
-	    sceneObject.gameTransformationResource == nullptr ||
-	    sceneObject.materialResource == nullptr) {
-		if (sceneObject.transformationResource != nullptr) {
-			sceneObject.transformationResource->Release();
-			sceneObject.transformationResource = nullptr;
-		}
-		if (sceneObject.gameTransformationResource != nullptr) {
-			sceneObject.gameTransformationResource->Release();
-			sceneObject.gameTransformationResource = nullptr;
-		}
-		if (sceneObject.materialResource != nullptr) {
-			sceneObject.materialResource->Release();
-			sceneObject.materialResource = nullptr;
-		}
-		return -1;
-	}
-
-	// CPU から毎フレーム WVP / World を書き込むため Map する
-	HRESULT mapResult = sceneObject.transformationResource->Map(
-		0,
-		nullptr,
-		reinterpret_cast<void**>(&sceneObject.transformationData));
-	if (FAILED(mapResult) || sceneObject.transformationData == nullptr) {
-		sceneObject.transformationResource->Release();  // Map に失敗した Resource は使わないので解放する
-		sceneObject.gameTransformationResource->Release();
-		sceneObject.materialResource->Release();
-		return -1;
-	}
-
-	mapResult = sceneObject.gameTransformationResource->Map(
-		0,
-		nullptr,
-		reinterpret_cast<void**>(&sceneObject.gameTransformationData));
-	if (FAILED(mapResult) || sceneObject.gameTransformationData == nullptr) {
-		sceneObject.transformationResource->Release();  // 片方だけ Map 成功した場合も両方解放して中途半端な Object を残さない
-		sceneObject.gameTransformationResource->Release();
-		sceneObject.materialResource->Release();
-		return -1;
-	}
-
-	mapResult = sceneObject.materialResource->Map(
-		0,
-		nullptr,
-		reinterpret_cast<void**>(&sceneObject.materialData));
-	if (FAILED(mapResult) || sceneObject.materialData == nullptr) {
-		sceneObject.transformationResource->Release();  // Material まで Map できた Object だけを Scene に残す
-		sceneObject.gameTransformationResource->Release();
-		sceneObject.materialResource->Release();
-		return -1;
-	}
 
 	sceneObject.transformationData->WVP = MakeIdentity4x4();  // 初回描画前の行列を単位行列にしておく
 	sceneObject.transformationData->previousWVP = MakeIdentity4x4();
@@ -520,10 +495,10 @@ bool EditorSceneObjectManager::SetCustomTexture(int32_t sceneObjectIndex, const 
 	}
 
 	ClearCustomTexture(sceneObjectIndex);
-	const bool isLoaded = LoadTextureResource(
+	// Upload Bufferと実体は共有Cacheが所有し、SceneObjectはSRVを借りるだけにする。
+	const bool isLoaded = AcquireSharedModelTexture(
 		textureAssetPath,
 		sceneObject.customTextureResource,
-		sceneObject.customTextureUploadResource,
 		sceneObject.customTextureSrvGpuHandle,
 		sceneObject.customTextureDescriptorIndex);
 
@@ -587,10 +562,9 @@ bool EditorSceneObjectManager::SetMaterialTexture(
 	}
 
 	ClearMaterialTexture(sceneObjectIndex, textureSlot);
-	const bool isLoaded = LoadTextureResource(
+	const bool isLoaded = AcquireSharedModelTexture(
 		textureAssetPath,
 		sceneObject.materialTextureResources[textureSlotArrayIndex],
-		sceneObject.materialTextureUploadResources[textureSlotArrayIndex],
 		sceneObject.materialTextureSrvGpuHandles[textureSlotArrayIndex],
 		sceneObject.materialTextureDescriptorIndices[textureSlotArrayIndex]);
 
@@ -617,11 +591,12 @@ void EditorSceneObjectManager::ClearCustomTexture(int32_t sceneObjectIndex) {
 		return;
 	}
 
-	ReleaseTextureResource(
-		sceneObject.customTextureResource,
-		sceneObject.customTextureUploadResource,
-		sceneObject.customTextureSrvGpuHandle,
-		sceneObject.customTextureDescriptorIndex);
+	// 実体は共有Cacheが持つため、ここでは参照を返して借りたHandleを捨てるだけにする。
+	ReleaseSharedModelTexture(sceneObject.textureAssetPath);
+	sceneObject.customTextureResource = nullptr;
+	sceneObject.customTextureUploadResource = nullptr;
+	sceneObject.customTextureSrvGpuHandle = {};
+	sceneObject.customTextureDescriptorIndex = -1;
 	sceneObject.textureAssetPath.clear();
 }
 
@@ -647,11 +622,11 @@ void EditorSceneObjectManager::ClearMaterialTexture(
 		return;
 	}
 
-	ReleaseTextureResource(
-		sceneObject.materialTextureResources[textureSlotArrayIndex],
-		sceneObject.materialTextureUploadResources[textureSlotArrayIndex],
-		sceneObject.materialTextureSrvGpuHandles[textureSlotArrayIndex],
-		sceneObject.materialTextureDescriptorIndices[textureSlotArrayIndex]);
+	ReleaseSharedModelTexture(sceneObject.materialTextureAssetPaths[textureSlotArrayIndex]);
+	sceneObject.materialTextureResources[textureSlotArrayIndex] = nullptr;
+	sceneObject.materialTextureUploadResources[textureSlotArrayIndex] = nullptr;
+	sceneObject.materialTextureSrvGpuHandles[textureSlotArrayIndex] = {};
+	sceneObject.materialTextureDescriptorIndices[textureSlotArrayIndex] = -1;
 	sceneObject.materialTextureAssetPaths[textureSlotArrayIndex].clear();
 }
 
@@ -671,9 +646,22 @@ bool EditorSceneObjectManager::LoadTextureResource(
 	int32_t& descriptorIndex) {
 	using namespace EditorSharedState;
 
+	// 参照先が無いTextureは黙って白いObjectになるだけで、原因がSceneなのか描画なのか判別できない。
+	// Pathは消さずに保持したまま、Consoleへ1回だけ理由を出す(毎フレーム出すとLogが埋まる)。
+	const std::filesystem::path resolvedTexturePath = ResolveEngineOrProjectFilePath(textureAssetPath);
+	if (!textureAssetPath.empty() && !std::filesystem::exists(resolvedTexturePath)) {
+		static std::unordered_set<std::string> reportedMissingTexturePaths;
+
+		if (reportedMissingTexturePaths.insert(textureAssetPath).second) {
+			Log("Asset: Textureが見つかりません " + textureAssetPath +
+				" (参照は保持しています。Pathを直すか、Assetを戻してください)");
+		}
+
+		return false;
+	}
+
 	if (device_ == nullptr ||
 		textureAssetPath.empty() ||
-		!std::filesystem::exists(textureAssetPath) ||
 		g_commandAllocator == nullptr ||
 		g_commandList == nullptr ||
 		g_commandQueue == nullptr ||
@@ -689,7 +677,29 @@ bool EditorSceneObjectManager::LoadTextureResource(
 
 	using namespace EditorSharedState;
 
-	DirectX::ScratchImage mipImages = LoadTexture(ConvertString(textureAssetPath));
+	// AssetId経由でTexture Import Settings(sRGB/NormalMap/Mipmap/MaxSize)を解決する。
+	// 未登録Assetや設定Storeに実体が無い場合は、変更前と同じ既定値(sRGB/Mipmap有効・制限無し)で読む。
+	bool textureForceSrgb = true;
+	bool textureGenerateMipmaps = true;
+	int32_t textureMaxSize = 0;
+	const AssetRecord* textureRecord = AssetRegistry::Get().FindByPath(textureAssetPath);
+	if (textureRecord != nullptr) {
+		const AssetImportMetadata* textureImportMetadata =
+			AssetImportSettingsStore::Get().Find(textureRecord->id);
+		if (textureImportMetadata != nullptr) {
+			textureForceSrgb = textureImportMetadata->texture.isNormalMap
+				? false
+				: textureImportMetadata->texture.srgb;
+			textureGenerateMipmaps = textureImportMetadata->texture.generateMipmaps;
+			textureMaxSize = textureImportMetadata->texture.maxSize;
+		}
+	}
+
+	DirectX::ScratchImage mipImages = LoadTexture(
+		ConvertString(textureAssetPath),
+		textureForceSrgb,
+		textureGenerateMipmaps,
+		textureMaxSize);
 	const DirectX::TexMetadata textureMetadata = mipImages.GetMetadata();
 	textureResource = CreateTextureResource(device_, textureMetadata);
 	if (textureResource == nullptr) {
@@ -791,57 +801,68 @@ bool EditorSceneObjectManager::SetCustomModelMesh(
 	EditorSceneObject& sceneObject = sceneObjects_[static_cast<size_t>(sceneObjectIndex)];
 	ClearCustomModelMesh(sceneObjectIndex);
 
-	const size_t vertexBufferSize = sizeof(VertexData) * modelData.vertices.size();
-	sceneObject.customMeshVertexResource = CreateVertexResource(vertexBufferSize);
-	if (sceneObject.customMeshVertexResource == nullptr) {
-		return false;
+	SharedModelMesh* sharedMesh = nullptr;
+	if (!assetPath.empty()) {
+		auto sharedMeshIterator = sharedModelMeshes_.find(assetPath);
+		if (sharedMeshIterator != sharedModelMeshes_.end()) {
+			sharedMesh = &sharedMeshIterator->second;
+		}
+		else {
+			SharedModelMesh newSharedMesh{};
+			const size_t vertexBufferSize = sizeof(VertexData) * modelData.vertices.size();
+			size_t vertexByteOffset = 0u;
+			if (!AllocateMeshAtlasRange(
+				vertexAtlasPages_,
+				modelData.vertices.data(),
+				vertexBufferSize,
+				alignof(VertexData),
+				newSharedMesh.vertexResource,
+				vertexByteOffset)) {
+				return false;
+			}
+			newSharedMesh.vertexBufferView.BufferLocation =
+				newSharedMesh.vertexResource->GetGPUVirtualAddress() + vertexByteOffset;
+			newSharedMesh.vertexBufferView.SizeInBytes = static_cast<UINT>(vertexBufferSize);
+			newSharedMesh.vertexBufferView.StrideInBytes = sizeof(VertexData);
+			newSharedMesh.vertexCount = static_cast<uint32_t>(modelData.vertices.size());
+
+			if (!modelData.indices.empty()) {
+				const size_t indexBufferSize = sizeof(uint32_t) * modelData.indices.size();
+				size_t indexByteOffset = 0u;
+				if (!AllocateMeshAtlasRange(
+					indexAtlasPages_,
+					modelData.indices.data(),
+					indexBufferSize,
+					alignof(uint32_t),
+					newSharedMesh.indexResource,
+					indexByteOffset)) {
+					return false;
+				}
+				newSharedMesh.indexBufferView.BufferLocation =
+					newSharedMesh.indexResource->GetGPUVirtualAddress() + indexByteOffset;
+				newSharedMesh.indexBufferView.SizeInBytes = static_cast<UINT>(indexBufferSize);
+				newSharedMesh.indexBufferView.Format = DXGI_FORMAT_R32_UINT;
+				newSharedMesh.indexCount = static_cast<uint32_t>(modelData.indices.size());
+			}
+
+			auto insertedMesh = sharedModelMeshes_.emplace(assetPath, newSharedMesh);
+			sharedMesh = &insertedMesh.first->second;
+		}
 	}
 
-	VertexData* mappedVertexData = nullptr;
-	const HRESULT mapResult = sceneObject.customMeshVertexResource->Map(
-		0,
-		nullptr,
-		reinterpret_cast<void**>(&mappedVertexData));
-	if (FAILED(mapResult) || mappedVertexData == nullptr) {
-		sceneObject.customMeshVertexResource->Release();
-		sceneObject.customMeshVertexResource = nullptr;
-		return false;
+	if (sharedMesh != nullptr) {
+		sharedMesh->referenceCount++;
+		sceneObject.customMeshVertexResource = sharedMesh->vertexResource;
+		sceneObject.customMeshVertexBufferView = sharedMesh->vertexBufferView;
+		sceneObject.customMeshVertexCount = sharedMesh->vertexCount;
+		sceneObject.customMeshIndexResource = sharedMesh->indexResource;
+		sceneObject.customMeshIndexBufferView = sharedMesh->indexBufferView;
+		sceneObject.customMeshIndexCount = sharedMesh->indexCount;
+		sceneObject.usesSharedCustomMesh = true;
+		sceneObject.assetPath = assetPath;
 	}
-
-	std::memcpy(mappedVertexData, modelData.vertices.data(), vertexBufferSize);
-	sceneObject.customMeshVertexBufferView.BufferLocation =
-		sceneObject.customMeshVertexResource->GetGPUVirtualAddress();
-	sceneObject.customMeshVertexBufferView.SizeInBytes = static_cast<UINT>(vertexBufferSize);
-	sceneObject.customMeshVertexBufferView.StrideInBytes = sizeof(VertexData);
-	sceneObject.customMeshVertexCount = static_cast<uint32_t>(modelData.vertices.size());
-
-	// 共有頂点を持つメッシュだけ Index Buffer を追加し、既存 OBJ / FBX は従来経路を維持する。
-	if (!modelData.indices.empty()) {
-		const size_t indexBufferSize = sizeof(uint32_t) * modelData.indices.size();
-		sceneObject.customMeshIndexResource = CreateVertexResource(indexBufferSize);
-
-		if (sceneObject.customMeshIndexResource == nullptr) {
-			ClearCustomModelMesh(sceneObjectIndex);
-			return false;
-		}
-
-		uint32_t* mappedIndexData = nullptr;
-		const HRESULT indexMapResult = sceneObject.customMeshIndexResource->Map(
-			0,
-			nullptr,
-			reinterpret_cast<void**>(&mappedIndexData));
-
-		if (FAILED(indexMapResult) || mappedIndexData == nullptr) {
-			ClearCustomModelMesh(sceneObjectIndex);
-			return false;
-		}
-
-		std::memcpy(mappedIndexData, modelData.indices.data(), indexBufferSize);
-		sceneObject.customMeshIndexBufferView.BufferLocation =
-			sceneObject.customMeshIndexResource->GetGPUVirtualAddress();
-		sceneObject.customMeshIndexBufferView.SizeInBytes = static_cast<UINT>(indexBufferSize);
-		sceneObject.customMeshIndexBufferView.Format = DXGI_FORMAT_R32_UINT;
-		sceneObject.customMeshIndexCount = static_cast<uint32_t>(modelData.indices.size());
+	else {
+		return false;
 	}
 
 	const std::vector<Matrix4x4>* initialSkinMatrices =
@@ -1009,24 +1030,108 @@ void EditorSceneObjectManager::ClearCustomModelMesh(int32_t sceneObjectIndex) {
 
 	EditorSceneObject& sceneObject = sceneObjects_[static_cast<size_t>(sceneObjectIndex)];
 	ClearSkinningResources(sceneObjectIndex);
-	if (sceneObject.customMeshVertexResource != nullptr) {
-		sceneObject.customMeshVertexResource->Release();
-		sceneObject.customMeshVertexResource = nullptr;
+	if (sceneObject.usesSharedCustomMesh) {
+		auto sharedMeshIterator = sharedModelMeshes_.find(sceneObject.assetPath);
+		if (sharedMeshIterator != sharedModelMeshes_.end()) {
+			SharedModelMesh& sharedMesh = sharedMeshIterator->second;
+			sharedMesh.referenceCount = (std::max)(sharedMesh.referenceCount - 1, 0);
+			if (sharedMesh.referenceCount == 0) {
+				// Atlasページ内の領域は他Meshと共有するため個別Releaseしない。
+				sharedModelMeshes_.erase(sharedMeshIterator);
+			}
+		}
 	}
+	else {
+		if (sceneObject.customMeshVertexResource != nullptr) {
+			sceneObject.customMeshVertexResource->Release();
+		}
+		if (sceneObject.customMeshIndexResource != nullptr) {
+			sceneObject.customMeshIndexResource->Release();
+		}
+	}
+	sceneObject.customMeshVertexResource = nullptr;
 	sceneObject.customMeshVertexBufferView = {};
 	sceneObject.customMeshVertexCount = 0u;
-
-	if (sceneObject.customMeshIndexResource != nullptr) {
-		sceneObject.customMeshIndexResource->Release();
-		sceneObject.customMeshIndexResource = nullptr;
-	}
-
+	sceneObject.customMeshIndexResource = nullptr;
 	sceneObject.customMeshIndexBufferView = {};
 	sceneObject.customMeshIndexCount = 0u;
+	sceneObject.usesSharedCustomMesh = false;
 	sceneObject.customMeshLocalBoundsCenter = {0.0f, 0.0f, 0.0f};
 	sceneObject.customMeshLocalBoundsSize = {1.0f, 1.0f, 1.0f};
 	sceneObject.usesCustomMesh = false;
 	sceneObject.assetPath.clear();
+}
+
+void EditorSceneObjectManager::InvalidateAssetResources(const std::string& assetPath) {
+	if (assetPath.empty()) {
+		return;
+	}
+
+	auto normalizePath = [](const std::string& path) {
+		std::string normalizedPath = std::filesystem::path(path).lexically_normal().generic_string();
+		std::transform(normalizedPath.begin(), normalizedPath.end(), normalizedPath.begin(), [](unsigned char character) {
+			return static_cast<char>(std::tolower(character));
+		});
+		return normalizedPath;
+	};
+	const std::string normalizedAssetPath = normalizePath(assetPath);
+
+	for (int32_t sceneObjectIndex = 0;
+		sceneObjectIndex < static_cast<int32_t>(sceneObjects_.size());
+		sceneObjectIndex++) {
+		EditorSceneObject& sceneObject = sceneObjects_[static_cast<size_t>(sceneObjectIndex)];
+
+		if (normalizePath(sceneObject.assetPath) == normalizedAssetPath) {
+			ClearCustomModelMesh(sceneObjectIndex);
+		}
+		if (normalizePath(sceneObject.textureAssetPath) == normalizedAssetPath) {
+			ClearCustomTexture(sceneObjectIndex);
+		}
+
+		for (int32_t textureSlotIndex = 0;
+			textureSlotIndex < static_cast<int32_t>(EditorMaterialTextureSlot::Count);
+			textureSlotIndex++) {
+			const size_t textureSlotArrayIndex = static_cast<size_t>(textureSlotIndex);
+			if (normalizePath(sceneObject.materialTextureAssetPaths[textureSlotArrayIndex]) == normalizedAssetPath) {
+				ClearMaterialTexture(
+					sceneObjectIndex,
+					static_cast<EditorMaterialTextureSlot>(textureSlotIndex));
+			}
+		}
+	}
+
+	// 上でSceneObject側の参照を外しているため、ここへ残るのは参照0または失敗記録だけになる。
+	// まだ参照が残っているEntryを消すと借用中のSRVが宙に浮くため、その場合は触らない。
+	for (auto iterator = sharedModelTextures_.begin(); iterator != sharedModelTextures_.end();) {
+		if (normalizePath(iterator->first) != normalizedAssetPath ||
+			iterator->second.referenceCount > 0) {
+			++iterator;
+			continue;
+		}
+
+		SharedModelTexture& sharedTexture = iterator->second;
+		ReleaseTextureResource(
+			sharedTexture.textureResource,
+			sharedTexture.uploadResource,
+			sharedTexture.srvGpuHandle,
+			sharedTexture.descriptorIndex);
+		iterator = sharedModelTextures_.erase(iterator);
+	}
+
+	for (auto iterator = cachedUiTextures_.begin(); iterator != cachedUiTextures_.end();) {
+		if (normalizePath(iterator->first) != normalizedAssetPath) {
+			++iterator;
+			continue;
+		}
+
+		CachedUiTexture& cachedTexture = iterator->second;
+		ReleaseTextureResource(
+			cachedTexture.textureResource,
+			cachedTexture.uploadResource,
+			cachedTexture.srvGpuHandle,
+			cachedTexture.descriptorIndex);
+		iterator = cachedUiTextures_.erase(iterator);
+	}
 }
 
 void EditorSceneObjectManager::ReleaseObject(int32_t sceneObjectIndex) {
@@ -1039,21 +1144,30 @@ void EditorSceneObjectManager::ReleaseObject(int32_t sceneObjectIndex) {
 	ClearCustomTexture(sceneObjectIndex);
 	ClearAllMaterialTextures(sceneObjectIndex);
 	ClearCustomModelMesh(sceneObjectIndex);
-	if (sceneObject.transformationResource != nullptr) {
-		sceneObject.transformationResource->Release();
-		sceneObject.transformationResource = nullptr;
-		sceneObject.transformationData = nullptr;
+	if (sceneObject.usesSharedObjectBuffers) {
+		ReleaseObjectBufferSlot(sceneObject.objectBufferSlot);
 	}
-	if (sceneObject.gameTransformationResource != nullptr) {
-		sceneObject.gameTransformationResource->Release();
-		sceneObject.gameTransformationResource = nullptr;
-		sceneObject.gameTransformationData = nullptr;
+	else {
+		if (sceneObject.transformationResource != nullptr) {
+			sceneObject.transformationResource->Release();
+		}
+		if (sceneObject.gameTransformationResource != nullptr) {
+			sceneObject.gameTransformationResource->Release();
+		}
+		if (sceneObject.materialResource != nullptr) {
+			sceneObject.materialResource->Release();
+		}
 	}
-	if (sceneObject.materialResource != nullptr) {
-		sceneObject.materialResource->Release();
-		sceneObject.materialResource = nullptr;
-		sceneObject.materialData = nullptr;
-	}
+	sceneObject.transformationResource = nullptr;
+	sceneObject.transformationData = nullptr;
+	sceneObject.gameTransformationResource = nullptr;
+	sceneObject.gameTransformationData = nullptr;
+	sceneObject.materialResource = nullptr;
+	sceneObject.materialData = nullptr;
+	sceneObject.transformationGpuAddress = 0u;
+	sceneObject.gameTransformationGpuAddress = 0u;
+	sceneObject.materialGpuAddress = 0u;
+	sceneObject.usesSharedObjectBuffers = false;
 }
 
 void EditorSceneObjectManager::ReleaseAll() {
@@ -1076,6 +1190,23 @@ void EditorSceneObjectManager::ReleaseAll() {
 	}
 
 	cachedUiTextures_.clear();
+
+	for (auto& sharedTexturePair : sharedModelTextures_) {
+		SharedModelTexture& sharedTexture = sharedTexturePair.second;
+		ReleaseTextureResource(
+			sharedTexture.textureResource,
+			sharedTexture.uploadResource,
+			sharedTexture.srvGpuHandle,
+			sharedTexture.descriptorIndex);
+	}
+
+	sharedModelTextures_.clear();
+
+	sharedModelMeshes_.clear();
+	ReleaseMeshAtlasPages(indexAtlasPages_);
+	ReleaseMeshAtlasPages(vertexAtlasPages_);
+	ReleaseObjectBufferPools();
+	hasFreedTextureDescriptor_ = false;
 }
 
 std::vector<EditorSceneObject>& EditorSceneObjectManager::GetSceneObjects() {
@@ -1093,7 +1224,8 @@ int32_t EditorSceneObjectManager::AcquireCustomTextureDescriptorIndex() {
 		return descriptorIndex;
 	}
 
-	if (nextCustomTextureDescriptorIndex_ >= 1024) {
+	if (nextCustomTextureDescriptorIndex_ >=
+		static_cast<int32_t>(EditorSharedState::kRuntimeSrvDescriptorHeapCapacity)) {
 		return -1;
 	}
 
@@ -1103,7 +1235,7 @@ int32_t EditorSceneObjectManager::AcquireCustomTextureDescriptorIndex() {
 }
 
 void EditorSceneObjectManager::ReleaseCustomTextureDescriptorIndex(int32_t descriptorIndex) {
-	if (descriptorIndex < 198) {
+	if (descriptorIndex < static_cast<int32_t>(EditorSharedState::kRuntimeReservedSrvDescriptorCount)) {
 		return;
 	}
 
@@ -1115,6 +1247,91 @@ void EditorSceneObjectManager::ReleaseCustomTextureDescriptorIndex(int32_t descr
 	}
 
 	freeCustomTextureDescriptorIndices_.push_back(descriptorIndex);
+	// SRVが空いたので、上限超過で失敗した画像を次の要求で1回だけ読み直せるようにする。
+	hasFreedTextureDescriptor_ = true;
+}
+
+bool EditorSceneObjectManager::AcquireSharedModelTexture(
+	const std::string& textureAssetPath,
+	ID3D12Resource*& textureResource,
+	D3D12_GPU_DESCRIPTOR_HANDLE& srvGpuHandle,
+	int32_t& descriptorIndex) {
+	textureResource = nullptr;
+	srvGpuHandle = {};
+	descriptorIndex = -1;
+	if (textureAssetPath.empty()) {
+		return false;
+	}
+
+	const auto sharedTextureIterator = sharedModelTextures_.find(textureAssetPath);
+	if (sharedTextureIterator != sharedModelTextures_.end()) {
+		SharedModelTexture& sharedTexture = sharedTextureIterator->second;
+
+		if (!sharedTexture.loadFailed && sharedTexture.textureResource != nullptr) {
+			sharedTexture.referenceCount++;
+			textureResource = sharedTexture.textureResource;
+			srvGpuHandle = sharedTexture.srvGpuHandle;
+			descriptorIndex = sharedTexture.descriptorIndex;
+			return true;
+		}
+
+		// 失敗はCacheへ残す。毎フレーム読み直すとLoadTextureResourceのGPU全同期が積み上がる。
+		// SRVが空いた直後だけ、記録を捨てて1回だけ読み直す。
+		if (!hasFreedTextureDescriptor_) {
+			return false;
+		}
+		hasFreedTextureDescriptor_ = false;
+		sharedModelTextures_.erase(sharedTextureIterator);
+	}
+
+	SharedModelTexture sharedTexture{};
+	const bool isLoaded = LoadTextureResource(
+		textureAssetPath,
+		sharedTexture.textureResource,
+		sharedTexture.uploadResource,
+		sharedTexture.srvGpuHandle,
+		sharedTexture.descriptorIndex);
+	if (!isLoaded) {
+		sharedTexture.loadFailed = true;
+		sharedModelTextures_.insert_or_assign(textureAssetPath, sharedTexture);
+		return false;
+	}
+
+	sharedTexture.referenceCount = 1;
+	textureResource = sharedTexture.textureResource;
+	srvGpuHandle = sharedTexture.srvGpuHandle;
+	descriptorIndex = sharedTexture.descriptorIndex;
+	sharedModelTextures_.insert_or_assign(textureAssetPath, sharedTexture);
+	return true;
+}
+
+void EditorSceneObjectManager::ReleaseSharedModelTexture(const std::string& textureAssetPath) {
+	if (textureAssetPath.empty()) {
+		return;
+	}
+
+	const auto sharedTextureIterator = sharedModelTextures_.find(textureAssetPath);
+	if (sharedTextureIterator == sharedModelTextures_.end()) {
+		return;
+	}
+
+	SharedModelTexture& sharedTexture = sharedTextureIterator->second;
+	if (sharedTexture.loadFailed) {
+		// 失敗記録は参照を持たない。次の読み直し判断まで残す。
+		return;
+	}
+
+	sharedTexture.referenceCount--;
+	if (sharedTexture.referenceCount > 0) {
+		return;
+	}
+
+	ReleaseTextureResource(
+		sharedTexture.textureResource,
+		sharedTexture.uploadResource,
+		sharedTexture.srvGpuHandle,
+		sharedTexture.descriptorIndex);
+	sharedModelTextures_.erase(textureAssetPath);
 }
 
 ID3D12Resource* EditorSceneObjectManager::CreateVertexResource(size_t sizeInBytes) const {
@@ -1148,6 +1365,150 @@ ID3D12Resource* EditorSceneObjectManager::CreateVertexResource(size_t sizeInByte
 	}
 
 	return resource;
+}
+
+bool EditorSceneObjectManager::AllocateMeshAtlasRange(
+	std::vector<MeshAtlasPage>& atlasPages,
+	const void* sourceData,
+	size_t dataSize,
+	size_t alignment,
+	ID3D12Resource*& resource,
+	size_t& byteOffset) {
+	resource = nullptr;
+	byteOffset = 0u;
+	if (sourceData == nullptr || dataSize == 0u || alignment == 0u) {
+		return false;
+	}
+
+	auto tryAllocate = [&](MeshAtlasPage& page) {
+		const size_t alignedOffset = (page.used + alignment - 1u) & ~(alignment - 1u);
+		if (page.mappedData == nullptr || alignedOffset + dataSize > page.capacity) {
+			return false;
+		}
+		std::memcpy(page.mappedData + alignedOffset, sourceData, dataSize);
+		page.used = alignedOffset + dataSize;
+		resource = page.resource;
+		byteOffset = alignedOffset;
+		return true;
+	};
+
+	for (MeshAtlasPage& page : atlasPages) {
+		if (tryAllocate(page)) {
+			return true;
+		}
+	}
+
+	constexpr size_t kDefaultAtlasPageSize = 16u * 1024u * 1024u;
+	MeshAtlasPage newPage{};
+	newPage.capacity = (std::max)(kDefaultAtlasPageSize, dataSize + alignment);
+	newPage.resource = CreateVertexResource(newPage.capacity);
+	if (newPage.resource == nullptr ||
+		FAILED(newPage.resource->Map(
+			0,
+			nullptr,
+			reinterpret_cast<void**>(&newPage.mappedData))) ||
+		newPage.mappedData == nullptr) {
+		if (newPage.resource != nullptr) {
+			newPage.resource->Release();
+		}
+		return false;
+	}
+
+	atlasPages.push_back(newPage);
+	return tryAllocate(atlasPages.back());
+}
+
+void EditorSceneObjectManager::ReleaseMeshAtlasPages(
+	std::vector<MeshAtlasPage>& atlasPages) {
+	for (MeshAtlasPage& page : atlasPages) {
+		if (page.resource != nullptr) {
+			page.resource->Unmap(0, nullptr);
+			page.resource->Release();
+		}
+		page = {};
+	}
+	atlasPages.clear();
+}
+
+bool EditorSceneObjectManager::InitializeObjectBufferPools() {
+	if (transformationPoolResource_ != nullptr &&
+		gameTransformationPoolResource_ != nullptr &&
+		materialPoolResource_ != nullptr) {
+		return true;
+	}
+	ReleaseObjectBufferPools();
+	if (device_ == nullptr) {
+		return false;
+	}
+
+	constexpr size_t transformationStride =
+		(sizeof(TransformationMatrix) + kConstantBufferAlignment - 1u) & ~(kConstantBufferAlignment - 1u);
+	constexpr size_t materialStride =
+		(sizeof(Material) + kConstantBufferAlignment - 1u) & ~(kConstantBufferAlignment - 1u);
+	transformationPoolResource_ = CreateVertexResource(
+		transformationStride * kObjectBufferCapacity);
+	gameTransformationPoolResource_ = CreateVertexResource(
+		transformationStride * kObjectBufferCapacity);
+	materialPoolResource_ = CreateVertexResource(materialStride * kObjectBufferCapacity);
+	if (transformationPoolResource_ == nullptr || gameTransformationPoolResource_ == nullptr ||
+		materialPoolResource_ == nullptr) {
+		ReleaseObjectBufferPools();
+		return false;
+	}
+
+	const HRESULT sceneMapResult = transformationPoolResource_->Map(
+		0, nullptr, reinterpret_cast<void**>(&transformationPoolData_));
+	const HRESULT gameMapResult = gameTransformationPoolResource_->Map(
+		0, nullptr, reinterpret_cast<void**>(&gameTransformationPoolData_));
+	const HRESULT materialMapResult = materialPoolResource_->Map(
+		0, nullptr, reinterpret_cast<void**>(&materialPoolData_));
+	if (FAILED(sceneMapResult) || FAILED(gameMapResult) || FAILED(materialMapResult) ||
+		transformationPoolData_ == nullptr || gameTransformationPoolData_ == nullptr ||
+		materialPoolData_ == nullptr) {
+		ReleaseObjectBufferPools();
+		return false;
+	}
+	return true;
+}
+
+bool EditorSceneObjectManager::AcquireObjectBufferSlot(uint32_t& slot) {
+	if (!InitializeObjectBufferPools()) {
+		return false;
+	}
+	if (!freeObjectBufferSlots_.empty()) {
+		slot = freeObjectBufferSlots_.back();
+		freeObjectBufferSlots_.pop_back();
+		return true;
+	}
+	if (nextObjectBufferSlot_ >= kObjectBufferCapacity) {
+		return false;
+	}
+	slot = nextObjectBufferSlot_++;
+	return true;
+}
+
+void EditorSceneObjectManager::ReleaseObjectBufferSlot(uint32_t slot) {
+	if (slot < kObjectBufferCapacity) {
+		freeObjectBufferSlots_.push_back(slot);
+	}
+}
+
+void EditorSceneObjectManager::ReleaseObjectBufferPools() {
+	auto releasePool = [](ID3D12Resource*& resource, uint8_t*& mappedData) {
+		if (resource != nullptr) {
+			if (mappedData != nullptr) {
+				resource->Unmap(0, nullptr);
+			}
+			resource->Release();
+		}
+		resource = nullptr;
+		mappedData = nullptr;
+	};
+	releasePool(transformationPoolResource_, transformationPoolData_);
+	releasePool(gameTransformationPoolResource_, gameTransformationPoolData_);
+	releasePool(materialPoolResource_, materialPoolData_);
+	freeObjectBufferSlots_.clear();
+	nextObjectBufferSlot_ = 0u;
 }
 
 ID3D12Resource* EditorSceneObjectManager::CreateTransformationResource() const {

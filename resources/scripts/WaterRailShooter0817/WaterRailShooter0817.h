@@ -16,8 +16,11 @@ public:
 
 private:
 	bool isPlayerFireHeld_ = false;
+	// Gameplay Sceneの固定ObjectはStart時に解決し、各Script InstanceのUpdateでFindしない。
+	GameObject cachedPlayerShip_;
+	GameObject cachedStageController_;
 	// GameObject名の検索はScene全体の線形走査なので、このInstanceがTitle/Resultの
-	// どちらのControllerかは初回Updateで一度だけ判定して保持する。
+	// どちらのControllerかはStartで一度だけ判定して保持する。
 	bool hasResolvedSceneRole_ = false;
 	bool isTitleController_ = false;
 	bool isResultController_ = false;

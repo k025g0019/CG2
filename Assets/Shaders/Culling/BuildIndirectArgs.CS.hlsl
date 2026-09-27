@@ -4,19 +4,23 @@
     float3 boundsExtent;
     int gameObjectId;
     uint vertexCount;
+    uint indexCount;
+    uint isIndexed;
 };
 
-struct DrawArguments
+struct IndirectArguments
 {
-    uint vertexCountPerInstance;
+    uint vertexOrIndexCountPerInstance;
     uint instanceCount;
-    uint startVertexLocation;
+    uint startVertexOrIndexLocation;
+    int baseVertexLocation;
     uint startInstanceLocation;
+	uint padding;
 };
 
 StructuredBuffer<CullingObject> gCullingObjects : register(t0);
 StructuredBuffer<uint> gVisibility : register(t1);
-RWStructuredBuffer<DrawArguments> gDrawArguments : register(u0);
+RWStructuredBuffer<IndirectArguments> gDrawArguments : register(u0);
 
 cbuffer CullingConstants : register(b0)
 {
@@ -41,12 +45,16 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         return;
     }
 
-    DrawArguments drawArguments;
-    drawArguments.vertexCountPerInstance = gVisibility[objectIndex] != 0u
-        ? gCullingObjects[objectIndex].vertexCount
+    IndirectArguments drawArguments;
+    drawArguments.vertexOrIndexCountPerInstance = gVisibility[objectIndex] != 0u
+        ? (gCullingObjects[objectIndex].isIndexed != 0u
+            ? gCullingObjects[objectIndex].indexCount
+            : gCullingObjects[objectIndex].vertexCount)
         : 0u;
     drawArguments.instanceCount = gVisibility[objectIndex] != 0u ? 1u : 0u;
-    drawArguments.startVertexLocation = 0u;
+    drawArguments.startVertexOrIndexLocation = 0u;
+    drawArguments.baseVertexLocation = 0;
     drawArguments.startInstanceLocation = 0u;
+	drawArguments.padding = 0u;
     gDrawArguments[objectIndex] = drawArguments;
 }

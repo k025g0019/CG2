@@ -4,6 +4,7 @@
 
 #include "Engine/Input/InputSystem.h"
 #include "EditorSharedState.h"
+#include "Source/Engine/Core/GamepadInput.h"
 
 using namespace EditorSharedState;
 
@@ -116,6 +117,13 @@ void EditorFrameInputManager::Update() {
 	//================================================================
 
 	g_feelKitHaptics.update();
+
+	//================================================================
+	// Gamepad (XInput) 状態の取得
+	//================================================================
+	// Input Action の Gamepad Binding はここで更新した値を読む。
+	// 未接続・抜き差しは GamepadInput 側が中立値へ倒して安全に扱う。
+	GamepadInput::Get().Update();
 
 	//================================================================
 	// DirectInput マウス状態の取得

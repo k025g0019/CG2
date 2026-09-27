@@ -6,6 +6,7 @@
 #include "EditorInputManager.h"
 #include "EditorLogFieldRegistry.generated.h"
 #include "EditorOceanSystem.h"
+#include "EditorPhysicsManager.h"
 #include "EditorScriptManager.h"
 #include "EditorTargetingManager.h"
 #include "EditorWeaponManager.h"
@@ -256,7 +257,8 @@ void EditorRuntimePropertyManager::Initialize(
 	EditorDamageManager* damageManager,
 	EditorInputManager* inputManager,
 	EditorAudioManager* audioManager,
-	EditorEffectManager* effectManager) {
+	EditorEffectManager* effectManager,
+	EditorPhysicsManager* physicsManager) {
 	editorScene_ = editorScene;
 	scriptManager_ = scriptManager;
 	targetingManager_ = targetingManager;
@@ -265,6 +267,7 @@ void EditorRuntimePropertyManager::Initialize(
 	inputManager_ = inputManager;
 	audioManager_ = audioManager;
 	effectManager_ = effectManager;
+	physicsManager_ = physicsManager;
 }
 
 void EditorRuntimePropertyManager::Start() {
@@ -871,7 +874,8 @@ void EditorRuntimePropertyManager::Update(float deltaTime) {
 			}
 
 			EditorComponent* part = EditorComponentUtility::FindComponent(gameObject, EditorComponentType::DestructiblePart);
-			if (part != nullptr && part->isActive && !part->destructibleDestroyed) {
+			// Blast有効時は子Chunkの有効化・無効化をBlast Actor分裂結果が所有する。
+			if (part != nullptr && part->isActive && !part->destructibleBlastEnabled && !part->destructibleDestroyed) {
 				const int32_t healthId = part->destructibleHealthGameObjectId >= 0 ? part->destructibleHealthGameObjectId : gameObject.id;
 				EditorGameObject* healthObject = editorScene_->FindGameObject(healthId);
 				EditorComponent* health = healthObject != nullptr ? EditorComponentUtility::FindComponent(*healthObject, EditorComponentType::Health) : nullptr;
@@ -2901,11 +2905,41 @@ bool EditorRuntimePropertyManager::SetVector3(
 		else if (propertyName == "Rotation") gameObject->rotate = value;
 		else if (propertyName == "Scale") gameObject->scale = value;
 		else return false;
+
+		// SetTransform と同じく、Physicsが所有するWorld姿勢も同時に更新する。
+		// 親を持つObjectではvalueはLocal値なので、World SRTへ変換してから渡す。
+		if (physicsManager_ != nullptr) {
+			Vector3 worldScale{};
+			Vector3 worldRotation{};
+			Vector3 worldPosition{};
+
+			if (editorScene_->GetWorldTransform(
+				gameObjectId,
+				worldScale,
+				worldRotation,
+				worldPosition)) {
+				physicsManager_->SetGameObjectTransform(gameObjectId, worldPosition, worldRotation);
+			}
+		}
+
 		return true;
 	}
 
 	EditorComponent* component = FindComponent(gameObjectId, componentName);
 	if (component == nullptr) return false;
+
+	// RigidBodyの速度はPhysics Bodyが実体を所有する。Componentだけを書き換えると
+	// 次のPhysics更新で元の値へ戻るため、専用APIと同じ経路へ流す。
+	if (component->type == EditorComponentType::RigidBody && propertyName == "velocity") {
+		component->velocity = value;
+		return physicsManager_ == nullptr || physicsManager_->SetVelocity(gameObjectId, value);
+	}
+
+	if (component->type == EditorComponentType::RigidBody && propertyName == "angularVelocity") {
+		component->angularVelocity = value;
+		return physicsManager_ == nullptr || physicsManager_->SetAngularVelocity(gameObjectId, value);
+	}
+
 	if (componentName == "MovementModifier" && propertyName == "PositionOffset") component->movementModifierLocalPositionOffset = value;
 	else if (componentName == "MovementModifier" && propertyName == "RotationOffset") component->movementModifierLocalRotationOffset = value;
 	else if (componentName == "TargetPoint" && propertyName == "AimOffset") component->targetPointAimOffset = value;

@@ -1,6 +1,6 @@
-import io
+﻿import io
 
-DST = r"C:\kogakuin\LE1\CG2\Assets\Scenes\Result.scene"
+DST = r"C:\kogakuin\ManoEngine\Assets\Scenes\Result.scene"
 
 with io.open(DST, "r", encoding="utf-8", newline="") as f:
     lines = [l for l in f.read().split("\n") if l != ""]

@@ -1,72 +1,72 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-	<ClCompile Include="Source\Engine\Animation\AnimationGraph.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Animation\PropertyAnimationClip.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorAnimationWindowManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorDiagnosticsWindowManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorHookWireDebugWindowManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorPvShootWindowManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorLogFieldRegistry.generated.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorLogMonitorManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorLogMonitorWindowManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorLogSystemProviders.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorProfilerManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorProfilerAllocationTracker.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorTeamUuid.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorTeamCollaborationManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorReplayManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Asset\AssetManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Asset\AssetRegistry.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Effect\EffectAsset.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Effect\EditorEffectManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Effect\EffectDefinition.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Effect\EditorVfxManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Effect\EditorEffekseerManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
+    <ClCompile Include="Source\Engine\Animation\AnimationGraph.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Animation\PropertyAnimationClip.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorAnimationWindowManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorDiagnosticsWindowManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorHookWireDebugWindowManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorPvShootWindowManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorLogFieldRegistry.generated.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorLogMonitorManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorLogMonitorWindowManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorLogSystemProviders.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorProfilerManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorProfilerAllocationTracker.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorTeamUuid.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorTeamCollaborationManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorReplayManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Asset\AssetManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Asset\AssetRegistry.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Effect\EffectAsset.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Effect\EditorEffectManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Effect\EffectDefinition.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Effect\EditorVfxManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Effect\EditorEffekseerManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
     <Filter Include="ソース ファイル">
       <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
       <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
@@ -85,128 +85,1067 @@
     <Filter Include="ソース ファイル\main,gameSceen">
       <UniqueIdentifier>{98388bf0-ca04-40e8-8819-db5d1f272e3b}</UniqueIdentifier>
     </Filter>
+    <ClCompile Include="Source\Engine\Collaboration\TcpCollaborationTransport.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Asset\AssetImportSettings.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\ProjectSettings.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\GamepadInput.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\tinyxml2\tinyxml2.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\action_node.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\basic_types.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\behavior_tree.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\blackboard.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\bt_factory.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\condition_node.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\control_node.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\decorator_node.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\allocator.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\clusterizer.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\indexanalyzer.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\indexcodec.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\indexgenerator.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\meshletcodec.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\meshletutils.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\opacitymap.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\overdrawoptimizer.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\partition.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\quantization.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\rasterizer.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\simplifier.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\spatialorder.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\stripifier.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\tangentspace.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\vcacheoptimizer.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\vertexcodec.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\vertexfilter.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\meshoptimizer\src\vfetchoptimizer.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\json_export.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\script_parser.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\script_tokenizer.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\shared_library.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\shared_library_WIN.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\tree_node.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\xml_parsing.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\recastnavigation-1.6.0\Detour\Source\DetourAlloc.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\recastnavigation-1.6.0\Detour\Source\DetourAssert.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\AI\recastnavigation-1.6.0\Detour\Source\DetourCommon.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorAnimationManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorConstraintManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Renderer\EditorLightProbeManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Renderer\EditorPlanarReflectionManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorFreeTransformManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorTerrainHeightField.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-	<ClInclude Include="Source\Engine\Animation\AnimationGraph.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Animation\PropertyAnimationClip.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorAnimationWindowManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorDiagnosticsWindowManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorHookWireDebugWindowManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorPvShootWindowManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorLogFieldKind.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorLogFieldRegistry.generated.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorLogMonitorManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorLogMonitorWindowManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorLogSystemProviders.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorProfilerManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorProfilerAllocationTracker.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorTeamUuid.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorTeamCollaborationManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorReplayManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Asset\AssetType.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Asset\AssetManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Asset\AssetRegistry.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Effect\EffectAsset.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Effect\EditorEffectManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Effect\EffectDefinition.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Effect\EditorVfxManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Effect\EditorEffekseerManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
+    <ClInclude Include="Source\Engine\Animation\AnimationGraph.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Animation\PropertyAnimationClip.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorAnimationWindowManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorDiagnosticsWindowManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorHookWireDebugWindowManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorPvShootWindowManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorLogFieldKind.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorLogFieldRegistry.generated.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorLogMonitorManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorLogMonitorWindowManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorLogSystemProviders.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorProfilerManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorProfilerAllocationTracker.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorTeamUuid.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorTeamCollaborationManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorReplayManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Asset\AssetType.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Asset\AssetManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Asset\AssetRegistry.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Effect\EffectAsset.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Effect\EditorEffectManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Effect\EffectDefinition.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Effect\EditorVfxManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Effect\EditorEffekseerManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
     <None Include=".editorconfig" />
     <None Include="Assets\Input\InGameInputAction.json">
       <Filter>リソース ファイル</Filter>
     </None>
-	<None Include="Assets\Shaders\Particle\ParticleClear.CS.hlsl" />
-	<None Include="Assets\Shaders\Particle\ParticleCommon.hlsli" />
-	<None Include="Assets\Shaders\Particle\ParticleUpdate.CS.hlsl" />
-	<None Include="Assets\Shaders\Particle\ParticleSpawn.CS.hlsl" />
-	<None Include="Assets\Shaders\Particle\Particle.VS.hlsl" />
-	<None Include="Assets\Shaders\Particle\Particle.PS.hlsl" />
-	<None Include="Assets\Shaders\Particle\OceanSprayMist.hlsli" />
-	<None Include="Assets\Shaders\Particle\ParticleModel.VS.hlsl" />
-	<None Include="Assets\Shaders\Particle\ParticleModel.PS.hlsl" />
-	<None Include="Assets\Shaders\Transparency\WeightedOIT.PS.hlsl" />
-	<None Include="Assets\Shaders\Transparency\WeightedOITComposite.PS.hlsl" />
-	<None Include="Assets\Shaders\Transparency\RefractiveSurface.PS.hlsl" />
-	<None Include="Assets\Shaders\Temporal\SkinnedMotionVector.VS.hlsl" />
-	<None Include="Assets\Shaders\Water\UnderwaterCaustics.PS.hlsl" />
-	<None Include="Assets\Shaders\Common\SurfaceDeformation.hlsli" />
-	<None Include="Assets\Shaders\Object3d.VS.hlsl" />
-	<None Include="Assets\Shaders\Object3d.PS.hlsl" />
-	<None Include="Assets\Shaders\Water\OceanSpectrum.hlsli" />
-	<None Include="Assets\Shaders\Water\OceanFftSampling.hlsli" />
-	<None Include="Assets\Shaders\Water\OceanFFT_UpdateSpectrum.CS.hlsl" />
-	<None Include="Assets\Shaders\Water\OceanFFT_Row.CS.hlsl" />
-	<None Include="Assets\Shaders\Water\OceanFFT_Transpose.CS.hlsl" />
-	<None Include="Assets\Shaders\Water\OceanFFT_Finalize.CS.hlsl" />
-	<None Include="Assets\Shaders\Water\OceanSurface.hlsli" />
-	<None Include="Assets\Shaders\Water\OceanSurface.PS.hlsl" />
-	<None Include="Assets\Shaders\Object3dReflectionMask.PS.hlsl" />
-	<None Include="Assets\Shaders\Culling\BuildIndirectArgs.CS.hlsl" />
-	<None Include="Assets\Shaders\Culling\FrustumCulling.CS.hlsl" />
-	<None Include="Assets\Shaders\Culling\OcclusionCulling.CS.hlsl" />
-	<None Include="Assets\Shaders\Depth\DepthDownsample.CS.hlsl" />
-	<None Include="Assets\Shaders\Depth\DepthPyramid.CS.hlsl" />
-	<None Include="Assets\Shaders\Depth\ReconstructNormal.CS.hlsl" />
-	<None Include="Assets\Shaders\PostProcess\Bloom\BloomCommon.hlsli" />
-	<None Include="Assets\Shaders\PostProcess\Bloom\BloomDownsample.PS.hlsl" />
-	<None Include="Assets\Shaders\PostProcess\Bloom\BloomPrefilter.PS.hlsl" />
-	<None Include="Assets\Shaders\PostProcess\Bloom\BloomUpsample.PS.hlsl" />
-	<None Include="Assets\Shaders\PostProcess\Filter.PS.hlsl" />
-	<None Include="Assets\Shaders\PostProcess\Glare.PS.hlsl" />
-	<None Include="Assets\Shaders\PostProcess\SMAA\SMAABlendWeight.PS.hlsl" />
-	<None Include="Assets\Shaders\PostProcess\SMAA\SMAACommon.hlsli" />
-	<None Include="Assets\Shaders\PostProcess\SMAA\SMAAEdgeDetection.PS.hlsl" />
-	<None Include="Assets\Shaders\PostProcess\SMAA\SMAANeighborhoodBlend.PS.hlsl" />
-	<None Include="Assets\Shaders\PostProcess\FinalComposite.PS.hlsl" />
-	<None Include="Assets\Shaders\PostProcess\SSGI.PS.hlsl" />
+    <None Include="Assets\Shaders\Particle\ParticleClear.CS.hlsl" />
+    <None Include="Assets\Shaders\Particle\ParticleCommon.hlsli" />
+    <None Include="Assets\Shaders\Particle\ParticleUpdate.CS.hlsl" />
+    <None Include="Assets\Shaders\Particle\ParticleSpawn.CS.hlsl" />
+    <None Include="Assets\Shaders\Particle\Particle.VS.hlsl" />
+    <None Include="Assets\Shaders\Particle\Particle.PS.hlsl" />
+    <None Include="Assets\Shaders\Particle\OceanSprayMist.hlsli" />
+    <None Include="Assets\Shaders\Particle\ParticleModel.VS.hlsl" />
+    <None Include="Assets\Shaders\Particle\ParticleModel.PS.hlsl" />
+    <None Include="Assets\Shaders\Transparency\WeightedOIT.PS.hlsl" />
+    <None Include="Assets\Shaders\Transparency\WeightedOITComposite.PS.hlsl" />
+    <None Include="Assets\Shaders\Transparency\RefractiveSurface.PS.hlsl" />
+    <None Include="Assets\Shaders\Temporal\SkinnedMotionVector.VS.hlsl" />
+    <None Include="Assets\Shaders\Water\UnderwaterCaustics.PS.hlsl" />
+    <None Include="Assets\Shaders\Common\SurfaceDeformation.hlsli" />
+    <None Include="Assets\Shaders\Object3d.VS.hlsl" />
+    <None Include="Assets\Shaders\Object3d.PS.hlsl" />
+    <None Include="Assets\Shaders\Water\OceanSpectrum.hlsli" />
+    <None Include="Assets\Shaders\Water\OceanFftSampling.hlsli" />
+    <None Include="Assets\Shaders\Water\OceanFFT_UpdateSpectrum.CS.hlsl" />
+    <None Include="Assets\Shaders\Water\OceanFFT_Row.CS.hlsl" />
+    <None Include="Assets\Shaders\Water\OceanFFT_Transpose.CS.hlsl" />
+    <None Include="Assets\Shaders\Water\OceanFFT_Finalize.CS.hlsl" />
+    <None Include="Assets\Shaders\Water\OceanSurface.hlsli" />
+    <None Include="Assets\Shaders\Water\OceanSurface.PS.hlsl" />
+    <None Include="Assets\Shaders\Object3dReflectionMask.PS.hlsl" />
+    <None Include="Assets\Shaders\Culling\BuildIndirectArgs.CS.hlsl" />
+    <None Include="Assets\Shaders\Culling\FrustumCulling.CS.hlsl" />
+    <None Include="Assets\Shaders\Culling\OcclusionCulling.CS.hlsl" />
+    <None Include="Assets\Shaders\Depth\DepthDownsample.CS.hlsl" />
+    <None Include="Assets\Shaders\Depth\DepthPyramid.CS.hlsl" />
+    <None Include="Assets\Shaders\Depth\ReconstructNormal.CS.hlsl" />
+    <None Include="Assets\Shaders\PostProcess\Bloom\BloomCommon.hlsli" />
+    <None Include="Assets\Shaders\PostProcess\Bloom\BloomDownsample.PS.hlsl" />
+    <None Include="Assets\Shaders\PostProcess\Bloom\BloomPrefilter.PS.hlsl" />
+    <None Include="Assets\Shaders\PostProcess\Bloom\BloomUpsample.PS.hlsl" />
+    <None Include="Assets\Shaders\PostProcess\Filter.PS.hlsl" />
+    <None Include="Assets\Shaders\PostProcess\Glare.PS.hlsl" />
+    <None Include="Assets\Shaders\PostProcess\SMAA\SMAABlendWeight.PS.hlsl" />
+    <None Include="Assets\Shaders\PostProcess\SMAA\SMAACommon.hlsli" />
+    <None Include="Assets\Shaders\PostProcess\SMAA\SMAAEdgeDetection.PS.hlsl" />
+    <None Include="Assets\Shaders\PostProcess\SMAA\SMAANeighborhoodBlend.PS.hlsl" />
+    <None Include="Assets\Shaders\PostProcess\FinalComposite.PS.hlsl" />
+    <None Include="Assets\Shaders\PostProcess\SSGI.PS.hlsl" />
     <None Include="Assets\Shaders\DirectXTK\EnvironmentMapEffectBridge.hlsli" />
     <None Include="Assets\Shaders\Reflection\ParallaxCorrectedCubemap.hlsli" />
     <None Include="Assets\Shaders\Reflection\SSRComposite.CS.hlsl" />
@@ -224,6 +1163,54 @@
     <None Include="Assets\Shaders\Temporal\VelocityDilate.CS.hlsl" />
     <None Include="Assets\Shaders\ShadowDepth.VS.hlsl" />
     <None Include="Assets\Shaders\Shadow\AlphaCutoutShadowDepth.PS.hlsl" />
+    <ClInclude Include="Source\Engine\Collaboration\ICollaborationTransport.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Collaboration\TcpCollaborationTransport.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Collaboration\CollaborationProtocol.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Asset\AssetImportSettings.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Core\ProjectSettings.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Core\GamepadInput.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorFreeTransformManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Renderer\EditorLightProbeManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Renderer\EditorPlanarReflectionManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorTerrainHeightField.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="ThirdParty\AI\cppGOAP-develop\src\Action.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="ThirdParty\AI\cppGOAP-develop\src\Node.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="ThirdParty\AI\cppGOAP-develop\src\Planner.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="ThirdParty\AI\cppGOAP-develop\src\WorldState.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="ThirdParty\AI\MicroPather-master\micropather.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="ThirdParty\meshoptimizer\src\meshoptimizer.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Source\Engine\Core\CrashHandler.cpp">
@@ -262,60 +1249,60 @@
     <ClCompile Include="Source\Engine\Editor\EditorJoltPhysicsManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorLocalMoveManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorRailMovementManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorRailBranchManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorActionSequenceManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorSaveManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorTargetingManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorDamageManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorObjectPoolManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorWeaponManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorWeaponLoadoutManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorRuntimePropertyManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorCameraEffectManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorWaveSpawnerManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorSceneOptimizationManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorWaterRailShooterSceneBuilder.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorGameplayEventManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorUiBindingManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorGameplayToolsWindowManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorLocalMoveManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorRailMovementManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorRailBranchManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorActionSequenceManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorSaveManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorTargetingManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorDamageManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorObjectPoolManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorWeaponManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorWeaponLoadoutManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorRuntimePropertyManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorCameraEffectManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorWaveSpawnerManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorSceneOptimizationManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorWaterRailShooterSceneBuilder.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorGameplayEventManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorUiBindingManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorGameplayToolsWindowManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorRollingMoveManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
@@ -346,68 +1333,8 @@
     <ClCompile Include="Source\Engine\Editor\EditorNavigationManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-	<ClCompile Include="Source\Engine\Editor\EditorBlastDestructionManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-    <ClCompile Include="ThirdParty\meshoptimizer\src\allocator.cpp">
-      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
-    </ClCompile>
-    <ClCompile Include="ThirdParty\meshoptimizer\src\clusterizer.cpp">
-      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
-    </ClCompile>
-    <ClCompile Include="ThirdParty\meshoptimizer\src\indexanalyzer.cpp">
-      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
-    </ClCompile>
-    <ClCompile Include="ThirdParty\meshoptimizer\src\indexcodec.cpp">
-      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
-    </ClCompile>
-    <ClCompile Include="ThirdParty\meshoptimizer\src\indexgenerator.cpp">
-      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
-    </ClCompile>
-    <ClCompile Include="ThirdParty\meshoptimizer\src\meshletcodec.cpp">
-      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
-    </ClCompile>
-    <ClCompile Include="ThirdParty\meshoptimizer\src\meshletutils.cpp">
-      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
-    </ClCompile>
-    <ClCompile Include="ThirdParty\meshoptimizer\src\opacitymap.cpp">
-      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
-    </ClCompile>
-    <ClCompile Include="ThirdParty\meshoptimizer\src\overdrawoptimizer.cpp">
-      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
-    </ClCompile>
-    <ClCompile Include="ThirdParty\meshoptimizer\src\partition.cpp">
-      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
-    </ClCompile>
-    <ClCompile Include="ThirdParty\meshoptimizer\src\quantization.cpp">
-      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
-    </ClCompile>
-    <ClCompile Include="ThirdParty\meshoptimizer\src\rasterizer.cpp">
-      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
-    </ClCompile>
-    <ClCompile Include="ThirdParty\meshoptimizer\src\simplifier.cpp">
-      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
-    </ClCompile>
-    <ClCompile Include="ThirdParty\meshoptimizer\src\spatialorder.cpp">
-      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
-    </ClCompile>
-    <ClCompile Include="ThirdParty\meshoptimizer\src\stripifier.cpp">
-      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
-    </ClCompile>
-    <ClCompile Include="ThirdParty\meshoptimizer\src\tangentspace.cpp">
-      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
-    </ClCompile>
-    <ClCompile Include="ThirdParty\meshoptimizer\src\vcacheoptimizer.cpp">
-      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
-    </ClCompile>
-    <ClCompile Include="ThirdParty\meshoptimizer\src\vertexcodec.cpp">
-      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
-    </ClCompile>
-    <ClCompile Include="ThirdParty\meshoptimizer\src\vertexfilter.cpp">
-      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
-    </ClCompile>
-    <ClCompile Include="ThirdParty\meshoptimizer\src\vfetchoptimizer.cpp">
-      <Filter>繧ｽ繝ｼ繧ｹ 繝輔ぃ繧､繝ｫ</Filter>
+    <ClCompile Include="Source\Engine\Editor\EditorBlastDestructionManager.cpp">
+      <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorPhysicsManager.cpp">
       <Filter>ソース ファイル</Filter>
@@ -442,9 +1369,9 @@
     <ClCompile Include="Source\Engine\Speech\SpeechSystem.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-	<ClCompile Include="Source\Engine\Speech\WhisperSpeechBackend.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
+    <ClCompile Include="Source\Engine\Speech\WhisperSpeechBackend.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Engine\Speech\WindowsSpeechApiBackend.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
@@ -520,25 +1447,25 @@
     <ClCompile Include="Source\Engine\Renderer\EditorDepthHierarchyManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-	<ClCompile Include="Source\Engine\Renderer\EditorGBufferManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Renderer\EditorGpuCullingManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Renderer\EditorOceanFftManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Renderer\EditorGpuParticleManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Renderer\EditorVfxRenderer.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Renderer\EditorPostProcessQualityManager.cpp">
-	  <Filter>ソース ファイル</Filter>
-	</ClCompile>
-	<ClCompile Include="Source\Engine\Renderer\EditorTemporalRenderingManager.cpp">
+    <ClCompile Include="Source\Engine\Renderer\EditorGBufferManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Renderer\EditorGpuCullingManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Renderer\EditorOceanFftManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Renderer\EditorGpuParticleManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Renderer\EditorVfxRenderer.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Renderer\EditorPostProcessQualityManager.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Renderer\EditorTemporalRenderingManager.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorPlatformManager.cpp">
@@ -1476,7 +2403,7 @@
     <ClInclude Include="Source\Engine\Editor\EditorBottomPanelWindowManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-	<ClInclude Include="Source\Engine\Core\EditorCommonTypes.h">
+    <ClInclude Include="Source\Engine\Core\EditorCommonTypes.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="Source\Engine\Editor\EditorHierarchyPanel.h">
@@ -1491,60 +2418,60 @@
     <ClInclude Include="Source\Engine\Editor\EditorJoltPhysicsManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorLocalMoveManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorRailMovementManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorRailBranchManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorActionSequenceManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorSaveManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorTargetingManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorDamageManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorObjectPoolManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorWeaponManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorWeaponLoadoutManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorRuntimePropertyManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorCameraEffectManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorWaveSpawnerManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorSceneOptimizationManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorWaterRailShooterSceneBuilder.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorGameplayEventManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorUiBindingManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorGameplayToolsWindowManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorLocalMoveManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorRailMovementManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorRailBranchManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorActionSequenceManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorSaveManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorTargetingManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorDamageManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorObjectPoolManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorWeaponManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorWeaponLoadoutManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorRuntimePropertyManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorCameraEffectManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorWaveSpawnerManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorSceneOptimizationManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorWaterRailShooterSceneBuilder.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorGameplayEventManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorUiBindingManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorGameplayToolsWindowManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
     <ClInclude Include="Source\Engine\Editor\EditorRollingMoveManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
@@ -1557,9 +2484,9 @@
     <ClInclude Include="Source\Engine\Editor\EditorNavigationManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-	<ClInclude Include="Source\Engine\Editor\EditorBlastDestructionManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
+    <ClInclude Include="Source\Engine\Editor\EditorBlastDestructionManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
     <ClInclude Include="Source\Engine\Editor\EditorPhysicsManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
@@ -1588,9 +2515,9 @@
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="Source\Engine\Core\EditorNativeScript.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Core\EditorScriptApi.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Core\EditorScriptApi.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="Source\Engine\Core\EngineVersion.h">
@@ -1623,9 +2550,9 @@
     <ClInclude Include="Source\Engine\Speech\SpeechSystem.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-	<ClInclude Include="Source\Engine\Speech\WhisperSpeechBackend.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
+    <ClInclude Include="Source\Engine\Speech\WhisperSpeechBackend.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
     <ClInclude Include="Source\Engine\Speech\WindowsSpeechApiBackend.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
@@ -1683,7 +2610,7 @@
     <ClInclude Include="Source\Engine\Editor\EditorExternalFeatureWindowManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-	<ClInclude Include="Source\Engine\Core\EditorSharedState.h">
+    <ClInclude Include="Source\Engine\Core\EditorSharedState.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="Source\Engine\Editor\EditorDockingManager.h">
@@ -1725,25 +2652,25 @@
     <ClInclude Include="Source\Engine\Renderer\EditorDepthHierarchyManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-	<ClInclude Include="Source\Engine\Renderer\EditorGBufferManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Renderer\EditorGpuCullingManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Renderer\EditorOceanFftManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Renderer\EditorGpuParticleManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Renderer\EditorVfxRenderer.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Renderer\EditorPostProcessQualityManager.h">
-	  <Filter>ヘッダー ファイル</Filter>
-	</ClInclude>
-	<ClInclude Include="Source\Engine\Renderer\EditorTemporalRenderingManager.h">
+    <ClInclude Include="Source\Engine\Renderer\EditorGBufferManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Renderer\EditorGpuCullingManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Renderer\EditorOceanFftManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Renderer\EditorGpuParticleManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Renderer\EditorVfxRenderer.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Renderer\EditorPostProcessQualityManager.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Engine\Renderer\EditorTemporalRenderingManager.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="Source\Engine\Editor\EditorPlatformManager.h">
@@ -1775,9 +2702,6 @@
     </ClInclude>
     <ClInclude Include="Engine\Input\KeyboardState.h">
       <Filter>ヘッダー ファイル</Filter>
-    </ClInclude>
-    <ClInclude Include="ThirdParty\meshoptimizer\src\meshoptimizer.h">
-      <Filter>繝倥ャ繝繝ｼ 繝輔ぃ繧､繝ｫ</Filter>
     </ClInclude>
     <ClInclude Include="Source\Engine\Core\StringUtility.h">
       <Filter>ヘッダー ファイル</Filter>
@@ -1835,5 +2759,20 @@
     <Text Include="ThirdParty\imgui-docking\imgui-docking\LICENSE.txt">
       <Filter>imgui</Filter>
     </Text>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Build\PhysicsSdk\CMakeLists.txt" />
+    <None Include="Build\PhysicsSdk\Setup.ps1" />
+    <None Include="Build\PhysicsSdk\ApplyCompatibility.ps1" />
+    <None Include="Build\PhysicsSdk\PhysicsSdk.props" />
+    <None Include="Build\PhysicsSdk\README.md" />
+    <None Include="Build\PhysicsSdk\Smoke.cpp">
+      <Filter>ソース ファイル</Filter>
+    </None>
+    <None Include="Build\PhysicsSdk\Cuda13Compatibility.cpp">
+      <Filter>ソース ファイル</Filter>
+    </None>
+    <None Include="Assets\Shaders\Common\AnalyticAtmosphere.hlsli" />
+    <None Include="Assets\Shaders\PostProcess\AutoExposure.PS.hlsl" />
   </ItemGroup>
 </Project>

@@ -64,9 +64,6 @@ namespace {
 void EditorHookWireDebugWindowManager::Initialize() {
 }
 
-void EditorHookWireDebugWindowManager::Update() {
-}
-
 void EditorHookWireDebugWindowManager::Draw() {
 #ifdef USE_IMGUI
 	if (!g_isHookWireDebugWindowVisible) {

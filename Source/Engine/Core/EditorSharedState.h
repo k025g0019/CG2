@@ -44,6 +44,7 @@
 #include "EditorAssetUtility.h"
 #include "EditorBottomPanel.h"
 #include "EditorCommonTypes.h"
+#include "EditorHrCheck.h"
 #include "EditorHierarchyPanel.h"
 #include "EditorInspectorPanel.h"
 #include "EditorMainMenuBar.h"
@@ -465,11 +466,11 @@ namespace EditorSharedState {
 			static_cast<uint32_t>(arguments.size()),
 			includeHandler,
 			IID_PPV_ARGS(shaderResult.GetAddressOf()));
-		assert(SUCCEEDED(hr));
+		EDITOR_HR_VERIFY(hr);
 
 		HRESULT compileStatus = S_OK; // compileStatus �� DXC ���Ԃ����ŏI�I�ȃR���p�C�����ہB
 		hr = shaderResult->GetStatus(&compileStatus);
-		assert(SUCCEEDED(hr));
+		EDITOR_HR_VERIFY(hr);
 
 		ComPtr<IDxcBlobUtf8> shaderError; // shaderError �� HLSL �R���p�C���G���[��x���̕�����B
 		shaderResult->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(shaderError.GetAddressOf()), nullptr);
@@ -490,7 +491,7 @@ namespace EditorSharedState {
 
 		ComPtr<IDxcBlob> shaderBlob; // shaderBlob �� GPU �ɓn���ŏI�I�� DXIL �o�C�g�R�[�h�B
 		hr = shaderResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(shaderBlob.GetAddressOf()), nullptr);
-		assert(SUCCEEDED(hr));
+		EDITOR_HR_VERIFY(hr);
 
 		Log(logStream, std::format("Compile Succeeded, path:{}, profile:{}",
 		                           ConvertString(filePath), ConvertString(std::wstring{profile})));
@@ -1460,7 +1461,7 @@ namespace EditorSharedState {
 			D3D12_RESOURCE_STATE_DEPTH_WRITE,
 			&g_depthClearValue,
 			IID_PPV_ARGS(&resource));
-		assert(SUCCEEDED(createResult));
+		EDITOR_HR_VERIFY(createResult);
 		return resource;
 	}
 
@@ -1486,7 +1487,7 @@ namespace EditorSharedState {
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
 			&g_depthClearValue,
 			IID_PPV_ARGS(&resource));
-		assert(SUCCEEDED(createResult));
+		EDITOR_HR_VERIFY(createResult);
 		return resource;
 	}
 
@@ -1494,12 +1495,12 @@ namespace EditorSharedState {
 		g_fenceValue++; // g_fenceValue ��i�߂āA���̃t���[���ő҂� GPU �����ԍ������B
 		HRESULT signalResult = g_commandQueue->Signal(g_fence.Get(), g_fenceValue);
 		// Signal �� CommandQueue �ցA�����܂ł� GPU ��Ɣԍ���o�^����B
-		assert(SUCCEEDED(signalResult));
+		EDITOR_HR_VERIFY(signalResult);
 
 		// GPU ���܂� g_fenceValue �܂ŏI����Ă��Ȃ���΁AEvent ���g���� CPU ��҂�����B
 		if (g_fence->GetCompletedValue() < g_fenceValue) {
 			signalResult = g_fence->SetEventOnCompletion(g_fenceValue, g_fenceEvent);
-			assert(SUCCEEDED(signalResult));
+			EDITOR_HR_VERIFY(signalResult);
 			WaitForSingleObject(g_fenceEvent, INFINITE);
 		}
 	}
@@ -1561,21 +1562,44 @@ namespace EditorSharedState {
 			g_renderHeight,
 			DXGI_FORMAT_R8G8B8A8_UNORM,
 			0);
-		assert(SUCCEEDED(resizeResult));
+		EDITOR_HR_VERIFY(resizeResult);
 
+		// 取得できた back buffer だけ RTV を張り直す。GetBuffer が失敗した Buffer は
+		// nullptr のままなので、そのまま CreateRenderTargetView へ渡してはいけない。
+		bool runtimeSwapChainBuffersReady = true;
 		for (uint32_t bufferIndex = 0; bufferIndex < kRuntimeSwapChainBufferCount; bufferIndex++) {
 			resizeResult = g_swapChain->GetBuffer(bufferIndex, IID_PPV_ARGS(&g_swapChainResources[bufferIndex]));
 			// Resize ��� back buffer ���擾���� RTV ���č쐬����B
-			assert(SUCCEEDED(resizeResult));
+			if (!EDITOR_HR_OK(resizeResult) || g_swapChainResources[bufferIndex] == nullptr) {
+				runtimeSwapChainBuffersReady = false;
+				continue;
+			}
 			g_device->CreateRenderTargetView(
 				g_swapChainResources[bufferIndex],
 				&g_rtvDesc,
 				g_rtvHandles[bufferIndex]);
 		}
 
+		// back buffer が欠けたままでは Present も Barrier もできない。Depth の
+		// 再生成へ進む前に終了要求を出し、null を参照する経路へ入らないようにする。
+		if (!runtimeSwapChainBuffersReady) {
+			g_isEndRequested = true;
+			g_exitCode = 2; // 2 は起動後の復帰不能な描画失敗を表す。
+			return;
+		}
+
 		g_depthStencilResource = CreateRuntimeDepthStencilResource(g_renderWidth, g_renderHeight);
 		g_opaqueDepthCopyResource = CreateRuntimeOpaqueDepthCopyResource(g_renderWidth, g_renderHeight);
 		// DepthStencil ���V�����`��T�C�Y�ɍ��킹�čč쐬����B
+
+		// Depth の再生成が失敗すると DepthStencilView / SRV / Barrier がすべて
+		// nullptr を参照する。描画を続けられないので、ここで終了要求を出す。
+		if (g_depthStencilResource == nullptr || g_opaqueDepthCopyResource == nullptr) {
+			g_isEndRequested = true;
+			g_exitCode = 2; // 2 は起動後の復帰不能な描画失敗を表す。
+			return;
+		}
+
 		g_device->CreateDepthStencilView(g_depthStencilResource, &g_dsvDesc, g_dsvHandle);
 
 		{
@@ -1631,7 +1655,7 @@ namespace EditorSharedState {
 			HRESULT hr = g_device->CreateCommittedResource(
 				&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
 				&clearValue, IID_PPV_ARGS(&resource));
-			assert(SUCCEEDED(hr));
+			EDITOR_HR_VERIFY(hr);
 			D3D12_RENDER_TARGET_VIEW_DESC rtvDesc{};
 			rtvDesc.Format = format;
 			rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;

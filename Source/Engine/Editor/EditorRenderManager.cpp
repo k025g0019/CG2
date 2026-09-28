@@ -1280,12 +1280,463 @@ namespace {
 
 		return settings;
 	}
+
+	//================================================================
+	// ToneMapping 後のポストプロセス Pass。Draw() から切り出した。
+	// commandList や PipelineState は Draw() 側でも g_ への別名に過ぎないため、
+	// ここでは EditorSharedState の実体を直接参照し、引数はフレームごとに
+	// 変わる値だけに絞っている。
+	//================================================================
+
+	// 画面平均輝度から露出を 1x1 の履歴 Texture へ更新する。適用したら true を返す。
+	// 前回時刻は関数内 static で持つ。Draw() 側にあったときと同じく 1 本しか存在しない。
+	bool ExecuteAutoExposurePass(
+		const PostProcessSettings& settings,
+		D3D12_GPU_DESCRIPTOR_HANDLE sourceSrvHandle,
+		ID3D12Resource* sourceResource,
+		const D3D12_VIEWPORT& exposureViewport) {
+		if (!settings.hasPostProcessComponent || !settings.compositeAutoExposureEnabled) {
+			return false;
+		}
+
+		static std::chrono::steady_clock::time_point previousExposureTime =
+			std::chrono::steady_clock::now();
+		const std::chrono::steady_clock::time_point currentExposureTime =
+			std::chrono::steady_clock::now();
+		// 露出の追従速度をフレームレートから切り離す。停止から復帰した直後に
+		// 一気に露出が飛ばないよう、上下ともクランプする。
+		const float exposureDeltaTime = (std::clamp)(
+			std::chrono::duration<float>(currentExposureTime - previousExposureTime).count(),
+			1.0f / 240.0f,
+			0.1f);
+		previousExposureTime = currentExposureTime;
+
+		const float inverseRenderWidth =
+			1.0f / static_cast<float>((std::max)(g_renderWidth, 1u));
+		const float inverseRenderHeight =
+			1.0f / static_cast<float>((std::max)(g_renderHeight, 1u));
+		return g_postProcessQualityManager.ExecuteAutoExposure(
+			g_commandList.Get(),
+			sourceSrvHandle,
+			sourceResource,
+			settings.compositeMinimumExposure,
+			settings.compositeMaximumExposure,
+			settings.compositeExposureAdaptationSpeed,
+			settings.compositeTargetLuminance,
+			exposureDeltaTime,
+			exposureViewport.TopLeftX * inverseRenderWidth,
+			exposureViewport.TopLeftY * inverseRenderHeight,
+			exposureViewport.Width * inverseRenderWidth,
+			exposureViewport.Height * inverseRenderHeight);
+	}
+
+	// SMAA(aaMode 2)を掛け、次に読むべき SRV Handle を返す。
+	// 別の AA モードや実行失敗のときは sourceSrvHandle をそのまま返す。
+	D3D12_GPU_DESCRIPTOR_HANDLE ExecuteSmaaPass(
+		const PostProcessSettings& settings,
+		D3D12_GPU_DESCRIPTOR_HANDLE sourceSrvHandle) {
+		if (settings.aaMode != 2) {
+			return sourceSrvHandle;
+		}
+
+		const bool isSmaaExecuted = g_postProcessQualityManager.ExecuteSmaa(
+			g_commandList.Get(),
+			sourceSrvHandle,
+			settings.smaaThreshold,
+			settings.smaaCornerRounding);
+
+		return isSmaaExecuted
+			? g_postProcessQualityManager.GetSmaaOutputSrvHandle()
+			: sourceSrvHandle;
+	}
+
+	// 最終結果を back buffer へ書く。aaMode 1 のときだけ FXAA を通し、
+	// それ以外は passthrough でそのまま転送する(AA モードは排他)。
+	// back buffer の状態遷移は呼び出し側が行う。ここでは描画だけを担当する。
+	void ExecuteBackBufferCompositePass(
+		const PostProcessSettings& settings,
+		D3D12_GPU_DESCRIPTOR_HANDLE sourceSrvHandle,
+		D3D12_GPU_DESCRIPTOR_HANDLE bloomSrvHandle,
+		const D3D12_VIEWPORT& fullViewport,
+		const D3D12_RECT& fullScissor,
+		uint32_t backBufferIndex) {
+		const D3D12_CPU_DESCRIPTOR_HANDLE& backBufferRtvHandle = g_rtvHandles[backBufferIndex];
+		g_commandList->RSSetViewports(1, &fullViewport);
+		g_commandList->RSSetScissorRects(1, &fullScissor);
+		g_commandList->OMSetRenderTargets(1, &backBufferRtvHandle, FALSE, nullptr);
+		float backBufferClearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+		g_commandList->ClearRenderTargetView(backBufferRtvHandle, backBufferClearColor, 0, nullptr);
+		ID3D12DescriptorHeap* descriptorHeaps[] = {g_srvDescriptorHeap};
+		g_commandList->SetDescriptorHeaps(1, descriptorHeaps);
+		g_commandList->SetGraphicsRootSignature(g_postProcessRootSignature.Get());
+		const bool isFxaaSelected = settings.aaMode == 1;
+		g_commandList->SetPipelineState(isFxaaSelected
+			? g_fxaaPipelineState.Get()
+			: g_passthroughPipelineState.Get());
+		g_commandList->SetGraphicsRootDescriptorTable(0, sourceSrvHandle);
+		g_commandList->SetGraphicsRootDescriptorTable(1, bloomSrvHandle);
+		// passthrough 側は FXAA の閾値を無効値にして、同じ Root Constants を使い回す。
+		const float fxaaParams[4] = {
+			1.0f / static_cast<float>(g_renderWidth),
+			1.0f / static_cast<float>(g_renderHeight),
+			isFxaaSelected ? 0.65f : 0.0f,
+			isFxaaSelected ? 0.0312f : 10.0f
+		};
+		g_commandList->SetGraphicsRoot32BitConstants(2, 4, fxaaParams, 0);
+		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		RecordEditorProfilerDrawCall();
+		g_commandList->DrawInstanced(3, 1, 0, 0);
+	}
+
+	// 画面全体に対する GameView 矩形の UV と、1 ピクセル分の UV 幅。
+	// DoF / Motion Blur は GameView の中だけへ効かせるため、同じ 6 値を必要とする。
+	struct GameViewportUv {
+		float inverseRenderWidth = 0.0f;
+		float inverseRenderHeight = 0.0f;
+		float originU = 0.0f;
+		float originV = 0.0f;
+		float widthUv = 0.0f;
+		float heightUv = 0.0f;
+	};
+
+	// ポストプロセスが今読むべき RenderTarget。入力と同じ RenderTarget へは書けないため、
+	// HDR と Composite を交互に使う。Pass が走ると読み取り元が入れ替わる。
+	struct PostProcessSource {
+		D3D12_GPU_DESCRIPTOR_HANDLE srvHandle{};
+		ID3D12Resource* resource = nullptr;
+	};
+
+	// 被写界深度ブラー。実行条件を満たさなければ source をそのまま返す。
+	PostProcessSource ExecuteDepthOfFieldPass(
+		const PostProcessSettings& settings,
+		const PostProcessSource& source,
+		const D3D12_VIEWPORT& fullViewport,
+		const D3D12_RECT& fullScissor,
+		const GameViewportUv& gameViewportUv,
+		bool shouldRenderGameView) {
+		if (!shouldRenderGameView ||
+			!settings.cameraDofEnabled ||
+			g_depthOfFieldPipelineState == nullptr ||
+			g_hdrRenderTarget == nullptr ||
+			g_hdrCompositeRenderTarget == nullptr) {
+			return source;
+		}
+
+		// 読み取り元が Composite なら HDR 側へ書く。逆もまた同じ。
+		const bool isSourceComposite = source.srvHandle.ptr == g_hdrCompositeSrvHandleGPU.ptr;
+		ID3D12Resource* destinationResource = isSourceComposite
+			? g_hdrRenderTarget
+			: g_hdrCompositeRenderTarget;
+		const D3D12_CPU_DESCRIPTOR_HANDLE destinationRtvHandle = isSourceComposite
+			? g_hdrRtvHandle
+			: g_hdrCompositeRtvHandle;
+		const D3D12_GPU_DESCRIPTOR_HANDLE destinationSrvHandle = isSourceComposite
+			? g_hdrSrvHandleGPU
+			: g_hdrCompositeSrvHandleGPU;
+
+		D3D12_RESOURCE_BARRIER depthOfFieldBarrier{};
+		depthOfFieldBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		depthOfFieldBarrier.Transition.pResource = destinationResource;
+		depthOfFieldBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		depthOfFieldBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		depthOfFieldBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		g_commandList->ResourceBarrier(1, &depthOfFieldBarrier);
+
+		g_commandList->RSSetViewports(1, &fullViewport);
+		g_commandList->RSSetScissorRects(1, &fullScissor);
+		g_commandList->OMSetRenderTargets(1, &destinationRtvHandle, FALSE, nullptr);
+		float passClearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+		g_commandList->ClearRenderTargetView(destinationRtvHandle, passClearColor, 0, nullptr);
+		ID3D12DescriptorHeap* descriptorHeaps[] = {g_srvDescriptorHeap};
+		g_commandList->SetDescriptorHeaps(1, descriptorHeaps);
+		g_commandList->SetGraphicsRootSignature(g_postProcessRootSignature.Get());
+		g_commandList->SetPipelineState(g_depthOfFieldPipelineState.Get());
+		g_commandList->SetGraphicsRootDescriptorTable(0, source.srvHandle);
+		g_commandList->SetGraphicsRootDescriptorTable(1, g_depthSrvHandleGPU);
+		float passParams[12] = {
+			settings.cameraDofFocusDistance,
+			settings.cameraDofAperture,
+			settings.cameraNearClip,
+			settings.cameraFarClip,
+			settings.cameraDofFocalLength,
+			24.0f,
+			gameViewportUv.inverseRenderWidth,
+			gameViewportUv.inverseRenderHeight,
+			gameViewportUv.originU,
+			gameViewportUv.originV,
+			gameViewportUv.widthUv,
+			gameViewportUv.heightUv
+		};
+		g_commandList->SetGraphicsRoot32BitConstants(2u, 12u, passParams, 0u);
+		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		RecordEditorProfilerDrawCall();
+		g_commandList->DrawInstanced(3, 1, 0, 0);
+
+		depthOfFieldBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		depthOfFieldBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		g_commandList->ResourceBarrier(1, &depthOfFieldBarrier);
+		return PostProcessSource{destinationSrvHandle, destinationResource};
+	}
+
+	// 移動ブラー。Temporal(aaMode 3)で velocity が作られている場合だけ効く。
+	// 実行条件を満たさなければ source をそのまま返す。
+	PostProcessSource ExecuteMotionBlurPass(
+		const PostProcessSettings& settings,
+		const PostProcessSource& source,
+		const D3D12_VIEWPORT& fullViewport,
+		const D3D12_RECT& fullScissor,
+		const GameViewportUv& gameViewportUv,
+		bool shouldRenderGameView) {
+		if (!shouldRenderGameView ||
+			!settings.cameraMotionBlurEnabled ||
+			settings.aaMode != 3 ||
+			g_motionBlurPipelineState == nullptr ||
+			g_hdrRenderTarget == nullptr ||
+			g_hdrCompositeRenderTarget == nullptr) {
+			return source;
+		}
+
+		// 読み取り元が HDR なら Composite 側へ書く。逆もまた同じ。
+		const bool isSourceHdr = source.srvHandle.ptr == g_hdrSrvHandleGPU.ptr;
+		ID3D12Resource* destinationResource = isSourceHdr
+			? g_hdrCompositeRenderTarget
+			: g_hdrRenderTarget;
+		const D3D12_CPU_DESCRIPTOR_HANDLE destinationRtvHandle = isSourceHdr
+			? g_hdrCompositeRtvHandle
+			: g_hdrRtvHandle;
+		const D3D12_GPU_DESCRIPTOR_HANDLE destinationSrvHandle = isSourceHdr
+			? g_hdrCompositeSrvHandleGPU
+			: g_hdrSrvHandleGPU;
+
+		D3D12_RESOURCE_BARRIER motionBlurBarrier{};
+		motionBlurBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		motionBlurBarrier.Transition.pResource = destinationResource;
+		motionBlurBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		motionBlurBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		motionBlurBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		g_commandList->ResourceBarrier(1, &motionBlurBarrier);
+
+		g_commandList->RSSetViewports(1, &fullViewport);
+		g_commandList->RSSetScissorRects(1, &fullScissor);
+		g_commandList->OMSetRenderTargets(1, &destinationRtvHandle, FALSE, nullptr);
+		float passClearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+		g_commandList->ClearRenderTargetView(destinationRtvHandle, passClearColor, 0, nullptr);
+		ID3D12DescriptorHeap* descriptorHeaps[] = {g_srvDescriptorHeap};
+		g_commandList->SetDescriptorHeaps(1, descriptorHeaps);
+		g_commandList->SetGraphicsRootSignature(g_postProcessRootSignature.Get());
+		g_commandList->SetPipelineState(g_motionBlurPipelineState.Get());
+		g_commandList->SetGraphicsRootDescriptorTable(0, source.srvHandle);
+		g_commandList->SetGraphicsRootDescriptorTable(1, g_temporalRenderingManager.GetVelocitySrvHandle());
+		g_commandList->SetGraphicsRootDescriptorTable(3, g_depthSrvHandleGPU);
+		float passParams[12] = {
+			settings.cameraMotionBlurIntensity,
+			12.0f,
+			24.0f,
+			48.0f,
+			settings.cameraNearClip,
+			settings.cameraFarClip,
+			gameViewportUv.inverseRenderWidth,
+			gameViewportUv.inverseRenderHeight,
+			gameViewportUv.originU,
+			gameViewportUv.originV,
+			gameViewportUv.widthUv,
+			gameViewportUv.heightUv
+		};
+		g_commandList->SetGraphicsRoot32BitConstants(2u, 12u, passParams, 0u);
+		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		RecordEditorProfilerDrawCall();
+		g_commandList->DrawInstanced(3, 1, 0, 0);
+
+		motionBlurBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		motionBlurBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		g_commandList->ResourceBarrier(1, &motionBlurBarrier);
+		return PostProcessSource{destinationSrvHandle, destinationResource};
+	}
+
+	// glare*ByMode 配列のうち Bloom 本体が使う添字。多段 Bloom と最終合成の
+	// 二か所が同じ枠を参照するため、値をここ 1 か所で持つ。
+	constexpr size_t kBloomGlareModeIndex = 1u;
+
+	// 多段 Bloom の結果。SRV Handle と、実行できたかどうかを併せて返す。
+	// Glare は Bloom が成功した場合だけ走るため、呼び出し側は両方を必要とする。
+	struct BloomPassResult {
+		D3D12_GPU_DESCRIPTOR_HANDLE bloomSrvHandle{};
+		bool isQualityBloomExecuted = false;
+	};
+
+	// 多段 Bloom を実行する。失敗した場合は fallbackBloomSrvHandle をそのまま返し、
+	// 呼び出し側は従来の Bloom を最終合成に使う。
+	BloomPassResult ExecuteBloomPass(
+		const PostProcessSettings& settings,
+		D3D12_GPU_DESCRIPTOR_HANDLE hdrSourceSrvHandle,
+		D3D12_GPU_DESCRIPTOR_HANDLE fallbackBloomSrvHandle) {
+		BloomPassResult result{};
+		result.bloomSrvHandle = fallbackBloomSrvHandle;
+
+		const float bloomOutputIntensity =
+			settings.bloomIntensity * settings.glareIntensityByMode[kBloomGlareModeIndex];
+		result.isQualityBloomExecuted =
+			settings.hasPostProcessComponent &&
+			settings.glareModeMask != 0 &&
+			bloomOutputIntensity > 0.0f &&
+			g_postProcessQualityManager.ExecuteBloom(
+				g_commandList.Get(),
+				hdrSourceSrvHandle,
+				bloomOutputIntensity,
+				settings.bloomThreshold,
+				settings.bloomSoftKnee,
+				settings.glareSizeByMode[kBloomGlareModeIndex]);
+
+		if (result.isQualityBloomExecuted) {
+			result.bloomSrvHandle = g_postProcessQualityManager.GetBloomSrvHandle();
+		}
+
+		return result;
+	}
+
+	// Glare の結果。最後に使われた Texture が自前で着色済みかどうかを併せて返す。
+	struct GlarePassResult {
+		D3D12_GPU_DESCRIPTOR_HANDLE bloomSrvHandle{};
+		bool wasFinalGlareTextureTinted = false;
+	};
+
+	// Bloom 明部を Ghosts / Streaks / Fog Glow 等へ変換する。
+	// Ghost/Streak 等はシェーダー内で自分の色(glareColorByModeその物)を焼き込み済みなので、
+	// 最終合成でブルームの色をもう一度掛けると二重着色になる。実際に使われた最後の
+	// Texture がどちらかを wasFinalGlareTextureTinted で返す。
+	GlarePassResult ExecuteGlarePasses(
+		const PostProcessSettings& settings,
+		bool isQualityBloomExecuted,
+		D3D12_GPU_DESCRIPTOR_HANDLE bloomSrvHandle) {
+		GlarePassResult result{};
+		result.bloomSrvHandle = bloomSrvHandle;
+
+		if (!isQualityBloomExecuted) {
+			return result;
+		}
+
+		bool preserveGlareSource = (settings.glareModeMask & (1 << 1)) != 0;
+
+		for (int32_t glareModeIndex = 2; glareModeIndex <= 7; glareModeIndex++) {
+			if ((settings.glareModeMask & (1 << glareModeIndex)) == 0) {
+				continue;
+			}
+
+			const size_t glareArrayIndex = static_cast<size_t>(glareModeIndex);
+			const bool isGlareExecuted = g_postProcessQualityManager.ExecuteGlare(
+				g_commandList.Get(),
+				result.bloomSrvHandle,
+				glareModeIndex,
+				settings.glareIntensityByMode[glareArrayIndex],
+				settings.glareSizeByMode[glareArrayIndex],
+				settings.glareAngleByMode[glareArrayIndex],
+				settings.glareStreakCountByMode[glareArrayIndex],
+				settings.glareFadeByMode[glareArrayIndex],
+				settings.glareColorModulationByMode[glareArrayIndex],
+				settings.glareCenterByMode[glareArrayIndex].x,
+				settings.glareCenterByMode[glareArrayIndex].y,
+				settings.glareColorByMode[glareArrayIndex].x,
+				settings.glareColorByMode[glareArrayIndex].y,
+				settings.glareColorByMode[glareArrayIndex].z,
+				preserveGlareSource,
+				settings.glareSampleRatio);
+
+			if (isGlareExecuted) {
+				result.bloomSrvHandle = g_postProcessQualityManager.GetGlareSrvHandle();
+				preserveGlareSource = true;
+				result.wasFinalGlareTextureTinted = true;
+			}
+		}
+
+		return result;
+	}
+
+	// Filter を有効な Mode 分だけ順番に掛け、次に読むべき SRV Handle を返す。
+	// 1 つも実行されなければ sourceSrvHandle をそのまま返す。
+	D3D12_GPU_DESCRIPTOR_HANDLE ExecuteFilterPasses(
+		const PostProcessSettings& settings,
+		D3D12_GPU_DESCRIPTOR_HANDLE sourceSrvHandle) {
+		D3D12_GPU_DESCRIPTOR_HANDLE filteredSrvHandle = sourceSrvHandle;
+		// filterModeMask が未設定の旧データは、単一の filterMode を Mask へ読み替える。
+		const int32_t filterModeMask = settings.filterModeMask != 0
+			? settings.filterModeMask
+			: (settings.filterMode > 0 ? 1 << settings.filterMode : 0);
+
+		for (int32_t filterModeIndex = 1; filterModeIndex <= 8; filterModeIndex++) {
+			if ((filterModeMask & (1 << filterModeIndex)) == 0) {
+				continue;
+			}
+
+			const size_t filterModeArrayIndex = static_cast<size_t>(filterModeIndex);
+			const bool isFilterExecuted = g_postProcessQualityManager.ExecuteFilter(
+				g_commandList.Get(),
+				filteredSrvHandle,
+				filterModeIndex,
+				settings.filterStrengthByMode[filterModeArrayIndex],
+				settings.filterColorByMode[filterModeArrayIndex].x,
+				settings.filterColorByMode[filterModeArrayIndex].y,
+				settings.filterColorByMode[filterModeArrayIndex].z);
+
+			// 実行できた Filter の出力を次の Filter の入力へ繋ぐ。
+			if (isFilterExecuted) {
+				filteredSrvHandle = g_postProcessQualityManager.GetFilterSrvHandle();
+			}
+		}
+
+		return filteredSrvHandle;
+	}
+
+	// Sharpen を g_hdrCompositeRenderTarget へ書き戻す。掛けた場合だけ true を返し、
+	// 呼び出し側は次に読むのが Composite 側か Filter 側かをその戻り値で決める。
+	bool ExecuteSharpenPass(
+		const PostProcessSettings& settings,
+		const D3D12_VIEWPORT& fullViewport,
+		const D3D12_RECT& fullScissor,
+		const float clearColor[4],
+		D3D12_GPU_DESCRIPTOR_HANDLE sourceSrvHandle,
+		D3D12_GPU_DESCRIPTOR_HANDLE bloomSrvHandle) {
+		if (!settings.hasPostProcessComponent ||
+			settings.sharpenStrength <= 0.0f ||
+			g_hdrCompositeRenderTarget == nullptr ||
+			g_sharpenPipelineState == nullptr) {
+			return false;
+		}
+
+		D3D12_RESOURCE_BARRIER sharpenBarrier{};
+		sharpenBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		sharpenBarrier.Transition.pResource = g_hdrCompositeRenderTarget;
+		sharpenBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		sharpenBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		sharpenBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		g_commandList->ResourceBarrier(1, &sharpenBarrier);
+
+		g_commandList->RSSetViewports(1, &fullViewport);
+		g_commandList->RSSetScissorRects(1, &fullScissor);
+		g_commandList->OMSetRenderTargets(1, &g_hdrCompositeRtvHandle, FALSE, nullptr);
+		g_commandList->ClearRenderTargetView(g_hdrCompositeRtvHandle, clearColor, 0, nullptr);
+		g_commandList->SetGraphicsRootSignature(g_postProcessRootSignature.Get());
+		g_commandList->SetPipelineState(g_sharpenPipelineState.Get());
+		g_commandList->SetGraphicsRootDescriptorTable(0, sourceSrvHandle);
+		g_commandList->SetGraphicsRootDescriptorTable(1, bloomSrvHandle);
+		float sharpenParams[4] = {
+			1.0f / static_cast<float>(g_renderWidth),
+			1.0f / static_cast<float>(g_renderHeight),
+			settings.sharpenStrength,
+			0.0f
+		};
+		g_commandList->SetGraphicsRoot32BitConstants(2, 4, sharpenParams, 0);
+		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		RecordEditorProfilerDrawCall();
+		g_commandList->DrawInstanced(3, 1, 0, 0);
+
+		sharpenBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		sharpenBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		g_commandList->ResourceBarrier(1, &sharpenBarrier);
+		return true;
+	}
 }
 
 void EditorRenderManager::Initialize() {
-}
-
-void EditorRenderManager::Update() {
 }
 
 void EditorRenderManager::Draw() {
@@ -6062,24 +6513,9 @@ void EditorRenderManager::Draw() {
 	//================================================================
 	// 多段Bloomを実行し、失敗時は既存Bloomを最終合成に使う
 	//================================================================
-	D3D12_GPU_DESCRIPTOR_HANDLE finalBloomSrvHandle = bloomSrvHandlesGPU[0];
-	const size_t bloomModeIndex = 1u;
-	const float bloomOutputIntensity = ppSettings.bloomIntensity * ppSettings.glareIntensityByMode[bloomModeIndex];
-	const bool isQualityBloomExecuted =
-		ppSettings.hasPostProcessComponent &&
-		ppSettings.glareModeMask != 0 &&
-		bloomOutputIntensity > 0.0f &&
-		g_postProcessQualityManager.ExecuteBloom(
-			commandList.Get(),
-			hdrPostSourceSrvHandle,
-			bloomOutputIntensity,
-			ppSettings.bloomThreshold,
-			ppSettings.bloomSoftKnee,
-			ppSettings.glareSizeByMode[bloomModeIndex]);
-
-	if (isQualityBloomExecuted) {
-		finalBloomSrvHandle = g_postProcessQualityManager.GetBloomSrvHandle();
-	}
+	const BloomPassResult bloomPassResult =
+		ExecuteBloomPass(ppSettings, hdrPostSourceSrvHandle, bloomSrvHandlesGPU[0]);
+	const bool isQualityBloomExecuted = bloomPassResult.isQualityBloomExecuted;
 
 	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuBloomEvent);
 	const uint32_t gpuGlareEvent = profilerManager.BeginGpuEvent(
@@ -6094,42 +6530,10 @@ void EditorRenderManager::Draw() {
 	// Ghost/Streak等はシェーダー内で自分の色(glareColorByModeその物)を焼き込み済み。
 	// 最終合成で「ブルーム」の色をもう一度掛けると二重着色になるため、
 	// 実際に使われた最後のテクスチャがどちらかをここで覚えておく。
-	bool wasFinalGlareTextureTinted = false;
-
-	if (isQualityBloomExecuted) {
-		bool preserveGlareSource = (ppSettings.glareModeMask & (1 << 1)) != 0;
-
-		for (int32_t glareModeIndex = 2; glareModeIndex <= 7; glareModeIndex++) {
-			if ((ppSettings.glareModeMask & (1 << glareModeIndex)) == 0) {
-				continue;
-			}
-
-			const size_t glareArrayIndex = static_cast<size_t>(glareModeIndex);
-			const bool isGlareExecuted = g_postProcessQualityManager.ExecuteGlare(
-				commandList.Get(),
-				finalBloomSrvHandle,
-				glareModeIndex,
-				ppSettings.glareIntensityByMode[glareArrayIndex],
-				ppSettings.glareSizeByMode[glareArrayIndex],
-				ppSettings.glareAngleByMode[glareArrayIndex],
-				ppSettings.glareStreakCountByMode[glareArrayIndex],
-				ppSettings.glareFadeByMode[glareArrayIndex],
-				ppSettings.glareColorModulationByMode[glareArrayIndex],
-				ppSettings.glareCenterByMode[glareArrayIndex].x,
-				ppSettings.glareCenterByMode[glareArrayIndex].y,
-				ppSettings.glareColorByMode[glareArrayIndex].x,
-				ppSettings.glareColorByMode[glareArrayIndex].y,
-				ppSettings.glareColorByMode[glareArrayIndex].z,
-				preserveGlareSource,
-				ppSettings.glareSampleRatio);
-
-			if (isGlareExecuted) {
-				finalBloomSrvHandle = g_postProcessQualityManager.GetGlareSrvHandle();
-				preserveGlareSource = true;
-				wasFinalGlareTextureTinted = true;
-			}
-		}
-	}
+	const GlarePassResult glarePassResult =
+		ExecuteGlarePasses(ppSettings, isQualityBloomExecuted, bloomPassResult.bloomSrvHandle);
+	const D3D12_GPU_DESCRIPTOR_HANDLE finalBloomSrvHandle = glarePassResult.bloomSrvHandle;
+	const bool wasFinalGlareTextureTinted = glarePassResult.wasFinalGlareTextureTinted;
 
 	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuGlareEvent);
 	const uint32_t gpuDepthOfFieldEvent = profilerManager.BeginGpuEvent(
@@ -6148,66 +6552,25 @@ void EditorRenderManager::Draw() {
 	const float gameViewportWidthUv = g_editorGameWidth * inverseRenderWidth;
 	const float gameViewportHeightUv = g_editorGameHeight * inverseRenderHeight;
 
-	if (shouldRenderGameView &&
-		ppSettings.cameraDofEnabled &&
-		dofPipelineState != nullptr &&
-		hdrRenderTarget != nullptr &&
-		hdrCompositeRenderTarget != nullptr) {
-		const bool isDofSourceComposite =
-			hdrPostSourceSrvHandle.ptr == hdrCompositeSrvHandleGPU.ptr;
-		ID3D12Resource* dofDestinationResource = isDofSourceComposite
-			? hdrRenderTarget
-			: hdrCompositeRenderTarget;
-		const D3D12_CPU_DESCRIPTOR_HANDLE dofDestinationRtvHandle = isDofSourceComposite
-			? hdrRtvHandle
-			: hdrCompositeRtvHandle;
-		const D3D12_GPU_DESCRIPTOR_HANDLE dofDestinationSrvHandle = isDofSourceComposite
-			? hdrSrvHandleGPU
-			: hdrCompositeSrvHandleGPU;
+	// DoF / Motion Blur へ同じ 6 値をまとめて渡す。
+	const GameViewportUv gameViewportUv{
+		inverseRenderWidth,
+		inverseRenderHeight,
+		gameViewportOriginU,
+		gameViewportOriginV,
+		gameViewportWidthUv,
+		gameViewportHeightUv};
 
-		D3D12_RESOURCE_BARRIER dofBarrier{};
-		dofBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		dofBarrier.Transition.pResource = dofDestinationResource;
-		dofBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-		dofBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		dofBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-		commandList->ResourceBarrier(1, &dofBarrier);
-
-		commandList->RSSetViewports(1, &fullViewport);
-		commandList->RSSetScissorRects(1, &fullScissor);
-		commandList->OMSetRenderTargets(1, &dofDestinationRtvHandle, FALSE, nullptr);
-		float dofClearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-		commandList->ClearRenderTargetView(dofDestinationRtvHandle, dofClearColor, 0, nullptr);
-		ID3D12DescriptorHeap* heaps[] = {srvDescriptorHeap};
-		commandList->SetDescriptorHeaps(1, heaps);
-		commandList->SetGraphicsRootSignature(postProcessRootSignature.Get());
-		commandList->SetPipelineState(dofPipelineState.Get());
-		commandList->SetGraphicsRootDescriptorTable(0, hdrPostSourceSrvHandle);
-		commandList->SetGraphicsRootDescriptorTable(1, depthSrvHandleGPU);
-		float dofParams[12] = {
-			ppSettings.cameraDofFocusDistance,
-			ppSettings.cameraDofAperture,
-			ppSettings.cameraNearClip,
-			ppSettings.cameraFarClip,
-			ppSettings.cameraDofFocalLength,
-			24.0f,
-			inverseRenderWidth,
-			inverseRenderHeight,
-			gameViewportOriginU,
-			gameViewportOriginV,
-			gameViewportWidthUv,
-			gameViewportHeightUv
-		};
-		commandList->SetGraphicsRoot32BitConstants(2u, 12u, dofParams, 0u);
-		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		RecordEditorProfilerDrawCall();
-		commandList->DrawInstanced(3, 1, 0, 0);
-
-		dofBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-		dofBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		commandList->ResourceBarrier(1, &dofBarrier);
-		hdrPostSourceSrvHandle = dofDestinationSrvHandle;
-		hdrPostSourceResource = dofDestinationResource;
+	{
+		const PostProcessSource depthOfFieldResult = ExecuteDepthOfFieldPass(
+			ppSettings,
+			PostProcessSource{hdrPostSourceSrvHandle, hdrPostSourceResource},
+			fullViewport,
+			fullScissor,
+			gameViewportUv,
+			shouldRenderGameView);
+		hdrPostSourceSrvHandle = depthOfFieldResult.srvHandle;
+		hdrPostSourceResource = depthOfFieldResult.resource;
 	}
 
 	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuDepthOfFieldEvent);
@@ -6220,68 +6583,16 @@ void EditorRenderManager::Draw() {
 	// Motion Blur: velocity を使って移動ブラー
 	// 現在の HDR 入力とは別の RenderTarget へ書き、読み書き競合を防ぐ。
 	//================================================================
-	if (shouldRenderGameView &&
-		ppSettings.cameraMotionBlurEnabled &&
-		ppSettings.aaMode == 3 &&
-		motionBlurPipelineState != nullptr &&
-		hdrRenderTarget != nullptr &&
-		hdrCompositeRenderTarget != nullptr) {
-		const bool isMotionBlurSourceHdr =
-			hdrPostSourceSrvHandle.ptr == hdrSrvHandleGPU.ptr;
-		ID3D12Resource* motionBlurDestinationResource = isMotionBlurSourceHdr
-			? hdrCompositeRenderTarget
-			: hdrRenderTarget;
-		const D3D12_CPU_DESCRIPTOR_HANDLE motionBlurDestinationRtvHandle = isMotionBlurSourceHdr
-			? hdrCompositeRtvHandle
-			: hdrRtvHandle;
-		const D3D12_GPU_DESCRIPTOR_HANDLE motionBlurDestinationSrvHandle = isMotionBlurSourceHdr
-			? hdrCompositeSrvHandleGPU
-			: hdrSrvHandleGPU;
-
-		D3D12_RESOURCE_BARRIER mbBarrier{};
-		mbBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		mbBarrier.Transition.pResource = motionBlurDestinationResource;
-		mbBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-		mbBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		mbBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-		commandList->ResourceBarrier(1, &mbBarrier);
-
-		commandList->RSSetViewports(1, &fullViewport);
-		commandList->RSSetScissorRects(1, &fullScissor);
-		commandList->OMSetRenderTargets(1, &motionBlurDestinationRtvHandle, FALSE, nullptr);
-		float mbClearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-		commandList->ClearRenderTargetView(motionBlurDestinationRtvHandle, mbClearColor, 0, nullptr);
-		ID3D12DescriptorHeap* heaps[] = {srvDescriptorHeap};
-		commandList->SetDescriptorHeaps(1, heaps);
-		commandList->SetGraphicsRootSignature(postProcessRootSignature.Get());
-		commandList->SetPipelineState(motionBlurPipelineState.Get());
-		commandList->SetGraphicsRootDescriptorTable(0, hdrPostSourceSrvHandle);
-		commandList->SetGraphicsRootDescriptorTable(1, g_temporalRenderingManager.GetVelocitySrvHandle());
-		commandList->SetGraphicsRootDescriptorTable(3, depthSrvHandleGPU);
-		float mbParams[12] = {
-			ppSettings.cameraMotionBlurIntensity,
-			12.0f,
-			24.0f,
-			48.0f,
-			ppSettings.cameraNearClip,
-			ppSettings.cameraFarClip,
-			inverseRenderWidth,
-			inverseRenderHeight,
-			gameViewportOriginU,
-			gameViewportOriginV,
-			gameViewportWidthUv,
-			gameViewportHeightUv
-		};
-		commandList->SetGraphicsRoot32BitConstants(2u, 12u, mbParams, 0u);
-		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		RecordEditorProfilerDrawCall();
-		commandList->DrawInstanced(3, 1, 0, 0);
-
-		mbBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-		mbBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		commandList->ResourceBarrier(1, &mbBarrier);
-		hdrPostSourceSrvHandle = motionBlurDestinationSrvHandle;
-		hdrPostSourceResource = motionBlurDestinationResource;
+	{
+		const PostProcessSource motionBlurResult = ExecuteMotionBlurPass(
+			ppSettings,
+			PostProcessSource{hdrPostSourceSrvHandle, hdrPostSourceResource},
+			fullViewport,
+			fullScissor,
+			gameViewportUv,
+			shouldRenderGameView);
+		hdrPostSourceSrvHandle = motionBlurResult.srvHandle;
+		hdrPostSourceResource = motionBlurResult.resource;
 	}
 
 	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuMotionBlurEvent);
@@ -6294,39 +6605,12 @@ void EditorRenderManager::Draw() {
 	// 1x1 の履歴 Texture へ画面平均露出を更新する
 	//================================================================
 
-	bool isAutoExposureExecuted = false;
-
-	if (ppSettings.hasPostProcessComponent && ppSettings.compositeAutoExposureEnabled) {
-		static std::chrono::steady_clock::time_point previousExposureTime =
-			std::chrono::steady_clock::now();
-		const std::chrono::steady_clock::time_point currentExposureTime =
-			std::chrono::steady_clock::now();
-		const float exposureDeltaTime = (std::clamp)(
-			std::chrono::duration<float>(currentExposureTime - previousExposureTime).count(),
-			1.0f / 240.0f,
-			0.1f);
-		previousExposureTime = currentExposureTime;
-		const D3D12_VIEWPORT& exposureViewport = shouldRenderGameView
-			? gameViewport
-			: viewport;
-		const float inverseRenderWidth =
-			1.0f / static_cast<float>((std::max)(g_renderWidth, 1u));
-		const float inverseRenderHeight =
-			1.0f / static_cast<float>((std::max)(g_renderHeight, 1u));
-		isAutoExposureExecuted = g_postProcessQualityManager.ExecuteAutoExposure(
-			commandList.Get(),
-			hdrPostSourceSrvHandle,
-			hdrPostSourceResource,
-			ppSettings.compositeMinimumExposure,
-			ppSettings.compositeMaximumExposure,
-			ppSettings.compositeExposureAdaptationSpeed,
-			ppSettings.compositeTargetLuminance,
-			exposureDeltaTime,
-			exposureViewport.TopLeftX * inverseRenderWidth,
-			exposureViewport.TopLeftY * inverseRenderHeight,
-			exposureViewport.Width * inverseRenderWidth,
-			exposureViewport.Height * inverseRenderHeight);
-	}
+	// 露出の測定範囲は、GameView 表示中はその矩形、そうでなければ SceneView の矩形。
+	const bool isAutoExposureExecuted = ExecuteAutoExposurePass(
+		ppSettings,
+		hdrPostSourceSrvHandle,
+		hdrPostSourceResource,
+		shouldRenderGameView ? gameViewport : viewport);
 
 	// Final tone mapping + bloom composite: HDR RT + BloomA 遶翫・LDR RT
 	{
@@ -6398,9 +6682,9 @@ void EditorRenderManager::Draw() {
 			static_cast<float>(ppSettings.compositeDebugView),
 			// Ghost/Streak等が最後に実行された場合、そのテクスチャは既に自分の色を
 			// 焼き込み済みなので、ここで「ブルーム」の色を重ねて二重着色しない。
-			wasFinalGlareTextureTinted ? 1.0f : ppSettings.glareColorByMode[bloomModeIndex].x,
-			wasFinalGlareTextureTinted ? 1.0f : ppSettings.glareColorByMode[bloomModeIndex].y,
-			wasFinalGlareTextureTinted ? 1.0f : ppSettings.glareColorByMode[bloomModeIndex].z,
+			wasFinalGlareTextureTinted ? 1.0f : ppSettings.glareColorByMode[kBloomGlareModeIndex].x,
+			wasFinalGlareTextureTinted ? 1.0f : ppSettings.glareColorByMode[kBloomGlareModeIndex].y,
+			wasFinalGlareTextureTinted ? 1.0f : ppSettings.glareColorByMode[kBloomGlareModeIndex].z,
 			// Ocean Debug専用の後段停止は通常描画の反射改善と無関係なため、
 			// FinalCompositeへは常に無効値を渡す。
 			0.0f,
@@ -6449,28 +6733,8 @@ void EditorRenderManager::Draw() {
 	// Blender 風 Filter: ToneMapping 後の画面へ 3x3 畳み込みを適用する
 	//================================================================
 
-	D3D12_GPU_DESCRIPTOR_HANDLE filteredPostProcessSrvHandle = postProcessSrvHandleGPU;
-	const int32_t filterModeMask = ppSettings.filterModeMask != 0
-		? ppSettings.filterModeMask
-		: (ppSettings.filterMode > 0 ? 1 << ppSettings.filterMode : 0);
-	for (int32_t filterModeIndex = 1; filterModeIndex <= 8; filterModeIndex++) {
-		if ((filterModeMask & (1 << filterModeIndex)) == 0) {
-			continue;
-		}
-
-		const bool isFilterExecuted = g_postProcessQualityManager.ExecuteFilter(
-			commandList.Get(),
-			filteredPostProcessSrvHandle,
-			filterModeIndex,
-			ppSettings.filterStrengthByMode[static_cast<size_t>(filterModeIndex)],
-			ppSettings.filterColorByMode[static_cast<size_t>(filterModeIndex)].x,
-			ppSettings.filterColorByMode[static_cast<size_t>(filterModeIndex)].y,
-			ppSettings.filterColorByMode[static_cast<size_t>(filterModeIndex)].z);
-
-		if (isFilterExecuted) {
-			filteredPostProcessSrvHandle = g_postProcessQualityManager.GetFilterSrvHandle();
-		}
-	}
+	const D3D12_GPU_DESCRIPTOR_HANDLE filteredPostProcessSrvHandle =
+		ExecuteFilterPasses(ppSettings, postProcessSrvHandleGPU);
 
 	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuFilterEvent);
 	const uint32_t gpuSharpenEvent = profilerManager.BeginGpuEvent(
@@ -6482,44 +6746,13 @@ void EditorRenderManager::Draw() {
 	// 闕ｳ・ E E E : Sharpen
 	// ToneMapping 陟募 E E E 後 E騾匁E E  E  E E E 陷剁E E  E 奁E E  E 定氣莉｣・ E E E 邵 E E E ・ E E E 邵 E E E 螟ｧ・ E E E 霈披 E E E 驍ｱ・ E E E 郢 E E E 竏壺 E E E 邵 E E E 竏ｵ諤咎お繝ｻFXAA 邵 E E E ・ E E E 雋ゑ E E E  E E E 邵 E E E 蜷 E E E  E E E 繝ｻ
 	//================================================================
-	bool isSharpenExecuted = false;
-
-	if (ppSettings.hasPostProcessComponent &&
-		ppSettings.sharpenStrength > 0.0f &&
-		hdrCompositeRenderTarget != nullptr &&
-		sharpenPipelineState != nullptr) {
-		D3D12_RESOURCE_BARRIER sharpenBarrier{};
-		sharpenBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		sharpenBarrier.Transition.pResource = hdrCompositeRenderTarget;
-		sharpenBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-		sharpenBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		sharpenBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-		commandList->ResourceBarrier(1, &sharpenBarrier);
-
-		commandList->RSSetViewports(1, &fullViewport);
-		commandList->RSSetScissorRects(1, &fullScissor);
-		commandList->OMSetRenderTargets(1, &hdrCompositeRtvHandle, FALSE, nullptr);
-		commandList->ClearRenderTargetView(hdrCompositeRtvHandle, clearColor, 0, nullptr);
-		commandList->SetGraphicsRootSignature(postProcessRootSignature.Get());
-		commandList->SetPipelineState(sharpenPipelineState.Get());
-		commandList->SetGraphicsRootDescriptorTable(0, filteredPostProcessSrvHandle);
-		commandList->SetGraphicsRootDescriptorTable(1, finalBloomSrvHandle);
-		float sharpenParams[4] = {
-			1.0f / static_cast<float>(g_renderWidth),
-			1.0f / static_cast<float>(g_renderHeight),
-			ppSettings.sharpenStrength,
-			0.0f
-		};
-		commandList->SetGraphicsRoot32BitConstants(2, 4, sharpenParams, 0);
-		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		RecordEditorProfilerDrawCall();
-		commandList->DrawInstanced(3, 1, 0, 0);
-
-		sharpenBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-		sharpenBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		commandList->ResourceBarrier(1, &sharpenBarrier);
-		isSharpenExecuted = true;
-	}
+	const bool isSharpenExecuted = ExecuteSharpenPass(
+		ppSettings,
+		fullViewport,
+		fullScissor,
+		clearColor,
+		filteredPostProcessSrvHandle,
+		finalBloomSrvHandle);
 
 	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuSharpenEvent);
 	const uint32_t gpuAntialiasEvent = profilerManager.BeginGpuEvent(
@@ -6530,21 +6763,10 @@ void EditorRenderManager::Draw() {
 	//================================================================
 	// SMAA 3パスで輪郭検出、重み計算、近傍合成を順番に行う
 	//================================================================
-	D3D12_GPU_DESCRIPTOR_HANDLE finalAntialiasSourceSrvHandle = isSharpenExecuted
-		? hdrCompositeSrvHandleGPU
-		: filteredPostProcessSrvHandle;
-	bool isSmaaExecuted = false;
-	if (ppSettings.aaMode == 2) {
-		isSmaaExecuted = g_postProcessQualityManager.ExecuteSmaa(
-			commandList.Get(),
-			finalAntialiasSourceSrvHandle,
-			ppSettings.smaaThreshold,
-			ppSettings.smaaCornerRounding);
-	}
-
-	if (isSmaaExecuted) {
-		finalAntialiasSourceSrvHandle = g_postProcessQualityManager.GetSmaaOutputSrvHandle();
-	}
+	// Sharpen を掛けた場合はその出力(Composite)を、掛けていなければ Filter の出力を AA へ渡す。
+	const D3D12_GPU_DESCRIPTOR_HANDLE finalAntialiasSourceSrvHandle = ExecuteSmaaPass(
+		ppSettings,
+		isSharpenExecuted ? hdrCompositeSrvHandleGPU : filteredPostProcessSrvHandle);
 
 	// Back buffer に出力（AAモードに応じてパスを排他制御）
 	D3D12_RESOURCE_BARRIER backBufferBarrier{};
@@ -6555,35 +6777,13 @@ void EditorRenderManager::Draw() {
 	backBufferBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
 	commandList->ResourceBarrier(1, &backBufferBarrier);
 
-	{
-		commandList->RSSetViewports(1, &fullViewport);
-		commandList->RSSetScissorRects(1, &fullScissor);
-		commandList->OMSetRenderTargets(1, &rtvHandles[backBufferIndex], FALSE, nullptr);
-		float backBufferClearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-		commandList->ClearRenderTargetView(rtvHandles[backBufferIndex], backBufferClearColor, 0, nullptr);
-		ID3D12DescriptorHeap* heaps[] = {srvDescriptorHeap};
-		commandList->SetDescriptorHeaps(1, heaps);
-		commandList->SetGraphicsRootSignature(postProcessRootSignature.Get());
-		commandList->SetPipelineState(ppSettings.aaMode == 1 ? fxaaPipelineState.Get() : passthroughPipelineState.Get());
-		commandList->SetGraphicsRootDescriptorTable(0, finalAntialiasSourceSrvHandle);
-		commandList->SetGraphicsRootDescriptorTable(1, finalBloomSrvHandle);
-		float fxaaParams[4];
-		if (ppSettings.aaMode == 1) {
-			fxaaParams[0] = 1.0f / static_cast<float>(g_renderWidth);
-			fxaaParams[1] = 1.0f / static_cast<float>(g_renderHeight);
-			fxaaParams[2] = 0.65f;
-			fxaaParams[3] = 0.0312f;
-		} else {
-			fxaaParams[0] = 1.0f / static_cast<float>(g_renderWidth);
-			fxaaParams[1] = 1.0f / static_cast<float>(g_renderHeight);
-			fxaaParams[2] = 0.0f;
-			fxaaParams[3] = 10.0f;
-		}
-		commandList->SetGraphicsRoot32BitConstants(2, 4, fxaaParams, 0);
-		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		RecordEditorProfilerDrawCall();
-		commandList->DrawInstanced(3, 1, 0, 0);
-	}
+	ExecuteBackBufferCompositePass(
+		ppSettings,
+		finalAntialiasSourceSrvHandle,
+		finalBloomSrvHandle,
+		fullViewport,
+		fullScissor,
+		backBufferIndex);
 
 #ifdef USE_IMGUI
 	ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList.Get());

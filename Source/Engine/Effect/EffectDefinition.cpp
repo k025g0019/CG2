@@ -1,4 +1,4 @@
-#include "EffectDefinition.h"
+﻿#include "EffectDefinition.h"
 
 #include "ThirdParty/imgui-node-editor-master/imgui-node-editor-master/crude_json.h"
 

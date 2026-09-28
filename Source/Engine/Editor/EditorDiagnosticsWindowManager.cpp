@@ -225,6 +225,18 @@ void EditorDiagnosticsWindowManager::Draw() {
 			ImGui::EndTabItem();
 		}
 
+		// DirectXの失敗は以前assertだけで見ていたため、Release構成では痕跡が残らなかった。
+		// 件数をタブ名に出し、開かなくても異常に気付けるようにする。
+		const std::size_t apiFailureCount = EditorGetHrFailureCount();
+		const std::string apiFailureTabLabel = apiFailureCount > 0u
+			? std::string("DirectX失敗 (") + std::to_string(apiFailureCount) + ")###ApiFailures"
+			: std::string("DirectX失敗###ApiFailures");
+
+		if (ImGui::BeginTabItem(apiFailureTabLabel.c_str())) {
+			DrawApiFailures();
+			ImGui::EndTabItem();
+		}
+
 		ImGui::EndTabBar();
 	}
 
@@ -957,6 +969,53 @@ void EditorDiagnosticsWindowManager::DrawSceneValidation() {
 		}
 
 		ImGui::TextWrapped("%s", issue.message.c_str());
+	}
+#endif
+}
+
+void EditorDiagnosticsWindowManager::DrawApiFailures() {
+#ifdef USE_IMGUI
+	const std::size_t hrFailureCount = EditorGetHrFailureCount();
+	const std::vector<std::string>& hrFailures = EditorGetHrFailureLog();
+
+	if (hrFailureCount == 0u && g_shaderCompilationFailures.empty()) {
+		ImGui::TextDisabled("DirectX APIの失敗とShader compile失敗は記録されていません。");
+		ImGui::TextDisabled("ここに行が出た場合、同じ内容が logs/<日時>.Log にも残っています。");
+		return;
+	}
+
+	if (hrFailureCount > 0u) {
+		ImGui::TextColored(
+			ImVec4(1.0f, 0.35f, 0.30f, 1.0f), "HRESULT 失敗 %zu 件", hrFailureCount);
+		ImGui::SameLine();
+
+		if (ImGui::SmallButton("一覧をクリア")) {
+			EditorClearHrFailureLog();
+		}
+
+		// 記録は上限つきなので、打ち切られている場合はそれが分かるようにする。
+		if (hrFailureCount > hrFailures.size()) {
+			ImGui::TextDisabled(
+				"(表示は先頭 %zu 件。以降は件数のみ数えています)", hrFailures.size());
+		}
+
+		ImGui::Separator();
+
+		for (const std::string& hrFailure : hrFailures) {
+			ImGui::TextWrapped("%s", hrFailure.c_str());
+		}
+	}
+
+	if (!g_shaderCompilationFailures.empty()) {
+		ImGui::Separator();
+		ImGui::TextColored(
+			ImVec4(1.0f, 0.78f, 0.30f, 1.0f),
+			"Shader compile 失敗 %zu 件",
+			g_shaderCompilationFailures.size());
+
+		for (const std::string& shaderFailure : g_shaderCompilationFailures) {
+			ImGui::TextWrapped("%s", shaderFailure.c_str());
+		}
 	}
 #endif
 }

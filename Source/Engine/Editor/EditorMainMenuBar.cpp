@@ -1449,9 +1449,6 @@ void EditorMainMenuBar::Initialize(EditorScene* editorScene, EditorRuntimeManage
 	LoadAutoSaveSettings();
 }
 
-void EditorMainMenuBar::Update() {
-}
-
 void EditorMainMenuBar::LoadAutoSaveSettings() {
 	isAutoSaveEnabled_ = true;
 	autoSaveIntervalSeconds_ = 120.0f;

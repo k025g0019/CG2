@@ -9,9 +9,6 @@ using namespace EditorSharedState;
 void EditorBottomPanelWindowManager::Initialize() {
 }
 
-void EditorBottomPanelWindowManager::Update() {
-}
-
 void EditorBottomPanelWindowManager::Draw() {
 #ifdef USE_IMGUI
 	//================================================================

@@ -43,6 +43,7 @@ private:
 	void DrawMaterialPreview();
 	void DrawScopes();
 	void DrawRenderGraph();
+	void DrawApiFailures();  // HRESULT失敗とShader compile失敗の一覧。Release構成でも記録される唯一の窓口。
 	void AddIssue(EditorValidationSeverity severity, int32_t gameObjectId, const std::string& message);
 };
 

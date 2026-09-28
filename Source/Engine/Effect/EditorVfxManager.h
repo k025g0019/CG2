@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "EffectDefinition.h"
 #include "Source/Engine/Effect/EditorEffectManager.h"

@@ -5,6 +5,7 @@
 #pragma warning(pop)
 
 #include "EditorAssetUtility.h"
+#include "EditorHrCheck.h"
 #include "Source/Engine/Editor/EditorProfilerManager.h"
 
 #include <algorithm>
@@ -598,7 +599,12 @@ void EditorGpuParticleManager::UploadSpawns(
 	void* mappedAddress = nullptr;
 	const D3D12_RANGE readRange{0u, 0u};
 	HRESULT hr = particleUploadBuffer_->Map(0u, &readRange, &mappedAddress);
-	assert(SUCCEEDED(hr));
+	// Map が失敗すると mappedAddress は nullptr のままで、続く書き込みが
+	// null 参照になる。Release では assert が消えるためここで必ず打ち切る。
+	// 今フレームの Spawn を捨てるだけで、既存 Particle の更新は次の Pass で続く。
+	if (!EDITOR_HR_OK(hr) || mappedAddress == nullptr) {
+		return;
+	}
 	GpuParticleData* uploadParticles = static_cast<GpuParticleData*>(mappedAddress);
 	for (uint32_t spawnIndex = 0u; spawnIndex < uploadCount; spawnIndex++) {
 		uploadParticles[spawnIndex] = ConvertSpawn(spawns[spawnIndex]);

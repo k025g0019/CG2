@@ -1,4 +1,4 @@
-#include "EditorAssetManagerAdapters.h"
+﻿#include "EditorAssetManagerAdapters.h"
 
 #include "EditorAssetUtility.h"
 #include "EditorSharedState.h"

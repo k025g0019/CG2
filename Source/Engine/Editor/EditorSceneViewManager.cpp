@@ -2175,9 +2175,6 @@ namespace {
 void EditorSceneViewManager::Initialize() {
 }
 
-void EditorSceneViewManager::Update() {
-}
-
 void EditorSceneViewManager::Draw() {
 #ifdef USE_IMGUI
 	g_isSceneViewVisible = false;  // Draw 中に有効な矩形を取れたフレームだけ true にする。

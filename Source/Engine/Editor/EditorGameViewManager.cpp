@@ -2065,9 +2065,6 @@ namespace {
 void EditorGameViewManager::Initialize() {
 }
 
-void EditorGameViewManager::Update() {
-}
-
 void EditorGameViewManager::Draw() {
 #ifdef USE_IMGUI
 	g_isGameViewVisible = false;  // Draw 中に有効な矩形を取れたフレームだけ true にする。

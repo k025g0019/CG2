@@ -10,7 +10,6 @@ public:
 	//================================================================
 
 	void Initialize();  // InspectorPanel 本体は SceneLifecycleManager が初期化するため、ここでは空。
-	void Update();  // Component 値の変更は Draw 中の ImGui 入力で発生するため、Update は空。
 	void Draw();  // Inspector に必要な共有状態を Context に詰めて描画する。
 };
 

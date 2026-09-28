@@ -25,8 +25,8 @@ Engine配布、Launcher、Version固定、Migration、環境診断は[user-guide
 | Runtime API | 415 Entry（Version 15でSpeechの発話中 / 推論中状態2件を追加） |
 | 利用者向けC++ Class | 79件（Version 14でSpeech / Vision / Haptic / HapticVoice / Onlineを追加） |
 | Script Template | 26件 |
-| Inspector Field期待値 | 1,981 Field / 278 Component |
-| チェックイン済みField Registry | 1,981 Field / 278 Component（期待値と一致） |
+| Inspector Field期待値 | 2,011 Field / 278 Component |
+| チェックイン済みField Registry | 2,011 Field / 278 Component（期待値と一致） |
 
 Field Registry（`EditorLogFieldRegistry.generated.cpp`）は`Tools/generate_log_field_registry.py`の生成物である。**Inspectorへ行を追加・変更したら必ず再実行してコミットする**。2026-09-13の再実行で、それまで残っていた「19 Field不足・PerformanceSettings未登録・LightProbeGroupの旧Field参照」を解消した。
 
@@ -37,6 +37,57 @@ Version 14のSpeech / Vision / Haptics / Onlineは専用Wrapperと専用Debug Wi
 ### 現行仕様の読み方
 
 `README.md`には初期実装時点の評価・未対応表が履歴として残っている。現在の分野横断状態、コードの所有関係、処理順は`engine-internals.md`を正とする。個別Field/APIはComponent・Scriptリファレンスを参照し、矛盾する古い評価行は現行仕様章を優先する。
+
+## 2026-09-29 更新: Release構成の無検査経路を閉じる / 確保器の取り違え防止 / 毎フレームの空処理削除
+
+保守性・安全性・安定性・可読性・無駄の排除を対象に、機能追加を伴わない改善を行った。
+Debug/x64 と Release/x64 の両方で 0警告0エラー、`Tests/RunNativeSmokeTests.ps1` 3件成功、
+`Tools/CheckSourceHygiene.ps1` 違反0を確認している。
+
+| 分野 | 内容 | 根拠 |
+| --- | --- | --- |
+| **HRESULT検査** | `assert(SUCCEEDED(x))` 49箇所を `EDITOR_HR_OK` / `EDITOR_HR_VERIFY` へ置換。`assert`はRelease(NDEBUG)で消えるため、従来 `ResizeBuffers` / `GetBuffer` / `Map` / `CreateCommittedResource` の失敗がRelease構成で完全に無検査だった | `Source/Engine/Core/EditorHrCheck.h` |
+| **null参照の遮断** | 上記の失敗後にnullを触っていた6経路へガードを追加。GpuParticleの`Map`失敗時のnull書き込み、SwapChain resize失敗時の`CreateRenderTargetView(nullptr)`、Depth生成失敗時のDSV作成、`Finalize`の無条件`Release` | `EditorPlatformManager.cpp` / `EditorSharedState.h` / `EditorGpuParticleManager.cpp` |
+| **確保器の取り違え防止** | グローバル`operator new`置き換えで aligned かつ nothrow の4種が欠けていた。欠けた形だけCRT側が使われ、`_aligned_free`へ渡る組み合わせが成立しうる。20種すべてを揃えた | `EditorProfilerAllocationTracker.cpp` |
+| **確保コストの削減** | Engine全体の`new`が毎回通る`RecordEditorProfilerAllocation`が別TUの非inline関数だった。Profiler OFF時の判定をHeaderへ移し、確保ごとの関数呼び出しを無くした | `EditorProfilerAllocationTracker.h` |
+| **毎フレームの空処理** | `GameScene::Update()`が呼んでいた空実装`Update()`を10件削除（宣言・定義とも）。「Updateは空実装」と書かれたコメント8行も1つの説明へ統合 | `GameScene.cpp` ほか10クラス |
+| **失敗の可視化** | 診断Windowへ「DirectX失敗」タブを追加。HRESULT失敗とShader compile失敗の件数をタブ名に出す。失敗行は`logs/<日時>.Log`にも残る | `EditorDiagnosticsWindowManager.cpp` |
+| **テストのビルド** | `Tests/*.cpp` 3件はどの構成にも登録されておらずビルドされていなかった。`Tests/RunNativeSmokeTests.ps1`で個別exeとしてビルド・実行する（3件成功） | `Tests/RunNativeSmokeTests.ps1` |
+| **文字化けの再発防止** | BOMなしUTF-8だった14ファイルへBOMを付与。既存の文字化け4,239個（漢字部分は先行バイトが失われ復元不能）を上限とし、増加・BOM欠落・`assert(SUCCEEDED(`再導入を検査する | `Tools/CheckSourceHygiene.ps1` |
+| **巨大関数の分割** | `EditorRenderManager::Draw()` 5,441行 → **5,190行**。後段ポストプロセスの9 Passを無名namespaceの関数へ切り出した（Filter / Sharpen / Bloom / Glare / DoF / MotionBlur / AutoExposure / SMAA / BackBuffer合成）。GPU計測イベントの粒度は維持している | `EditorRenderManager.cpp` |
+| **Development構成の修復** | `Development|x64`が`NDEBUG`も`_DEBUG`も定義しておらず、Blastヘッダを含む翻訳単位が**コンパイル不能**だった（変更前から）。同構成は`PhysicsSdk\lib\release`をリンクするため`NDEBUG`を追加。3構成すべて0警告0エラーになった | `CG2.vcxproj` |
+| **手順の欠落** | `Tools/generate_log_field_registry.py` が`.gitignore`の`Tools/*`で未追跡だった。「Inspectorへ行を追加したら再実行してコミットする」と規定しているのに、クローン先に生成器が無い状態だったため追跡対象へ戻した。再実行して差分0（チェックイン済みRegistryは最新）。あわせて上表のField数を実測値2,011へ修正（1,981は30件古い） | `.gitignore` |
+
+調査して**問題が無いと確認できた**もの（今回は変更していない）:
+
+- 描画ループ内のファイルI/O（環境Texture・Color LUT）はdirtyフラグで制御済み
+- 毎フレームのPSO / RootSignature生成は無し
+- Window Panelは可視判定より前に重い処理をしていない
+- `FindGameObject`はhash索引つきで、Miss時の索引再構築storm対策もある
+- `EditorLightProbeManager::UpdateGrid` / `FillGridData` は設定差分判定と早期returnで済んでいる
+- `EditorComponent`の全POD Fieldは`CreateComponent`が既定値を入れている（取りこぼし0件）
+- 初期化子なしの`EditorComponent`宣言は0件（未初期化POD読み出しは発生しない）
+
+### `Draw()` 分割の手順（残り約17 Passも同じ形で進める）
+
+作者が区切りコメントで26 Passに分けているので、これを1つずつ関数へ移す。手順は次の通り。
+
+1. `Draw()` 冒頭の約90行は `auto& commandList = g_commandList;` のような **EditorSharedState グローバルへの別名定義だけ**である。したがって抽出先の関数はこれらを引数で受けず、`g_` を直接参照する。引数はフレームごとに変わる値（Pass間で受け渡すSRV Handle、`ppSettings`、Viewport）に絞る。
+2. 入力と同じRenderTargetへ書けないPassは、`PostProcessSource`（SRV Handle + Resource）を受けて返す形にする。HDRとCompositeを交互に使う既存の作法をそのまま関数境界へ写せる。
+3. GPU計測イベント（`profilerManager.BeginGpuEvent` / `EndGpuEvent`）はPass境界にまたがるので`Draw()`側に残す。関数へ取り込むと計測粒度が落ちる。
+4. 変数の渡し漏れ・型違いはコンパイラが検出する。1 Passごとにビルドして進める（実際に`bloomModeIndex`の取り残しをコンパイラが検出した）。
+5. `PostProcessSettings`は`.cpp`の無名namespace内の型なので、抽出先はメンバ関数ではなく同じ無名namespaceの関数にする。ヘッダを触らずに済み、Pass処理は元々実装詳細なので設計上もこちらが正しい。
+
+残る課題（未着手。いずれも実機確認を伴うため分離して行う）:
+
+- `EditorRenderManager::Draw()`は5,190行。残る最大の塊は「Scene rendering to HDR RT」1,353行で、ここは別途分解が必要
+- `Draw()`内に関数内`static`が15個ある（フレーム跨ぎの隠れ状態）。分割を進めるならメンバ変数へ移すのが前提になる
+- `EditorScene::LoadScene()` 3,720行 / `SaveScene()` 2,602行 / `CreateComponent()` 1,894行
+- `CG2.vcxproj`がThirdPartyライブラリを`C:\kogakuin\LE1\CG2\...`の絶対パスで参照している。別のマシンへcloneするとリンクできない
+- `EditorComponent`（1,820行・1,596 Field）の既定値が宣言から約2,000行離れた別ファイルにある。宣言側のMember初期化子へ移すと1箇所管理になるが、Scene既定値が変わらないことの実機確認が必要
+- `EditorSharedState.h`が可変グローバル332個を持ち47ファイルから`using namespace`されている
+- `Engine/Input`がトップレベルにあり`Source/Engine/*`の配置規則と揃っていない
+- CIが無く、上記スクリプトはすべて手動実行
 
 ## 2026-09-13 更新: UI/Text・Prefab/Scene Streaming・Terrain/Foliage・Editor制作安定性の改善
 

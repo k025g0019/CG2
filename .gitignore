@@ -401,6 +401,11 @@ Tools/Whisper/*
 !Tools/Whisper/README.md
 !Tools/Versioning/
 !Tools/Versioning/*.ps1
+# Field Registry の生成器。docs/ReadMe.md が「Inspectorへ行を追加したら再実行してコミットする」
+# と規定している手順の本体なので、これが未追跡だとクローン先で再生成できない。
+!Tools/generate_log_field_registry.py
+# Source の文字化け・BOM欠落・assert(SUCCEEDED())再導入を検査する。
+!Tools/CheckSourceHygiene.ps1
 .vs/
 .git/
 .codex/

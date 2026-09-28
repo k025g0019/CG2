@@ -9,9 +9,6 @@ using namespace EditorSharedState;
 void EditorDockingManager::Initialize() {
 }
 
-void EditorDockingManager::Update() {
-}
-
 void EditorDockingManager::Draw() {
 #ifdef USE_IMGUI
 	//================================================================

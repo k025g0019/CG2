@@ -4,6 +4,7 @@
 #include <onnxruntime_cxx_api.h>
 #include <xaudio2.h>
 #include <xaudio2fx.h>
+#include "EditorHrCheck.h"
 #include "EditorProfilerManager.h"
 #include "EditorSharedState.h"
 using namespace EditorSharedState;
@@ -190,6 +191,14 @@ namespace {
 		g_isInitializationFailed = true; // g_isInitializationFailed は GameScene が後綁EManager 初期化を止めるためのフラグ、E
 		g_isEndRequested = true; // g_isEndRequested は WinMain のループへ入らなぁE��ぁE��する終亁E��求フラグ、E
 		g_exitCode = 1; // 1 は初期化失敗を表す終亁E��ード、E
+	}
+
+	// 起動後に復帰不能な描画失敗(Device Removed で back buffer が取得できない等)が
+	// 起きたときに、null を参照する前にメインループを畳むための終了要求。
+	// 初期化失敗ではないので g_isInitializationFailed は立てず、終了コードで区別する。
+	void RequestFatalRuntimeFailure() {
+		g_isEndRequested = true;
+		g_exitCode = 2; // 2 は起動後の復帰不能な描画失敗を表す。
 	}
 
 	VertexData MakePrimitiveVertex(float x, float y, float z, float u, float v, const Vector3& normal) {
@@ -548,7 +557,11 @@ namespace {
 				0,
 				nullptr,
 				reinterpret_cast<void**>(&mappedVertexData));
-			assert(SUCCEEDED(mapResult));
+			// Map 失敗時は mappedVertexData が nullptr のままなので memcpy できない。
+			// この Primitive だけ諦めて次へ進む。BufferView を書かないので描画側も参照しない。
+			if (!EDITOR_HR_OK(mapResult) || mappedVertexData == nullptr) {
+				continue;
+			}
 			std::memcpy(
 				mappedVertexData,
 				primitiveModelData[meshTypeIndex].vertices.data(),
@@ -606,7 +619,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	IDirectInput8* directInput = nullptr; // directInput はキーボ�Eドデバイスを作る DirectInput 本体、E
 	hr = DirectInput8Create(
 		instanceHandle, DIRECTINPUT_VERSION, IID_IDirectInput8, reinterpret_cast<void**>(&directInput), nullptr);
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 
 	// directInput が作れなぁE��合、エチE��ター操作�E入力を取得できなぁE��め起動を止める、E
 	if (FAILED(hr) || directInput == nullptr) {
@@ -616,7 +629,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	IDirectInputDevice8* keyboardDevice = nullptr; // keyboardDevice は DIK_* の押下状態を取得するため�Eキーボ�Eド�E力デバイス、E
 	hr = directInput->CreateDevice(GUID_SysKeyboard, &keyboardDevice, nullptr);
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 
 	// キーボ�Eドデバイス作�E失敗時は directInput を解放してから終亁E��る、E
 	if (FAILED(hr) || keyboardDevice == nullptr) {
@@ -627,12 +640,12 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	hr = keyboardDevice->SetDataFormat(&c_dfDIKeyboard);
 	// c_dfDIKeyboard は DirectInput の 256 キー配�E形式で入力を受け取る持E��、E
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 
 	// foreground / nonexclusive は他アプリと入力を奪ぁE��わなぁE��チE��ター向け設定、E
 	hr = keyboardDevice->SetCooperativeLevel(
 		windowHandle, DISCL_FOREGROUND | DISCL_NONEXCLUSIVE | DISCL_NOWINKEY);
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 
 	//================================================================
 	// DirectInput マウスチE��イス作�E
@@ -640,7 +653,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	IDirectInputDevice8* mouseDevice = nullptr;
 	hr = directInput->CreateDevice(GUID_SysMouse, &mouseDevice, nullptr);
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 	if (FAILED(hr) || mouseDevice == nullptr) {
 		directInput->Release();
 		RequestInitializationFailure();
@@ -648,10 +661,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	}
 
 	hr = mouseDevice->SetDataFormat(&c_dfDIMouse);
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 	hr = mouseDevice->SetCooperativeLevel(
 		windowHandle, DISCL_FOREGROUND | DISCL_NONEXCLUSIVE);
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 
 	// key / preKey は初期化直後�E今フレーム・前フレーム入力状態、E
 	BYTE key[256] = {};
@@ -682,7 +695,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	IXAudio2* xAudio2 = nullptr; // xAudio2 は音声再生エンジン本体、E
 	hr = XAudio2Create(&xAudio2, 0, XAUDIO2_DEFAULT_PROCESSOR);
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 
 	// XAudio2 が作れなぁE��合、E��声リソースを保持できなぁE��め終亁E��る、E
 	if (FAILED(hr) || xAudio2 == nullptr) {
@@ -692,7 +705,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	IXAudio2MasteringVoice* masterVoice = nullptr; // masterVoice は最終的にスピ�Eカーへ送る出劁EVoice、E
 	hr = xAudio2->CreateMasteringVoice(&masterVoice);
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 
 	// masterVoice 作�E失敗時は XAudio2 本体を解放して終亁E��る、E
 	if (FAILED(hr) || masterVoice == nullptr) {
@@ -713,7 +726,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	ComPtr<IDXGIFactory7> dxgiFactory; // dxgiFactory は GPU Adapter と SwapChain を作るための DXGI 入口、E
 	hr = CreateDXGIFactory1(IID_PPV_ARGS(dxgiFactory.GetAddressOf()));
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 
 	ComPtr<IDXGIAdapter4> useAdapter; // useAdapter は実際に D3D12Device を作る物琁EGPU、E
 	for (UINT adapterIndex = 0;; ++adapterIndex) {
@@ -727,7 +740,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		// adapterDesc は GPU 名と Software Adapter 判定に使ぁE��報、E
 		DXGI_ADAPTER_DESC3 adapterDesc{};
 		hr = candidateAdapter->GetDesc3(&adapterDesc);
-		assert(SUCCEEDED(hr));
+		EDITOR_HR_VERIFY(hr);
 
 		// Software Adapter は WARP なので、ゲーム描画に使ぁE��EGPU 候補から外す、E
 		if (adapterDesc.Flags & DXGI_ADAPTER_FLAG3_SOFTWARE) {
@@ -792,7 +805,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	// commandQueueDesc は標準�E Direct CommandQueue を作るための設定、E
 	D3D12_COMMAND_QUEUE_DESC commandQueueDesc{};
 	hr = device->CreateCommandQueue(&commandQueueDesc, IID_PPV_ARGS(commandQueue.GetAddressOf()));
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 
 	// CommandQueue がなぁE��描画命令めEGPU に送れなぁE��め終亁E��る、E
 	if (FAILED(hr) || commandQueue == nullptr) {
@@ -847,7 +860,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	ComPtr<ID3D12CommandAllocator> commandAllocator; // commandAllocator は CommandList が記録する命令メモリを管琁E��る、E
 	hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(commandAllocator.GetAddressOf()));
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 
 	// CommandAllocator がなぁE�� CommandList めEReset できなぁE��め終亁E��る、E
 	if (FAILED(hr) || commandAllocator == nullptr) {
@@ -859,7 +872,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	// commandList は描画・コピ�E・ResourceBarrier の命令を記録するオブジェクト、E
 	hr = device->CreateCommandList(
 		0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator.Get(), nullptr, IID_PPV_ARGS(commandList.GetAddressOf()));
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 
 	// CommandList がなぁE��初期チE��スチャアチE�Eロードも描画もできなぁE��め終亁E��る、E
 	if (FAILED(hr) || commandList == nullptr) {
@@ -868,7 +881,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	}
 
 	hr = commandList->Close(); // 作�E直後�E CommandList は開いてぁE��ため、一度 Close して通常の Reset 手頁E��合わせる、E
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 
 	// clientRect は Window 冁E�E描画可能領域。SwapChain サイズの初期値に使ぁE��E
 	RECT clientRect{};
@@ -892,7 +905,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	hr = dxgiFactory->CreateSwapChainForHwnd(
 		commandQueue.Get(), windowHandle, &swapChainDesc, nullptr, nullptr,
 		reinterpret_cast<IDXGISwapChain1**>(swapChain.GetAddressOf()));
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 
 	// SwapChain がなぁE�� Window へ Present できなぁE��め終亁E��る、E
 	if (FAILED(hr) || swapChain == nullptr) {
@@ -919,9 +932,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	// swapChainResources は 2 枚�Eバックバッファ実体、E
 	ID3D12Resource* swapChainResources[2] = {nullptr};
 	hr = swapChain->GetBuffer(0, IID_PPV_ARGS(&swapChainResources[0]));
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 	hr = swapChain->GetBuffer(1, IID_PPV_ARGS(&swapChainResources[1]));
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 
 	// rtvDesc はバックバッファめE2D RenderTarget として扱ぁE��定、E
 	D3D12_RENDER_TARGET_VIEW_DESC rtvDesc{};
@@ -977,7 +990,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			initialState,
 			&depthClearValue,
 			IID_PPV_ARGS(&newDepthStencilResource));
-		assert(SUCCEEDED(createDepthResult));
+		EDITOR_HR_VERIFY(createDepthResult);
 
 		return newDepthStencilResource;
 	};
@@ -987,11 +1000,21 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		renderHeight,
 		D3D12_RESOURCE_STATE_DEPTH_WRITE);
 	// depthStencilResource は現在の描画サイズに合わせた Depth バッファ、E
-	device->CreateDepthStencilView(depthStencilResource, &dsvDesc, dsvHandle);
 	ID3D12Resource* opaqueDepthCopyResource = createDepthStencilResource(
 		renderWidth,
 		renderHeight,
 		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+	// Depth バッファが作れないまま描画へ進むと、DepthStencilView / SRV / Barrier の
+	// すべてが nullptr を参照する。Debug でしか気付けない不正状態なので起動を止める。
+	if (depthStencilResource == nullptr || opaqueDepthCopyResource == nullptr) {
+		if (depthStencilResource != nullptr) depthStencilResource->Release();
+		if (opaqueDepthCopyResource != nullptr) opaqueDepthCopyResource->Release();
+		RequestInitializationFailure();
+		return;
+	}
+
+	device->CreateDepthStencilView(depthStencilResource, &dsvDesc, dsvHandle);
 
 	D3D12_CPU_DESCRIPTOR_HANDLE depthSrvHandleCPU = GetCPUDescriptorHandle(
 		srvDescriptorHeap,
@@ -1046,7 +1069,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
 		&shadowClearValue,
 		IID_PPV_ARGS(&shadowMapResource));
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 
 	D3D12_DEPTH_STENCIL_VIEW_DESC shadowDsvDesc{};
 	shadowDsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
@@ -1101,7 +1124,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		HRESULT hr = device->CreateCommittedResource(
 			&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
 			&clearValue, IID_PPV_ARGS(&resource));
-		assert(SUCCEEDED(hr));
+		EDITOR_HR_VERIFY(hr);
 		return resource;
 	};
 
@@ -1294,11 +1317,11 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	ComPtr<IDxcCompiler3> dxcCompiler; // dxcCompiler は HLSL めEDXIL へコンパイルする DXC コンパイラ、E
 	ComPtr<IDxcIncludeHandler> includeHandler; // includeHandler は shader の #include を解決するための標準ハンドラ、E
 	hr = DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(dxcUtils.GetAddressOf()));
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 	hr = DxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(dxcCompiler.GetAddressOf()));
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 	hr = dxcUtils->CreateDefaultIncludeHandler(includeHandler.GetAddressOf());
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 
 	// vertexShaderBlob は VS main のコンパイル済みバイトコード、E
 	// 途中の1件で打ち切らず全Shaderを検査し、失敗一覧を最後にまとめて通知する。
@@ -3344,7 +3367,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	VertexData* mappedSpriteVertexData = nullptr;
 	// mappedSpriteVertexData は Sprite 頂点を書き込むための CPU mapped ポインタ、E
 	hr = spriteVertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedSpriteVertexData));
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 	std::memcpy(mappedSpriteVertexData, spriteVertices, sizeof(spriteVertices));
 
 	// spriteVertexBufferView は Sprite 頂点 Buffer めEDraw に渡す情報、E
@@ -3357,7 +3380,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	// spriteIndexResource は Sprite 四角形の IndexBuffer、E
 	uint32_t* mappedSpriteIndexData = nullptr; // mappedSpriteIndexData は Sprite Index めECPU から書き込むためのポインタ、E
 	hr = spriteIndexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedSpriteIndexData));
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 	std::memcpy(mappedSpriteIndexData, spriteIndices, sizeof(spriteIndices));
 
 	// spriteIndexBufferView は Sprite IndexBuffer めEDrawIndexed に渡す情報、E
@@ -3521,7 +3544,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	ComPtr<ID3D12Fence> fence; // fence は CPU ぁEGPU 処琁E��亁E��征E��ための同期オブジェクト、E
 	uint64_t fenceValue = 0; // fenceValue は Signal ごとに進める GPU 完亁E��認用カウンタ、E
 	hr = device->CreateFence(fenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(fence.GetAddressOf()));
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 
 	HANDLE fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 	// fenceEvent は GPU 完亁E��知めECPU ぁEWaitForSingleObject で征E��ための Win32 Event、E
@@ -3537,12 +3560,12 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		fenceValue++; // fenceValue を進め、今回征E�� GPU 作業番号を作る、E
 		HRESULT signalResult = commandQueue->Signal(fence.Get(), fenceValue);
 		// Signal は commandQueue に現在の fenceValue を完亁E��定として登録する、E
-		assert(SUCCEEDED(signalResult));
+		EDITOR_HR_VERIFY(signalResult);
 
 		// GPU がまだ持E��値まで終わってぁE��ければ、Event を登録して CPU を征E��させる、E
 		if (fence->GetCompletedValue() < fenceValue) {
 			HRESULT eventResult = fence->SetEventOnCompletion(fenceValue, fenceEvent);
-			assert(SUCCEEDED(eventResult));
+			EDITOR_HR_VERIFY(eventResult);
 			WaitForSingleObject(fenceEvent, INFINITE);
 		}
 	};
@@ -3584,14 +3607,28 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			renderHeight,
 			swapChainDesc.Format,
 			0);
-		assert(SUCCEEDED(resizeResult));
+		EDITOR_HR_VERIFY(resizeResult);
 
+		// 古い back buffer は上で Release 済みなので、ResizeBuffers が失敗しても
+		// GetBuffer は必ず試す。失敗した Buffer に対して RTV を作ると nullptr を
+		// 渡すことになるため、取得できた Buffer だけ RTV を張り直す。
+		bool swapChainBuffersReady = true;
 		for (uint32_t bufferIndex = 0; bufferIndex < swapChainDesc.BufferCount; ++bufferIndex) {
 			// Resize 後�E新しい back buffer を取得して RTV を張り直す、E
 			HRESULT getBufferResult =
 				swapChain->GetBuffer(bufferIndex, IID_PPV_ARGS(&swapChainResources[bufferIndex]));
-			assert(SUCCEEDED(getBufferResult));
+			if (!EDITOR_HR_OK(getBufferResult) || swapChainResources[bufferIndex] == nullptr) {
+				swapChainBuffersReady = false;
+				continue;
+			}
 			device->CreateRenderTargetView(swapChainResources[bufferIndex], &rtvDesc, rtvHandles[bufferIndex]);
+		}
+
+		// back buffer が 1 枚でも欠けた状態では Present も RTV 遷移もできない。
+		// Device Removed 等の復帰不能な失敗なので、null を触る前に終了要求を出す。
+		if (!swapChainBuffersReady) {
+			RequestFatalRuntimeFailure();
+			return;
 		}
 
 		depthStencilResource = createDepthStencilResource(
@@ -3611,9 +3648,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	};
 
 	hr = commandAllocator->Reset(); // チE��スチャアチE�Eロード用に CommandAllocator と CommandList を記録可能状態へ戻す、E
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 	hr = commandList->Reset(commandAllocator.Get(), nullptr);
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 
 	// intermediateResources は Texture upload のための一晁EUpload Buffer、E
 	ID3D12Resource* intermediateResources[_countof(textureFilePaths)] = {nullptr};
@@ -3662,7 +3699,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		kRuntimeEnvironmentSrvDescriptorIndex);
 
 	hr = commandList->Close(); // Texture upload 用 CommandList を閉じて GPU に実行させる、E
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 
 	// uploadCommandLists は ExecuteCommandLists に渡ぁECommandList 配�E、E
 	ID3D12CommandList* uploadCommandLists[] = {commandList.Get()};
@@ -3670,10 +3707,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	fenceValue++; // 初期アチE�E��ードが完亁E��るまで征E��、以降�E描画で Texture を安�Eに参�Eする、E
 	hr = commandQueue->Signal(fence.Get(), fenceValue);
-	assert(SUCCEEDED(hr));
+	EDITOR_HR_VERIFY(hr);
 	if (fence->GetCompletedValue() < fenceValue) {
 		hr = fence->SetEventOnCompletion(fenceValue, fenceEvent);
-		assert(SUCCEEDED(hr));
+		EDITOR_HR_VERIFY(hr);
 		WaitForSingleObject(fenceEvent, INFINITE);
 	}
 
@@ -4613,6 +4650,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	g_instanceHandle = instanceHandle; // ここから下�E、Initialize 冁E�Eローカル生�E物めEEditorSharedState の共有状態へ移す、E
 	g_logStream = std::move(logStream);
+	// HRESULT 失敗行を実行ログ(logs/<日時>.Log)へも残す。g_logStream は
+	// Finalize まで生きるグローバルなので、寿命の逆転は起きない。
+	EditorSetHrFailureLogStream(&g_logStream);
 	g_windowHandle = windowHandle;
 	g_hr = hr;
 	g_directInput = directInput;
@@ -5270,9 +5310,22 @@ int EditorPlatformManager::Finalize() {
 		opaqueDepthCopyResource->Release();
 		opaqueDepthCopyResource = nullptr;
 	}
-	depthStencilResource->Release();
-	swapChainResources[0]->Release();
-	swapChainResources[1]->Release();
+	// 初期化が途中で失敗した場合や、Resize 中に back buffer を取得できなかった
+	// 場合はこれらが nullptr のまま Finalize に来る。無条件 Release は終了時の
+	// null 参照になるため、他のリソースと同じように存在確認してから解放する。
+	if (depthStencilResource != nullptr) {
+		depthStencilResource->Release();
+		depthStencilResource = nullptr;
+	}
+	for (ID3D12Resource*& swapChainResource : swapChainResources) {
+		if (swapChainResource != nullptr) {
+			swapChainResource->Release();
+			swapChainResource = nullptr;
+		}
+	}
+
+	// g_logStream をこの先で閉じるため、書き出し先の登録を先に外す。
+	EditorSetHrFailureLogStream(nullptr);
 
 #ifdef _DEBUG
 	ComPtr<IDXGIDebug1> debug;

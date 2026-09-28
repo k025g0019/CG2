@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // EditorLogFieldRegistry.generated.h(生成物)とEditorLogMonitorManager.h(手書き)の
 // 両方から参照される共通の値種別。生成Scriptを再実行してもこのFileは上書きされないため、

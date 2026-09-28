@@ -165,7 +165,7 @@ copy /Y "$(ProjectDir)Source\Engine\Core\EditorScriptApi.h" "$(TargetDir)ScriptA
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_WINDOWS;USE_IMGUI;NOMINMAX;BTCPP_LIBRARY_VERSION="4.9.0";%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_WINDOWS;USE_IMGUI;NOMINMAX;BTCPP_LIBRARY_VERSION="4.9.0";%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>ThirdParty\imgui-docking\imgui-docking;ThirdParty\imgui-docking\imgui-docking\backends;ThirdParty\ImGuizmo-master\ImGuizmo-master\src;ThirdParty\FeelKitHaptics;ThirdParty\JoltPhysics-5.5.0;ThirdParty\AI\BehaviorTree.CPP-4.9.0\include;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\tinyxml2;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\minicoro;ThirdParty\AI\OpenSteer-master\include;ThirdParty\AI\recastnavigation-1.6.0\Detour\Include;ThirdParty\AI\recastnavigation-1.6.0\DetourCrowd\Include;ThirdParty\AI\recastnavigation-1.6.0\Recast\Include;ThirdParty\meshoptimizer\src;ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include;ThirdParty\Shader\FidelityFX-SDK-v1.1.4\ffx-api\include;Source\Engine\Animation;Source\Engine\Core;Source\Engine\Editor;Source\Engine\Effect;Source\Engine\Physics;Source\Engine\Audio;Source\Engine\Input;Source\Engine\Navigation;Source\Engine\Renderer;.;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 /external:anglebrackets /external:W0 %(AdditionalOptions)</AdditionalOptions>
       <ConformanceMode>true</ConformanceMode>
@@ -416,6 +416,10 @@ copy /Y "$(ProjectDir)Source\Engine\Core\EditorScriptApi.h" "$(TargetDir)ScriptA
       <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
     </ClCompile>
     <ClCompile Include="Source\Engine\Physics\BoxCollision.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\EditorHrCheck.cpp">
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
       <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
     </ClCompile>
@@ -1175,6 +1179,10 @@ copy /Y "$(ProjectDir)Source\Engine\Core\EditorScriptApi.h" "$(TargetDir)ScriptA
     <ClInclude Include="Source\Engine\Core\EngineEnvironmentCheck.h" />
     <ClInclude Include="Source\Engine\Editor\EditorAssetFactory.h" />
     <ClInclude Include="Source\Engine\Editor\EditorAssetManagerAdapters.h" />
+    <ClInclude Include="Source\Engine\Core\EditorHrCheck.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorAnimationManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorAudioManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorConstraintManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorAssetUtility.h" />
     <ClInclude Include="Source\Engine\Editor\EditorAIManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorBottomPanel.h" />

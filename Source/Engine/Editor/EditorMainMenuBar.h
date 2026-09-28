@@ -15,7 +15,6 @@
 class EditorMainMenuBar {
 public:
 	void Initialize(EditorScene* editorScene, EditorRuntimeManager* runtimeManager);  // Play / Stop 操作に使う Scene と RuntimeManager を受け取る
-	void Update();  // 現時点では自動更新なし
 	// メインメニューと Play ボタンを描画する
 	void Draw(
 		std::vector<std::string>& consoleMessages,

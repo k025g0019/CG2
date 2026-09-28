@@ -9,9 +9,6 @@ using namespace EditorSharedState;
 void EditorHierarchyWindowManager::Initialize() {
 }
 
-void EditorHierarchyWindowManager::Update() {
-}
-
 void EditorHierarchyWindowManager::Draw() {
 #ifdef USE_IMGUI
 	//================================================================

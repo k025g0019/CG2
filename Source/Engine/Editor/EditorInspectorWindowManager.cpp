@@ -19,9 +19,6 @@ namespace {
 void EditorInspectorWindowManager::Initialize() {
 }
 
-void EditorInspectorWindowManager::Update() {
-}
-
 void EditorInspectorWindowManager::Draw() {
 #ifdef USE_IMGUI
 	//================================================================

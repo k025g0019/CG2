@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #pragma warning(push, 0)
 #include <d3d12.h>

@@ -201,18 +201,13 @@ void GameScene::Update() {
 	});
 
 	if (isStandaloneGame_) {
-		gameViewManager_.Update();
-		renderManager_.Update();
 		return;
 	}
 
-	mainMenuManager_.Update();  // メインメニューは Draw で表示するだけなので Update は空実装。
-	dockingManager_.Update();  // Docking は Draw 時に DockSpace を確保するため、Update は空実装。
-	sceneViewManager_.Update();  // SceneView の入力判定は Draw 中の ImGui 座標が必要なので Update は空実装。
-	gameViewManager_.Update();  // GameView の Camera 行列は Draw 中の矩形から作るため Update は空実装。
-	hierarchyWindowManager_.Update();  // Hierarchy は Draw 中に選択・ドラッグを処理するため Update は空実装。
-	inspectorWindowManager_.Update();  // Inspector は Draw 中に Component 値を編集するため Update は空実装。
-	bottomPanelWindowManager_.Update();  // BottomPanel は Draw 中に Project / Console を操作するため Update は空実装。
+	// MainMenu / Docking / SceneView / GameView / Hierarchy / Inspector / BottomPanel /
+	// LogMonitor / HookWireDebug / Renderer はフレーム前半に進める状態を持たない。
+	// 選択・ドラッグ・Component 編集・行列更新はすべて Draw 中の ImGui 入力と
+	// 矩形から直接処理するため、これらに Update は無い。以下は実際に状態が動くものだけ。
 	profileEditorUpdate("Animation Window.Update", [this]() {
 		animationWindowManager_.Update();  // Timeline Preview の時間進行と Record 中の Key 化を更新する。
 	});
@@ -223,13 +218,10 @@ void GameScene::Update() {
 		diagnosticsWindowManager_.Update();  // 表示中だけ一定間隔でScene構成を静的検査する。
 	});
 	externalFeatureWindowManager_.Update();  // Play外でもHaptics Previewとログ反映を進める。
-	logMonitorWindowManager_.Update();  // 選択UIはDraw中に編集するためUpdateは空実装。
-	hookWireDebugWindowManager_.Update();  // 検査はDraw中に行うためUpdateは空実装。
 	pvShootWindowManager_.Update();  // PV撮影モードのTimeScale倍率をRuntimeへ反映する。
 	profileEditorUpdate("Team Collaboration.Update", [this]() {
 		teamCollaborationManager_.Update(1.0f / 60.0f, g_editorRuntimeManager.IsPlaying());
 	});
-	renderManager_.Update();  // Renderer は Draw で GPU コマンドを発行するため Update は空実装。
 }
 
 void GameScene::Draw() {

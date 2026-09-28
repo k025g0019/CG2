@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <cstdint>
 #include <functional>
@@ -13,7 +13,6 @@
 class EditorLogMonitorWindowManager {
 public:
 	void Initialize();
-	void Update();
 	void Draw();
 
 private:

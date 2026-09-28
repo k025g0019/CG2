@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // 汎用ログ・監視System(Runtime Inspector + Watch + Logger)。
 // GameObject / Component / System のいずれの対象も、ユーザーがUI(EditorLogMonitorWindowManager)で

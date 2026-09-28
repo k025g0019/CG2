@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // 汎用ログ・監視システムの「System」対象(GameObjectに属さないManager/Global State)を
 // 提供するProvider一覧。

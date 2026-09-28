@@ -1,4 +1,4 @@
-#pragma warning(disable : 4189 4514)
+﻿#pragma warning(disable : 4189 4514)
 
 #include "EditorLogMonitorWindowManager.h"
 
@@ -52,9 +52,6 @@ namespace {
 }
 
 void EditorLogMonitorWindowManager::Initialize() {
-}
-
-void EditorLogMonitorWindowManager::Update() {
 }
 
 void EditorLogMonitorWindowManager::Draw() {

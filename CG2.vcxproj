@@ -5,6 +5,10 @@
       <Configuration>Debug</Configuration>
       <Platform>x64</Platform>
     </ProjectConfiguration>
+    <ProjectConfiguration Include="Development|x64">
+      <Configuration>Development</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
     <ProjectConfiguration Include="Release|x64">
       <Configuration>Release</Configuration>
       <Platform>x64</Platform>
@@ -31,6 +35,13 @@
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Development|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
   </ImportGroup>
@@ -40,6 +51,9 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Development|x64'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
@@ -52,11 +66,16 @@
     <ExternalIncludePath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;$(ExternalIncludePath)</ExternalIncludePath>
     <LibraryPath>$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\Effekseer\Release;$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\EffekseerRendererDX12\Release;$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\3rdParty\LLGI\src\Release;C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release;$(ProjectDir)ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Development|x64'">
+    <IncludePath>$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\Effekseer;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\EffekseerRendererDX12;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\EffekseerRendererCommon;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\EffekseerRendererLLGI;$(ProjectDir)ThirdParty\Effekseer-1.70e\Dev\Cpp\3rdParty\LLGI\src;C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;$(ProjectDir)ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\include;$(IncludePath)</IncludePath>
+    <ExternalIncludePath>C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\include;$(ExternalIncludePath)</ExternalIncludePath>
+    <LibraryPath>$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\Effekseer\Release;$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\EffekseerRendererDX12\Release;$(ProjectDir)ThirdParty\Effekseer-1.70e\build-cg2\Dev\Cpp\3rdParty\LLGI\src\Release;C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release;$(ProjectDir)ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;_WINDOWS;USE_IMGUI;NOMINMAX;BTCPP_LIBRARY_VERSION=&quot;4.9.0&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_WINDOWS;USE_IMGUI;NOMINMAX;BTCPP_LIBRARY_VERSION="4.9.0";%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>ThirdParty\imgui-docking\imgui-docking;ThirdParty\imgui-docking\imgui-docking\backends;ThirdParty\ImGuizmo-master\ImGuizmo-master\src;ThirdParty\FeelKitHaptics;ThirdParty\JoltPhysics-5.5.0;ThirdParty\AI\BehaviorTree.CPP-4.9.0\include;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\tinyxml2;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\minicoro;ThirdParty\AI\OpenSteer-master\include;ThirdParty\AI\recastnavigation-1.6.0\Detour\Include;ThirdParty\AI\recastnavigation-1.6.0\DetourCrowd\Include;ThirdParty\AI\recastnavigation-1.6.0\Recast\Include;ThirdParty\meshoptimizer\src;ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include;ThirdParty\Shader\FidelityFX-SDK-v1.1.4\ffx-api\include;Source\Engine\Animation;Source\Engine\Core;Source\Engine\Editor;Source\Engine\Effect;Source\Engine\Physics;Source\Engine\Audio;Source\Engine\Input;Source\Engine\Navigation;Source\Engine\Renderer;.;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 /external:anglebrackets /external:W0 %(AdditionalOptions)</AdditionalOptions>
       <ConformanceMode>true</ConformanceMode>
@@ -101,7 +120,7 @@ copy /Y "$(ProjectDir)Source\Engine\Core\EditorScriptApi.h" "$(TargetDir)ScriptA
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_WINDOWS;USE_IMGUI;NOMINMAX;BTCPP_LIBRARY_VERSION=&quot;4.9.0&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_WINDOWS;USE_IMGUI;NOMINMAX;BTCPP_LIBRARY_VERSION="4.9.0";%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>ThirdParty\imgui-docking\imgui-docking;ThirdParty\imgui-docking\imgui-docking\backends;ThirdParty\ImGuizmo-master\ImGuizmo-master\src;ThirdParty\FeelKitHaptics;ThirdParty\JoltPhysics-5.5.0;ThirdParty\AI\BehaviorTree.CPP-4.9.0\include;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\tinyxml2;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\minicoro;ThirdParty\AI\OpenSteer-master\include;ThirdParty\AI\recastnavigation-1.6.0\Detour\Include;ThirdParty\AI\recastnavigation-1.6.0\DetourCrowd\Include;ThirdParty\AI\recastnavigation-1.6.0\Recast\Include;ThirdParty\meshoptimizer\src;ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include;ThirdParty\Shader\FidelityFX-SDK-v1.1.4\ffx-api\include;Source\Engine\Animation;Source\Engine\Core;Source\Engine\Editor;Source\Engine\Effect;Source\Engine\Physics;Source\Engine\Audio;Source\Engine\Input;Source\Engine\Navigation;Source\Engine\Renderer;.;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 /external:anglebrackets /external:W0 %(AdditionalOptions)</AdditionalOptions>
       <ConformanceMode>true</ConformanceMode>
@@ -117,6 +136,53 @@ copy /Y "$(ProjectDir)Source\Engine\Core\EditorScriptApi.h" "$(TargetDir)ScriptA
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>EffekseerRendererDX12.lib;Effekseer.lib;LLGI.lib;libfbxsdk.lib;onnxruntime.lib;winhttp.lib;mfplat.lib;mfreadwrite.lib;mfuuid.lib;mf.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>C:\kogakuin\LE1\CG2\ThirdParty\PhysicsSdk\lib\release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+    <Manifest>
+      <EnableDpiAwareness>PerMonitorHighDPIAware</EnableDpiAwareness>
+    </Manifest>
+    <PostBuildEvent>
+      <Command>copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxcompiler.dll" "$(TargetDir)dxcompiler.dll"
+copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dxil.dll"
+copy "C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.9\lib\x64\release\libfbxsdk.dll" "$(TargetDir)libfbxsdk.dll"
+copy "$(ProjectDir)ThirdParty\onnxruntime-win-x64-gpu_cuda13-1.27.0\lib\onnxruntime.dll" "$(TargetDir)onnxruntime.dll"
+xcopy "$(ProjectDir)Assets" "$(TargetDir)Assets" /E /I /Y
+xcopy "$(ProjectDir)resources" "$(TargetDir)resources" /E /I /Y
+xcopy "$(ProjectDir)Tools\Whisper" "$(TargetDir)Tools\Whisper" /E /I /Y /D
+xcopy "$(ProjectDir)ThirdParty\Shader\lygia" "$(TargetDir)ThirdParty\Shader\lygia" /E /I /Y
+xcopy "$(ProjectDir)ThirdParty\Shader\NoiseShader-3.0.1\Packages\jp.keijiro.noiseshader\Shader" "$(TargetDir)ThirdParty\Shader\NoiseShader-3.0.1\Packages\jp.keijiro.noiseshader\Shader" /E /I /Y
+xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\bin\shaders" "$(TargetDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\bin\shaders" /E /I /Y
+xcopy "$(ProjectDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" "$(TargetDir)ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include" /E /I /Y
+if not exist "$(TargetDir)ScriptApi" mkdir "$(TargetDir)ScriptApi"
+copy /Y "$(ProjectDir)Source\Engine\Core\EditorNativeScript.h" "$(TargetDir)ScriptApi\EditorNativeScript.h"
+copy /Y "$(ProjectDir)Source\Engine\Core\EditorScriptApi.h" "$(TargetDir)ScriptApi\EditorScriptApi.h"</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Development|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_WINDOWS;USE_IMGUI;NOMINMAX;BTCPP_LIBRARY_VERSION="4.9.0";%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>ThirdParty\imgui-docking\imgui-docking;ThirdParty\imgui-docking\imgui-docking\backends;ThirdParty\ImGuizmo-master\ImGuizmo-master\src;ThirdParty\FeelKitHaptics;ThirdParty\JoltPhysics-5.5.0;ThirdParty\AI\BehaviorTree.CPP-4.9.0\include;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\tinyxml2;ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\minicoro;ThirdParty\AI\OpenSteer-master\include;ThirdParty\AI\recastnavigation-1.6.0\Detour\Include;ThirdParty\AI\recastnavigation-1.6.0\DetourCrowd\Include;ThirdParty\AI\recastnavigation-1.6.0\Recast\Include;ThirdParty\meshoptimizer\src;ThirdParty\Shader\FidelityFX-SDK-v1.1.4\sdk\include;ThirdParty\Shader\FidelityFX-SDK-v1.1.4\ffx-api\include;Source\Engine\Animation;Source\Engine\Core;Source\Engine\Editor;Source\Engine\Effect;Source\Engine\Physics;Source\Engine\Audio;Source\Engine\Input;Source\Engine\Navigation;Source\Engine\Renderer;.;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>/utf-8 /external:anglebrackets /external:W0 %(AdditionalOptions)</AdditionalOptions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <TreatAngleIncludeAsExternal>true</TreatAngleIncludeAsExternal>
+      <WholeProgramOptimization>false</WholeProgramOptimization>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EntryPointSymbol>WinMainCRTStartup</EntryPointSymbol>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>EffekseerRendererDX12.lib;Effekseer.lib;LLGI.lib;libfbxsdk.lib;onnxruntime.lib;winhttp.lib;mfplat.lib;mfreadwrite.lib;mfuuid.lib;mf.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <LinkTimeCodeGeneration />
     </Link>
     <Manifest>
       <EnableDpiAwareness>PerMonitorHighDPIAware</EnableDpiAwareness>
@@ -148,60 +214,60 @@ copy /Y "$(ProjectDir)Source\Engine\Core\EditorScriptApi.h" "$(TargetDir)ScriptA
     <None Include="Build\PhysicsSdk\Smoke.cpp" />
     <None Include="Build\PhysicsSdk\Cuda13Compatibility.cpp" />
     <None Include="Assets\Input\InGameInputAction.json" />
-	<None Include="Assets\Shaders\Particle\ParticleClear.CS.hlsl" />
-	<None Include="Assets\Shaders\Particle\ParticleCommon.hlsli" />
-	<None Include="Assets\Shaders\Particle\ParticleUpdate.CS.hlsl" />
-	<None Include="Assets\Shaders\Particle\ParticleSpawn.CS.hlsl" />
-	<None Include="Assets\Shaders\Particle\Particle.VS.hlsl" />
-	<None Include="Assets\Shaders\Particle\Particle.PS.hlsl" />
-	<None Include="Assets\Shaders\Particle\OceanSprayMist.hlsli" />
-	<None Include="Assets\Shaders\Particle\ParticleModel.VS.hlsl" />
-	<None Include="Assets\Shaders\Particle\ParticleModel.PS.hlsl" />
-	<None Include="Assets\Shaders\Transparency\WeightedOIT.PS.hlsl" />
-	<None Include="Assets\Shaders\Transparency\WeightedOITComposite.PS.hlsl" />
-	<None Include="Assets\Shaders\Transparency\RefractiveSurface.PS.hlsl" />
-	<None Include="Assets\Shaders\Temporal\SkinnedMotionVector.VS.hlsl" />
-	<None Include="Assets\Shaders\Water\UnderwaterCaustics.PS.hlsl" />
-	<None Include="Assets\Shaders\Common\SurfaceDeformation.hlsli" />
-	<None Include="Assets\Shaders\Common\AnalyticAtmosphere.hlsli" />
-	<None Include="Assets\Shaders\Object3d.PS.hlsl">
-	  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-	</None>
-	<None Include="Assets\Shaders\Water\OceanSpectrum.hlsli">
-	  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-	</None>
-	<None Include="Assets\Shaders\Water\OceanFftSampling.hlsli" />
-	<None Include="Assets\Shaders\Water\OceanFFT_UpdateSpectrum.CS.hlsl" />
-	<None Include="Assets\Shaders\Water\OceanFFT_Row.CS.hlsl" />
-	<None Include="Assets\Shaders\Water\OceanFFT_Transpose.CS.hlsl" />
-	<None Include="Assets\Shaders\Water\OceanFFT_Finalize.CS.hlsl" />
-	<None Include="Assets\Shaders\Water\OceanSurface.hlsli" />
-	<None Include="Assets\Shaders\Water\OceanSurface.PS.hlsl">
-	  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-	</None>
-	<None Include="Assets\Shaders\Object3dReflectionMask.PS.hlsl" />
+    <None Include="Assets\Shaders\Particle\ParticleClear.CS.hlsl" />
+    <None Include="Assets\Shaders\Particle\ParticleCommon.hlsli" />
+    <None Include="Assets\Shaders\Particle\ParticleUpdate.CS.hlsl" />
+    <None Include="Assets\Shaders\Particle\ParticleSpawn.CS.hlsl" />
+    <None Include="Assets\Shaders\Particle\Particle.VS.hlsl" />
+    <None Include="Assets\Shaders\Particle\Particle.PS.hlsl" />
+    <None Include="Assets\Shaders\Particle\OceanSprayMist.hlsli" />
+    <None Include="Assets\Shaders\Particle\ParticleModel.VS.hlsl" />
+    <None Include="Assets\Shaders\Particle\ParticleModel.PS.hlsl" />
+    <None Include="Assets\Shaders\Transparency\WeightedOIT.PS.hlsl" />
+    <None Include="Assets\Shaders\Transparency\WeightedOITComposite.PS.hlsl" />
+    <None Include="Assets\Shaders\Transparency\RefractiveSurface.PS.hlsl" />
+    <None Include="Assets\Shaders\Temporal\SkinnedMotionVector.VS.hlsl" />
+    <None Include="Assets\Shaders\Water\UnderwaterCaustics.PS.hlsl" />
+    <None Include="Assets\Shaders\Common\SurfaceDeformation.hlsli" />
+    <None Include="Assets\Shaders\Common\AnalyticAtmosphere.hlsli" />
+    <None Include="Assets\Shaders\Object3d.PS.hlsl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="Assets\Shaders\Water\OceanSpectrum.hlsli">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="Assets\Shaders\Water\OceanFftSampling.hlsli" />
+    <None Include="Assets\Shaders\Water\OceanFFT_UpdateSpectrum.CS.hlsl" />
+    <None Include="Assets\Shaders\Water\OceanFFT_Row.CS.hlsl" />
+    <None Include="Assets\Shaders\Water\OceanFFT_Transpose.CS.hlsl" />
+    <None Include="Assets\Shaders\Water\OceanFFT_Finalize.CS.hlsl" />
+    <None Include="Assets\Shaders\Water\OceanSurface.hlsli" />
+    <None Include="Assets\Shaders\Water\OceanSurface.PS.hlsl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="Assets\Shaders\Object3dReflectionMask.PS.hlsl" />
     <None Include="Assets\Shaders\Object3d.VS.hlsl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-	<None Include="Assets\Shaders\Culling\BuildIndirectArgs.CS.hlsl" />
-	<None Include="Assets\Shaders\Culling\FrustumCulling.CS.hlsl" />
-	<None Include="Assets\Shaders\Culling\OcclusionCulling.CS.hlsl" />
-	<None Include="Assets\Shaders\Depth\DepthDownsample.CS.hlsl" />
-	<None Include="Assets\Shaders\Depth\DepthPyramid.CS.hlsl" />
-	<None Include="Assets\Shaders\Depth\ReconstructNormal.CS.hlsl" />
-	<None Include="Assets\Shaders\PostProcess\Bloom\BloomCommon.hlsli" />
-	<None Include="Assets\Shaders\PostProcess\Bloom\BloomDownsample.PS.hlsl" />
-	<None Include="Assets\Shaders\PostProcess\Bloom\BloomPrefilter.PS.hlsl" />
-	<None Include="Assets\Shaders\PostProcess\Bloom\BloomUpsample.PS.hlsl" />
-	<None Include="Assets\Shaders\PostProcess\Filter.PS.hlsl" />
-	<None Include="Assets\Shaders\PostProcess\AutoExposure.PS.hlsl" />
-	<None Include="Assets\Shaders\PostProcess\Glare.PS.hlsl" />
-	<None Include="Assets\Shaders\PostProcess\SMAA\SMAABlendWeight.PS.hlsl" />
-	<None Include="Assets\Shaders\PostProcess\SMAA\SMAACommon.hlsli" />
-	<None Include="Assets\Shaders\PostProcess\SMAA\SMAAEdgeDetection.PS.hlsl" />
-	<None Include="Assets\Shaders\PostProcess\SMAA\SMAANeighborhoodBlend.PS.hlsl" />
-	<None Include="Assets\Shaders\PostProcess\FinalComposite.PS.hlsl" />
-	<None Include="Assets\Shaders\PostProcess\SSGI.PS.hlsl" />
+    <None Include="Assets\Shaders\Culling\BuildIndirectArgs.CS.hlsl" />
+    <None Include="Assets\Shaders\Culling\FrustumCulling.CS.hlsl" />
+    <None Include="Assets\Shaders\Culling\OcclusionCulling.CS.hlsl" />
+    <None Include="Assets\Shaders\Depth\DepthDownsample.CS.hlsl" />
+    <None Include="Assets\Shaders\Depth\DepthPyramid.CS.hlsl" />
+    <None Include="Assets\Shaders\Depth\ReconstructNormal.CS.hlsl" />
+    <None Include="Assets\Shaders\PostProcess\Bloom\BloomCommon.hlsli" />
+    <None Include="Assets\Shaders\PostProcess\Bloom\BloomDownsample.PS.hlsl" />
+    <None Include="Assets\Shaders\PostProcess\Bloom\BloomPrefilter.PS.hlsl" />
+    <None Include="Assets\Shaders\PostProcess\Bloom\BloomUpsample.PS.hlsl" />
+    <None Include="Assets\Shaders\PostProcess\Filter.PS.hlsl" />
+    <None Include="Assets\Shaders\PostProcess\AutoExposure.PS.hlsl" />
+    <None Include="Assets\Shaders\PostProcess\Glare.PS.hlsl" />
+    <None Include="Assets\Shaders\PostProcess\SMAA\SMAABlendWeight.PS.hlsl" />
+    <None Include="Assets\Shaders\PostProcess\SMAA\SMAACommon.hlsli" />
+    <None Include="Assets\Shaders\PostProcess\SMAA\SMAAEdgeDetection.PS.hlsl" />
+    <None Include="Assets\Shaders\PostProcess\SMAA\SMAANeighborhoodBlend.PS.hlsl" />
+    <None Include="Assets\Shaders\PostProcess\FinalComposite.PS.hlsl" />
+    <None Include="Assets\Shaders\PostProcess\SSGI.PS.hlsl" />
     <None Include="Assets\Shaders\DirectXTK\EnvironmentMapEffectBridge.hlsli">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
@@ -229,316 +295,717 @@ copy /Y "$(ProjectDir)Source\Engine\Core\EditorScriptApi.h" "$(TargetDir)ScriptA
     </None>
   </ItemGroup>
   <ItemGroup>
-	<ClCompile Include="Source\Engine\Animation\AnimationGraph.cpp" />
-	<ClCompile Include="Source\Engine\Core\EngineVersion.cpp" />
-	<ClCompile Include="Source\Engine\Core\ProjectVersionManager.cpp" />
-	<ClCompile Include="Source\Engine\Core\EngineEnvironmentCheck.cpp" />
-	<ClCompile Include="Source\Engine\Animation\PropertyAnimationClip.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorAnimationWindowManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorDiagnosticsWindowManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorHookWireDebugWindowManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorPvShootWindowManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorLogFieldRegistry.generated.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorLogMonitorManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorLogMonitorWindowManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorLogSystemProviders.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorProfilerManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorProfilerAllocationTracker.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorTeamUuid.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorTeamCollaborationManager.cpp" />
-	<ClCompile Include="Source\Engine\Collaboration\TcpCollaborationTransport.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorReplayManager.cpp" />
-	<ClCompile Include="Source\Engine\Asset\AssetManager.cpp" />
-	<ClCompile Include="Source\Engine\Asset\AssetRegistry.cpp" />
-	<ClCompile Include="Source\Engine\Asset\AssetImportSettings.cpp" />
-	<ClCompile Include="Source\Engine\Core\ProjectSettings.cpp" />
-	<ClCompile Include="Source\Engine\Core\GamepadInput.cpp" />
-	<ClCompile Include="Source\Engine\Effect\EffectAsset.cpp" />
-	<ClCompile Include="Source\Engine\Effect\EditorEffectManager.cpp" />
-	<ClCompile Include="Source\Engine\Effect\EffectDefinition.cpp" />
-	<ClCompile Include="Source\Engine\Effect\EditorVfxManager.cpp" />
-	<ClCompile Include="Source\Engine\Effect\EditorEffekseerManager.cpp" />
-    <ClCompile Include="Source\Engine\Core\ApplicationWindow.cpp" />
-    <ClCompile Include="Source\Engine\Physics\BoxCollision.cpp" />
-    <ClCompile Include="Source\Engine\Core\CrashHandler.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorAssetFactory.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorAssetManagerAdapters.cpp" />
+    <ClCompile Include="Source\Engine\Animation\AnimationGraph.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\EngineVersion.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\ProjectVersionManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\EngineEnvironmentCheck.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Animation\PropertyAnimationClip.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorAnimationWindowManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorDiagnosticsWindowManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorHookWireDebugWindowManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorPvShootWindowManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorLogFieldRegistry.generated.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorLogMonitorManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorLogMonitorWindowManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorLogSystemProviders.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorProfilerManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorProfilerAllocationTracker.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorTeamUuid.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorTeamCollaborationManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Collaboration\TcpCollaborationTransport.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorReplayManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Asset\AssetManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Asset\AssetRegistry.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Asset\AssetImportSettings.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\ProjectSettings.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\GamepadInput.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Effect\EffectAsset.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Effect\EditorEffectManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Effect\EffectDefinition.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Effect\EditorVfxManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Effect\EditorEffekseerManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\ApplicationWindow.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Physics\BoxCollision.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\CrashHandler.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorAssetFactory.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorAssetManagerAdapters.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorAssetUtility.cpp">
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Development|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
     </ClCompile>
-    <ClCompile Include="Source\Engine\Editor\EditorBottomPanel.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorBottomPanelWindowManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorComponentUtility.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorDockingManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorFrameInputManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorGameBuildManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorGameViewManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorHierarchyPanel.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorHierarchyWindowManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorImguiFrameManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorBottomPanel.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorBottomPanelWindowManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorComponentUtility.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorDockingManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorFrameInputManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorGameBuildManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorGameViewManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorHierarchyPanel.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorHierarchyWindowManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorImguiFrameManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorInspectorPanel.cpp">
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Development|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
     </ClCompile>
-    <ClCompile Include="Source\Engine\Editor\EditorInspectorWindowManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorInputManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorJoltPhysicsManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorLocalMoveManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorRailMovementManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorRailBranchManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorActionSequenceManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorSaveManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorTargetingManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorDamageManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorObjectPoolManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorWeaponManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorWeaponLoadoutManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorRuntimePropertyManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorCameraEffectManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorWaveSpawnerManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorSceneOptimizationManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorWaterRailShooterSceneBuilder.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorGameplayEventManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorUiBindingManager.cpp" />
-	<ClCompile Include="Source\Engine\Editor\EditorGameplayToolsWindowManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorMainMenuBar.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorMainMenuManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorMeshCollision.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorNativeScriptAssetManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorInspectorWindowManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorInputManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorJoltPhysicsManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorLocalMoveManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorRailMovementManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorRailBranchManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorActionSequenceManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorSaveManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorTargetingManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorDamageManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorObjectPoolManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorWeaponManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorWeaponLoadoutManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorRuntimePropertyManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorCameraEffectManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorWaveSpawnerManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorSceneOptimizationManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorWaterRailShooterSceneBuilder.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorGameplayEventManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorUiBindingManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorGameplayToolsWindowManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorMainMenuBar.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorMainMenuManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorMeshCollision.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorNativeScriptAssetManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorAIManager.cpp">
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Development|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\cppGOAP-develop\src\Action.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\cppGOAP-develop\src\Node.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\cppGOAP-develop\src\Planner.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\cppGOAP-develop\src\WorldState.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\MicroPather-master\micropather.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\3rdparty\tinyxml2\tinyxml2.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\action_node.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\basic_types.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\behavior_tree.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\blackboard.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\bt_factory.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\condition_node.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\control_node.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\decorator_node.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\meshoptimizer\src\allocator.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\meshoptimizer\src\clusterizer.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\meshoptimizer\src\indexanalyzer.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\meshoptimizer\src\indexcodec.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\meshoptimizer\src\indexgenerator.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\meshoptimizer\src\meshletcodec.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\meshoptimizer\src\meshletutils.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\meshoptimizer\src\opacitymap.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\meshoptimizer\src\overdrawoptimizer.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\meshoptimizer\src\partition.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\meshoptimizer\src\quantization.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\meshoptimizer\src\rasterizer.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\meshoptimizer\src\simplifier.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\meshoptimizer\src\spatialorder.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\meshoptimizer\src\stripifier.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\meshoptimizer\src\tangentspace.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\meshoptimizer\src\vcacheoptimizer.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\meshoptimizer\src\vertexcodec.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\meshoptimizer\src\vertexfilter.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\meshoptimizer\src\vfetchoptimizer.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\json_export.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\script_parser.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\script_tokenizer.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\shared_library.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\shared_library_WIN.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\tree_node.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\BehaviorTree.CPP-4.9.0\src\xml_parsing.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\recastnavigation-1.6.0\Detour\Source\DetourAlloc.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\recastnavigation-1.6.0\Detour\Source\DetourAssert.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\AI\recastnavigation-1.6.0\Detour\Source\DetourCommon.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
-      <ClCompile Include="Source\Engine\Editor\EditorAnimationManager.cpp" />
-	  <ClCompile Include="Source\Engine\Editor\EditorBlastDestructionManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorConstraintManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorAnimationManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorBlastDestructionManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorConstraintManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorNavigationManager.cpp">
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Development|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
     </ClCompile>
-    <ClCompile Include="Source\Engine\Editor\EditorOceanSystem.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorPhysicsManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorRenderManager.cpp" />
-	<ClCompile Include="Source\Engine\Renderer\EditorDepthHierarchyManager.cpp" />
-	<ClCompile Include="Source\Engine\Renderer\EditorGBufferManager.cpp" />
-	<ClCompile Include="Source\Engine\Renderer\EditorLightProbeManager.cpp" />
-	<ClCompile Include="Source\Engine\Renderer\EditorGpuCullingManager.cpp" />
-	<ClCompile Include="Source\Engine\Renderer\EditorOceanFftManager.cpp" />
-	<ClCompile Include="Source\Engine\Renderer\EditorGpuParticleManager.cpp" />
-	<ClCompile Include="Source\Engine\Renderer\EditorVfxRenderer.cpp" />
-	<ClCompile Include="Source\Engine\Renderer\EditorPostProcessQualityManager.cpp" />
-	<ClCompile Include="Source\Engine\Renderer\EditorTemporalRenderingManager.cpp" />
-	<ClCompile Include="Source\Engine\Renderer\EditorPlanarReflectionManager.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorOceanSystem.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorPhysicsManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorRenderManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Renderer\EditorDepthHierarchyManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Renderer\EditorGBufferManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Renderer\EditorLightProbeManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Renderer\EditorGpuCullingManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Renderer\EditorOceanFftManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Renderer\EditorGpuParticleManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Renderer\EditorVfxRenderer.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Renderer\EditorPostProcessQualityManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Renderer\EditorTemporalRenderingManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Renderer\EditorPlanarReflectionManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
     <ClCompile Include="Source\Engine\Editor\EditorRollingMoveManager.cpp">
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Development|x64'">5045;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
     </ClCompile>
-    <ClCompile Include="Source\Engine\Editor\EditorRuntimeManager.cpp" />
-    <ClCompile Include="Source\Engine\External\ExternalFeature.cpp" />
-    <ClCompile Include="Source\Engine\Speech\SpeechSystem.cpp" />
-	<ClCompile Include="Source\Engine\Speech\WhisperSpeechBackend.cpp" />
-    <ClCompile Include="Source\Engine\Speech\WindowsSpeechApiBackend.cpp" />
-    <ClCompile Include="Source\Engine\Vision\VisionSystem.cpp" />
-    <ClCompile Include="Source\Engine\Vision\MediaFoundationCameraSource.cpp" />
-    <ClCompile Include="Source\Engine\Vision\BuiltinVisionBackend.cpp" />
-    <ClCompile Include="Source\Engine\Vision\OnnxVisionBackend.cpp" />
-    <ClCompile Include="Source\Engine\Online\OnlineJson.cpp" />
-    <ClCompile Include="Source\Engine\Online\OnlineService.cpp" />
-    <ClCompile Include="Source\Engine\Online\WinHttpOnlineBackend.cpp" />
-    <ClCompile Include="Source\Engine\Haptics\HapticSystem.cpp" />
-    <ClCompile Include="Source\Engine\Haptics\FeelKitHapticBackend.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorExternalFeatureManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorExternalFeatureWindowManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorAudioManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorFreeTransformManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorScene.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorSceneCameraController.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorSceneLifecycleManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorSceneObjectManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorSceneSynchronizer.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorSceneViewManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorTerrainHeightField.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorSelectionManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorScriptManager.cpp" />
-    <ClCompile Include="Source\Engine\Editor\EditorPlatformManager.cpp" />
-    <ClCompile Include="Source\Engine\Core\GameScene.cpp" />
+    <ClCompile Include="Source\Engine\Editor\EditorRuntimeManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\External\ExternalFeature.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Speech\SpeechSystem.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Speech\WhisperSpeechBackend.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Speech\WindowsSpeechApiBackend.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Vision\VisionSystem.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Vision\MediaFoundationCameraSource.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Vision\BuiltinVisionBackend.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Vision\OnnxVisionBackend.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Online\OnlineJson.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Online\OnlineService.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Online\WinHttpOnlineBackend.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Haptics\HapticSystem.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Haptics\FeelKitHapticBackend.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorExternalFeatureManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorExternalFeatureWindowManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorAudioManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorFreeTransformManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorScene.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorSceneCameraController.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorSceneLifecycleManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorSceneObjectManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorSceneSynchronizer.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorSceneViewManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorTerrainHeightField.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorSelectionManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorScriptManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Editor\EditorPlatformManager.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\GameScene.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
     <ClCompile Include="Engine\Input\InputAction.cpp" />
     <ClCompile Include="Engine\Input\InputActionAsset.cpp" />
     <ClCompile Include="Engine\Input\InputActionMap.cpp" />
@@ -547,117 +1014,158 @@ copy /Y "$(ProjectDir)Source\Engine\Core\EditorScriptApi.h" "$(TargetDir)ScriptA
     <ClCompile Include="ThirdParty\imgui-docking\imgui-docking\imgui.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\imgui-docking\imgui-docking\imgui_demo.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\imgui-docking\imgui-docking\imgui_draw.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\imgui-docking\imgui-docking\backends\imgui_impl_dx12.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\imgui-docking\imgui-docking\backends\imgui_impl_win32.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\imgui-docking\imgui-docking\imgui_tables.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\imgui-docking\imgui-docking\imgui_widgets.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\ImGuizmo-master\ImGuizmo-master\src\ImGuizmo.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\imgui-node-editor-master\imgui-node-editor-master\crude_json.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\JoltPhysics-5.5.0\Jolt\**\*.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\FeelKitHaptics\FeelKit.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\FeelKitHaptics\FeelKitHaptics.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\FeelKitHaptics\haptics\FeelKitVibration.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\FeelKitHaptics\core\FeelKitCore.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\FeelKitHaptics\audio\FeelKitAudio.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\FeelKitHaptics\generation\FeelKitImpactGeneration.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\FeelKitHaptics\effects\FeelKitEffects.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="ThirdParty\FeelKitHaptics\screen\FeelKitScreen.cpp">
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Development|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="Source\Engine\Core\Imgui.cpp">
       <ObjectFileName>$(IntDir)imgui_helper.obj</ObjectFileName>
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
     </ClCompile>
-    <ClCompile Include="Source\Engine\Core\Log.cpp" />
-    <ClCompile Include="Source\Engine\Core\main.cpp" />
-    <ClCompile Include="Source\Engine\Core\Matrix.cpp" />
-    <ClCompile Include="Source\Engine\Physics\SphereCollision.cpp" />
-    <ClCompile Include="Source\Engine\Core\StringUtility.cpp" />
-    <ClCompile Include="Source\Engine\Core\Vector&amp;Matrix.cpp" />
-    <ClCompile Include="Source\Engine\Core\Vector.cpp" />
+    <ClCompile Include="Source\Engine\Core\Log.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\main.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\Matrix.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Physics\SphereCollision.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\StringUtility.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\Vector&amp;Matrix.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\Vector.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-	<ClInclude Include="Source\Engine\Animation\AnimationGraph.h" />
-	<ClInclude Include="Source\Engine\Animation\PropertyAnimationClip.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorAnimationWindowManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorDiagnosticsWindowManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorHookWireDebugWindowManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorPvShootWindowManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorLogFieldKind.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorLogFieldRegistry.generated.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorLogMonitorManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorLogMonitorWindowManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorLogSystemProviders.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorProfilerManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorProfilerAllocationTracker.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorTeamUuid.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorTeamCollaborationManager.h" />
-	<ClInclude Include="Source\Engine\Collaboration\ICollaborationTransport.h" />
-	<ClInclude Include="Source\Engine\Collaboration\TcpCollaborationTransport.h" />
-	<ClInclude Include="Source\Engine\Collaboration\CollaborationProtocol.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorReplayManager.h" />
-	<ClInclude Include="Source\Engine\Asset\AssetType.h" />
-	<ClInclude Include="Source\Engine\Asset\AssetManager.h" />
-	<ClInclude Include="Source\Engine\Asset\AssetRegistry.h" />
-	<ClInclude Include="Source\Engine\Asset\AssetImportSettings.h" />
-	<ClInclude Include="Source\Engine\Core\ProjectSettings.h" />
-	<ClInclude Include="Source\Engine\Core\GamepadInput.h" />
-	<ClInclude Include="Source\Engine\Effect\EffectAsset.h" />
-	<ClInclude Include="Source\Engine\Effect\EditorEffectManager.h" />
-	<ClInclude Include="Source\Engine\Effect\EffectDefinition.h" />
-	<ClInclude Include="Source\Engine\Effect\EditorVfxManager.h" />
-	<ClInclude Include="Source\Engine\Effect\EditorEffekseerManager.h" />
+    <ClInclude Include="Source\Engine\Animation\AnimationGraph.h" />
+    <ClInclude Include="Source\Engine\Animation\PropertyAnimationClip.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorAnimationWindowManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorDiagnosticsWindowManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorHookWireDebugWindowManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorPvShootWindowManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorLogFieldKind.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorLogFieldRegistry.generated.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorLogMonitorManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorLogMonitorWindowManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorLogSystemProviders.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorProfilerManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorProfilerAllocationTracker.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorTeamUuid.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorTeamCollaborationManager.h" />
+    <ClInclude Include="Source\Engine\Collaboration\ICollaborationTransport.h" />
+    <ClInclude Include="Source\Engine\Collaboration\TcpCollaborationTransport.h" />
+    <ClInclude Include="Source\Engine\Collaboration\CollaborationProtocol.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorReplayManager.h" />
+    <ClInclude Include="Source\Engine\Asset\AssetType.h" />
+    <ClInclude Include="Source\Engine\Asset\AssetManager.h" />
+    <ClInclude Include="Source\Engine\Asset\AssetRegistry.h" />
+    <ClInclude Include="Source\Engine\Asset\AssetImportSettings.h" />
+    <ClInclude Include="Source\Engine\Core\ProjectSettings.h" />
+    <ClInclude Include="Source\Engine\Core\GamepadInput.h" />
+    <ClInclude Include="Source\Engine\Effect\EffectAsset.h" />
+    <ClInclude Include="Source\Engine\Effect\EditorEffectManager.h" />
+    <ClInclude Include="Source\Engine\Effect\EffectDefinition.h" />
+    <ClInclude Include="Source\Engine\Effect\EditorVfxManager.h" />
+    <ClInclude Include="Source\Engine\Effect\EditorEffekseerManager.h" />
     <ClInclude Include="Source\Engine\Core\ApplicationWindow.h" />
     <ClInclude Include="Source\Engine\Physics\BoxCollision.h" />
     <ClInclude Include="Source\Engine\Core\CrashHandler.h" />
@@ -671,13 +1179,13 @@ copy /Y "$(ProjectDir)Source\Engine\Core\EditorScriptApi.h" "$(TargetDir)ScriptA
     <ClInclude Include="Source\Engine\Editor\EditorAIManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorBottomPanel.h" />
     <ClInclude Include="Source\Engine\Editor\EditorBottomPanelWindowManager.h" />
-	<ClInclude Include="Source\Engine\Core\EditorCommonTypes.h" />
+    <ClInclude Include="Source\Engine\Core\EditorCommonTypes.h" />
     <ClInclude Include="Source\Engine\Editor\EditorComponentUtility.h" />
     <ClInclude Include="Source\Engine\Editor\EditorDockingManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorFrameInputManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorGameBuildManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorGameViewManager.h" />
-	<ClInclude Include="Source\Engine\Core\EditorSharedState.h" />
+    <ClInclude Include="Source\Engine\Core\EditorSharedState.h" />
     <ClInclude Include="Source\Engine\Editor\EditorHierarchyPanel.h" />
     <ClInclude Include="Source\Engine\Editor\EditorHierarchyWindowManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorImguiFrameManager.h" />
@@ -685,44 +1193,44 @@ copy /Y "$(ProjectDir)Source\Engine\Core\EditorScriptApi.h" "$(TargetDir)ScriptA
     <ClInclude Include="Source\Engine\Editor\EditorInspectorWindowManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorInputManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorJoltPhysicsManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorLocalMoveManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorRailMovementManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorRailBranchManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorActionSequenceManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorSaveManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorTargetingManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorDamageManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorObjectPoolManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorWeaponManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorWeaponLoadoutManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorRuntimePropertyManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorCameraEffectManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorWaveSpawnerManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorSceneOptimizationManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorWaterRailShooterSceneBuilder.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorGameplayEventManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorUiBindingManager.h" />
-	<ClInclude Include="Source\Engine\Editor\EditorGameplayToolsWindowManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorLocalMoveManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorRailMovementManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorRailBranchManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorActionSequenceManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorSaveManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorTargetingManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorDamageManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorObjectPoolManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorWeaponManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorWeaponLoadoutManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorRuntimePropertyManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorCameraEffectManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorWaveSpawnerManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorSceneOptimizationManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorWaterRailShooterSceneBuilder.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorGameplayEventManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorUiBindingManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorGameplayToolsWindowManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorFreeTransformManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorMainMenuBar.h" />
     <ClInclude Include="Source\Engine\Editor\EditorMainMenuManager.h" />
-      <ClInclude Include="Source\Engine\Editor\EditorMeshCollision.h" />
-	  <ClInclude Include="Source\Engine\Editor\EditorBlastDestructionManager.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorMeshCollision.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorBlastDestructionManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorNativeScriptAssetManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorNavigationManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorOceanSystem.h" />
     <ClInclude Include="Source\Engine\Editor\EditorPhysicsManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorRenderManager.h" />
-	<ClInclude Include="Source\Engine\Renderer\EditorDepthHierarchyManager.h" />
-	<ClInclude Include="Source\Engine\Renderer\EditorGBufferManager.h" />
-	<ClInclude Include="Source\Engine\Renderer\EditorLightProbeManager.h" />
-	<ClInclude Include="Source\Engine\Renderer\EditorGpuCullingManager.h" />
-	<ClInclude Include="Source\Engine\Renderer\EditorOceanFftManager.h" />
-	<ClInclude Include="Source\Engine\Renderer\EditorGpuParticleManager.h" />
-	<ClInclude Include="Source\Engine\Renderer\EditorVfxRenderer.h" />
-	<ClInclude Include="Source\Engine\Renderer\EditorPostProcessQualityManager.h" />
-	<ClInclude Include="Source\Engine\Renderer\EditorTemporalRenderingManager.h" />
-	<ClInclude Include="Source\Engine\Renderer\EditorPlanarReflectionManager.h" />
+    <ClInclude Include="Source\Engine\Renderer\EditorDepthHierarchyManager.h" />
+    <ClInclude Include="Source\Engine\Renderer\EditorGBufferManager.h" />
+    <ClInclude Include="Source\Engine\Renderer\EditorLightProbeManager.h" />
+    <ClInclude Include="Source\Engine\Renderer\EditorGpuCullingManager.h" />
+    <ClInclude Include="Source\Engine\Renderer\EditorOceanFftManager.h" />
+    <ClInclude Include="Source\Engine\Renderer\EditorGpuParticleManager.h" />
+    <ClInclude Include="Source\Engine\Renderer\EditorVfxRenderer.h" />
+    <ClInclude Include="Source\Engine\Renderer\EditorPostProcessQualityManager.h" />
+    <ClInclude Include="Source\Engine\Renderer\EditorTemporalRenderingManager.h" />
+    <ClInclude Include="Source\Engine\Renderer\EditorPlanarReflectionManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorRollingMoveManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorRuntimeManager.h" />
     <ClInclude Include="Source\Engine\External\ExternalFeature.h" />
@@ -730,7 +1238,7 @@ copy /Y "$(ProjectDir)Source\Engine\Core\EditorScriptApi.h" "$(TargetDir)ScriptA
     <ClInclude Include="Source\Engine\Speech\ISpeechBackend.h" />
     <ClInclude Include="Source\Engine\Speech\NullSpeechBackend.h" />
     <ClInclude Include="Source\Engine\Speech\SpeechSystem.h" />
-	<ClInclude Include="Source\Engine\Speech\WhisperSpeechBackend.h" />
+    <ClInclude Include="Source\Engine\Speech\WhisperSpeechBackend.h" />
     <ClInclude Include="Source\Engine\Speech\WindowsSpeechApiBackend.h" />
     <ClInclude Include="Source\Engine\Vision\VisionTypes.h" />
     <ClInclude Include="Source\Engine\Vision\IVisionBackend.h" />

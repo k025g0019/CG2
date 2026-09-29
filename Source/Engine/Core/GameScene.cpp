@@ -1,6 +1,6 @@
 ﻿#include "GameScene.h"
 
-#include "ApplicationWindow.h"
+#include "WinApp.h"
 #include "EditorSharedState.h"
 #include "ProjectSettings.h"
 #include "Source/Engine/Asset/AssetRegistry.h"
@@ -99,7 +99,7 @@ void GameScene::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_gameBuildScenePaths = gameBuildSettings_.scenePaths;
 
 	if (isStandaloneGame_) {
-		SetStandaloneWindowTitle(gameBuildSettings_.productName);
+		WinApp::SetStandaloneWindowTitle(gameBuildSettings_.productName);
 	}
 
 	//------------------------------

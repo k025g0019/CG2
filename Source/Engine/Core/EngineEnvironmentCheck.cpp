@@ -4,6 +4,7 @@
 
 #include <Windows.h>
 #include <d3d12.h>
+#include <wrl/client.h>
 
 #include <array>
 #include <sstream>
@@ -90,9 +91,13 @@ EnvironmentCheckReport EngineEnvironmentCheck::Run(const std::filesystem::path& 
 		using CreateDeviceFunction = HRESULT(WINAPI*)(IUnknown*, D3D_FEATURE_LEVEL, REFIID, void**);
 		auto createDevice = reinterpret_cast<CreateDeviceFunction>(GetProcAddress(d3d12, "D3D12CreateDevice"));
 		if (createDevice != nullptr) {
-			ID3D12Device* device = nullptr;
-			directX12 = SUCCEEDED(createDevice(nullptr, D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), reinterpret_cast<void**>(&device)));
-			if (device != nullptr) device->Release();
+			// 作れるかどうかを見るだけの Device。ComPtr が抜けるときに手放す。
+			Microsoft::WRL::ComPtr<ID3D12Device> device;
+			directX12 = SUCCEEDED(createDevice(
+				nullptr,
+				D3D_FEATURE_LEVEL_11_0,
+				__uuidof(ID3D12Device),
+				reinterpret_cast<void**>(device.GetAddressOf())));
 		}
 		FreeLibrary(d3d12);
 	}

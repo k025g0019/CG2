@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "EditorJoltPhysicsManager.h"
+#include "EditorPhysicsBuoyancyTypes.h"
 #include "EditorScene.h"
 
 #include <functional>
@@ -265,6 +266,21 @@ private:
 	void ApplyUprightStabilizerTorques();  // 現在の上方向を目標World上方向へ戻すPD Torqueを加える
 	void ApplyElectromagneticForces();  // Coulomb力、Lorentz力、磁気双極子Torqueを加える
 	void ApplyBuoyancyForces(float fixedDeltaTime);  // FFT局所水面と実Physics Shapeの水没体積・浮心から浮力を加える
+	bool BuildLocalWaterSurface(
+		const BuoyancyObjectInput& input,
+		const Matrix4x4& boatWorldMatrix,
+		const Vector3& boatRight,
+		const Vector3& boatForward,
+		LocalWaterSurfaceModel& surface);  // 船体下面の5x5 ProbeからFFT水面を25点だけ評価して局所水面を作る
+	bool ApplyShapeBuoyancyForces(const BuoyancyObjectInput& input);  // 実Physics Shapeを水面Planeで切る本命の浮力。扱えたらtrue
+	void ApplyHydrodynamicForces(
+		const BuoyancyObjectInput& input,
+		const LocalWaterSurfaceModel& waterSurface,
+		const EditorJoltPhysicsManager::SubmergedVolumeInfo& volumeInfo,
+		const Vector3& boatRight,
+		const Vector3& boatUp,
+		const Vector3& boatForward);  // 付加質量・静水圧・面ごとの抗力・Slamming・造波抵抗をまとめて加える
+	void ApplyGridBuoyancyForces(const BuoyancyObjectInput& input);  // 体積取得へ対応しないShape用に船体AABBへ仮想セルを詰める安全策
 	void RecordDebugCast(
 		PhysicsDebugCastType type,
 		const Vector3& origin,

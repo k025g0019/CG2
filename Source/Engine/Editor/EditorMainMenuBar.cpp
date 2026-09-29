@@ -1734,8 +1734,8 @@ void EditorMainMenuBar::Draw(
 
 		if (ImGui::MenuItem("終了")) {
 			// WM_CLOSE に集約し、Window の×ボタンと同じ保存確認を必ず通す。
-			if (g_windowHandle != nullptr) {
-				PostMessageW(g_windowHandle, WM_CLOSE, 0u, 0);
+			if (g_winApp != nullptr && g_winApp->HasWindow()) {
+				g_winApp->RequestQuit();
 			}
 		}
 

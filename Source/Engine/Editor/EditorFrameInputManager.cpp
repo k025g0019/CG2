@@ -74,25 +74,26 @@ void EditorFrameInputManager::Update() {
 	}
 
 	//================================================================
-	// DirectInput キーボード状態の取得
+	// DirectInput の入力取得
 	//================================================================
 
-	std::memcpy(g_preKey, g_key, sizeof(g_key));  // g_preKey は前フレーム、g_key は今フレームの押下状態。差分でトリガー入力を判定する。
-	g_hr = g_keyboardDevice->Acquire();  // Acquire はフォーカス復帰後に入力取得を再開するために必要。
-	g_hr = g_keyboardDevice->GetDeviceState(sizeof(g_key), g_key);  // GetDeviceState は DIK_* ごとの押下状態を 256 バイト配列に詰める。
-
-	// 入力取得に失敗した場合は、デバイスを取り直して同じフレーム内で再取得する。
-	if (FAILED(g_hr)) {
-		g_keyboardDevice->Acquire();
-		g_hr = g_keyboardDevice->GetDeviceState(sizeof(g_key), g_key);
+	// Keyboard と Mouse の取得、前フレーム状態の退避は Input クラスが一手に行う。
+	// ここで 2 回呼ぶと「押した瞬間」が消えるため、1 フレームに 1 回だけ呼ぶ。
+	if (g_input == nullptr) {
+		return;
 	}
+
+	g_input->Update();
+
+	// 後続の Manager は 256 バイト配列をそのまま受け取る形なので、読み取り専用で借りる。
+	const BYTE* keyStates = g_input->GetKeyStates();
+	const BYTE* previousKeyStates = g_input->GetPreviousKeyStates();
 
 	// ESCの意味は起動形態で変える。書き出し済みPlayerでは従来通りアプリ終了要求。
 	// Editor内では「視点操作=常時」等でPlay中にGameViewから抜けにくくなった時、
 	// ESCがエディタごと終了する唯一の脱出手段になってしまっていたため、
 	// Play中はStopとして扱い、Editorそのものは閉じないようにする。
-	const bool isEscapeTriggered = g_key[DIK_ESCAPE] != 0 && g_preKey[DIK_ESCAPE] == 0;
-	if (isEscapeTriggered) {
+	if (g_input->TriggerKey(DIK_ESCAPE)) {
 		if (g_isStandaloneGame) {
 			PostQuitMessage(0);
 		}
@@ -107,7 +108,7 @@ void EditorFrameInputManager::Update() {
 
 	InputSystem& inputSystem = Engine::GetInputSystem();  // OS イベントではなくフレーム更新側で Action 判定する入力システム本体。
 	for (const EngineKeyBinding& keyBinding : kEngineKeyBindings) {
-		const bool isPressed = (g_key[keyBinding.dikCode] & 0x80u) != 0u;
+		const bool isPressed = g_input->PushKey(keyBinding.dikCode);
 		inputSystem.SetKeyState(keyBinding.keyPath, isPressed);  // DirectInput の現在押下状態を Keyboard/Space 形式で流し込む。
 	}
 	inputSystem.Update();  // 前フレーム状態との差分から started / performed / canceled を決めてコールバックを呼ぶ。
@@ -126,20 +127,11 @@ void EditorFrameInputManager::Update() {
 	GamepadInput::Get().Update();
 
 	//================================================================
-	// DirectInput マウス状態の取得
+	// Cursor の固定
 	//================================================================
 
-	g_preMouseState = g_mouseState;
-
-	if (g_mouseDevice != nullptr) {
-		g_hr = g_mouseDevice->Acquire();
-		g_hr = g_mouseDevice->GetDeviceState(sizeof(g_mouseState), &g_mouseState);
-		if (FAILED(g_hr)) {
-			g_mouseDevice->Acquire();
-			g_hr = g_mouseDevice->GetDeviceState(sizeof(g_mouseState), &g_mouseState);
-		}
-	}
-
+	// Mouse の取得自体は上の Input::Update() で済んでいる。ここは Play 中の
+	// 視点操作で Cursor が Window の外へ出ないようにするだけ。
 	if (g_runtimeCursorLocked) {
 		ApplyRuntimeCursorLock(true);
 	}
@@ -150,8 +142,8 @@ void EditorFrameInputManager::Update() {
 
 	// Play 中はゲーム入力を優先し、エディターカメラのショートカットと衝突しないようにする。
 	g_editorSceneCameraController.UpdateKeyboard(
-		g_key,
-		g_preKey,
+		keyStates,
+		previousKeyStates,
 		g_editorRuntimeManager.IsPlaying(),
 		g_cameraTransform,
 		g_uvTransform,
@@ -159,21 +151,18 @@ void EditorFrameInputManager::Update() {
 		g_editorCameraRotateSpeed,
 		g_editorCameraFastRate);
 
-	// currentClientRect は Windows クライアント領域の現在サイズ。外枠やタイトルバーは含めない。
-	RECT currentClientRect{};
-	GetClientRect(g_windowHandle, &currentClientRect);
-
 	//================================================================
 	// ウィンドウリサイズに合わせた描画ターゲット更新
 	//================================================================
 
-	// right - left はクライアント幅。0 になる最小化中でも 1px は確保する。
-	uint32_t nextRenderWidth =
-		(std::max)(1u, static_cast<uint32_t>(currentClientRect.right - currentClientRect.left));
+	// Client 領域は外枠やタイトルバーを含まない、描画に使う領域だけ。
+	// 最小化中の 0px 丸めは WinApp 側で済ませているので、ここでは受け取るだけ。
+	uint32_t nextRenderWidth = 1u;
+	uint32_t nextRenderHeight = 1u;
 
-	// bottom - top はクライアント高さ。0 の SwapChain を作れないため 1px 以上に丸める。
-	uint32_t nextRenderHeight =
-		(std::max)(1u, static_cast<uint32_t>(currentClientRect.bottom - currentClientRect.top));
+	if (g_winApp == nullptr || !g_winApp->GetClientSize(nextRenderWidth, nextRenderHeight)) {
+		return;  // Window が無い状態では SwapChain を作り直さない
+	}
 
 	ResizeRenderTargets(nextRenderWidth, nextRenderHeight);  // SwapChain / DepthStencil / RTV を必要な時だけ作り直す。
 	g_editorWindowWidth = static_cast<float>(g_renderWidth);  // ImGui と SceneView は float 座標で扱うため、描画サイズを float に明示変換する。

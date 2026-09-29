@@ -598,62 +598,33 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		return;
 	}
 
-	HWND windowHandle = CreateMainWindow(instanceHandle, logStream);
-	// Window Handle は DirectX SwapChain と DirectInput の協調レベル設定に使用する。
+	//========================================
+	// Window と入力の生成
+	//========================================
 
-	if (windowHandle == nullptr) {
+	// Win32 と DirectInput は WinApp / Input クラスが所有する。
+	// どちらも実体を動的に確保し、Finalize で明示的に手放す。
+	// Input は協調 Level の設定に Window Handle を要するため、WinApp より後に作る。
+	g_winApp = std::make_unique<WinApp>();
+
+	if (!g_winApp->Initialize(instanceHandle, logStream)) {
+		g_winApp.reset();
 		RequestInitializationFailure();
 		return;
 	}
 
+	// Window Handle は DirectX SwapChain と DirectInput の協調 Level 設定に使う。
+	const HWND windowHandle = g_winApp->GetHwnd();
 	HRESULT hr = S_OK;
-	IDirectInput8* directInput = nullptr;
-	hr = DirectInput8Create(
-		instanceHandle, DIRECTINPUT_VERSION, IID_IDirectInput8, reinterpret_cast<void**>(&directInput), nullptr);
-	EDITOR_HR_VERIFY(hr);
 
-	if (FAILED(hr) || directInput == nullptr) {
+	g_input = std::make_unique<Input>();
+
+	if (!g_input->Initialize(instanceHandle, g_winApp.get())) {
+		g_input.reset();
+		g_winApp.reset();
 		RequestInitializationFailure();
 		return;
 	}
-
-	IDirectInputDevice8* keyboardDevice = nullptr;
-	hr = directInput->CreateDevice(GUID_SysKeyboard, &keyboardDevice, nullptr);
-	EDITOR_HR_VERIFY(hr);
-
-	if (FAILED(hr) || keyboardDevice == nullptr) {
-		directInput->Release();
-		RequestInitializationFailure();
-		return;
-	}
-
-	hr = keyboardDevice->SetDataFormat(&c_dfDIKeyboard);
-	EDITOR_HR_VERIFY(hr);
-
-	hr = keyboardDevice->SetCooperativeLevel(
-		windowHandle, DISCL_FOREGROUND | DISCL_NONEXCLUSIVE | DISCL_NOWINKEY);
-	EDITOR_HR_VERIFY(hr);
-
-	//================================================================
-	//================================================================
-
-	IDirectInputDevice8* mouseDevice = nullptr;
-	hr = directInput->CreateDevice(GUID_SysMouse, &mouseDevice, nullptr);
-	EDITOR_HR_VERIFY(hr);
-	if (FAILED(hr) || mouseDevice == nullptr) {
-		directInput->Release();
-		RequestInitializationFailure();
-		return;
-	}
-
-	hr = mouseDevice->SetDataFormat(&c_dfDIMouse);
-	EDITOR_HR_VERIFY(hr);
-	hr = mouseDevice->SetCooperativeLevel(
-		windowHandle, DISCL_FOREGROUND | DISCL_NONEXCLUSIVE);
-	EDITOR_HR_VERIFY(hr);
-
-	BYTE key[256] = {};
-	BYTE preKey[256] = {};
 
 #ifdef _DEBUG
 	//================================================================
@@ -699,215 +670,66 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	SoundData soundData{};
 	IXAudio2SourceVoice* sourceVoice = nullptr;
 
-	//================================================================
-	// DirectX 12 を初期化する。
-	//================================================================
+	//========================================
+	// DirectX12 基盤の生成
+	//========================================
 
-	ComPtr<IDXGIFactory7> dxgiFactory; // GPU Adapter と SwapChain を作成する DXGI Factory。
-	hr = CreateDXGIFactory1(IID_PPV_ARGS(dxgiFactory.GetAddressOf()));
-	EDITOR_HR_VERIFY(hr);
+	// Device / Command / SwapChain / Descriptor Heap / Fence は DirectXCommon が所有する。
+	// Adapter 選択、Feature Level の段階的な後退、Debug Layer の Message 設定も
+	// すべてクラス側へ移してある。
+	g_dxCommon = std::make_unique<DirectXCommon>();
 
-	ComPtr<IDXGIAdapter4> useAdapter; // D3D12Device の作成に使用する物理 GPU。
-	for (UINT adapterIndex = 0;; ++adapterIndex) {
-		ComPtr<IDXGIAdapter4> candidateAdapter;
-		if (dxgiFactory->EnumAdapterByGpuPreference(
-			adapterIndex, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
-			IID_PPV_ARGS(candidateAdapter.GetAddressOf())) == DXGI_ERROR_NOT_FOUND) {
-			break;
-		}
-
-		DXGI_ADAPTER_DESC3 adapterDesc{};
-		hr = candidateAdapter->GetDesc3(&adapterDesc);
-		EDITOR_HR_VERIFY(hr);
-
-		if (adapterDesc.Flags & DXGI_ADAPTER_FLAG3_SOFTWARE) {
-			continue;
-		}
-
-		useAdapter = candidateAdapter; // 最初に見つかった物理 GPU を使用 Adapter として採用する。
-		Log(logStream, std::format("Use Adapter:{}", ConvertString(std::wstring{adapterDesc.Description})));
-		break;
-	}
-	assert(useAdapter != nullptr);
-
-	ComPtr<ID3D12Device> device;
-	hr = D3D12CreateDevice(useAdapter.Get(), D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(device.GetAddressOf()));
-	if (SUCCEEDED(hr)) {
-		Log(logStream, "FeatureLevel:12.2");
-	}
-	else {
-		hr = D3D12CreateDevice(useAdapter.Get(), D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS(device.GetAddressOf()));
-		if (SUCCEEDED(hr)) {
-			Log(logStream, "FeatureLevel:12.1");
-		}
-		else {
-			hr = D3D12CreateDevice(useAdapter.Get(), D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(device.GetAddressOf()));
-			if (SUCCEEDED(hr)) {
-				Log(logStream, "FeatureLevel:12.0");
-			}
-		}
-	}
-	assert(device != nullptr);
-	Log(logStream, "Complete create D3D12Device!!!");
-
-#ifdef _DEBUG
-	ComPtr<ID3D12InfoQueue> infoQueue;
-	if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(infoQueue.GetAddressOf())))) {
-		// Keep Debug Layer messages in the Visual Studio output without raising 0x0000087A exceptions.
-		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, FALSE);
-		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, FALSE);
-		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, FALSE);
-
-		D3D12_MESSAGE_ID denyIds[] = {
-			D3D12_MESSAGE_ID_RESOURCE_BARRIER_MISMATCHING_COMMAND_LIST_TYPE,
-		};
-
-		D3D12_MESSAGE_SEVERITY severities[] = {D3D12_MESSAGE_SEVERITY_INFO};
-
-		D3D12_INFO_QUEUE_FILTER filter{};
-		filter.DenyList.NumIDs = _countof(denyIds);
-		filter.DenyList.pIDList = denyIds;
-		filter.DenyList.NumSeverities = _countof(severities);
-		filter.DenyList.pSeverityList = severities;
-		infoQueue->PushStorageFilter(&filter);
-	}
-#endif
-
-	ComPtr<ID3D12CommandQueue> commandQueue; // GPU に CommandList を送るキュー。
-
-	D3D12_COMMAND_QUEUE_DESC commandQueueDesc{};
-	hr = device->CreateCommandQueue(&commandQueueDesc, IID_PPV_ARGS(commandQueue.GetAddressOf()));
-	EDITOR_HR_VERIFY(hr);
-
-	if (FAILED(hr) || commandQueue == nullptr) {
+	if (!g_dxCommon->Initialize(g_winApp.get(), logStream)) {
+		g_dxCommon.reset();
 		RequestInitializationFailure();
 		return;
 	}
 
-	D3D12_QUERY_HEAP_DESC renderTimestampQueryHeapDesc{};
-	renderTimestampQueryHeapDesc.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
-	renderTimestampQueryHeapDesc.Count = kEditorProfilerTimestampQueryCapacity;
-	ComPtr<ID3D12QueryHeap> renderTimestampQueryHeap;
-	hr = device->CreateQueryHeap(
-		&renderTimestampQueryHeapDesc,
-		IID_PPV_ARGS(renderTimestampQueryHeap.GetAddressOf()));
+	//----------------------------------------
+	// 以降の初期化で使う借り受け
+	//----------------------------------------
 
-	std::uint64_t renderTimestampFrequency = 0u;
+	// 抽出前と同じ名前で受け直し、PSO や Texture を作る後続コードへ手を入れずに済ませる。
+	// 所有権は DirectXCommon にあるので、ここで Release も Reset もしない。
+	const ComPtr<ID3D12Device>& device = g_dxCommon->GetDevice();
+	const ComPtr<ID3D12CommandQueue>& commandQueue = g_dxCommon->GetCommandQueue();
+	const ComPtr<ID3D12CommandAllocator>& commandAllocator = g_dxCommon->GetCommandAllocator();
+	const ComPtr<ID3D12GraphicsCommandList>& commandList = g_dxCommon->GetCommandList();
+	const ComPtr<IDXGIFactory7>& dxgiFactory = g_dxCommon->GetDxgiFactory();
+	const ComPtr<IDXGIAdapter4>& useAdapter = g_dxCommon->GetAdapter();
+	const ComPtr<IDXGISwapChain4>& swapChain = g_dxCommon->GetSwapChain();
+	const ComPtr<ID3D12QueryHeap>& renderTimestampQueryHeap = g_dxCommon->GetTimestampQueryHeap();
+	const ComPtr<ID3D12Resource>& renderTimestampReadback = g_dxCommon->GetTimestampReadback();
+	const std::uint64_t renderTimestampFrequency = g_dxCommon->GetTimestampFrequency();
+	const DXGI_SWAP_CHAIN_DESC1& swapChainDesc = g_dxCommon->GetSwapChainDesc();
+	ID3D12DescriptorHeap* rtvDescriptorHeap = g_dxCommon->GetRtvDescriptorHeap();
+	ID3D12DescriptorHeap* srvDescriptorHeap = g_dxCommon->GetSrvDescriptorHeap();
+	ID3D12DescriptorHeap* dsvDescriptorHeap = g_dxCommon->GetDsvDescriptorHeap();
 
-	if (SUCCEEDED(hr)) {
-		hr = commandQueue->GetTimestampFrequency(&renderTimestampFrequency);
-	}
+	// Back Buffer と その RTV は所有せず、番号で引いた結果を借りるだけ。
+	ID3D12Resource* swapChainResources[DirectXCommon::kBackBufferCount] = {
+		g_dxCommon->GetBackBuffer(0u),
+		g_dxCommon->GetBackBuffer(1u)};
+	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandles[DirectXCommon::kBackBufferCount] = {
+		g_dxCommon->GetBackBufferRtvHandle(0u),
+		g_dxCommon->GetBackBufferRtvHandle(1u)};
 
-	D3D12_HEAP_PROPERTIES renderTimestampReadbackHeapProperties{};
-	renderTimestampReadbackHeapProperties.Type = D3D12_HEAP_TYPE_READBACK;
-	D3D12_RESOURCE_DESC renderTimestampReadbackDesc{};
-	renderTimestampReadbackDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-	renderTimestampReadbackDesc.Width =
-		sizeof(std::uint64_t) * static_cast<std::uint64_t>(kEditorProfilerTimestampQueryCapacity);
-	renderTimestampReadbackDesc.Height = 1u;
-	renderTimestampReadbackDesc.DepthOrArraySize = 1u;
-	renderTimestampReadbackDesc.MipLevels = 1u;
-	renderTimestampReadbackDesc.SampleDesc.Count = 1u;
-	renderTimestampReadbackDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-	ComPtr<ID3D12Resource> renderTimestampReadback;
-
-	if (SUCCEEDED(hr)) {
-		hr = device->CreateCommittedResource(
-			&renderTimestampReadbackHeapProperties,
-			D3D12_HEAP_FLAG_NONE,
-			&renderTimestampReadbackDesc,
-			D3D12_RESOURCE_STATE_COPY_DEST,
-			nullptr,
-			IID_PPV_ARGS(renderTimestampReadback.GetAddressOf()));
-	}
-
-	if (FAILED(hr) || renderTimestampQueryHeap == nullptr ||
-		renderTimestampReadback == nullptr || renderTimestampFrequency == 0u) {
-		Log(logStream, std::format("Render profiler resource creation failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
-		RequestInitializationFailure();
-		return;
-	}
-
-
-	ComPtr<ID3D12CommandAllocator> commandAllocator;
-	hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(commandAllocator.GetAddressOf()));
-	EDITOR_HR_VERIFY(hr);
-
-	if (FAILED(hr) || commandAllocator == nullptr) {
-		RequestInitializationFailure();
-		return;
-	}
-
-	ComPtr<ID3D12GraphicsCommandList> commandList;
-	hr = device->CreateCommandList(
-		0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator.Get(), nullptr, IID_PPV_ARGS(commandList.GetAddressOf()));
-	EDITOR_HR_VERIFY(hr);
-
-	if (FAILED(hr) || commandList == nullptr) {
-		RequestInitializationFailure();
-		return;
-	}
-
-	hr = commandList->Close();
-	EDITOR_HR_VERIFY(hr);
-
-	RECT clientRect{};
-	GetClientRect(windowHandle, &clientRect);
-
-	uint32_t renderWidth = (std::max)(1u, static_cast<uint32_t>(clientRect.right - clientRect.left));
-	uint32_t renderHeight = (std::max)(1u, static_cast<uint32_t>(clientRect.bottom - clientRect.top));
-
-	ComPtr<IDXGISwapChain4> swapChain; // Window に表示するバックバッファ列。
-
-	DXGI_SWAP_CHAIN_DESC1 swapChainDesc{};
-	swapChainDesc.Width = renderWidth;
-	swapChainDesc.Height = renderHeight;
-	swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	swapChainDesc.SampleDesc.Count = 1;
-	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-	swapChainDesc.BufferCount = 2;
-	swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-	hr = dxgiFactory->CreateSwapChainForHwnd(
-		commandQueue.Get(), windowHandle, &swapChainDesc, nullptr, nullptr,
-		reinterpret_cast<IDXGISwapChain1**>(swapChain.GetAddressOf()));
-	EDITOR_HR_VERIFY(hr);
-
-	if (FAILED(hr) || swapChain == nullptr) {
-		RequestInitializationFailure();
-		return;
-	}
-
-	ID3D12DescriptorHeap* rtvDescriptorHeap =
-		CreateDescriptorHeap(device.Get(), D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kRuntimeRtvCount, false);
-
-	ID3D12DescriptorHeap* srvDescriptorHeap =
-		CreateDescriptorHeap(
-			device.Get(),
-			D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
-			kRuntimeSrvDescriptorHeapCapacity,
-			true);
-
-	// DepthStencil を参照する DSV Descriptor Heap。
-	ID3D12DescriptorHeap* dsvDescriptorHeap =
-		CreateDescriptorHeap(device.Get(), D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 2, false);
-
-	ID3D12Resource* swapChainResources[2] = {nullptr};
-	hr = swapChain->GetBuffer(0, IID_PPV_ARGS(&swapChainResources[0]));
-	EDITOR_HR_VERIFY(hr);
-	hr = swapChain->GetBuffer(1, IID_PPV_ARGS(&swapChainResources[1]));
-	EDITOR_HR_VERIFY(hr);
-
+	// Back Buffer 以外の Render Target も同じ形式なので、この記述を使い回す。
 	D3D12_RENDER_TARGET_VIEW_DESC rtvDesc{};
-	rtvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	rtvDesc.Format = DirectXCommon::kBackBufferFormat;
 	rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
 
-	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandles[2];
-	rtvHandles[0] = GetCPUDescriptorHandle(
-		rtvDescriptorHeap, device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV), 0);
-	device->CreateRenderTargetView(swapChainResources[0], &rtvDesc, rtvHandles[0]);
-	rtvHandles[1] = GetCPUDescriptorHandle(
-		rtvDescriptorHeap, device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV), 1);
-	device->CreateRenderTargetView(swapChainResources[1], &rtvDesc, rtvHandles[1]);
+#ifdef _DEBUG
+	// PSO 生成に失敗したとき、直前の Debug Layer Message をログへ残すために持つ。
+	// Message の抑止設定そのものは DirectXCommon 側で済んでいる。
+	ComPtr<ID3D12InfoQueue> infoQueue;
+	device->QueryInterface(IID_PPV_ARGS(infoQueue.GetAddressOf()));
+#endif
+
+	// Back Buffer と同じ大きさで Depth や中間 Target を作るため、現在の解像度を控える。
+	// Window の Resize でここも追従するので const にしない。
+	uint32_t renderWidth = swapChainDesc.Width;
+	uint32_t renderHeight = swapChainDesc.Height;
 
 	D3D12_CLEAR_VALUE depthClearValue{};
 	depthClearValue.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
@@ -952,26 +774,29 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		return newDepthStencilResource;
 	};
 
-	ID3D12Resource* depthStencilResource = createDepthStencilResource(
+	ComPtr<ID3D12Resource> depthStencilResource;
+	depthStencilResource.Attach(createDepthStencilResource(
 		renderWidth,
 		renderHeight,
-		D3D12_RESOURCE_STATE_DEPTH_WRITE);
+		D3D12_RESOURCE_STATE_DEPTH_WRITE));
 	// 現在の描画サイズに合わせた Depth バッファ。
-	ID3D12Resource* opaqueDepthCopyResource = createDepthStencilResource(
+	ComPtr<ID3D12Resource> opaqueDepthCopyResource;
+	opaqueDepthCopyResource.Attach(createDepthStencilResource(
 		renderWidth,
 		renderHeight,
-		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
 
 	// Depth バッファが作れないまま描画へ進むと、DepthStencilView / SRV / Barrier の
 	// すべてが nullptr を参照する。Debug でしか気付けない不正状態なので起動を止める。
 	if (depthStencilResource == nullptr || opaqueDepthCopyResource == nullptr) {
-		if (depthStencilResource != nullptr) depthStencilResource->Release();
-		if (opaqueDepthCopyResource != nullptr) opaqueDepthCopyResource->Release();
+		// ComPtr なので、片方だけ作れた場合も参照を手放すだけでよい。
+		depthStencilResource.Reset();
+		opaqueDepthCopyResource.Reset();
 		RequestInitializationFailure();
 		return;
 	}
 
-	device->CreateDepthStencilView(depthStencilResource, &dsvDesc, dsvHandle);
+	device->CreateDepthStencilView(depthStencilResource.Get(), &dsvDesc, dsvHandle);
 
 	D3D12_CPU_DESCRIPTOR_HANDLE depthSrvHandleCPU = GetCPUDescriptorHandle(
 		srvDescriptorHeap,
@@ -986,7 +811,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	depthSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 	depthSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 	depthSrvDesc.Texture2D.MipLevels = 1;
-	device->CreateShaderResourceView(depthStencilResource, &depthSrvDesc, depthSrvHandleCPU);
+	device->CreateShaderResourceView(depthStencilResource.Get(), &depthSrvDesc, depthSrvHandleCPU);
 	D3D12_CPU_DESCRIPTOR_HANDLE opaqueDepthCopySrvHandleCPU = GetCPUDescriptorHandle(
 		srvDescriptorHeap,
 		device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV),
@@ -996,7 +821,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV),
 		kRuntimeOpaqueDepthCopySrvDescriptorIndex);
 	device->CreateShaderResourceView(
-		opaqueDepthCopyResource,
+		opaqueDepthCopyResource.Get(),
 		&depthSrvDesc,
 		opaqueDepthCopySrvHandleCPU);
 
@@ -3214,7 +3039,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		.translate = {0.0f, 0.0f, 0.0f}
 	};
 
-	ID3D12Resource* vertexResource = CreateBufferResource(device.Get(), sizeof(VertexData) * vertices.size());
+	ComPtr<ID3D12Resource> vertexResource;
+	vertexResource.Attach(CreateBufferResource(device.Get(), sizeof(VertexData) * vertices.size()));
 	if (vertexResource == nullptr) {
 		Log(logStream, "Sphere vertex buffer creation failed.");
 		RequestInitializationFailure();
@@ -3238,7 +3064,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	hr = vertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedVertexData));
 	if (FAILED(hr) || mappedVertexData == nullptr) {
 		Log(logStream, std::format("Sphere vertex buffer Map failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
-		vertexResource->Release();
+		vertexResource.Reset();
 		RequestInitializationFailure();
 		return;
 	}
@@ -3251,8 +3077,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	vertexBufferView.StrideInBytes = sizeof(VertexData);
 
 	// plane.obj の頂点を GPU へ渡す Upload Buffer。
-	ID3D12Resource* modelVertexResource = CreateBufferResource(device.Get(),
-	                                                           sizeof(VertexData) * modelData.vertices.size());
+	ComPtr<ID3D12Resource> modelVertexResource;
+	modelVertexResource.Attach(CreateBufferResource(device.Get(),
+		sizeof(VertexData) * modelData.vertices.size()));
 	if (modelVertexResource == nullptr) {
 		Log(logStream, "Plane vertex buffer creation failed.");
 		RequestInitializationFailure();
@@ -3264,7 +3091,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	hr = modelVertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedModelVertexData));
 	if (FAILED(hr) || mappedModelVertexData == nullptr) {
 		Log(logStream, std::format("Plane vertex buffer Map failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
-		modelVertexResource->Release();
+		modelVertexResource.Reset();
 		RequestInitializationFailure();
 		return;
 	}
@@ -3458,104 +3285,11 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	std::vector<EditorSceneObject>& editorSceneObjects = editorSceneObjectManager.GetSceneObjects();
 	int32_t selectedPlacedSceneObjectIndex = -1;
-	ComPtr<ID3D12Fence> fence;
-	uint64_t fenceValue = 0;
-	hr = device->CreateFence(fenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(fence.GetAddressOf()));
-	EDITOR_HR_VERIFY(hr);
+	// Fence と待機 Event は DirectXCommon が持つ。ここは借り受けるだけ。
+	const ComPtr<ID3D12Fence>& fence = g_dxCommon->GetFence();
 
-	HANDLE fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-	assert(fenceEvent != nullptr);
-
-	if (fenceEvent == nullptr) {
-		RequestInitializationFailure();
-		return;
-	}
-
-	auto waitForGpu = [&]() {
-		fenceValue++;
-		HRESULT signalResult = commandQueue->Signal(fence.Get(), fenceValue);
-		EDITOR_HR_VERIFY(signalResult);
-
-		if (fence->GetCompletedValue() < fenceValue) {
-			HRESULT eventResult = fence->SetEventOnCompletion(fenceValue, fenceEvent);
-			EDITOR_HR_VERIFY(eventResult);
-			WaitForSingleObject(fenceEvent, INFINITE);
-		}
-	};
-
-	auto resizeRenderTargets = [&](uint32_t width, uint32_t height) {
-		if (renderWidth == width && renderHeight == height) {
-			return;
-		}
-
-		waitForGpu();
-
-		for (ID3D12Resource*& swapChainResource : swapChainResources) {
-			if (swapChainResource != nullptr) {
-				swapChainResource->Release();
-				swapChainResource = nullptr;
-			}
-		}
-
-		// 描画サイズの変更に合わせ、古い DepthStencil も作り直す。
-		if (depthStencilResource != nullptr) {
-			depthStencilResource->Release();
-			depthStencilResource = nullptr;
-		}
-
-		if (opaqueDepthCopyResource != nullptr) {
-			opaqueDepthCopyResource->Release();
-			opaqueDepthCopyResource = nullptr;
-		}
-
-		renderWidth = width; // 新しい SwapChain の幅を保持する。
-		renderHeight = height;
-
-		// SwapChain の Back Buffer を新しいサイズで再生成する。
-		HRESULT resizeResult = swapChain->ResizeBuffers(
-			swapChainDesc.BufferCount,
-			renderWidth,
-			renderHeight,
-			swapChainDesc.Format,
-			0);
-		EDITOR_HR_VERIFY(resizeResult);
-
-		// 古い back buffer は上で Release 済みなので、ResizeBuffers が失敗しても
-		// GetBuffer は必ず試す。失敗した Buffer に対して RTV を作ると nullptr を
-		// 渡すことになるため、取得できた Buffer だけ RTV を張り直す。
-		bool swapChainBuffersReady = true;
-		for (uint32_t bufferIndex = 0; bufferIndex < swapChainDesc.BufferCount; ++bufferIndex) {
-			HRESULT getBufferResult =
-				swapChain->GetBuffer(bufferIndex, IID_PPV_ARGS(&swapChainResources[bufferIndex]));
-			if (!EDITOR_HR_OK(getBufferResult) || swapChainResources[bufferIndex] == nullptr) {
-				swapChainBuffersReady = false;
-				continue;
-			}
-			device->CreateRenderTargetView(swapChainResources[bufferIndex], &rtvDesc, rtvHandles[bufferIndex]);
-		}
-
-		// back buffer が 1 枚でも欠けた状態では Present も RTV 遷移もできない。
-		// Device Removed 等の復帰不能な失敗なので、null を触る前に終了要求を出す。
-		if (!swapChainBuffersReady) {
-			RequestFatalRuntimeFailure();
-			return;
-		}
-
-		depthStencilResource = createDepthStencilResource(
-			renderWidth,
-			renderHeight,
-			D3D12_RESOURCE_STATE_DEPTH_WRITE);
-		opaqueDepthCopyResource = createDepthStencilResource(
-			renderWidth,
-			renderHeight,
-			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-		// DepthStencil も新しい描画サイズに合わせて再生成する。
-		device->CreateDepthStencilView(depthStencilResource, &dsvDesc, dsvHandle);
-		device->CreateShaderResourceView(
-			opaqueDepthCopyResource,
-			&depthSrvDesc,
-			opaqueDepthCopySrvHandleCPU);
-	};
+	// GPU の完了待ちと SwapChain の作り直しは DirectXCommon が持つ。
+	// Initialize にあった同名のラムダは一度も呼ばれていなかったので残していない。
 
 	hr = commandAllocator->Reset();
 	EDITOR_HR_VERIFY(hr);
@@ -3612,14 +3346,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	ID3D12CommandList* uploadCommandLists[] = {commandList.Get()};
 	commandQueue->ExecuteCommandLists(1, uploadCommandLists);
 
-	fenceValue++;
-	hr = commandQueue->Signal(fence.Get(), fenceValue);
-	EDITOR_HR_VERIFY(hr);
-	if (fence->GetCompletedValue() < fenceValue) {
-		hr = fence->SetEventOnCompletion(fenceValue, fenceEvent);
-		EDITOR_HR_VERIFY(hr);
-		WaitForSingleObject(fenceEvent, INFINITE);
-	}
+	// Texture の Upload が GPU 側で終わるまで待つ。Signal と待機は DirectXCommon が持つ。
+	g_dxCommon->WaitForGpu();
 
 	commandAllocator->Reset();
 	commandList->Reset(commandAllocator.Get(), nullptr);
@@ -3649,13 +3377,14 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	D3D12_GPU_DESCRIPTOR_HANDLE colorGradingLutSrvHandleGPU = GetGPUDescriptorHandle(
 		srvDescriptorHeap, srvDescriptorSize, kRuntimeColorGradingLutSrvDescriptorIndex);
 
-	ID3D12Resource* iblIrradianceCube = nullptr;
-	ID3D12Resource* iblPrefilterCube = nullptr;
-	ID3D12Resource* iblEnvironmentCube = nullptr;
-	ID3D12Resource* iblBrdfLut = nullptr;
-	ID3D12Resource* colorGradingLut = nullptr;
+	// IBL と Color Grading LUT は g_ へ渡した後も生き続けるので、ComPtr で受け取る。
+	ComPtr<ID3D12Resource> iblIrradianceCube;
+	ComPtr<ID3D12Resource> iblPrefilterCube;
+	ComPtr<ID3D12Resource> iblEnvironmentCube;
+	ComPtr<ID3D12Resource> iblBrdfLut;
+	ComPtr<ID3D12Resource> colorGradingLut;
 	uint32_t iblPrefilterMipCount = 0;
-	std::vector<ID3D12Resource*> iblUploadResources;
+	std::vector<ComPtr<ID3D12Resource>> iblUploadResources;
 
 	std::wstring iblDir = L"Assets/Textures/IBL/Studio/";
 	std::wstring iblFiles[] = {
@@ -3666,7 +3395,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	};
 
 	// DDS が存在すれば読み込む
-	auto loadIblCube = [&](const std::wstring& path, ID3D12Resource*& outRes, D3D12_CPU_DESCRIPTOR_HANDLE srvCPU,
+	auto loadIblCube = [&](const std::wstring& path, ComPtr<ID3D12Resource>& outRes, D3D12_CPU_DESCRIPTOR_HANDLE srvCPU,
 	                       uint32_t* mipCount) {
 		if (!std::filesystem::exists(ResolveEngineOrProjectFilePath(path))) {
 			return;
@@ -3674,7 +3403,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		DirectX::ScratchImage img = LoadTexture(path);
 		const auto& meta = img.GetMetadata();
 		outRes = CreateTextureResource(device.Get(), meta);
-		UploadTextureData(device.Get(), commandList.Get(), outRes, img);
+		UploadTextureData(device.Get(), commandList.Get(), outRes.Get(), img);
 		D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
 		srv.Format = meta.format;
 		srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -3686,14 +3415,14 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		else {
 			srv.Texture2D.MipLevels = static_cast<UINT>(meta.mipLevels);
 		}
-		device->CreateShaderResourceView(outRes, &srv, srvCPU);
+		device->CreateShaderResourceView(outRes.Get(), &srv, srvCPU);
 		if (mipCount) {
 			*mipCount = static_cast<uint32_t>(meta.mipLevels);
 		}
 	};
 
 	auto makePlaceholder = [&](uint32_t w, uint32_t h, uint32_t arraySize, DXGI_FORMAT fmt, bool isCube,
-	                           ID3D12Resource*& outRes, D3D12_CPU_DESCRIPTOR_HANDLE srvCPU) {
+	                           ComPtr<ID3D12Resource>& outRes, D3D12_CPU_DESCRIPTOR_HANDLE srvCPU) {
 		D3D12_RESOURCE_DESC d{};
 		d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
 		d.Width = w;
@@ -3705,9 +3434,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		D3D12_HEAP_PROPERTIES hp{};
 		hp.Type = D3D12_HEAP_TYPE_DEFAULT;
 		HRESULT hr = device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST,
-		                                             nullptr, IID_PPV_ARGS(&outRes));
+		                                             nullptr, IID_PPV_ARGS(outRes.GetAddressOf()));
 		if (FAILED(hr) || !outRes) {
-			outRes = nullptr;
+			outRes.Reset();
 			return;
 		}
 		uint32_t bytesPerPixel = (fmt == DXGI_FORMAT_R16G16_FLOAT) ? 4 : 8;
@@ -3745,7 +3474,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			srd[i].RowPitch = pitch;
 			srd[i].SlicePitch = sliceSize;
 		}
-		UINT64 uploadBufferSize = GetRequiredIntermediateSize(outRes, 0, subResourceCount);
+		UINT64 uploadBufferSize = GetRequiredIntermediateSize(outRes.Get(), 0, subResourceCount);
 		ID3D12Resource* uploadHeap = nullptr;
 		D3D12_HEAP_PROPERTIES uploadHp{};
 		uploadHp.Type = D3D12_HEAP_TYPE_UPLOAD;
@@ -3760,10 +3489,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		if (SUCCEEDED(
 			device->CreateCommittedResource(&uploadHp, D3D12_HEAP_FLAG_NONE, &bufDesc, D3D12_RESOURCE_STATE_GENERIC_READ
 				, nullptr, IID_PPV_ARGS(&uploadHeap))) && uploadHeap) {
-			UpdateSubresources(commandList.Get(), outRes, uploadHeap, 0, 0, subResourceCount, srd.data());
+			UpdateSubresources(commandList.Get(), outRes.Get(), uploadHeap, 0, 0, subResourceCount, srd.data());
 			D3D12_RESOURCE_BARRIER barrier{};
 			barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-			barrier.Transition.pResource = outRes;
+			barrier.Transition.pResource = outRes.Get();
 			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
 			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 			barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
@@ -3779,7 +3508,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		else {
 			srv.Texture2D.MipLevels = 1;
 		}
-		device->CreateShaderResourceView(outRes, &srv, srvCPU);
+		device->CreateShaderResourceView(outRes.Get(), &srv, srvCPU);
 	};
 
 	//================================================================
@@ -3871,7 +3600,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		&](uint32_t baseSize,
 			uint32_t mipCount,
 			bool isIrradiance,
-			ID3D12Resource*& outputResource,
+			ComPtr<ID3D12Resource>& outputResource,
 			D3D12_CPU_DESCRIPTOR_HANDLE srvHandle) {
 		D3D12_RESOURCE_DESC resourceDescription{};
 		resourceDescription.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -3890,10 +3619,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			&resourceDescription,
 			D3D12_RESOURCE_STATE_COPY_DEST,
 			nullptr,
-			IID_PPV_ARGS(&outputResource));
+			IID_PPV_ARGS(outputResource.GetAddressOf()));
 
 		if (FAILED(createResult) || outputResource == nullptr) {
-			outputResource = nullptr;
+			outputResource.Reset();
 			return false;
 		}
 
@@ -3949,7 +3678,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		}
 
 		const UINT64 uploadBufferSize = GetRequiredIntermediateSize(
-			outputResource,
+			outputResource.Get(),
 			0u,
 			subresourceCount);
 		ID3D12Resource* uploadResource = nullptr;
@@ -3972,14 +3701,14 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			IID_PPV_ARGS(&uploadResource));
 
 		if (FAILED(uploadResult) || uploadResource == nullptr) {
-			outputResource->Release();
-			outputResource = nullptr;
+			outputResource.Reset();
+			outputResource.Reset();
 			return false;
 		}
 
 		UpdateSubresources(
 			commandList.Get(),
-			outputResource,
+			outputResource.Get(),
 			uploadResource,
 			0u,
 			0u,
@@ -3989,7 +3718,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 		D3D12_RESOURCE_BARRIER barrier{};
 		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		barrier.Transition.pResource = outputResource;
+		barrier.Transition.pResource = outputResource.Get();
 		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
 		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
@@ -4000,11 +3729,11 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		srvDescription.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 		srvDescription.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
 		srvDescription.TextureCube.MipLevels = mipCount;
-		device->CreateShaderResourceView(outputResource, &srvDescription, srvHandle);
+		device->CreateShaderResourceView(outputResource.Get(), &srvDescription, srvHandle);
 		return true;
 	};
 
-	auto createProceduralBrdfLut = [&](ID3D12Resource*& outputResource, D3D12_CPU_DESCRIPTOR_HANDLE srvHandle) {
+	auto createProceduralBrdfLut = [&](ComPtr<ID3D12Resource>& outputResource, D3D12_CPU_DESCRIPTOR_HANDLE srvHandle) {
 		constexpr uint32_t kLutSize = 256u;
 		std::vector<float> lutPixels(static_cast<size_t>(kLutSize) * kLutSize * 2u);
 
@@ -4045,8 +3774,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			&resourceDescription,
 			D3D12_RESOURCE_STATE_COPY_DEST,
 			nullptr,
-			IID_PPV_ARGS(&outputResource))) || outputResource == nullptr) {
-			outputResource = nullptr;
+			IID_PPV_ARGS(outputResource.GetAddressOf()))) || outputResource == nullptr) {
+			outputResource.Reset();
 			return false;
 		}
 
@@ -4054,7 +3783,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		subresource.pData = lutPixels.data();
 		subresource.RowPitch = static_cast<LONG_PTR>(kLutSize) * 2 * sizeof(float);
 		subresource.SlicePitch = subresource.RowPitch * static_cast<LONG_PTR>(kLutSize);
-		const UINT64 uploadBufferSize = GetRequiredIntermediateSize(outputResource, 0u, 1u);
+		const UINT64 uploadBufferSize = GetRequiredIntermediateSize(outputResource.Get(), 0u, 1u);
 		D3D12_HEAP_PROPERTIES uploadHeapProperties{};
 		uploadHeapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
 		D3D12_RESOURCE_DESC uploadDescription{};
@@ -4074,16 +3803,16 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			D3D12_RESOURCE_STATE_GENERIC_READ,
 			nullptr,
 			IID_PPV_ARGS(&uploadResource))) || uploadResource == nullptr) {
-			outputResource->Release();
-			outputResource = nullptr;
+			outputResource.Reset();
+			outputResource.Reset();
 			return false;
 		}
 
-		UpdateSubresources(commandList.Get(), outputResource, uploadResource, 0u, 0u, 1u, &subresource);
+		UpdateSubresources(commandList.Get(), outputResource.Get(), uploadResource, 0u, 0u, 1u, &subresource);
 		iblUploadResources.push_back(uploadResource);
 		D3D12_RESOURCE_BARRIER barrier{};
 		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		barrier.Transition.pResource = outputResource;
+		barrier.Transition.pResource = outputResource.Get();
 		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
 		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
@@ -4093,12 +3822,12 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		srvDescription.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 		srvDescription.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		srvDescription.Texture2D.MipLevels = 1u;
-		device->CreateShaderResourceView(outputResource, &srvDescription, srvHandle);
+		device->CreateShaderResourceView(outputResource.Get(), &srvDescription, srvHandle);
 		return true;
 	};
 
 	auto createIdentityColorGradingLut = [&] (
-		ID3D12Resource*& outputResource,
+		ComPtr<ID3D12Resource>& outputResource,
 		D3D12_CPU_DESCRIPTOR_HANDLE srvHandle) {
 		constexpr uint32_t kColorLutSize = 32u;
 		constexpr uint32_t kColorLutWidth = kColorLutSize * kColorLutSize;
@@ -4144,8 +3873,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			&resourceDescription,
 			D3D12_RESOURCE_STATE_COPY_DEST,
 			nullptr,
-			IID_PPV_ARGS(&outputResource))) || outputResource == nullptr) {
-			outputResource = nullptr;
+			IID_PPV_ARGS(outputResource.GetAddressOf()))) || outputResource == nullptr) {
+			outputResource.Reset();
 			return false;
 		}
 
@@ -4158,7 +3887,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		subresource.SlicePitch =
 			subresource.RowPitch * static_cast<LONG_PTR>(kColorLutHeight);
 
-		const UINT64 uploadBufferSize = GetRequiredIntermediateSize(outputResource, 0u, 1u);
+		const UINT64 uploadBufferSize = GetRequiredIntermediateSize(outputResource.Get(), 0u, 1u);
 		D3D12_HEAP_PROPERTIES uploadHeapProperties{};
 		uploadHeapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
 		D3D12_RESOURCE_DESC uploadDescription{};
@@ -4178,17 +3907,17 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			D3D12_RESOURCE_STATE_GENERIC_READ,
 			nullptr,
 			IID_PPV_ARGS(&uploadResource))) || uploadResource == nullptr) {
-			outputResource->Release();
-			outputResource = nullptr;
+			outputResource.Reset();
+			outputResource.Reset();
 			return false;
 		}
 
-		UpdateSubresources(commandList.Get(), outputResource, uploadResource, 0u, 0u, 1u, &subresource);
+		UpdateSubresources(commandList.Get(), outputResource.Get(), uploadResource, 0u, 0u, 1u, &subresource);
 		iblUploadResources.push_back(uploadResource);
 
 		D3D12_RESOURCE_BARRIER barrier{};
 		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		barrier.Transition.pResource = outputResource;
+		barrier.Transition.pResource = outputResource.Get();
 		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
 		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
@@ -4199,7 +3928,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		srvDescription.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 		srvDescription.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		srvDescription.Texture2D.MipLevels = 1u;
-		device->CreateShaderResourceView(outputResource, &srvDescription, srvHandle);
+		device->CreateShaderResourceView(outputResource.Get(), &srvDescription, srvHandle);
 		return true;
 	};
 
@@ -4248,30 +3977,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 		ID3D12CommandList* uploadLists[] = {commandList.Get()};
 		commandQueue->ExecuteCommandLists(1, uploadLists);
-		fenceValue++;
-		hr = commandQueue->Signal(fence.Get(), fenceValue);
-		if (FAILED(hr)) {
-			Log(logStream, std::format("IBL CommandQueue Signal failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
-			RequestInitializationFailure();
-			return;
-		}
+		// IBL の Upload が GPU 側で終わるまで待つ。
+		g_dxCommon->WaitForGpu();
 
-		if (fence->GetCompletedValue() < fenceValue) {
-			hr = fence->SetEventOnCompletion(fenceValue, fenceEvent);
-			if (FAILED(hr)) {
-				Log(logStream, std::format("IBL Fence SetEventOnCompletion failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
-				RequestInitializationFailure();
-				return;
-			}
-
-			WaitForSingleObject(fenceEvent, INFINITE);
-		}
-
-		for (ID3D12Resource* uploadResource : iblUploadResources) {
-			if (uploadResource != nullptr) {
-				uploadResource->Release();
-			}
-		}
+		// ComPtr なので clear するだけで参照が外れる。
 		iblUploadResources.clear();
 		// The renderer owns the next Reset. Keep the initialization command list closed here.
 	}
@@ -4560,37 +4269,13 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	// HRESULT 失敗行を実行ログ(logs/<日時>.Log)へも残す。g_logStream は
 	// Finalize まで生きるグローバルなので、寿命の逆転は起きない。
 	EditorSetHrFailureLogStream(&g_logStream);
-	g_windowHandle = windowHandle;
 	g_hr = hr;
-	g_directInput = directInput;
-	g_keyboardDevice = keyboardDevice;
-	g_mouseDevice = mouseDevice;
-	std::memcpy(g_key, key, sizeof(g_key));
-	std::memcpy(g_preKey, preKey, sizeof(g_preKey));
-	g_message = message;
 	g_xAudio2 = xAudio2;
 	g_masterVoice = masterVoice;
 	g_soundData = soundData;
 	g_sourceVoice = sourceVoice;
-	g_dxgiFactory = dxgiFactory;
-	g_useAdapter = useAdapter;
-	g_device = device;
-	g_commandQueue = commandQueue;
-	g_commandAllocator = commandAllocator;
-	g_commandList = commandList;
-	g_renderTimestampQueryHeap = renderTimestampQueryHeap;
-	g_renderTimestampReadback = renderTimestampReadback;
-	g_renderTimestampFrequency = renderTimestampFrequency;
-	g_swapChain = swapChain;
-	g_swapChainDesc = swapChainDesc;
-	g_rtvDescriptorHeap = rtvDescriptorHeap;
-	g_srvDescriptorHeap = srvDescriptorHeap;
-	g_dsvDescriptorHeap = dsvDescriptorHeap;
-	for (uint32_t bufferIndex = 0; bufferIndex < kRuntimeSwapChainBufferCount; bufferIndex++) {
-		g_swapChainResources[bufferIndex] = swapChainResources[bufferIndex];
-		g_rtvHandles[bufferIndex] = rtvHandles[bufferIndex];
-	}
-	g_rtvDesc = rtvDesc;
+	// Device / Command / SwapChain / Descriptor Heap / Fence は DirectXCommon が
+	// 所有しているので、ここで引き渡すものは無い。
 	g_depthClearValue = depthClearValue;
 	g_dsvDesc = dsvDesc;
 	g_dsvHandle = dsvHandle;
@@ -4601,45 +4286,45 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_opaqueDepthCopyResource = opaqueDepthCopyResource;
 	g_opaqueDepthCopySrvHandleCPU = opaqueDepthCopySrvHandleCPU;
 	g_opaqueDepthCopySrvHandleGPU = opaqueDepthCopySrvHandleGPU;
-	g_shadowMapResource = shadowMapResource;
+	g_shadowMapResource.Attach(shadowMapResource);
 	g_shadowMapSrvCpuHandle = shadowMapSrvCpuHandle;
 	g_shadowMapSrvGpuHandle = shadowMapSrvGpuHandle;
 	g_renderWidth = renderWidth;
 	g_renderHeight = renderHeight;
-	g_hdrRenderTarget = hdrRenderTarget;
+	g_hdrRenderTarget.Attach(hdrRenderTarget);
 	g_hdrRtvHandle = hdrRtvHandle;
 	g_hdrSrvHandleCPU = hdrSrvHandleCPU;
 	g_hdrSrvHandleGPU = hdrSrvHandleGPU;
 	for (uint32_t i = 0; i < 2; i++) {
-		g_bloomRenderTargets[i] = bloomRenderTargets[i];
+		g_bloomRenderTargets[i].Attach(bloomRenderTargets[i]);
 		g_bloomRtvHandles[i] = bloomRtvHandles[i];
 		g_bloomSrvHandlesCPU[i] = bloomSrvHandlesCPU[i];
 		g_bloomSrvHandlesGPU[i] = bloomSrvHandlesGPU[i];
 	}
-	g_postProcessRenderTarget = postProcessRenderTarget;
+	g_postProcessRenderTarget.Attach(postProcessRenderTarget);
 	g_postProcessRtvHandle = postProcessRtvHandle;
 	g_postProcessSrvHandleCPU = postProcessSrvHandleCPU;
 	g_postProcessSrvHandleGPU = postProcessSrvHandleGPU;
 	for (uint32_t i = 0; i < 2; i++) {
-		g_ssaoRenderTargets[i] = ssaoRenderTargets[i];
+		g_ssaoRenderTargets[i].Attach(ssaoRenderTargets[i]);
 		g_ssaoRtvHandles[i] = ssaoRtvHandles[i];
 		g_ssaoSrvHandlesCPU[i] = ssaoSrvHandlesCPU[i];
 		g_ssaoSrvHandlesGPU[i] = ssaoSrvHandlesGPU[i];
 	}
-	g_hdrCompositeRenderTarget = hdrCompositeRenderTarget;
+	g_hdrCompositeRenderTarget.Attach(hdrCompositeRenderTarget);
 	g_hdrCompositeRtvHandle = hdrCompositeRtvHandle;
 	g_hdrCompositeSrvHandleCPU = hdrCompositeSrvHandleCPU;
 	g_hdrCompositeSrvHandleGPU = hdrCompositeSrvHandleGPU;
-	g_materialMaskRenderTarget = materialMaskRenderTarget;
+	g_materialMaskRenderTarget.Attach(materialMaskRenderTarget);
 	g_materialMaskRtvHandle = materialMaskRtvHandle;
 	g_materialMaskSrvHandleCPU = materialMaskSrvHandleCPU;
 	g_materialMaskSrvHandleGPU = materialMaskSrvHandleGPU;
-	g_planarReflectionRenderTarget = planarReflectionRenderTarget;
+	g_planarReflectionRenderTarget.Attach(planarReflectionRenderTarget);
 	g_planarReflectionRtvHandle = planarReflectionRtvHandle;
 	g_planarReflectionSrvHandleCPU = planarReflectionSrvHandleCPU;
 	g_planarReflectionSrvHandleGPU = planarReflectionSrvHandleGPU;
-	g_oitAccumulationRenderTarget = oitAccumulationRenderTarget;
-	g_oitRevealageRenderTarget = oitRevealageRenderTarget;
+	g_oitAccumulationRenderTarget.Attach(oitAccumulationRenderTarget);
+	g_oitRevealageRenderTarget.Attach(oitRevealageRenderTarget);
 
 	for (uint32_t oitTargetIndex = 0u; oitTargetIndex < 2u; ++oitTargetIndex) {
 		g_oitRtvHandles[oitTargetIndex] = oitRtvHandles[oitTargetIndex];
@@ -4745,26 +4430,26 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_colorGradingLutSrvHandleCPU = colorGradingLutSrvHandleCPU;
 	g_colorGradingLutSrvHandleGPU = colorGradingLutSrvHandleGPU;
 	g_iblPrefilterMipCount = iblPrefilterMipCount;
-	g_spriteMaterialResource = spriteMaterialResource;
+	g_spriteMaterialResource.Attach(spriteMaterialResource);
 	g_spriteMaterialData = spriteMaterialData;
-	g_sphereMaterialResource = sphereMaterialResource;
+	g_sphereMaterialResource.Attach(sphereMaterialResource);
 	g_sphereMaterialData = sphereMaterialData;
-	g_directionalLightResource = directionalLightResource;
+	g_directionalLightResource.Attach(directionalLightResource);
 	g_directionalLightData = directionalLightData;
-	g_emissiveLightResource = emissiveLightResource;
+	g_emissiveLightResource.Attach(emissiveLightResource);
 	g_emissiveLightData = emissiveLightData;
-	g_spriteTransformationMatrixResource = spriteTransformationMatrixResource;
+	g_spriteTransformationMatrixResource.Attach(spriteTransformationMatrixResource);
 	g_spriteTransformationMatrixData = spriteTransformationMatrixData;
-	g_sphereTransformationMatrixResource = sphereTransformationMatrixResource;
+	g_sphereTransformationMatrixResource.Attach(sphereTransformationMatrixResource);
 	g_sphereTransformationMatrixData = sphereTransformationMatrixData;
-	g_identitySkinMatrixResource = identitySkinMatrixResource;
+	g_identitySkinMatrixResource.Attach(identitySkinMatrixResource);
 	g_identitySkinMatrixData = identitySkinMatrixData;
-	g_batchInstanceResource = batchInstanceResource;
+	g_batchInstanceResource.Attach(batchInstanceResource);
 	g_batchInstanceData = batchInstanceData;
 	g_modelData = std::move(modelData);
 	for (size_t meshTypeIndex = 0; meshTypeIndex < kEditorModelMeshTypeCount; meshTypeIndex++) {
 		g_editorPrimitiveModelData[meshTypeIndex] = std::move(primitiveModelData[meshTypeIndex]);
-		g_editorPrimitiveVertexResources[meshTypeIndex] = primitiveVertexResources[meshTypeIndex];
+		g_editorPrimitiveVertexResources[meshTypeIndex].Attach(primitiveVertexResources[meshTypeIndex]);
 		g_editorPrimitiveVertexBufferViews[meshTypeIndex] = primitiveVertexBufferViews[meshTypeIndex];
 		g_editorPrimitiveVertexCounts[meshTypeIndex] = primitiveVertexCounts[meshTypeIndex];
 	}
@@ -4782,8 +4467,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_uvTransform = uvTransform;
 	g_vertexResource = vertexResource;
 	g_modelVertexResource = modelVertexResource;
-	g_spriteVertexResource = spriteVertexResource;
-	g_spriteIndexResource = spriteIndexResource;
+	g_spriteVertexResource.Attach(spriteVertexResource);
+	g_spriteIndexResource.Attach(spriteIndexResource);
 	g_vertexBufferView = vertexBufferView;
 	g_modelVertexBufferView = modelVertexBufferView;
 	g_spriteVertexBufferView = spriteVertexBufferView;
@@ -4815,15 +4500,12 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	g_directionalLightIconPosition = directionalLightIconPosition;
 	g_editorSceneObjectManager = std::move(editorSceneObjectManager);
 	g_selectedPlacedSceneObjectIndex = selectedPlacedSceneObjectIndex;
-	g_fence = fence;
-	g_fenceValue = fenceValue;
-	g_fenceEvent = fenceEvent;
 	for (uint32_t textureIndex = 0; textureIndex < kRuntimeTextureCount; textureIndex++) {
 		g_textureFilePaths[textureIndex] = textureFilePaths[textureIndex];
 		g_textureFilePathStrings[textureIndex] = textureFilePathStrings[textureIndex];
 		g_textureMetadatas[textureIndex] = textureMetadatas[textureIndex];
-		g_textureResources[textureIndex] = textureResources[textureIndex];
-		g_intermediateResources[textureIndex] = intermediateResources[textureIndex];
+		g_textureResources[textureIndex].Attach(textureResources[textureIndex]);
+		g_intermediateResources[textureIndex].Attach(intermediateResources[textureIndex]);
 		g_textureSrvHandlesCPU[textureIndex] = textureSrvHandlesCPU[textureIndex];
 		g_textureSrvHandlesGPU[textureIndex] = textureSrvHandlesGPU[textureIndex];
 	}
@@ -4849,21 +4531,13 @@ void EditorPlatformManager::Update() {
 
 	g_isDrawRequested = false;
 
-	if (g_message.message == WM_QUIT) {
-		g_exitCode = static_cast<int>(g_message.wParam);
-		g_isEndRequested = true;
-		return;
-	}
-
-	while (PeekMessage(&g_message, nullptr, 0, 0, PM_REMOVE) != FALSE) {
-		TranslateMessage(&g_message);
-		DispatchMessage(&g_message);
-
-		if (g_message.message == WM_QUIT) {
-			g_exitCode = static_cast<int>(g_message.wParam);
-			g_isEndRequested = true;
-			break;
+	// Message の取り出しと振り分けは WinApp が持つ。ここは終了要求の受け取りだけ。
+	if (g_winApp == nullptr || g_winApp->ProcessMessage()) {
+		if (g_winApp != nullptr) {
+			g_exitCode = g_winApp->GetExitCode();
 		}
+
+		g_isEndRequested = true;
 	}
 }
 
@@ -4881,31 +4555,21 @@ bool EditorPlatformManager::HasInitializationFailed() const {
 int EditorPlatformManager::Finalize() {
 	auto& hr = g_hr;
 	auto& logStream = g_logStream;
-	auto& windowHandle = g_windowHandle;
-	auto& directInput = g_directInput;
-	auto& keyboardDevice = g_keyboardDevice;
-	auto& mouseDevice = g_mouseDevice;
-	auto& key = g_key;
-	auto& preKey = g_preKey;
-	auto& message = g_message;
 	auto& xAudio2 = g_xAudio2;
 	auto& masterVoice = g_masterVoice;
 	auto& soundData = g_soundData;
 	auto& sourceVoice = g_sourceVoice;
-	auto& dxgiFactory = g_dxgiFactory;
-	auto& useAdapter = g_useAdapter;
-	auto& device = g_device;
-	auto& commandQueue = g_commandQueue;
-	auto& commandAllocator = g_commandAllocator;
-	auto& commandList = g_commandList;
-	auto& swapChain = g_swapChain;
-	auto& swapChainDesc = g_swapChainDesc;
-	auto& rtvDescriptorHeap = g_rtvDescriptorHeap;
-	auto& srvDescriptorHeap = g_srvDescriptorHeap;
-	auto& dsvDescriptorHeap = g_dsvDescriptorHeap;
-	auto& swapChainResources = g_swapChainResources;
-	auto& rtvDesc = g_rtvDesc;
-	auto& rtvHandles = g_rtvHandles;
+	auto& dxgiFactory = g_dxCommon->GetDxgiFactory();
+	auto& useAdapter = g_dxCommon->GetAdapter();
+	auto& device = g_dxCommon->GetDevice();
+	auto& commandQueue = g_dxCommon->GetCommandQueue();
+	auto& commandAllocator = g_dxCommon->GetCommandAllocator();
+	auto& commandList = g_dxCommon->GetCommandList();
+	auto& swapChain = g_dxCommon->GetSwapChain();
+	auto& swapChainDesc = g_dxCommon->GetSwapChainDesc();
+	ID3D12DescriptorHeap* rtvDescriptorHeap = g_dxCommon->GetRtvDescriptorHeap();
+	ID3D12DescriptorHeap* srvDescriptorHeap = g_dxCommon->GetSrvDescriptorHeap();
+	ID3D12DescriptorHeap* dsvDescriptorHeap = g_dxCommon->GetDsvDescriptorHeap();
 	auto& depthClearValue = g_depthClearValue;
 	auto& dsvDesc = g_dsvDesc;
 	auto& dsvHandle = g_dsvHandle;
@@ -4989,9 +4653,6 @@ int EditorPlatformManager::Finalize() {
 	auto& editorSceneObjectManager = g_editorSceneObjectManager;
 	auto& editorSceneObjects = g_editorSceneObjectManager.GetSceneObjects();
 	auto& selectedPlacedSceneObjectIndex = g_selectedPlacedSceneObjectIndex;
-	auto& fence = g_fence;
-	auto& fenceValue = g_fenceValue;
-	auto& fenceEvent = g_fenceEvent;
 	auto& textureFilePaths = g_textureFilePaths;
 	auto& textureFilePathStrings = g_textureFilePathStrings;
 	auto& editorTextureFilePaths = g_editorTextureFilePaths;
@@ -5057,19 +4718,12 @@ int EditorPlatformManager::Finalize() {
 	}
 
 	g_feelKitHaptics.shutdown();
-	if (keyboardDevice != nullptr) {
-		keyboardDevice->Unacquire();
-		keyboardDevice->Release();
-		keyboardDevice = nullptr;
-	}
-	if (mouseDevice != nullptr) {
-		mouseDevice->Unacquire();
-		mouseDevice->Release();
-		mouseDevice = nullptr;
-	}
-	if (directInput != nullptr) {
-		directInput->Release();
-		directInput = nullptr;
+
+	// DirectInput Device の Unacquire と解放は Input クラスが持つ。
+	// ComPtr なのでここに Release は書かない。
+	if (g_input != nullptr) {
+		g_input->Finalize();
+		g_input.reset();
 	}
 
 	Log(logStream, "application finished");
@@ -5080,41 +4734,40 @@ int EditorPlatformManager::Finalize() {
 	ImGui::DestroyContext();
 #endif
 
-	if (fenceEvent != nullptr) {
-		CloseHandle(fenceEvent);
-	}
+	// Fence の待機 Event は DirectXCommon が CloseHandle する。
 
-	for (ID3D12Resource* intermediateResource : intermediateResources) {
-		intermediateResource->Release();
+	// ComPtr なので Release は書かない。参照を手放すだけ。
+	for (ComPtr<ID3D12Resource>& intermediateResource : intermediateResources) {
+		intermediateResource.Reset();
 	}
-	for (ID3D12Resource* textureResource : textureResources) {
-		textureResource->Release();
+	for (ComPtr<ID3D12Resource>& textureResource : textureResources) {
+		textureResource.Reset();
 	}
 	editorSceneObjectManager.ReleaseAll();
-	spriteMaterialResource->Release();
-	sphereMaterialResource->Release();
-	directionalLightResource->Release();
-	spriteTransformationMatrixResource->Release();
-	sphereTransformationMatrixResource->Release();
+	spriteMaterialResource.Reset();
+	sphereMaterialResource.Reset();
+	directionalLightResource.Reset();
+	spriteTransformationMatrixResource.Reset();
+	sphereTransformationMatrixResource.Reset();
 	if (identitySkinMatrixResource != nullptr) {
-		identitySkinMatrixResource->Release();
-		identitySkinMatrixResource = nullptr;
+		identitySkinMatrixResource.Reset();
+		identitySkinMatrixResource.Reset();
 		identitySkinMatrixData = nullptr;
 	}
 	if (batchInstanceResource != nullptr) {
-		batchInstanceResource->Release();
-		batchInstanceResource = nullptr;
+		batchInstanceResource.Reset();
+		batchInstanceResource.Reset();
 		batchInstanceData = nullptr;
 	}
-	spriteIndexResource->Release();
-	spriteVertexResource->Release();
-	for (ID3D12Resource* primitiveVertexResource : editorPrimitiveVertexResources) {
-		if (primitiveVertexResource != nullptr) {
-			primitiveVertexResource->Release();
+	spriteIndexResource.Reset();
+	spriteVertexResource.Reset();
+	for (ComPtr<ID3D12Resource>& primitiveVertexResource : editorPrimitiveVertexResources) {
+		{
+			primitiveVertexResource.Reset();
 		}
 	}
-	modelVertexResource->Release();
-	vertexResource->Release();
+	modelVertexResource.Reset();
+	vertexResource.Reset();
 	g_editorRuntimeManager.GetEffekseerManager().FinalizeGraphics();
 	g_gpuCullingManager.Finalize();
 	g_oceanFftManager.Finalize();
@@ -5125,109 +4778,54 @@ int EditorPlatformManager::Finalize() {
 	g_depthHierarchyManager.Finalize();
 	g_gBufferManager.Finalize();
 	g_lightProbeManager.Finalize();
-	srvDescriptorHeap->Release();
-	dsvDescriptorHeap->Release();
-	rtvDescriptorHeap->Release();
+	// Descriptor Heap は DirectXCommon が ComPtr で所有する。ここでは解放しない。
 	if (shadowMapResource != nullptr) {
-		shadowMapResource->Release();
-		shadowMapResource = nullptr;
+		shadowMapResource.Reset();
+		shadowMapResource.Reset();
 	}
-	for (ID3D12Resource* bloomResource : g_bloomRenderTargets) {
-		if (bloomResource != nullptr) {
-			bloomResource->Release();
+	for (ComPtr<ID3D12Resource>& bloomResource : g_bloomRenderTargets) {
+		{
+			bloomResource.Reset();
 		}
 	}
-	if (g_postProcessRenderTarget != nullptr) {
-		g_postProcessRenderTarget->Release();
-		g_postProcessRenderTarget = nullptr;
+	g_postProcessRenderTarget.Reset();
+	for (ComPtr<ID3D12Resource>& ssaoResource : g_ssaoRenderTargets) {
+		ssaoResource.Reset();
 	}
-	for (ID3D12Resource*& ssaoResource : g_ssaoRenderTargets) {
-		if (ssaoResource != nullptr) {
-			ssaoResource->Release();
-			ssaoResource = nullptr;
-		}
-	}
-	if (g_hdrCompositeRenderTarget != nullptr) {
-		g_hdrCompositeRenderTarget->Release();
-		g_hdrCompositeRenderTarget = nullptr;
-	}
-	if (g_materialMaskRenderTarget != nullptr) {
-		g_materialMaskRenderTarget->Release();
-		g_materialMaskRenderTarget = nullptr;
-	}
+	g_hdrCompositeRenderTarget.Reset();
+	g_materialMaskRenderTarget.Reset();
 
-	if (g_planarReflectionRenderTarget != nullptr) {
-		g_planarReflectionRenderTarget->Release();
-		g_planarReflectionRenderTarget = nullptr;
-	}
+	g_planarReflectionRenderTarget.Reset();
 
-	if (g_oitAccumulationRenderTarget != nullptr) {
-		g_oitAccumulationRenderTarget->Release();
-		g_oitAccumulationRenderTarget = nullptr;
-	}
+	g_oitAccumulationRenderTarget.Reset();
 
-	if (g_oitRevealageRenderTarget != nullptr) {
-		g_oitRevealageRenderTarget->Release();
-		g_oitRevealageRenderTarget = nullptr;
-	}
-	if (g_environmentTextureUploadResource != nullptr) {
-		g_environmentTextureUploadResource->Release();
-		g_environmentTextureUploadResource = nullptr;
-	}
-	if (g_environmentTextureResource != nullptr) {
-		g_environmentTextureResource->Release();
-		g_environmentTextureResource = nullptr;
-	}
-	if (g_iblIrradianceCube != nullptr) {
-		g_iblIrradianceCube->Release();
-		g_iblIrradianceCube = nullptr;
-	}
-	if (g_iblPrefilterCube != nullptr) {
-		g_iblPrefilterCube->Release();
-		g_iblPrefilterCube = nullptr;
-	}
-	if (g_iblEnvironmentCube != nullptr) {
-		g_iblEnvironmentCube->Release();
-		g_iblEnvironmentCube = nullptr;
-	}
-	if (g_iblBRDFLUT != nullptr) {
-		g_iblBRDFLUT->Release();
-		g_iblBRDFLUT = nullptr;
-	}
-	if (g_colorGradingLut != nullptr) {
-		g_colorGradingLut->Release();
-		g_colorGradingLut = nullptr;
-	}
-	if (g_customColorGradingLutUploadResource != nullptr) {
-		g_customColorGradingLutUploadResource->Release();
-		g_customColorGradingLutUploadResource = nullptr;
-	}
-	if (g_customColorGradingLutResource != nullptr) {
-		g_customColorGradingLutResource->Release();
-		g_customColorGradingLutResource = nullptr;
-	}
+	g_oitRevealageRenderTarget.Reset();
+	g_environmentTextureUploadResource.Reset();
+	g_environmentTextureResource.Reset();
+	g_iblIrradianceCube.Reset();
+	g_iblPrefilterCube.Reset();
+	g_iblEnvironmentCube.Reset();
+	g_iblBRDFLUT.Reset();
+	g_colorGradingLut.Reset();
+	g_customColorGradingLutUploadResource.Reset();
+	g_customColorGradingLutResource.Reset();
 	g_loadedColorGradingLutAssetPath.clear();
 	if (hdrRenderTarget != nullptr) {
-		hdrRenderTarget->Release();
-		hdrRenderTarget = nullptr;
+		hdrRenderTarget.Reset();
+		hdrRenderTarget.Reset();
 	}
 	if (opaqueDepthCopyResource != nullptr) {
-		opaqueDepthCopyResource->Release();
-		opaqueDepthCopyResource = nullptr;
+		opaqueDepthCopyResource.Reset();
+		opaqueDepthCopyResource.Reset();
 	}
 	// 初期化が途中で失敗した場合や、Resize 中に back buffer を取得できなかった
 	// 場合はこれらが nullptr のまま Finalize に来る。無条件 Release は終了時の
 	// null 参照になるため、他のリソースと同じように存在確認してから解放する。
 	if (depthStencilResource != nullptr) {
-		depthStencilResource->Release();
-		depthStencilResource = nullptr;
+		depthStencilResource.Reset();
+		depthStencilResource.Reset();
 	}
-	for (ID3D12Resource*& swapChainResource : swapChainResources) {
-		if (swapChainResource != nullptr) {
-			swapChainResource->Release();
-			swapChainResource = nullptr;
-		}
-	}
+	// Back Buffer は DirectXCommon が ComPtr で持つので、ここでは解放しない。
 
 	// g_logStream をこの先で閉じるため、書き出し先の登録を先に外す。
 	EditorSetHrFailureLogStream(nullptr);
@@ -5242,7 +4840,21 @@ int EditorPlatformManager::Finalize() {
 #endif
 
 
-	g_exitCode = static_cast<int>(message.wParam);
+	// Device / Command / SwapChain / Fence は DirectXCommon が生成と逆順に手放す。
+	// GPU の完了待ちもクラス側で行うので、ここでは順番だけを守る。
+	if (g_dxCommon != nullptr) {
+		g_dxCommon->Finalize();
+		g_dxCommon.reset();
+	}
+
+	// 終了コードは WinApp が WM_QUIT から拾って持っている。
+	// Window は DirectX より後に壊す。SwapChain が Window を参照しているため。
+	if (g_winApp != nullptr) {
+		g_exitCode = g_winApp->GetExitCode();
+		g_winApp->Finalize();
+		g_winApp.reset();
+	}
+
 	g_isFinalized = true;
 	return g_exitCode;
 }

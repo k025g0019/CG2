@@ -54,8 +54,8 @@ namespace {
 			return;
 		}
 
-		ID3D12Resource* currentSkinResource = g_identitySkinMatrixResource;
-		ID3D12Resource* previousSkinResource = g_identitySkinMatrixResource;
+		ID3D12Resource* currentSkinResource = g_identitySkinMatrixResource.Get();
+		ID3D12Resource* previousSkinResource = g_identitySkinMatrixResource.Get();
 
 		if (sceneObject != nullptr && sceneObject->usesSkinning &&
 			sceneObject->currentSkinMatrixResource != nullptr &&
@@ -1296,6 +1296,390 @@ namespace {
 	}
 
 	//========================================
+	// 影 Atlas のタイル割り当て
+	//========================================
+
+	// Sun の Cascade 数。距離で 4 分割し、近距離へ解像度を寄せる。
+	constexpr uint32_t kSunCascadeCount = 4u;
+
+	// 5x5 Atlas の全タイル数。Sun cascade 4 + Point Light 最大 3 灯 x 6 面 = 22 で収まる。
+	constexpr uint32_t kMaxShadowRenderPassCount =
+		static_cast<uint32_t>(kShadowAtlasTiles) * static_cast<uint32_t>(kShadowAtlasTiles);
+
+	// 影を 1 タイル描くための情報。どのライトの、どの行列で、どのタイルへ描くか。
+	struct ShadowRenderPass {
+		Matrix4x4 viewProjection;
+		uint32_t tileIndex;
+		int32_t lightIndex;
+	};
+
+	//========================================
+	// フレーム共有の描画状態
+	//========================================
+
+	// Draw() 1 回ぶんの描画で、複数のステージが読み書きする状態をここへ集約する。
+	// Draw() は 5,000 行超の平坦な文の列で、ローカル変数が 400 個近くステージ間を
+	// またいでいた。ステージへ切り出すたびに引数が 15 個規模へ膨らむため、
+	// またぐ状態はこの構造体へ寄せて引数 1 つで渡す。
+	//
+	// ここへ入れるのは「あるステージが決めて、後のステージが読む」ものだけ。
+	// EditorSharedState のグローバル(g_*)はそのまま参照できるので入れない。
+	struct RenderFrameContext {
+		//------------------------------
+		// 機能ごとの有効判定
+		//------------------------------
+
+		bool shouldRenderAmbientOcclusion = false;   // GTAO を走らせるか
+		bool shouldRenderSsgi = false;               // SSGI を走らせるか
+		bool shouldRenderVolumetricLightShaft = false; // 光の筋を走らせるか
+		bool shouldExecuteTemporalOrSsr = false;     // Temporal AA か SSR のどちらかが要るか
+		bool shouldUseGpuCulling = false;            // GPU Culling を使うか（object 数で決める）
+		bool shouldRenderMaterialMask = false;       // 材質マスクを描くか
+		bool shouldRenderGBuffer = false;            // GBuffer を描くか
+		bool shouldUpdateGpuParticles = false;       // GPU Particle を更新するか
+		bool shouldBuildDepthHierarchy = false;      // Depth Pyramid を作るか
+
+		// GPU Culling の候補数。判定に使うだけでなく、後段で AABB 配列の
+		// reserve にも使うため文脈へ残す。
+		size_t gpuCullingCandidateCount = 0u;
+
+		//------------------------------
+		// 影 Atlas の配置結果
+		//------------------------------
+
+		std::array<ShadowRenderPass, kMaxShadowRenderPassCount> shadowRenderPasses{};
+		uint32_t shadowRenderPassCount = 0u;                  // 実際に描くタイル数
+		std::array<Matrix4x4, kMaxSceneLights> lightViewProjectionMatrixPerLight{};
+		int32_t sunLightIndex = -1;                           // Sun として扱うライト。-1 なら無し
+
+		//------------------------------
+		// 平面反射
+		//------------------------------
+
+		// planarManager は GetViews() が返す参照を後段が持つため、
+		// フレーム全体で生存させる必要がある。文脈が所有する。
+		EditorPlanarReflectionManager planarManager;
+		const EditorPlanarReflectionManager::ProbeView* scenePlanarView = nullptr;
+		const EditorPlanarReflectionManager::ProbeView* gamePlanarView = nullptr;
+		bool hasPlanarReflectionCapture = false;
+		bool hasPlanarReflectionComposite = false;
+	};
+
+	// 今フレームでどの描画機能を走らせるかを決め、平面反射のカメラを用意する。
+	// 参照するカメラ行列・SceneObject は EditorSharedState のグローバルなので引数に取らない。
+	void DecideFrameRenderFeatures(
+		RenderFrameContext& frame,
+		const PostProcessSettings& settings,
+		int32_t lightCount) {
+		//------------------------------
+		// ポストプロセス側の要求
+		//------------------------------
+
+		frame.shouldRenderAmbientOcclusion =
+			settings.hasPostProcessComponent &&
+			settings.compositeAmbientOcclusionStrength > 0.0f;
+		frame.shouldRenderSsgi =
+			settings.hasPostProcessComponent &&
+			settings.compositeSsgiEnabled &&
+			settings.compositeSsgiIntensity > 0.0f;
+		// Sun Beams(光の筋)。Environment コンポーネントの設定は CollectSceneLights 内の
+		// ApplyVolumetricLightSettings で既に directionalLightData[0] へ反映済み。
+		frame.shouldRenderVolumetricLightShaft =
+			lightCount > 0 &&
+			g_directionalLightData[0].lightType == 0 &&
+			g_directionalLightData[0].shadowEnabled > 0.5f &&
+			g_directionalLightData[0].volumetricIntensity > 0.0001f;
+		// 履歴テクスチャは共有するが、行列と履歴有効状態は Scene / Game の Viewport ごとに分離する。
+		frame.shouldExecuteTemporalOrSsr =
+			settings.hasPostProcessComponent &&
+			(settings.aaMode == 3 || settings.ssrEnabled);
+
+		//------------------------------
+		// GPU Culling を使うかの判定
+		//------------------------------
+
+		const std::vector<EditorSceneObject>& sceneObjects =
+			g_editorSceneObjectManager.GetSceneObjects();
+		frame.gpuCullingCandidateCount = 0u;
+
+		for (const EditorSceneObject& sceneObject : sceneObjects) {
+			if (sceneObject.type == EditorSceneObjectType::Model &&
+				!sceneObject.ocean.isEnabled &&
+				sceneObject.transformationData != nullptr) {
+				frame.gpuCullingCandidateCount++;
+			}
+		}
+
+		// 少数オブジェクトでは全画面 Hi-Z 生成と readback の方が高コストになる。
+		constexpr size_t kGpuCullingMinimumObjectCount = 256u;
+		// Scene View / Game View は別々の可視判定 Buffer を持つため、片方の Camera 結果を
+		// もう片方へ誤適用せずに GPU Culling を利用できる。
+		constexpr bool kGpuCullingEnabled = true;
+		frame.shouldUseGpuCulling =
+			kGpuCullingEnabled &&
+			frame.gpuCullingCandidateCount >= kGpuCullingMinimumObjectCount;
+
+		//------------------------------
+		// 平面反射のカメラ準備
+		//------------------------------
+
+		frame.planarManager.CollectProbes(g_editorScene, sceneObjects);
+		frame.planarManager.UpdateCameras(
+			g_cameraMatrix,
+			g_viewMatrix,
+			g_projectionMatrix,
+			g_gameCameraMatrix,
+			g_gameViewMatrix,
+			g_gameProjectionMatrix);
+
+		frame.scenePlanarView = frame.planarManager.FindNearestView(g_cameraTransform.translate);
+		frame.gamePlanarView = frame.planarManager.FindNearestView(g_gameCameraPosition);
+
+		//------------------------------
+		// 上記から決まる残りの判定
+		//------------------------------
+
+		frame.shouldRenderMaterialMask =
+			frame.planarManager.HasCompositeProbes() || frame.shouldExecuteTemporalOrSsr;
+		frame.shouldRenderGBuffer =
+			frame.shouldRenderAmbientOcclusion ||
+			frame.shouldRenderSsgi ||
+			frame.shouldExecuteTemporalOrSsr;
+		frame.shouldUpdateGpuParticles =
+			g_editorRuntimeManager.IsPlaying() &&
+			g_editorRuntimeManager.GetEffectManager().HasLiveGpuParticles();
+		frame.shouldBuildDepthHierarchy =
+			frame.shouldUseGpuCulling ||
+			frame.shouldExecuteTemporalOrSsr ||
+			frame.shouldUpdateGpuParticles;
+	}
+
+	//========================================
+	// 影 Atlas の配置
+	//========================================
+
+	// Sun の CSM と、ローカルライトの影を 5x5 Atlas のどのタイルへ描くかを決める。
+	// 通常ライトは 16 灯まで評価するが、影は Atlas に収まる分だけ描く。
+	// Atlas を使い切ったあとのライトは照明のみ有効にし、影だけを無効化する。
+	//
+	// このフェーズで宣言する 21 個のうち、後段が使うのは 4 つだけなので、
+	// それを文脈へ書き、残りは関数内のローカルに閉じている。
+	void PlaceShadowAtlasPasses(
+		RenderFrameContext& frame,
+		const PostProcessSettings& settings,
+		int32_t lightCount,
+		bool shouldRenderSceneView,
+		const Vector3& activeCameraPosition) {
+
+		// 通常ライトは16灯まで評価するが、影は5x5 Atlasに収まる分だけ描画する。
+		// Atlasを使い切った後のライトは照明のみ有効にし、影だけを無効化する。
+
+		for (Matrix4x4& lightViewProjectionMatrix : frame.lightViewProjectionMatrixPerLight) {
+			lightViewProjectionMatrix = MakeIdentity4x4();
+		}
+
+
+		for (int32_t lightIndex = 0; lightIndex < lightCount; lightIndex++) {
+			if (g_directionalLightData[lightIndex].lightType == 0) {
+				frame.sunLightIndex = lightIndex;
+				break;
+			}
+		}
+
+		const Matrix4x4& activeCameraMatrix = shouldRenderSceneView
+			? g_cameraMatrix
+			: g_gameCameraMatrix;
+		const Matrix4x4& activeCameraProjectionMatrix = shouldRenderSceneView
+			? g_projectionMatrix
+			: g_gameProjectionMatrix;
+		Vector3 activeCameraForward = Normalize(Vector3{
+			activeCameraMatrix.matrix[2][0],
+			activeCameraMatrix.matrix[2][1],
+			activeCameraMatrix.matrix[2][2]});
+
+		if (Length(activeCameraForward) <= 0.0001f) {
+			activeCameraForward = {0.0f, 0.0f, 1.0f};
+		}
+
+		const float cascadeNearClip = (std::max)(settings.cameraNearClip, 0.05f);
+		const float cascadeFarClip = (std::clamp)(
+			settings.cameraFarClip,
+			cascadeNearClip + 1.0f,
+			240.0f);
+		std::array<float, kSunCascadeCount> cascadeSplits{};
+		constexpr float kCascadeLogarithmicWeight = 0.68f;
+
+		for (uint32_t cascadeIndex = 0u; cascadeIndex < kSunCascadeCount; cascadeIndex++) {
+			const float cascadeRatio =
+				static_cast<float>(cascadeIndex + 1u) /
+				static_cast<float>(kSunCascadeCount);
+			const float logarithmicSplit = cascadeNearClip * std::pow(
+				cascadeFarClip / cascadeNearClip,
+				cascadeRatio);
+			const float uniformSplit = cascadeNearClip +
+				(cascadeFarClip - cascadeNearClip) * cascadeRatio;
+			cascadeSplits[cascadeIndex] =
+				logarithmicSplit * kCascadeLogarithmicWeight +
+				uniformSplit * (1.0f - kCascadeLogarithmicWeight);
+		}
+
+		const float tileScale = 1.0f / static_cast<float>(kShadowAtlasTiles);
+		uint32_t nextLocalShadowTileIndex = frame.sunLightIndex >= 0 ? kSunCascadeCount : 0u;
+
+		for (int32_t lightIndex = 0; lightIndex < lightCount; lightIndex++) {
+			DirectionalLight& light = g_directionalLightData[lightIndex];
+			light.shadowCascadeSplits = {};
+			light.shadowCascadeCount = 0.0f;
+			light.shadowCascadeVP.fill({});
+			light.shadowCascadeAtlas.fill({});
+
+			if (lightIndex == frame.sunLightIndex) {
+				float previousCascadeSplit = cascadeNearClip;
+
+				for (uint32_t cascadeIndex = 0u;
+					cascadeIndex < kSunCascadeCount;
+					cascadeIndex++) {
+					const Matrix4x4 cascadeViewProjection = MakeSunCascadeViewProjectionMatrix(
+						light,
+						activeCameraPosition,
+						activeCameraForward,
+						activeCameraProjectionMatrix,
+						previousCascadeSplit,
+						cascadeSplits[cascadeIndex]);
+					const uint32_t tileIndex = cascadeIndex;
+					const uint32_t tileX = tileIndex % static_cast<uint32_t>(kShadowAtlasTiles);
+					const uint32_t tileY = tileIndex / static_cast<uint32_t>(kShadowAtlasTiles);
+					const Vector4 atlasTransform = {
+						tileScale,
+						tileScale,
+						static_cast<float>(tileX) * tileScale,
+						static_cast<float>(tileY) * tileScale
+					};
+					light.shadowCascadeVP[cascadeIndex] = cascadeViewProjection;
+					light.shadowCascadeAtlas[cascadeIndex] = atlasTransform;
+					frame.shadowRenderPasses[frame.shadowRenderPassCount] = {
+						cascadeViewProjection,
+						tileIndex,
+						lightIndex
+					};
+					frame.shadowRenderPassCount++;
+					previousCascadeSplit = cascadeSplits[cascadeIndex];
+				}
+
+				light.shadowCascadeSplits = {
+					cascadeSplits[0],
+					cascadeSplits[1],
+					cascadeSplits[2],
+					cascadeSplits[3]
+				};
+				light.shadowCascadeCount = static_cast<float>(kSunCascadeCount);
+				light.shadowVP = light.shadowCascadeVP[0];
+				light.shadowTileIndex = 0.0f;
+				light.shadowTileUvScaleX = light.shadowCascadeAtlas[0].x;
+				light.shadowTileUvScaleY = light.shadowCascadeAtlas[0].y;
+				light.shadowTileUvBiasX = light.shadowCascadeAtlas[0].z;
+				light.shadowTileUvBiasY = light.shadowCascadeAtlas[0].w;
+				frame.lightViewProjectionMatrixPerLight[lightIndex] = light.shadowVP;
+				continue;
+			}
+
+			// Point Lightは全方向へ光るため、1タイルの平面シャドウでは背後や側面が
+			// 「影データ無し=遮蔽物無し扱い」になり壁越しに光が漏れる。
+			// 6面(Cube)分のタイルをAtlasへ個別配置し、光源からの方向で面を選んで判定する。
+			const bool isPointLightShadow = (light.lightType == 1);
+			const uint32_t totalAtlasTileCount =
+				static_cast<uint32_t>(kShadowAtlasTiles) * static_cast<uint32_t>(kShadowAtlasTiles);
+			const uint32_t faceCount = isPointLightShadow ? kCubeFaceCount : 1u;
+
+			if (isPointLightShadow &&
+				nextLocalShadowTileIndex + kCubeFaceCount <= totalAtlasTileCount &&
+				frame.shadowRenderPassCount + kCubeFaceCount <= kMaxShadowRenderPassCount) {
+				// Rangeを超えた先はシェーダ側の距離減衰で光が完全に消えるため、
+				// Far clipにRangeをそのまま使えば必要な範囲を過不足なく覆える。
+				const float farClip = (std::max)(light.range, 1.0f);
+				const float nearClip = CalculatePointLightShadowNearClip(farClip);
+
+				for (uint32_t faceIndex = 0u; faceIndex < faceCount; faceIndex++) {
+					const Matrix4x4 faceViewProjection = MakePointLightCubeFaceViewProjectionMatrix(
+						light.position,
+						nearClip,
+						farClip,
+						faceIndex);
+					const uint32_t tileIndex = nextLocalShadowTileIndex;
+					const uint32_t tileX = tileIndex % static_cast<uint32_t>(kShadowAtlasTiles);
+					const uint32_t tileY = tileIndex / static_cast<uint32_t>(kShadowAtlasTiles);
+					const Vector4 atlasTransform = {
+						tileScale,
+						tileScale,
+						static_cast<float>(tileX) * tileScale,
+						static_cast<float>(tileY) * tileScale
+					};
+					light.shadowCascadeVP[faceIndex] = faceViewProjection;
+					light.shadowCascadeAtlas[faceIndex] = atlasTransform;
+					frame.shadowRenderPasses[frame.shadowRenderPassCount] = {
+						faceViewProjection,
+						tileIndex,
+						lightIndex
+					};
+					frame.shadowRenderPassCount++;
+					nextLocalShadowTileIndex++;
+				}
+
+				light.shadowCascadeCount = static_cast<float>(kCubeFaceCount);
+				// Cascade用のsplitはPoint Lightでは未使用なので、
+				// 透視深度バイアス計算に必要なNear/Farの受け渡しに転用する。
+				light.shadowCascadeSplits = {nearClip, farClip, 0.0f, 0.0f};
+				light.shadowVP = light.shadowCascadeVP[0];
+				light.shadowTileIndex = 0.0f;
+				light.shadowTileUvScaleX = light.shadowCascadeAtlas[0].x;
+				light.shadowTileUvScaleY = light.shadowCascadeAtlas[0].y;
+				light.shadowTileUvBiasX = light.shadowCascadeAtlas[0].z;
+				light.shadowTileUvBiasY = light.shadowCascadeAtlas[0].w;
+				frame.lightViewProjectionMatrixPerLight[lightIndex] = light.shadowVP;
+				continue;
+			}
+
+			// Point Lightは6面すべて揃わない状態で1面だけ描くと光漏れになるため、
+			// Atlasに6面を確保できない場合は影だけを無効化する。
+			if (isPointLightShadow) {
+				light.shadowEnabled = 0.0f;
+				continue;
+			}
+
+			// Spot / Directional Lightの影は1タイル使用する。通常ライト数を増やしても
+			// Atlas外のViewportやUVを生成しないよう、満杯なら影だけを無効化する。
+			if (nextLocalShadowTileIndex >= totalAtlasTileCount ||
+				frame.shadowRenderPassCount >= kMaxShadowRenderPassCount) {
+				light.shadowEnabled = 0.0f;
+				continue;
+			}
+
+			const Matrix4x4 lightViewProjection = MakeLightViewProjectionMatrix(
+				g_editorSceneObjectManager.GetSceneObjects(),
+				g_transform,
+				&light,
+				g_isLegacyPreviewVisible);
+			const uint32_t tileIndex = nextLocalShadowTileIndex;
+			const uint32_t tileX = tileIndex % static_cast<uint32_t>(kShadowAtlasTiles);
+			const uint32_t tileY = tileIndex / static_cast<uint32_t>(kShadowAtlasTiles);
+			light.shadowVP = lightViewProjection;
+			light.shadowTileIndex = static_cast<float>(tileIndex);
+			light.shadowTileUvScaleX = tileScale;
+			light.shadowTileUvScaleY = tileScale;
+			light.shadowTileUvBiasX = static_cast<float>(tileX) * tileScale;
+			light.shadowTileUvBiasY = static_cast<float>(tileY) * tileScale;
+			frame.lightViewProjectionMatrixPerLight[lightIndex] = lightViewProjection;
+			frame.shadowRenderPasses[frame.shadowRenderPassCount] = {
+				lightViewProjection,
+				tileIndex,
+				lightIndex
+			};
+			frame.shadowRenderPassCount++;
+			nextLocalShadowTileIndex++;
+		}
+	}
+
+	//========================================
 	// ToneMapping 後のポストプロセス Pass
 	//========================================
 
@@ -1336,7 +1720,7 @@ namespace {
 		const float inverseRenderHeight =
 			1.0f / static_cast<float>((std::max)(g_renderHeight, 1u));
 		return g_postProcessQualityManager.ExecuteAutoExposure(
-			g_commandList.Get(),
+			g_dxCommon->GetCommandList().Get(),
 			sourceSrvHandle,
 			sourceResource,
 			settings.compositeMinimumExposure,
@@ -1360,7 +1744,7 @@ namespace {
 		}
 
 		const bool isSmaaExecuted = g_postProcessQualityManager.ExecuteSmaa(
-			g_commandList.Get(),
+			g_dxCommon->GetCommandList().Get(),
 			sourceSrvHandle,
 			settings.smaaThreshold,
 			settings.smaaCornerRounding);
@@ -1380,21 +1764,21 @@ namespace {
 		const D3D12_VIEWPORT& fullViewport,
 		const D3D12_RECT& fullScissor,
 		uint32_t backBufferIndex) {
-		const D3D12_CPU_DESCRIPTOR_HANDLE& backBufferRtvHandle = g_rtvHandles[backBufferIndex];
-		g_commandList->RSSetViewports(1, &fullViewport);
-		g_commandList->RSSetScissorRects(1, &fullScissor);
-		g_commandList->OMSetRenderTargets(1, &backBufferRtvHandle, FALSE, nullptr);
+		const D3D12_CPU_DESCRIPTOR_HANDLE& backBufferRtvHandle = g_dxCommon->GetBackBufferRtvHandle(backBufferIndex);
+		g_dxCommon->GetCommandList()->RSSetViewports(1, &fullViewport);
+		g_dxCommon->GetCommandList()->RSSetScissorRects(1, &fullScissor);
+		g_dxCommon->GetCommandList()->OMSetRenderTargets(1, &backBufferRtvHandle, FALSE, nullptr);
 		float backBufferClearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-		g_commandList->ClearRenderTargetView(backBufferRtvHandle, backBufferClearColor, 0, nullptr);
-		ID3D12DescriptorHeap* descriptorHeaps[] = {g_srvDescriptorHeap};
-		g_commandList->SetDescriptorHeaps(1, descriptorHeaps);
-		g_commandList->SetGraphicsRootSignature(g_postProcessRootSignature.Get());
+		g_dxCommon->GetCommandList()->ClearRenderTargetView(backBufferRtvHandle, backBufferClearColor, 0, nullptr);
+		ID3D12DescriptorHeap* descriptorHeaps[] = {g_dxCommon->GetSrvDescriptorHeap()};
+		g_dxCommon->GetCommandList()->SetDescriptorHeaps(1, descriptorHeaps);
+		g_dxCommon->GetCommandList()->SetGraphicsRootSignature(g_postProcessRootSignature.Get());
 		const bool isFxaaSelected = settings.aaMode == 1;
-		g_commandList->SetPipelineState(isFxaaSelected
+		g_dxCommon->GetCommandList()->SetPipelineState(isFxaaSelected
 			? g_fxaaPipelineState.Get()
 			: g_passthroughPipelineState.Get());
-		g_commandList->SetGraphicsRootDescriptorTable(0, sourceSrvHandle);
-		g_commandList->SetGraphicsRootDescriptorTable(1, bloomSrvHandle);
+		g_dxCommon->GetCommandList()->SetGraphicsRootDescriptorTable(0, sourceSrvHandle);
+		g_dxCommon->GetCommandList()->SetGraphicsRootDescriptorTable(1, bloomSrvHandle);
 		// passthrough 側は FXAA の閾値を無効値にして、同じ Root Constants を使い回す。
 		const float fxaaParams[4] = {
 			1.0f / static_cast<float>(g_renderWidth),
@@ -1402,10 +1786,10 @@ namespace {
 			isFxaaSelected ? 0.65f : 0.0f,
 			isFxaaSelected ? 0.0312f : 10.0f
 		};
-		g_commandList->SetGraphicsRoot32BitConstants(2, 4, fxaaParams, 0);
-		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		g_dxCommon->GetCommandList()->SetGraphicsRoot32BitConstants(2, 4, fxaaParams, 0);
+		g_dxCommon->GetCommandList()->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		RecordEditorProfilerDrawCall();
-		g_commandList->DrawInstanced(3, 1, 0, 0);
+		g_dxCommon->GetCommandList()->DrawInstanced(3, 1, 0, 0);
 	}
 
 	//------------------------------
@@ -1449,8 +1833,8 @@ namespace {
 		// 読み取り元が Composite なら HDR 側へ書く。逆もまた同じ。
 		const bool isSourceComposite = source.srvHandle.ptr == g_hdrCompositeSrvHandleGPU.ptr;
 		ID3D12Resource* destinationResource = isSourceComposite
-			? g_hdrRenderTarget
-			: g_hdrCompositeRenderTarget;
+			? g_hdrRenderTarget.Get()
+			: g_hdrCompositeRenderTarget.Get();
 		const D3D12_CPU_DESCRIPTOR_HANDLE destinationRtvHandle = isSourceComposite
 			? g_hdrRtvHandle
 			: g_hdrCompositeRtvHandle;
@@ -1464,19 +1848,19 @@ namespace {
 		depthOfFieldBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		depthOfFieldBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		depthOfFieldBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-		g_commandList->ResourceBarrier(1, &depthOfFieldBarrier);
+		g_dxCommon->GetCommandList()->ResourceBarrier(1, &depthOfFieldBarrier);
 
-		g_commandList->RSSetViewports(1, &fullViewport);
-		g_commandList->RSSetScissorRects(1, &fullScissor);
-		g_commandList->OMSetRenderTargets(1, &destinationRtvHandle, FALSE, nullptr);
+		g_dxCommon->GetCommandList()->RSSetViewports(1, &fullViewport);
+		g_dxCommon->GetCommandList()->RSSetScissorRects(1, &fullScissor);
+		g_dxCommon->GetCommandList()->OMSetRenderTargets(1, &destinationRtvHandle, FALSE, nullptr);
 		float passClearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-		g_commandList->ClearRenderTargetView(destinationRtvHandle, passClearColor, 0, nullptr);
-		ID3D12DescriptorHeap* descriptorHeaps[] = {g_srvDescriptorHeap};
-		g_commandList->SetDescriptorHeaps(1, descriptorHeaps);
-		g_commandList->SetGraphicsRootSignature(g_postProcessRootSignature.Get());
-		g_commandList->SetPipelineState(g_depthOfFieldPipelineState.Get());
-		g_commandList->SetGraphicsRootDescriptorTable(0, source.srvHandle);
-		g_commandList->SetGraphicsRootDescriptorTable(1, g_depthSrvHandleGPU);
+		g_dxCommon->GetCommandList()->ClearRenderTargetView(destinationRtvHandle, passClearColor, 0, nullptr);
+		ID3D12DescriptorHeap* descriptorHeaps[] = {g_dxCommon->GetSrvDescriptorHeap()};
+		g_dxCommon->GetCommandList()->SetDescriptorHeaps(1, descriptorHeaps);
+		g_dxCommon->GetCommandList()->SetGraphicsRootSignature(g_postProcessRootSignature.Get());
+		g_dxCommon->GetCommandList()->SetPipelineState(g_depthOfFieldPipelineState.Get());
+		g_dxCommon->GetCommandList()->SetGraphicsRootDescriptorTable(0, source.srvHandle);
+		g_dxCommon->GetCommandList()->SetGraphicsRootDescriptorTable(1, g_depthSrvHandleGPU);
 		float passParams[12] = {
 			settings.cameraDofFocusDistance,
 			settings.cameraDofAperture,
@@ -1491,14 +1875,14 @@ namespace {
 			gameViewportUv.widthUv,
 			gameViewportUv.heightUv
 		};
-		g_commandList->SetGraphicsRoot32BitConstants(2u, 12u, passParams, 0u);
-		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		g_dxCommon->GetCommandList()->SetGraphicsRoot32BitConstants(2u, 12u, passParams, 0u);
+		g_dxCommon->GetCommandList()->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		RecordEditorProfilerDrawCall();
-		g_commandList->DrawInstanced(3, 1, 0, 0);
+		g_dxCommon->GetCommandList()->DrawInstanced(3, 1, 0, 0);
 
 		depthOfFieldBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		depthOfFieldBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		g_commandList->ResourceBarrier(1, &depthOfFieldBarrier);
+		g_dxCommon->GetCommandList()->ResourceBarrier(1, &depthOfFieldBarrier);
 		return PostProcessSource{destinationSrvHandle, destinationResource};
 	}
 
@@ -1523,8 +1907,8 @@ namespace {
 		// 読み取り元が HDR なら Composite 側へ書く。逆もまた同じ。
 		const bool isSourceHdr = source.srvHandle.ptr == g_hdrSrvHandleGPU.ptr;
 		ID3D12Resource* destinationResource = isSourceHdr
-			? g_hdrCompositeRenderTarget
-			: g_hdrRenderTarget;
+			? g_hdrCompositeRenderTarget.Get()
+			: g_hdrRenderTarget.Get();
 		const D3D12_CPU_DESCRIPTOR_HANDLE destinationRtvHandle = isSourceHdr
 			? g_hdrCompositeRtvHandle
 			: g_hdrRtvHandle;
@@ -1538,20 +1922,20 @@ namespace {
 		motionBlurBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		motionBlurBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		motionBlurBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-		g_commandList->ResourceBarrier(1, &motionBlurBarrier);
+		g_dxCommon->GetCommandList()->ResourceBarrier(1, &motionBlurBarrier);
 
-		g_commandList->RSSetViewports(1, &fullViewport);
-		g_commandList->RSSetScissorRects(1, &fullScissor);
-		g_commandList->OMSetRenderTargets(1, &destinationRtvHandle, FALSE, nullptr);
+		g_dxCommon->GetCommandList()->RSSetViewports(1, &fullViewport);
+		g_dxCommon->GetCommandList()->RSSetScissorRects(1, &fullScissor);
+		g_dxCommon->GetCommandList()->OMSetRenderTargets(1, &destinationRtvHandle, FALSE, nullptr);
 		float passClearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-		g_commandList->ClearRenderTargetView(destinationRtvHandle, passClearColor, 0, nullptr);
-		ID3D12DescriptorHeap* descriptorHeaps[] = {g_srvDescriptorHeap};
-		g_commandList->SetDescriptorHeaps(1, descriptorHeaps);
-		g_commandList->SetGraphicsRootSignature(g_postProcessRootSignature.Get());
-		g_commandList->SetPipelineState(g_motionBlurPipelineState.Get());
-		g_commandList->SetGraphicsRootDescriptorTable(0, source.srvHandle);
-		g_commandList->SetGraphicsRootDescriptorTable(1, g_temporalRenderingManager.GetVelocitySrvHandle());
-		g_commandList->SetGraphicsRootDescriptorTable(3, g_depthSrvHandleGPU);
+		g_dxCommon->GetCommandList()->ClearRenderTargetView(destinationRtvHandle, passClearColor, 0, nullptr);
+		ID3D12DescriptorHeap* descriptorHeaps[] = {g_dxCommon->GetSrvDescriptorHeap()};
+		g_dxCommon->GetCommandList()->SetDescriptorHeaps(1, descriptorHeaps);
+		g_dxCommon->GetCommandList()->SetGraphicsRootSignature(g_postProcessRootSignature.Get());
+		g_dxCommon->GetCommandList()->SetPipelineState(g_motionBlurPipelineState.Get());
+		g_dxCommon->GetCommandList()->SetGraphicsRootDescriptorTable(0, source.srvHandle);
+		g_dxCommon->GetCommandList()->SetGraphicsRootDescriptorTable(1, g_temporalRenderingManager.GetVelocitySrvHandle());
+		g_dxCommon->GetCommandList()->SetGraphicsRootDescriptorTable(3, g_depthSrvHandleGPU);
 		float passParams[12] = {
 			settings.cameraMotionBlurIntensity,
 			12.0f,
@@ -1566,14 +1950,14 @@ namespace {
 			gameViewportUv.widthUv,
 			gameViewportUv.heightUv
 		};
-		g_commandList->SetGraphicsRoot32BitConstants(2u, 12u, passParams, 0u);
-		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		g_dxCommon->GetCommandList()->SetGraphicsRoot32BitConstants(2u, 12u, passParams, 0u);
+		g_dxCommon->GetCommandList()->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		RecordEditorProfilerDrawCall();
-		g_commandList->DrawInstanced(3, 1, 0, 0);
+		g_dxCommon->GetCommandList()->DrawInstanced(3, 1, 0, 0);
 
 		motionBlurBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		motionBlurBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		g_commandList->ResourceBarrier(1, &motionBlurBarrier);
+		g_dxCommon->GetCommandList()->ResourceBarrier(1, &motionBlurBarrier);
 		return PostProcessSource{destinationSrvHandle, destinationResource};
 	}
 
@@ -1608,7 +1992,7 @@ namespace {
 			settings.glareModeMask != 0 &&
 			bloomOutputIntensity > 0.0f &&
 			g_postProcessQualityManager.ExecuteBloom(
-				g_commandList.Get(),
+				g_dxCommon->GetCommandList().Get(),
 				hdrSourceSrvHandle,
 				bloomOutputIntensity,
 				settings.bloomThreshold,
@@ -1652,7 +2036,7 @@ namespace {
 
 			const size_t glareArrayIndex = static_cast<size_t>(glareModeIndex);
 			const bool isGlareExecuted = g_postProcessQualityManager.ExecuteGlare(
-				g_commandList.Get(),
+				g_dxCommon->GetCommandList().Get(),
 				result.bloomSrvHandle,
 				glareModeIndex,
 				settings.glareIntensityByMode[glareArrayIndex],
@@ -1701,7 +2085,7 @@ namespace {
 
 			const size_t filterModeArrayIndex = static_cast<size_t>(filterModeIndex);
 			const bool isFilterExecuted = g_postProcessQualityManager.ExecuteFilter(
-				g_commandList.Get(),
+				g_dxCommon->GetCommandList().Get(),
 				filteredSrvHandle,
 				filterModeIndex,
 				settings.filterStrengthByMode[filterModeArrayIndex],
@@ -1718,7 +2102,7 @@ namespace {
 		return filteredSrvHandle;
 	}
 
-	// Sharpen を g_hdrCompositeRenderTarget へ書き戻す。掛けた場合だけ true を返し、
+	// Sharpen を g_hdrCompositeRenderTarget.Get() へ書き戻す。掛けた場合だけ true を返し、
 	// 呼び出し側は次に読むのが Composite 側か Filter 側かをその戻り値で決める。
 	bool ExecuteSharpenPass(
 		const PostProcessSettings& settings,
@@ -1736,34 +2120,34 @@ namespace {
 
 		D3D12_RESOURCE_BARRIER sharpenBarrier{};
 		sharpenBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		sharpenBarrier.Transition.pResource = g_hdrCompositeRenderTarget;
+		sharpenBarrier.Transition.pResource = g_hdrCompositeRenderTarget.Get();
 		sharpenBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		sharpenBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		sharpenBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-		g_commandList->ResourceBarrier(1, &sharpenBarrier);
+		g_dxCommon->GetCommandList()->ResourceBarrier(1, &sharpenBarrier);
 
-		g_commandList->RSSetViewports(1, &fullViewport);
-		g_commandList->RSSetScissorRects(1, &fullScissor);
-		g_commandList->OMSetRenderTargets(1, &g_hdrCompositeRtvHandle, FALSE, nullptr);
-		g_commandList->ClearRenderTargetView(g_hdrCompositeRtvHandle, clearColor, 0, nullptr);
-		g_commandList->SetGraphicsRootSignature(g_postProcessRootSignature.Get());
-		g_commandList->SetPipelineState(g_sharpenPipelineState.Get());
-		g_commandList->SetGraphicsRootDescriptorTable(0, sourceSrvHandle);
-		g_commandList->SetGraphicsRootDescriptorTable(1, bloomSrvHandle);
+		g_dxCommon->GetCommandList()->RSSetViewports(1, &fullViewport);
+		g_dxCommon->GetCommandList()->RSSetScissorRects(1, &fullScissor);
+		g_dxCommon->GetCommandList()->OMSetRenderTargets(1, &g_hdrCompositeRtvHandle, FALSE, nullptr);
+		g_dxCommon->GetCommandList()->ClearRenderTargetView(g_hdrCompositeRtvHandle, clearColor, 0, nullptr);
+		g_dxCommon->GetCommandList()->SetGraphicsRootSignature(g_postProcessRootSignature.Get());
+		g_dxCommon->GetCommandList()->SetPipelineState(g_sharpenPipelineState.Get());
+		g_dxCommon->GetCommandList()->SetGraphicsRootDescriptorTable(0, sourceSrvHandle);
+		g_dxCommon->GetCommandList()->SetGraphicsRootDescriptorTable(1, bloomSrvHandle);
 		float sharpenParams[4] = {
 			1.0f / static_cast<float>(g_renderWidth),
 			1.0f / static_cast<float>(g_renderHeight),
 			settings.sharpenStrength,
 			0.0f
 		};
-		g_commandList->SetGraphicsRoot32BitConstants(2, 4, sharpenParams, 0);
-		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		g_dxCommon->GetCommandList()->SetGraphicsRoot32BitConstants(2, 4, sharpenParams, 0);
+		g_dxCommon->GetCommandList()->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		RecordEditorProfilerDrawCall();
-		g_commandList->DrawInstanced(3, 1, 0, 0);
+		g_dxCommon->GetCommandList()->DrawInstanced(3, 1, 0, 0);
 
 		sharpenBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		sharpenBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		g_commandList->ResourceBarrier(1, &sharpenBarrier);
+		g_dxCommon->GetCommandList()->ResourceBarrier(1, &sharpenBarrier);
 		return true;
 	}
 }
@@ -1820,22 +2204,26 @@ void EditorRenderManager::Draw() {
 	// ここからの参照群は、PlatformManagerが生成したDevice/Queue/SwapChainと、
 	// 各初期化処理が作成したPSO/Texture/BufferをDraw内で使いやすくするAlias。
 	// ComPtrやResourceのLifetimeはEditorSharedState側が保持する。
-	auto& device = g_device;
-	auto& commandQueue = g_commandQueue;
-	auto& commandAllocator = g_commandAllocator;
-	auto& commandList = g_commandList;
-	auto& renderTimestampQueryHeap = g_renderTimestampQueryHeap;
-	auto& renderTimestampReadback = g_renderTimestampReadback;
-	auto& renderTimestampFrequency = g_renderTimestampFrequency;
+	auto& device = g_dxCommon->GetDevice();
+	auto& commandQueue = g_dxCommon->GetCommandQueue();
+	auto& commandAllocator = g_dxCommon->GetCommandAllocator();
+	auto& commandList = g_dxCommon->GetCommandList();
+	auto& renderTimestampQueryHeap = g_dxCommon->GetTimestampQueryHeap();
+	auto& renderTimestampReadback = g_dxCommon->GetTimestampReadback();
+	const std::uint64_t renderTimestampFrequency = g_dxCommon->GetTimestampFrequency();
 	auto& renderProfile = g_renderProfile;
 	EditorProfilerManager& profilerManager = g_editorRuntimeManager.GetProfilerManager();
 	uint32_t renderTimestampQueryCount = 2u;
-	auto& useAdapter = g_useAdapter;
+	auto& useAdapter = g_dxCommon->GetAdapter();
 
-	auto& swapChain = g_swapChain;
-	auto& srvDescriptorHeap = g_srvDescriptorHeap;
-	auto& swapChainResources = g_swapChainResources;
-	auto& rtvHandles = g_rtvHandles;
+	auto& swapChain = g_dxCommon->GetSwapChain();
+	ID3D12DescriptorHeap* srvDescriptorHeap = g_dxCommon->GetSrvDescriptorHeap();
+	ID3D12Resource* swapChainResources[DirectXCommon::kBackBufferCount] = {
+		g_dxCommon->GetBackBuffer(0u),
+		g_dxCommon->GetBackBuffer(1u)};
+	const D3D12_CPU_DESCRIPTOR_HANDLE rtvHandles[DirectXCommon::kBackBufferCount] = {
+		g_dxCommon->GetBackBufferRtvHandle(0u),
+		g_dxCommon->GetBackBufferRtvHandle(1u)};
 	auto& dsvHandle = g_dsvHandle;
 	auto& depthStencilResource = g_depthStencilResource;
 	auto& depthSrvHandleGPU = g_depthSrvHandleGPU;
@@ -1942,9 +2330,6 @@ void EditorRenderManager::Draw() {
 	auto& spriteProjectionMatrix = g_spriteProjectionMatrix;
 	auto& sceneClearColor = g_sceneClearColor;
 	auto& editorSceneObjects = g_editorSceneObjectManager.GetSceneObjects();
-	auto& fence = g_fence;
-	auto& fenceValue = g_fenceValue;
-	auto& fenceEvent = g_fenceEvent;
 	renderProfile.sceneObjectCount = static_cast<uint32_t>((std::min)(
 		editorSceneObjects.size(),
 		static_cast<size_t>((std::numeric_limits<uint32_t>::max)())));
@@ -2181,293 +2566,42 @@ void EditorRenderManager::Draw() {
 	//========================================
 	// 描画機能ごとの必要リソース判定
 	//========================================
-	const bool shouldRenderAmbientOcclusion =
-		ppSettings.hasPostProcessComponent &&
-		ppSettings.compositeAmbientOcclusionStrength > 0.0f;
-	const bool shouldRenderSsgi =
-		ppSettings.hasPostProcessComponent &&
-		ppSettings.compositeSsgiEnabled &&
-		ppSettings.compositeSsgiIntensity > 0.0f;
-	// Sun Beams(光の筋)。Environmentコンポーネントの設定はCollectSceneLights内の
-	// ApplyVolumetricLightSettingsで既にdirectionalLightData[0]へ反映済み。
-	const bool shouldRenderVolumetricLightShaft =
-		lightCount > 0 &&
-		directionalLightData[0].lightType == 0 &&
-		directionalLightData[0].shadowEnabled > 0.5f &&
-		directionalLightData[0].volumetricIntensity > 0.0001f;
-	// 履歴テクスチャは共有するが、行列と履歴有効状態は Scene / Game の Viewport ごとに分離する。
-	const bool shouldExecuteTemporalOrSsr =
-		ppSettings.hasPostProcessComponent &&
-		(ppSettings.aaMode == 3 || ppSettings.ssrEnabled);
 
-	size_t gpuCullingCandidateCount = 0u;
+	// 今フレームでどの機能を走らせるかと、平面反射のカメラをここで決める。
+	// 決めた内容は frame（RenderFrameContext）へ入り、後続の各ステージが読む。
+	RenderFrameContext frame{};
+	DecideFrameRenderFeatures(frame, ppSettings, lightCount);
 
-	for (const EditorSceneObject& sceneObject : editorSceneObjects) {
-		if (sceneObject.type == EditorSceneObjectType::Model &&
-			!sceneObject.ocean.isEnabled &&
-			sceneObject.transformationData != nullptr) {
-			gpuCullingCandidateCount++;
-		}
-	}
-
-	// 少数オブジェクトでは全画面 Hi-Z 生成と readback の方が高コストになる。
-	constexpr size_t kGpuCullingMinimumObjectCount = 256u;
-	// Scene View / Game Viewは別々の可視判定Bufferを持つため、片方のCamera結果を
-	// もう片方へ誤適用せずにGPU Cullingを利用できる。
-	constexpr bool kGpuCullingEnabled = true;
-	const bool shouldUseGpuCulling =
-		kGpuCullingEnabled &&
-		gpuCullingCandidateCount >= kGpuCullingMinimumObjectCount;
-
-	EditorPlanarReflectionManager planarManager;
-	planarManager.CollectProbes(g_editorScene, editorSceneObjects);
-	planarManager.UpdateCameras(
-		cameraMatrix,
-		viewMatrix,
-		projectionMatrix,
-		g_gameCameraMatrix,
-		g_gameViewMatrix,
-		g_gameProjectionMatrix);
-
+	// 後続コードを変更せずに済むよう、元と同じ名前の参照別名で受け直す。
+	const bool& shouldRenderAmbientOcclusion = frame.shouldRenderAmbientOcclusion;
+	const bool& shouldRenderSsgi = frame.shouldRenderSsgi;
+	const bool& shouldRenderVolumetricLightShaft = frame.shouldRenderVolumetricLightShaft;
+	const bool& shouldExecuteTemporalOrSsr = frame.shouldExecuteTemporalOrSsr;
+	const bool& shouldUseGpuCulling = frame.shouldUseGpuCulling;
+	const bool& shouldRenderMaterialMask = frame.shouldRenderMaterialMask;
+	const bool& shouldRenderGBuffer = frame.shouldRenderGBuffer;
+	const bool& shouldUpdateGpuParticles = frame.shouldUpdateGpuParticles;
+	const bool& shouldBuildDepthHierarchy = frame.shouldBuildDepthHierarchy;
+	const size_t& gpuCullingCandidateCount = frame.gpuCullingCandidateCount;
+	EditorPlanarReflectionManager& planarManager = frame.planarManager;
 	auto& planarViews = planarManager.GetViews();
-	const EditorPlanarReflectionManager::ProbeView* scenePlanarView =
-		planarManager.FindNearestView(cameraTransform.translate);
-	const EditorPlanarReflectionManager::ProbeView* gamePlanarView =
-		planarManager.FindNearestView(g_gameCameraPosition);
-	const bool shouldRenderMaterialMask =
-		planarManager.HasCompositeProbes() || shouldExecuteTemporalOrSsr;
-	const bool shouldRenderGBuffer =
-		shouldRenderAmbientOcclusion || shouldRenderSsgi || shouldExecuteTemporalOrSsr;
-	const bool shouldUpdateGpuParticles =
-		g_editorRuntimeManager.IsPlaying() &&
-		g_editorRuntimeManager.GetEffectManager().HasLiveGpuParticles();
-	const bool shouldBuildDepthHierarchy =
-		shouldUseGpuCulling || shouldExecuteTemporalOrSsr || shouldUpdateGpuParticles;
-	bool hasPlanarReflectionCapture = false;
-	bool hasPlanarReflectionComposite = false;
+	const EditorPlanarReflectionManager::ProbeView* scenePlanarView = frame.scenePlanarView;
+	const EditorPlanarReflectionManager::ProbeView* gamePlanarView = frame.gamePlanarView;
+	bool& hasPlanarReflectionCapture = frame.hasPlanarReflectionCapture;
+	bool& hasPlanarReflectionComposite = frame.hasPlanarReflectionComposite;
 
 	//========================================
 	// Sun CSM とローカルライト影の Atlas 配置
 	//========================================
 
-	constexpr uint32_t kSunCascadeCount = 4u;
-	// 通常ライトは16灯まで評価するが、影は5x5 Atlasに収まる分だけ描画する。
-	// Atlasを使い切った後のライトは照明のみ有効にし、影だけを無効化する。
-	constexpr uint32_t kMaxShadowRenderPassCount =
-		static_cast<uint32_t>(kShadowAtlasTiles) * static_cast<uint32_t>(kShadowAtlasTiles);
-	struct ShadowRenderPass {
-		Matrix4x4 viewProjection;
-		uint32_t tileIndex;
-		int32_t lightIndex;
-	};
-	std::array<ShadowRenderPass, kMaxShadowRenderPassCount> shadowRenderPasses{};
-	uint32_t shadowRenderPassCount = 0u;
-	std::array<Matrix4x4, kMaxSceneLights> lightViewProjectionMatrixPerLight{};
+	PlaceShadowAtlasPasses(
+		frame, ppSettings, lightCount, shouldRenderSceneView, activeCameraPosition);
 
-	for (Matrix4x4& lightViewProjectionMatrix : lightViewProjectionMatrixPerLight) {
-		lightViewProjectionMatrix = MakeIdentity4x4();
-	}
-
-	int32_t sunLightIndex = -1;
-
-	for (int32_t lightIndex = 0; lightIndex < lightCount; lightIndex++) {
-		if (directionalLightData[lightIndex].lightType == 0) {
-			sunLightIndex = lightIndex;
-			break;
-		}
-	}
-
-	const Matrix4x4& activeCameraMatrix = shouldRenderSceneView
-		? cameraMatrix
-		: g_gameCameraMatrix;
-	const Matrix4x4& activeCameraProjectionMatrix = shouldRenderSceneView
-		? projectionMatrix
-		: g_gameProjectionMatrix;
-	Vector3 activeCameraForward = Normalize(Vector3{
-		activeCameraMatrix.matrix[2][0],
-		activeCameraMatrix.matrix[2][1],
-		activeCameraMatrix.matrix[2][2]});
-
-	if (Length(activeCameraForward) <= 0.0001f) {
-		activeCameraForward = {0.0f, 0.0f, 1.0f};
-	}
-
-	const float cascadeNearClip = (std::max)(ppSettings.cameraNearClip, 0.05f);
-	const float cascadeFarClip = (std::clamp)(
-		ppSettings.cameraFarClip,
-		cascadeNearClip + 1.0f,
-		240.0f);
-	std::array<float, kSunCascadeCount> cascadeSplits{};
-	constexpr float kCascadeLogarithmicWeight = 0.68f;
-
-	for (uint32_t cascadeIndex = 0u; cascadeIndex < kSunCascadeCount; cascadeIndex++) {
-		const float cascadeRatio =
-			static_cast<float>(cascadeIndex + 1u) /
-			static_cast<float>(kSunCascadeCount);
-		const float logarithmicSplit = cascadeNearClip * std::pow(
-			cascadeFarClip / cascadeNearClip,
-			cascadeRatio);
-		const float uniformSplit = cascadeNearClip +
-			(cascadeFarClip - cascadeNearClip) * cascadeRatio;
-		cascadeSplits[cascadeIndex] =
-			logarithmicSplit * kCascadeLogarithmicWeight +
-			uniformSplit * (1.0f - kCascadeLogarithmicWeight);
-	}
-
-	const float tileScale = 1.0f / static_cast<float>(kShadowAtlasTiles);
-	uint32_t nextLocalShadowTileIndex = sunLightIndex >= 0 ? kSunCascadeCount : 0u;
-
-	for (int32_t lightIndex = 0; lightIndex < lightCount; lightIndex++) {
-		DirectionalLight& light = directionalLightData[lightIndex];
-		light.shadowCascadeSplits = {};
-		light.shadowCascadeCount = 0.0f;
-		light.shadowCascadeVP.fill({});
-		light.shadowCascadeAtlas.fill({});
-
-		if (lightIndex == sunLightIndex) {
-			float previousCascadeSplit = cascadeNearClip;
-
-			for (uint32_t cascadeIndex = 0u;
-				cascadeIndex < kSunCascadeCount;
-				cascadeIndex++) {
-				const Matrix4x4 cascadeViewProjection = MakeSunCascadeViewProjectionMatrix(
-					light,
-					activeCameraPosition,
-					activeCameraForward,
-					activeCameraProjectionMatrix,
-					previousCascadeSplit,
-					cascadeSplits[cascadeIndex]);
-				const uint32_t tileIndex = cascadeIndex;
-				const uint32_t tileX = tileIndex % static_cast<uint32_t>(kShadowAtlasTiles);
-				const uint32_t tileY = tileIndex / static_cast<uint32_t>(kShadowAtlasTiles);
-				const Vector4 atlasTransform = {
-					tileScale,
-					tileScale,
-					static_cast<float>(tileX) * tileScale,
-					static_cast<float>(tileY) * tileScale
-				};
-				light.shadowCascadeVP[cascadeIndex] = cascadeViewProjection;
-				light.shadowCascadeAtlas[cascadeIndex] = atlasTransform;
-				shadowRenderPasses[shadowRenderPassCount] = {
-					cascadeViewProjection,
-					tileIndex,
-					lightIndex
-				};
-				shadowRenderPassCount++;
-				previousCascadeSplit = cascadeSplits[cascadeIndex];
-			}
-
-			light.shadowCascadeSplits = {
-				cascadeSplits[0],
-				cascadeSplits[1],
-				cascadeSplits[2],
-				cascadeSplits[3]
-			};
-			light.shadowCascadeCount = static_cast<float>(kSunCascadeCount);
-			light.shadowVP = light.shadowCascadeVP[0];
-			light.shadowTileIndex = 0.0f;
-			light.shadowTileUvScaleX = light.shadowCascadeAtlas[0].x;
-			light.shadowTileUvScaleY = light.shadowCascadeAtlas[0].y;
-			light.shadowTileUvBiasX = light.shadowCascadeAtlas[0].z;
-			light.shadowTileUvBiasY = light.shadowCascadeAtlas[0].w;
-			lightViewProjectionMatrixPerLight[lightIndex] = light.shadowVP;
-			continue;
-		}
-
-		// Point Lightは全方向へ光るため、1タイルの平面シャドウでは背後や側面が
-		// 「影データ無し=遮蔽物無し扱い」になり壁越しに光が漏れる。
-		// 6面(Cube)分のタイルをAtlasへ個別配置し、光源からの方向で面を選んで判定する。
-		const bool isPointLightShadow = (light.lightType == 1);
-		const uint32_t totalAtlasTileCount =
-			static_cast<uint32_t>(kShadowAtlasTiles) * static_cast<uint32_t>(kShadowAtlasTiles);
-		const uint32_t faceCount = isPointLightShadow ? kCubeFaceCount : 1u;
-
-		if (isPointLightShadow &&
-			nextLocalShadowTileIndex + kCubeFaceCount <= totalAtlasTileCount &&
-			shadowRenderPassCount + kCubeFaceCount <= kMaxShadowRenderPassCount) {
-			// Rangeを超えた先はシェーダ側の距離減衰で光が完全に消えるため、
-			// Far clipにRangeをそのまま使えば必要な範囲を過不足なく覆える。
-			const float farClip = (std::max)(light.range, 1.0f);
-			const float nearClip = CalculatePointLightShadowNearClip(farClip);
-
-			for (uint32_t faceIndex = 0u; faceIndex < faceCount; faceIndex++) {
-				const Matrix4x4 faceViewProjection = MakePointLightCubeFaceViewProjectionMatrix(
-					light.position,
-					nearClip,
-					farClip,
-					faceIndex);
-				const uint32_t tileIndex = nextLocalShadowTileIndex;
-				const uint32_t tileX = tileIndex % static_cast<uint32_t>(kShadowAtlasTiles);
-				const uint32_t tileY = tileIndex / static_cast<uint32_t>(kShadowAtlasTiles);
-				const Vector4 atlasTransform = {
-					tileScale,
-					tileScale,
-					static_cast<float>(tileX) * tileScale,
-					static_cast<float>(tileY) * tileScale
-				};
-				light.shadowCascadeVP[faceIndex] = faceViewProjection;
-				light.shadowCascadeAtlas[faceIndex] = atlasTransform;
-				shadowRenderPasses[shadowRenderPassCount] = {
-					faceViewProjection,
-					tileIndex,
-					lightIndex
-				};
-				shadowRenderPassCount++;
-				nextLocalShadowTileIndex++;
-			}
-
-			light.shadowCascadeCount = static_cast<float>(kCubeFaceCount);
-			// Cascade用のsplitはPoint Lightでは未使用なので、
-			// 透視深度バイアス計算に必要なNear/Farの受け渡しに転用する。
-			light.shadowCascadeSplits = {nearClip, farClip, 0.0f, 0.0f};
-			light.shadowVP = light.shadowCascadeVP[0];
-			light.shadowTileIndex = 0.0f;
-			light.shadowTileUvScaleX = light.shadowCascadeAtlas[0].x;
-			light.shadowTileUvScaleY = light.shadowCascadeAtlas[0].y;
-			light.shadowTileUvBiasX = light.shadowCascadeAtlas[0].z;
-			light.shadowTileUvBiasY = light.shadowCascadeAtlas[0].w;
-			lightViewProjectionMatrixPerLight[lightIndex] = light.shadowVP;
-			continue;
-		}
-
-		// Point Lightは6面すべて揃わない状態で1面だけ描くと光漏れになるため、
-		// Atlasに6面を確保できない場合は影だけを無効化する。
-		if (isPointLightShadow) {
-			light.shadowEnabled = 0.0f;
-			continue;
-		}
-
-		// Spot / Directional Lightの影は1タイル使用する。通常ライト数を増やしても
-		// Atlas外のViewportやUVを生成しないよう、満杯なら影だけを無効化する。
-		if (nextLocalShadowTileIndex >= totalAtlasTileCount ||
-			shadowRenderPassCount >= kMaxShadowRenderPassCount) {
-			light.shadowEnabled = 0.0f;
-			continue;
-		}
-
-		const Matrix4x4 lightViewProjection = MakeLightViewProjectionMatrix(
-			editorSceneObjects,
-			transform,
-			&light,
-			isLegacyPreviewVisible);
-		const uint32_t tileIndex = nextLocalShadowTileIndex;
-		const uint32_t tileX = tileIndex % static_cast<uint32_t>(kShadowAtlasTiles);
-		const uint32_t tileY = tileIndex / static_cast<uint32_t>(kShadowAtlasTiles);
-		light.shadowVP = lightViewProjection;
-		light.shadowTileIndex = static_cast<float>(tileIndex);
-		light.shadowTileUvScaleX = tileScale;
-		light.shadowTileUvScaleY = tileScale;
-		light.shadowTileUvBiasX = static_cast<float>(tileX) * tileScale;
-		light.shadowTileUvBiasY = static_cast<float>(tileY) * tileScale;
-		lightViewProjectionMatrixPerLight[lightIndex] = lightViewProjection;
-		shadowRenderPasses[shadowRenderPassCount] = {
-			lightViewProjection,
-			tileIndex,
-			lightIndex
-		};
-		shadowRenderPassCount++;
-		nextLocalShadowTileIndex++;
-	}
+	// 後続コードを変更せずに済むよう、元と同じ名前の参照別名で受け直す。
+	auto& shadowRenderPasses = frame.shadowRenderPasses;
+	const uint32_t& shadowRenderPassCount = frame.shadowRenderPassCount;
+	auto& lightViewProjectionMatrixPerLight = frame.lightViewProjectionMatrixPerLight;
+	const int32_t& sunLightIndex = frame.sunLightIndex;
 
 	//========================================
 	// シャドウマップの更新判定
@@ -2743,16 +2877,14 @@ void EditorRenderManager::Draw() {
 		g_gameCameraPosition,
 		true);
 
-	hr = commandAllocator->Reset();
-	if (FAILED(hr)) {
-		Log(g_logStream, std::format("CommandAllocator Reset failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
-		g_isDrawRequested = false;
-		return;
-	}
+	//========================================
+	// 毎フレームの描画の前処理
+	//========================================
 
-	hr = commandList->Reset(commandAllocator.Get(), graphicsPipelineState.Get());
-	if (FAILED(hr)) {
-		Log(g_logStream, std::format("CommandList Reset failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+	// Command Allocator と List を巻き戻して、このフレームの記録を始める。
+	// 巻き戻しの順番と失敗判定は DirectXCommon が持つ。
+	if (!g_dxCommon->BeginFrame(graphicsPipelineState.Get())) {
+		Log(g_logStream, "DirectXCommon BeginFrame failed");
 		g_isDrawRequested = false;
 		return;
 	}
@@ -2918,12 +3050,12 @@ void EditorRenderManager::Draw() {
 		}
 
 		if (g_environmentTextureUploadResource != nullptr) {
-			g_environmentTextureUploadResource->Release();
-			g_environmentTextureUploadResource = nullptr;
+			g_environmentTextureUploadResource.Reset();
+			g_environmentTextureUploadResource.Reset();
 		}
 		if (g_environmentTextureResource != nullptr) {
-			g_environmentTextureResource->Release();
-			g_environmentTextureResource = nullptr;
+			g_environmentTextureResource.Reset();
+			g_environmentTextureResource.Reset();
 		}
 
 		g_loadedEnvironmentTextureAssetPath.clear();
@@ -2942,7 +3074,7 @@ void EditorRenderManager::Draw() {
 		g_environmentTextureUploadResource = UploadTextureData(
 			device.Get(),
 			commandList.Get(),
-			g_environmentTextureResource,
+			g_environmentTextureResource.Get(),
 			environmentMipImages);
 
 		D3D12_SHADER_RESOURCE_VIEW_DESC environmentSrvDesc{};
@@ -2951,7 +3083,7 @@ void EditorRenderManager::Draw() {
 		environmentSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		environmentSrvDesc.Texture2D.MipLevels = static_cast<UINT>(environmentMetadata.mipLevels);
 		device->CreateShaderResourceView(
-			g_environmentTextureResource,
+			g_environmentTextureResource.Get(),
 			&environmentSrvDesc,
 			g_environmentTextureSrvHandleCPU);
 
@@ -2983,14 +3115,14 @@ void EditorRenderManager::Draw() {
 			return;
 		}
 
-		const D3D12_RESOURCE_DESC identityDescription = identityColorGradingLut->GetDesc();
+		const D3D12_RESOURCE_DESC identityDescription = identityColorGradingLut.Get()->GetDesc();
 		D3D12_SHADER_RESOURCE_VIEW_DESC identitySrvDescription{};
 		identitySrvDescription.Format = identityDescription.Format;
 		identitySrvDescription.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 		identitySrvDescription.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		identitySrvDescription.Texture2D.MipLevels = identityDescription.MipLevels;
 		device->CreateShaderResourceView(
-			identityColorGradingLut,
+			identityColorGradingLut.Get(),
 			&identitySrvDescription,
 			colorGradingLutSrvHandleCPU);
 	};
@@ -3001,13 +3133,13 @@ void EditorRenderManager::Draw() {
 		}
 
 		if (customColorGradingLutUploadResource != nullptr) {
-			customColorGradingLutUploadResource->Release();
-			customColorGradingLutUploadResource = nullptr;
+			customColorGradingLutUploadResource.Reset();
+			customColorGradingLutUploadResource.Reset();
 		}
 
 		if (customColorGradingLutResource != nullptr) {
-			customColorGradingLutResource->Release();
-			customColorGradingLutResource = nullptr;
+			customColorGradingLutResource.Reset();
+			customColorGradingLutResource.Reset();
 		}
 
 		loadedColorGradingLutAssetPath.clear();
@@ -3036,7 +3168,7 @@ void EditorRenderManager::Draw() {
 		customColorGradingLutUploadResource = UploadTextureData(
 			device.Get(),
 			commandList.Get(),
-			customColorGradingLutResource,
+			customColorGradingLutResource.Get(),
 			lutImages);
 		D3D12_SHADER_RESOURCE_VIEW_DESC lutSrvDescription{};
 		lutSrvDescription.Format = lutMetadata.format;
@@ -3044,7 +3176,7 @@ void EditorRenderManager::Draw() {
 		lutSrvDescription.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		lutSrvDescription.Texture2D.MipLevels = static_cast<UINT>(lutMetadata.mipLevels);
 		device->CreateShaderResourceView(
-			customColorGradingLutResource,
+			customColorGradingLutResource.Get(),
 			&lutSrvDescription,
 			colorGradingLutSrvHandleCPU);
 		loadedColorGradingLutAssetPath = ppSettings.compositeColorLutAssetPath;
@@ -3119,7 +3251,7 @@ void EditorRenderManager::Draw() {
 				: g_batchedShadowPipelineState.Get());
 			commandList->SetGraphicsRootShaderResourceView(
 				kCurrentSkinMatrixRootParameter,
-				g_batchInstanceResource->GetGPUVirtualAddress());
+				g_batchInstanceResource.Get()->GetGPUVirtualAddress());
 
 			if (firstObject.usesCustomMesh) {
 				commandList->IASetVertexBuffers(0, 1, &firstObject.customMeshVertexBufferView);
@@ -3261,7 +3393,7 @@ void EditorRenderManager::Draw() {
 			commandList->SetPipelineState(shadowPipelineState.Get());
 			commandList->SetGraphicsRootConstantBufferView(
 				1,
-				sphereTransformationMatrixResource->GetGPUVirtualAddress());
+				sphereTransformationMatrixResource.Get()->GetGPUVirtualAddress());
 			commandList->IASetVertexBuffers(0, 1, &modelVertexBufferView);
 			RecordEditorProfilerDrawCall();
 			commandList->DrawInstanced(static_cast<UINT>(modelData.vertices.size()), 1, 0, 0);
@@ -3342,7 +3474,7 @@ void EditorRenderManager::Draw() {
 		shadowPipelineState != nullptr) {
 		D3D12_RESOURCE_BARRIER shadowBarrier{};
 		shadowBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		shadowBarrier.Transition.pResource = shadowMapResource;
+		shadowBarrier.Transition.pResource = shadowMapResource.Get();
 		shadowBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		shadowBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		shadowBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
@@ -3449,10 +3581,10 @@ void EditorRenderManager::Draw() {
 		commandList->SetDescriptorHeaps(1, probeDescriptorHeaps);
 		commandList->SetGraphicsRootConstantBufferView(
 			2,
-			directionalLightResource->GetGPUVirtualAddress());
+			directionalLightResource.Get()->GetGPUVirtualAddress());
 		commandList->SetGraphicsRootConstantBufferView(
 			5,
-			emissiveLightResource->GetGPUVirtualAddress());
+			emissiveLightResource.Get()->GetGPUVirtualAddress());
 		commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);
 		commandList->SetGraphicsRootDescriptorTable(
 			26,
@@ -3491,7 +3623,7 @@ void EditorRenderManager::Draw() {
 		g_lightProbeManager.DispatchBake(
 			commandList.Get(),
 			srvDescriptorHeap,
-			directionalLightResource->GetGPUVirtualAddress(),
+			directionalLightResource.Get()->GetGPUVirtualAddress(),
 			bakeBaseProbeIndex,
 			bakeProbeCount);
 	}
@@ -3511,7 +3643,7 @@ void EditorRenderManager::Draw() {
 
 	D3D12_RESOURCE_BARRIER hdrBarrier{};
 	hdrBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-	hdrBarrier.Transition.pResource = hdrRenderTarget;
+	hdrBarrier.Transition.pResource = hdrRenderTarget.Get();
 	hdrBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 	hdrBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 	hdrBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -3520,8 +3652,8 @@ void EditorRenderManager::Draw() {
 	commandList->SetGraphicsRootSignature(rootSignature.Get());
 	BindSceneObjectSkinningResources(commandList.Get(), nullptr);
 	commandList->SetPipelineState(graphicsPipelineState.Get());
-	commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
-	commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource->GetGPUVirtualAddress());
+	commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource.Get()->GetGPUVirtualAddress());
+	commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource.Get()->GetGPUVirtualAddress());
 	ID3D12DescriptorHeap* descriptorHeaps[] = {srvDescriptorHeap};
 	commandList->SetDescriptorHeaps(1, descriptorHeaps);
 	commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);
@@ -3546,7 +3678,7 @@ void EditorRenderManager::Draw() {
 	D3D12_RESOURCE_BARRIER materialMaskBarrier{};
 	if (shouldRenderMaterialMask && materialMaskRenderTarget != nullptr) {
 		materialMaskBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		materialMaskBarrier.Transition.pResource = materialMaskRenderTarget;
+		materialMaskBarrier.Transition.pResource = materialMaskRenderTarget.Get();
 		materialMaskBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		materialMaskBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		materialMaskBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -3664,8 +3796,8 @@ void EditorRenderManager::Draw() {
 
 		commandList->SetGraphicsRootSignature(rootSignature.Get());
 		commandList->SetPipelineState(graphicsPipelineState.Get());
-		commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
-		commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource->GetGPUVirtualAddress());
+		commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource.Get()->GetGPUVirtualAddress());
+		commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource.Get()->GetGPUVirtualAddress());
 		commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);
 		commandList->SetGraphicsRootDescriptorTable(6, environmentSrvHandleGPU);
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -3971,10 +4103,10 @@ void EditorRenderManager::Draw() {
 					: firstObject.transformationGpuAddress);
 			commandList->SetGraphicsRootShaderResourceView(
 				kCurrentSkinMatrixRootParameter,
-				g_batchInstanceResource->GetGPUVirtualAddress());
+				g_batchInstanceResource.Get()->GetGPUVirtualAddress());
 			commandList->SetGraphicsRootShaderResourceView(
 				kPreviousSkinMatrixRootParameter,
-				g_identitySkinMatrixResource->GetGPUVirtualAddress());
+				g_identitySkinMatrixResource.Get()->GetGPUVirtualAddress());
 
 			D3D12_GPU_DESCRIPTOR_HANDLE textureHandle =
 				firstObject.customTextureSrvGpuHandle.ptr != 0u
@@ -4073,8 +4205,8 @@ void EditorRenderManager::Draw() {
 			D3D12_GPU_VIRTUAL_ADDRESS materialGpuAddress = sceneObject.materialGpuAddress;
 			if (materialResource == nullptr) {
 				materialResource = sceneObject.type == EditorSceneObjectType::Sprite
-					                   ? spriteMaterialResource
-					                   : sphereMaterialResource;
+					                   ? spriteMaterialResource.Get()
+					                   : sphereMaterialResource.Get();
 				materialGpuAddress = materialResource->GetGPUVirtualAddress();
 			}
 
@@ -4327,7 +4459,7 @@ void EditorRenderManager::Draw() {
 			ID3D12Resource* materialResource = sceneObject.materialResource;
 			D3D12_GPU_VIRTUAL_ADDRESS materialGpuAddress = sceneObject.materialGpuAddress;
 			if (materialResource == nullptr) {
-				materialResource = sphereMaterialResource;
+				materialResource = sphereMaterialResource.Get();
 				materialGpuAddress = materialResource->GetGPUVirtualAddress();
 			}
 
@@ -4371,8 +4503,8 @@ void EditorRenderManager::Draw() {
 
 		commandList->SetGraphicsRootSignature(rootSignature.Get());
 		commandList->SetPipelineState(graphicsPipelineState.Get());
-		commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
-		commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource->GetGPUVirtualAddress());
+		commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource.Get()->GetGPUVirtualAddress());
+		commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource.Get()->GetGPUVirtualAddress());
 		commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);
 		commandList->OMSetRenderTargets(1, &hdrRtvHandle, FALSE, &dsvHandle);
 	};
@@ -4447,8 +4579,8 @@ void EditorRenderManager::Draw() {
 
 		commandList->SetGraphicsRootSignature(rootSignature.Get());
 		commandList->SetPipelineState(graphicsPipelineState.Get());
-		commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
-		commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource->GetGPUVirtualAddress());
+		commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource.Get()->GetGPUVirtualAddress());
+		commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource.Get()->GetGPUVirtualAddress());
 		commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);
 		commandList->SetGraphicsRootDescriptorTable(6, environmentSrvHandleGPU);
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -4581,7 +4713,7 @@ void EditorRenderManager::Draw() {
 		(oceanReflectionUpdateFrameIndex % oceanReflectionUpdateInterval) == 0u;
 	const bool hasPlanarReflectionTargetChanged =
 		!hasSubmittedPlanarReflection ||
-		submittedPlanarReflectionTarget != planarReflectionRenderTarget;
+		submittedPlanarReflectionTarget != planarReflectionRenderTarget.Get();
 	const bool shouldRenderPlanarReflection =
 		hasPlanarReflectionResources &&
 		(hasPlanarReflectionTargetChanged ||
@@ -4604,7 +4736,7 @@ void EditorRenderManager::Draw() {
 
 		D3D12_RESOURCE_BARRIER planarReflectionBarrier{};
 		planarReflectionBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		planarReflectionBarrier.Transition.pResource = planarReflectionRenderTarget;
+		planarReflectionBarrier.Transition.pResource = planarReflectionRenderTarget.Get();
 		planarReflectionBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		planarReflectionBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		planarReflectionBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -4613,7 +4745,7 @@ void EditorRenderManager::Draw() {
 		if (depthStencilResource != nullptr) {
 			D3D12_RESOURCE_BARRIER reflectionDepthBarrier{};
 			reflectionDepthBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-			reflectionDepthBarrier.Transition.pResource = depthStencilResource;
+			reflectionDepthBarrier.Transition.pResource = depthStencilResource.Get();
 			reflectionDepthBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 			reflectionDepthBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 			reflectionDepthBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
@@ -4645,8 +4777,8 @@ void EditorRenderManager::Draw() {
 
 			commandList->SetGraphicsRootSignature(rootSignature.Get());
 			commandList->SetPipelineState(planarScenePipelineState.Get());
-			commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
-			commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource.Get()->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource.Get()->GetGPUVirtualAddress());
 			commandList->SetDescriptorHeaps(1, descriptorHeaps);
 			commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);
 			commandList->SetGraphicsRootDescriptorTable(6, environmentSrvHandleGPU);
@@ -4704,8 +4836,8 @@ void EditorRenderManager::Draw() {
 
 			commandList->SetGraphicsRootSignature(rootSignature.Get());
 			commandList->SetPipelineState(planarScenePipelineState.Get());
-			commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
-			commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource.Get()->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource.Get()->GetGPUVirtualAddress());
 			commandList->SetDescriptorHeaps(1, descriptorHeaps);
 			commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);
 			commandList->SetGraphicsRootDescriptorTable(6, environmentSrvHandleGPU);
@@ -4751,12 +4883,12 @@ void EditorRenderManager::Draw() {
 		commandList->ResourceBarrier(1, &planarReflectionBarrier);
 		hasSubmittedPlanarReflection = true;
 		submittedPlanarReflectionStateHash = planarReflectionStateHash;
-		submittedPlanarReflectionTarget = planarReflectionRenderTarget;
+		submittedPlanarReflectionTarget = planarReflectionRenderTarget.Get();
 
 		commandList->SetGraphicsRootSignature(rootSignature.Get());
 		commandList->SetPipelineState(graphicsPipelineState.Get());
-		commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
-		commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource->GetGPUVirtualAddress());
+		commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource.Get()->GetGPUVirtualAddress());
+		commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource.Get()->GetGPUVirtualAddress());
 		commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	}
@@ -4764,7 +4896,7 @@ void EditorRenderManager::Draw() {
 	hasPlanarReflectionCapture =
 		hasPlanarReflectionResources &&
 		hasSubmittedPlanarReflection &&
-		submittedPlanarReflectionTarget == planarReflectionRenderTarget;
+		submittedPlanarReflectionTarget == planarReflectionRenderTarget.Get();
 
 	const bool shouldRenderWeightedOit =
 		g_oitAccumulationRenderTarget != nullptr &&
@@ -4801,8 +4933,8 @@ void EditorRenderManager::Draw() {
 	if (shouldRenderWeightedOit) {
 		std::array<D3D12_RESOURCE_BARRIER, 2u> oitBarriers{};
 		ID3D12Resource* oitResources[2] = {
-			g_oitAccumulationRenderTarget,
-			g_oitRevealageRenderTarget};
+			g_oitAccumulationRenderTarget.Get(),
+			g_oitRevealageRenderTarget.Get()};
 
 		for (uint32_t oitTargetIndex = 0u; oitTargetIndex < oitBarriers.size(); ++oitTargetIndex) {
 			oitBarriers[oitTargetIndex].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -4823,7 +4955,7 @@ void EditorRenderManager::Draw() {
 		if (depthStencilResource != nullptr && !hasPlanarReflectionCapture) {
 			D3D12_RESOURCE_BARRIER mainDepthBarrier{};
 			mainDepthBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-			mainDepthBarrier.Transition.pResource = depthStencilResource;
+			mainDepthBarrier.Transition.pResource = depthStencilResource.Get();
 			mainDepthBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 			mainDepthBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 			mainDepthBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
@@ -4843,10 +4975,10 @@ void EditorRenderManager::Draw() {
 			cameraTransform.translate);
 
 		if (isLegacyPreviewVisible) {
-			commandList->SetGraphicsRootConstantBufferView(0, sphereMaterialResource->GetGPUVirtualAddress());
+			commandList->SetGraphicsRootConstantBufferView(0, sphereMaterialResource.Get()->GetGPUVirtualAddress());
 			commandList->SetGraphicsRootConstantBufferView(
 				1,
-				sphereTransformationMatrixResource->GetGPUVirtualAddress());
+				sphereTransformationMatrixResource.Get()->GetGPUVirtualAddress());
 			commandList->SetGraphicsRootDescriptorTable(3, textureSrvHandlesGPU[2]);
 			commandList->IASetVertexBuffers(0, 1, &modelVertexBufferView);
 			RecordEditorProfilerDrawCall();
@@ -4964,19 +5096,19 @@ void EditorRenderManager::Draw() {
 
 		std::array<D3D12_RESOURCE_BARRIER, 2u> opaqueCopyBarriers{};
 		opaqueCopyBarriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		opaqueCopyBarriers[0].Transition.pResource = hdrRenderTarget;
+		opaqueCopyBarriers[0].Transition.pResource = hdrRenderTarget.Get();
 		opaqueCopyBarriers[0].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		opaqueCopyBarriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		opaqueCopyBarriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
 		opaqueCopyBarriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		opaqueCopyBarriers[1].Transition.pResource = hdrCompositeRenderTarget;
+		opaqueCopyBarriers[1].Transition.pResource = hdrCompositeRenderTarget.Get();
 		opaqueCopyBarriers[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		opaqueCopyBarriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		opaqueCopyBarriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
 		commandList->ResourceBarrier(
 			static_cast<UINT>(opaqueCopyBarriers.size()),
 			opaqueCopyBarriers.data());
-		commandList->CopyResource(hdrCompositeRenderTarget, hdrRenderTarget);
+		commandList->CopyResource(hdrCompositeRenderTarget.Get(), hdrRenderTarget.Get());
 
 		opaqueCopyBarriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
 		opaqueCopyBarriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -4988,19 +5120,19 @@ void EditorRenderManager::Draw() {
 
 		std::array<D3D12_RESOURCE_BARRIER, 2u> opaqueDepthCopyBarriers{};
 		opaqueDepthCopyBarriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		opaqueDepthCopyBarriers[0].Transition.pResource = depthStencilResource;
+		opaqueDepthCopyBarriers[0].Transition.pResource = depthStencilResource.Get();
 		opaqueDepthCopyBarriers[0].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		opaqueDepthCopyBarriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 		opaqueDepthCopyBarriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
 		opaqueDepthCopyBarriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		opaqueDepthCopyBarriers[1].Transition.pResource = opaqueDepthCopyResource;
+		opaqueDepthCopyBarriers[1].Transition.pResource = opaqueDepthCopyResource.Get();
 		opaqueDepthCopyBarriers[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		opaqueDepthCopyBarriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		opaqueDepthCopyBarriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
 		commandList->ResourceBarrier(
 			static_cast<UINT>(opaqueDepthCopyBarriers.size()),
 			opaqueDepthCopyBarriers.data());
-		commandList->CopyResource(opaqueDepthCopyResource, depthStencilResource);
+		commandList->CopyResource(opaqueDepthCopyResource.Get(), depthStencilResource.Get());
 
 		opaqueDepthCopyBarriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
 		opaqueDepthCopyBarriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
@@ -5011,8 +5143,8 @@ void EditorRenderManager::Draw() {
 			opaqueDepthCopyBarriers.data());
 
 		commandList->SetGraphicsRootSignature(rootSignature.Get());
-		commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
-		commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource->GetGPUVirtualAddress());
+		commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource.Get()->GetGPUVirtualAddress());
+		commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource.Get()->GetGPUVirtualAddress());
 		commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);
 		commandList->SetGraphicsRootDescriptorTable(6, environmentSrvHandleGPU);
 		commandList->SetGraphicsRootDescriptorTable(22, hdrCompositeSrvHandleGPU);
@@ -5102,19 +5234,19 @@ void EditorRenderManager::Draw() {
 
 		std::array<D3D12_RESOURCE_BARRIER, 2u> refractiveCopyBarriers{};
 		refractiveCopyBarriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		refractiveCopyBarriers[0].Transition.pResource = hdrRenderTarget;
+		refractiveCopyBarriers[0].Transition.pResource = hdrRenderTarget.Get();
 		refractiveCopyBarriers[0].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		refractiveCopyBarriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		refractiveCopyBarriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
 		refractiveCopyBarriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		refractiveCopyBarriers[1].Transition.pResource = hdrCompositeRenderTarget;
+		refractiveCopyBarriers[1].Transition.pResource = hdrCompositeRenderTarget.Get();
 		refractiveCopyBarriers[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		refractiveCopyBarriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		refractiveCopyBarriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
 		commandList->ResourceBarrier(
 			static_cast<UINT>(refractiveCopyBarriers.size()),
 			refractiveCopyBarriers.data());
-		commandList->CopyResource(hdrCompositeRenderTarget, hdrRenderTarget);
+		commandList->CopyResource(hdrCompositeRenderTarget.Get(), hdrRenderTarget.Get());
 
 		refractiveCopyBarriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
 		refractiveCopyBarriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -5126,15 +5258,15 @@ void EditorRenderManager::Draw() {
 
 		D3D12_RESOURCE_BARRIER refractiveDepthBarrier{};
 		refractiveDepthBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		refractiveDepthBarrier.Transition.pResource = depthStencilResource;
+		refractiveDepthBarrier.Transition.pResource = depthStencilResource.Get();
 		refractiveDepthBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		refractiveDepthBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 		refractiveDepthBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		commandList->ResourceBarrier(1, &refractiveDepthBarrier);
 
 		commandList->SetGraphicsRootSignature(rootSignature.Get());
-		commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
-		commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource->GetGPUVirtualAddress());
+		commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource.Get()->GetGPUVirtualAddress());
+		commandList->SetGraphicsRootConstantBufferView(5, emissiveLightResource.Get()->GetGPUVirtualAddress());
 		commandList->SetGraphicsRootDescriptorTable(4, shadowMapSrvGpuHandle);
 		commandList->SetGraphicsRootDescriptorTable(6, environmentSrvHandleGPU);
 		commandList->SetGraphicsRootDescriptorTable(22, hdrCompositeSrvHandleGPU);
@@ -5322,10 +5454,10 @@ void EditorRenderManager::Draw() {
 					? firstObject.gameTransformationGpuAddress
 					: firstObject.transformationGpuAddress);
 			commandList->SetGraphicsRootConstantBufferView(
-				2, directionalLightResource->GetGPUVirtualAddress());
+				2, directionalLightResource.Get()->GetGPUVirtualAddress());
 			commandList->SetGraphicsRootShaderResourceView(
 				kCurrentSkinMatrixRootParameter,
-				g_batchInstanceResource->GetGPUVirtualAddress());
+				g_batchInstanceResource.Get()->GetGPUVirtualAddress());
 			const D3D12_GPU_DESCRIPTOR_HANDLE textureHandle =
 				firstObject.customTextureSrvGpuHandle.ptr != 0u
 					? firstObject.customTextureSrvGpuHandle
@@ -5408,7 +5540,7 @@ void EditorRenderManager::Draw() {
 				transformationGpuAddress);
 			commandList->SetGraphicsRootConstantBufferView(
 				2,
-				directionalLightResource->GetGPUVirtualAddress());
+				directionalLightResource.Get()->GetGPUVirtualAddress());
 
 			const D3D12_GPU_DESCRIPTOR_HANDLE textureHandle =
 				sceneObject.customTextureSrvGpuHandle.ptr != 0u
@@ -5477,7 +5609,7 @@ void EditorRenderManager::Draw() {
 		(!planarViews.empty() || hasActiveRenderView)) {
 		D3D12_RESOURCE_BARRIER depthBarrier{};
 		depthBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		depthBarrier.Transition.pResource = depthStencilResource;
+		depthBarrier.Transition.pResource = depthStencilResource.Get();
 		depthBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		depthBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 		depthBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
@@ -5504,7 +5636,7 @@ void EditorRenderManager::Draw() {
 		depthStencilResource != nullptr) {
 		D3D12_RESOURCE_BARRIER compositeBarrier{};
 		compositeBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		compositeBarrier.Transition.pResource = hdrCompositeRenderTarget;
+		compositeBarrier.Transition.pResource = hdrCompositeRenderTarget.Get();
 		compositeBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		compositeBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		compositeBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -5601,7 +5733,7 @@ void EditorRenderManager::Draw() {
 
 		D3D12_RESOURCE_BARRIER depthComputeBarrier{};
 		depthComputeBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		depthComputeBarrier.Transition.pResource = depthStencilResource;
+		depthComputeBarrier.Transition.pResource = depthStencilResource.Get();
 		depthComputeBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		depthComputeBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		depthComputeBarrier.Transition.StateAfter = computeReadableDepthState;
@@ -5800,7 +5932,7 @@ void EditorRenderManager::Draw() {
 	D3D12_GPU_DESCRIPTOR_HANDLE hdrPostSourceSrvHandle = hasPlanarReflectionComposite
 		? hdrCompositeSrvHandleGPU : hdrSrvHandleGPU;
 	ID3D12Resource* hdrPostSourceResource = hasPlanarReflectionComposite
-		? hdrCompositeRenderTarget : hdrRenderTarget;
+		? hdrCompositeRenderTarget.Get() : hdrRenderTarget.Get();
 
 	//========================================
 	// GTAO計算と深度考慮Blur
@@ -5819,7 +5951,7 @@ void EditorRenderManager::Draw() {
 		ssaoBlurPipelineState != nullptr) {
 		D3D12_RESOURCE_BARRIER ssaoBarrier{};
 		ssaoBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		ssaoBarrier.Transition.pResource = ssaoRenderTargets[0];
+		ssaoBarrier.Transition.pResource = ssaoRenderTargets[0].Get();
 		ssaoBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		ssaoBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		ssaoBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -5854,7 +5986,7 @@ void EditorRenderManager::Draw() {
 		ssaoBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		commandList->ResourceBarrier(1, &ssaoBarrier);
 
-		ssaoBarrier.Transition.pResource = ssaoRenderTargets[1];
+		ssaoBarrier.Transition.pResource = ssaoRenderTargets[1].Get();
 		ssaoBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		ssaoBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		commandList->ResourceBarrier(1, &ssaoBarrier);
@@ -5950,7 +6082,7 @@ void EditorRenderManager::Draw() {
 		// 1) 半解像度でSSGIを解く
 		//------------------------------
 		transitionResource(
-			g_ssgiRenderTarget,
+			g_ssgiRenderTarget.Get(),
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
 			D3D12_RESOURCE_STATE_RENDER_TARGET);
 		commandList->SetPipelineState(ssgiPipelineState.Get());
@@ -5995,7 +6127,7 @@ void EditorRenderManager::Draw() {
 		}
 
 		transitionResource(
-			g_ssgiRenderTarget,
+			g_ssgiRenderTarget.Get(),
 			D3D12_RESOURCE_STATE_RENDER_TARGET,
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
@@ -6003,7 +6135,7 @@ void EditorRenderManager::Draw() {
 		// 2) Motion Vector で前フレームへ位置合わせして混ぜる
 		//------------------------------
 		transitionResource(
-			g_ssgiHistoryRenderTargets[ssgiHistoryWriteIndex],
+			g_ssgiHistoryRenderTargets[ssgiHistoryWriteIndex].Get(),
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
 			D3D12_RESOURCE_STATE_RENDER_TARGET);
 		commandList->SetPipelineState(ssgiTemporalPipelineState.Get());
@@ -6054,7 +6186,7 @@ void EditorRenderManager::Draw() {
 		}
 
 		transitionResource(
-			g_ssgiHistoryRenderTargets[ssgiHistoryWriteIndex],
+			g_ssgiHistoryRenderTargets[ssgiHistoryWriteIndex].Get(),
 			D3D12_RESOURCE_STATE_RENDER_TARGET,
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
@@ -6148,7 +6280,7 @@ void EditorRenderManager::Draw() {
 		commandList->OMSetRenderTargets(1, &volumetricTargetRtv, FALSE, nullptr);
 		commandList->SetGraphicsRootDescriptorTable(0, depthSrvHandleGPU);
 		commandList->SetGraphicsRootDescriptorTable(1, shadowMapSrvGpuHandle);
-		commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource->GetGPUVirtualAddress());
+		commandList->SetGraphicsRootConstantBufferView(2, directionalLightResource.Get()->GetGPUVirtualAddress());
 
 		auto drawVolumetricLightShaftViewport = [&](
 			const D3D12_VIEWPORT& targetViewport,
@@ -6208,8 +6340,8 @@ void EditorRenderManager::Draw() {
 		std::array<D3D12_RESOURCE_BARRIER, 3u> temporalInputBarriers{};
 		ID3D12Resource* temporalInputResources[3] = {
 			hdrPostSourceResource,
-			depthStencilResource,
-			materialMaskRenderTarget,
+			depthStencilResource.Get(),
+			materialMaskRenderTarget.Get(),
 		};
 
 		for (uint32_t barrierIndex = 0u; barrierIndex < temporalInputBarriers.size(); barrierIndex++) {
@@ -6323,8 +6455,8 @@ void EditorRenderManager::Draw() {
 	if (shouldRenderWeightedOit) {
 		std::array<D3D12_RESOURCE_BARRIER, 2u> oitReadBarriers{};
 		ID3D12Resource* oitResources[2] = {
-			g_oitAccumulationRenderTarget,
-			g_oitRevealageRenderTarget};
+			g_oitAccumulationRenderTarget.Get(),
+			g_oitRevealageRenderTarget.Get()};
 
 		for (uint32_t oitTargetIndex = 0u; oitTargetIndex < oitReadBarriers.size(); ++oitTargetIndex) {
 			oitReadBarriers[oitTargetIndex].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -6337,8 +6469,8 @@ void EditorRenderManager::Draw() {
 		commandList->ResourceBarrier(static_cast<UINT>(oitReadBarriers.size()), oitReadBarriers.data());
 		const bool isOitSourceHdr = hdrPostSourceSrvHandle.ptr == hdrSrvHandleGPU.ptr;
 		ID3D12Resource* oitDestinationResource = isOitSourceHdr
-			? hdrCompositeRenderTarget
-			: hdrRenderTarget;
+			? hdrCompositeRenderTarget.Get()
+			: hdrRenderTarget.Get();
 		const D3D12_CPU_DESCRIPTOR_HANDLE oitDestinationRtvHandle = isOitSourceHdr
 			? hdrCompositeRtvHandle
 			: hdrRtvHandle;
@@ -6393,8 +6525,8 @@ void EditorRenderManager::Draw() {
 		hdrCompositeRenderTarget != nullptr) {
 		const bool isUnderwaterSourceHdr = hdrPostSourceSrvHandle.ptr == hdrSrvHandleGPU.ptr;
 		ID3D12Resource* underwaterDestinationResource = isUnderwaterSourceHdr
-			? hdrCompositeRenderTarget
-			: hdrRenderTarget;
+			? hdrCompositeRenderTarget.Get()
+			: hdrRenderTarget.Get();
 		const D3D12_CPU_DESCRIPTOR_HANDLE underwaterDestinationRtvHandle = isUnderwaterSourceHdr
 			? hdrCompositeRtvHandle
 			: hdrRtvHandle;
@@ -6682,7 +6814,7 @@ void EditorRenderManager::Draw() {
 	{
 		D3D12_RESOURCE_BARRIER postProcessBarrier{};
 		postProcessBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		postProcessBarrier.Transition.pResource = postProcessRenderTarget;
+		postProcessBarrier.Transition.pResource = postProcessRenderTarget.Get();
 		postProcessBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		postProcessBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		postProcessBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -6834,13 +6966,8 @@ void EditorRenderManager::Draw() {
 		isSharpenExecuted ? hdrCompositeSrvHandleGPU : filteredPostProcessSrvHandle);
 
 	// Back buffer に出力（AAモードに応じてパスを排他制御）
-	D3D12_RESOURCE_BARRIER backBufferBarrier{};
-	backBufferBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-	backBufferBarrier.Transition.pResource = swapChainResources[backBufferIndex];
-	backBufferBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-	backBufferBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
-	backBufferBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-	commandList->ResourceBarrier(1, &backBufferBarrier);
+	// PRESENT -> RENDER_TARGET の状態遷移は DirectXCommon が持つ。
+	g_dxCommon->BeginBackBufferPass();
 
 	ExecuteBackBufferCompositePass(
 		ppSettings,
@@ -6854,9 +6981,8 @@ void EditorRenderManager::Draw() {
 	ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList.Get());
 #endif
 
-	backBufferBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-	backBufferBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-	commandList->ResourceBarrier(1, &backBufferBarrier);
+	// RENDER_TARGET -> PRESENT へ戻す。忘れると Present が失敗する。
+	g_dxCommon->EndBackBufferPass();
 	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuAntialiasEvent);
 	profilerManager.EndGpuEvent(commandList.Get(), renderTimestampQueryHeap.Get(), gpuFrameDetailEvent);
 	renderTimestampQueryCount = (std::max)(
@@ -6877,16 +7003,17 @@ void EditorRenderManager::Draw() {
 			0u);
 	}
 
-	hr = commandList->Close();
-	if (FAILED(hr)) {
-		Log(g_logStream, std::format("CommandList Close failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+	//========================================
+	// 毎フレームの描画の後処理
+	//========================================
+
+	// 記録を閉じて GPU へ送る。ここまでが「このフレームで描くもの」。
+	if (!g_dxCommon->SubmitCommandList(g_logStream)) {
 		g_isDrawRequested = false;
 		return;
 	}
 
-	ID3D12CommandList* commandLists[] = {commandList.Get()};
-	commandQueue->ExecuteCommandLists(1, commandLists);
-
+	// 影 Atlas を描き直したフレームだけ、次フレームの再描画要否を決める Hash を更新する。
 	if (hasRecordedShadowMapUpdate) {
 		submittedShadowStateHash = shadowStateHash;
 		hasSubmittedShadowMap = true;
@@ -6894,9 +7021,9 @@ void EditorRenderManager::Draw() {
 
 	// Project Settings の VSync 設定をそのまま同期間隔へ渡す(1 = 垂直同期あり、0 = なし)。
 	const UINT presentSyncInterval = ProjectSettings::Get().GetData().vsyncEnabled ? 1u : 0u;
-	hr = swapChain->Present(presentSyncInterval, 0); // Present で back buffer を Window へ出す
-	if (FAILED(hr)) {
-		Log(g_logStream, std::format("SwapChain Present failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
+
+	// Present して、このフレームの GPU 作業が終わるまで待つ。
+	if (!g_dxCommon->EndFrame(presentSyncInterval, g_logStream)) {
 		g_isDrawRequested = false;
 		return;
 	}
@@ -6904,26 +7031,6 @@ void EditorRenderManager::Draw() {
 	if (!hasLoggedFirstPresent) {
 		Log(g_logStream, "EditorRenderManager first present completed");
 		hasLoggedFirstPresent = true;
-	}
-
-	fenceValue++;
-	hr = commandQueue->Signal(fence.Get(), fenceValue);
-	if (FAILED(hr)) {
-		Log(g_logStream, std::format("CommandQueue Signal failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
-		g_isDrawRequested = false;
-		return;
-	}
-
-	if (fence->GetCompletedValue() < fenceValue) {
-		hr = fence->SetEventOnCompletion(fenceValue, fenceEvent);
-		if (FAILED(hr)) {
-			Log(g_logStream, std::format("Fence SetEventOnCompletion failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
-			g_isDrawRequested = false;
-			return;
-		}
-		if (fenceEvent != nullptr) {
-			WaitForSingleObject(fenceEvent, INFINITE);
-		}
 	}
 
 	// GPU が完了したため、次フレームで使う可視結果を安全に読み戻す。

@@ -7249,8 +7249,8 @@ EditorScriptVector2 EditorScriptManager::GetMousePositionInternal() const {
 
 EditorScriptVector2 EditorScriptManager::GetMouseDeltaInternal() const {
 	return {
-		static_cast<float>(EditorSharedState::g_mouseState.lX),
-		static_cast<float>(EditorSharedState::g_mouseState.lY)};
+		EditorSharedState::g_input != nullptr ? EditorSharedState::g_input->GetMouseMoveX() : 0.0f,
+		EditorSharedState::g_input != nullptr ? EditorSharedState::g_input->GetMouseMoveY() : 0.0f};
 }
 
 bool EditorScriptManager::IsMouseButtonDownInternal(int32_t mouseButton) const {
@@ -7258,7 +7258,8 @@ bool EditorScriptManager::IsMouseButtonDownInternal(int32_t mouseButton) const {
 		return false;
 	}
 
-	return (EditorSharedState::g_mouseState.rgbButtons[mouseButton] & 0x80u) != 0u;
+	return EditorSharedState::g_input != nullptr
+		&& EditorSharedState::g_input->PushMouseButton(mouseButton);
 }
 
 bool EditorScriptManager::WasMouseButtonPressedInternal(int32_t mouseButton) const {
@@ -7266,8 +7267,11 @@ bool EditorScriptManager::WasMouseButtonPressedInternal(int32_t mouseButton) con
 		return false;
 	}
 
-	const bool isPressed = (EditorSharedState::g_mouseState.rgbButtons[mouseButton] & 0x80u) != 0u;
-	const bool wasPressed = (EditorSharedState::g_preMouseState.rgbButtons[mouseButton] & 0x80u) != 0u;
+	const bool isPressed = EditorSharedState::g_input != nullptr
+		&& EditorSharedState::g_input->PushMouseButton(mouseButton);
+	const bool wasPressed = EditorSharedState::g_input != nullptr
+		&& (EditorSharedState::g_input->GetPreviousMouseState().rgbButtons[mouseButton]
+			& Input::kPressedBit) != 0u;
 	return isPressed && !wasPressed;
 }
 
@@ -7276,8 +7280,11 @@ bool EditorScriptManager::WasMouseButtonReleasedInternal(int32_t mouseButton) co
 		return false;
 	}
 
-	const bool isPressed = (EditorSharedState::g_mouseState.rgbButtons[mouseButton] & 0x80u) != 0u;
-	const bool wasPressed = (EditorSharedState::g_preMouseState.rgbButtons[mouseButton] & 0x80u) != 0u;
+	const bool isPressed = EditorSharedState::g_input != nullptr
+		&& EditorSharedState::g_input->PushMouseButton(mouseButton);
+	const bool wasPressed = EditorSharedState::g_input != nullptr
+		&& (EditorSharedState::g_input->GetPreviousMouseState().rgbButtons[mouseButton]
+			& Input::kPressedBit) != 0u;
 	return !isPressed && wasPressed;
 }
 

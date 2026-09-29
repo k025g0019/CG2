@@ -576,15 +576,15 @@ bool EditorCameraEffectManager::UpdateCameraInput(float deltaTime, const uint8_t
 	}
 
 	const bool isCursorAvailable = IsCursorInsideGameView() || cameraInputOwnsCursorLock_;
-	const bool isRightMouseDown = (g_mouseState.rgbButtons[1] & 0x80u) != 0u ||
+	const bool isRightMouseDown = (g_input != nullptr && g_input->PushMouseButton(1)) ||
 		(GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
 	const bool isRotationActive = isCursorAvailable &&
 		(cameraComponent->cameraInputActivation == 1 || isRightMouseDown);
 
 	if (isRotationActive) {
 		const float invertY = cameraComponent->cameraInputInvertY ? -1.0f : 1.0f;
-		cameraInputYaw_ += static_cast<float>(g_mouseState.lX) * cameraComponent->cameraInputLookSensitivity;
-		cameraInputPitch_ += static_cast<float>(g_mouseState.lY) *
+		cameraInputYaw_ += g_input->GetMouseMoveX() * cameraComponent->cameraInputLookSensitivity;
+		cameraInputPitch_ += g_input->GetMouseMoveY() *
 			cameraComponent->cameraInputLookSensitivity * invertY;
 		const float minimumPitch = cameraComponent->cameraInputMinimumPitchDegrees *
 			(std::numbers::pi_v<float> / 180.0f);
@@ -629,7 +629,7 @@ bool EditorCameraEffectManager::UpdateCameraInput(float deltaTime, const uint8_t
 
 	if (cameraComponent->cameraInputStyle == 1) {
 		if (isCursorAvailable && cameraComponent->cameraInputZoomSpeed > 0.0f) {
-			const float wheelSteps = static_cast<float>(g_mouseState.lZ) / 120.0f;
+			const float wheelSteps = (g_input != nullptr ? g_input->GetMouseWheel() : 0.0f) / 120.0f;
 			cameraInputOrbitDistance_ -= wheelSteps * cameraComponent->cameraInputZoomSpeed;
 		}
 

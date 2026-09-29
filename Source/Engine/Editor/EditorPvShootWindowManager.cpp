@@ -249,8 +249,8 @@ void EditorPvShootWindowManager::DrawPanel() {
 
 		Transforms unusedUvTransform{};
 		pvCameraController_.UpdateKeyboard(
-			g_key,
-			g_preKey,
+			g_input->GetKeyStates(),
+			g_input->GetPreviousKeyStates(),
 			false,  // PV撮影中は常に操作できるようにする（SceneViewはPlay中を弾くがここでは弾かない）。
 			cameraRuntimeTransform,
 			unusedUvTransform,

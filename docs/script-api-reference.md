@@ -1,11 +1,23 @@
 ﻿# CG2Engine C++ Script APIリファレンス
 
 この文書はC++ ScriptのLifecycle、型、Wrapper、Runtime API、実装例をまとめた検索用リファレンスである。
+プログラミング、Compile、Link、API、ABI、DLL、GameObject、Componentが分からない場合は、先に`docs/engine-internals.md`の「0. プログラミングを知らない人のための前提知識」、特に「0.8 CG2EngineのNative Scriptが動くまで」を読む。
 実在する API は `Source/Engine/Core/EditorScriptApi.h` を基準にする。
 
 ## C++ スクリプトでできること
 
 C++ スクリプトは、GameObject に付けた DLL を Play 中に読み込み、使用者が書いた処理を呼び出す仕組みである。
+
+初心者向けに言い換えると、`.cpp`は人が書く手順書、`.Generated.cpp`はEngineとの接続部、`.dll`はWindowsが実行できる形へ変換した完成品である。Engineは`.cpp`を直接実行せず、Build後のDLLを読み込む。
+
+```text
+使用者が.cppを書く
+  → Engineが.Generated.cppとの接続を用意する
+  → CompilerとLinkerが.dllを作る
+  → Script ComponentがGameObjectとDLL Pathを結び付ける
+  → EngineがDLLを読み込み、GameObjectごとのInstanceを作る
+  → Play中にStart / Update / FixedUpdate / Stopを呼ぶ
+```
 
 主に次のことを行う。
 
@@ -55,7 +67,7 @@ C++ スクリプトを使うには、最低限次が必要である。
 | `OnAnimationEvent(...)` | Animation ClipのEvent時刻通過時。 | Event名、文字列、数値を受けて演出や処理を起動。 |
 | `Stop()` | Play停止またはScript停止時。 | ユーザー状態の終了処理。 |
 
-Engineは`.Generated.cpp`内でDLL読込、Instance生成、ライフサイクル、Physics Event、Animation Event、Field、ActionのABI転送を生成する。使用者が`extern "C"`や`EditorScript_*`関数を書くことは禁止する。
+Engineは`.Generated.cpp`へ、Instance生成、ライフサイクル、Physics Event、Animation Event、Field、ActionをDLL境界越しに転送する関数を生成する。DLL FileをWindowsのProcessへ読み込む処理は`.Generated.cpp`ではなく`EditorScriptManager`が担当する。使用者が`extern "C"`や`EditorScript_*`関数を書くことは禁止する。
 
 ### Lifecycle Callbackをconstructorで登録する
 

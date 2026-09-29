@@ -256,10 +256,10 @@ bool EditorVfxRenderer::UploadTextureImmediate(const std::string& texturePath, T
 	if (device_ == nullptr ||
 		texturePath.empty() ||
 		!std::filesystem::exists(resolvedTexturePath) ||
-		g_commandAllocator == nullptr ||
-		g_commandList == nullptr ||
-		g_commandQueue == nullptr ||
-		g_fence == nullptr) {
+		g_dxCommon->GetCommandAllocator() == nullptr ||
+		g_dxCommon->GetCommandList() == nullptr ||
+		g_dxCommon->GetCommandQueue() == nullptr ||
+		g_dxCommon->GetFence() == nullptr) {
 		return false;
 	}
 
@@ -276,40 +276,32 @@ bool EditorVfxRenderer::UploadTextureImmediate(const std::string& texturePath, T
 
 	entry.textureResource.Attach(textureResource);
 
-	HRESULT hr = g_commandAllocator->Reset();
+	HRESULT hr = g_dxCommon->GetCommandAllocator()->Reset();
 	if (FAILED(hr)) {
 		return false;
 	}
 
-	hr = g_commandList->Reset(g_commandAllocator.Get(), nullptr);
+	hr = g_dxCommon->GetCommandList()->Reset(g_dxCommon->GetCommandAllocator().Get(), nullptr);
 	if (FAILED(hr)) {
 		return false;
 	}
 
-	ID3D12Resource* uploadResource = UploadTextureData(device_.Get(), g_commandList.Get(), entry.textureResource.Get(), mipImages);
+	ID3D12Resource* uploadResource = UploadTextureData(device_.Get(), g_dxCommon->GetCommandList().Get(), entry.textureResource.Get(), mipImages);
 	if (uploadResource == nullptr) {
 		return false;
 	}
 
 	entry.uploadResource.Attach(uploadResource);
 
-	hr = g_commandList->Close();
+	hr = g_dxCommon->GetCommandList()->Close();
 	if (FAILED(hr)) {
 		return false;
 	}
 
-	ID3D12CommandList* commandLists[] = {g_commandList.Get()};
-	g_commandQueue->ExecuteCommandLists(1u, commandLists);
-	g_fenceValue++;
-	hr = g_commandQueue->Signal(g_fence.Get(), g_fenceValue);
-	if (FAILED(hr)) {
-		return false;
-	}
-
-	if (g_fence->GetCompletedValue() < g_fenceValue) {
-		g_fence->SetEventOnCompletion(g_fenceValue, g_fenceEvent);
-		WaitForSingleObject(g_fenceEvent, INFINITE);
-	}
+	ID3D12CommandList* commandLists[] = {g_dxCommon->GetCommandList().Get()};
+	g_dxCommon->GetCommandQueue()->ExecuteCommandLists(1u, commandLists);
+	// Texture の Upload が GPU 側で終わるまで待つ。Signal と待機は DirectXCommon が持つ。
+	g_dxCommon->WaitForGpu();
 
 	entry.descriptorIndex = nextTextureDescriptorIndex_;
 	nextTextureDescriptorIndex_++;

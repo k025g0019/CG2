@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
@@ -410,7 +410,14 @@ copy /Y "$(ProjectDir)Source\Engine\Core\EditorScriptApi.h" "$(TargetDir)ScriptA
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
       <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
     </ClCompile>
-    <ClCompile Include="Source\Engine\Core\ApplicationWindow.cpp">
+    <ClCompile Include="Source\Engine\Core\DirectXCommon.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>    <ClCompile Include="Source\Engine\Core\Input.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
+    </ClCompile>
+    <ClCompile Include="Source\Engine\Core\WinApp.cpp">
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">MaxSpeed</Optimization>
       <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Development|x64'">true</WholeProgramOptimization>
     </ClCompile>
@@ -1169,7 +1176,9 @@ copy /Y "$(ProjectDir)Source\Engine\Core\EditorScriptApi.h" "$(TargetDir)ScriptA
     <ClInclude Include="Source\Engine\Effect\EffectDefinition.h" />
     <ClInclude Include="Source\Engine\Effect\EditorVfxManager.h" />
     <ClInclude Include="Source\Engine\Effect\EditorEffekseerManager.h" />
-    <ClInclude Include="Source\Engine\Core\ApplicationWindow.h" />
+    <ClInclude Include="Source\Engine\Core\DirectXCommon.h" />
+    <ClInclude Include="Source\Engine\Core\Input.h" />
+    <ClInclude Include="Source\Engine\Core\WinApp.h" />
     <ClInclude Include="Source\Engine\Physics\BoxCollision.h" />
     <ClInclude Include="Source\Engine\Core\CrashHandler.h" />
     <ClInclude Include="Source\Engine\Core\EngineVersion.h" />
@@ -1226,6 +1235,7 @@ copy /Y "$(ProjectDir)Source\Engine\Core\EditorScriptApi.h" "$(TargetDir)ScriptA
     <ClInclude Include="Source\Engine\Editor\EditorNativeScriptAssetManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorNavigationManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorOceanSystem.h" />
+    <ClInclude Include="Source\Engine\Editor\EditorPhysicsBuoyancyTypes.h" />
     <ClInclude Include="Source\Engine\Editor\EditorPhysicsManager.h" />
     <ClInclude Include="Source\Engine\Editor\EditorRenderManager.h" />
     <ClInclude Include="Source\Engine\Renderer\EditorDepthHierarchyManager.h" />

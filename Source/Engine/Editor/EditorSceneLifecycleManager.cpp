@@ -85,7 +85,8 @@ void EditorSceneLifecycleManager::Update() {
 			g_editorRuntimeManager.GetProfilerManager(),
 			"Runtime.Update",
 			"Editor");
-		g_editorRuntimeManager.Update(g_key, editorPlayDeltaTime);  // RuntimeManager が InputManager と PhysicsManager を順番に更新する。
+		// RuntimeManager が InputManager と PhysicsManager を順番に更新する。
+		g_editorRuntimeManager.Update(g_input->GetKeyStates(), editorPlayDeltaTime);
 	}
 
 	//================================================================

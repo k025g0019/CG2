@@ -700,11 +700,10 @@ bool EditorSceneObjectManager::LoadTextureResource(
 
 	if (device_ == nullptr ||
 		textureAssetPath.empty() ||
-		g_commandAllocator == nullptr ||
-		g_commandList == nullptr ||
-		g_commandQueue == nullptr ||
-		g_fence == nullptr ||
-		g_fenceEvent == nullptr) {
+		g_dxCommon->GetCommandAllocator() == nullptr ||
+		g_dxCommon->GetCommandList() == nullptr ||
+		g_dxCommon->GetCommandQueue() == nullptr ||
+		g_dxCommon->GetFence() == nullptr) {
 		return false;
 	}
 
@@ -761,51 +760,37 @@ bool EditorSceneObjectManager::LoadTextureResource(
 	//------------------------------
 
 	// Copy Commandを記録するAllocator/Listは、前回実行完了後でなければResetできない。
-	HRESULT commandResult = g_commandAllocator->Reset();
+	HRESULT commandResult = g_dxCommon->GetCommandAllocator()->Reset();
 	if (FAILED(commandResult)) {
 		ReleaseTextureResource(textureResource, uploadResource, srvGpuHandle, descriptorIndex);
 		return false;
 	}
 
-	commandResult = g_commandList->Reset(g_commandAllocator.Get(), nullptr);
+	commandResult = g_dxCommon->GetCommandList()->Reset(g_dxCommon->GetCommandAllocator().Get(), nullptr);
 	if (FAILED(commandResult)) {
 		ReleaseTextureResource(textureResource, uploadResource, srvGpuHandle, descriptorIndex);
 		return false;
 	}
 
 	// Upload Heapを中継し、Default HeapのTextureへ全MipのCopy Commandを積む。
-	uploadResource = UploadTextureData(device_, g_commandList.Get(), textureResource, mipImages);
+	uploadResource = UploadTextureData(device_, g_dxCommon->GetCommandList().Get(), textureResource, mipImages);
 	if (uploadResource == nullptr) {
 		ReleaseTextureResource(textureResource, uploadResource, srvGpuHandle, descriptorIndex);
 		return false;
 	}
 
-	commandResult = g_commandList->Close();
+	commandResult = g_dxCommon->GetCommandList()->Close();
 	if (FAILED(commandResult)) {
 		ReleaseTextureResource(textureResource, uploadResource, srvGpuHandle, descriptorIndex);
 		return false;
 	}
 
 	// CommandをQueueへ提出しただけではCopy完了ではない。直後にSRVとして公開する前にFenceを待つ。
-	ID3D12CommandList* commandLists[] = {g_commandList.Get()};
-	g_commandQueue->ExecuteCommandLists(1, commandLists);
-	g_fenceValue++;
-	commandResult = g_commandQueue->Signal(g_fence.Get(), g_fenceValue);
-	if (FAILED(commandResult)) {
-		ReleaseTextureResource(textureResource, uploadResource, srvGpuHandle, descriptorIndex);
-		return false;
-	}
-
+	ID3D12CommandList* commandLists[] = {g_dxCommon->GetCommandList().Get()};
+	g_dxCommon->GetCommandQueue()->ExecuteCommandLists(1, commandLists);
 	// この同期はLoadを単純にする代わりにCPUを停止させる。大量Assetでは非同期Uploadが改善候補になる。
-	if (g_fence->GetCompletedValue() < g_fenceValue) {
-		commandResult = g_fence->SetEventOnCompletion(g_fenceValue, g_fenceEvent);
-		if (FAILED(commandResult)) {
-			ReleaseTextureResource(textureResource, uploadResource, srvGpuHandle, descriptorIndex);
-			return false;
-		}
-
-		WaitForSingleObject(g_fenceEvent, INFINITE);
-	}
+	// Signal と待機は DirectXCommon が持つ。
+	g_dxCommon->WaitForGpu();
 
 	//------------------------------
 	// Shader Resource View生成
@@ -819,9 +804,9 @@ bool EditorSceneObjectManager::LoadTextureResource(
 	srvDesc.Texture2D.MipLevels = static_cast<UINT>(textureMetadata.mipLevels);
 
 	const D3D12_CPU_DESCRIPTOR_HANDLE srvCpuHandle =
-		GetCPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, static_cast<UINT>(descriptorIndex));
+		GetCPUDescriptorHandle(g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, static_cast<UINT>(descriptorIndex));
 	srvGpuHandle =
-		GetGPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, static_cast<UINT>(descriptorIndex));
+		GetGPUDescriptorHandle(g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, static_cast<UINT>(descriptorIndex));
 	device_->CreateShaderResourceView(textureResource, &srvDesc, srvCpuHandle);
 	return true;
 }

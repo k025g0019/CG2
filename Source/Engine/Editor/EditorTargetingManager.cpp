@@ -408,7 +408,8 @@ void EditorTargetingManager::Update(float deltaTime) {
 
 			if (GetCursorPos(&cursorPosition)) {
 				const POINT screenPos = cursorPosition;
-				const bool converted = ScreenToClient(g_windowHandle, &cursorPosition);
+				const bool converted = g_winApp != nullptr
+					&& ScreenToClient(g_winApp->GetHwnd(), &cursorPosition) != 0;
 
 				nextPosition.x =
 					(static_cast<float>(cursorPosition.x) - g_editorGameX) / g_editorGameWidth;

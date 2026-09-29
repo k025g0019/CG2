@@ -10,27 +10,6 @@
 #include <utility>
 
 namespace {
-	//------------------------------
-	// 実行時の浮力設定
-	// Buoyancy がなければ Dynamic Rigidbody の3D Colliderから安全な既定値を作る
-	//------------------------------
-	struct RuntimeBuoyancySettings {
-		int32_t oceanGameObjectId = -1;
-		Vector3 centerOffset = {0.0f, 0.0f, 0.0f};
-		Vector3 hullSize = {1.0f, 1.0f, 1.0f};
-		float strength = 24.0f;
-		float damping = 7.0f;
-		float waterDrag = 1.4f;
-		float angularDrag = 1.8f;
-		float normalInfluence = 0.2f;
-		float lateralDrag = 4.0f;
-		float verticalDrag = 2.5f;
-		float slammingStrength = 2.0f;
-		bool automaticPhysicalProperties = false;
-		float waterDensity = 1025.0f;
-		bool limitDraftHeight = false;  // Collider から自動で作る船体は喫水高さに縦範囲を制限する
-	};
-
 	struct BuoyancyGridDimensions {
 		int32_t countX = 2;
 		int32_t countY = 2;
@@ -43,9 +22,6 @@ namespace {
 	constexpr int32_t kBuoyancyMaximumCellCount = 512;
 	constexpr float kBuoyancyDraftOverheadRatio = 1.25f;  // 平衡喫水の上に波の頂上分の余裕を持たせる
 	constexpr float kBuoyancyDraftMinimumHeight = 0.3f;  // 平たい物体にも縦方向の最低セル高さを確保する
-	constexpr int32_t kBuoyancySurfaceProbeAxisCount = 5;  // 局所FFT水面を補間する固定Probe数
-	constexpr size_t kBuoyancySurfaceProbeCount =
-		static_cast<size_t>(kBuoyancySurfaceProbeAxisCount * kBuoyancySurfaceProbeAxisCount);
 	constexpr float kWaterKinematicViscosity = 1.004e-6f;  // 20度付近の水の動粘性係数（m^2/s）
 
 	struct SubmergedSurfacePanel {
@@ -3378,1417 +3354,1647 @@ void EditorPhysicsManager::ApplyBuoyancyForces(float fixedDeltaTime) {
 			worldPosition);
 
 		//------------------------------
+		// 浮力計算へ渡す入力をまとめる
+		//------------------------------
+
+		BuoyancyObjectInput buoyancyInput{};
+		buoyancyInput.gameObject = &gameObject;
+		buoyancyInput.rigidBody = rigidBodyComponent;
+		buoyancyInput.buoyancyDiagnostics = physicsObject.buoyancy;
+		buoyancyInput.settings = buoyancySettings;
+		buoyancyInput.hullSize = safeHullSize;
+		buoyancyInput.worldScale = worldScale;
+		buoyancyInput.worldRotation = worldRotation;
+		buoyancyInput.worldPosition = worldPosition;
+		buoyancyInput.fixedDeltaTime = fixedDeltaTime;
+		buoyancyInput.oceanElapsedTime = oceanElapsedTime;
+		buoyancyInput.gravityMagnitude = gravityMagnitude;
+		buoyancyInput.buoyancyUp = buoyancyUp;
+
+		//------------------------------
 		// 実 Physics Shape を使う浮力
 		//------------------------------
-		// 船体 AABB の空間へ仮想セルを詰めるのではなく、Jolt が実際に衝突へ使う
-		// Box / Sphere / Capsule / ConvexHull を局所水面 Plane で切る。
-		// これにより上部構造や凸包外の空間へ浮力が掛からず、水没体積の重心が浮心になる。
-		{
-			const Matrix4x4 boatWorldMatrix = editorScene_->GetWorldMatrix(gameObject.id);
-			const Matrix4x4 boatRotationMatrix = MakeAffineMatrix(
-				{1.0f, 1.0f, 1.0f},
-				worldRotation,
-				{0.0f, 0.0f, 0.0f});
-			const Vector3 boatRight = Normalize(Transform(
-				{1.0f, 0.0f, 0.0f},
-				boatRotationMatrix));
-			const Vector3 boatUp = Normalize(Transform(
-				{0.0f, 1.0f, 0.0f},
-				boatRotationMatrix));
-			const Vector3 boatForward = Normalize(Transform(
-				{0.0f, 0.0f, 1.0f},
-				boatRotationMatrix));
 
-			Vector3 horizontalRight{boatRight.x, 0.0f, boatRight.z};
-			Vector3 horizontalForward{boatForward.x, 0.0f, boatForward.z};
-
-			if (Length(horizontalRight) <= 0.0001f) {
-				horizontalRight = {1.0f, 0.0f, 0.0f};
-			}
-			else {
-				horizontalRight = Normalize(horizontalRight);
-			}
-
-			if (Length(horizontalForward) <= 0.0001f) {
-				horizontalForward = {0.0f, 0.0f, 1.0f};
-			}
-			else {
-				horizontalForward = Normalize(horizontalForward);
-			}
-
-			const Vector3 worldHullCenter = Transform(
-				buoyancySettings.centerOffset,
-				boatWorldMatrix);
-			const float probeHalfWidth = (std::max)(
-				std::fabs(safeHullSize.x * worldScale.x) * 0.4f,
-				0.25f);
-			const float probeHalfLength = (std::max)(
-				std::fabs(safeHullSize.z * worldScale.z) * 0.4f,
-				0.25f);
-			std::array<float, kBuoyancySurfaceProbeCount> probeRightOffsets{};
-			std::array<float, kBuoyancySurfaceProbeCount> probeForwardOffsets{};
-			std::array<Vector3, kBuoyancySurfaceProbeCount> probePositions{};
-			std::array<EditorOceanSurfaceSample, kBuoyancySurfaceProbeCount> surfaceSamples{};
-			std::array<bool, kBuoyancySurfaceProbeCount> hasSurfaceSample{};
-			constexpr size_t kCenterSurfaceProbeIndex = kBuoyancySurfaceProbeCount / 2u;
-			int32_t resolvedOceanGameObjectId = buoyancySettings.oceanGameObjectId;
-			int32_t validSurfaceSampleCount = 0;
-			Vector3 averageSurfaceVelocity{};
-			Vector3 averageSurfaceNormal{};
-			float averageSurfaceHeight = 0.0f;
-			const uint32_t objectSampleKey =
-				static_cast<uint32_t>(gameObject.id) * 4099u + 2048u;
-
-			for (size_t probeIndex = 0u; probeIndex < probePositions.size(); probeIndex++) {
-				const int32_t gridX = static_cast<int32_t>(probeIndex) %
-					kBuoyancySurfaceProbeAxisCount;
-				const int32_t gridZ = static_cast<int32_t>(probeIndex) /
-					kBuoyancySurfaceProbeAxisCount;
-				const float normalizedX =
-					2.0f * static_cast<float>(gridX) /
-						static_cast<float>(kBuoyancySurfaceProbeAxisCount - 1) -
-					1.0f;
-				const float normalizedZ =
-					2.0f * static_cast<float>(gridZ) /
-						static_cast<float>(kBuoyancySurfaceProbeAxisCount - 1) -
-					1.0f;
-				probeRightOffsets[probeIndex] = normalizedX * probeHalfWidth;
-				probeForwardOffsets[probeIndex] = normalizedZ * probeHalfLength;
-				probePositions[probeIndex] = Add(
-					worldHullCenter,
-					Add(
-						Multiply(probeRightOffsets[probeIndex], horizontalRight),
-						Multiply(probeForwardOffsets[probeIndex], horizontalForward)));
-			}
-
-			for (size_t probeIndex = 0u; probeIndex < probePositions.size(); probeIndex++) {
-				const uint64_t surfaceSampleKey = static_cast<uint64_t>(
-					objectSampleKey + static_cast<uint32_t>(probeIndex));
-				hasSurfaceSample[probeIndex] = SampleEditorOceanSurface(
-					*editorScene_,
-					resolvedOceanGameObjectId,
-					probePositions[probeIndex],
-					surfaceSampleKey,
-					oceanElapsedTime,
-					surfaceSamples[probeIndex]);
-
-				if (!hasSurfaceSample[probeIndex]) {
-					continue;
-				}
-
-				if (resolvedOceanGameObjectId < 0) {
-					resolvedOceanGameObjectId = surfaceSamples[probeIndex].oceanGameObjectId;
-				}
-
-				Vector3 upwardNormal = surfaceSamples[probeIndex].normal;
-				if (Dot(upwardNormal, buoyancyUp) < 0.0f) {
-					upwardNormal = Multiply(-1.0f, upwardNormal);
-				}
-
-				averageSurfaceVelocity = Add(
-					averageSurfaceVelocity,
-					surfaceSamples[probeIndex].velocity);
-				averageSurfaceNormal = Add(averageSurfaceNormal, upwardNormal);
-				averageSurfaceHeight += surfaceSamples[probeIndex].position.y;
-				validSurfaceSampleCount++;
-			}
-
-			// 中央点が取れなければ実 Shape Plane を作れないため、旧グリッドへフォールバックする。
-			if (hasSurfaceSample[kCenterSurfaceProbeIndex] && validSurfaceSampleCount > 0) {
-				const float inverseSurfaceSampleCount =
-					1.0f / static_cast<float>(validSurfaceSampleCount);
-				averageSurfaceVelocity = Multiply(
-					inverseSurfaceSampleCount,
-					averageSurfaceVelocity);
-				averageSurfaceHeight *= inverseSurfaceSampleCount;
-				averageSurfaceNormal = Normalize(averageSurfaceNormal);
-				Vector3 fittedSurfaceNormal = averageSurfaceNormal;
-				float fittedSurfaceHeight = surfaceSamples[kCenterSurfaceProbeIndex].position.y;
-
-				// 船体下面を覆う 3x3 FFT Sample へ最小二乗 Plane を当てる。
-				// 一方向の波頭や斜め波でも、中央差分だけより外れ値と局所Normalノイズへ強くなる。
-				if (validSurfaceSampleCount == static_cast<int32_t>(surfaceSamples.size())) {
-					float rightSlopeNumerator = 0.0f;
-					float rightSlopeDenominator = 0.0f;
-					float forwardSlopeNumerator = 0.0f;
-					float forwardSlopeDenominator = 0.0f;
-
-					for (size_t probeIndex = 0u; probeIndex < surfaceSamples.size(); probeIndex++) {
-						const float relativeSurfaceHeight =
-							surfaceSamples[probeIndex].position.y - averageSurfaceHeight;
-						rightSlopeNumerator +=
-							probeRightOffsets[probeIndex] * relativeSurfaceHeight;
-						rightSlopeDenominator +=
-							probeRightOffsets[probeIndex] * probeRightOffsets[probeIndex];
-						forwardSlopeNumerator +=
-							probeForwardOffsets[probeIndex] * relativeSurfaceHeight;
-						forwardSlopeDenominator +=
-							probeForwardOffsets[probeIndex] * probeForwardOffsets[probeIndex];
-					}
-
-					const float rightSurfaceSlope = (rightSlopeDenominator > 0.000001f)
-						? rightSlopeNumerator / rightSlopeDenominator
-						: 0.0f;
-					const float forwardSurfaceSlope = (forwardSlopeDenominator > 0.000001f)
-						? forwardSlopeNumerator / forwardSlopeDenominator
-						: 0.0f;
-					const Vector3 lateralTangent = Add(
-						horizontalRight,
-						Multiply(rightSurfaceSlope, buoyancyUp));
-					const Vector3 longitudinalTangent = Add(
-						horizontalForward,
-						Multiply(forwardSurfaceSlope, buoyancyUp));
-					Vector3 leastSquaresNormal = Cross(longitudinalTangent, lateralTangent);
-
-					if (Length(leastSquaresNormal) > 0.0001f) {
-						leastSquaresNormal = Normalize(leastSquaresNormal);
-
-						if (Dot(leastSquaresNormal, buoyancyUp) < 0.0f) {
-							leastSquaresNormal = Multiply(-1.0f, leastSquaresNormal);
-						}
-
-						fittedSurfaceNormal = Normalize(Add(
-							Multiply(0.85f, leastSquaresNormal),
-							Multiply(0.15f, averageSurfaceNormal)));
-						fittedSurfaceHeight = averageSurfaceHeight;
-					}
-				}
-
-				if (Length(fittedSurfaceNormal) <= 0.0001f) {
-					fittedSurfaceNormal = buoyancyUp;
-				}
-
-				// 固定5x5 Probeを双線形補間し、水力面数に比例したFFT評価を避けながら
-				// 各面位置の高さ、法線、表面速度を取得する。
-				const auto interpolateSurfaceSample = [
-					&](const Vector3& queryPosition, EditorOceanSurfaceSample& interpolatedSample) {
-					const Vector3 centerToQuery = Subtract(queryPosition, worldHullCenter);
-					const float normalizedRight = (std::clamp)(
-						Dot(centerToQuery, horizontalRight) / probeHalfWidth,
-						-1.0f,
-						1.0f);
-					const float normalizedForward = (std::clamp)(
-						Dot(centerToQuery, horizontalForward) / probeHalfLength,
-						-1.0f,
-						1.0f);
-					const float gridX = (normalizedRight * 0.5f + 0.5f) *
-						static_cast<float>(kBuoyancySurfaceProbeAxisCount - 1);
-					const float gridZ = (normalizedForward * 0.5f + 0.5f) *
-						static_cast<float>(kBuoyancySurfaceProbeAxisCount - 1);
-					const int32_t minimumX = (std::clamp)(
-						static_cast<int32_t>(std::floor(gridX)),
-						0,
-						kBuoyancySurfaceProbeAxisCount - 1);
-					const int32_t minimumZ = (std::clamp)(
-						static_cast<int32_t>(std::floor(gridZ)),
-						0,
-						kBuoyancySurfaceProbeAxisCount - 1);
-					const int32_t maximumX = (std::min)(
-						minimumX + 1,
-						kBuoyancySurfaceProbeAxisCount - 1);
-					const int32_t maximumZ = (std::min)(
-						minimumZ + 1,
-						kBuoyancySurfaceProbeAxisCount - 1);
-					const float interpolationX = gridX - static_cast<float>(minimumX);
-					const float interpolationZ = gridZ - static_cast<float>(minimumZ);
-					const size_t minimumMinimumIndex = static_cast<size_t>(
-						minimumZ * kBuoyancySurfaceProbeAxisCount + minimumX);
-					const size_t maximumMinimumIndex = static_cast<size_t>(
-						minimumZ * kBuoyancySurfaceProbeAxisCount + maximumX);
-					const size_t minimumMaximumIndex = static_cast<size_t>(
-						maximumZ * kBuoyancySurfaceProbeAxisCount + minimumX);
-					const size_t maximumMaximumIndex = static_cast<size_t>(
-						maximumZ * kBuoyancySurfaceProbeAxisCount + maximumX);
-					const bool hasInterpolationSamples =
-						hasSurfaceSample[minimumMinimumIndex] &&
-						hasSurfaceSample[maximumMinimumIndex] &&
-						hasSurfaceSample[minimumMaximumIndex] &&
-						hasSurfaceSample[maximumMaximumIndex];
-
-					if (hasInterpolationSamples) {
-						const auto bilinearVector = [
-							interpolationX,
-							interpolationZ](
-								const Vector3& minimumMinimum,
-								const Vector3& maximumMinimum,
-								const Vector3& minimumMaximum,
-								const Vector3& maximumMaximum) {
-							const Vector3 minimumRow = Add(
-								Multiply(1.0f - interpolationX, minimumMinimum),
-								Multiply(interpolationX, maximumMinimum));
-							const Vector3 maximumRow = Add(
-								Multiply(1.0f - interpolationX, minimumMaximum),
-								Multiply(interpolationX, maximumMaximum));
-							return Add(
-								Multiply(1.0f - interpolationZ, minimumRow),
-								Multiply(interpolationZ, maximumRow));
-						};
-						const Vector3 interpolatedPosition = bilinearVector(
-							surfaceSamples[minimumMinimumIndex].position,
-							surfaceSamples[maximumMinimumIndex].position,
-							surfaceSamples[minimumMaximumIndex].position,
-							surfaceSamples[maximumMaximumIndex].position);
-						interpolatedSample.isValid = true;
-						interpolatedSample.oceanGameObjectId = resolvedOceanGameObjectId;
-						interpolatedSample.position = {
-							queryPosition.x,
-							interpolatedPosition.y,
-							queryPosition.z};
-						interpolatedSample.normal = Normalize(bilinearVector(
-							surfaceSamples[minimumMinimumIndex].normal,
-							surfaceSamples[maximumMinimumIndex].normal,
-							surfaceSamples[minimumMaximumIndex].normal,
-							surfaceSamples[maximumMaximumIndex].normal));
-						interpolatedSample.velocity = bilinearVector(
-							surfaceSamples[minimumMinimumIndex].velocity,
-							surfaceSamples[maximumMinimumIndex].velocity,
-							surfaceSamples[minimumMaximumIndex].velocity,
-							surfaceSamples[maximumMaximumIndex].velocity);
-						return;
-					}
-
-					const float safeNormalY = std::fabs(fittedSurfaceNormal.y) > 0.0001f
-						? fittedSurfaceNormal.y
-						: 1.0f;
-					const float planeHeight = fittedSurfaceHeight -
-						((queryPosition.x - worldHullCenter.x) * fittedSurfaceNormal.x +
-						 (queryPosition.z - worldHullCenter.z) * fittedSurfaceNormal.z) /
-							safeNormalY;
-					interpolatedSample.isValid = true;
-					interpolatedSample.oceanGameObjectId = resolvedOceanGameObjectId;
-					interpolatedSample.position = {
-						queryPosition.x,
-						planeHeight,
-						queryPosition.z};
-					interpolatedSample.normal = fittedSurfaceNormal;
-					interpolatedSample.velocity = averageSurfaceVelocity;
-				};
-
-				const Vector3 fittedSurfacePosition{
-					worldHullCenter.x,
-					fittedSurfaceHeight,
-					worldHullCenter.z};
-				EditorJoltPhysicsManager::SubmergedVolumeInfo volumeInfo{};
-				const bool hasShapeVolume = joltPhysicsManager_.GetSubmergedVolume(
-					gameObject.id,
-					fittedSurfacePosition,
-					fittedSurfaceNormal,
-					volumeInfo);
-
-				if (hasShapeVolume) {
-					const float safeFixedDeltaTime = (std::max)(fixedDeltaTime, 0.0001f);
-					float resolvedBodyMass = rigidBodyComponent->mass;
-					joltPhysicsManager_.GetBodyMass(gameObject.id, resolvedBodyMass);
-					const float safeMass = (std::max)(resolvedBodyMass, 0.01f);
-					const float buoyancyStrength = (std::max)(buoyancySettings.strength, 0.0f);
-					const float shapeWidth = (std::max)(std::fabs(volumeInfo.shapeSize.x), 0.05f);
-					const float shapeHeight = (std::max)(std::fabs(volumeInfo.shapeSize.y), 0.05f);
-					const float shapeLength = (std::max)(std::fabs(volumeInfo.shapeSize.z), 0.05f);
-					const float shapeRadius = 0.5f * (std::max)(
-						(std::max)(shapeWidth, shapeHeight),
-						shapeLength);
-					const float forwardProjectedArea = shapeWidth * shapeHeight;
-					const float lateralProjectedArea = shapeLength * shapeHeight;
-					const float verticalProjectedArea = shapeWidth * shapeLength;
-					const float maximumProjectedArea = (std::max)(
-						(std::max)(forwardProjectedArea, lateralProjectedArea),
-						verticalProjectedArea);
-					const float submergedRatio = (std::clamp)(
-						volumeInfo.submergedVolume / volumeInfo.totalVolume,
-						0.0f,
-						1.0f);
-					BuoyancyRuntimeState& buoyancyState = buoyancyRuntimeStates_[gameObject.id];
-					float enteringVolumeRate = 0.0f;
-
-					if (buoyancyState.hasPreviousSample) {
-						enteringVolumeRate = (std::max)(
-							(volumeInfo.submergedVolume - buoyancyState.previousSubmergedVolume) /
-								safeFixedDeltaTime,
-							0.0f);
-					}
-
-					buoyancyState.previousSubmergedVolume = volumeInfo.submergedVolume;
-					buoyancyState.hasPreviousSample = true;
-
-					if (submergedRatio <= 0.000001f) {
-						buoyancyState.hasPreviousRelativeWaterVelocity = false;
-						buoyancyState.hasPreviousAngularVelocity = false;
-						buoyancyState.hasPreviousHydrostaticOffset = false;
-						buoyancyState.filteredRelativeWaterAcceleration = {};
-						buoyancyState.filteredAngularAcceleration = {};
-						buoyancyState.filteredHydrostaticOffset = {};
-						continue;
-					}
-
-					// 自動物理は水密度を直接使い、質量と排水体積の釣り合いで喫水を決める。
-					// 旧Sceneの手動方式だけは、既存の浮力値から実効密度を逆算して互換性を保つ。
-					float effectiveFluidDensity = 0.0f;
-
-					if (buoyancySettings.automaticPhysicalProperties) {
-						effectiveFluidDensity = (std::max)(buoyancySettings.waterDensity, 0.0f);
-					}
-					else if (gravityMagnitude > 0.0001f && volumeInfo.totalVolume > 0.000001f) {
-						effectiveFluidDensity =
-							safeMass * buoyancyStrength /
-							(gravityMagnitude * volumeInfo.totalVolume);
-					}
-
-					const Vector3 centerToBuoyancy = Subtract(
-						volumeInfo.centerOfBuoyancy,
-						volumeInfo.centerOfMass);
-					const Vector3 centerOfBuoyancyVelocity = Add(
-						rigidBodyComponent->velocity,
-						Cross(rigidBodyComponent->angularVelocity, centerToBuoyancy));
-					const Vector3 relativeWaterVelocity = Subtract(
-						centerOfBuoyancyVelocity,
-						averageSurfaceVelocity);
-					const float relativeVerticalVelocity = Dot(
-						relativeWaterVelocity,
-						buoyancyUp);
-					Vector3 addedMassForce{};
-					// 対角付加質量。Coriolis項でも同じ値を使うためループ外へ出す。
-					float surgeAddedMass = 0.0f;
-					float swayAddedMass = 0.0f;
-					float heaveAddedMass = 0.0f;
-
-					if (buoyancySettings.automaticPhysicalProperties &&
-						buoyancyState.hasPreviousRelativeWaterVelocity) {
-						const Vector3 measuredRelativeWaterAcceleration = Multiply(
-							1.0f / safeFixedDeltaTime,
-							Subtract(
-								relativeWaterVelocity,
-								buoyancyState.previousRelativeWaterVelocity));
-						constexpr float kAccelerationFilterTime = 0.08f;
-						const float accelerationFilterResponse = 1.0f - std::exp(
-							-safeFixedDeltaTime / kAccelerationFilterTime);
-						buoyancyState.filteredRelativeWaterAcceleration = Add(
-							Multiply(
-								1.0f - accelerationFilterResponse,
-								buoyancyState.filteredRelativeWaterAcceleration),
-							Multiply(
-								accelerationFilterResponse,
-								measuredRelativeWaterAcceleration));
-						const float displacedFluidMass =
-							effectiveFluidDensity * volumeInfo.submergedVolume;
-						const auto addAxisAddedMassForce = [
-							&addedMassForce,
-							&buoyancyState,
-							displacedFluidMass,
-							maximumProjectedArea](
-								const Vector3& axis,
-								float projectedArea) {
-							const float addedMassCoefficient = (std::clamp)(
-								projectedArea / (std::max)(maximumProjectedArea, 0.0001f),
-								0.1f,
-								1.0f);
-							const float axisAcceleration = Dot(
-								buoyancyState.filteredRelativeWaterAcceleration,
-								axis);
-							const float axisAddedMass = displacedFluidMass * addedMassCoefficient;
-							addedMassForce = Add(
-								addedMassForce,
-								Multiply(-axisAddedMass * axisAcceleration, axis));
-							return axisAddedMass;
-						};
-						surgeAddedMass = addAxisAddedMassForce(boatForward, forwardProjectedArea);
-						swayAddedMass = addAxisAddedMassForce(boatRight, lateralProjectedArea);
-						heaveAddedMass = addAxisAddedMassForce(boatUp, verticalProjectedArea);
-						const float maximumAddedMassForce = safeMass * gravityMagnitude * 6.0f;
-						const float addedMassForceLength = Length(addedMassForce);
-
-						if (addedMassForceLength > maximumAddedMassForce &&
-							addedMassForceLength > 0.0001f) {
-							addedMassForce = Multiply(
-								maximumAddedMassForce / addedMassForceLength,
-								addedMassForce);
-						}
-					}
-					else if (!buoyancySettings.automaticPhysicalProperties) {
-						buoyancyState.filteredRelativeWaterAcceleration = {};
-					}
-
-					buoyancyState.previousRelativeWaterVelocity = relativeWaterVelocity;
-					buoyancyState.hasPreviousRelativeWaterVelocity =
-						buoyancySettings.automaticPhysicalProperties;
-
-					// 船体が回転すると周囲の水も角加速する。軸ごとの投影面積と排水流体質量から
-					// 回転付加慣性を求め、差分Noiseは短い時定数で平滑化する。
-					Vector3 rotationalAddedInertiaTorque{};
-
-					if (buoyancySettings.automaticPhysicalProperties &&
-						buoyancyState.hasPreviousAngularVelocity) {
-						const Vector3 measuredAngularAcceleration = Multiply(
-							1.0f / safeFixedDeltaTime,
-							Subtract(
-								rigidBodyComponent->angularVelocity,
-								buoyancyState.previousAngularVelocity));
-						constexpr float kAngularAccelerationFilterTime = 0.1f;
-						const float angularFilterResponse = 1.0f - std::exp(
-							-safeFixedDeltaTime / kAngularAccelerationFilterTime);
-						buoyancyState.filteredAngularAcceleration = Add(
-							Multiply(
-								1.0f - angularFilterResponse,
-								buoyancyState.filteredAngularAcceleration),
-							Multiply(
-								angularFilterResponse,
-								measuredAngularAcceleration));
-						const float displacedFluidMass =
-							effectiveFluidDensity * volumeInfo.submergedVolume;
-						const float rollAddedInertiaCoefficient = (std::clamp)(
-							forwardProjectedArea / (std::max)(maximumProjectedArea, 0.0001f),
-							0.1f,
-							1.0f);
-						const float pitchAddedInertiaCoefficient = (std::clamp)(
-							lateralProjectedArea / (std::max)(maximumProjectedArea, 0.0001f),
-							0.1f,
-							1.0f);
-						const float yawAddedInertiaCoefficient = (std::clamp)(
-							verticalProjectedArea / (std::max)(maximumProjectedArea, 0.0001f),
-							0.1f,
-							1.0f);
-						const float rollAddedInertia =
-							rollAddedInertiaCoefficient * displacedFluidMass *
-							(shapeWidth * shapeWidth + shapeHeight * shapeHeight) / 12.0f;
-						const float pitchAddedInertia =
-							pitchAddedInertiaCoefficient * displacedFluidMass *
-							(shapeLength * shapeLength + shapeHeight * shapeHeight) / 12.0f;
-						const float yawAddedInertia =
-							yawAddedInertiaCoefficient * displacedFluidMass *
-							(shapeWidth * shapeWidth + shapeLength * shapeLength) / 12.0f;
-						rotationalAddedInertiaTorque = Add(
-							Multiply(
-								-rollAddedInertia * Dot(
-									buoyancyState.filteredAngularAcceleration,
-									boatForward),
-								boatForward),
-							Multiply(
-								-pitchAddedInertia * Dot(
-									buoyancyState.filteredAngularAcceleration,
-									boatRight),
-								boatRight));
-						rotationalAddedInertiaTorque = Add(
-							rotationalAddedInertiaTorque,
-							Multiply(
-								-yawAddedInertia * Dot(
-									buoyancyState.filteredAngularAcceleration,
-									boatUp),
-								boatUp));
-						const float maximumAddedInertiaTorque =
-							safeMass * shapeRadius * gravityMagnitude * 4.0f;
-						const float addedInertiaTorqueLength = Length(rotationalAddedInertiaTorque);
-
-						if (addedInertiaTorqueLength > maximumAddedInertiaTorque &&
-							addedInertiaTorqueLength > 0.0001f) {
-							rotationalAddedInertiaTorque = Multiply(
-								maximumAddedInertiaTorque / addedInertiaTorqueLength,
-								rotationalAddedInertiaTorque);
-						}
-					}
-					else if (!buoyancySettings.automaticPhysicalProperties) {
-						buoyancyState.filteredAngularAcceleration = {};
-					}
-
-					buoyancyState.previousAngularVelocity = rigidBodyComponent->angularVelocity;
-					buoyancyState.hasPreviousAngularVelocity =
-						buoyancySettings.automaticPhysicalProperties;
-
-					// Translational diagonal added-mass Coriolis coupling.
-					// Produces Munk-type yaw/pitch/roll moments for anisotropic added mass.
-					// This is not a complete 6-DOF added-mass Coriolis matrix.
-					//
-					// M_A*νdot + C_A(ν)*ν = τ の並進部分について、付加運動量を p_A = A*v とすると
-					// 左辺のCoriolis由来Momentは v × p_A。付加質量を上で -m_A*a の外力として
-					// 右辺へ移しているので、加えるTorqueは符号を反転した -(v × p_A) になる。
-					//
-					// 成分式(Mx/My/Mz)を書くと軸対応を誤りやすいため、既存の正規直交船体基底を
-					// 使ったWorld空間の1本のベクトル式で求める。
-					Vector3 addedMassCoriolisTorque{};
-
-					if (buoyancySettings.automaticPhysicalProperties) {
-						const float surgeSpeed = Dot(relativeWaterVelocity, boatForward);
-						const float swaySpeed = Dot(relativeWaterVelocity, boatRight);
-						const float heaveSpeed = Dot(relativeWaterVelocity, boatUp);
-						const Vector3 bodyRelativeVelocity = Add(
-							Multiply(surgeSpeed, boatForward),
-							Add(
-								Multiply(swaySpeed, boatRight),
-								Multiply(heaveSpeed, boatUp)));
-						const Vector3 addedMomentum = Add(
-							Multiply(surgeAddedMass * surgeSpeed, boatForward),
-							Add(
-								Multiply(swayAddedMass * swaySpeed, boatRight),
-								Multiply(heaveAddedMass * heaveSpeed, boatUp)));
-						addedMassCoriolisTorque = Multiply(
-							-1.0f,
-							Cross(bodyRelativeVelocity, addedMomentum));
-						// 付加慣性Torqueと同じ基準で頭打ちにする。
-						const float maximumCoriolisTorque =
-							safeMass * shapeRadius * gravityMagnitude * 4.0f;
-						const float coriolisTorqueLength = Length(addedMassCoriolisTorque);
-
-						if (coriolisTorqueLength > maximumCoriolisTorque &&
-							coriolisTorqueLength > 0.0001f) {
-							addedMassCoriolisTorque = Multiply(
-								maximumCoriolisTorque / coriolisTorqueLength,
-								addedMassCoriolisTorque);
-						}
-					}
-
-					// 水面を少し上げた2回目の実Shape切断から dV/dh を求める。
-					// これは自由水面における水線面積となり、上下動の復元剛性と臨界減衰を決める。
-					const float waterplaneProbeHeight = (std::clamp)(
-						shapeHeight * 0.02f,
-						0.02f,
-						0.25f);
-					const Vector3 raisedSurfacePosition = Add(
-						fittedSurfacePosition,
-						Multiply(waterplaneProbeHeight, buoyancyUp));
-					EditorJoltPhysicsManager::SubmergedVolumeInfo raisedVolumeInfo{};
-					const bool hasRaisedVolume = joltPhysicsManager_.GetSubmergedVolume(
-						gameObject.id,
-						raisedSurfacePosition,
-						fittedSurfaceNormal,
-						raisedVolumeInfo);
-					const float maximumWaterplaneArea = (std::max)(
-						shapeWidth * shapeLength * 2.0f,
-						0.01f);
-					float waterplaneArea = 0.0f;
-
-					if (hasRaisedVolume) {
-						waterplaneArea = (std::clamp)(
-							(raisedVolumeInfo.submergedVolume - volumeInfo.submergedVolume) /
-								waterplaneProbeHeight,
-							0.0f,
-							maximumWaterplaneArea);
-					}
-					else {
-						const float partialSubmersionWeight = (std::clamp)(
-							4.0f * submergedRatio * (1.0f - submergedRatio),
-							0.0f,
-							1.0f);
-						waterplaneArea = shapeWidth * shapeLength * partialSubmersionWeight;
-					}
-
-					// 静水圧は重力と反対方向へだけ働く。実浮心へ加えるため、傾斜時の復元Momentは
-					// Center of BuoyancyとCenter of Massの位置関係から自然にJoltへ発生する。
-					const Vector3 hydrostaticForce = Multiply(
-						effectiveFluidDensity * volumeInfo.submergedVolume * gravityMagnitude,
-						buoyancyUp);
-					const float heaveStiffness =
-						effectiveFluidDensity * gravityMagnitude * waterplaneArea;
-					const float heaveDampingRatio = (std::clamp)(
-						buoyancySettings.automaticPhysicalProperties
-							? 0.7f
-							: buoyancySettings.damping * 0.1f,
-						0.0f,
-						2.0f);
-					const float criticalHeaveDamping =
-						2.0f * heaveDampingRatio * std::sqrt((std::max)(
-							heaveStiffness * safeMass,
-							0.0f));
-					const float maximumHeaveDampingForce =
-						safeMass * std::fabs(relativeVerticalVelocity) / safeFixedDeltaTime;
-					const float heaveDampingForceMagnitude = (std::clamp)(
-						-criticalHeaveDamping * relativeVerticalVelocity,
-						-maximumHeaveDampingForce,
-						maximumHeaveDampingForce);
-					const Vector3 heaveDampingForce = Multiply(
-						heaveDampingForceMagnitude,
-						buoyancyUp);
-					Vector3 rotationalRadiationDampingTorque{};
-
-					if (buoyancySettings.automaticPhysicalProperties &&
-						volumeInfo.submergedVolume > 0.000001f &&
-						waterplaneArea > 0.000001f) {
-						const float buoyancyCenterAboveMass = Dot(
-							Subtract(volumeInfo.centerOfBuoyancy, volumeInfo.centerOfMass),
-							buoyancyUp);
-						const float rollWaterplaneMoment =
-							waterplaneArea * shapeWidth * shapeWidth / 12.0f;
-						const float pitchWaterplaneMoment =
-							waterplaneArea * shapeLength * shapeLength / 12.0f;
-						const float rollMetacentricHeight = (std::max)(
-							rollWaterplaneMoment / volumeInfo.submergedVolume +
-								buoyancyCenterAboveMass,
-							0.0f);
-						const float pitchMetacentricHeight = (std::max)(
-							pitchWaterplaneMoment / volumeInfo.submergedVolume +
-								buoyancyCenterAboveMass,
-							0.0f);
-						const float rollHydrostaticStiffness =
-							effectiveFluidDensity * gravityMagnitude *
-							volumeInfo.submergedVolume * rollMetacentricHeight;
-						const float pitchHydrostaticStiffness =
-							effectiveFluidDensity * gravityMagnitude *
-							volumeInfo.submergedVolume * pitchMetacentricHeight;
-						const float rollBodyInertia =
-							safeMass * (shapeWidth * shapeWidth + shapeHeight * shapeHeight) / 12.0f;
-						const float pitchBodyInertia =
-							safeMass * (shapeLength * shapeLength + shapeHeight * shapeHeight) / 12.0f;
-						constexpr float kRotationalRadiationDampingRatio = 0.35f;
-						const auto calculateRadiationDampingTorque = [
-							safeFixedDeltaTime](
-								float angularSpeed,
-								float bodyInertia,
-								float hydrostaticStiffness) {
-							const float dampingCoefficient =
-								2.0f * kRotationalRadiationDampingRatio * std::sqrt((std::max)(
-									bodyInertia * hydrostaticStiffness,
-									0.0f));
-							const float maximumStoppingTorque =
-								bodyInertia * std::fabs(angularSpeed) / safeFixedDeltaTime;
-							return (std::clamp)(
-								-dampingCoefficient * angularSpeed,
-								-maximumStoppingTorque,
-								maximumStoppingTorque);
-						};
-						const float rollDampingTorque = calculateRadiationDampingTorque(
-							Dot(rigidBodyComponent->angularVelocity, boatForward),
-							rollBodyInertia,
-							rollHydrostaticStiffness);
-						const float pitchDampingTorque = calculateRadiationDampingTorque(
-							Dot(rigidBodyComponent->angularVelocity, boatRight),
-							pitchBodyInertia,
-							pitchHydrostaticStiffness);
-						rotationalRadiationDampingTorque = Add(
-							Multiply(rollDampingTorque, boatForward),
-							Multiply(pitchDampingTorque, boatRight));
-					}
-
-					// 実Shape表面を水面で切り、各水没面の法線へ圧力抗力、接線へ摩擦抗力を加える。
-					// 船首の斜面と舷側の平面は法線・水没面積が異なるため、同じ速度でも抵抗が変わる。
-					const float forwardSpeed = Dot(relativeWaterVelocity, boatForward);
-					const float lateralSpeed = Dot(relativeWaterVelocity, boatRight);
-					const float verticalSpeed = Dot(relativeWaterVelocity, boatUp);
-					Vector3 hydrodynamicDragForce{};
-					Vector3 hydrodynamicDragTorque{};
-					// Phase2計測用に圧力と摩擦を分けて集計する。合力は従来どおり
-					// hydrodynamicDragForce へ入れるので、物理挙動は変わらない。
-					Vector3 diagnosticPressureForce{};
-					Vector3 diagnosticSkinFrictionForce{};
-					float diagnosticWettedArea = 0.0f;
-					Vector3 weightedHydrostaticApplicationPoint{};
-					float hydrostaticApplicationWeight = 0.0f;
-					const bool hasSurfaceTriangles =
-						joltPhysicsManager_.GetHydrodynamicSurfaceTriangles(
-							gameObject.id,
-							buoyancyState.surfaceTriangles);
-					int32_t submergedPanelCount = 0;
-
-					if (hasSurfaceTriangles) {
-						const float forwardDragCoefficient = buoyancySettings.automaticPhysicalProperties
-							? 1.0f
-							: (std::max)(buoyancySettings.waterDrag, 0.0f);
-						const float lateralDragCoefficient = buoyancySettings.automaticPhysicalProperties
-							? 1.0f
-							: (std::max)(buoyancySettings.lateralDrag, 0.0f);
-						const float verticalDragCoefficient = buoyancySettings.automaticPhysicalProperties
-							? 1.0f
-							: (std::max)(buoyancySettings.verticalDrag, 0.0f);
-						const float rotationalVelocityScale = buoyancySettings.automaticPhysicalProperties
-							? 1.0f
-							: (std::max)(buoyancySettings.angularDrag, 0.0f);
-
-						for (const EditorJoltPhysicsManager::HydrodynamicSurfaceTriangle&
-							surfaceTriangle : buoyancyState.surfaceTriangles) {
-							const std::array<Vector3, 3u> panelVertices = {
-								surfaceTriangle.first,
-								surfaceTriangle.second,
-								surfaceTriangle.third};
-							std::array<float, 3u> vertexSurfaceDistances{};
-
-							for (size_t vertexIndex = 0u;
-								vertexIndex < panelVertices.size();
-								vertexIndex++) {
-								EditorOceanSurfaceSample vertexSurfaceSample{};
-								interpolateSurfaceSample(
-									panelVertices[vertexIndex],
-									vertexSurfaceSample);
-								vertexSurfaceDistances[vertexIndex] = Dot(
-									Subtract(
-										panelVertices[vertexIndex],
-										vertexSurfaceSample.position),
-									buoyancyUp);
-							}
-
-							SubmergedSurfacePanel submergedPanel{};
-
-							if (!BuildSubmergedSurfacePanel(
-									surfaceTriangle,
-									vertexSurfaceDistances,
-									submergedPanel)) {
-								continue;
-							}
-
-							EditorOceanSurfaceSample panelSurfaceSample{};
-							interpolateSurfaceSample(
-								submergedPanel.center,
-								panelSurfaceSample);
-							const Vector3 centerToPanel = Subtract(
-								submergedPanel.center,
-								volumeInfo.centerOfMass);
-							const float panelDepth = (std::max)(
-								-Dot(
-									Subtract(submergedPanel.center, panelSurfaceSample.position),
-									buoyancyUp),
-								0.0f);
-							const float upwardHydrostaticProjection = (std::max)(
-								-Dot(submergedPanel.outwardNormal, buoyancyUp),
-								0.0f);
-							const float panelHydrostaticWeight =
-								panelDepth * submergedPanel.area * upwardHydrostaticProjection;
-
-							if (panelHydrostaticWeight > 0.000001f) {
-								weightedHydrostaticApplicationPoint = Add(
-									weightedHydrostaticApplicationPoint,
-									Multiply(panelHydrostaticWeight, submergedPanel.center));
-								hydrostaticApplicationWeight += panelHydrostaticWeight;
-							}
-
-							const Vector3 rotationalPanelVelocity = Multiply(
-								rotationalVelocityScale,
-								Cross(rigidBodyComponent->angularVelocity, centerToPanel));
-							const Vector3 panelVelocity = Add(
-								rigidBodyComponent->velocity,
-								rotationalPanelVelocity);
-							const Vector3 relativePanelVelocity = Subtract(
-								panelVelocity,
-								panelSurfaceSample.velocity);
-							const float normalVelocity = Dot(
-								relativePanelVelocity,
-								submergedPanel.outwardNormal);
-							const float enteringNormalSpeed = (std::max)(normalVelocity, 0.0f);
-							const Vector3 tangentialVelocity = Subtract(
-								relativePanelVelocity,
-								Multiply(normalVelocity, submergedPanel.outwardNormal));
-							const float tangentialSpeed = Length(tangentialVelocity);
-
-							// 相対運動がない水没面は抗力も摩擦も0なので、高価な係数計算を省く。
-							// 力は0でも濡れ面ではあるため、濡れ面積の集計だけは行う。
-							if (enteringNormalSpeed <= 0.0001f && tangentialSpeed <= 0.0001f) {
-								diagnosticWettedArea += submergedPanel.area;
-								submergedPanelCount++;
-								continue;
-							}
-
-							Vector3 pressureForce{};
-
-							if (enteringNormalSpeed > 0.0001f) {
-								const float forwardAlignment = std::fabs(Dot(
-									submergedPanel.outwardNormal,
-									boatForward));
-								const float lateralAlignment = std::fabs(Dot(
-									submergedPanel.outwardNormal,
-									boatRight));
-								const float verticalAlignment = std::fabs(Dot(
-									submergedPanel.outwardNormal,
-									boatUp));
-								const float alignmentTotal = (std::max)(
-									forwardAlignment + lateralAlignment + verticalAlignment,
-									0.0001f);
-								const float pressureDragCoefficient =
-									(forwardDragCoefficient * forwardAlignment +
-										lateralDragCoefficient * lateralAlignment +
-										verticalDragCoefficient * verticalAlignment) /
-									alignmentTotal;
-								const float pressureForceMagnitude =
-									0.5f * effectiveFluidDensity * pressureDragCoefficient *
-									submergedPanel.area * enteringNormalSpeed * enteringNormalSpeed;
-								pressureForce = Multiply(
-									-pressureForceMagnitude,
-									submergedPanel.outwardNormal);
-							}
-
-							Vector3 skinFrictionForce{};
-
-							if (tangentialSpeed > 0.0001f) {
-								const float reynoldsNumber = (std::max)(
-									tangentialSpeed * shapeLength / kWaterKinematicViscosity,
-									1.0f);
-								float skinFrictionCoefficient = 0.0f;
-
-								if (reynoldsNumber < 500000.0f) {
-									skinFrictionCoefficient = 1.328f / std::sqrt(reynoldsNumber);
-								}
-								else {
-									const float logarithmicTerm = std::log10(reynoldsNumber) - 2.0f;
-									skinFrictionCoefficient = 0.075f /
-										(logarithmicTerm * logarithmicTerm);
-								}
-
-								skinFrictionCoefficient = (std::clamp)(
-									skinFrictionCoefficient * forwardDragCoefficient,
-									0.0f,
-									0.02f);
-								const float skinFrictionForceMagnitude =
-									0.5f * effectiveFluidDensity * skinFrictionCoefficient *
-									submergedPanel.area * tangentialSpeed * tangentialSpeed;
-								skinFrictionForce = Multiply(
-									-skinFrictionForceMagnitude / tangentialSpeed,
-									tangentialVelocity);
-							}
-
-							const Vector3 panelForce = Add(pressureForce, skinFrictionForce);
-							hydrodynamicDragForce = Add(hydrodynamicDragForce, panelForce);
-							hydrodynamicDragTorque = Add(
-								hydrodynamicDragTorque,
-								Cross(centerToPanel, panelForce));
-							diagnosticPressureForce = Add(diagnosticPressureForce, pressureForce);
-							diagnosticSkinFrictionForce = Add(
-								diagnosticSkinFrictionForce,
-								skinFrictionForce);
-							diagnosticWettedArea += submergedPanel.area;
-							submergedPanelCount++;
-						}
-
-						if (submergedPanelCount > 0) {
-							const float maximumPanelForce = safeMass * (std::max)(
-								Length(relativeWaterVelocity) / safeFixedDeltaTime,
-								gravityMagnitude * 8.0f);
-							const float maximumPanelTorque = safeMass * shapeRadius * (std::max)(
-								Length(rigidBodyComponent->angularVelocity) * shapeRadius /
-									safeFixedDeltaTime,
-								gravityMagnitude * 8.0f);
-							float panelForceScale = 1.0f;
-							const float panelForceLength = Length(hydrodynamicDragForce);
-							const float panelTorqueLength = Length(hydrodynamicDragTorque);
-
-							if (panelForceLength > maximumPanelForce && panelForceLength > 0.0001f) {
-								panelForceScale = (std::min)(
-									panelForceScale,
-									maximumPanelForce / panelForceLength);
-							}
-
-							if (panelTorqueLength > maximumPanelTorque && panelTorqueLength > 0.0001f) {
-								panelForceScale = (std::min)(
-									panelForceScale,
-									maximumPanelTorque / panelTorqueLength);
-							}
-
-							hydrodynamicDragForce = Multiply(
-								panelForceScale,
-								hydrodynamicDragForce);
-							hydrodynamicDragTorque = Multiply(
-								panelForceScale,
-								hydrodynamicDragTorque);
-						}
-					}
-					Vector3 hydrostaticApplicationPoint = volumeInfo.centerOfBuoyancy;
-
-					// 合計浮力はJoltの排水体積から変えず、局所FFT水深を積分した位置へ作用点だけを寄せる。
-					// 開いたMeshや反転法線ではWeightが作れないため、Jolt浮心へ安全に戻す。
-					if (hydrostaticApplicationWeight > 0.000001f) {
-						const Vector3 localHydrostaticApplicationPoint = Multiply(
-							1.0f / hydrostaticApplicationWeight,
-							weightedHydrostaticApplicationPoint);
-						Vector3 localHydrostaticOffset = Subtract(
-							localHydrostaticApplicationPoint,
-							volumeInfo.centerOfBuoyancy);
-						const float maximumHydrostaticOffset = shapeRadius * 0.35f;
-						const float localHydrostaticOffsetLength = Length(localHydrostaticOffset);
-
-						if (localHydrostaticOffsetLength > maximumHydrostaticOffset &&
-							localHydrostaticOffsetLength > 0.0001f) {
-							localHydrostaticOffset = Multiply(
-								maximumHydrostaticOffset / localHydrostaticOffsetLength,
-								localHydrostaticOffset);
-						}
-
-						constexpr float kHydrostaticPointFilterTime = 0.08f;
-						const float hydrostaticPointResponse = 1.0f - std::exp(
-							-safeFixedDeltaTime / kHydrostaticPointFilterTime);
-
-						if (buoyancyState.hasPreviousHydrostaticOffset) {
-							buoyancyState.filteredHydrostaticOffset = Add(
-								Multiply(
-									1.0f - hydrostaticPointResponse,
-									buoyancyState.filteredHydrostaticOffset),
-								Multiply(hydrostaticPointResponse, localHydrostaticOffset));
-						}
-						else {
-							buoyancyState.filteredHydrostaticOffset = localHydrostaticOffset;
-						}
-
-						buoyancyState.hasPreviousHydrostaticOffset = true;
-						hydrostaticApplicationPoint = Add(
-							volumeInfo.centerOfBuoyancy,
-							buoyancyState.filteredHydrostaticOffset);
-					}
-					else {
-						buoyancyState.filteredHydrostaticOffset = {};
-						buoyancyState.hasPreviousHydrostaticOffset = false;
-					}
-
-					// Shape面を取得できない場合だけ、外接寸法の軸別投影面積へ戻す。
-					if (submergedPanelCount <= 0) {
-						const float wettedAreaRatio = std::pow(submergedRatio, 2.0f / 3.0f);
-						const auto calculateQuadraticDragForce = [
-							effectiveFluidDensity,
-							safeMass,
-							safeFixedDeltaTime,
-							wettedAreaRatio](
-								float axisSpeed,
-								float dragCoefficient,
-								float projectedArea,
-								const Vector3& axisDirection) {
-							const float maximumStoppingForce =
-								safeMass * std::fabs(axisSpeed) / safeFixedDeltaTime;
-							const float dragForceMagnitude = (std::clamp)(
-								-0.5f * effectiveFluidDensity *
-									(std::max)(dragCoefficient, 0.0f) * projectedArea *
-									wettedAreaRatio * axisSpeed * std::fabs(axisSpeed),
-								-maximumStoppingForce,
-								maximumStoppingForce);
-							return Multiply(dragForceMagnitude, axisDirection);
-						};
-						hydrodynamicDragForce = calculateQuadraticDragForce(
-							forwardSpeed,
-							buoyancySettings.automaticPhysicalProperties
-								? 1.0f
-								: buoyancySettings.waterDrag,
-							shapeWidth * shapeHeight,
-							boatForward);
-						hydrodynamicDragForce = Add(
-							hydrodynamicDragForce,
-							calculateQuadraticDragForce(
-								lateralSpeed,
-								buoyancySettings.automaticPhysicalProperties
-									? 1.0f
-									: buoyancySettings.lateralDrag,
-								shapeLength * shapeHeight,
-								boatRight));
-						hydrodynamicDragForce = Add(
-							hydrodynamicDragForce,
-							calculateQuadraticDragForce(
-								verticalSpeed,
-								buoyancySettings.automaticPhysicalProperties
-									? 1.0f
-									: buoyancySettings.verticalDrag,
-								shapeWidth * shapeLength,
-								boatUp));
-					}
-					Vector3 upwardSurfaceNormal = fittedSurfaceNormal;
-
-					if (Dot(upwardSurfaceNormal, buoyancyUp) < 0.0f) {
-						upwardSurfaceNormal = Multiply(-1.0f, upwardSurfaceNormal);
-					}
-
-					const float normalInfluence = (std::clamp)(
-						buoyancySettings.automaticPhysicalProperties
-							? 0.2f
-							: buoyancySettings.normalInfluence,
-						0.0f,
-						1.0f);
-					const Vector3 impactDirection = Normalize(Add(
-						Multiply(1.0f - normalInfluence, buoyancyUp),
-						Multiply(normalInfluence, upwardSurfaceNormal)));
-					const float enteringWaterSpeed = (std::max)(
-						-relativeVerticalVelocity,
-						0.0f);
-					const float maximumSlammingForce =
-						safeMass * gravityMagnitude * 4.0f;
-					const float resolvedSlammingStrength = buoyancySettings.automaticPhysicalProperties
-						? 1.0f
-						: (std::max)(buoyancySettings.slammingStrength, 0.0f);
-					const float slammingForceMagnitude = (std::clamp)(
-						effectiveFluidDensity *
-							resolvedSlammingStrength *
-							enteringVolumeRate * enteringWaterSpeed,
-						0.0f,
-						maximumSlammingForce);
-					const Vector3 slammingForce = Multiply(
-						slammingForceMagnitude,
-						impactDirection);
-					Vector3 waveMakingResistanceForce{};
-
-					// 造波抵抗は面圧力や表面摩擦とは別に、排水量基準面積とFroude数から求める。
-					// 船種判定は行わず、同じ式が形状寸法と速度の違いをそのまま反映する。
-					if (buoyancySettings.automaticPhysicalProperties &&
-						gravityMagnitude > 0.0001f &&
-						std::fabs(forwardSpeed) > 0.0001f) {
-						const float froudeNumber = std::fabs(forwardSpeed) / std::sqrt(
-							gravityMagnitude * shapeLength);
-						const float hullFullness = (std::clamp)(
-							shapeWidth / shapeLength,
-							0.05f,
-							1.0f);
-						const float displacementReferenceArea = std::pow(
-							(std::max)(volumeInfo.submergedVolume, 0.000001f),
-							2.0f / 3.0f);
-						const float resistanceHump = std::exp(
-							-std::pow((froudeNumber - 0.38f) / 0.16f, 2.0f));
-						const float planingTransition = (std::clamp)(
-							(froudeNumber - 0.25f) / 0.75f,
-							0.0f,
-							1.0f);
-						const float waveResistanceCoefficient = hullFullness *
-							(0.002f + 0.010f * resistanceHump + 0.004f * planingTransition);
-						const float unclampedWaveResistance =
-							0.5f * effectiveFluidDensity * waveResistanceCoefficient *
-							displacementReferenceArea * forwardSpeed * forwardSpeed;
-						const float maximumStoppingForce =
-							safeMass * std::fabs(forwardSpeed) / safeFixedDeltaTime;
-						const float maximumWaveResistance = (std::min)(
-							maximumStoppingForce,
-							safeMass * gravityMagnitude * 2.0f);
-						const float waveResistanceMagnitude = (std::min)(
-							unclampedWaveResistance,
-							maximumWaveResistance);
-						waveMakingResistanceForce = Multiply(
-							-forwardSpeed / std::fabs(forwardSpeed) * waveResistanceMagnitude,
-							boatForward);
-					}
-
-					// Runtime診断値を書き出す。Planing不足の原因が係数・濡れ面・圧力方向の
-					// どれかを切り分けるため、圧力抗力の鉛直上向き成分を船体重量と並べて残す。
-					if (physicsObject.buoyancy != nullptr) {
-						EditorComponent& buoyancyDiagnostics = *physicsObject.buoyancy;
-						buoyancyDiagnostics.buoyancyDebugBuoyancyForce = Length(hydrostaticForce);
-						buoyancyDiagnostics.buoyancyDebugPressureDragForce =
-							Length(diagnosticPressureForce);
-						buoyancyDiagnostics.buoyancyDebugPressureUpwardForce = Dot(
-							diagnosticPressureForce,
-							buoyancyUp);
-						buoyancyDiagnostics.buoyancyDebugSkinFrictionForce =
-							Length(diagnosticSkinFrictionForce);
-						buoyancyDiagnostics.buoyancyDebugAddedMassForce = Length(addedMassForce);
-						buoyancyDiagnostics.buoyancyDebugSlammingForce = Length(slammingForce);
-						buoyancyDiagnostics.buoyancyDebugWaveMakingResistance =
-							Length(waveMakingResistanceForce);
-						buoyancyDiagnostics.buoyancyDebugSubmergedRatio = submergedRatio;
-						buoyancyDiagnostics.buoyancyDebugWettedArea = diagnosticWettedArea;
-						buoyancyDiagnostics.buoyancyDebugForwardSpeed = forwardSpeed;
-						buoyancyDiagnostics.buoyancyDebugWeightForce = safeMass * gravityMagnitude;
-						buoyancyDiagnostics.buoyancyDebugAddedMassCoriolisTorque =
-							addedMassCoriolisTorque;
-						// 船首方向と水に対する進行方向の偏角。Coriolis Momentが偏角を増やす
-						// (不安定化する)向きに働いているかを実測で確かめるために出す。
-						buoyancyDiagnostics.buoyancyDebugSideslipAngleDegrees = std::atan2(
-							Dot(relativeWaterVelocity, boatRight),
-							Dot(relativeWaterVelocity, boatForward)) * 180.0f /
-							3.14159265358979323846f;
-						// 船首の上下角。boatForwardの鉛直成分から求め、正を船首上げとする。
-						buoyancyDiagnostics.buoyancyDebugTrimAngleDegrees =
-							std::asin((std::clamp)(Dot(boatForward, buoyancyUp), -1.0f, 1.0f)) *
-							180.0f / 3.14159265358979323846f;
-					}
-
-					const bool usesSurfacePanels = submergedPanelCount > 0;
-					const Vector3 centerAppliedDragForce = usesSurfacePanels
-						? Vector3{}
-						: hydrodynamicDragForce;
-					const Vector3 dynamicCenterForce = Add(
-						heaveDampingForce,
-						Add(
-							addedMassForce,
-							Add(
-								waveMakingResistanceForce,
-								Add(centerAppliedDragForce, slammingForce))));
-					AddForceAtPosition(
-						gameObject.id,
-						hydrostaticForce,
-						hydrostaticApplicationPoint);
-					AddForceAtPosition(
-						gameObject.id,
-						dynamicCenterForce,
-						volumeInfo.centerOfBuoyancy);
-					AddTorque(
-						gameObject.id,
-						Add(
-							rotationalRadiationDampingTorque,
-							Add(rotationalAddedInertiaTorque, addedMassCoriolisTorque)));
-
-					if (usesSurfacePanels) {
-						AddForce(gameObject.id, hydrodynamicDragForce);
-						AddTorque(gameObject.id, hydrodynamicDragTorque);
-					}
-					else {
-						// 面情報を得られないShapeだけ、外接寸法から回転抵抗を近似する。
-						const float angularDrag = buoyancySettings.automaticPhysicalProperties
-							? 1.0f
-							: (std::max)(buoyancySettings.angularDrag, 0.0f);
-						const float rollRadiusSquared =
-							0.25f * (shapeWidth * shapeWidth + shapeHeight * shapeHeight);
-						const float pitchRadiusSquared =
-							0.25f * (shapeLength * shapeLength + shapeHeight * shapeHeight);
-						const float yawRadiusSquared =
-							0.25f * (shapeWidth * shapeWidth + shapeLength * shapeLength);
-						const float rollAngularSpeed = Dot(
-							rigidBodyComponent->angularVelocity,
-							boatForward);
-						const float pitchAngularSpeed = Dot(
-							rigidBodyComponent->angularVelocity,
-							boatRight);
-						const float yawAngularSpeed = Dot(
-							rigidBodyComponent->angularVelocity,
-							boatUp);
-						const float angularDragScale = safeMass * angularDrag * submergedRatio;
-						Vector3 waterAngularDragTorque = Multiply(
-							-angularDragScale * rollRadiusSquared * rollAngularSpeed,
-							boatForward);
-						waterAngularDragTorque = Add(
-							waterAngularDragTorque,
-							Multiply(
-								-angularDragScale * pitchRadiusSquared * pitchAngularSpeed,
-								boatRight));
-						waterAngularDragTorque = Add(
-							waterAngularDragTorque,
-							Multiply(
-								-angularDragScale * yawRadiusSquared * yawAngularSpeed,
-								boatUp));
-						AddTorque(gameObject.id, waterAngularDragTorque);
-					}
-					continue;
-				}
-			}
-		}
-
-		// 実 Shape の体積取得に対応しない特殊 Shape だけ、従来グリッドを安全策として使う。
-		const BuoyancyGridDimensions gridDimensions = BuildBuoyancyGridDimensions(
-			safeHullSize,
-			worldScale);
-		float resolvedBodyMass = rigidBodyComponent->mass;
-		joltPhysicsManager_.GetBodyMass(gameObject.id, resolvedBodyMass);
-		const float safeMass = (std::max)(resolvedBodyMass, 0.01f);
-		const float worldHullWidth = (std::max)(
-			std::fabs(safeHullSize.x * worldScale.x),
-			0.05f);
-		const float worldHullHeight = (std::max)(
-			std::fabs(safeHullSize.y * worldScale.y),
-			0.05f);
-		const float worldHullLength = (std::max)(
-			std::fabs(safeHullSize.z * worldScale.z),
-			0.05f);
-		const float approximateHullVolume =
-			worldHullWidth * worldHullHeight * worldHullLength;
-		const float automaticBuoyancyStrength =
-			(std::max)(buoyancySettings.waterDensity, 0.0f) *
-			approximateHullVolume * gravityMagnitude / safeMass;
-		const float buoyancyStrength = buoyancySettings.automaticPhysicalProperties
-			? automaticBuoyancyStrength
-			: (std::max)(buoyancySettings.strength, 0.0f);
-		const float automaticBuoyancyDamping =
-			1.4f * std::sqrt((std::max)(buoyancyStrength / worldHullHeight, 0.0f));
-		const float buoyancyDamping = buoyancySettings.automaticPhysicalProperties
-			? automaticBuoyancyDamping
-			: (std::max)(buoyancySettings.damping, 0.0f);
-
-		// B: Collider 自動の浮力物体は、モデル全体の AABB 中心を基準にすると
-		// マストなどの上部構造まで縦グリッドが広がり、転覆モーメントの原因になる。
-		// 縦範囲を「船底（AABB 下端）〜平衡喫水 + 波の余裕」へ制限して配置し直す。
-		Vector3 limitedHullSize = safeHullSize;
-		if (buoyancySettings.limitDraftHeight) {
-			const float equilibriumSubmersionRatio = (std::clamp)(
-				gravityMagnitude / (std::max)(buoyancyStrength, 0.01f),
-				0.2f,
-				0.9f);
-			const float requestedDraftHeight = std::min(
-				safeHullSize.y * equilibriumSubmersionRatio * kBuoyancyDraftOverheadRatio,
-				safeHullSize.y);
-			limitedHullSize.y = (std::max)(requestedDraftHeight, kBuoyancyDraftMinimumHeight);
-		}
-		const float verticalGridHeight = limitedHullSize.y;
-		const BuoyancyGridDimensions limitedGridDimensions = (buoyancySettings.limitDraftHeight)
-			? BuildBuoyancyGridDimensions(limitedHullSize, worldScale)
-			: gridDimensions;
-
-		const int32_t floatPointCount =
-			limitedGridDimensions.countX * limitedGridDimensions.countY * limitedGridDimensions.countZ;
-		const Vector3 localCellSize{
-			safeHullSize.x / static_cast<float>(limitedGridDimensions.countX),
-			verticalGridHeight / static_cast<float>(limitedGridDimensions.countY),
-			safeHullSize.z / static_cast<float>(limitedGridDimensions.countZ)};
-		const Vector3 localCellHalfSize = Multiply(0.5f, localCellSize);
-		const float modelBottomY =
-			buoyancySettings.centerOffset.y - safeHullSize.y * 0.5f;
-		const float gridCenterY = buoyancySettings.limitDraftHeight
-			? modelBottomY + verticalGridHeight * 0.5f
-			: buoyancySettings.centerOffset.y;
-		const Vector3 localHullMinimum{
-			buoyancySettings.centerOffset.x - safeHullSize.x * 0.5f,
-			gridCenterY - verticalGridHeight * 0.5f,
-			buoyancySettings.centerOffset.z - safeHullSize.z * 0.5f};
-		const float pointMass = safeMass / static_cast<float>(floatPointCount);
-		const Matrix4x4 boatWorldMatrix = editorScene_->GetWorldMatrix(gameObject.id);
-		const Matrix4x4 boatRotationMatrix = MakeAffineMatrix(
-			{1.0f, 1.0f, 1.0f},
-			worldRotation,
-			{0.0f, 0.0f, 0.0f});
-		const Vector3 boatRight = Normalize(Transform({1.0f, 0.0f, 0.0f}, boatRotationMatrix));
-		const Vector3 boatUp = Normalize(Transform({0.0f, 1.0f, 0.0f}, boatRotationMatrix));
-		const Vector3 boatForward = Normalize(Transform({0.0f, 0.0f, 1.0f}, boatRotationMatrix));
-		const float forwardDrag = buoyancySettings.automaticPhysicalProperties
-			? 1.0f
-			: (std::max)(buoyancySettings.waterDrag, 0.0f);
-		const float lateralDrag = buoyancySettings.automaticPhysicalProperties
-			? 1.0f
-			: (std::max)(buoyancySettings.lateralDrag, 0.0f);
-		const float verticalDrag = buoyancySettings.automaticPhysicalProperties
-			? 1.0f
-			: (std::max)(buoyancySettings.verticalDrag, 0.0f);
-		const float normalInfluence = (std::clamp)(
-			buoyancySettings.automaticPhysicalProperties
-				? 0.2f
-				: buoyancySettings.normalInfluence,
-			0.0f,
-			1.0f);
-		const float slammingStrength = buoyancySettings.automaticPhysicalProperties
-			? 1.0f
-			: (std::max)(buoyancySettings.slammingStrength, 0.0f);
-		float totalSubmersionRatio = 0.0f;
-		int32_t submergedPointCount = 0;
-		int32_t resolvedOceanGameObjectId =
-			buoyancySettings.oceanGameObjectId;
-
-		for (int32_t gridIndexZ = 0; gridIndexZ < limitedGridDimensions.countZ; gridIndexZ++) {
-			for (int32_t gridIndexX = 0; gridIndexX < limitedGridDimensions.countX; gridIndexX++) {
-				const Vector3 localColumnCenter{
-					localHullMinimum.x +
-						(static_cast<float>(gridIndexX) + 0.5f) * localCellSize.x,
-					gridCenterY,
-					localHullMinimum.z +
-						(static_cast<float>(gridIndexZ) + 0.5f) * localCellSize.z};
-				const Vector3 worldColumnCenter = Transform(localColumnCenter, boatWorldMatrix);
-				const int32_t columnIndex =
-					gridIndexZ * limitedGridDimensions.countX + gridIndexX;
-				const uint32_t objectSampleKey =
-					static_cast<uint32_t>(gameObject.id) * 4099u;
-				const uint64_t surfaceSampleKey = static_cast<uint64_t>(
-					objectSampleKey + static_cast<uint32_t>(columnIndex));
-				EditorOceanSurfaceSample surfaceSample{};
-
-				// 同じ X/Z 列にある縦セルは同じ FFT 水面を共有し、GPU 読み戻しを重複させない。
-				if (!SampleEditorOceanSurface(
-						*editorScene_,
-						resolvedOceanGameObjectId,
-						worldColumnCenter,
-						surfaceSampleKey,
-						oceanElapsedTime,
-						surfaceSample)) {
-					continue;
-				}
-
-				if (resolvedOceanGameObjectId < 0) {
-					resolvedOceanGameObjectId = surfaceSample.oceanGameObjectId;
-				}
-
-				for (int32_t gridIndexY = 0; gridIndexY < limitedGridDimensions.countY; gridIndexY++) {
-					const Vector3 localFloatPoint{
-						localColumnCenter.x,
-						localHullMinimum.y +
-							(static_cast<float>(gridIndexY) + 0.5f) * localCellSize.y,
-						localColumnCenter.z};
-					const Vector3 worldFloatPoint = Transform(localFloatPoint, boatWorldMatrix);
-					const Vector3 worldCellExtentX = Transform(
-						Add(localFloatPoint, {localCellHalfSize.x, 0.0f, 0.0f}),
-						boatWorldMatrix);
-					const Vector3 worldCellExtentY = Transform(
-						Add(localFloatPoint, {0.0f, localCellHalfSize.y, 0.0f}),
-						boatWorldMatrix);
-					const Vector3 worldCellExtentZ = Transform(
-						Add(localFloatPoint, {0.0f, 0.0f, localCellHalfSize.z}),
-						boatWorldMatrix);
-					const float projectedCellHalfHeight = (std::max)(
-						std::fabs(worldCellExtentX.y - worldFloatPoint.y) +
-							std::fabs(worldCellExtentY.y - worldFloatPoint.y) +
-							std::fabs(worldCellExtentZ.y - worldFloatPoint.y),
-						0.005f);
-					const float cellBottomPositionY =
-						worldFloatPoint.y - projectedCellHalfHeight;
-					const float submergedCellHeight = (std::clamp)(
-						surfaceSample.position.y - cellBottomPositionY,
-						0.0f,
-						projectedCellHalfHeight * 2.0f);
-
-					if (submergedCellHeight <= 0.0f) {
-						continue;
-					}
-
-					const float submersionRatio =
-						submergedCellHeight / (projectedCellHalfHeight * 2.0f);
-					Vector3 worldForcePoint = worldFloatPoint;
-					worldForcePoint.y = cellBottomPositionY + submergedCellHeight * 0.5f;
-					const Vector3 centerToPoint = Subtract(worldForcePoint, worldPosition);
-					const Vector3 pointAngularVelocity = Cross(
-						rigidBodyComponent->angularVelocity,
-						centerToPoint);
-					const Vector3 pointVelocity = Add(
-						rigidBodyComponent->velocity,
-						pointAngularVelocity);
-					const Vector3 relativePointVelocity = Subtract(
-						pointVelocity,
-						surfaceSample.velocity);
-					const float relativeVerticalVelocity = Dot(
-						relativePointVelocity,
-						buoyancyUp);
-					const float pointAcceleration = (std::clamp)(
-						buoyancyStrength * submersionRatio -
-							relativeVerticalVelocity * buoyancyDamping * submersionRatio,
-						0.0f,
-						(std::max)(buoyancyStrength * 2.0f, gravityMagnitude * 4.0f));
-					Vector3 waterNormal = surfaceSample.normal;
-
-					if (Dot(waterNormal, buoyancyUp) < 0.0f) {
-						waterNormal = Multiply(-1.0f, waterNormal);
-					}
-
-					const Vector3 buoyancyDirection = Normalize(Add(
-						Multiply(1.0f - normalInfluence, buoyancyUp),
-						Multiply(normalInfluence, waterNormal)));
-					const float enteringWaterSpeed = (std::max)(-relativeVerticalVelocity, 0.0f);
-					const float slammingAcceleration = (std::min)(
-						enteringWaterSpeed * enteringWaterSpeed * slammingStrength *
-							(1.0f - submersionRatio),
-						gravityMagnitude * 4.0f);
-					const Vector3 buoyancyForce = Multiply(
-						pointMass * (pointAcceleration + slammingAcceleration),
-						buoyancyDirection);
-
-					// 船体の前後・横・上下を別係数で減衰し、前進を残しながら横滑りと着水を抑える。
-					const float forwardSpeed = Dot(relativePointVelocity, boatForward);
-					const float lateralSpeed = Dot(relativePointVelocity, boatRight);
-					const float verticalSpeed = Dot(relativePointVelocity, boatUp);
-					Vector3 dragAcceleration = Add(
-						Multiply(-forwardSpeed * forwardDrag * (1.0f + std::fabs(forwardSpeed) * 0.05f), boatForward),
-						Multiply(-lateralSpeed * lateralDrag * (1.0f + std::fabs(lateralSpeed) * 0.05f), boatRight));
-					dragAcceleration = Add(
-						dragAcceleration,
-						Multiply(-verticalSpeed * verticalDrag * (1.0f + std::fabs(verticalSpeed) * 0.05f), boatUp));
-					const float dragAccelerationLength = Length(dragAcceleration);
-					const float maximumDragAcceleration = (std::max)(gravityMagnitude * 6.0f, 20.0f);
-
-					if (dragAccelerationLength > maximumDragAcceleration) {
-						dragAcceleration = Multiply(
-							maximumDragAcceleration / dragAccelerationLength,
-							dragAcceleration);
-					}
-
-					const Vector3 hydrodynamicDragForce = Multiply(
-						pointMass * submersionRatio,
-						dragAcceleration);
-					AddForceAtPosition(
-						gameObject.id,
-						Add(buoyancyForce, hydrodynamicDragForce),
-						worldForcePoint);
-					totalSubmersionRatio += submersionRatio;
-					submergedPointCount++;
-				}
-			}
-		}
-
-		if (submergedPointCount <= 0) {
+		// 扱えた物体はここで完了。旧グリッドへは進めない。
+		if (ApplyShapeBuoyancyForces(buoyancyInput)) {
 			continue;
 		}
 
-		const float averageSubmersionRatio =
-			totalSubmersionRatio / static_cast<float>(floatPointCount);
+		//------------------------------
+		// 旧グリッド方式の浮力
+		//------------------------------
+
+		ApplyGridBuoyancyForces(buoyancyInput);
+	}
+}
+
+// 実 Physics Shape を水面 Plane で切って浮力を加える。
+//
+// 船体 AABB の空間へ仮想セルを詰めるのではなく、Jolt が実際に衝突へ使う
+// Box / Sphere / Capsule / ConvexHull をそのまま切る。これにより上部構造や
+// 凸包外の空間へ浮力が掛からず、水没体積の重心がそのまま浮心になる。
+//
+// 戻り値は「この物体を処理し終えたか」。中央 Probe の水面が取れない場合や
+// Shape が体積取得へ対応しない場合は false を返し、呼び出し側が
+// ApplyGridBuoyancyForces() へ委ねる。
+bool EditorPhysicsManager::ApplyShapeBuoyancyForces(const BuoyancyObjectInput& input) {
+	//------------------------------
+	// 呼び出し側と同じ名前で入力を受け直す
+	//------------------------------
+
+	// 抽出前と同じ識別子のまま計算本体を残せるようにする。
+	EditorGameObject& gameObject = *input.gameObject;
+	EditorComponent* rigidBodyComponent = input.rigidBody;
+	const RuntimeBuoyancySettings& buoyancySettings = input.settings;
+	const Vector3& safeHullSize = input.hullSize;
+	const Vector3& worldScale = input.worldScale;
+	const Vector3& worldRotation = input.worldRotation;
+	const float fixedDeltaTime = input.fixedDeltaTime;
+	const float oceanElapsedTime = input.oceanElapsedTime;
+	const float gravityMagnitude = input.gravityMagnitude;
+	const Vector3& buoyancyUp = input.buoyancyUp;
+
+	const Matrix4x4 boatWorldMatrix = editorScene_->GetWorldMatrix(gameObject.id);
+	const Matrix4x4 boatRotationMatrix = MakeAffineMatrix(
+		{1.0f, 1.0f, 1.0f},
+		worldRotation,
+		{0.0f, 0.0f, 0.0f});
+	const Vector3 boatRight = Normalize(Transform(
+		{1.0f, 0.0f, 0.0f},
+		boatRotationMatrix));
+	const Vector3 boatUp = Normalize(Transform(
+		{0.0f, 1.0f, 0.0f},
+		boatRotationMatrix));
+	const Vector3 boatForward = Normalize(Transform(
+		{0.0f, 0.0f, 1.0f},
+		boatRotationMatrix));
+
+	//------------------------------
+	// 局所水面の推定
+	//------------------------------
+
+	// 中央 Probe が取れないと実 Shape を切る Plane を作れないので、旧グリッドへ委ねる。
+	LocalWaterSurfaceModel waterSurface{};
+
+	if (!BuildLocalWaterSurface(input, boatWorldMatrix, boatRight, boatForward, waterSurface)) {
+		return false;
+	}
+
+	// 抽出前と同じ識別子で水面を受け直す。
+	const Vector3& worldHullCenter = waterSurface.hullCenter;
+	const Vector3& fittedSurfaceNormal = waterSurface.fittedNormal;
+	const float fittedSurfaceHeight = waterSurface.fittedHeight;
+	const Vector3& averageSurfaceVelocity = waterSurface.averageVelocity;
+	const auto interpolateSurfaceSample = [&waterSurface](
+		const Vector3& queryPosition,
+		EditorOceanSurfaceSample& interpolatedSample) {
+		waterSurface.Sample(queryPosition, interpolatedSample);
+	};
+
+
+
+	const Vector3 fittedSurfacePosition{
+		worldHullCenter.x,
+		fittedSurfaceHeight,
+		worldHullCenter.z};
+	EditorJoltPhysicsManager::SubmergedVolumeInfo volumeInfo{};
+	const bool hasShapeVolume = joltPhysicsManager_.GetSubmergedVolume(
+		gameObject.id,
+		fittedSurfacePosition,
+		fittedSurfaceNormal,
+		volumeInfo);
+
+	//------------------------------
+	// 流体力の計算と適用
+	//------------------------------
+
+	// 体積を取れない Shape は水面で切れないので、旧グリッドへ委ねる。
+	if (!hasShapeVolume) {
+		return false;
+	}
+
+	ApplyHydrodynamicForces(input, waterSurface, volumeInfo, boatRight, boatUp, boatForward);
+	return true;
+}
+
+// 実 Shape の水没体積と浮心から、船に掛かる流体力をすべて計算して Jolt へ加える。
+//
+// 扱う力は次のとおりで、いずれも水没体積か水没面から量を決める。
+//   付加質量（並進 / 回転 / Coriolis 結合）
+//   静水圧と Heave 復元・減衰（水線面積 dV/dh から剛性と臨界減衰を求める）
+//   回転放射減衰
+//   水没面ごとの圧力抗力と表面摩擦抗力
+//   Slamming（入水衝撃）と造波抵抗
+//
+// 自動物理（automaticPhysicalProperties）では水密度と排水体積から物理量を算出し、
+// 旧 Scene の手動指定では既存の浮力値から実効密度を逆算して互換性を保つ。
+void EditorPhysicsManager::ApplyHydrodynamicForces(
+	const BuoyancyObjectInput& input,
+	const LocalWaterSurfaceModel& waterSurface,
+	const EditorJoltPhysicsManager::SubmergedVolumeInfo& volumeInfo,
+	const Vector3& boatRight,
+	const Vector3& boatUp,
+	const Vector3& boatForward) {
+	//------------------------------
+	// 呼び出し側と同じ名前で入力を受け直す
+	//------------------------------
+
+	// 抽出前と同じ識別子のまま計算本体を残せるようにする。
+	EditorGameObject& gameObject = *input.gameObject;
+	EditorComponent* rigidBodyComponent = input.rigidBody;
+	const RuntimeBuoyancySettings& buoyancySettings = input.settings;
+	const float fixedDeltaTime = input.fixedDeltaTime;
+	const float gravityMagnitude = input.gravityMagnitude;
+	const Vector3& buoyancyUp = input.buoyancyUp;
+	const Vector3& fittedSurfaceNormal = waterSurface.fittedNormal;
+	const Vector3& averageSurfaceVelocity = waterSurface.averageVelocity;
+
+	// 切り出す前と同じ値。水面 Plane の基準点（船体中心の真上の水面）。
+	const Vector3 fittedSurfacePosition{
+		waterSurface.hullCenter.x,
+		waterSurface.fittedHeight,
+		waterSurface.hullCenter.z};
+
+	// 面ごとの水深問い合わせ。切り出す前のラムダと同じ呼び方を残す。
+	const auto interpolateSurfaceSample = [&waterSurface](
+		const Vector3& queryPosition,
+		EditorOceanSurfaceSample& interpolatedSample) {
+		waterSurface.Sample(queryPosition, interpolatedSample);
+	};
+
+	const float safeFixedDeltaTime = (std::max)(fixedDeltaTime, 0.0001f);
+	float resolvedBodyMass = rigidBodyComponent->mass;
+	joltPhysicsManager_.GetBodyMass(gameObject.id, resolvedBodyMass);
+	const float safeMass = (std::max)(resolvedBodyMass, 0.01f);
+	const float buoyancyStrength = (std::max)(buoyancySettings.strength, 0.0f);
+	const float shapeWidth = (std::max)(std::fabs(volumeInfo.shapeSize.x), 0.05f);
+	const float shapeHeight = (std::max)(std::fabs(volumeInfo.shapeSize.y), 0.05f);
+	const float shapeLength = (std::max)(std::fabs(volumeInfo.shapeSize.z), 0.05f);
+	const float shapeRadius = 0.5f * (std::max)(
+		(std::max)(shapeWidth, shapeHeight),
+		shapeLength);
+	const float forwardProjectedArea = shapeWidth * shapeHeight;
+	const float lateralProjectedArea = shapeLength * shapeHeight;
+	const float verticalProjectedArea = shapeWidth * shapeLength;
+	const float maximumProjectedArea = (std::max)(
+		(std::max)(forwardProjectedArea, lateralProjectedArea),
+		verticalProjectedArea);
+	const float submergedRatio = (std::clamp)(
+		volumeInfo.submergedVolume / volumeInfo.totalVolume,
+		0.0f,
+		1.0f);
+	BuoyancyRuntimeState& buoyancyState = buoyancyRuntimeStates_[gameObject.id];
+	float enteringVolumeRate = 0.0f;
+
+	if (buoyancyState.hasPreviousSample) {
+		enteringVolumeRate = (std::max)(
+			(volumeInfo.submergedVolume - buoyancyState.previousSubmergedVolume) /
+				safeFixedDeltaTime,
+			0.0f);
+	}
+
+	buoyancyState.previousSubmergedVolume = volumeInfo.submergedVolume;
+	buoyancyState.hasPreviousSample = true;
+
+	if (submergedRatio <= 0.000001f) {
+		buoyancyState.hasPreviousRelativeWaterVelocity = false;
+		buoyancyState.hasPreviousAngularVelocity = false;
+		buoyancyState.hasPreviousHydrostaticOffset = false;
+		buoyancyState.filteredRelativeWaterAcceleration = {};
+		buoyancyState.filteredAngularAcceleration = {};
+		buoyancyState.filteredHydrostaticOffset = {};
+		return;
+	}
+
+	// 自動物理は水密度を直接使い、質量と排水体積の釣り合いで喫水を決める。
+	// 旧Sceneの手動方式だけは、既存の浮力値から実効密度を逆算して互換性を保つ。
+	float effectiveFluidDensity = 0.0f;
+
+	if (buoyancySettings.automaticPhysicalProperties) {
+		effectiveFluidDensity = (std::max)(buoyancySettings.waterDensity, 0.0f);
+	}
+	else if (gravityMagnitude > 0.0001f && volumeInfo.totalVolume > 0.000001f) {
+		effectiveFluidDensity =
+			safeMass * buoyancyStrength /
+			(gravityMagnitude * volumeInfo.totalVolume);
+	}
+
+	const Vector3 centerToBuoyancy = Subtract(
+		volumeInfo.centerOfBuoyancy,
+		volumeInfo.centerOfMass);
+	const Vector3 centerOfBuoyancyVelocity = Add(
+		rigidBodyComponent->velocity,
+		Cross(rigidBodyComponent->angularVelocity, centerToBuoyancy));
+	const Vector3 relativeWaterVelocity = Subtract(
+		centerOfBuoyancyVelocity,
+		averageSurfaceVelocity);
+	const float relativeVerticalVelocity = Dot(
+		relativeWaterVelocity,
+		buoyancyUp);
+	Vector3 addedMassForce{};
+	// 対角付加質量。Coriolis項でも同じ値を使うためループ外へ出す。
+	float surgeAddedMass = 0.0f;
+	float swayAddedMass = 0.0f;
+	float heaveAddedMass = 0.0f;
+
+	if (buoyancySettings.automaticPhysicalProperties &&
+		buoyancyState.hasPreviousRelativeWaterVelocity) {
+		const Vector3 measuredRelativeWaterAcceleration = Multiply(
+			1.0f / safeFixedDeltaTime,
+			Subtract(
+				relativeWaterVelocity,
+				buoyancyState.previousRelativeWaterVelocity));
+		constexpr float kAccelerationFilterTime = 0.08f;
+		const float accelerationFilterResponse = 1.0f - std::exp(
+			-safeFixedDeltaTime / kAccelerationFilterTime);
+		buoyancyState.filteredRelativeWaterAcceleration = Add(
+			Multiply(
+				1.0f - accelerationFilterResponse,
+				buoyancyState.filteredRelativeWaterAcceleration),
+			Multiply(
+				accelerationFilterResponse,
+				measuredRelativeWaterAcceleration));
+		const float displacedFluidMass =
+			effectiveFluidDensity * volumeInfo.submergedVolume;
+		const auto addAxisAddedMassForce = [
+			&addedMassForce,
+			&buoyancyState,
+			displacedFluidMass,
+			maximumProjectedArea](
+				const Vector3& axis,
+				float projectedArea) {
+			const float addedMassCoefficient = (std::clamp)(
+				projectedArea / (std::max)(maximumProjectedArea, 0.0001f),
+				0.1f,
+				1.0f);
+			const float axisAcceleration = Dot(
+				buoyancyState.filteredRelativeWaterAcceleration,
+				axis);
+			const float axisAddedMass = displacedFluidMass * addedMassCoefficient;
+			addedMassForce = Add(
+				addedMassForce,
+				Multiply(-axisAddedMass * axisAcceleration, axis));
+			return axisAddedMass;
+		};
+		surgeAddedMass = addAxisAddedMassForce(boatForward, forwardProjectedArea);
+		swayAddedMass = addAxisAddedMassForce(boatRight, lateralProjectedArea);
+		heaveAddedMass = addAxisAddedMassForce(boatUp, verticalProjectedArea);
+		const float maximumAddedMassForce = safeMass * gravityMagnitude * 6.0f;
+		const float addedMassForceLength = Length(addedMassForce);
+
+		if (addedMassForceLength > maximumAddedMassForce &&
+			addedMassForceLength > 0.0001f) {
+			addedMassForce = Multiply(
+				maximumAddedMassForce / addedMassForceLength,
+				addedMassForce);
+		}
+	}
+	else if (!buoyancySettings.automaticPhysicalProperties) {
+		buoyancyState.filteredRelativeWaterAcceleration = {};
+	}
+
+	buoyancyState.previousRelativeWaterVelocity = relativeWaterVelocity;
+	buoyancyState.hasPreviousRelativeWaterVelocity =
+		buoyancySettings.automaticPhysicalProperties;
+
+	// 船体が回転すると周囲の水も角加速する。軸ごとの投影面積と排水流体質量から
+	// 回転付加慣性を求め、差分Noiseは短い時定数で平滑化する。
+	Vector3 rotationalAddedInertiaTorque{};
+
+	if (buoyancySettings.automaticPhysicalProperties &&
+		buoyancyState.hasPreviousAngularVelocity) {
+		const Vector3 measuredAngularAcceleration = Multiply(
+			1.0f / safeFixedDeltaTime,
+			Subtract(
+				rigidBodyComponent->angularVelocity,
+				buoyancyState.previousAngularVelocity));
+		constexpr float kAngularAccelerationFilterTime = 0.1f;
+		const float angularFilterResponse = 1.0f - std::exp(
+			-safeFixedDeltaTime / kAngularAccelerationFilterTime);
+		buoyancyState.filteredAngularAcceleration = Add(
+			Multiply(
+				1.0f - angularFilterResponse,
+				buoyancyState.filteredAngularAcceleration),
+			Multiply(
+				angularFilterResponse,
+				measuredAngularAcceleration));
+		const float displacedFluidMass =
+			effectiveFluidDensity * volumeInfo.submergedVolume;
+		const float rollAddedInertiaCoefficient = (std::clamp)(
+			forwardProjectedArea / (std::max)(maximumProjectedArea, 0.0001f),
+			0.1f,
+			1.0f);
+		const float pitchAddedInertiaCoefficient = (std::clamp)(
+			lateralProjectedArea / (std::max)(maximumProjectedArea, 0.0001f),
+			0.1f,
+			1.0f);
+		const float yawAddedInertiaCoefficient = (std::clamp)(
+			verticalProjectedArea / (std::max)(maximumProjectedArea, 0.0001f),
+			0.1f,
+			1.0f);
+		const float rollAddedInertia =
+			rollAddedInertiaCoefficient * displacedFluidMass *
+			(shapeWidth * shapeWidth + shapeHeight * shapeHeight) / 12.0f;
+		const float pitchAddedInertia =
+			pitchAddedInertiaCoefficient * displacedFluidMass *
+			(shapeLength * shapeLength + shapeHeight * shapeHeight) / 12.0f;
+		const float yawAddedInertia =
+			yawAddedInertiaCoefficient * displacedFluidMass *
+			(shapeWidth * shapeWidth + shapeLength * shapeLength) / 12.0f;
+		rotationalAddedInertiaTorque = Add(
+			Multiply(
+				-rollAddedInertia * Dot(
+					buoyancyState.filteredAngularAcceleration,
+					boatForward),
+				boatForward),
+			Multiply(
+				-pitchAddedInertia * Dot(
+					buoyancyState.filteredAngularAcceleration,
+					boatRight),
+				boatRight));
+		rotationalAddedInertiaTorque = Add(
+			rotationalAddedInertiaTorque,
+			Multiply(
+				-yawAddedInertia * Dot(
+					buoyancyState.filteredAngularAcceleration,
+					boatUp),
+				boatUp));
+		const float maximumAddedInertiaTorque =
+			safeMass * shapeRadius * gravityMagnitude * 4.0f;
+		const float addedInertiaTorqueLength = Length(rotationalAddedInertiaTorque);
+
+		if (addedInertiaTorqueLength > maximumAddedInertiaTorque &&
+			addedInertiaTorqueLength > 0.0001f) {
+			rotationalAddedInertiaTorque = Multiply(
+				maximumAddedInertiaTorque / addedInertiaTorqueLength,
+				rotationalAddedInertiaTorque);
+		}
+	}
+	else if (!buoyancySettings.automaticPhysicalProperties) {
+		buoyancyState.filteredAngularAcceleration = {};
+	}
+
+	buoyancyState.previousAngularVelocity = rigidBodyComponent->angularVelocity;
+	buoyancyState.hasPreviousAngularVelocity =
+		buoyancySettings.automaticPhysicalProperties;
+
+	// Translational diagonal added-mass Coriolis coupling.
+	// Produces Munk-type yaw/pitch/roll moments for anisotropic added mass.
+	// This is not a complete 6-DOF added-mass Coriolis matrix.
+	//
+	// M_A*νdot + C_A(ν)*ν = τ の並進部分について、付加運動量を p_A = A*v とすると
+	// 左辺のCoriolis由来Momentは v × p_A。付加質量を上で -m_A*a の外力として
+	// 右辺へ移しているので、加えるTorqueは符号を反転した -(v × p_A) になる。
+	//
+	// 成分式(Mx/My/Mz)を書くと軸対応を誤りやすいため、既存の正規直交船体基底を
+	// 使ったWorld空間の1本のベクトル式で求める。
+	Vector3 addedMassCoriolisTorque{};
+
+	if (buoyancySettings.automaticPhysicalProperties) {
+		const float surgeSpeed = Dot(relativeWaterVelocity, boatForward);
+		const float swaySpeed = Dot(relativeWaterVelocity, boatRight);
+		const float heaveSpeed = Dot(relativeWaterVelocity, boatUp);
+		const Vector3 bodyRelativeVelocity = Add(
+			Multiply(surgeSpeed, boatForward),
+			Add(
+				Multiply(swaySpeed, boatRight),
+				Multiply(heaveSpeed, boatUp)));
+		const Vector3 addedMomentum = Add(
+			Multiply(surgeAddedMass * surgeSpeed, boatForward),
+			Add(
+				Multiply(swayAddedMass * swaySpeed, boatRight),
+				Multiply(heaveAddedMass * heaveSpeed, boatUp)));
+		addedMassCoriolisTorque = Multiply(
+			-1.0f,
+			Cross(bodyRelativeVelocity, addedMomentum));
+		// 付加慣性Torqueと同じ基準で頭打ちにする。
+		const float maximumCoriolisTorque =
+			safeMass * shapeRadius * gravityMagnitude * 4.0f;
+		const float coriolisTorqueLength = Length(addedMassCoriolisTorque);
+
+		if (coriolisTorqueLength > maximumCoriolisTorque &&
+			coriolisTorqueLength > 0.0001f) {
+			addedMassCoriolisTorque = Multiply(
+				maximumCoriolisTorque / coriolisTorqueLength,
+				addedMassCoriolisTorque);
+		}
+	}
+
+	// 水面を少し上げた2回目の実Shape切断から dV/dh を求める。
+	// これは自由水面における水線面積となり、上下動の復元剛性と臨界減衰を決める。
+	const float waterplaneProbeHeight = (std::clamp)(
+		shapeHeight * 0.02f,
+		0.02f,
+		0.25f);
+	const Vector3 raisedSurfacePosition = Add(
+		fittedSurfacePosition,
+		Multiply(waterplaneProbeHeight, buoyancyUp));
+	EditorJoltPhysicsManager::SubmergedVolumeInfo raisedVolumeInfo{};
+	const bool hasRaisedVolume = joltPhysicsManager_.GetSubmergedVolume(
+		gameObject.id,
+		raisedSurfacePosition,
+		fittedSurfaceNormal,
+		raisedVolumeInfo);
+	const float maximumWaterplaneArea = (std::max)(
+		shapeWidth * shapeLength * 2.0f,
+		0.01f);
+	float waterplaneArea = 0.0f;
+
+	if (hasRaisedVolume) {
+		waterplaneArea = (std::clamp)(
+			(raisedVolumeInfo.submergedVolume - volumeInfo.submergedVolume) /
+				waterplaneProbeHeight,
+			0.0f,
+			maximumWaterplaneArea);
+	}
+	else {
+		const float partialSubmersionWeight = (std::clamp)(
+			4.0f * submergedRatio * (1.0f - submergedRatio),
+			0.0f,
+			1.0f);
+		waterplaneArea = shapeWidth * shapeLength * partialSubmersionWeight;
+	}
+
+	// 静水圧は重力と反対方向へだけ働く。実浮心へ加えるため、傾斜時の復元Momentは
+	// Center of BuoyancyとCenter of Massの位置関係から自然にJoltへ発生する。
+	const Vector3 hydrostaticForce = Multiply(
+		effectiveFluidDensity * volumeInfo.submergedVolume * gravityMagnitude,
+		buoyancyUp);
+	const float heaveStiffness =
+		effectiveFluidDensity * gravityMagnitude * waterplaneArea;
+	const float heaveDampingRatio = (std::clamp)(
+		buoyancySettings.automaticPhysicalProperties
+			? 0.7f
+			: buoyancySettings.damping * 0.1f,
+		0.0f,
+		2.0f);
+	const float criticalHeaveDamping =
+		2.0f * heaveDampingRatio * std::sqrt((std::max)(
+			heaveStiffness * safeMass,
+			0.0f));
+	const float maximumHeaveDampingForce =
+		safeMass * std::fabs(relativeVerticalVelocity) / safeFixedDeltaTime;
+	const float heaveDampingForceMagnitude = (std::clamp)(
+		-criticalHeaveDamping * relativeVerticalVelocity,
+		-maximumHeaveDampingForce,
+		maximumHeaveDampingForce);
+	const Vector3 heaveDampingForce = Multiply(
+		heaveDampingForceMagnitude,
+		buoyancyUp);
+	Vector3 rotationalRadiationDampingTorque{};
+
+	if (buoyancySettings.automaticPhysicalProperties &&
+		volumeInfo.submergedVolume > 0.000001f &&
+		waterplaneArea > 0.000001f) {
+		const float buoyancyCenterAboveMass = Dot(
+			Subtract(volumeInfo.centerOfBuoyancy, volumeInfo.centerOfMass),
+			buoyancyUp);
+		const float rollWaterplaneMoment =
+			waterplaneArea * shapeWidth * shapeWidth / 12.0f;
+		const float pitchWaterplaneMoment =
+			waterplaneArea * shapeLength * shapeLength / 12.0f;
+		const float rollMetacentricHeight = (std::max)(
+			rollWaterplaneMoment / volumeInfo.submergedVolume +
+				buoyancyCenterAboveMass,
+			0.0f);
+		const float pitchMetacentricHeight = (std::max)(
+			pitchWaterplaneMoment / volumeInfo.submergedVolume +
+				buoyancyCenterAboveMass,
+			0.0f);
+		const float rollHydrostaticStiffness =
+			effectiveFluidDensity * gravityMagnitude *
+			volumeInfo.submergedVolume * rollMetacentricHeight;
+		const float pitchHydrostaticStiffness =
+			effectiveFluidDensity * gravityMagnitude *
+			volumeInfo.submergedVolume * pitchMetacentricHeight;
+		const float rollBodyInertia =
+			safeMass * (shapeWidth * shapeWidth + shapeHeight * shapeHeight) / 12.0f;
+		const float pitchBodyInertia =
+			safeMass * (shapeLength * shapeLength + shapeHeight * shapeHeight) / 12.0f;
+		constexpr float kRotationalRadiationDampingRatio = 0.35f;
+		const auto calculateRadiationDampingTorque = [
+			safeFixedDeltaTime](
+				float angularSpeed,
+				float bodyInertia,
+				float hydrostaticStiffness) {
+			const float dampingCoefficient =
+				2.0f * kRotationalRadiationDampingRatio * std::sqrt((std::max)(
+					bodyInertia * hydrostaticStiffness,
+					0.0f));
+			const float maximumStoppingTorque =
+				bodyInertia * std::fabs(angularSpeed) / safeFixedDeltaTime;
+			return (std::clamp)(
+				-dampingCoefficient * angularSpeed,
+				-maximumStoppingTorque,
+				maximumStoppingTorque);
+		};
+		const float rollDampingTorque = calculateRadiationDampingTorque(
+			Dot(rigidBodyComponent->angularVelocity, boatForward),
+			rollBodyInertia,
+			rollHydrostaticStiffness);
+		const float pitchDampingTorque = calculateRadiationDampingTorque(
+			Dot(rigidBodyComponent->angularVelocity, boatRight),
+			pitchBodyInertia,
+			pitchHydrostaticStiffness);
+		rotationalRadiationDampingTorque = Add(
+			Multiply(rollDampingTorque, boatForward),
+			Multiply(pitchDampingTorque, boatRight));
+	}
+
+	// 実Shape表面を水面で切り、各水没面の法線へ圧力抗力、接線へ摩擦抗力を加える。
+	// 船首の斜面と舷側の平面は法線・水没面積が異なるため、同じ速度でも抵抗が変わる。
+	const float forwardSpeed = Dot(relativeWaterVelocity, boatForward);
+	const float lateralSpeed = Dot(relativeWaterVelocity, boatRight);
+	const float verticalSpeed = Dot(relativeWaterVelocity, boatUp);
+	Vector3 hydrodynamicDragForce{};
+	Vector3 hydrodynamicDragTorque{};
+	// Phase2計測用に圧力と摩擦を分けて集計する。合力は従来どおり
+	// hydrodynamicDragForce へ入れるので、物理挙動は変わらない。
+	Vector3 diagnosticPressureForce{};
+	Vector3 diagnosticSkinFrictionForce{};
+	float diagnosticWettedArea = 0.0f;
+	Vector3 weightedHydrostaticApplicationPoint{};
+	float hydrostaticApplicationWeight = 0.0f;
+	const bool hasSurfaceTriangles =
+		joltPhysicsManager_.GetHydrodynamicSurfaceTriangles(
+			gameObject.id,
+			buoyancyState.surfaceTriangles);
+	int32_t submergedPanelCount = 0;
+
+	if (hasSurfaceTriangles) {
+		const float forwardDragCoefficient = buoyancySettings.automaticPhysicalProperties
+			? 1.0f
+			: (std::max)(buoyancySettings.waterDrag, 0.0f);
+		const float lateralDragCoefficient = buoyancySettings.automaticPhysicalProperties
+			? 1.0f
+			: (std::max)(buoyancySettings.lateralDrag, 0.0f);
+		const float verticalDragCoefficient = buoyancySettings.automaticPhysicalProperties
+			? 1.0f
+			: (std::max)(buoyancySettings.verticalDrag, 0.0f);
+		const float rotationalVelocityScale = buoyancySettings.automaticPhysicalProperties
+			? 1.0f
+			: (std::max)(buoyancySettings.angularDrag, 0.0f);
+
+		for (const EditorJoltPhysicsManager::HydrodynamicSurfaceTriangle&
+			surfaceTriangle : buoyancyState.surfaceTriangles) {
+			const std::array<Vector3, 3u> panelVertices = {
+				surfaceTriangle.first,
+				surfaceTriangle.second,
+				surfaceTriangle.third};
+			std::array<float, 3u> vertexSurfaceDistances{};
+
+			for (size_t vertexIndex = 0u;
+				vertexIndex < panelVertices.size();
+				vertexIndex++) {
+				EditorOceanSurfaceSample vertexSurfaceSample{};
+				interpolateSurfaceSample(
+					panelVertices[vertexIndex],
+					vertexSurfaceSample);
+				vertexSurfaceDistances[vertexIndex] = Dot(
+					Subtract(
+						panelVertices[vertexIndex],
+						vertexSurfaceSample.position),
+					buoyancyUp);
+			}
+
+			SubmergedSurfacePanel submergedPanel{};
+
+			if (!BuildSubmergedSurfacePanel(
+					surfaceTriangle,
+					vertexSurfaceDistances,
+					submergedPanel)) {
+				continue;
+			}
+
+			EditorOceanSurfaceSample panelSurfaceSample{};
+			interpolateSurfaceSample(
+				submergedPanel.center,
+				panelSurfaceSample);
+			const Vector3 centerToPanel = Subtract(
+				submergedPanel.center,
+				volumeInfo.centerOfMass);
+			const float panelDepth = (std::max)(
+				-Dot(
+					Subtract(submergedPanel.center, panelSurfaceSample.position),
+					buoyancyUp),
+				0.0f);
+			const float upwardHydrostaticProjection = (std::max)(
+				-Dot(submergedPanel.outwardNormal, buoyancyUp),
+				0.0f);
+			const float panelHydrostaticWeight =
+				panelDepth * submergedPanel.area * upwardHydrostaticProjection;
+
+			if (panelHydrostaticWeight > 0.000001f) {
+				weightedHydrostaticApplicationPoint = Add(
+					weightedHydrostaticApplicationPoint,
+					Multiply(panelHydrostaticWeight, submergedPanel.center));
+				hydrostaticApplicationWeight += panelHydrostaticWeight;
+			}
+
+			const Vector3 rotationalPanelVelocity = Multiply(
+				rotationalVelocityScale,
+				Cross(rigidBodyComponent->angularVelocity, centerToPanel));
+			const Vector3 panelVelocity = Add(
+				rigidBodyComponent->velocity,
+				rotationalPanelVelocity);
+			const Vector3 relativePanelVelocity = Subtract(
+				panelVelocity,
+				panelSurfaceSample.velocity);
+			const float normalVelocity = Dot(
+				relativePanelVelocity,
+				submergedPanel.outwardNormal);
+			const float enteringNormalSpeed = (std::max)(normalVelocity, 0.0f);
+			const Vector3 tangentialVelocity = Subtract(
+				relativePanelVelocity,
+				Multiply(normalVelocity, submergedPanel.outwardNormal));
+			const float tangentialSpeed = Length(tangentialVelocity);
+
+			// 相対運動がない水没面は抗力も摩擦も0なので、高価な係数計算を省く。
+			// 力は0でも濡れ面ではあるため、濡れ面積の集計だけは行う。
+			if (enteringNormalSpeed <= 0.0001f && tangentialSpeed <= 0.0001f) {
+				diagnosticWettedArea += submergedPanel.area;
+				submergedPanelCount++;
+				continue;
+			}
+
+			Vector3 pressureForce{};
+
+			if (enteringNormalSpeed > 0.0001f) {
+				const float forwardAlignment = std::fabs(Dot(
+					submergedPanel.outwardNormal,
+					boatForward));
+				const float lateralAlignment = std::fabs(Dot(
+					submergedPanel.outwardNormal,
+					boatRight));
+				const float verticalAlignment = std::fabs(Dot(
+					submergedPanel.outwardNormal,
+					boatUp));
+				const float alignmentTotal = (std::max)(
+					forwardAlignment + lateralAlignment + verticalAlignment,
+					0.0001f);
+				const float pressureDragCoefficient =
+					(forwardDragCoefficient * forwardAlignment +
+						lateralDragCoefficient * lateralAlignment +
+						verticalDragCoefficient * verticalAlignment) /
+					alignmentTotal;
+				const float pressureForceMagnitude =
+					0.5f * effectiveFluidDensity * pressureDragCoefficient *
+					submergedPanel.area * enteringNormalSpeed * enteringNormalSpeed;
+				pressureForce = Multiply(
+					-pressureForceMagnitude,
+					submergedPanel.outwardNormal);
+			}
+
+			Vector3 skinFrictionForce{};
+
+			if (tangentialSpeed > 0.0001f) {
+				const float reynoldsNumber = (std::max)(
+					tangentialSpeed * shapeLength / kWaterKinematicViscosity,
+					1.0f);
+				float skinFrictionCoefficient = 0.0f;
+
+				if (reynoldsNumber < 500000.0f) {
+					skinFrictionCoefficient = 1.328f / std::sqrt(reynoldsNumber);
+				}
+				else {
+					const float logarithmicTerm = std::log10(reynoldsNumber) - 2.0f;
+					skinFrictionCoefficient = 0.075f /
+						(logarithmicTerm * logarithmicTerm);
+				}
+
+				skinFrictionCoefficient = (std::clamp)(
+					skinFrictionCoefficient * forwardDragCoefficient,
+					0.0f,
+					0.02f);
+				const float skinFrictionForceMagnitude =
+					0.5f * effectiveFluidDensity * skinFrictionCoefficient *
+					submergedPanel.area * tangentialSpeed * tangentialSpeed;
+				skinFrictionForce = Multiply(
+					-skinFrictionForceMagnitude / tangentialSpeed,
+					tangentialVelocity);
+			}
+
+			const Vector3 panelForce = Add(pressureForce, skinFrictionForce);
+			hydrodynamicDragForce = Add(hydrodynamicDragForce, panelForce);
+			hydrodynamicDragTorque = Add(
+				hydrodynamicDragTorque,
+				Cross(centerToPanel, panelForce));
+			diagnosticPressureForce = Add(diagnosticPressureForce, pressureForce);
+			diagnosticSkinFrictionForce = Add(
+				diagnosticSkinFrictionForce,
+				skinFrictionForce);
+			diagnosticWettedArea += submergedPanel.area;
+			submergedPanelCount++;
+		}
+
+		if (submergedPanelCount > 0) {
+			const float maximumPanelForce = safeMass * (std::max)(
+				Length(relativeWaterVelocity) / safeFixedDeltaTime,
+				gravityMagnitude * 8.0f);
+			const float maximumPanelTorque = safeMass * shapeRadius * (std::max)(
+				Length(rigidBodyComponent->angularVelocity) * shapeRadius /
+					safeFixedDeltaTime,
+				gravityMagnitude * 8.0f);
+			float panelForceScale = 1.0f;
+			const float panelForceLength = Length(hydrodynamicDragForce);
+			const float panelTorqueLength = Length(hydrodynamicDragTorque);
+
+			if (panelForceLength > maximumPanelForce && panelForceLength > 0.0001f) {
+				panelForceScale = (std::min)(
+					panelForceScale,
+					maximumPanelForce / panelForceLength);
+			}
+
+			if (panelTorqueLength > maximumPanelTorque && panelTorqueLength > 0.0001f) {
+				panelForceScale = (std::min)(
+					panelForceScale,
+					maximumPanelTorque / panelTorqueLength);
+			}
+
+			hydrodynamicDragForce = Multiply(
+				panelForceScale,
+				hydrodynamicDragForce);
+			hydrodynamicDragTorque = Multiply(
+				panelForceScale,
+				hydrodynamicDragTorque);
+		}
+	}
+	Vector3 hydrostaticApplicationPoint = volumeInfo.centerOfBuoyancy;
+
+	// 合計浮力はJoltの排水体積から変えず、局所FFT水深を積分した位置へ作用点だけを寄せる。
+	// 開いたMeshや反転法線ではWeightが作れないため、Jolt浮心へ安全に戻す。
+	if (hydrostaticApplicationWeight > 0.000001f) {
+		const Vector3 localHydrostaticApplicationPoint = Multiply(
+			1.0f / hydrostaticApplicationWeight,
+			weightedHydrostaticApplicationPoint);
+		Vector3 localHydrostaticOffset = Subtract(
+			localHydrostaticApplicationPoint,
+			volumeInfo.centerOfBuoyancy);
+		const float maximumHydrostaticOffset = shapeRadius * 0.35f;
+		const float localHydrostaticOffsetLength = Length(localHydrostaticOffset);
+
+		if (localHydrostaticOffsetLength > maximumHydrostaticOffset &&
+			localHydrostaticOffsetLength > 0.0001f) {
+			localHydrostaticOffset = Multiply(
+				maximumHydrostaticOffset / localHydrostaticOffsetLength,
+				localHydrostaticOffset);
+		}
+
+		constexpr float kHydrostaticPointFilterTime = 0.08f;
+		const float hydrostaticPointResponse = 1.0f - std::exp(
+			-safeFixedDeltaTime / kHydrostaticPointFilterTime);
+
+		if (buoyancyState.hasPreviousHydrostaticOffset) {
+			buoyancyState.filteredHydrostaticOffset = Add(
+				Multiply(
+					1.0f - hydrostaticPointResponse,
+					buoyancyState.filteredHydrostaticOffset),
+				Multiply(hydrostaticPointResponse, localHydrostaticOffset));
+		}
+		else {
+			buoyancyState.filteredHydrostaticOffset = localHydrostaticOffset;
+		}
+
+		buoyancyState.hasPreviousHydrostaticOffset = true;
+		hydrostaticApplicationPoint = Add(
+			volumeInfo.centerOfBuoyancy,
+			buoyancyState.filteredHydrostaticOffset);
+	}
+	else {
+		buoyancyState.filteredHydrostaticOffset = {};
+		buoyancyState.hasPreviousHydrostaticOffset = false;
+	}
+
+	// Shape面を取得できない場合だけ、外接寸法の軸別投影面積へ戻す。
+	if (submergedPanelCount <= 0) {
+		const float wettedAreaRatio = std::pow(submergedRatio, 2.0f / 3.0f);
+		const auto calculateQuadraticDragForce = [
+			effectiveFluidDensity,
+			safeMass,
+			safeFixedDeltaTime,
+			wettedAreaRatio](
+				float axisSpeed,
+				float dragCoefficient,
+				float projectedArea,
+				const Vector3& axisDirection) {
+			const float maximumStoppingForce =
+				safeMass * std::fabs(axisSpeed) / safeFixedDeltaTime;
+			const float dragForceMagnitude = (std::clamp)(
+				-0.5f * effectiveFluidDensity *
+					(std::max)(dragCoefficient, 0.0f) * projectedArea *
+					wettedAreaRatio * axisSpeed * std::fabs(axisSpeed),
+				-maximumStoppingForce,
+				maximumStoppingForce);
+			return Multiply(dragForceMagnitude, axisDirection);
+		};
+		hydrodynamicDragForce = calculateQuadraticDragForce(
+			forwardSpeed,
+			buoyancySettings.automaticPhysicalProperties
+				? 1.0f
+				: buoyancySettings.waterDrag,
+			shapeWidth * shapeHeight,
+			boatForward);
+		hydrodynamicDragForce = Add(
+			hydrodynamicDragForce,
+			calculateQuadraticDragForce(
+				lateralSpeed,
+				buoyancySettings.automaticPhysicalProperties
+					? 1.0f
+					: buoyancySettings.lateralDrag,
+				shapeLength * shapeHeight,
+				boatRight));
+		hydrodynamicDragForce = Add(
+			hydrodynamicDragForce,
+			calculateQuadraticDragForce(
+				verticalSpeed,
+				buoyancySettings.automaticPhysicalProperties
+					? 1.0f
+					: buoyancySettings.verticalDrag,
+				shapeWidth * shapeLength,
+				boatUp));
+	}
+	Vector3 upwardSurfaceNormal = fittedSurfaceNormal;
+
+	if (Dot(upwardSurfaceNormal, buoyancyUp) < 0.0f) {
+		upwardSurfaceNormal = Multiply(-1.0f, upwardSurfaceNormal);
+	}
+
+	const float normalInfluence = (std::clamp)(
+		buoyancySettings.automaticPhysicalProperties
+			? 0.2f
+			: buoyancySettings.normalInfluence,
+		0.0f,
+		1.0f);
+	const Vector3 impactDirection = Normalize(Add(
+		Multiply(1.0f - normalInfluence, buoyancyUp),
+		Multiply(normalInfluence, upwardSurfaceNormal)));
+	const float enteringWaterSpeed = (std::max)(
+		-relativeVerticalVelocity,
+		0.0f);
+	const float maximumSlammingForce =
+		safeMass * gravityMagnitude * 4.0f;
+	const float resolvedSlammingStrength = buoyancySettings.automaticPhysicalProperties
+		? 1.0f
+		: (std::max)(buoyancySettings.slammingStrength, 0.0f);
+	const float slammingForceMagnitude = (std::clamp)(
+		effectiveFluidDensity *
+			resolvedSlammingStrength *
+			enteringVolumeRate * enteringWaterSpeed,
+		0.0f,
+		maximumSlammingForce);
+	const Vector3 slammingForce = Multiply(
+		slammingForceMagnitude,
+		impactDirection);
+	Vector3 waveMakingResistanceForce{};
+
+	// 造波抵抗は面圧力や表面摩擦とは別に、排水量基準面積とFroude数から求める。
+	// 船種判定は行わず、同じ式が形状寸法と速度の違いをそのまま反映する。
+	if (buoyancySettings.automaticPhysicalProperties &&
+		gravityMagnitude > 0.0001f &&
+		std::fabs(forwardSpeed) > 0.0001f) {
+		const float froudeNumber = std::fabs(forwardSpeed) / std::sqrt(
+			gravityMagnitude * shapeLength);
+		const float hullFullness = (std::clamp)(
+			shapeWidth / shapeLength,
+			0.05f,
+			1.0f);
+		const float displacementReferenceArea = std::pow(
+			(std::max)(volumeInfo.submergedVolume, 0.000001f),
+			2.0f / 3.0f);
+		const float resistanceHump = std::exp(
+			-std::pow((froudeNumber - 0.38f) / 0.16f, 2.0f));
+		const float planingTransition = (std::clamp)(
+			(froudeNumber - 0.25f) / 0.75f,
+			0.0f,
+			1.0f);
+		const float waveResistanceCoefficient = hullFullness *
+			(0.002f + 0.010f * resistanceHump + 0.004f * planingTransition);
+		const float unclampedWaveResistance =
+			0.5f * effectiveFluidDensity * waveResistanceCoefficient *
+			displacementReferenceArea * forwardSpeed * forwardSpeed;
+		const float maximumStoppingForce =
+			safeMass * std::fabs(forwardSpeed) / safeFixedDeltaTime;
+		const float maximumWaveResistance = (std::min)(
+			maximumStoppingForce,
+			safeMass * gravityMagnitude * 2.0f);
+		const float waveResistanceMagnitude = (std::min)(
+			unclampedWaveResistance,
+			maximumWaveResistance);
+		waveMakingResistanceForce = Multiply(
+			-forwardSpeed / std::fabs(forwardSpeed) * waveResistanceMagnitude,
+			boatForward);
+	}
+
+	// Runtime診断値を書き出す。Planing不足の原因が係数・濡れ面・圧力方向の
+	// どれかを切り分けるため、圧力抗力の鉛直上向き成分を船体重量と並べて残す。
+	if (input.buoyancyDiagnostics != nullptr) {
+		EditorComponent& buoyancyDiagnostics = *input.buoyancyDiagnostics;
+		buoyancyDiagnostics.buoyancyDebugBuoyancyForce = Length(hydrostaticForce);
+		buoyancyDiagnostics.buoyancyDebugPressureDragForce =
+			Length(diagnosticPressureForce);
+		buoyancyDiagnostics.buoyancyDebugPressureUpwardForce = Dot(
+			diagnosticPressureForce,
+			buoyancyUp);
+		buoyancyDiagnostics.buoyancyDebugSkinFrictionForce =
+			Length(diagnosticSkinFrictionForce);
+		buoyancyDiagnostics.buoyancyDebugAddedMassForce = Length(addedMassForce);
+		buoyancyDiagnostics.buoyancyDebugSlammingForce = Length(slammingForce);
+		buoyancyDiagnostics.buoyancyDebugWaveMakingResistance =
+			Length(waveMakingResistanceForce);
+		buoyancyDiagnostics.buoyancyDebugSubmergedRatio = submergedRatio;
+		buoyancyDiagnostics.buoyancyDebugWettedArea = diagnosticWettedArea;
+		buoyancyDiagnostics.buoyancyDebugForwardSpeed = forwardSpeed;
+		buoyancyDiagnostics.buoyancyDebugWeightForce = safeMass * gravityMagnitude;
+		buoyancyDiagnostics.buoyancyDebugAddedMassCoriolisTorque =
+			addedMassCoriolisTorque;
+		// 船首方向と水に対する進行方向の偏角。Coriolis Momentが偏角を増やす
+		// (不安定化する)向きに働いているかを実測で確かめるために出す。
+		buoyancyDiagnostics.buoyancyDebugSideslipAngleDegrees = std::atan2(
+			Dot(relativeWaterVelocity, boatRight),
+			Dot(relativeWaterVelocity, boatForward)) * 180.0f /
+			3.14159265358979323846f;
+		// 船首の上下角。boatForwardの鉛直成分から求め、正を船首上げとする。
+		buoyancyDiagnostics.buoyancyDebugTrimAngleDegrees =
+			std::asin((std::clamp)(Dot(boatForward, buoyancyUp), -1.0f, 1.0f)) *
+			180.0f / 3.14159265358979323846f;
+	}
+
+	const bool usesSurfacePanels = submergedPanelCount > 0;
+	const Vector3 centerAppliedDragForce = usesSurfacePanels
+		? Vector3{}
+		: hydrodynamicDragForce;
+	const Vector3 dynamicCenterForce = Add(
+		heaveDampingForce,
+		Add(
+			addedMassForce,
+			Add(
+				waveMakingResistanceForce,
+				Add(centerAppliedDragForce, slammingForce))));
+	AddForceAtPosition(
+		gameObject.id,
+		hydrostaticForce,
+		hydrostaticApplicationPoint);
+	AddForceAtPosition(
+		gameObject.id,
+		dynamicCenterForce,
+		volumeInfo.centerOfBuoyancy);
+	AddTorque(
+		gameObject.id,
+		Add(
+			rotationalRadiationDampingTorque,
+			Add(rotationalAddedInertiaTorque, addedMassCoriolisTorque)));
+
+	if (usesSurfacePanels) {
+		AddForce(gameObject.id, hydrodynamicDragForce);
+		AddTorque(gameObject.id, hydrodynamicDragTorque);
+	}
+	else {
+		// 面情報を得られないShapeだけ、外接寸法から回転抵抗を近似する。
 		const float angularDrag = buoyancySettings.automaticPhysicalProperties
 			? 1.0f
 			: (std::max)(buoyancySettings.angularDrag, 0.0f);
-		const Vector3 waterAngularDragTorque = Multiply(
-			-safeMass * angularDrag * averageSubmersionRatio,
-			rigidBodyComponent->angularVelocity);
-
+		const float rollRadiusSquared =
+			0.25f * (shapeWidth * shapeWidth + shapeHeight * shapeHeight);
+		const float pitchRadiusSquared =
+			0.25f * (shapeLength * shapeLength + shapeHeight * shapeHeight);
+		const float yawRadiusSquared =
+			0.25f * (shapeWidth * shapeWidth + shapeLength * shapeLength);
+		const float rollAngularSpeed = Dot(
+			rigidBodyComponent->angularVelocity,
+			boatForward);
+		const float pitchAngularSpeed = Dot(
+			rigidBodyComponent->angularVelocity,
+			boatRight);
+		const float yawAngularSpeed = Dot(
+			rigidBodyComponent->angularVelocity,
+			boatUp);
+		const float angularDragScale = safeMass * angularDrag * submergedRatio;
+		Vector3 waterAngularDragTorque = Multiply(
+			-angularDragScale * rollRadiusSquared * rollAngularSpeed,
+			boatForward);
+		waterAngularDragTorque = Add(
+			waterAngularDragTorque,
+			Multiply(
+				-angularDragScale * pitchRadiusSquared * pitchAngularSpeed,
+				boatRight));
+		waterAngularDragTorque = Add(
+			waterAngularDragTorque,
+			Multiply(
+				-angularDragScale * yawRadiusSquared * yawAngularSpeed,
+				boatUp));
 		AddTorque(gameObject.id, waterAngularDragTorque);
 	}
+}
+
+// 船体下面を覆う 5x5 Probe から局所水面モデルを作る。
+//
+// 水力面は数百枚になりうるが、FFT 水面の評価はこの 25 点だけに抑える。
+// 面ごとの水深は後段が LocalWaterSurfaceModel::Sample() で双線形補間して求める。
+//
+// 戻り値は「実 Shape Plane を作れたか」。中央 Probe が取れなかった場合は false で、
+// 呼び出し側は旧グリッド方式へ委ねる。
+bool EditorPhysicsManager::BuildLocalWaterSurface(
+	const BuoyancyObjectInput& input,
+	const Matrix4x4& boatWorldMatrix,
+	const Vector3& boatRight,
+	const Vector3& boatForward,
+	LocalWaterSurfaceModel& surface) {
+	//------------------------------
+	// 呼び出し側と同じ名前で入力を受け直す
+	//------------------------------
+
+	EditorGameObject& gameObject = *input.gameObject;
+	const RuntimeBuoyancySettings& buoyancySettings = input.settings;
+	const Vector3& safeHullSize = input.hullSize;
+	const Vector3& worldScale = input.worldScale;
+	const Vector3& buoyancyUp = input.buoyancyUp;
+	const float oceanElapsedTime = input.oceanElapsedTime;
+
+
+	Vector3 horizontalRight{boatRight.x, 0.0f, boatRight.z};
+	Vector3 horizontalForward{boatForward.x, 0.0f, boatForward.z};
+
+	if (Length(horizontalRight) <= 0.0001f) {
+		horizontalRight = {1.0f, 0.0f, 0.0f};
+	}
+	else {
+		horizontalRight = Normalize(horizontalRight);
+	}
+
+	if (Length(horizontalForward) <= 0.0001f) {
+		horizontalForward = {0.0f, 0.0f, 1.0f};
+	}
+	else {
+		horizontalForward = Normalize(horizontalForward);
+	}
+
+	const Vector3 worldHullCenter = Transform(
+		buoyancySettings.centerOffset,
+		boatWorldMatrix);
+	const float probeHalfWidth = (std::max)(
+		std::fabs(safeHullSize.x * worldScale.x) * 0.4f,
+		0.25f);
+	const float probeHalfLength = (std::max)(
+		std::fabs(safeHullSize.z * worldScale.z) * 0.4f,
+		0.25f);
+	std::array<float, kBuoyancySurfaceProbeCount> probeRightOffsets{};
+	std::array<float, kBuoyancySurfaceProbeCount> probeForwardOffsets{};
+	std::array<Vector3, kBuoyancySurfaceProbeCount> probePositions{};
+	std::array<EditorOceanSurfaceSample, kBuoyancySurfaceProbeCount> surfaceSamples{};
+	std::array<bool, kBuoyancySurfaceProbeCount> hasSurfaceSample{};
+	constexpr size_t kCenterSurfaceProbeIndex = kBuoyancySurfaceProbeCount / 2u;
+	int32_t resolvedOceanGameObjectId = buoyancySettings.oceanGameObjectId;
+	int32_t validSurfaceSampleCount = 0;
+	Vector3 averageSurfaceVelocity{};
+	Vector3 averageSurfaceNormal{};
+	float averageSurfaceHeight = 0.0f;
+	const uint32_t objectSampleKey =
+		static_cast<uint32_t>(gameObject.id) * 4099u + 2048u;
+
+	for (size_t probeIndex = 0u; probeIndex < probePositions.size(); probeIndex++) {
+		const int32_t gridX = static_cast<int32_t>(probeIndex) %
+			kBuoyancySurfaceProbeAxisCount;
+		const int32_t gridZ = static_cast<int32_t>(probeIndex) /
+			kBuoyancySurfaceProbeAxisCount;
+		const float normalizedX =
+			2.0f * static_cast<float>(gridX) /
+				static_cast<float>(kBuoyancySurfaceProbeAxisCount - 1) -
+			1.0f;
+		const float normalizedZ =
+			2.0f * static_cast<float>(gridZ) /
+				static_cast<float>(kBuoyancySurfaceProbeAxisCount - 1) -
+			1.0f;
+		probeRightOffsets[probeIndex] = normalizedX * probeHalfWidth;
+		probeForwardOffsets[probeIndex] = normalizedZ * probeHalfLength;
+		probePositions[probeIndex] = Add(
+			worldHullCenter,
+			Add(
+				Multiply(probeRightOffsets[probeIndex], horizontalRight),
+				Multiply(probeForwardOffsets[probeIndex], horizontalForward)));
+	}
+
+	for (size_t probeIndex = 0u; probeIndex < probePositions.size(); probeIndex++) {
+		const uint64_t surfaceSampleKey = static_cast<uint64_t>(
+			objectSampleKey + static_cast<uint32_t>(probeIndex));
+		hasSurfaceSample[probeIndex] = SampleEditorOceanSurface(
+			*editorScene_,
+			resolvedOceanGameObjectId,
+			probePositions[probeIndex],
+			surfaceSampleKey,
+			oceanElapsedTime,
+			surfaceSamples[probeIndex]);
+
+		if (!hasSurfaceSample[probeIndex]) {
+			continue;
+		}
+
+		if (resolvedOceanGameObjectId < 0) {
+			resolvedOceanGameObjectId = surfaceSamples[probeIndex].oceanGameObjectId;
+		}
+
+		Vector3 upwardNormal = surfaceSamples[probeIndex].normal;
+		if (Dot(upwardNormal, buoyancyUp) < 0.0f) {
+			upwardNormal = Multiply(-1.0f, upwardNormal);
+		}
+
+		averageSurfaceVelocity = Add(
+			averageSurfaceVelocity,
+			surfaceSamples[probeIndex].velocity);
+		averageSurfaceNormal = Add(averageSurfaceNormal, upwardNormal);
+		averageSurfaceHeight += surfaceSamples[probeIndex].position.y;
+		validSurfaceSampleCount++;
+	}
+
+	//------------------------------
+	// 中央 Probe が取れたかの確認
+	//------------------------------
+
+	// 中央点が無いと実 Shape を切る Plane の基準高さが決まらない。
+	if (!hasSurfaceSample[kCenterSurfaceProbeIndex] || validSurfaceSampleCount <= 0) {
+		return false;
+	}
+
+
+	const float inverseSurfaceSampleCount =
+		1.0f / static_cast<float>(validSurfaceSampleCount);
+	averageSurfaceVelocity = Multiply(
+		inverseSurfaceSampleCount,
+		averageSurfaceVelocity);
+	averageSurfaceHeight *= inverseSurfaceSampleCount;
+	averageSurfaceNormal = Normalize(averageSurfaceNormal);
+	Vector3 fittedSurfaceNormal = averageSurfaceNormal;
+	float fittedSurfaceHeight = surfaceSamples[kCenterSurfaceProbeIndex].position.y;
+
+	// 船体下面を覆う 3x3 FFT Sample へ最小二乗 Plane を当てる。
+	// 一方向の波頭や斜め波でも、中央差分だけより外れ値と局所Normalノイズへ強くなる。
+	if (validSurfaceSampleCount == static_cast<int32_t>(surfaceSamples.size())) {
+		float rightSlopeNumerator = 0.0f;
+		float rightSlopeDenominator = 0.0f;
+		float forwardSlopeNumerator = 0.0f;
+		float forwardSlopeDenominator = 0.0f;
+
+		for (size_t probeIndex = 0u; probeIndex < surfaceSamples.size(); probeIndex++) {
+			const float relativeSurfaceHeight =
+				surfaceSamples[probeIndex].position.y - averageSurfaceHeight;
+			rightSlopeNumerator +=
+				probeRightOffsets[probeIndex] * relativeSurfaceHeight;
+			rightSlopeDenominator +=
+				probeRightOffsets[probeIndex] * probeRightOffsets[probeIndex];
+			forwardSlopeNumerator +=
+				probeForwardOffsets[probeIndex] * relativeSurfaceHeight;
+			forwardSlopeDenominator +=
+				probeForwardOffsets[probeIndex] * probeForwardOffsets[probeIndex];
+		}
+
+		const float rightSurfaceSlope = (rightSlopeDenominator > 0.000001f)
+			? rightSlopeNumerator / rightSlopeDenominator
+			: 0.0f;
+		const float forwardSurfaceSlope = (forwardSlopeDenominator > 0.000001f)
+			? forwardSlopeNumerator / forwardSlopeDenominator
+			: 0.0f;
+		const Vector3 lateralTangent = Add(
+			horizontalRight,
+			Multiply(rightSurfaceSlope, buoyancyUp));
+		const Vector3 longitudinalTangent = Add(
+			horizontalForward,
+			Multiply(forwardSurfaceSlope, buoyancyUp));
+		Vector3 leastSquaresNormal = Cross(longitudinalTangent, lateralTangent);
+
+		if (Length(leastSquaresNormal) > 0.0001f) {
+			leastSquaresNormal = Normalize(leastSquaresNormal);
+
+			if (Dot(leastSquaresNormal, buoyancyUp) < 0.0f) {
+				leastSquaresNormal = Multiply(-1.0f, leastSquaresNormal);
+			}
+
+			fittedSurfaceNormal = Normalize(Add(
+				Multiply(0.85f, leastSquaresNormal),
+				Multiply(0.15f, averageSurfaceNormal)));
+			fittedSurfaceHeight = averageSurfaceHeight;
+		}
+	}
+
+	if (Length(fittedSurfaceNormal) <= 0.0001f) {
+		fittedSurfaceNormal = buoyancyUp;
+	}
+
+	//------------------------------
+	// 求めた水面を模型へ書き出す
+	//------------------------------
+
+	// ここから先は Field だけを読めば水面を再現できる。
+	surface.hullCenter = worldHullCenter;
+	surface.horizontalRight = horizontalRight;
+	surface.horizontalForward = horizontalForward;
+	surface.halfWidth = probeHalfWidth;
+	surface.halfLength = probeHalfLength;
+	surface.rightOffsets = probeRightOffsets;
+	surface.forwardOffsets = probeForwardOffsets;
+	surface.samples = surfaceSamples;
+	surface.hasSample = hasSurfaceSample;
+	surface.oceanGameObjectId = resolvedOceanGameObjectId;
+	surface.validSampleCount = validSurfaceSampleCount;
+	surface.averageVelocity = averageSurfaceVelocity;
+	surface.fittedNormal = fittedSurfaceNormal;
+	surface.fittedHeight = fittedSurfaceHeight;
+	return true;
+}
+
+
+//========================================
+// 局所水面モデル
+//========================================
+
+// queryPosition の真上の水面（高さ・法線・表面速度）を返す。
+//
+// 4 近傍 Probe がそろっていれば 25 点の双線形補間を使い、
+// 欠けていれば最小二乗 Plane の式へ落とす。どちらでも isValid は true になるので、
+// 呼び出し側は水面が「無い」場合を扱わなくてよい。
+void LocalWaterSurfaceModel::Sample(
+	const Vector3& queryPosition,
+	EditorOceanSurfaceSample& interpolatedSample) const {
+	// 切り出す前のラムダと同じ識別子を作り、補間本体へ手を入れずに済ませる。
+	const Vector3& worldHullCenter = hullCenter;
+	const float probeHalfWidth = halfWidth;
+	const float probeHalfLength = halfLength;
+	const std::array<EditorOceanSurfaceSample, kBuoyancySurfaceProbeCount>& surfaceSamples = samples;
+	const std::array<bool, kBuoyancySurfaceProbeCount>& hasSurfaceSample = hasSample;
+	const int32_t resolvedOceanGameObjectId = oceanGameObjectId;
+	const Vector3& fittedSurfaceNormal = fittedNormal;
+	const float fittedSurfaceHeight = fittedHeight;
+	const Vector3& averageSurfaceVelocity = averageVelocity;
+
+
+	const Vector3 centerToQuery = Subtract(queryPosition, worldHullCenter);
+	const float normalizedRight = (std::clamp)(
+		Dot(centerToQuery, horizontalRight) / probeHalfWidth,
+		-1.0f,
+		1.0f);
+	const float normalizedForward = (std::clamp)(
+		Dot(centerToQuery, horizontalForward) / probeHalfLength,
+		-1.0f,
+		1.0f);
+	const float gridX = (normalizedRight * 0.5f + 0.5f) *
+		static_cast<float>(kBuoyancySurfaceProbeAxisCount - 1);
+	const float gridZ = (normalizedForward * 0.5f + 0.5f) *
+		static_cast<float>(kBuoyancySurfaceProbeAxisCount - 1);
+	const int32_t minimumX = (std::clamp)(
+		static_cast<int32_t>(std::floor(gridX)),
+		0,
+		kBuoyancySurfaceProbeAxisCount - 1);
+	const int32_t minimumZ = (std::clamp)(
+		static_cast<int32_t>(std::floor(gridZ)),
+		0,
+		kBuoyancySurfaceProbeAxisCount - 1);
+	const int32_t maximumX = (std::min)(
+		minimumX + 1,
+		kBuoyancySurfaceProbeAxisCount - 1);
+	const int32_t maximumZ = (std::min)(
+		minimumZ + 1,
+		kBuoyancySurfaceProbeAxisCount - 1);
+	const float interpolationX = gridX - static_cast<float>(minimumX);
+	const float interpolationZ = gridZ - static_cast<float>(minimumZ);
+	const size_t minimumMinimumIndex = static_cast<size_t>(
+		minimumZ * kBuoyancySurfaceProbeAxisCount + minimumX);
+	const size_t maximumMinimumIndex = static_cast<size_t>(
+		minimumZ * kBuoyancySurfaceProbeAxisCount + maximumX);
+	const size_t minimumMaximumIndex = static_cast<size_t>(
+		maximumZ * kBuoyancySurfaceProbeAxisCount + minimumX);
+	const size_t maximumMaximumIndex = static_cast<size_t>(
+		maximumZ * kBuoyancySurfaceProbeAxisCount + maximumX);
+	const bool hasInterpolationSamples =
+		hasSurfaceSample[minimumMinimumIndex] &&
+		hasSurfaceSample[maximumMinimumIndex] &&
+		hasSurfaceSample[minimumMaximumIndex] &&
+		hasSurfaceSample[maximumMaximumIndex];
+
+	if (hasInterpolationSamples) {
+		const auto bilinearVector = [
+			interpolationX,
+			interpolationZ](
+				const Vector3& minimumMinimum,
+				const Vector3& maximumMinimum,
+				const Vector3& minimumMaximum,
+				const Vector3& maximumMaximum) {
+			const Vector3 minimumRow = Add(
+				Multiply(1.0f - interpolationX, minimumMinimum),
+				Multiply(interpolationX, maximumMinimum));
+			const Vector3 maximumRow = Add(
+				Multiply(1.0f - interpolationX, minimumMaximum),
+				Multiply(interpolationX, maximumMaximum));
+			return Add(
+				Multiply(1.0f - interpolationZ, minimumRow),
+				Multiply(interpolationZ, maximumRow));
+		};
+		const Vector3 interpolatedPosition = bilinearVector(
+			surfaceSamples[minimumMinimumIndex].position,
+			surfaceSamples[maximumMinimumIndex].position,
+			surfaceSamples[minimumMaximumIndex].position,
+			surfaceSamples[maximumMaximumIndex].position);
+		interpolatedSample.isValid = true;
+		interpolatedSample.oceanGameObjectId = resolvedOceanGameObjectId;
+		interpolatedSample.position = {
+			queryPosition.x,
+			interpolatedPosition.y,
+			queryPosition.z};
+		interpolatedSample.normal = Normalize(bilinearVector(
+			surfaceSamples[minimumMinimumIndex].normal,
+			surfaceSamples[maximumMinimumIndex].normal,
+			surfaceSamples[minimumMaximumIndex].normal,
+			surfaceSamples[maximumMaximumIndex].normal));
+		interpolatedSample.velocity = bilinearVector(
+			surfaceSamples[minimumMinimumIndex].velocity,
+			surfaceSamples[maximumMinimumIndex].velocity,
+			surfaceSamples[minimumMaximumIndex].velocity,
+			surfaceSamples[maximumMaximumIndex].velocity);
+		return;
+	}
+
+	const float safeNormalY = std::fabs(fittedSurfaceNormal.y) > 0.0001f
+		? fittedSurfaceNormal.y
+		: 1.0f;
+	const float planeHeight = fittedSurfaceHeight -
+		((queryPosition.x - worldHullCenter.x) * fittedSurfaceNormal.x +
+		 (queryPosition.z - worldHullCenter.z) * fittedSurfaceNormal.z) /
+			safeNormalY;
+	interpolatedSample.isValid = true;
+	interpolatedSample.oceanGameObjectId = resolvedOceanGameObjectId;
+	interpolatedSample.position = {
+		queryPosition.x,
+		planeHeight,
+		queryPosition.z};
+	interpolatedSample.normal = fittedSurfaceNormal;
+	interpolatedSample.velocity = averageSurfaceVelocity;
+}
+
+// 船体 AABB へ仮想セルを詰めて浮力を加える、実 Shape 方式の安全策。
+//
+// 実 Shape の体積取得へ対応しない特殊 Shape だけがここへ来る。セル単位の水没高さから
+// 浮力とセル速度の抗力を積み、最後に全体の水没率から回転抗力を掛ける。
+// Collider から自動生成した船体では縦範囲を喫水付近へ制限し、マストなどの
+// 上部構造までセルが広がって転覆モーメントを生むのを防ぐ。
+void EditorPhysicsManager::ApplyGridBuoyancyForces(const BuoyancyObjectInput& input) {
+	//------------------------------
+	// 呼び出し側と同じ名前で入力を受け直す
+	//------------------------------
+
+	// 抽出前と同じ識別子のまま計算本体を残せるようにする。
+	EditorGameObject& gameObject = *input.gameObject;
+	EditorComponent* rigidBodyComponent = input.rigidBody;
+	const RuntimeBuoyancySettings& buoyancySettings = input.settings;
+	const Vector3& safeHullSize = input.hullSize;
+	const Vector3& worldScale = input.worldScale;
+	const Vector3& worldRotation = input.worldRotation;
+	const Vector3& worldPosition = input.worldPosition;
+	const float oceanElapsedTime = input.oceanElapsedTime;
+	const float gravityMagnitude = input.gravityMagnitude;
+	const Vector3& buoyancyUp = input.buoyancyUp;
+
+	// 実 Shape の体積取得に対応しない特殊 Shape だけ、従来グリッドを安全策として使う。
+	const BuoyancyGridDimensions gridDimensions = BuildBuoyancyGridDimensions(
+		safeHullSize,
+		worldScale);
+	float resolvedBodyMass = rigidBodyComponent->mass;
+	joltPhysicsManager_.GetBodyMass(gameObject.id, resolvedBodyMass);
+	const float safeMass = (std::max)(resolvedBodyMass, 0.01f);
+	const float worldHullWidth = (std::max)(
+		std::fabs(safeHullSize.x * worldScale.x),
+		0.05f);
+	const float worldHullHeight = (std::max)(
+		std::fabs(safeHullSize.y * worldScale.y),
+		0.05f);
+	const float worldHullLength = (std::max)(
+		std::fabs(safeHullSize.z * worldScale.z),
+		0.05f);
+	const float approximateHullVolume =
+		worldHullWidth * worldHullHeight * worldHullLength;
+	const float automaticBuoyancyStrength =
+		(std::max)(buoyancySettings.waterDensity, 0.0f) *
+		approximateHullVolume * gravityMagnitude / safeMass;
+	const float buoyancyStrength = buoyancySettings.automaticPhysicalProperties
+		? automaticBuoyancyStrength
+		: (std::max)(buoyancySettings.strength, 0.0f);
+	const float automaticBuoyancyDamping =
+		1.4f * std::sqrt((std::max)(buoyancyStrength / worldHullHeight, 0.0f));
+	const float buoyancyDamping = buoyancySettings.automaticPhysicalProperties
+		? automaticBuoyancyDamping
+		: (std::max)(buoyancySettings.damping, 0.0f);
+
+	// B: Collider 自動の浮力物体は、モデル全体の AABB 中心を基準にすると
+	// マストなどの上部構造まで縦グリッドが広がり、転覆モーメントの原因になる。
+	// 縦範囲を「船底（AABB 下端）〜平衡喫水 + 波の余裕」へ制限して配置し直す。
+	Vector3 limitedHullSize = safeHullSize;
+	if (buoyancySettings.limitDraftHeight) {
+		const float equilibriumSubmersionRatio = (std::clamp)(
+			gravityMagnitude / (std::max)(buoyancyStrength, 0.01f),
+			0.2f,
+			0.9f);
+		const float requestedDraftHeight = std::min(
+			safeHullSize.y * equilibriumSubmersionRatio * kBuoyancyDraftOverheadRatio,
+			safeHullSize.y);
+		limitedHullSize.y = (std::max)(requestedDraftHeight, kBuoyancyDraftMinimumHeight);
+	}
+	const float verticalGridHeight = limitedHullSize.y;
+	const BuoyancyGridDimensions limitedGridDimensions = (buoyancySettings.limitDraftHeight)
+		? BuildBuoyancyGridDimensions(limitedHullSize, worldScale)
+		: gridDimensions;
+
+	const int32_t floatPointCount =
+		limitedGridDimensions.countX * limitedGridDimensions.countY * limitedGridDimensions.countZ;
+	const Vector3 localCellSize{
+		safeHullSize.x / static_cast<float>(limitedGridDimensions.countX),
+		verticalGridHeight / static_cast<float>(limitedGridDimensions.countY),
+		safeHullSize.z / static_cast<float>(limitedGridDimensions.countZ)};
+	const Vector3 localCellHalfSize = Multiply(0.5f, localCellSize);
+	const float modelBottomY =
+		buoyancySettings.centerOffset.y - safeHullSize.y * 0.5f;
+	const float gridCenterY = buoyancySettings.limitDraftHeight
+		? modelBottomY + verticalGridHeight * 0.5f
+		: buoyancySettings.centerOffset.y;
+	const Vector3 localHullMinimum{
+		buoyancySettings.centerOffset.x - safeHullSize.x * 0.5f,
+		gridCenterY - verticalGridHeight * 0.5f,
+		buoyancySettings.centerOffset.z - safeHullSize.z * 0.5f};
+	const float pointMass = safeMass / static_cast<float>(floatPointCount);
+	const Matrix4x4 boatWorldMatrix = editorScene_->GetWorldMatrix(gameObject.id);
+	const Matrix4x4 boatRotationMatrix = MakeAffineMatrix(
+		{1.0f, 1.0f, 1.0f},
+		worldRotation,
+		{0.0f, 0.0f, 0.0f});
+	const Vector3 boatRight = Normalize(Transform({1.0f, 0.0f, 0.0f}, boatRotationMatrix));
+	const Vector3 boatUp = Normalize(Transform({0.0f, 1.0f, 0.0f}, boatRotationMatrix));
+	const Vector3 boatForward = Normalize(Transform({0.0f, 0.0f, 1.0f}, boatRotationMatrix));
+	const float forwardDrag = buoyancySettings.automaticPhysicalProperties
+		? 1.0f
+		: (std::max)(buoyancySettings.waterDrag, 0.0f);
+	const float lateralDrag = buoyancySettings.automaticPhysicalProperties
+		? 1.0f
+		: (std::max)(buoyancySettings.lateralDrag, 0.0f);
+	const float verticalDrag = buoyancySettings.automaticPhysicalProperties
+		? 1.0f
+		: (std::max)(buoyancySettings.verticalDrag, 0.0f);
+	const float normalInfluence = (std::clamp)(
+		buoyancySettings.automaticPhysicalProperties
+			? 0.2f
+			: buoyancySettings.normalInfluence,
+		0.0f,
+		1.0f);
+	const float slammingStrength = buoyancySettings.automaticPhysicalProperties
+		? 1.0f
+		: (std::max)(buoyancySettings.slammingStrength, 0.0f);
+	float totalSubmersionRatio = 0.0f;
+	int32_t submergedPointCount = 0;
+	int32_t resolvedOceanGameObjectId =
+		buoyancySettings.oceanGameObjectId;
+
+	for (int32_t gridIndexZ = 0; gridIndexZ < limitedGridDimensions.countZ; gridIndexZ++) {
+		for (int32_t gridIndexX = 0; gridIndexX < limitedGridDimensions.countX; gridIndexX++) {
+			const Vector3 localColumnCenter{
+				localHullMinimum.x +
+					(static_cast<float>(gridIndexX) + 0.5f) * localCellSize.x,
+				gridCenterY,
+				localHullMinimum.z +
+					(static_cast<float>(gridIndexZ) + 0.5f) * localCellSize.z};
+			const Vector3 worldColumnCenter = Transform(localColumnCenter, boatWorldMatrix);
+			const int32_t columnIndex =
+				gridIndexZ * limitedGridDimensions.countX + gridIndexX;
+			const uint32_t objectSampleKey =
+				static_cast<uint32_t>(gameObject.id) * 4099u;
+			const uint64_t surfaceSampleKey = static_cast<uint64_t>(
+				objectSampleKey + static_cast<uint32_t>(columnIndex));
+			EditorOceanSurfaceSample surfaceSample{};
+
+			// 同じ X/Z 列にある縦セルは同じ FFT 水面を共有し、GPU 読み戻しを重複させない。
+			if (!SampleEditorOceanSurface(
+					*editorScene_,
+					resolvedOceanGameObjectId,
+					worldColumnCenter,
+					surfaceSampleKey,
+					oceanElapsedTime,
+					surfaceSample)) {
+				continue;
+			}
+
+			if (resolvedOceanGameObjectId < 0) {
+				resolvedOceanGameObjectId = surfaceSample.oceanGameObjectId;
+			}
+
+			for (int32_t gridIndexY = 0; gridIndexY < limitedGridDimensions.countY; gridIndexY++) {
+				const Vector3 localFloatPoint{
+					localColumnCenter.x,
+					localHullMinimum.y +
+						(static_cast<float>(gridIndexY) + 0.5f) * localCellSize.y,
+					localColumnCenter.z};
+				const Vector3 worldFloatPoint = Transform(localFloatPoint, boatWorldMatrix);
+				const Vector3 worldCellExtentX = Transform(
+					Add(localFloatPoint, {localCellHalfSize.x, 0.0f, 0.0f}),
+					boatWorldMatrix);
+				const Vector3 worldCellExtentY = Transform(
+					Add(localFloatPoint, {0.0f, localCellHalfSize.y, 0.0f}),
+					boatWorldMatrix);
+				const Vector3 worldCellExtentZ = Transform(
+					Add(localFloatPoint, {0.0f, 0.0f, localCellHalfSize.z}),
+					boatWorldMatrix);
+				const float projectedCellHalfHeight = (std::max)(
+					std::fabs(worldCellExtentX.y - worldFloatPoint.y) +
+						std::fabs(worldCellExtentY.y - worldFloatPoint.y) +
+						std::fabs(worldCellExtentZ.y - worldFloatPoint.y),
+					0.005f);
+				const float cellBottomPositionY =
+					worldFloatPoint.y - projectedCellHalfHeight;
+				const float submergedCellHeight = (std::clamp)(
+					surfaceSample.position.y - cellBottomPositionY,
+					0.0f,
+					projectedCellHalfHeight * 2.0f);
+
+				if (submergedCellHeight <= 0.0f) {
+					continue;
+				}
+
+				const float submersionRatio =
+					submergedCellHeight / (projectedCellHalfHeight * 2.0f);
+				Vector3 worldForcePoint = worldFloatPoint;
+				worldForcePoint.y = cellBottomPositionY + submergedCellHeight * 0.5f;
+				const Vector3 centerToPoint = Subtract(worldForcePoint, worldPosition);
+				const Vector3 pointAngularVelocity = Cross(
+					rigidBodyComponent->angularVelocity,
+					centerToPoint);
+				const Vector3 pointVelocity = Add(
+					rigidBodyComponent->velocity,
+					pointAngularVelocity);
+				const Vector3 relativePointVelocity = Subtract(
+					pointVelocity,
+					surfaceSample.velocity);
+				const float relativeVerticalVelocity = Dot(
+					relativePointVelocity,
+					buoyancyUp);
+				const float pointAcceleration = (std::clamp)(
+					buoyancyStrength * submersionRatio -
+						relativeVerticalVelocity * buoyancyDamping * submersionRatio,
+					0.0f,
+					(std::max)(buoyancyStrength * 2.0f, gravityMagnitude * 4.0f));
+				Vector3 waterNormal = surfaceSample.normal;
+
+				if (Dot(waterNormal, buoyancyUp) < 0.0f) {
+					waterNormal = Multiply(-1.0f, waterNormal);
+				}
+
+				const Vector3 buoyancyDirection = Normalize(Add(
+					Multiply(1.0f - normalInfluence, buoyancyUp),
+					Multiply(normalInfluence, waterNormal)));
+				const float enteringWaterSpeed = (std::max)(-relativeVerticalVelocity, 0.0f);
+				const float slammingAcceleration = (std::min)(
+					enteringWaterSpeed * enteringWaterSpeed * slammingStrength *
+						(1.0f - submersionRatio),
+					gravityMagnitude * 4.0f);
+				const Vector3 buoyancyForce = Multiply(
+					pointMass * (pointAcceleration + slammingAcceleration),
+					buoyancyDirection);
+
+				// 船体の前後・横・上下を別係数で減衰し、前進を残しながら横滑りと着水を抑える。
+				const float forwardSpeed = Dot(relativePointVelocity, boatForward);
+				const float lateralSpeed = Dot(relativePointVelocity, boatRight);
+				const float verticalSpeed = Dot(relativePointVelocity, boatUp);
+				Vector3 dragAcceleration = Add(
+					Multiply(-forwardSpeed * forwardDrag * (1.0f + std::fabs(forwardSpeed) * 0.05f), boatForward),
+					Multiply(-lateralSpeed * lateralDrag * (1.0f + std::fabs(lateralSpeed) * 0.05f), boatRight));
+				dragAcceleration = Add(
+					dragAcceleration,
+					Multiply(-verticalSpeed * verticalDrag * (1.0f + std::fabs(verticalSpeed) * 0.05f), boatUp));
+				const float dragAccelerationLength = Length(dragAcceleration);
+				const float maximumDragAcceleration = (std::max)(gravityMagnitude * 6.0f, 20.0f);
+
+				if (dragAccelerationLength > maximumDragAcceleration) {
+					dragAcceleration = Multiply(
+						maximumDragAcceleration / dragAccelerationLength,
+						dragAcceleration);
+				}
+
+				const Vector3 hydrodynamicDragForce = Multiply(
+					pointMass * submersionRatio,
+					dragAcceleration);
+				AddForceAtPosition(
+					gameObject.id,
+					Add(buoyancyForce, hydrodynamicDragForce),
+					worldForcePoint);
+				totalSubmersionRatio += submersionRatio;
+				submergedPointCount++;
+			}
+		}
+	}
+
+	if (submergedPointCount <= 0) {
+		return;
+	}
+
+	const float averageSubmersionRatio =
+		totalSubmersionRatio / static_cast<float>(floatPointCount);
+	const float angularDrag = buoyancySettings.automaticPhysicalProperties
+		? 1.0f
+		: (std::max)(buoyancySettings.angularDrag, 0.0f);
+	const Vector3 waterAngularDragTorque = Multiply(
+		-safeMass * angularDrag * averageSubmersionRatio,
+		rigidBodyComponent->angularVelocity);
+
+	AddTorque(gameObject.id, waterAngularDragTorque);
 }

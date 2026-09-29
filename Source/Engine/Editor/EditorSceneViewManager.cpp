@@ -210,8 +210,8 @@ namespace {
 		return
 			dikCode >= 0 &&
 			dikCode < 256 &&
-			g_key[dikCode] != 0 &&
-			g_preKey[dikCode] == 0;
+			g_input != nullptr &&
+			g_input->TriggerKey(dikCode);
 	}
 
 	void UpdateActiveToolFromShortcut(bool canUseShortcut) {

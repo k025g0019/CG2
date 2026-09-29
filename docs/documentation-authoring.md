@@ -51,6 +51,34 @@ Descriptor Heap、Pipeline State、内部キャッシュ、Jolt Physics への�
 
 機能説明には、メニュー名、ボタン名、コンポーネント名、必要なファイル、設定値、Play の有無を含める。「設定する」「使用する」だけで終わらせない。
 
+### 2.6 プログラミング未経験者が途中から読んでも理解できる順序にする
+
+内部名や略語から説明を始めない。各項目は原則として、次の順で書く。
+
+1. 画面やゲーム上で何を実現する機能か。
+2. 身近な例または簡単な入力と出力。
+3. 使用者がどこで作成・設定するか。
+4. CPU、GPU、Manager、Component等の誰が処理するか。
+5. 入力から結果までの処理順。
+6. 専門用語とData構造。
+7. `.h`の公開契約と`.cpp`の実処理。
+8. 失敗条件、未実装範囲、性能上限。
+
+`Pipeline`、`Tag`、`Layer`、`Object`、`Resource`等は複数の意味を持つため、何を指すかを先に固定する。たとえばPipelineはGPU Graphics Pipelineと1FrameのRender Pass列を分け、TagはGameObject Tag、Component Type、Damage Tag、Surface Tagを分ける。
+
+### 2.7 UI表示と実際のData接続を別々に確認する
+
+UIにComboやCheckboxが表示されても、Engine機能が存在する証拠にはならない。次を順番に確認する。
+
+1. 値を保持するFieldがGameObject、Component、Asset、Project Settings等に存在するか。
+2. UI変更がそのFieldへ書き込まれるか。
+3. Scene、Prefab、Project Settings等へ保存・再読込されるか。
+4. Undo/Redoと共同編集差分へ含まれるか。
+5. Runtime ManagerまたはRendererが値を読むか。
+6. Script APIで取得・変更・検索できるか。
+
+いずれかがない場合は「表示のみ」「保存されない」「Runtime未接続」等を明記する。現行のGameObject HeaderにあるTag、Layer、Staticはこの確認が必要な代表例である。
+
 ## 3. 推奨する調査・文章生成モデル
 
 ChatGPT Work へ渡す場合は、利用可能なモデルの中で最も長いコンテキストと高い推論性能を持つモデルを使う。高速回答用の小型モデルより、複数ファイルの整合性確認と長文構成を優先する。
@@ -253,9 +281,9 @@ GameObject の説明は次の項目を埋める。
 初期状態:
 名前の変更方法:
 有効 / 無効の意味:
-Tag の用途:
-Layer の用途:
-Static の用途:
+Tag の用途（Field・保存・Runtime・検索APIの有無を別々に確認）:
+Layer の用途（GameObject共通かPhysics Component専用かを区別）:
+Static の用途（描画・物理・Batchingへ接続されるかを確認）:
 親子関係の作り方:
 Transform の継承範囲:
 複製方法:
@@ -1950,7 +1978,7 @@ Project Settings 相当の画面または設定ファイルを全て調査する
 | Physics | Gravity、Fixed Delta Time、Solver、Layer Collision Matrix。 |
 | Render | HDR、AA、Bloom、SSR、Planar Reflection、Shadow、ToneMapping。 |
 | Quality | 低 / 中 / 高の違い、GPU負荷。 |
-| Tags / Layers | 作成、割り当て、物理 / 描画 / 検索への影響。 |
+| Tags / Layers | 設定画面と保存先が本当に存在するか。存在する場合は作成、割り当て、物理 / 描画 / 検索への影響。存在しない場合は仮UIまたは未実装と明記する。 |
 | Audio | Output、Volume、Mixer、3D Audio の有無。 |
 | AI | Python Path、Model Path、GPU / CPU、実行頻度。 |
 | Build | 出力先、必要 DLL、Asset コピー。 |

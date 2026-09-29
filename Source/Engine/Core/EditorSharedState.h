@@ -32,13 +32,16 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <memory>
 #include <wrl.h>
 #pragma warning(pop)
 #pragma warning(disable : 4820)
 #pragma warning(disable : 4514)
 #pragma warning(disable : 5045)
 
-#include "ApplicationWindow.h"
+#include "DirectXCommon.h"
+#include "Input.h"
+#include "WinApp.h"
 #include "CrashHandler.h"
 #include "EditorAssetFactory.h"
 #include "EditorAssetUtility.h"
@@ -318,7 +321,11 @@ namespace EditorSharedState {
 		}
 
 		UINT64 intermediateSize = GetRequiredIntermediateSize(texture, 0, static_cast<UINT>(subresources.size()));
-		ID3D12Resource* intermediateResource = CreateBufferResource(device, intermediateSize);
+
+		// 転送が終わるまで生きていればよい中間 Buffer。失敗したらここで手放す。
+		ComPtr<ID3D12Resource> intermediateResource;
+		intermediateResource.Attach(CreateBufferResource(device, intermediateSize));
+
 		if (intermediateResource == nullptr) {
 			return nullptr;
 		}
@@ -326,13 +333,13 @@ namespace EditorSharedState {
 		const UINT64 uploadedSize = UpdateSubresources(
 			commandList,
 			texture,
-			intermediateResource,
+			intermediateResource.Get(),
 			0,
 			0,
 			static_cast<UINT>(subresources.size()),
 			subresources.data());
+
 		if (uploadedSize == 0u) {
-			intermediateResource->Release();
 			return nullptr;
 		}
 
@@ -345,7 +352,8 @@ namespace EditorSharedState {
 		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_GENERIC_READ;
 		commandList->ResourceBarrier(1, &barrier);
 
-		return intermediateResource;
+		// 呼び出し側が解放を引き受けるので、参照カウントを渡して手放す。
+		return intermediateResource.Detach();
 	}
 
 	inline ID3D12Resource* CreateBufferResource(ID3D12Device* device, size_t sizeInBytes) {
@@ -765,21 +773,20 @@ namespace EditorSharedState {
 	inline bool g_isFinalized = false;
 	inline bool g_isDrawRequested = false;
 	inline std::ofstream g_logStream;
-	inline HWND g_windowHandle = nullptr;
+	//------------------------------
+	// Window と入力
+	//------------------------------
+
+	// Win32 と DirectInput は WinApp / Input クラスが所有する。
+	// ここに置くのは実体への Pointer だけで、Handle や Key 配列は各クラスの
+	// メンバ変数にある。Initialize 前と Finalize 後は nullptr になる。
+	inline std::unique_ptr<WinApp> g_winApp;  // Window Class 登録・Window 生成・Message 振り分け
+	inline std::unique_ptr<Input> g_input;  // DirectInput の Keyboard / Mouse
+	inline std::unique_ptr<DirectXCommon> g_dxCommon;  // Device / Command / SwapChain / Fence / Descriptor Heap
+
 	inline HRESULT g_hr = S_OK;
-	inline IDirectInput8* g_directInput = nullptr;
-	inline IDirectInputDevice8* g_keyboardDevice = nullptr;
-	inline IDirectInputDevice8* g_mouseDevice = nullptr;
-	inline DIMOUSESTATE g_mouseState{};
-	inline DIMOUSESTATE g_preMouseState{};  // Scriptの押した瞬間・離した瞬間判定に使う前フレーム状態。
 	inline bool g_runtimeCursorLocked = false;  // Play中のCameraまたはScriptがカーソル固定を要求している。
 	inline bool g_runtimeCursorVisible = true;  // Win32 ShowCursorの現在要求値。
-
-	inline BYTE g_key[256] = {};
-
-	inline BYTE g_preKey[256] = {};
-
-	inline MSG g_message{};
 
 	inline IXAudio2* g_xAudio2 = nullptr;
 	inline IXAudio2MasteringVoice* g_masterVoice = nullptr;
@@ -787,64 +794,49 @@ namespace EditorSharedState {
 	inline SoundData g_soundData{};
 
 	inline IXAudio2SourceVoice* g_sourceVoice = nullptr;
-	inline ComPtr<IDXGIFactory7> g_dxgiFactory;
-	inline ComPtr<IDXGIAdapter4> g_useAdapter;
-	inline ComPtr<ID3D12Device> g_device;
-	inline ComPtr<ID3D12CommandQueue> g_commandQueue;
-	inline ComPtr<ID3D12CommandAllocator> g_commandAllocator;
-	inline ComPtr<ID3D12GraphicsCommandList> g_commandList;
-	inline ComPtr<ID3D12QueryHeap> g_renderTimestampQueryHeap;
-	inline ComPtr<ID3D12Resource> g_renderTimestampReadback;
-	inline std::uint64_t g_renderTimestampFrequency = 0u;
+	// Device / Command / SwapChain / Fence / Descriptor Heap は DirectXCommon が所有する。
+	// ここから触るときは g_dxCommon の getter を経由する。
 
-	inline ComPtr<IDXGISwapChain4> g_swapChain;
 
-	inline DXGI_SWAP_CHAIN_DESC1 g_swapChainDesc{};
 
-	inline ID3D12DescriptorHeap* g_rtvDescriptorHeap = nullptr;
-	inline ID3D12DescriptorHeap* g_srvDescriptorHeap = nullptr;
-	inline ID3D12DescriptorHeap* g_dsvDescriptorHeap = nullptr;
 
-	inline ID3D12Resource* g_swapChainResources[kRuntimeSwapChainBufferCount] = {nullptr, nullptr};
 
-	inline D3D12_RENDER_TARGET_VIEW_DESC g_rtvDesc{};
-	inline D3D12_CPU_DESCRIPTOR_HANDLE g_rtvHandles[kRuntimeSwapChainBufferCount]{};
 
 	inline D3D12_CLEAR_VALUE g_depthClearValue{};
 	inline D3D12_DEPTH_STENCIL_VIEW_DESC g_dsvDesc{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_dsvHandle{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_shadowDsvHandle{};
 
-	inline ID3D12Resource* g_depthStencilResource = nullptr;
+	inline ComPtr<ID3D12Resource> g_depthStencilResource;
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_depthSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_depthSrvHandleGPU{};
-	inline ID3D12Resource* g_opaqueDepthCopyResource = nullptr;
+	inline ComPtr<ID3D12Resource> g_opaqueDepthCopyResource;
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_opaqueDepthCopySrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_opaqueDepthCopySrvHandleGPU{};
-	inline ID3D12Resource* g_shadowMapResource = nullptr;
+	inline ComPtr<ID3D12Resource> g_shadowMapResource;
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_shadowMapSrvCpuHandle{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_shadowMapSrvGpuHandle{};
 
-	inline ID3D12Resource* g_hdrRenderTarget = nullptr;
+	inline ComPtr<ID3D12Resource> g_hdrRenderTarget;
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_hdrRtvHandle{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_hdrSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_hdrSrvHandleGPU{};
 
-	inline ID3D12Resource* g_bloomRenderTargets[2] = {};
+	inline ComPtr<ID3D12Resource> g_bloomRenderTargets[2];
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_bloomRtvHandles[2]{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_bloomSrvHandlesCPU[2]{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_bloomSrvHandlesGPU[2]{};
-	inline ID3D12Resource* g_postProcessRenderTarget = nullptr;
+	inline ComPtr<ID3D12Resource> g_postProcessRenderTarget;
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_postProcessRtvHandle{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_postProcessSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_postProcessSrvHandleGPU{};
-	inline ID3D12Resource* g_ssaoRenderTargets[2] = {};
+	inline ComPtr<ID3D12Resource> g_ssaoRenderTargets[2];
 	// SSGI は半解像度で解き、Temporal で均してからフル解像度へ加算する。
-	inline ID3D12Resource* g_ssgiRenderTarget = nullptr;
+	inline ComPtr<ID3D12Resource> g_ssgiRenderTarget;
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_ssgiRtvHandle{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_ssgiSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_ssgiSrvHandleGPU{};
-	inline ID3D12Resource* g_ssgiHistoryRenderTargets[2] = {};
+	inline ComPtr<ID3D12Resource> g_ssgiHistoryRenderTargets[2];
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_ssgiHistoryRtvHandles[2]{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_ssgiHistorySrvHandlesCPU[2]{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_ssgiHistorySrvHandlesGPU[2]{};
@@ -855,21 +847,21 @@ namespace EditorSharedState {
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_ssaoRtvHandles[2]{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_ssaoSrvHandlesCPU[2]{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_ssaoSrvHandlesGPU[2]{};
-	inline ID3D12Resource* g_hdrCompositeRenderTarget = nullptr;
+	inline ComPtr<ID3D12Resource> g_hdrCompositeRenderTarget;
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_hdrCompositeRtvHandle{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_hdrCompositeSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_hdrCompositeSrvHandleGPU{};
 
-	inline ID3D12Resource* g_materialMaskRenderTarget = nullptr;
+	inline ComPtr<ID3D12Resource> g_materialMaskRenderTarget;
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_materialMaskRtvHandle{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_materialMaskSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_materialMaskSrvHandleGPU{};
-	inline ID3D12Resource* g_planarReflectionRenderTarget = nullptr;
+	inline ComPtr<ID3D12Resource> g_planarReflectionRenderTarget;
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_planarReflectionRtvHandle{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_planarReflectionSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_planarReflectionSrvHandleGPU{};
-	inline ID3D12Resource* g_oitAccumulationRenderTarget = nullptr;
-	inline ID3D12Resource* g_oitRevealageRenderTarget = nullptr;
+	inline ComPtr<ID3D12Resource> g_oitAccumulationRenderTarget;
+	inline ComPtr<ID3D12Resource> g_oitRevealageRenderTarget;
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_oitRtvHandles[2]{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_oitSrvHandlesCPU[2]{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_oitSrvHandlesGPU[2]{};
@@ -1000,32 +992,32 @@ namespace EditorSharedState {
 	inline EditorTemporalRenderingManager g_temporalRenderingManager;
 	// IBL uses existing root signature with added descriptor ranges
 
-	inline ID3D12Resource* g_spriteMaterialResource = nullptr;
+	inline ComPtr<ID3D12Resource> g_spriteMaterialResource;
 	inline Material* g_spriteMaterialData = nullptr;
 
-	inline ID3D12Resource* g_sphereMaterialResource = nullptr;
+	inline ComPtr<ID3D12Resource> g_sphereMaterialResource;
 	inline Material* g_sphereMaterialData = nullptr;
 
-	inline ID3D12Resource* g_directionalLightResource = nullptr;
+	inline ComPtr<ID3D12Resource> g_directionalLightResource;
 	inline DirectionalLight* g_directionalLightData = nullptr;
 
-	inline ID3D12Resource* g_emissiveLightResource = nullptr;
+	inline ComPtr<ID3D12Resource> g_emissiveLightResource;
 	inline EmissiveLightArray* g_emissiveLightData = nullptr;
 
-	inline ID3D12Resource* g_spriteTransformationMatrixResource = nullptr;
+	inline ComPtr<ID3D12Resource> g_spriteTransformationMatrixResource;
 	inline TransformationMatrix* g_spriteTransformationMatrixData = nullptr;
-	inline ID3D12Resource* g_sphereTransformationMatrixResource = nullptr;
+	inline ComPtr<ID3D12Resource> g_sphereTransformationMatrixResource;
 	inline TransformationMatrix* g_sphereTransformationMatrixData = nullptr;
-	inline ID3D12Resource* g_identitySkinMatrixResource = nullptr;  // 非 Skin 頂点でも t16 / t17 を常に有効な SRV にする
+	inline ComPtr<ID3D12Resource> g_identitySkinMatrixResource;  // 非 Skin 頂点でも t16 / t17 を常に有効な SRV にする
 	inline Matrix4x4* g_identitySkinMatrixData = nullptr;
 	constexpr uint32_t kEditorBatchInstanceCapacity = 65536u;
-	inline ID3D12Resource* g_batchInstanceResource = nullptr;
+	inline ComPtr<ID3D12Resource> g_batchInstanceResource;
 	inline EditorBatchInstanceData* g_batchInstanceData = nullptr;
 
 	inline ModelData g_modelData{};
 	constexpr size_t kEditorModelMeshTypeCount = static_cast<size_t>(EditorModelMeshType::Count);
 	inline ModelData g_editorPrimitiveModelData[kEditorModelMeshTypeCount]{};
-	inline ID3D12Resource* g_editorPrimitiveVertexResources[kEditorModelMeshTypeCount] = {};
+	inline ComPtr<ID3D12Resource> g_editorPrimitiveVertexResources[kEditorModelMeshTypeCount];
 	inline D3D12_VERTEX_BUFFER_VIEW g_editorPrimitiveVertexBufferViews[kEditorModelMeshTypeCount]{};
 	inline uint32_t g_editorPrimitiveVertexCounts[kEditorModelMeshTypeCount] = {};
 
@@ -1041,10 +1033,10 @@ namespace EditorSharedState {
 
 	inline Transforms g_uvTransform{};
 
-	inline ID3D12Resource* g_vertexResource = nullptr;
-	inline ID3D12Resource* g_modelVertexResource = nullptr;
-	inline ID3D12Resource* g_spriteVertexResource = nullptr;
-	inline ID3D12Resource* g_spriteIndexResource = nullptr;
+	inline ComPtr<ID3D12Resource> g_vertexResource;
+	inline ComPtr<ID3D12Resource> g_modelVertexResource;
+	inline ComPtr<ID3D12Resource> g_spriteVertexResource;
+	inline ComPtr<ID3D12Resource> g_spriteIndexResource;
 
 	inline D3D12_VERTEX_BUFFER_VIEW g_vertexBufferView{};
 	inline D3D12_VERTEX_BUFFER_VIEW g_modelVertexBufferView{};
@@ -1130,37 +1122,34 @@ namespace EditorSharedState {
 
 	inline EditorSceneObjectManager g_editorSceneObjectManager;
 	inline int32_t g_selectedPlacedSceneObjectIndex = -1;
-	inline ComPtr<ID3D12Fence> g_fence;
-	inline uint64_t g_fenceValue = 0;
-	inline HANDLE g_fenceEvent = nullptr;
 
 	inline std::wstring g_textureFilePaths[kRuntimeTextureCount];
 	inline std::string g_textureFilePathStrings[kRuntimeTextureCount];
 	inline std::vector<std::string> g_editorTextureFilePaths;
 
 	inline DirectX::TexMetadata g_textureMetadatas[kRuntimeTextureCount]{};
-	inline ID3D12Resource* g_textureResources[kRuntimeTextureCount] = {nullptr, nullptr, nullptr, nullptr};
+	inline ComPtr<ID3D12Resource> g_textureResources[kRuntimeTextureCount];
 
-	inline ID3D12Resource* g_intermediateResources[kRuntimeTextureCount] = {nullptr, nullptr, nullptr, nullptr};
+	inline ComPtr<ID3D12Resource> g_intermediateResources[kRuntimeTextureCount];
 
 	inline UINT g_srvDescriptorSize = 0;
 
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_textureSrvHandlesCPU[kRuntimeTextureCount]{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_textureSrvHandlesGPU[kRuntimeTextureCount]{};
-	inline ID3D12Resource* g_environmentTextureResource = nullptr;
-	inline ID3D12Resource* g_environmentTextureUploadResource = nullptr;
+	inline ComPtr<ID3D12Resource> g_environmentTextureResource;
+	inline ComPtr<ID3D12Resource> g_environmentTextureUploadResource;
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_environmentTextureSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_environmentTextureSrvHandleGPU{};
 	inline std::string g_environmentTextureAssetPath;
 	inline std::string g_loadedEnvironmentTextureAssetPath;
 	inline bool g_isEnvironmentTextureDirty = false;
-	inline ID3D12Resource* g_iblEnvironmentCube = nullptr;
-	inline ID3D12Resource* g_iblIrradianceCube = nullptr;
-	inline ID3D12Resource* g_iblPrefilterCube = nullptr;
-	inline ID3D12Resource* g_iblBRDFLUT = nullptr;
-	inline ID3D12Resource* g_colorGradingLut = nullptr;
-	inline ID3D12Resource* g_customColorGradingLutResource = nullptr;
-	inline ID3D12Resource* g_customColorGradingLutUploadResource = nullptr;
+	inline ComPtr<ID3D12Resource> g_iblEnvironmentCube;
+	inline ComPtr<ID3D12Resource> g_iblIrradianceCube;
+	inline ComPtr<ID3D12Resource> g_iblPrefilterCube;
+	inline ComPtr<ID3D12Resource> g_iblBRDFLUT;
+	inline ComPtr<ID3D12Resource> g_colorGradingLut;
+	inline ComPtr<ID3D12Resource> g_customColorGradingLutResource;
+	inline ComPtr<ID3D12Resource> g_customColorGradingLutUploadResource;
 	inline std::string g_loadedColorGradingLutAssetPath;
 	inline bool g_iblEnvironmentCubeLoaded = false;  // EnvironmentMapEffect 用の実キューブマップが読み込めたか。
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_iblIrradianceSrvHandleCPU{};
@@ -1204,12 +1193,13 @@ namespace EditorSharedState {
 			return cursorClipRect;
 		}
 
-		if (g_windowHandle != nullptr) {
-			GetClientRect(g_windowHandle, &cursorClipRect);
+		if (g_winApp != nullptr && g_winApp->HasWindow()) {
+			const HWND windowHandle = g_winApp->GetHwnd();
+			GetClientRect(windowHandle, &cursorClipRect);
 			POINT clientOrigin{cursorClipRect.left, cursorClipRect.top};
 			POINT clientEnd{cursorClipRect.right, cursorClipRect.bottom};
-			ClientToScreen(g_windowHandle, &clientOrigin);
-			ClientToScreen(g_windowHandle, &clientEnd);
+			ClientToScreen(windowHandle, &clientOrigin);
+			ClientToScreen(windowHandle, &clientEnd);
 			cursorClipRect = {clientOrigin.x, clientOrigin.y, clientEnd.x, clientEnd.y};
 		}
 
@@ -1377,7 +1367,7 @@ namespace EditorSharedState {
 
 		ID3D12Resource* resource = nullptr;
 
-		HRESULT createResult = g_device->CreateCommittedResource(
+		HRESULT createResult = g_dxCommon->GetDevice()->CreateCommittedResource(
 			&heapProperties,
 			D3D12_HEAP_FLAG_NONE,
 			&resourceDesc,
@@ -1403,7 +1393,7 @@ namespace EditorSharedState {
 		resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
 
 		ID3D12Resource* resource = nullptr;
-		const HRESULT createResult = g_device->CreateCommittedResource(
+		const HRESULT createResult = g_dxCommon->GetDevice()->CreateCommittedResource(
 			&heapProperties,
 			D3D12_HEAP_FLAG_NONE,
 			&resourceDesc,
@@ -1414,15 +1404,10 @@ namespace EditorSharedState {
 		return resource;
 	}
 
+	// Fence の値とイベントは DirectXCommon が持つ。ここは既存の呼び出し名を残すための入口。
 	inline void WaitForGpu() {
-		g_fenceValue++;
-		HRESULT signalResult = g_commandQueue->Signal(g_fence.Get(), g_fenceValue);
-		EDITOR_HR_VERIFY(signalResult);
-
-		if (g_fence->GetCompletedValue() < g_fenceValue) {
-			signalResult = g_fence->SetEventOnCompletion(g_fenceValue, g_fenceEvent);
-			EDITOR_HR_VERIFY(signalResult);
-			WaitForSingleObject(g_fenceEvent, INFINITE);
+		if (g_dxCommon != nullptr) {
+			g_dxCommon->WaitForGpu();
 		}
 	}
 
@@ -1450,48 +1435,25 @@ namespace EditorSharedState {
 
 		WaitForGpu();
 
-		for (ID3D12Resource*& swapChainResource : g_swapChainResources) {
-			if (swapChainResource != nullptr) {
-				swapChainResource->Release();
-				swapChainResource = nullptr;
-			}
-		}
-
 		if (g_depthStencilResource != nullptr) {
-			g_depthStencilResource->Release();
-			g_depthStencilResource = nullptr;
+			g_depthStencilResource.Reset();
+			g_depthStencilResource.Reset();
 		}
 
 		if (g_opaqueDepthCopyResource != nullptr) {
-			g_opaqueDepthCopyResource->Release();
-			g_opaqueDepthCopyResource = nullptr;
+			g_opaqueDepthCopyResource.Reset();
+			g_opaqueDepthCopyResource.Reset();
 		}
 
 		g_renderWidth = width;
 		g_renderHeight = height;
 
-		HRESULT resizeResult = g_swapChain->ResizeBuffers(
-			2,
-			g_renderWidth,
-			g_renderHeight,
-			DXGI_FORMAT_R8G8B8A8_UNORM,
-			0);
-		EDITOR_HR_VERIFY(resizeResult);
-
-		// 取得できた back buffer だけ RTV を張り直す。GetBuffer が失敗した Buffer は
-		// nullptr のままなので、そのまま CreateRenderTargetView へ渡してはいけない。
-		bool runtimeSwapChainBuffersReady = true;
-		for (uint32_t bufferIndex = 0; bufferIndex < kRuntimeSwapChainBufferCount; bufferIndex++) {
-			resizeResult = g_swapChain->GetBuffer(bufferIndex, IID_PPV_ARGS(&g_swapChainResources[bufferIndex]));
-			if (!EDITOR_HR_OK(resizeResult) || g_swapChainResources[bufferIndex] == nullptr) {
-				runtimeSwapChainBuffersReady = false;
-				continue;
-			}
-			g_device->CreateRenderTargetView(
-				g_swapChainResources[bufferIndex],
-				&g_rtvDesc,
-				g_rtvHandles[bufferIndex]);
-		}
+		// Back Buffer の解放 / ResizeBuffers / RTV の張り直しは DirectXCommon が持つ。
+		// 取得に失敗した Buffer をそのまま使うと Present も Barrier もできないため、
+		// 失敗したら Depth の再生成へ進まずに終了要求を出す。
+		const bool runtimeSwapChainBuffersReady =
+			g_dxCommon != nullptr
+			&& g_dxCommon->ResizeSwapChain(g_renderWidth, g_renderHeight, g_logStream);
 
 		// back buffer が欠けたままでは Present も Barrier もできない。Depth の
 		// 再生成へ進む前に終了要求を出し、null を参照する経路へ入らないようにする。
@@ -1501,8 +1463,8 @@ namespace EditorSharedState {
 			return;
 		}
 
-		g_depthStencilResource = CreateRuntimeDepthStencilResource(g_renderWidth, g_renderHeight);
-		g_opaqueDepthCopyResource = CreateRuntimeOpaqueDepthCopyResource(g_renderWidth, g_renderHeight);
+		g_depthStencilResource.Attach(CreateRuntimeDepthStencilResource(g_renderWidth, g_renderHeight));
+		g_opaqueDepthCopyResource.Attach(CreateRuntimeOpaqueDepthCopyResource(g_renderWidth, g_renderHeight));
 
 		// Depth の再生成が失敗すると DepthStencilView / SRV / Barrier がすべて
 		// nullptr を参照する。描画を続けられないので、ここで終了要求を出す。
@@ -1512,7 +1474,7 @@ namespace EditorSharedState {
 			return;
 		}
 
-		g_device->CreateDepthStencilView(g_depthStencilResource, &g_dsvDesc, g_dsvHandle);
+		g_dxCommon->GetDevice()->CreateDepthStencilView(g_depthStencilResource.Get(), &g_dsvDesc, g_dsvHandle);
 
 		{
 			D3D12_SHADER_RESOURCE_VIEW_DESC depthSrvDesc{};
@@ -1520,32 +1482,30 @@ namespace EditorSharedState {
 			depthSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 			depthSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 			depthSrvDesc.Texture2D.MipLevels = 1;
-			g_depthSrvHandleCPU = GetCPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeDepthSrvDescriptorIndex);
-			g_depthSrvHandleGPU = GetGPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeDepthSrvDescriptorIndex);
-			g_device->CreateShaderResourceView(g_depthStencilResource, &depthSrvDesc, g_depthSrvHandleCPU);
+			g_depthSrvHandleCPU = GetCPUDescriptorHandle(g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, kRuntimeDepthSrvDescriptorIndex);
+			g_depthSrvHandleGPU = GetGPUDescriptorHandle(g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, kRuntimeDepthSrvDescriptorIndex);
+			g_dxCommon->GetDevice()->CreateShaderResourceView(g_depthStencilResource.Get(), &depthSrvDesc, g_depthSrvHandleCPU);
 
 			g_opaqueDepthCopySrvHandleCPU = GetCPUDescriptorHandle(
-				g_srvDescriptorHeap,
+				g_dxCommon->GetSrvDescriptorHeap(),
 				g_srvDescriptorSize,
 				kRuntimeOpaqueDepthCopySrvDescriptorIndex);
 			g_opaqueDepthCopySrvHandleGPU = GetGPUDescriptorHandle(
-				g_srvDescriptorHeap,
+				g_dxCommon->GetSrvDescriptorHeap(),
 				g_srvDescriptorSize,
 				kRuntimeOpaqueDepthCopySrvDescriptorIndex);
-			g_device->CreateShaderResourceView(
-				g_opaqueDepthCopyResource,
+			g_dxCommon->GetDevice()->CreateShaderResourceView(
+				g_opaqueDepthCopyResource.Get(),
 				&depthSrvDesc,
 				g_opaqueDepthCopySrvHandleCPU);
 		}
 
-		UINT rtvSize = g_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+		UINT rtvSize = g_dxCommon->GetDevice()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
-		auto recreateRenderTarget = [&](ID3D12Resource*& resource, uint32_t rtWidth, uint32_t rtHeight,
+		auto recreateRenderTarget = [&](ComPtr<ID3D12Resource>& resource, uint32_t rtWidth, uint32_t rtHeight,
 		                                 DXGI_FORMAT format, D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle) {
-			if (resource != nullptr) {
-				resource->Release();
-				resource = nullptr;
-			}
+			// 作り直す前に、古い Render Target の参照を手放す。
+			resource.Reset();
 			D3D12_RESOURCE_DESC desc{};
 			desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
 			desc.Width = rtWidth;
@@ -1563,37 +1523,37 @@ namespace EditorSharedState {
 			clearValue.Color[1] = 0.0f;
 			clearValue.Color[2] = 0.0f;
 			clearValue.Color[3] = 0.0f;
-			HRESULT hr = g_device->CreateCommittedResource(
+			HRESULT hr = g_dxCommon->GetDevice()->CreateCommittedResource(
 				&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-				&clearValue, IID_PPV_ARGS(&resource));
+				&clearValue, IID_PPV_ARGS(resource.GetAddressOf()));
 			EDITOR_HR_VERIFY(hr);
 			D3D12_RENDER_TARGET_VIEW_DESC rtvDesc{};
 			rtvDesc.Format = format;
 			rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
-			g_device->CreateRenderTargetView(resource, &rtvDesc, rtvHandle);
+			g_dxCommon->GetDevice()->CreateRenderTargetView(resource.Get(), &rtvDesc, rtvHandle);
 		};
 
 		// HDR RT (index 2)
 		recreateRenderTarget(g_hdrRenderTarget, g_renderWidth, g_renderHeight,
 			DXGI_FORMAT_R16G16B16A16_FLOAT,
-			GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 2));
+			GetCPUDescriptorHandle(g_dxCommon->GetRtvDescriptorHeap(), rtvSize, 2));
 
 		uint32_t bloomWidth = (std::max)(1u, g_renderWidth / 4);
 		uint32_t bloomHeight = (std::max)(1u, g_renderHeight / 4);
 		for (uint32_t i = 0; i < 2; i++) {
 			recreateRenderTarget(g_bloomRenderTargets[i], bloomWidth, bloomHeight,
 				DXGI_FORMAT_R16G16B16A16_FLOAT,
-				GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 3u + i));
+				GetCPUDescriptorHandle(g_dxCommon->GetRtvDescriptorHeap(), rtvSize, 3u + i));
 		}
 
 		recreateRenderTarget(g_postProcessRenderTarget, g_renderWidth, g_renderHeight,
 			DXGI_FORMAT_R8G8B8A8_UNORM,
-			GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 5u));
+			GetCPUDescriptorHandle(g_dxCommon->GetRtvDescriptorHeap(), rtvSize, 5u));
 
 		for (uint32_t i = 0; i < 2; i++) {
 			recreateRenderTarget(g_ssaoRenderTargets[i], g_renderWidth, g_renderHeight,
 				DXGI_FORMAT_R8_UNORM,
-				GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 6u + i));
+				GetCPUDescriptorHandle(g_dxCommon->GetRtvDescriptorHeap(), rtvSize, 6u + i));
 		}
 
 		// SSGI は半解像度。ノイズは後段のTemporalで均す。
@@ -1601,12 +1561,12 @@ namespace EditorSharedState {
 		g_ssgiRenderHeight = (std::max)(1u, g_renderHeight / 2u);
 		recreateRenderTarget(g_ssgiRenderTarget, g_ssgiRenderWidth, g_ssgiRenderHeight,
 			DXGI_FORMAT_R16G16B16A16_FLOAT,
-			GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 14u));
+			GetCPUDescriptorHandle(g_dxCommon->GetRtvDescriptorHeap(), rtvSize, 14u));
 
 		for (uint32_t i = 0; i < 2; i++) {
 			recreateRenderTarget(g_ssgiHistoryRenderTargets[i], g_ssgiRenderWidth, g_ssgiRenderHeight,
 				DXGI_FORMAT_R16G16B16A16_FLOAT,
-				GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 15u + i));
+				GetCPUDescriptorHandle(g_dxCommon->GetRtvDescriptorHeap(), rtvSize, 15u + i));
 		}
 
 		// 解像度が変わると履歴の位置が合わないので作り直す。
@@ -1614,24 +1574,24 @@ namespace EditorSharedState {
 
 		recreateRenderTarget(g_hdrCompositeRenderTarget, g_renderWidth, g_renderHeight,
 			DXGI_FORMAT_R16G16B16A16_FLOAT,
-			GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 8u));
+			GetCPUDescriptorHandle(g_dxCommon->GetRtvDescriptorHeap(), rtvSize, 8u));
 
 
 		recreateRenderTarget(g_materialMaskRenderTarget, g_renderWidth, g_renderHeight,
 			DXGI_FORMAT_R16G16B16A16_FLOAT,
-			GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 10u));
+			GetCPUDescriptorHandle(g_dxCommon->GetRtvDescriptorHeap(), rtvSize, 10u));
 
 		recreateRenderTarget(g_planarReflectionRenderTarget, g_renderWidth, g_renderHeight,
 			DXGI_FORMAT_R16G16B16A16_FLOAT,
-			GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 11u));
+			GetCPUDescriptorHandle(g_dxCommon->GetRtvDescriptorHeap(), rtvSize, 11u));
 
 		// Weighted Blended OIT は色の重み付き総和と透過率を別々に保持する。
 		recreateRenderTarget(g_oitAccumulationRenderTarget, g_renderWidth, g_renderHeight,
 			DXGI_FORMAT_R16G16B16A16_FLOAT,
-			GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 12u));
+			GetCPUDescriptorHandle(g_dxCommon->GetRtvDescriptorHeap(), rtvSize, 12u));
 		recreateRenderTarget(g_oitRevealageRenderTarget, g_renderWidth, g_renderHeight,
 			DXGI_FORMAT_R16_FLOAT,
-			GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 13u));
+			GetCPUDescriptorHandle(g_dxCommon->GetRtvDescriptorHeap(), rtvSize, 13u));
 
 		// HDR SRV
 		{
@@ -1640,9 +1600,9 @@ namespace EditorSharedState {
 			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 			srvDesc.Texture2D.MipLevels = 1;
-			g_hdrSrvHandleCPU = GetCPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeHdrSrvDescriptorIndex);
-			g_hdrSrvHandleGPU = GetGPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeHdrSrvDescriptorIndex);
-			g_device->CreateShaderResourceView(g_hdrRenderTarget, &srvDesc, g_hdrSrvHandleCPU);
+			g_hdrSrvHandleCPU = GetCPUDescriptorHandle(g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, kRuntimeHdrSrvDescriptorIndex);
+			g_hdrSrvHandleGPU = GetGPUDescriptorHandle(g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, kRuntimeHdrSrvDescriptorIndex);
+			g_dxCommon->GetDevice()->CreateShaderResourceView(g_hdrRenderTarget.Get(), &srvDesc, g_hdrSrvHandleCPU);
 		}
 
 		// Bloom SRVs
@@ -1653,9 +1613,9 @@ namespace EditorSharedState {
 			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 			srvDesc.Texture2D.MipLevels = 1;
 			uint32_t srvIndex = (i == 0) ? kRuntimeBloomSrvDescriptorIndexA : kRuntimeBloomSrvDescriptorIndexB;
-			g_bloomSrvHandlesCPU[i] = GetCPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, srvIndex);
-			g_bloomSrvHandlesGPU[i] = GetGPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, srvIndex);
-			g_device->CreateShaderResourceView(g_bloomRenderTargets[i], &srvDesc, g_bloomSrvHandlesCPU[i]);
+			g_bloomSrvHandlesCPU[i] = GetCPUDescriptorHandle(g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, srvIndex);
+			g_bloomSrvHandlesGPU[i] = GetGPUDescriptorHandle(g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, srvIndex);
+			g_dxCommon->GetDevice()->CreateShaderResourceView(g_bloomRenderTargets[i].Get(), &srvDesc, g_bloomSrvHandlesCPU[i]);
 		}
 
 		{
@@ -1664,10 +1624,10 @@ namespace EditorSharedState {
 			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 			srvDesc.Texture2D.MipLevels = 1;
-			g_postProcessRtvHandle = GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 5u);
-			g_postProcessSrvHandleCPU = GetCPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimePostProcessSrvDescriptorIndex);
-			g_postProcessSrvHandleGPU = GetGPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimePostProcessSrvDescriptorIndex);
-			g_device->CreateShaderResourceView(g_postProcessRenderTarget, &srvDesc, g_postProcessSrvHandleCPU);
+			g_postProcessRtvHandle = GetCPUDescriptorHandle(g_dxCommon->GetRtvDescriptorHeap(), rtvSize, 5u);
+			g_postProcessSrvHandleCPU = GetCPUDescriptorHandle(g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, kRuntimePostProcessSrvDescriptorIndex);
+			g_postProcessSrvHandleGPU = GetGPUDescriptorHandle(g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, kRuntimePostProcessSrvDescriptorIndex);
+			g_dxCommon->GetDevice()->CreateShaderResourceView(g_postProcessRenderTarget.Get(), &srvDesc, g_postProcessSrvHandleCPU);
 		}
 
 		for (uint32_t i = 0; i < 2; i++) {
@@ -1677,10 +1637,10 @@ namespace EditorSharedState {
 			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 			srvDesc.Texture2D.MipLevels = 1;
 			uint32_t srvIndex = (i == 0u) ? kRuntimeSsaoSrvDescriptorIndexA : kRuntimeSsaoSrvDescriptorIndexB;
-			g_ssaoRtvHandles[i] = GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 6u + i);
-			g_ssaoSrvHandlesCPU[i] = GetCPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, srvIndex);
-			g_ssaoSrvHandlesGPU[i] = GetGPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, srvIndex);
-			g_device->CreateShaderResourceView(g_ssaoRenderTargets[i], &srvDesc, g_ssaoSrvHandlesCPU[i]);
+			g_ssaoRtvHandles[i] = GetCPUDescriptorHandle(g_dxCommon->GetRtvDescriptorHeap(), rtvSize, 6u + i);
+			g_ssaoSrvHandlesCPU[i] = GetCPUDescriptorHandle(g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, srvIndex);
+			g_ssaoSrvHandlesGPU[i] = GetGPUDescriptorHandle(g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, srvIndex);
+			g_dxCommon->GetDevice()->CreateShaderResourceView(g_ssaoRenderTargets[i].Get(), &srvDesc, g_ssaoSrvHandlesCPU[i]);
 		}
 
 		{
@@ -1689,25 +1649,25 @@ namespace EditorSharedState {
 			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 			srvDesc.Texture2D.MipLevels = 1;
-			g_ssgiRtvHandle = GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 14u);
+			g_ssgiRtvHandle = GetCPUDescriptorHandle(g_dxCommon->GetRtvDescriptorHeap(), rtvSize, 14u);
 			g_ssgiSrvHandleCPU = GetCPUDescriptorHandle(
-				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeSsgiSrvDescriptorIndex);
+				g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, kRuntimeSsgiSrvDescriptorIndex);
 			g_ssgiSrvHandleGPU = GetGPUDescriptorHandle(
-				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeSsgiSrvDescriptorIndex);
-			g_device->CreateShaderResourceView(g_ssgiRenderTarget, &srvDesc, g_ssgiSrvHandleCPU);
+				g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, kRuntimeSsgiSrvDescriptorIndex);
+			g_dxCommon->GetDevice()->CreateShaderResourceView(g_ssgiRenderTarget.Get(), &srvDesc, g_ssgiSrvHandleCPU);
 
 			for (uint32_t i = 0; i < 2; i++) {
 				const uint32_t srvIndex = (i == 0u)
 					? kRuntimeSsgiHistorySrvDescriptorIndexA
 					: kRuntimeSsgiHistorySrvDescriptorIndexB;
 				g_ssgiHistoryRtvHandles[i] =
-					GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 15u + i);
+					GetCPUDescriptorHandle(g_dxCommon->GetRtvDescriptorHeap(), rtvSize, 15u + i);
 				g_ssgiHistorySrvHandlesCPU[i] =
-					GetCPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, srvIndex);
+					GetCPUDescriptorHandle(g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, srvIndex);
 				g_ssgiHistorySrvHandlesGPU[i] =
-					GetGPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, srvIndex);
-				g_device->CreateShaderResourceView(
-					g_ssgiHistoryRenderTargets[i], &srvDesc, g_ssgiHistorySrvHandlesCPU[i]);
+					GetGPUDescriptorHandle(g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, srvIndex);
+				g_dxCommon->GetDevice()->CreateShaderResourceView(
+					g_ssgiHistoryRenderTargets[i].Get(), &srvDesc, g_ssgiHistorySrvHandlesCPU[i]);
 			}
 		}
 
@@ -1717,10 +1677,10 @@ namespace EditorSharedState {
 			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 			srvDesc.Texture2D.MipLevels = 1;
-			g_hdrCompositeRtvHandle = GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 8u);
-			g_hdrCompositeSrvHandleCPU = GetCPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeHdrCompositeSrvDescriptorIndex);
-			g_hdrCompositeSrvHandleGPU = GetGPUDescriptorHandle(g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeHdrCompositeSrvDescriptorIndex);
-			g_device->CreateShaderResourceView(g_hdrCompositeRenderTarget, &srvDesc, g_hdrCompositeSrvHandleCPU);
+			g_hdrCompositeRtvHandle = GetCPUDescriptorHandle(g_dxCommon->GetRtvDescriptorHeap(), rtvSize, 8u);
+			g_hdrCompositeSrvHandleCPU = GetCPUDescriptorHandle(g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, kRuntimeHdrCompositeSrvDescriptorIndex);
+			g_hdrCompositeSrvHandleGPU = GetGPUDescriptorHandle(g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, kRuntimeHdrCompositeSrvDescriptorIndex);
+			g_dxCommon->GetDevice()->CreateShaderResourceView(g_hdrCompositeRenderTarget.Get(), &srvDesc, g_hdrCompositeSrvHandleCPU);
 		}
 
 
@@ -1730,12 +1690,12 @@ namespace EditorSharedState {
 			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 			srvDesc.Texture2D.MipLevels = 1;
-			g_materialMaskRtvHandle = GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 10u);
+			g_materialMaskRtvHandle = GetCPUDescriptorHandle(g_dxCommon->GetRtvDescriptorHeap(), rtvSize, 10u);
 			g_materialMaskSrvHandleCPU = GetCPUDescriptorHandle(
-				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeMaterialMaskSrvDescriptorIndex);
+				g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, kRuntimeMaterialMaskSrvDescriptorIndex);
 			g_materialMaskSrvHandleGPU = GetGPUDescriptorHandle(
-				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeMaterialMaskSrvDescriptorIndex);
-			g_device->CreateShaderResourceView(g_materialMaskRenderTarget, &srvDesc, g_materialMaskSrvHandleCPU);
+				g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, kRuntimeMaterialMaskSrvDescriptorIndex);
+			g_dxCommon->GetDevice()->CreateShaderResourceView(g_materialMaskRenderTarget.Get(), &srvDesc, g_materialMaskSrvHandleCPU);
 		}
 
 		{
@@ -1744,12 +1704,12 @@ namespace EditorSharedState {
 			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 			srvDesc.Texture2D.MipLevels = 1;
-			g_planarReflectionRtvHandle = GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 11u);
+			g_planarReflectionRtvHandle = GetCPUDescriptorHandle(g_dxCommon->GetRtvDescriptorHeap(), rtvSize, 11u);
 			g_planarReflectionSrvHandleCPU = GetCPUDescriptorHandle(
-				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimePlanarReflectionSrvDescriptorIndex);
+				g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, kRuntimePlanarReflectionSrvDescriptorIndex);
 			g_planarReflectionSrvHandleGPU = GetGPUDescriptorHandle(
-				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimePlanarReflectionSrvDescriptorIndex);
-			g_device->CreateShaderResourceView(g_planarReflectionRenderTarget, &srvDesc, g_planarReflectionSrvHandleCPU);
+				g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, kRuntimePlanarReflectionSrvDescriptorIndex);
+			g_dxCommon->GetDevice()->CreateShaderResourceView(g_planarReflectionRenderTarget.Get(), &srvDesc, g_planarReflectionSrvHandleCPU);
 		}
 
 		// OIT の revealage は PostProcess RootSignature の t2/t3 連続テーブルへ載せる。
@@ -1763,27 +1723,27 @@ namespace EditorSharedState {
 			D3D12_SHADER_RESOURCE_VIEW_DESC revealageSrvDesc = accumulationSrvDesc;
 			revealageSrvDesc.Format = DXGI_FORMAT_R16_FLOAT;
 
-			g_oitRtvHandles[0] = GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 12u);
-			g_oitRtvHandles[1] = GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 13u);
+			g_oitRtvHandles[0] = GetCPUDescriptorHandle(g_dxCommon->GetRtvDescriptorHeap(), rtvSize, 12u);
+			g_oitRtvHandles[1] = GetCPUDescriptorHandle(g_dxCommon->GetRtvDescriptorHeap(), rtvSize, 13u);
 
 			g_oitSrvHandlesCPU[0] = GetCPUDescriptorHandle(
-				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeOitAccumulationSrvDescriptorIndex);
+				g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, kRuntimeOitAccumulationSrvDescriptorIndex);
 			g_oitSrvHandlesGPU[0] = GetGPUDescriptorHandle(
-				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeOitAccumulationSrvDescriptorIndex);
+				g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, kRuntimeOitAccumulationSrvDescriptorIndex);
 			g_oitSrvHandlesCPU[1] = GetCPUDescriptorHandle(
-				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeOitRevealageSrvDescriptorIndex);
+				g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, kRuntimeOitRevealageSrvDescriptorIndex);
 			g_oitSrvHandlesGPU[1] = GetGPUDescriptorHandle(
-				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeOitRevealageSrvDescriptorIndex);
+				g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, kRuntimeOitRevealageSrvDescriptorIndex);
 
-			g_device->CreateShaderResourceView(
-				g_oitAccumulationRenderTarget, &accumulationSrvDesc, g_oitSrvHandlesCPU[0]);
-			g_device->CreateShaderResourceView(
-				g_oitRevealageRenderTarget, &revealageSrvDesc, g_oitSrvHandlesCPU[1]);
+			g_dxCommon->GetDevice()->CreateShaderResourceView(
+				g_oitAccumulationRenderTarget.Get(), &accumulationSrvDesc, g_oitSrvHandlesCPU[0]);
+			g_dxCommon->GetDevice()->CreateShaderResourceView(
+				g_oitRevealageRenderTarget.Get(), &revealageSrvDesc, g_oitSrvHandlesCPU[1]);
 
 			const D3D12_CPU_DESCRIPTOR_HANDLE duplicateRevealageHandle = GetCPUDescriptorHandle(
-				g_srvDescriptorHeap, g_srvDescriptorSize, kRuntimeOitRevealageDuplicateSrvDescriptorIndex);
-			g_device->CreateShaderResourceView(
-				g_oitRevealageRenderTarget, &revealageSrvDesc, duplicateRevealageHandle);
+				g_dxCommon->GetSrvDescriptorHeap(), g_srvDescriptorSize, kRuntimeOitRevealageDuplicateSrvDescriptorIndex);
+			g_dxCommon->GetDevice()->CreateShaderResourceView(
+				g_oitRevealageRenderTarget.Get(), &revealageSrvDesc, duplicateRevealageHandle);
 		}
 
 		// 深度依存の Compute Texture も Scene 描画サイズへ追従させる。

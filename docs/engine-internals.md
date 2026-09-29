@@ -1,10 +1,1008 @@
 ﻿# CG2Engine 全体内部設計
 
-更新基準: 2026-09-26
+更新基準: 2026-09-29
 
-この文書は実装者向け情報の集約先である。現行機能と未対応範囲、コード構造、所有権、Frame順、Runtime、DirectX 12描画、Memory、保存形式、Asset、Lighting、共同制作、外部認識・Online・Hapticsをこの1冊で扱う。Component全FieldとScript API全関数だけは検索量が大きいため専用リファレンスに分離する。
+この文書は、プログラミング未経験者が用語と全体像を知る入口であると同時に、実装者がコード上の根拠まで確認するための集約先である。現行機能と未対応範囲、コード構造、所有権、Frame順、Runtime、DirectX 12描画、Memory、保存形式、Asset、Lighting、共同制作、外部認識・Online・Hapticsをこの1冊で扱う。Component全FieldとScript API全関数だけは検索量が大きいため専用リファレンスに分離する。
 
 主要部は「全体構造」「現行機能仕様」「Runtime」「描画パイプライン」「保存・互換性」「Asset・Hot Reload」「Lighting・GI」「共同制作内部」「外部認識・Online・Haptics実装」の順に並ぶ。文書内検索ではManager名、Component名、保存行名、Pass名、Thread名を使う。
+
+## 0. プログラミングを知らない人のための前提知識
+
+この章は、C++、3D、DirectX、DLLを知らない読者が、後続章の言葉だけを暗記せず「何が入力され、誰が、いつ、何をして、何が結果として出るか」を理解するための入口である。既に知っている項目は読み飛ばしてよい。
+
+### 0.1 最初に知る全体像
+
+CG2Engineは、ゲームを作るための編集機能と、作ったゲームを動かす実行機能をまとめたプログラムである。
+
+ゲームには、Player、Enemy、Camera、Light等の「登場物」がある。それぞれの登場物へ、位置、見た目、当たり判定、音、動き等の機能を組み合わせる。CG2Engineでは登場物を`GameObject`、追加する機能を`Component`と呼ぶ。
+
+```text
+GameObject: Player
+  ├─ Transform      位置・回転・大きさ
+  ├─ ModelRenderer  モデルを画面へ描く
+  ├─ Rigidbody      物理的に動かす
+  ├─ Collider       当たり判定の形
+  ├─ AudioSource    音を鳴らす
+  └─ Script         ゲーム固有の動作を実行する
+```
+
+Engineが毎秒何十回も繰り返す基本処理は次のとおりである。
+
+```text
+入力を読む
+  → GameObjectとComponentを更新する
+  → 物理計算を進める
+  → AnimationやEffectを更新する
+  → Cameraから見える物を集める
+  → GPUへ描画命令を送る
+  → 完成した画像を画面へ表示する
+```
+
+これは一度だけ実行される処理ではない。画面を1回更新する単位を`Frame`と呼び、Engineは終了するまでFrame処理を繰り返す。`Update`は主に状態を進め、`Draw`は現在の状態から画像を作る。
+
+### 0.2 コンピューターとプログラムの基礎用語
+
+| 用語 | 初心者向けの意味 | CG2Engineでの例 |
+| --- | --- | --- |
+| Program | コンピューターに行わせる手順をまとめたもの。 | `CG2.exe`、`CG2Launcher.exe` |
+| Source Code | 人が読んで編集する命令文。C++では主に`.cpp`と`.h`。 | `EditorRenderManager.cpp` |
+| Machine Code | CPUが直接実行できる形式へ変換された命令。人が直接編集するものではない。 | `.exe`や`.dll`の中身 |
+| Compile | Source CodeをMachine Codeに近いObject Fileへ変換する作業。 | `cl.exe`が`.cpp`をCompileする |
+| Link | 複数のObject FileとLibraryを結合して`.exe`や`.dll`を作る作業。 | Scriptの`.cpp`と`.Generated.cpp`からDLLを作る |
+| Build | Compile、Link、必要File生成等をまとめて行う作業。 | Debug DLLをビルドする |
+| Executable | 単独で起動できるProgram File。 | `CG2.exe` |
+| Library | 他のProgramから利用する処理をまとめたもの。 | Jolt、XAudio2、Script DLL |
+| Process | 起動中のProgram本体。Fileではなく、Memory上で実行されている状態。 | 起動中のCG2 Editor |
+| Thread | 1つのProcess内で命令を進める流れ。複数Threadは同時に進められる。 | Main Thread、Network Thread、Worker Thread |
+| Memory | 実行中の値、Object、画像Data等を一時的に置く場所。Program終了後も残すにはFile保存が必要。 | SceneのGameObject配列、GPU Buffer |
+| File | Diskへ保存され、Program終了後も残るData。 | `.scene`、Texture、Model、DLL |
+| Path | Fileが置かれている場所を示す文字列。 | `Assets/Scenes/Main.scene` |
+
+Programの基本は「入力を受ける」「現在の状態を読む」「条件に応じて処理を選ぶ」「状態を変える」「結果を出す」の繰り返しである。
+
+```text
+入力: Space Keyが押された
+  → 現在の状態: Playerは生存中で、弾数が1以上ある
+  → 条件分岐: 発射できる条件を満たすか
+  → 状態変更: 弾数を1減らし、Projectileを生成する
+  → 出力: 発射音、Effect、画面上の弾
+```
+
+| 考え方 | 意味 | Engineでの例 |
+| --- | --- | --- |
+| Input | 処理へ渡される情報。Keyboardだけでなく、File、通信、前Frameの状態も含む。 | Key入力、Scene File、`deltaTime` |
+| State | 現在の状態を表すData。 | HP、位置、Play中か、Asset読込済みか |
+| Output | 処理の結果として外へ現れるもの。 | 画面、音、保存File、戻り値、Log |
+| Sequence | 命令を決められた順に行うこと。 | 入力後にUpdateし、その後にDrawする |
+| Condition / Branch | 条件が成立する場合だけ処理すること。C++では主に`if`を使う。 | HPが0以下なら死亡処理へ進む |
+| Loop | 同じ処理を繰り返すこと。 | 全GameObjectを順番に更新する |
+| Event | 何かが起きた時だけ通知される情報。 | Collision、Button click、Animation Event |
+| Error | 要求した処理を完了できなかった状態。 | File不在、DLL Load失敗、Device未接続 |
+
+Source Codeは、すべての行が常に上から一度ずつ動くわけではない。Functionは呼ばれた時だけ動き、`if`で処理が分かれ、Loopで同じ範囲を繰り返し、Eventは発生時に後から呼ばれる。したがって、ある処理を理解するには「そのFunctionを誰が呼ぶか」を先に探す。
+
+### 0.3 C++を読むための最低限の用語
+
+| 用語 | 意味 | 読むときの着眼点 |
+| --- | --- | --- |
+| Variable | 数値や文字列等を保持する名前付きの入れ物。 | 何を保持し、誰が書き換えるか |
+| Function | 入力を受け取り、まとまった処理を実行する単位。 | 呼出元、入力、戻り値、副作用 |
+| Return Value | Functionが呼出元へ返す結果。`bool`なら成功・失敗に使うことが多い。 | `false`が未対応、未発見、異常のどれか |
+| Class | DataとFunctionをまとめた設計図。 | そのClassが何を所有し、何に責任を持つか |
+| Object / Instance | Classの設計図から実際にMemory上へ作られた実体。 | いつ作られ、いつ破棄されるか |
+| Pointer | Memory上の実体が置かれている場所を指す値。 | null、寿命切れ、所有者に注意する |
+| Reference | 既存の値を別名で参照する仕組み。 | コピーなのか同じ実体なのか |
+| Container | 複数の値を保持する入れ物。 | `vector`は並び、`unordered_map`はKey検索に使う |
+| Enum | 選択肢へ名前を付けた整数。 | Component Type、状態、Mode等 |
+| Struct | 関連Dataをひとまとめにした型。 | CPUとGPU、EngineとDLLで同じ配置を要求する場合がある |
+| Callback | 後で呼んでもらうために登録するFunction。 | 入力Event、通信完了、Script Lifecycle |
+| Interface | 利用側が知る必要のある操作の約束。実装方法を隠す。 | Physics Backend、Online Backend |
+| Handle | 内部Pointerを直接渡さず、番号等で実体を識別する値。 | Audio Voice、Haptic Voice、Wire |
+
+「所有する」とは、通常はその実体の生成と破棄に責任を持つという意味である。「参照する」は存在を利用するだけで、勝手に破棄しない。Engine内部を読むときは、処理内容と同じくらい所有者と寿命が重要になる。
+
+### 0.4 Game Engineの基礎用語
+
+| 用語 | 意味 | CG2Engineでの扱い |
+| --- | --- | --- |
+| Scene | ある場面に存在するGameObjectをまとめたData。 | EditorSceneが保持し、`.scene`へ保存する |
+| GameObject | Scene内の物を識別する入れ物。単体では機能をほぼ持たない。 | ID、UUID、名前、親子関係、Componentを持つ |
+| Component | GameObjectへ追加する機能と設定。 | Camera、Light、Rigidbody、Script等 |
+| Transform | 位置、回転、大きさ。3D空間でどこにどう置くかを表す。 | 全GameObjectの基本情報 |
+| Parent / Child | GameObjectの親子関係。子は親の移動・回転・拡縮の影響を受ける。 | Hierarchy表示、World行列計算 |
+| Local座標 | 親を基準にした位置や向き。 | 子Objectの`translate`等 |
+| World座標 | Scene全体を基準にした最終位置や向き。 | 描画、物理、距離判定 |
+| Runtime | ゲームを実際に動かしている状態。 | Play中のManager群 |
+| Editor | Sceneや設定を人が編集する道具。 | Hierarchy、Inspector、Scene View |
+| Serialize | Memory上のDataをFileへ書ける形に変換すること。 | Scene保存、Prefab保存 |
+| Deserialize | FileのDataからMemory上のObjectを復元すること。 | Scene読込 |
+| Prefab | 再利用できるGameObject構成の雛形。 | Scene Instanceと元Prefabを関連付ける |
+| Asset | ゲームで利用する再利用可能なFile。 | Model、Texture、Audio、Shader、Script DLL |
+| Cache | 同じ計算や読込を繰り返さないため、結果を一時保存する仕組み。 | Texture Cache、Hash Cache、Shadow Cache |
+
+### 0.5 3D描画の前提知識
+
+3D Sceneは、そのままMonitorへ表示できない。Cameraから見た2D画像へ変換する必要がある。大まかな流れは次のとおりである。
+
+```text
+Modelの頂点
+  → GameObjectの位置・回転・大きさを適用する（World変換）
+  → Cameraから見た位置へ変換する（View変換）
+  → 遠近感を付けて画面範囲へ変換する（Projection変換）
+  → 三角形をPixel候補へ変換する（Rasterize）
+  → Material、Texture、Light、ShadowからPixel色を決める
+  → Post ProcessでBloomやAA等を加える
+  → Back Bufferを画面へPresentする
+```
+
+| 用語 | 意味 |
+| --- | --- |
+| CPU | ゲーム規則、Object管理、描画準備等の汎用処理を行うProcessor。 |
+| GPU | 大量の頂点やPixelを並列計算するProcessor。 |
+| Vertex | 3D形状を構成する点。位置、法線、UV等を持つ。 |
+| Triangle | 3個のVertexで作る面。GPU描画の基本単位。 |
+| Mesh | VertexとTriangle Indexをまとめた形状Data。 |
+| Texture | Materialへ貼る画像Data。色以外にNormal、Roughness等も格納する。 |
+| Material | 表面の色、粗さ、金属らしさ、透明度等をまとめた設定。 |
+| Shader | GPU上で頂点やPixel等を計算する小さなProgram。 |
+| Resource | 処理に必要なDataや機能の総称。DirectXではTextureやBuffer等のGPU用Dataを指すことが多い。 |
+| Buffer | 同じ形式のDataを連続して置くMemory領域。頂点、定数、Instance、Command等をGPUへ渡す。 |
+| Command List | GPUへ実行させる描画・計算・Copy命令を順番に記録する入れ物。 |
+| Descriptor | GPU ResourceをShaderから参照するための情報。Resource本体ではなく、種類や場所を示す。 |
+| Render Target | GPUが描画結果を書き込む画像。最終画面だけでなく中間画像も含む。 |
+| Depth Buffer | Cameraからの奥行きを保存し、手前の物を正しく表示するための画像。 |
+| GBuffer | Depth、Normal、Material情報等を後段処理用に保存する複数画像。 |
+| Draw Call | CPUがGPUへ「このMeshをこの設定で描け」と発行する命令。 |
+| Compute Shader | 画像描画に限らず、大量DataをGPUで並列計算するShader。 |
+| Post Process | 3D描画後の画像へBloom、AA、Tone Mapping等を適用する処理。 |
+
+3D計算で頻出する数学用語は次のとおりである。式を暗記する前に、何を表す値かを区別する。
+
+| 用語 | 初心者向けの意味 | 主な用途 |
+| --- | --- | --- |
+| Coordinate | 空間内の場所を数値で表す仕組み。3Dでは通常X、Y、Zの3軸を使う。 | Object位置、Camera位置、接触点 |
+| Vector | 大きさと向きを表す複数の数値。位置との差、速度、方向にも使う。 | 移動方向、法線、光の方向 |
+| Normal | 面がどちらを向いているかを表す単位Vector。 | Lighting、反射、裏表判定 |
+| UV | Texture上の場所を示す2次元座標。 | Mesh表面へ画像を貼る |
+| Matrix | 座標を移動・回転・拡縮・投影する変換をまとめた数表。 | World、View、Projection変換 |
+| Quaternion | 3D回転を安定して合成する4成分の表現。 | Object回転、Animation補間 |
+| Interpolation | 2つ以上の値の間を滑らかにつなぐ計算。 | Animation、Camera、Probe補間 |
+| Frustum | Cameraに写り得る範囲を切り取った錐台形状。 | 見えないObjectのCulling |
+| Culling | 結果へ影響しない物を計算前に除外すること。 | Frustum、Back Face、Occlusion |
+
+CPUとGPUは同じMemoryを自由に同時利用できるわけではない。CPUがDataを用意し、GPU用Resourceへ転送し、Command Listへ処理を記録してGPUへ実行させる。GPU結果をCPUへ戻す`Readback`は同期や転送待ちが発生しやすいため、頻繁に行うと重くなる。
+
+### 0.6 物理・通信・並列処理の前提知識
+
+| 用語 | 意味 | なぜ必要か |
+| --- | --- | --- |
+| Rigidbody | 位置、速度、質量等を持ち、物理法則で動くObject。 | 落下、衝突、Forceを扱う |
+| Collider | 衝突判定に使う形。見た目のMeshとは別の場合がある。 | 複雑な見た目を軽い形で判定する |
+| Fixed Time Step | 描画Frameとは別に、一定時間幅で物理を進める方式。 | FPS変動で物理結果が大きく変わるのを防ぐ |
+| Broad Phase | 離れていて絶対に当たらない組を粗く除外する段階。 | 全組合せ判定を避ける |
+| Narrow Phase | 残った候補同士の形を詳しく判定する段階。 | 接触点やめり込み量を求める |
+| Network | 別PCのProgram同士でDataを送受信する仕組み。 | 共同編集、Online Service |
+| TCP | Dataの順序と到達を保証するByte Stream通信。 | Scene変更を順番どおり送る |
+| Packet / Message | 通信Dataを意味のある単位にまとめたもの。 | Byte列を変更Event等として解釈する |
+| Mutex | 複数Threadが同じDataを同時変更しないためのLock。 | Race Conditionを防ぐ |
+| Race Condition | 実行順によって結果が変わる不具合。 | 再現しにくいCrashやData破損になる |
+| Main Thread | SceneやUI等の中心状態を変更する主Thread。 | 所有関係と更新順を一本化する |
+| Worker Thread | DownloadやFile解析等を裏で行うThread。 | Main画面を固めない |
+
+### 0.7 API、ABI、DLLを理解するための基礎
+
+`API`はApplication Programming Interfaceの略で、「外部から何を呼べるか」という使い方の約束である。たとえば`GameObject::GetTransform()`が存在すること、必要な引数、返る値がAPIに当たる。
+
+`ABI`はApplication Binary Interfaceの略で、Compile済みProgram同士がMemory上で正しくやり取りするための約束である。関数名、引数の型と順番、構造体の大きさ、呼出規約等が一致しなければ、Source Code上では似ていても実行時に壊れる。
+
+`DLL`はDynamic Link Libraryの略で、別Programから実行中に読み込めるCompile済みLibrary Fileである。`.cpp`は人が読むSource Code、`.dll`はCPUが実行するMachine Codeを含むFileであり、同じものではない。
+
+身近な例に置き換えると、Engine本体を建物、DLLを交換可能な機械、APIを操作PanelのButton配置、ABIをConnectorの形と電圧の規格と考えられる。機械の中身を交換できても、Connector規格が合わなければ接続できない。ただしこれは理解補助であり、実際には関数PointerとMemory Layoutの一致によって接続する。
+
+| 用語 | DLL接続での意味 |
+| --- | --- |
+| Export | DLLの外から名前で見つけて呼べるように公開したFunction。 |
+| Function Pointer | FunctionがMemory上のどこにあるかを保持し、後から呼ぶための値。 |
+| Runtime API Table | EngineがDLLへ利用を許可するFunction Pointerをまとめた構造体。 |
+| `LoadLibraryW` | WindowsがDLLを現在のProcessへ読み込むFunction。 |
+| `GetProcAddress` | Load済みDLLから、Export名に対応するFunction Addressを取得するFunction。 |
+| `FreeLibrary` | DLLの利用を終え、WindowsへModule解放を要求するFunction。解放後のFunction Pointerは使えない。 |
+
+### 0.8 CG2EngineのNative Scriptが動くまで
+
+ここでは「ゲーム側のC++を書いた後、なぜPlayするとUpdateが呼ばれるのか」を最初から順番に説明する。
+
+#### 段階1: 人がゲーム処理を書く
+
+利用者はScriptの`.cpp`へ、開始時の処理、毎Frameの処理、物理更新時の処理等を書く。通常は`Script`を継承したClassの`Start`、`Update`、`FixedUpdate`等を使用する。
+
+この時点では文字として保存されたSource Codeであり、Engineはまだ実行できない。
+
+#### 段階2: Engineが接続用Codeを用意する
+
+EngineはScript作成時に、利用者用`.cpp`だけでなく、定型Header、`.Generated.cpp`、Debug/Release用Build Scriptを生成する。
+
+`.Generated.cpp`は、利用者のClassを作るFunction、破棄するFunction、`Update`へ転送するFunction、公開Fieldを読み書きするFunction等を`extern "C"`と`__declspec(dllexport)`でDLL外部へ公開する。利用者がABI接続Codeを手書きするとFunction名や型を間違えやすいため、Engineが定型生成する。
+
+実装位置: `Source/Engine/Editor/EditorNativeScriptAssetManager.cpp:239-301`（`CreateNativeScriptAsset`）
+生成Code: `Source/Engine/Editor/EditorNativeScriptAssetManager.cpp:565-765`（`MakeGeneratedSourceText`）
+
+#### 段階3: `.cpp`からDLLを作る
+
+Build ScriptはVisual StudioのC++ Compiler環境を探し、利用者`.cpp`と`.Generated.cpp`を同時にCompile・Linkする。`cl`の`/LD` Optionが「実行FileではなくDLLを作る」という指定である。
+
+```text
+利用者のScript.cpp
+          ＋
+接続用Script.Generated.cpp
+          ↓ cl /LD
+x64/Debug/Script.dll または x64/Release/Script.dll
+```
+
+Debug版は最適化を抑えてDebug情報を出し、Release版は最適化する。どちらもC++20、64bit、共通Script API Headerを使う。
+
+実装位置: `Source/Engine/Editor/EditorNativeScriptAssetManager.cpp:766-823`（`MakeBuildScriptText`）
+Inspector起点: `Source/Engine/Editor/EditorInspectorPanel.cpp:2997-3027`（Script ComponentのBuild操作）
+
+#### 段階4: GameObjectへScript Componentを付ける
+
+Scene内のGameObjectへScriptまたはMonoBehaviour Componentを追加し、そのComponentへDLL Pathを保存する。これにより「このGameObjectは、このDLLに入ったゲーム処理を使う」という設定になる。
+
+Scene Fileへ保存するのはDLL Path、公開Field値等である。実行中のFunction PointerやInstance AddressはPCを再起動すると意味がなくなるため保存しない。
+
+#### 段階5: EngineがBindingを作る
+
+Play開始時、`EditorScriptManager`はScene内のGameObjectを走査し、ActiveなScript/MonoBehaviour Componentごとに`ScriptBinding`を作る。
+
+1個のBindingは主に次を保持する。
+
+| 値 | 役割 |
+| --- | --- |
+| `gameObjectId` | どのGameObjectが所有するScriptか |
+| `componentIndex` | 同じGameObject内のどのComponentか |
+| `componentType` | ScriptかMonoBehaviourか |
+| `dllPath` | どのDLLを使うか |
+| `instance` | そのComponent専用に生成したScript実体 |
+| `hasStarted` | Startを既に呼んだか |
+
+同じDLLを10個のGameObjectが使っても、DLL自体は原則1回だけLoadし、BindingとInstanceをGameObjectごとに分ける。DLL単位の情報が`ScriptModule`、Component単位の実行対象が`ScriptBinding`である。
+
+実装位置: `Source/Engine/Editor/EditorScriptManager.cpp:5515-5556`（`BuildScriptBindings`）
+型定義: `Source/Engine/Editor/EditorScriptManager.h:140-241`（`ScriptBinding`、`ScriptModule`）
+
+#### 段階6: EngineがDLLをProcessへLoadする
+
+Windowsでは`LoadLibraryW`へDLL Pathを渡すと、そのDLLが現在のEngine Processへ読み込まれ、`HMODULE`というModule Handleが返る。
+
+CG2Engineは元DLLを直接Loadし続けず、作業用Cacheへ別名CopyしたDLLをLoadする。WindowsはLoad中DLL Fileを置換しにくいため、元のBuild出力を次のBuildで更新できるようにするためである。
+
+次に`GetProcAddress`へ`EditorScript_UpdateInstance`等のExport名を渡し、DLL内FunctionのMemory Addressを取得する。そのAddressを共通Headerで定義した関数Pointer型として`ScriptModule`へ保持する。
+
+```text
+Script.dll
+  → 作業用DLLへCopy
+  → LoadLibraryW
+  → HMODULE取得
+  → GetProcAddress("EditorScript_Load")
+  → GetProcAddress("EditorScript_CreateInstance")
+  → GetProcAddress("EditorScript_UpdateInstance")
+  → Function Pointerとして保持
+```
+
+必須FunctionやCreate/Destroyの組合せが不足している場合、API Versionが対応しない場合、初期化がfalseを返した場合は、そのDLLを実行対象にしない。
+
+実装位置: `Source/Engine/Editor/EditorScriptManager.cpp:6881-7055`（`LoadModule`）
+
+#### 段階7: Engine APIをDLLへ渡す
+
+DLLからEngine内部のClassを直接操作させると、Engine内部構造を変更するたびに古いDLLが壊れる。そのためEngineは、外部へ公開してよいFunctionだけを`EditorScriptRuntimeApi`という関数Pointer Tableへまとめる。
+
+Engine側の`BuildRuntimeApi`が、Log、Transform、Input、Physics、Audio等のBridge FunctionをTableへ設定する。DLL Load直後にEngineが`EditorScript_Load(apiVersion, &runtimeApi)`を呼び、DLL側は受け取ったTable Pointerを保存する。
+
+```text
+ゲームScript
+  → GameObject::GetTransformを呼ぶ
+  → WrapperがRuntime API TableのGetTransformを呼ぶ
+  → Engine側Bridge Functionへ入る
+  → EditorSceneから対象GameObjectを検索する
+  → TransformをコピーしてDLLへ返す
+```
+
+この境界により、ゲームDLLは`EditorScene*`、`EditorComponent*`、JoltのBody Pointer等を直接保持しない。外へ渡すのはID、Handle、値をコピーした構造体、失敗を表す`bool`等である。
+
+API Version: `Source/Engine/Core/EditorScriptApi.h:9`（`kEditorScriptApiVersion`）
+公開契約: `Source/Engine/Core/EditorScriptApi.h:535-1147`（`EditorScriptRuntimeApi`とDLL Export型）
+Table構築: `Source/Engine/Editor/EditorScriptManager.cpp:5557-5975`（`BuildRuntimeApi`）
+Runtime API保持: `Source/Engine/Core/EditorNativeScript.h:21-31`（`EditorNativeScriptRuntime`）
+高水準Wrapper: `Source/Engine/Core/EditorNativeScript.h:388-822`（`GameObject`と`Component`）
+
+#### 段階8: GameObjectごとのScript Instanceを作る
+
+新しいInstance APIを持つDLLでは、Engineが`EditorScript_CreateInstance(gameObjectId)`を呼ぶ。Generated側は利用者のScript Classを1個生成し、所有GameObject IDを設定して`void*`としてEngineへ返す。
+
+EngineはInstanceの内部Layoutを知らない。`void*`は「DLL内の実体を識別するAddress」として保持し、操作するときは必ず同じDLLが公開したFunctionへ戻す。
+
+Instance生成後、Sceneへ保存されていたInspector公開Field値をInstanceへ適用し、それから`StartInstance`を1回だけ呼ぶ。
+
+実装位置: `Source/Engine/Editor/EditorScriptManager.cpp:6240-6307`（`StartBindingIfNeeded`）
+
+#### 段階9: 毎Frame、Script関数を呼ぶ
+
+EngineのRuntime更新中に`EditorScriptManager::Update`が呼ばれる。ManagerはBindingごとにGameObjectとComponentがActiveか確認し、Instance APIなら次を実行する。
+
+```text
+EngineのFrame Update
+  → EditorScriptManager::Update(deltaTime)
+  → BindingからDLL ModuleとInstanceを取得
+  → updateInstanceFunction(instance, deltaTime)
+  → Generated Function
+  → 利用者Script ClassのUpdate(deltaTime)
+```
+
+旧DLLではInstance Pointerの代わりに`gameObjectId`を渡す旧ABIを使う。CreateとDestroyの両Exportが揃っている場合だけInstance APIと判定し、中途半端に混在させない。
+
+通常更新: `Source/Engine/Editor/EditorScriptManager.cpp:580-737`（`Update`）
+固定更新: `Source/Engine/Editor/EditorScriptManager.cpp:738-837`（`FixedUpdate`）
+Event配送: `Source/Engine/Editor/EditorScriptManager.cpp:771-988`
+
+#### 段階10: Componentを取得する
+
+ゲームScriptの`GetComponent("Camera")`は、Engine内部のComponent Pointerを返さない。返る`Component` Wrapperは、所有GameObject IDとComponent型名を保持する軽量な窓口である。
+
+値を取得するたびに、WrapperがRuntime API Tableを通してEngineへ`gameObjectId`、`componentTypeName`、`propertyName`を渡す。Engine側が現在のSceneからGameObjectとComponentを検索し、値だけをコピーして返す。
+
+この方式なら、Scene内部の配列が移動してもDLLが古いPointerを保持しない。GameObjectが削除された場合は、以後の取得が`false`になる。
+
+Wrapper実装: `Source/Engine/Core/EditorNativeScript.h:657-822`（`Component`）
+Engine Bridge: `Source/Engine/Editor/EditorScriptManager.cpp:4958-5077`
+Property解決: `Source/Engine/Editor/EditorRuntimePropertyManager.cpp:2424-3006`
+
+#### 段階11: StopしてDLLを解放する
+
+Play停止や再読込時は、先にStarted済みBindingへ`Stop`を通知し、各Instanceを`DestroyInstance`で破棄する。その後にDLLの`Unload` Functionを呼び、最後に`FreeLibrary`でWindowsからModuleを解放する。
+
+`FreeLibrary`後は、そのDLLから取得したFunction PointerとInstance Addressは無効になる。順序を逆にすると、既に消えたCodeやObjectを呼んでCrashする。
+
+Binding停止: `Source/Engine/Editor/EditorScriptManager.cpp:6308-6351`（`StopBindingsForModule`）
+Module解放: `Source/Engine/Editor/EditorScriptManager.cpp:7056-7112`（`UnloadModule`）
+
+#### Engine側とゲーム側の境界
+
+| Engine側だけが持つもの | DLLへ渡してよいもの |
+| --- | --- |
+| `EditorScene*` | GameObject ID |
+| `EditorComponent*` | Component型名とProperty名 |
+| Jolt Body Pointer | Physics Handle、Hit結果のコピー |
+| XAudio2 Voice Pointer | Audio Handle |
+| GPU Resource Pointer | Material値、Texture Path、設定値 |
+| Manager Instance | Runtime APIのFunction Pointer |
+
+この境界はSecurity Sandboxではない。Native DLLはEngineと同じProcess内でMachine Codeを実行するため、壊れたPointer操作やAccess ViolationはEngine全体をCrashさせ得る。関数Pointer Tableは主に依存関係とABIを整理する境界であり、悪意あるDLLを隔離する仕組みではない。
+
+### 0.9 後続の各機能を読む方法
+
+専門的な章は、次の質問へ順番に答えるように読む。
+
+1. その機能は画面やゲーム上で何を実現するか。
+2. 利用者は何を設定または入力するか。
+3. どのManagerまたはSystemが所有するか。
+4. Initialize、Update、FixedUpdate、Drawのどの時点で動くか。
+5. CPUとGPUのどちらが何を担当するか。
+6. 途中Dataはどこへ保存されるか。
+7. 成功時に何が変わるか。
+8. 失敗時、未設定時、未接続時にどうなるか。
+9. Object数や解像度が増えたとき、どこが重くなるか。
+10. なぜその方式を採用し、他方式を採用しなかったか。
+
+後続章で専門用語だけが並んで理解できない場合は、その説明側に前提が不足している。用語を暗記して読み進めるのではなく、この章へ定義を追加し、機能章には入力から結果までの流れを補う。
+
+| 読みたい分野 | 先に読む前提 | 最初に追う流れ |
+| --- | --- | --- |
+| Scene / GameObject / Component | 0.2、0.3、0.4 | Scene読込 → GameObject生成 → Component更新 → 保存 |
+| Renderer / Light / Shadow / Post Process | 0.4、0.5 | Camera → 描画対象収集 → GPU Pass → Present |
+| Physics / Collision | 0.4、0.6 | Collider登録 → 固定時間更新 → 衝突検出 → Event通知 |
+| Native Script | 0.2、0.3、0.7、0.8 | Source生成 → DLL Build → Load → Instance → Update → Unload |
+| Asset / Serialization / Prefab | 0.2、0.4 | File発見 → 読込 → Memory上のObject → 保存・再読込 |
+| Network / 共同編集 | 0.2、0.6 | 変更作成 → Message化 → 送信 → 順序確認 → Scene反映 |
+| Multithreading / GPU Compute | 0.2、0.5、0.6 | Job作成 → 別Thread/GPU実行 → 同期 → 結果利用 |
+
+### 0.10 主要機能を専門用語なしで見渡す
+
+この表は後続章の地図である。まず「何のための機能か」と「何が入って何が出るか」だけを把握し、詳しい方式、採用理由、弱点、実装位置は各章で確認する。
+
+| 分野 | 何をするものか | 主な入力 → 結果 |
+| --- | --- | --- |
+| Launcher | Projectを選び、必要な設定を確認してEditorを起動する別Program。 | Project Path、Engine設定 → `CG2.exe`起動とConsole表示 |
+| Main Loop | ゲームが終了するまで、入力・更新・描画を同じ基本順序で繰り返す。 | OS Message、経過時間 → 1Frame分の状態と画面 |
+| Scene | ある場面に存在するGameObject全体を保持する。 | `.scene` File → Memory上のGameObject群 |
+| GameObject / Component | Player等の対象へ、描画・物理・音・Script等の機能を組み合わせる。 | GameObject IDとComponent設定 → 更新可能なScene要素 |
+| Transform | Objectの位置・回転・大きさと親子関係を最終的なWorld位置へ変換する。 | Local Transform、親Transform → World Transform |
+| Camera | 3D空間のどこから、どの範囲を、どの遠近感で見るかを決める。 | Camera Transform、FOV、Near/Far → View/Projection Matrix |
+| Renderer | Sceneの見える物を集め、GPUへ描画順とResourceを指示する。 | Camera、Mesh、Material、Light → 画面用画像 |
+| Material / Shader | 表面の色や粗さを設定し、GPU上で各頂点・Pixelの結果を計算する。 | Texture、材質値、Light → Pixel色 |
+| Lighting | 光の向き、距離、色、表面の向きから明るさを計算する。 | Light、Normal、Material → 直接光の明るさ |
+| Shadow | Lightから物体までの途中に遮る物があるかを調べ、暗くする。 | Light視点Depthと現在のPixel位置 → 影の有無・濃さ |
+| GI | 壁や床で反射した間接光を近似し、直接光だけでは出ない回り込みを加える。 | Light、Probe、Lightmap等 → 間接光 |
+| SSAO / GTAO | 画面上の奥行きと向きから、隙間や接触部の暗さを近似する。 | Depth、Normal → Ambient Occlusion画像 |
+| SSR | 画面内に既に描かれた情報をたどり、床や水面の反射を近似する。 | Color、Depth、Normal → 反射画像と信頼度 |
+| Post Process | 3D描画後の完成前画像へBloom、AA、色調整等を順番に適用する。 | HDR画像と設定 → 表示用画像 |
+| Ocean / Water | 波の高さと法線を作り、反射・屈折・泡等を組み合わせて水面を描く。 | 時間、風、波設定、周囲画像 → 動く水面 |
+| Physics | 速度、質量、Colliderから移動と衝突結果を一定時間刻みで計算する。 | Rigidbody、Collider、Force → Transformと衝突Event |
+| Destruction | 壊れた物を破片へ置き換え、CPUまたはGPUで多数の破片を動かす。 | 破壊位置、破片設定 → 破片InstanceとEffect |
+| Animation | Boneの姿勢を時間で変化させ、頂点を追従させる。 | Clip、再生時刻、Blend値 → Bone Matrixと変形済みModel |
+| Culling | Cameraに映らない、裏に隠れた、遠すぎるObjectを描画前に除外する。 | Bounding形状、Camera、Depth → 描画対象一覧 |
+| Asset | Model、Texture、Audio等をPathやIDで管理し、重複読込と不要な再読込を減らす。 | Asset File、Import設定 → 再利用可能なMemory/GPU Resource |
+| Serialization | Memory上のSceneや設定をFileへ保存し、後で同じ状態を復元する。 | ObjectとField → Text/Binary File、またはその逆 |
+| Prefab | 再利用するGameObject構成を雛形として保存し、複数Sceneへ配置する。 | Prefab FileとOverride → Scene内Instance |
+| Editor / Runtime | 編集用UIと、Play中にゲームを動かす処理の責任を分ける。 | 編集Data、Play操作 → Runtime用状態の開始・停止 |
+| Undo / Redo | 変更内容と変更前後の値を記録し、操作を戻す・やり直す。 | 編集Command → 復元されたScene状態 |
+| Collaboration | 複数PCの変更をUUIDとRevisionで識別し、順序や競合を管理して共有する。 | Change Event、通信Message → 他PCのScene更新 |
+| Snapshot | ある時点の全体状態を保存し、差分だけでは復旧できない場合の基準にする。 | Scene全体とRevision → 復旧用Data |
+| Network | DataをMessageへ変換し、接続先へ送り、切断や再接続を扱う。 | 送信Data、Address → 順序付けされた受信Message |
+| Native Script | Engine本体を変更せず、ゲーム固有処理をC++ DLLとして追加する。 | Script SourceとGameObject → Play中のLifecycle呼出し |
+| Memory管理 | 誰がObjectを作り、誰が破棄し、いつまで参照してよいかを決める。 | 生成要求と所有関係 → 有効なObject寿命 |
+| Multithreading | 重い仕事を複数の実行経路へ分け、Main画面の停止を減らす。 | Jobと共有Data → 完了結果。共有箇所では同期が必要 |
+| GPU Compute | 描画以外の大量反復計算をCompute ShaderでGPUへ任せる。 | Buffer、Texture、Dispatch数 → GPU上の計算結果 |
+| Profiler | CPU/GPUの処理時間、回数、Allocation等を測り、遅い場所を特定する。 | 計測区間とFrame → 時間・回数・履歴 |
+| Optimization | 計測結果に基づき、同じ結果をより少ない時間・Memory・通信量で得る。 | Profiler結果と制約 → 変更前後の比較値 |
+
+### 0.11 一般的な3D描画パイプラインとCG2Engine
+
+#### 最初に区別する2種類の「パイプライン」
+
+3D描画では、同じ「パイプライン」という言葉が2つの意味で使われる。
+
+| 種類 | 意味 | 例 |
+| --- | --- | --- |
+| GPU Graphics Pipeline | 1個の三角形を頂点DataからPixelへ変換するGPU内部の段階。 | Input Assembler、Vertex Shader、Rasterizer、Pixel Shader、Output Merger |
+| Frame Rendering Pipeline | 1Frameの完成画像を作るため、複数回のGPU描画・計算をどの順に行うか。 | Shadow → HDR Scene → Transparent → SSAO → Bloom → Tone Mapping → Present |
+
+Vertex ShaderやPixel Shaderは1Frameに1回だけ動くものではない。Shadow Map、通常Scene、Reflection、Post Process等のPassごとに、対象と出力先を変えながら何度も実行される。
+
+#### CPUが描画前に行うこと
+
+GPUはScene、GameObject、Componentという概念を直接知らない。CPU側のEngineが、毎Frame次を準備する。
+
+1. SceneからActiveなCamera、Light、Renderer、Materialを探す。
+2. GameObjectのLocal Transformと親TransformからWorld Matrixを作る。
+3. CameraのView MatrixとProjection Matrixを作る。
+4. FrustumやOcclusionで、画面へ影響しないObjectを候補から外す。
+5. 不透明、半透明、水面等へ分け、描画順を決める。
+6. MeshのVertex/Index Buffer、Texture、Constant Buffer、Shader、PSOを選ぶ。
+7. Command ListへResource切替、Draw、Compute Dispatch等の命令を記録する。
+
+この段階では、CPU自身が全Pixelの色を計算しているわけではない。CPUは「何を、どの設定で、どこへ描くか」を組み立て、実際の大量計算をGPUへ渡す。
+
+CG2EngineのFrame入口: `Source/Engine/Editor/EditorRenderManager.cpp:2162-2335`（`EditorRenderManager::Draw`）
+Command記録開始: `Source/Engine/Editor/EditorRenderManager.cpp:2879-2916`（Command Allocator/ListのReset）
+描画順・Batching: `Source/Engine/Editor/EditorRenderManager.cpp:3846-4012`（`drawSceneObjects`）
+
+#### GPU Graphics Pipelineの標準的な流れ
+
+```text
+Vertex Buffer / Index Buffer
+  → Input Assembler
+  → Vertex Shader
+  → 必要な場合だけTessellationやGeometry Shader
+  → Primitive Assembly・Clipping
+  → Perspective Divide・Viewport変換
+  → Rasterizer
+  → Early Depth Test
+  → Pixel Shader
+  → Output Merger
+  → Render Target / Depth Buffer
+```
+
+| 段階 | 初心者向けの説明 | CG2Engineで渡す主なもの |
+| --- | --- | --- |
+| Vertex Buffer | Modelを構成する点の一覧。 | Position、UV、Normal、Bone Index、Bone Weight |
+| Index Buffer | どの3頂点を1個のTriangleとして使うかを示す番号。 | `TRIANGLELIST`用Index |
+| Input Assembler | BufferのByte列を、位置やUV等の意味を持つVertexとして読む。 | 5属性のInput Layout |
+| Vertex Shader | 各VertexをWorld→View→Projectionの順に変換し、画面へ投影できる位置を作る。 | Matrix、Bone、Ocean変位 |
+| Tessellation | 少ないTriangleをGPU上で細分化する任意段階。 | CG2Engineでは主に水面。通常Modelでは未使用 |
+| Geometry Shader | Triangle単位で頂点を増減できる任意段階。 | CG2Engineでは未使用 |
+| Clipping | Camera範囲外やNear/Far面の外にある部分を切り取る。 | Clip Space座標 |
+| Perspective Divide | `x,y,z`を`w`で割り、遠い物が小さく見える座標へ変える。 | Clip Space → NDC |
+| Rasterizer | Triangleが画面上のどのPixel候補を覆うかを求め、Vertex出力を補間する。 | 塗り方、表裏Culling、Depth Bias |
+| Depth Test | 既にある奥行きと比べ、手前のFragmentだけを残す。 | Depth Buffer、比較方法 |
+| Pixel Shader | Texture、Material、Light、Shadow等からFragmentの色を計算する。 | 補間済みUV/Normal/World位置と各Resource |
+| Output Merger | Pixel Shader出力を既存画像とBlendし、ColorとDepthへ書く。 | Render Target、Blend、Depth/Stencil設定 |
+
+Input LayoutとPSO生成: `Source/Engine/Editor/EditorPlatformManager.cpp:2116-2179`
+HDR出力先・Light・Topology設定: `Source/Engine/Editor/EditorRenderManager.cpp:3641-3691`
+Mesh/Texture/Constant BufferのBindingとDraw: `Source/Engine/Editor/EditorRenderManager.cpp:4097-4382`
+
+#### 1Frameの画像がWindowへ出るまで
+
+CG2Engineは単純にModelをBack Bufferへ直接描くだけではない。まず影や補助画像を作り、SceneをHDR画像へ描き、その画像へScreen Space処理とPost Processを重ね、最後にSwap ChainのBack Bufferへ書く。
+
+```text
+Scene / Camera / Component設定
+  → ShadowやReflection等の事前Pass
+  → HDR Scene描画
+  → 不透明・水面・屈折・半透明
+  → Depth Pyramid / AO / GI / Reflection等
+  → Bloom / AA / Tone Mapping / Composite
+  → Command ListをClose
+  → Command QueueへSubmit
+  → Swap Chain Present
+  → FenceでGPU利用完了を確認
+```
+
+`Present`は3D計算を行う命令ではない。完成済みBack BufferをWindowへ表示するSwap Chain操作である。`Fence`はCPUがGPU使用中Resourceを早く再利用しないための完了番号である。
+
+Command送信・Present・Fence: `Source/Engine/Editor/EditorRenderManager.cpp:7013-7054`
+
+#### Compute Shaderはどこに入るか
+
+Compute ShaderはTriangleをPixelへ変換する固定Graphics Pipelineとは別経路である。任意のThread数でBufferやTextureを計算できるため、CG2EngineではGPU Culling、Depth Pyramid、Ocean FFT、SSR、SSGI、Particle、Exposure等に使う。Compute結果を後のGraphics Passが読む場合は、Resource Barrierで書込完了と次の読取状態を明示する。
+
+### 0.12 Componentを作成・追加・実行する仕組み
+
+#### 利用者から見えるComponentと内部実装の違い
+
+利用者からは、Camera、Light、Rigidbody等が別々のComponentに見える。しかし現行CG2Engineでは、各Componentが別のC++派生Classとして生成されるわけではない。
+
+全種類に使う1個の`EditorComponent`構造体へ全Fieldを集め、`EditorComponentType type`という種類番号で「このDataをCameraとして扱う」「Lightとして扱う」と決める方式である。これは`fat struct + type tag`方式であり、Unity風の操作画面を持つが、内部構造はUnityのComponent Class方式と同じではない。
+
+型一覧: `Source/Engine/Editor/EditorScene.h:20-513`（`EditorComponentType`）
+共通Data: `Source/Engine/Editor/EditorScene.h:773-840`から始まる`EditorComponent`
+GameObject側の保持: `Source/Engine/Editor/EditorScene.h:2595-2607`（`components`配列）
+
+#### InspectorでComponentを追加したときの流れ
+
+```text
+「コンポーネントを追加」を押す
+  → Popupの表示名からEditorComponentTypeを選ぶ
+  → Undo用に現在Sceneを保存する
+  → EditorScene::AddComponentを呼ぶ
+  → 同じTypeが既にないか確認する
+  → CreateComponentでUUID・Type・全Fieldの既定値を作る
+  → GameObject.componentsへ追加する
+  → InspectorがType別のFieldを表示する
+  → 各Runtime Managerが担当Typeを見つけて処理する
+```
+
+Popup登録: `Source/Engine/Editor/EditorInspectorPanel.cpp:279-577`（`kComponentAddEntries`）
+Popup操作: `Source/Engine/Editor/EditorInspectorPanel.cpp:9300-9388`（`DrawAddComponentPopup`）
+追加と重複防止: `Source/Engine/Editor/EditorScene.cpp:1168-1230`（`EditorScene::AddComponent`）
+既定値生成: `Source/Engine/Editor/EditorScene.cpp:8150-10043`（`EditorScene::CreateComponent`）
+Inspector分岐: `Source/Engine/Editor/EditorInspectorPanel.cpp:8440-8880`（`DrawComponentBody`）
+
+`AddComponent`が成功しても、そのComponentが自動的に毎Frame仮想関数を呼ばれるわけではない。Physics、Renderer、Audio等のManagerがSceneを走査し、自分が担当する`component.type`だけを読む。たとえばPhysicsはGameObjectごとのComponent配列を1回走査し、RigidBodyやForce等へのPointerをまとめてから固定更新する。
+
+検索処理: `Source/Engine/Editor/EditorComponentUtility.cpp:3-26`（`FindComponent`）
+Physicsの型収集例: `Source/Engine/Editor/EditorPhysicsManager.cpp:1586-1699`
+RendererのLight収集例: `Source/Engine/Editor/EditorRenderManager.cpp:512-590`
+
+#### 保存してから再び同じComponentになるまで
+
+Scene保存時はGameObject ID、Component Type、Active、共通Fieldを`Component`行へ書き、種類固有の追加値は既存列を壊さない`*Extension`行へ書く。読込時は先に保存Typeで`CreateComponent`を呼び、現在版の既定値を作ってから、Fileに存在する古い値で上書きする。この順序により、古いSceneに新Fieldがなくても新しい既定値を残せる。
+
+保存: `Source/Engine/Editor/EditorScene.cpp:1264-1460`（`SaveScene`のGameObject/Component行）
+読込: `Source/Engine/Editor/EditorScene.cpp:3882-4088`（`LoadScene`の基本行）
+
+#### 新しいComponent種類を作るときに必要な場所
+
+現行方式では、Classを1個追加しただけではComponentにならない。最低限、次を同じ変更でそろえる。
+
+1. `EditorComponentType`の既存順序を変えず、`Count`直前へ新Typeを追加する。
+2. `kEditorComponentTypeNames`末尾へ同じ順序で名前を追加する。`static_assert`で件数不一致を検出する。
+3. `EditorComponent`へ保存設定とRuntime状態のFieldを追加する。
+4. `CreateComponent`へ全Fieldの安全な既定値を追加する。
+5. `kComponentAddEntries`末尾側の適切なCategoryへ表示名を追加する。
+6. Inspector描画関数と`DrawComponentBody`のType分岐を追加する。
+7. 実際に動かすManagerを決め、Initialize/Update/FixedUpdate/Drawの適切な時点でTypeを収集する。
+8. Scene保存・読込を追加する。既存`Component`列へ途中挿入せず、必要ならExtension行を追加する。
+9. Scriptから触る必要があればRuntime API末尾と高水準Wrapperを追加する。既存ABI順序は変えない。
+10. Component Reference、生成Field Registry、依存、失敗条件、性能上限を更新する。
+
+「Inspectorに項目が出た」は実装完了ではない。Runtime Managerが値を読まなければゲーム結果は変わらず、保存を追加しなければSceneを開き直した時に消え、Script APIがなければゲームコードから操作できない。
+
+### 0.13 「Tag」と呼ばれている機能の実態
+
+#### 現在、汎用GameObject Tagは未実装
+
+Inspector上部には「タグ」と「レイヤー」が表示されるが、現在の選択肢は`Untagged`と`Default`だけである。値は`DrawGameObjectHeader`内の`static`なUI変数にしか入らず、`EditorGameObject`には汎用Tag/Layer/Static Fieldがない。したがってGameObjectごとの値ではなく、Scene保存、Prefab、Undo、共同編集、Script検索にも接続されていない。
+
+仮UI: `Source/Engine/Editor/EditorInspectorPanel.cpp:1487-1550`（保存先未実装と明記）
+GameObject Data: `Source/Engine/Editor/EditorScene.h:2595-2607`（Tag Fieldなし）
+Scene保存: `Source/Engine/Editor/EditorScene.cpp:1329-1353`（GameObject行にTagなし）
+
+このため、現状を「UnityのようにTagを付け、`FindWithTag`で検索できる」と説明してはいけない。Native Scriptの汎用検索は名前またはComponent種類が基準であり、GameObject Tag検索APIは存在しない。
+
+名前検索API: `Source/Engine/Core/EditorScriptApi.h:597`（`FindGameObjectByName`）
+Component検索API: `Source/Engine/Core/EditorScriptApi.h:844`（`FindGameObjectsWithComponent`）
+
+#### 現在動いている4種類の「分類情報」
+
+| 分類 | 保存場所 | 比較方法 | 用途 |
+| --- | --- | --- | --- |
+| Component Type Tag | `EditorComponent::type` | `EditorComponentType` Enum一致 | Camera、Light、Rigidbody等の機能種類 |
+| Physics Layer | Collider等の`physicsLayer` | 0〜7の番号とLayer Collision Matrix | 衝突、Raycast対象の絞り込み |
+| Damage Tag | Weapon/AreaDamageの文字列をFNV-1a 32bit値へ変換 | Hash値一致 | Bullet、Explosion等のDamage耐性・弱点 |
+| Surface Tag | `SurfaceType::surfaceTypeTag`文字列 | 大文字小文字を含む文字列完全一致 | Metal、Water、Wood等の命中Effectや弾挙動 |
+
+これらは名前にTagを含んでも、目的と保存場所が異なる。Physics LayerをDamage分類へ使ったり、Surface TagをGameObject検索へ使ったりはしない。
+
+#### Component Type Tagの動き
+
+`EditorComponentType`は整数の種類番号で、Component Dataの解釈を決める。`FindComponent`はGameObjectの`components`配列を先頭から走査し、`component.type == 求めるType`となる最初の要素を返す。Managerも同じType比較で担当Componentだけを処理する。
+
+Type名表と順序検査: `Source/Engine/Editor/EditorScene.cpp:169-464`
+Type検索: `Source/Engine/Editor/EditorComponentUtility.cpp:3-26`
+
+#### Physics Layerの動き
+
+Physics LayerはGameObject全体の汎用Layerではなく、ColliderやCharacter等のComponent設定である。8種類の番号をJoltのObject Layerへ変換し、Project/Sceneの対称なLayer Collision Matrixで「この2 Layerを衝突させるか」を決める。`Ignore Raycast`等はQuery側でも除外できる。
+
+Layer定義: `Source/Engine/Editor/EditorScene.h:2609-2625`
+Jolt Object Layer変換: `Source/Engine/Editor/EditorJoltPhysicsManager.cpp:141-203`
+衝突Matrix評価: `Source/Engine/Editor/EditorJoltPhysicsManager.cpp:3508-3528`
+保存: `Source/Engine/Editor/EditorScene.cpp:1295-1320`（Matrix）、`Source/Engine/Editor/EditorScene.cpp:1400-1425`（Component Layer）
+
+#### Damage Tagの動き
+
+Damage Tagは`"Bullet"`や`"Explosion"`等の任意文字列である。攻撃時にFNV-1aで安定した32bit IDへ変換して`DamageContext.userTag`へ入れる。被弾側の`DamageTagModifier`はEntryごとに同じHashを作って照合し、一致倍率、見つからなければ既定倍率をDamageへ掛ける。
+
+```text
+Weaponの"Explosion"
+  → FNV-1a Hash
+  → DamageContext.userTag
+  → 対象のDamageTagModifierを検索
+  → Entry文字列を同じHashへ変換して比較
+  → baseDamage × HitZone倍率 × Receiver倍率 × Tag倍率
+```
+
+Hash: `Source/Engine/Editor/EditorDamageManager.cpp:591-600`
+倍率解決: `Source/Engine/Editor/EditorDamageManager.cpp:857-875`
+Inspector編集: `Source/Engine/Editor/EditorInspectorPanel.cpp:5566-5583`
+保存・読込: `Source/Engine/Editor/EditorScene.cpp:2591-2605`、`Source/Engine/Editor/EditorScene.cpp:5890-5911`
+
+Hashは検索を速くし、固定Enumを増やさずゲーム固有名を追加できる。ただし文字列の大文字小文字と綴りが違えば別Tagになり、32bit Hashには理論上Collisionの可能性がある。Security用Hashではない。
+
+#### Surface Tagの動き
+
+Surface Tagは命中した表面材質の分類である。命中GameObjectにActiveな`SurfaceType`があればその文字列を使い、なければ親をRootまで検索する。Ocean Componentなら`Water`、最後まで見つからなければ`Default`になる。
+
+Weapon側の`ImpactResponder`はDamage TagとSurface Tagの両方をEntry順に照合する。空文字列はWildcardで、最初に両条件が一致したEntryだけがEffect、Audio、Decal、Camera Shake、Script Actionを実行する。
+
+Surface解決: `Source/Engine/Editor/EditorWeaponManager.cpp:1676-1700`（`ResolveSurfaceTag`）
+命中応答: `Source/Engine/Editor/EditorWeaponManager.cpp:1605-1674`（`ExecuteImpactResponse`）
+Inspector編集: `Source/Engine/Editor/EditorInspectorPanel.cpp:5733-5763`
+
+#### 将来、汎用GameObject Tagを実装する場合に必要な範囲
+
+表示用Comboだけでは完成しない。少なくともGameObjectのTag IDまたは文字列、Project単位のTag定義、InspectorのObject別編集、Scene/Prefab保存、Undo/Redo、共同編集差分、名前変更・削除時の互換、Scriptの`GetTag/SetTag/CompareTag/FindWithTag`、Buildへの持ち出しが必要である。検索頻度が高い場合は`tag → GameObject ID一覧`の索引も必要になる。
+
+## 実装参照の読み方
+
+処理や設計を説明する項目には、根拠となる実装を`ファイル:行`とSymbol名で記載する。
+`.h`は公開API、型、所有権、寿命の契約、`.cpp`は実際の処理順、分岐、計算、GPU Command発行の根拠として扱う。
+行番号はこの文書の更新基準時点の値である。コード変更によって対象行が動いた場合は、説明本文と同じ変更で参照行も更新する。
+
+記載形式:
+
+```text
+公開契約: Source/Engine/Editor/EditorAnimationManager.h:23-170（EditorAnimationManager）
+処理本体: Source/Engine/Editor/EditorAnimationManager.cpp:238-315（EditorAnimationManager::Update）
+```
+
+ファイル名だけの記載は入口の案内にしかならない。アルゴリズム、処理順、制約の根拠を示す場合は、対象関数または型を追える行番号まで記載する。
+
+## 主要実装参照索引
+
+この表はAI模擬面接へ文書を渡したとき、説明内容から実装へすぐ移動するための入口である。詳細な説明では、各章にも同じ形式でより狭い範囲を記載する。
+
+| 分野 | 公開契約・型 | 主な処理本体 |
+| --- | --- | --- |
+| Program Entry | `Source/Engine/Core/main.cpp:154`（`WinMain`） | `Source/Engine/Core/GameScene.cpp:85-278`（`Initialize / Update / Draw`） |
+| Runtime統括 | `Source/Engine/Editor/EditorRuntimeManager.h:51-249`（`EditorRuntimeManager`） | `Source/Engine/Editor/EditorRuntimeManager.cpp:178-436`（更新・Play切替）、`Source/Engine/Editor/EditorRuntimeManager.cpp:515-641`（System開始・停止） |
+| Scene / GameObject | `Source/Engine/Editor/EditorScene.h:2634`（`EditorScene`） | `Source/Engine/Editor/EditorScene.cpp:848-1068`（生成・親子・World変換） |
+| Scene Serialization | `Source/Engine/Editor/EditorScene.h:2634`（保存APIを含むScene契約） | `Source/Engine/Editor/EditorScene.cpp:1264-3880`（保存）、`Source/Engine/Editor/EditorScene.cpp:3882-7613`（読込） |
+| Renderer統括 | `Source/Engine/Editor/EditorRenderManager.h:6-16`（`EditorRenderManager`） | `Source/Engine/Editor/EditorRenderManager.cpp:1903-1910`（初期化・Draw入口） |
+| GBuffer | `Source/Engine/Renderer/EditorGBufferManager.h:16`（`EditorGBufferManager`） | `Source/Engine/Renderer/EditorGBufferManager.cpp:122-234`（MRT開始・終了） |
+| GPU Culling | `Source/Engine/Renderer/EditorGpuCullingManager.h:41-168`（公開設定・Buffer） | `Source/Engine/Renderer/EditorGpuCullingManager.cpp:37-120`（初期化）、`Source/Engine/Renderer/EditorGpuCullingManager.cpp:121-421`（Culling・Indirect） |
+| Temporal | `Source/Engine/Renderer/EditorTemporalRenderingManager.h:16-143`（View別History） | `Source/Engine/Renderer/EditorTemporalRenderingManager.cpp:51-119`（初期化）、`Source/Engine/Renderer/EditorTemporalRenderingManager.cpp:120-515`（Temporal実行） |
+| Post Process | `Source/Engine/Renderer/EditorPostProcessQualityManager.h:16-200`（品質設定・Pass API） | `Source/Engine/Renderer/EditorPostProcessQualityManager.cpp:62-500`（Bloom・SMAA・Glare・Filter・Exposure） |
+| Physics統括 | `Source/Engine/Editor/EditorPhysicsManager.h:18-279`（固定更新・Query・Force API） | `Source/Engine/Editor/EditorPhysicsManager.cpp:461-607`（開始・固定Step・停止）、`Source/Engine/Editor/EditorPhysicsManager.cpp:692-750`（Cast） |
+| Jolt接続 | `Source/Engine/Editor/EditorJoltPhysicsManager.h:12-148`（Body・Shape・Event契約） | `Source/Engine/Editor/EditorJoltPhysicsManager.cpp:4126-4213`（開始・更新・Query） |
+| Animation / Animator | `Source/Engine/Editor/EditorAnimationManager.h:23-181`（Clip・Parameter・Runtime型） | `Source/Engine/Editor/EditorAnimationManager.cpp:167-315`（開始・更新・停止）、`Source/Engine/Editor/EditorAnimationManager.cpp:1098-1352`（State評価） |
+| Native Script | `Source/Engine/Editor/EditorScriptManager.h:48`（DLL Module・Binding・Bridge契約） | `Source/Engine/Editor/EditorScriptManager.cpp:465-579`（開始・Binding）、`Source/Engine/Editor/EditorScriptManager.cpp:580-837`（Update・FixedUpdate） |
+| Asset Cache / Hot Reload | `Source/Engine/Asset/AssetManager.h:45`（`AssetManager`） | `Source/Engine/Asset/AssetManager.cpp:195-388`（Handler・変更通知・Unload・Hash） |
+| Asset Registry | `Source/Engine/Asset/AssetRegistry.h:50`（Registry Record・依存API） | `Source/Engine/Asset/AssetRegistry.cpp:72-145`（Load/Save）、`Source/Engine/Asset/AssetRegistry.cpp:294-427`（走査・依存Index） |
+| 共同編集 | `Source/Engine/Editor/EditorTeamCollaborationManager.h:82-415`（Session・Revision・Lock） | `Source/Engine/Editor/EditorTeamCollaborationManager.cpp:1333-1450`（初期化・更新） |
+| TCP Transport | `Source/Engine/Collaboration/TcpCollaborationTransport.h:20-50`（Transport契約） | `Source/Engine/Collaboration/TcpCollaborationTransport.cpp:598-680`（接続・送信Queue） |
+| Profiler | `Source/Engine/Editor/EditorProfilerManager.h:42-163`（Sample・Scope・履歴） | `Source/Engine/Editor/EditorProfilerManager.cpp:185-328`（GPU Timestamp）、`Source/Engine/Editor/EditorProfilerManager.cpp:345-390`（CPU Sample集約） |
+| GPU Particle | `Source/Engine/Renderer/EditorGpuParticleManager.h:20-183`（GPU共有Layout・Resource） | `Source/Engine/Renderer/EditorGpuParticleManager.cpp:145-330`（Compute更新・描画） |
+| FFT Ocean | `Source/Engine/Renderer/EditorOceanFftManager.h:23-199`（FFT Resource・Sample契約） | `Source/Engine/Renderer/EditorOceanFftManager.cpp:80-341`（FFT実行）、`Source/Engine/Renderer/EditorOceanFftManager.cpp:425-523`（Surface Sample） |
+| Launcher | `Tools/CG2Launcher/main.cpp:88-172`（GUI/CLI入口） | `Tools/CG2Launcher/LauncherGui.cpp:1689-1704`（Win32 Window生成・Message Loop）、`Tools/CG2Launcher/LauncherExperience.cpp:688-1484`（Project/Engine操作） |
+
+参照行を追加する際は、説明対象と直接関係する関数だけを示す。たとえばPhysics全体の説明に`EditorPhysicsManager.cpp`全行を指定せず、固定更新なら`EditorPhysicsManager::Update`、Raycastなら`EditorPhysicsManager::Raycast`を別々に示す。
+
+## 主要処理をコードで追う順番
+
+以下は影以外の主要処理について、最初に開く場所と、その付近で実際に行っている処理をまとめた追跡表である。面接練習で処理を説明するときは、方式だけでなくこの順番でコード上の根拠まで辿る。
+
+### A. 起動とメインループ
+
+| 段階 | 実装位置 | その行付近の処理 |
+| --- | --- | --- |
+| Windows入口 | `Source/Engine/Core/main.cpp:154-225`（`WinMain`） | Command LineとProject条件を処理し、`GameScene`を生成する。Engine全体を所有する最上位の入口。 |
+| Scene初期化呼出 | `Source/Engine/Core/main.cpp:226` | `GameScene::Initialize`へWindow Instanceを渡す。以降のManager生成・接続はGameScene側の責務になる。 |
+| Frame Loop | `Source/Engine/Core/main.cpp:228-232` | 終了要求まで`Update`の後に`Draw`を呼ぶ。可変時間更新と描画Command発行の最上位順序。 |
+| Engine初期化 | `Source/Engine/Core/GameScene.cpp:85-181`（`GameScene::Initialize`） | Platform、Scene、Editor Window、Runtime、Rendererを初期化し、依存するManager同士を接続する。 |
+| Engine更新 | `Source/Engine/Core/GameScene.cpp:182-245`（`GameScene::Update`） | 入力、Scene、Runtime、Editor UI、共同編集を1Frame分更新する。ここではGPU描画を行わない。 |
+| Engine描画 | `Source/Engine/Core/GameScene.cpp:246-330`（`GameScene::Draw`） | Runtime Debug DrawとRendererを呼び、最終的な描画Command発行へ進む。 |
+
+### B. GameObject・Component・Transform
+
+| 段階 | 実装位置 | その行付近の処理 |
+| --- | --- | --- |
+| GameObject生成 | `Source/Engine/Editor/EditorScene.cpp:848-892`（`CreateGameObject`） | UUIDとScene内IDを割り当て、既定Transformと必須Transform Componentを追加する。 |
+| 部分木複製 | `Source/Engine/Editor/EditorScene.cpp:893-977`（`DuplicateGameObject`） | 子孫を値で退避して新ID/UUIDを先に割り当て、部分木内部のGameObject参照を複製先へ張り替える。 |
+| 削除 | `Source/Engine/Editor/EditorScene.cpp:978-989`、`Source/Engine/Editor/EditorScene.cpp:10102-10119` | 公開入口で存在を確認し、内部再帰処理で子孫を削除した後に`children`索引を再構築する。 |
+| 親変更 | `Source/Engine/Editor/EditorScene.cpp:999-1053`（`SetParent`） | 自己参照・子孫参照による循環を拒否し、必要なら変更前World行列をLocalへ再分解して見た目を保つ。 |
+| Component追加 | `Source/Engine/Editor/EditorScene.cpp:1168-1221`（`AddComponent`） | 重複追加を拒否する。Collider追加時は描画Modelの実境界から中心・大きさを初期化する。 |
+| Component削除 | `Source/Engine/Editor/EditorScene.cpp:1222-1256`（`RemoveComponent`） | Transformは必須なので削除を拒否し、それ以外はType一致要素を除去する。 |
+
+### C. Scene保存・読込・Prefab・Undo
+
+| 段階 | 実装位置 | その行付近の処理 |
+| --- | --- | --- |
+| 保存開始 | `Source/Engine/Editor/EditorScene.cpp:1264-1308`（`SaveScene`） | Project Versionによる書込可否を確認し、元ファイルを壊さないよう`.savetmp`へUTF-8 BOM付きで書き始める。 |
+| Object/Component保存 | `Source/Engine/Editor/EditorScene.cpp:1310-3880` | GameObject基本行の後ろへUUID、Prefab Link、Component、各Extension行を出力する。既存列を動かさず拡張行を追加する方式。 |
+| 読込準備 | `Source/Engine/Editor/EditorScene.cpp:3882-3905`（`LoadScene`） | Format互換性を検査し、現在Sceneへ直接書かず`loadedGameObjects`へ段階的に構築する。 |
+| 行解析 | `Source/Engine/Editor/EditorScene.cpp:3907-7595` | 行頭TokenでGameObject、Component、Extensionを判別する。未知行は捨てず再保存用に保持する。 |
+| 読込Commit | `Source/Engine/Editor/EditorScene.cpp:7596-7613` | 全行の解析成功後だけ`gameObjects_`を置換し、UUID、親子索引、次IDを修復する。途中失敗では編集中Sceneを維持する。 |
+| Prefab保存 | `Source/Engine/Editor/EditorScene.cpp:7619-7736` | 指定Root以下を一時Sceneへ切り出し、Prefab由来情報とVariant基底を含めて保存する。 |
+| Prefab反映 | `Source/Engine/Editor/EditorScene.cpp:7737-7809`（`ApplyPrefabInstance`） | Instance側の変更をPrefab Sourceへ適用する。UUIDとScene内IDの役割を分けて参照を維持する。 |
+| Undo/Redo | `Source/Engine/Editor/EditorScene.cpp:8055-8082` | Scene SnapshotをUndo/Redo Stack間で移動し、復元後にIDと親子索引を再構築する。 |
+
+### D. Play Runtimeと更新順
+
+| 段階 | 実装位置 | その行付近の処理 |
+| --- | --- | --- |
+| 依存接続 | `Source/Engine/Editor/EditorRuntimeManager.cpp:18-177`（`Initialize`） | SceneとConsoleを受け取り、Script、Physics、Animation、Audio等のManager間参照を接続する。 |
+| 可変時間処理 | `Source/Engine/Editor/EditorRuntimeManager.cpp:178-243`（`Update`前半） | 非同期Scene結果とScriptからのScene要求を先に処理し、Time Scaleを確定する。Scene差替えFrameは旧参照で処理を続けない。 |
+| Gameplay更新 | `Source/Engine/Editor/EditorRuntimeManager.cpp:244-299` | Input、Script Update、Damage、Movement、Wave、Weapon、AI、Navigationの順で可変時間処理を進める。 |
+| PhysicsとFixedUpdate | `Source/Engine/Editor/EditorRuntimeManager.cpp:300-333` | Physicsを固定Stepで進め、確定したCollision/Wire EventをScriptへ渡し、実行Step数と同じ回数だけ`FixedUpdate`を呼ぶ。 |
+| 後段System | `Source/Engine/Editor/EditorRuntimeManager.cpp:334-368` | Physics結果を使うAnimation、Constraint、Effect、Audio、Haptics、UI、Cameraを更新する。 |
+| Play切替 | `Source/Engine/Editor/EditorRuntimeManager.cpp:395-436`（`TogglePlay`） | 開始時にSceneをBackupし、停止時にRuntime Systemを止めて編集前Sceneへ戻す。 |
+| System開始/停止 | `Source/Engine/Editor/EditorRuntimeManager.cpp:515-641` | Manager間依存を満たす順にStartし、停止時はCallback先が先に消えない順でStopする。 |
+| 非同期Scene読込 | `Source/Engine/Editor/EditorRuntimeManager.cpp:741-789`、`Source/Engine/Editor/EditorRuntimeManager.cpp:1209-1330` | WorkerでScene Fileを解析し、完了後の安全なFrame境界でPrimary置換またはAdditive Mergeを行う。 |
+
+### E. Renderer・GBuffer・Depth・GPU Culling
+
+| 段階 | 実装位置 | その行付近の処理 |
+| --- | --- | --- |
+| 描画入口 | `Source/Engine/Editor/EditorRenderManager.cpp:2155-2161`（`Initialize`）、`Source/Engine/Editor/EditorRenderManager.cpp:2162-2250`（`Draw`冒頭） | Renderer初期化後、Draw内でCamera、Light、Shadow、Geometry、Screen-space、Post Processを順にCommand Listへ記録する。各Passの実処理位置は下の行で分けて示す。 |
+| 機能有効判定 | `Source/Engine/Editor/EditorRenderManager.cpp:1370-1455`（`DecideFrameRenderFeatures`） | PostProcess設定、Light、Object数からGBuffer、Temporal、SSGI、GPU Culling、GPU Particle等を走らせるか決める。 |
+| GBuffer開始/終了 | `Source/Engine/Editor/EditorRenderManager.cpp:5579-5596` | Geometry描画前にMRTへ切り替え、終了後に後段Shaderから読める状態へ戻す。 |
+| GBuffer内部 | `Source/Engine/Renderer/EditorGBufferManager.cpp:122-233` | 5枚のRender TargetをClearして同時Bindし、終了時にRender TargetからShader ResourceへBarrierを張る。 |
+| Depth Pyramid | `Source/Engine/Renderer/EditorDepthHierarchyManager.cpp:119-243`（`Generate`） | Scene Depthを縮小しながらMip階層へ変換し、同時にScreen-space処理用Normalを再構築する。 |
+| Depth生成呼出 | `Source/Engine/Editor/EditorRenderManager.cpp:5795`付近 | GBuffer/Depth完了後にDepth Hierarchyを生成し、SSR、SSGI、Occlusion Culling、GPU Particle衝突へ渡す。 |
+| GPU可視判定 | `Source/Engine/Renderer/EditorGpuCullingManager.cpp:121-394`（`Execute`） | CPUで集めたBoundsをGPUへ送り、FrustumとHi-Z Occlusionを判定して可視ListとIndirect引数を作る。 |
+| Indirect Draw | `Source/Engine/Renderer/EditorGpuCullingManager.cpp:395-441` | Compute結果をCommand Signatureへ渡して`ExecuteIndirect`し、CPU Readbackなしで描画数を決める。 |
+
+### F. Temporal・SSR・SSGI・Post Process
+
+| 段階 | 実装位置 | その行付近の処理 |
+| --- | --- | --- |
+| Temporal/SSR呼出 | `Source/Engine/Editor/EditorRenderManager.cpp:6326-6400` | Scene ViewとGame ViewごとのCamera行列、Depth、Normal、Velocity、Historyを揃えてTemporal Managerへ渡す。 |
+| Temporal本体 | `Source/Engine/Renderer/EditorTemporalRenderingManager.cpp:120-515`（`Execute`） | Velocity/Reactive/Disocclusionを生成し、SSR Trace、Resolve、Temporal、Denoise、CompositeとTemporal AAを実行する。 |
+| SSGI本体 | `Source/Engine/Editor/EditorRenderManager.cpp:6016-6251` | 半解像度のScreen-space間接光、History合成、深度考慮Upsampleの順に処理し、履歴有効状態を更新する。 |
+| Bloom | `Source/Engine/Renderer/EditorPostProcessQualityManager.cpp:148-271`（`ExecuteBloom`） | Threshold/Soft Kneeで抽出し、複数段DownsampleとUpsampleで広がりを作る。 |
+| SMAA | `Source/Engine/Renderer/EditorPostProcessQualityManager.cpp:272-331`（`ExecuteSmaa`） | Edge検出、Blend Weight計算、Neighborhood Blendの3 Passを順に実行する。 |
+| Glare/Filter | `Source/Engine/Renderer/EditorPostProcessQualityManager.cpp:332-453` | Glare方向Passと色FilterをPing-Pong Targetへ描き、後段Composite用SRVを返す。 |
+| Auto Exposure | `Source/Engine/Renderer/EditorPostProcessQualityManager.cpp:454-648` | 輝度Histogramを作り、Percentile範囲から目標露出を計算して時間補間する。CPU表示用Readbackもここで扱う。 |
+| 最終順序 | `Source/Engine/Editor/EditorRenderManager.cpp:6711-6978` | Bloom、Glare、DoF、Motion Blur、Exposure、Filter、Sharpen、SMAA、BackBuffer Compositeの順に実行する。 |
+
+### G. Light Probe GI
+
+| 段階 | 実装位置 | その行付近の処理 |
+| --- | --- | --- |
+| Resource初期化 | `Source/Engine/Renderer/EditorLightProbeManager.cpp:115-571` | Capture Cube Map、SH係数、Visibility、距離Moment等のGPU ResourceとPSOを作る。 |
+| Grid更新 | `Source/Engine/Renderer/EditorLightProbeManager.cpp:657-712`（`UpdateGrid`） | Probe配置・個数・間隔の変更を検出し、必要数に合わせてResourceを再生成する。 |
+| Rebake要求 | `Source/Engine/Renderer/EditorLightProbeManager.cpp:713-721` | Scene/Light状態が変化したとき、全Probeを最初から焼き直す状態へ戻す。 |
+| Bake Batch準備 | `Source/Engine/Renderer/EditorLightProbeManager.cpp:722-752` | 1Frameで処理するProbe範囲を決め、全Probeを一度に焼いてFrameを止めないよう分散する。 |
+| 6面Capture | `Source/Engine/Renderer/EditorLightProbeManager.cpp:753-867` | Probe位置からCube 6面のView Projectionを作り、Scene色をCaptureする。 |
+| SH/Visibility生成 | `Source/Engine/Renderer/EditorLightProbeManager.cpp:868-956`（`DispatchBake`） | Capture結果をCompute Shaderへ渡し、SH9とVisibility/距離Momentへ圧縮する。 |
+| Renderer接続 | `Source/Engine/Editor/EditorRenderManager.cpp:3543-3564` | Shadow直後にProbe Bakeを開始し、同じScene/Light状態Hashで再Bake要否を決める。 |
+
+### H. Physics・Collision
+
+| 段階 | 実装位置 | その行付近の処理 |
+| --- | --- | --- |
+| Simulation開始 | `Source/Engine/Editor/EditorPhysicsManager.cpp:461-526` | Runtime値と固定時間Accumulatorを初期化し、Scene ComponentからJolt Bodyを生成する。 |
+| 固定Step | `Source/Engine/Editor/EditorPhysicsManager.cpp:527-606`（`Update`） | 可変`deltaTime`をAccumulatorへ貯め、最大4回まで一定時間幅で外力計算、Jolt積分、Event回収を行う。 |
+| Component Cache | `Source/Engine/Editor/EditorPhysicsManager.cpp:1577-1714` | Sceneを1回走査してForce/Field/Constraint ComponentへのPointerを集め、Substepごとの全Scene検索を避ける。 |
+| Jolt本体接続 | `Source/Engine/Editor/EditorJoltPhysicsManager.cpp:4126-4159` | Jolt WorldのStart/Update/StopとRuntime生成ObjectのBody登録を外部へ公開する。 |
+| Raycast | `Source/Engine/Editor/EditorPhysicsManager.cpp:692-703`、`Source/Engine/Editor/EditorJoltPhysicsManager.cpp:4161-4168` | 上位ManagerがDebug記録を担当し、実際のBroad/Narrow Phase QueryはJolt側へ委譲する。 |
+| 浮力（物体走査） | `Source/Engine/Editor/EditorPhysicsManager.cpp:3312-3389`（`ApplyBuoyancyForces`） | Dynamic Rigidbodyを走査し、有効性判定とWorld姿勢解決を済ませた入力（`BuoyancyObjectInput`）を作って、実Shape方式と旧グリッド方式へ振り分ける。 |
+| 浮力（実Shape方式） | `Source/Engine/Editor/EditorPhysicsManager.cpp:3400-3478`（`ApplyShapeBuoyancyForces`） | 局所水面を作り、Joltへ水没体積を問い合わせ、扱えたら流体力計算へ進む。中央Probeが取れない場合とShapeが体積取得へ対応しない場合だけfalseを返し、旧グリッドへ委ねる。 |
+| 浮力（局所水面） | `Source/Engine/Editor/EditorPhysicsManager.cpp:4396-4601`（`BuildLocalWaterSurface`） | 船体下面へ5x5 Probeを並べてFFT水面を25点だけ評価し、最小二乗Planeを当てて`LocalWaterSurfaceModel`を作る。面ごとの水深は同Modelの`Sample`が双線形補間で返す。 |
+| 浮力（流体力） | `Source/Engine/Editor/EditorPhysicsManager.cpp:3491-4387`（`ApplyHydrodynamicForces`） | 実Shapeの水没体積と浮心から、付加質量、静水圧とHeave復元・減衰、回転放射減衰、水没面ごとの圧力抗力と表面摩擦抗力、Slamming、造波抵抗を求めてJoltへ加える。 |
+| 浮力（安全策） | `Source/Engine/Editor/EditorPhysicsManager.cpp:4736-5000`（`ApplyGridBuoyancyForces`） | 実Shapeの体積取得へ対応しない特殊Shapeだけ、船体AABBへ仮想セルを詰めてセル単位の水没高さから浮力を積む。 |
+
+### I. Animation・Animator
+
+| 段階 | 実装位置 | その行付近の処理 |
+| --- | --- | --- |
+| Play開始 | `Source/Engine/Editor/EditorAnimationManager.cpp:167-237`（`Start`） | 再生時間とRuntime Cacheを初期化し、元Transformを保存してClip/Graphを読み込む。 |
+| 距離LOD更新 | `Source/Engine/Editor/EditorAnimationManager.cpp:238-306`（`Update`） | Camera距離でPose評価頻度を落とし、間引いた時間は蓄積して再生時間の遅れを防ぐ。 |
+| 停止復元 | `Source/Engine/Editor/EditorAnimationManager.cpp:307-341`（`Stop`） | Play中に書き換えたTransformを開始前の値へ戻し、Runtime状態を破棄する。 |
+| Animator生成 | `Source/Engine/Editor/EditorAnimationManager.cpp:876-923`（`StartAnimator`） | Model Clip、Animation Graph、Instance固有Parameter、初期StateをRuntimeへ構築する。 |
+| State更新 | `Source/Engine/Editor/EditorAnimationManager.cpp:1098-1279`（`UpdateAnimator`） | 自動Parameter、Transition判定、現在/遷移元Pose Sampling、Action Blend、Event判定を順に進める。 |
+| 遷移条件 | `Source/Engine/Editor/EditorAnimationManager.cpp:1280-1352`（`EvaluateStateMachine`） | 条件を満たすTransitionを選び、現在State、遷移元State、Blend時間、Trigger消費を更新する。 |
+| Pose反映 | `Source/Engine/Editor/EditorAnimationManager.cpp:1778-1820` | In-PlaceとRoot Motionを分け、最終PoseをGameObject Transformへ適用する。 |
+| Event通知 | `Source/Engine/Editor/EditorAnimationManager.cpp:1866-1902` | 前回時刻から現在時刻までに通過したEventをEffectとScriptへ通知し、Loop跨ぎも判定する。 |
+
+### J. Native Script
+
+| 段階 | 実装位置 | その行付近の処理 |
+| --- | --- | --- |
+| Binding構築 | `Source/Engine/Editor/EditorScriptManager.cpp:5515-5556`（`BuildScriptBindings`） | Scene内Script Componentを走査し、GameObjectとDLL Moduleを結ぶBinding索引を作る。 |
+| DLL Load | `Source/Engine/Editor/EditorScriptManager.cpp:6881-7055`（`LoadModule`） | DLLを読み、API VersionとExport関数を検証してInstance APIまたは旧APIのFunction Pointerを保持する。 |
+| Start | `Source/Engine/Editor/EditorScriptManager.cpp:465-579` | Bindingを構築し、DLL単位で一度Loadした後、ActiveなComponent InstanceへStartを通知する。 |
+| Update | `Source/Engine/Editor/EditorScriptManager.cpp:580-733` | 入力、Hot Reload、Inspector Field同期、UI/Input Event通知の後に通常Updateを呼ぶ。Simulation LODによる間引きもここで行う。 |
+| FixedUpdate | `Source/Engine/Editor/EditorScriptManager.cpp:738-821` | Collision/Wire Eventを対象ObjectのBindingだけへ通知し、その後に固定時間Callbackを呼ぶ。 |
+| Hot Reload | `Source/Engine/Editor/EditorScriptManager.cpp:6832-6872` | DLL Timestamp変化を検出し、旧Instance状態を退避してModule再Load後にBindingを再開する。 |
+| Stop/Unload | `Source/Engine/Editor/EditorScriptManager.cpp:989-1016` | DLLをUnloadする前にInstanceのStop/破棄を呼び、無効になるFunction PointerとBindingを消す。 |
+
+### K. Asset・Hot Reload
+
+| 段階 | 実装位置 | その行付近の処理 |
+| --- | --- | --- |
+| Type判定 | `Source/Engine/Asset/AssetManager.cpp:201-269` | Asset種別ごとのHandlerを登録し、拡張子から担当Handlerを選ぶ。AssetManager自身は個別形式を解釈しない。 |
+| 変更通知 | `Source/Engine/Asset/AssetManager.cpp:270-280` | Handlerへ変更を通知し、結果をRegistryのReload状態へ反映する。 |
+| Cache破棄 | `Source/Engine/Asset/AssetManager.cpp:281-305` | Invalidateは再読込可能状態へし、UnloadはCacheとRegistry Recordを明示的に除去する。 |
+| 依存・Hash | `Source/Engine/Asset/AssetManager.cpp:306-388` | Handlerから依存Pathを取得し、正規化したFile内容から変更検出用Hashを作る。 |
+| Registry読書 | `Source/Engine/Asset/AssetRegistry.cpp:72-133` | Path、Asset ID、Type、Hash、依存、Reload状態をRegistry Fileへ読み書きする。 |
+| Disk走査 | `Source/Engine/Asset/AssetRegistry.cpp:288-345` | `Assets`と`resources`を走査し、追加・変更・削除を既存Recordと照合する。 |
+| 逆依存Index | `Source/Engine/Asset/AssetRegistry.cpp:346-417` | Forward DependencyからReverse Indexを再構築し、あるAsset変更時に影響を受けるAssetを逆引きする。 |
+
+### L. 共同編集・TCP
+
+| 段階 | 実装位置 | その行付近の処理 |
+| --- | --- | --- |
+| Session初期化 | `Source/Engine/Editor/EditorTeamCollaborationManager.cpp:1333-1383` | Transport、Settings、Change Log、Client ID、接続状態を初期化する。 |
+| Frame更新 | `Source/Engine/Editor/EditorTeamCollaborationManager.cpp:1384-1450` | 受信Message、Heartbeat、Presence、Lock Timeout、Play中の遅延変更を順に処理する。 |
+| 接続Handshake | `Source/Engine/Editor/EditorTeamCollaborationManager.cpp:3131-3220` | Protocol/Engine/Project互換情報を送り、Project違いやVersion不一致を同期前に拒否する。 |
+| Change適用 | `Source/Engine/Editor/EditorTeamCollaborationManager.cpp:3600-3635` | TeamItemのRevisionと対象UUIDを確認し、Component/Field単位の変更をSceneへ適用する。 |
+| Snapshot復旧 | `Source/Engine/Editor/EditorTeamCollaborationManager.cpp:4676-4751` | 差分だけで追いつけない再接続時にScene Snapshotを検証して適用する。 |
+| Server Loop | `Source/Engine/Collaboration/TcpCollaborationTransport.cpp:179-358` | Client受付、複数Socketの受信、改行Frame分割、切断検出、Broadcastを専用Threadで行う。 |
+| Client Loop | `Source/Engine/Collaboration/TcpCollaborationTransport.cpp:359-556` | Non-blocking接続、送信Queue、部分送受信、再接続状態を専用Threadで処理する。 |
+| Main Thread境界 | `Source/Engine/Collaboration/TcpCollaborationTransport.cpp:632-677` | `Send`はQueueへ積み、`Poll`は受信済みMessageをMain Threadへ移す。SceneをNetwork Threadから直接変更しない。 |
+
+### M. Profiler
+
+| 段階 | 実装位置 | その行付近の処理 |
+| --- | --- | --- |
+| CPU Scope | `Source/Engine/Editor/EditorProfilerManager.cpp:26-123`（`Scope`） | Constructorで開始時刻と親Call Pathを保持し、Destructorで経過時間を自動記録するRAII計測。 |
+| GPU Event開始/終了 | `Source/Engine/Editor/EditorProfilerManager.cpp:178-235` | Timestamp Queryを2個確保し、GPU Command List上の開始・終了位置へQueryを記録する。 |
+| GPU結果集約 | `Source/Engine/Editor/EditorProfilerManager.cpp:240-328` | Timestamp差をmsへ変換し、子時間、Draw Call、Dispatch数を親Sampleへ集約する。 |
+| CPU Sample集約 | `Source/Engine/Editor/EditorProfilerManager.cpp:345-390` | Source、Call Path、Thread、Object IDをKeyに最新・平均・Peak・Allocationを蓄積する。 |
+| Frame履歴 | `Source/Engine/Editor/EditorProfilerManager.cpp:397-465` | CPU/GPU Frame時間をRing Bufferへ保存し、古い順へ並べてDiagnosticsへ返す。 |
+
+### N. GPU Particle・FFT Ocean
+
+| 段階 | 実装位置 | その行付近の処理 |
+| --- | --- | --- |
+| Particle更新 | `Source/Engine/Renderer/EditorGpuParticleManager.cpp:145-260` | GPU上のAlive/Dead Listを再構築し、DepthとCollision Proxyを使って寿命・運動・衝突をCompute更新する。 |
+| Particle描画 | `Source/Engine/Renderer/EditorGpuParticleManager.cpp:261-342` | Particle BufferをSRVへ遷移し、BillboardとModel ParticleをGPU Instancingで描く。 |
+| Particle Spawn | `Source/Engine/Renderer/EditorGpuParticleManager.cpp:633-680` | CPU側Spawn要求をHLSL共有LayoutへPackingし、Dead Listから新しいSlotをGPUで確保する。 |
+| Ocean FFT実行 | `Source/Engine/Renderer/EditorOceanFftManager.cpp:80-341` | Spectrum時間発展、5 Fieldの2D FFT、変位・法線・Foam生成、Surface Sample出力を順にDispatchする。 |
+| 2D FFT | `Source/Engine/Renderer/EditorOceanFftManager.cpp:1136-1184`（`ExecuteFft2D`） | Row FFTとTransposeを2回組み合わせ、2次元逆FFTをCompute Shaderで実行する。 |
+| Sample要求 | `Source/Engine/Renderer/EditorOceanFftManager.cpp:425-463` | 浮力等が必要とする局所座標をKey付きでQueueし、同じKeyの過去解決値があれば即座に返す。 |
+| GPU Readback | `Source/Engine/Renderer/EditorOceanFftManager.cpp:464-541` | GPU完了済みSampleをCPUへ戻し、位置・法線・速度・FoamをKey別Cacheへ保存する。 |
+
+### O. Camera・Lighting・Material・Shader
+
+| 段階 | 実装位置 | その行付近の処理 |
+| --- | --- | --- |
+| Game View Camera選択 | `Source/Engine/Editor/EditorGameViewManager.cpp:140-185` | ActiveなCamera Componentから最大Priorityを選び、Runtime上書き、Follow対象、Scene Camera代用を含めて最終Transformを決める。 |
+| View/Projection生成 | `Source/Engine/Editor/EditorGameViewManager.cpp:226-306` | World Camera行列を逆行列化してViewを作り、Camera ComponentのFOV・Near/Far・Perspective/OrthographicからProjectionを作る。 |
+| Scene Camera操作 | `Source/Engine/Editor/EditorSceneCameraController.cpp:19-161` | Keyboard移動とMouse回転・Pan・ZoomをScene View専用Transformへ反映する。Game View Cameraとは別系統。 |
+| CPU Frustum判定 | `Source/Engine/Editor/EditorRenderManager.cpp:339-370` | Object BoundsをView Projectionへ投影して視錐台外を除外する。GPU Cullingを使わない経路とShadow/GBuffer収集でも共通利用する。 |
+| Light収集 | `Source/Engine/Editor/EditorRenderManager.cpp:507-613`（`CollectSceneLights`） | Directional・Point・Spot・AreaをGPU共有Light配列へ変換し、強度、範囲、Spot角、Shadow情報を詰める。 |
+| LightのGPU反映 | `Source/Engine/Editor/EditorRenderManager.cpp:2363-2508` | Scene Light、Emissive Light、Sun Portal、Light Probe Gridを収集し、Camera位置を含むFrame用Constant Bufferへ書く。 |
+| Material定義 | `Source/Engine/Editor/EditorScene.h:782-833` | 色、Lighting Model、Metallic、Roughness、Normal/AO等のTexture Path、UV、透明・両面設定をComponent Dataとして保持する。 |
+| 描画Proxy生成 | `Source/Engine/Editor/EditorSceneObjectManager.cpp:296-513`（`CreateObject`） | Scene ComponentをRenderer用Objectへ変換し、Transform・Material・Mesh・Texture・Skinning用GPU Resourceを割り当てる。 |
+| Material Texture | `Source/Engine/Editor/EditorSceneObjectManager.cpp:579-678` | PBR Texture SlotごとにResourceとDescriptorを所有し、差替え・解放・共有参照を管理する。 |
+| Shader Compile | `Source/Engine/Editor/EditorPlatformManager.cpp:1285-1548` | Vertex/Pixel/Compute ShaderをDXCでCompileし、各Pass用BlobをRoot SignatureとPSO生成へ渡す。 |
+| PBR Lighting | `Assets/Shaders/Object3d.PS.hlsl:912-1175` | 通常Light、Probe GI、Emissive、Sun PortalをMaterial BRDFへ加算し、最終的なForward Lighting色を計算する。 |
+
+### P. Audio・Navigation・AI
+
+| 段階 | 実装位置 | その行付近の処理 |
+| --- | --- | --- |
+| Audio開始 | `Source/Engine/Editor/EditorAudioManager.cpp:104-161` | Scene内Audio Sourceを走査し、Play On Awake、Clip、Bus、Voice上限をRuntime状態へ準備する。 |
+| Audio再生 | `Source/Engine/Editor/EditorAudioManager.cpp:162-372` | Clip CacheからVoiceを確保し、Loop、Volume、Pitch、3D位置、Handleを設定して再生する。 |
+| Audio更新 | `Source/Engine/Editor/EditorAudioManager.cpp:373-572` | Listenerとの距離減衰、Doppler、Occlusion、Reverb、Fade、Bus音量を更新し、終了Voiceを回収する。 |
+| Navigation構築 | `Source/Engine/Editor/EditorNavigationManager.cpp:671-781` | Walkable Surface、Obstacle、Area、Off-mesh Linkから移動用Dataを再構築する。 |
+| Path計算 | `Source/Engine/Editor/EditorNavigationManager.cpp:519-589` | 開始点と目的地をSurfaceへ投影し、経路点列と到達可否を返す。 |
+| Agent更新 | `Source/Engine/Editor/EditorNavigationManager.cpp:782-899` | 現在経路の次点へ加速・減速し、停止距離、回転、Surface追従、Link移動を適用する。 |
+| AI Runtime | `Source/Engine/Editor/EditorAIManager.cpp:1030-1131` | ActiveなAI AgentとSensorを更新し、認識結果、移動意思、Physics/Navigationへの出力をまとめる。 |
+| AI Sensor | `Source/Engine/Editor/EditorAIManager.cpp:1205-1790` | 視野角、距離、遮蔽Raycast、Tag/Layer条件から候補を絞り、検出結果と記憶時間を更新する。 |
+
+### Q. 音声・画像認識・Online・Haptics
+
+| 段階 | 実装位置 | その行付近の処理 |
+| --- | --- | --- |
+| Speech統括 | `Source/Engine/Speech/SpeechSystem.cpp:62-296` | Backend選択、Session登録、開始・停止、複数Component要求からBackend稼働要否を管理する。 |
+| Speech結果配布 | `Source/Engine/Speech/SpeechSystem.cpp:297-567` | Backend結果をGameObject別Sessionへ配り、Keyword一致と各CallbackをMain Threadで発火する。 |
+| Windows SAPI | `Source/Engine/Speech/WindowsSpeechApiBackend.cpp:102-274`、`Source/Engine/Speech/WindowsSpeechApiBackend.cpp:302-594` | COM/SAPIを初期化し、Keyword/Dictation Grammarを構築して認識EventをResult Queueへ変換する。 |
+| Camera/Vision統括 | `Source/Engine/Vision/VisionSystem.cpp:33-337` | Camera SourceをGameObject単位で開閉し、RecognizerのBackendと映像元を関連付ける。 |
+| Vision更新 | `Source/Engine/Vision/VisionSystem.cpp:338-430` | 最新Frameだけを取得して認識Backendへ渡し、古いFrame処理が蓄積しないよう結果を更新する。 |
+| 内蔵Vision | `Source/Engine/Vision/BuiltinVisionBackend.cpp:82-267` | CPUで色追跡とFrame差分による動き検出を行う。対応していない認識Modeへ勝手に置換しない。 |
+| ONNX Vision | `Source/Engine/Vision/OnnxVisionBackend.cpp:230-674` | Model Session、Input Tensor、Classification/Detection出力解析を管理し、利用不能時はErrorを返す。 |
+| Online統括 | `Source/Engine/Online/OnlineService.cpp:115-251`、`Source/Engine/Online/OnlineService.cpp:343-469` | Backendを初期化し、ResponseをLeaderboard/PlayerData/CloudSaveへ振り分け、失敗要求を再送Queueへ積む。 |
+| WinHTTP Worker | `Source/Engine/Online/WinHttpOnlineBackend.cpp:168-258` | Main ThreadではRequestをQueueへ積み、Worker Threadで送受信してResponse Queueへ戻す。 |
+| Online永続Queue | `Source/Engine/Online/OnlineService.cpp:888-986` | 未送信要求をDiskへ保存し、再起動・再接続後にも再送できるよう復元する。 |
+| Haptics合成 | `Source/Engine/Haptics/HapticSystem.cpp:107-292` | 複数VoiceのClip/Envelope/Intensityを時間評価し、左右出力へ合成してDevice Backendへ渡す。 |
+| FeelKit接続 | `Source/Engine/Haptics/FeelKitHapticBackend.cpp:24-160` | Device初期化、切断復旧、Intensity送信、Error状態をFeelKit固有APIと共通Interfaceの間で変換する。 |
+
+### R. Launcherの生成・表示・処理
+
+LauncherはEngine内のImGui Windowではなく、`CG2Launcher.exe`という独立Executableである。GUI FrameworkはQt、WPF、WinUI、MFCではなく、Windows SDKの**Win32 User Interface API（User32）**を直接使っている。DirectXで独自UIを描くのではなく、Win32 APIで親Windowと子Controlを作る方式である。
+
+「Windowsへ描画を任せる」とは、何も指定せず画面が生成されるという意味ではない。Launcher側が`CreateWindowW/CreateWindowExW`へ、Window Class名、表示文字、Style、座標、幅、高さ、親Window、Control IDを渡して各部品を生成する。生成後は各部品が独立した`HWND`を持ち、Windowsにあらかじめ登録されている標準Control用Window Procedureが`WM_PAINT`等を処理して、Buttonの枠、文字、選択状態、Scrollbar、入力Caret等を描画する。
+
+Launcherが使用する画面部品は次のとおり。
+
+| 画面部品 | Win32 Window Class | 主なStyle | 生成場所・役割 |
+| --- | --- | --- | --- |
+| Launcher親Window | `CG2LauncherWindow`（独自登録） | `WS_OVERLAPPED / WS_CAPTION / WS_SYSMENU / WS_MINIMIZEBOX` | `Tools/CG2Launcher/LauncherGui.cpp:1693-1699`。Title BarとWindow枠を持つ1160×750の親Windowを作る。 |
+| Navigation・操作Button | `BUTTON` | `WS_CHILD`、Navigationのみ初期`WS_VISIBLE` | `Tools/CG2Launcher/LauncherGui.cpp:908-910`、`Tools/CG2Launcher/LauncherGui.cpp:1035-1038`。押下時に親へ`WM_COMMAND`を送る。 |
+| 見出し・説明文 | `STATIC` | `SS_LEFT` | `Tools/CG2Launcher/LauncherGui.cpp:904-906`。編集不要なLabelを表示する。 |
+| 参加コード・Hub入力 | `EDIT` | `WS_EX_CLIENTEDGE / ES_AUTOHSCROLL` | `Tools/CG2Launcher/LauncherGui.cpp:912-915`。一行Text入力欄を作る。 |
+| 実行結果欄 | `EDIT` | `ES_MULTILINE / ES_READONLY / ES_AUTOVSCROLL` | `Tools/CG2Launcher/LauncherGui.cpp:1048-1051`。長い処理結果を折り返して表示する読取専用Text欄。 |
+| Project・Engine一覧 | `LISTBOX` | `LBS_NOTIFY / WS_VSCROLL / WS_HSCROLL` | `Tools/CG2Launcher/LauncherGui.cpp:917-920`等。一覧選択を親Windowへ通知する。 |
+| Engine・Channel選択 | `COMBOBOX` | `CBS_DROPDOWNLIST / WS_VSCROLL` | `Tools/CG2Launcher/LauncherGui.cpp:923-925`等。自由入力ではなく登録済み候補から選択する。 |
+
+親Windowだけは`WNDCLASSEXW`と`RegisterClassExW`で`CG2LauncherWindow`としてLauncherが登録する。背景は`COLOR_WINDOW + 1`、Cursorは`IDC_ARROW`、Iconは`IDI_APPLICATION`である。子Controlの`BUTTON`等はWindows側に既に存在するClassなので、LauncherがButton用の描画コードやPixel Shaderを作る必要はない。
+
+この実装には`WM_PAINT`、`WM_DRAWITEM`、Direct2D、Direct3D、ImGuiによる独自描画処理がない。Launcherの`WindowProc`が処理しないMessageは`DefWindowProcW`へ渡し、親Windowの標準動作もWindowsへ委譲する。表示内容の変更は、再描画関数を直接呼ぶのではなく、`SetWindowTextW`で文字を設定するか、`SendMessageW`で`LB_ADDSTRING`や`CB_ADDSTRING`を標準Controlへ送り、その結果としてWindowsに再描画させる。
+
+文字列はWin32のWide Character APIへ渡すためUTF-16の`wchar_t`を使用する。Engine側で保持するUTF-8文字列との変換は`MultiByteToWideChar(CP_UTF8)`と`WideCharToMultiByte(CP_UTF8)`で行う（`Tools/CG2Launcher/LauncherGui.cpp:149-163`）。
+
+現状は座標と大きさをPixel値で直接指定しており、親Windowも`WS_THICKFRAME`や`WS_MAXIMIZEBOX`を持たない固定サイズ構成である。また、`LauncherGui.cpp`内では`WM_SETFONT`や独自Font生成を行っていないため、標準ControlのFontと外観はWindowsの既定値に依存する。実装が単純で追加Libraryも不要という利点がある一方、DPI追従、自由なTheme、複雑なLayout、独自Animationには弱い。
+
+| 段階 | 実装位置 | その行付近の処理 |
+| --- | --- | --- |
+| Build構成 | `Tools/CG2Launcher/CG2Launcher.vcxproj:22-43`、`Tools/CG2Launcher/CG2Launcher.vcxproj:74-123` | Unicode対応のC++ Applicationとして各Launcher SourceをCompileする。SubsystemはConsoleのままにし、GUI起動時だけConsole Windowを隠すため、同じ実行ファイルでGUIとCLIの両方を提供できる。 |
+| Process入口 | `Tools/CG2Launcher/main.cpp:24-28`、`Tools/CG2Launcher/main.cpp:88-108`（`wmain`） | 引数なし、`--gui`、`.cg2-invite`指定ならConsoleを隠してGUIへ進み、それ以外はInstall、Verify、Publish等のCLI Commandとして処理する。 |
+| Window Class登録 | `Tools/CG2Launcher/LauncherGui.cpp:1689-1699`（`LauncherGui::Run`） | `WNDCLASSEXW`へ`WindowProc`、背景Brush、Cursor、Iconを登録し、固定サイズの親Window「CG2Engine Hub」を`CreateWindowExW`で作る。 |
+| 表示とMessage Loop | `Tools/CG2Launcher/LauncherGui.cpp:1700-1704` | `ShowWindow`と`UpdateWindow`で表示し、`GetMessageW`→`TranslateMessage`→`DispatchMessageW`を繰り返して入力やOS通知を`WindowProc`へ届ける。 |
+| GUI状態 | `Tools/CG2Launcher/LauncherGui.cpp:31-147`（`HubPage`、`ControlId`、`WindowState`） | 現在Page、登録Project、Engine一覧、Controlの`HWND`、更新状態、処理中Flagを保持する。Control IDがButton操作と処理を結び付ける。 |
+| Control生成 | `Tools/CG2Launcher/LauncherGui.cpp:897-1027` | `CreateWindowW/CreateWindowExW`で標準Controlを生成する。Projects、Installs、Updates、Settingsの各Pageを最初にすべて作り、Page別の`HWND`配列へ登録する。 |
+| 初期画面構築 | `Tools/CG2Launcher/LauncherGui.cpp:1029-1054`（`WindowProc`の`WM_CREATE`） | 左側Navigation、4 Page、結果表示欄を生成し、Project Pageを表示する。続いて登録情報の再読込、Drag & Drop受付、Update確認を開始する。 |
+| Page切替 | `Tools/CG2Launcher/LauncherGui.cpp:606-612`（`ShowPage`） | 選択Pageに属するControlを`SW_SHOW`、それ以外を`SW_HIDE`にする。画面を描き直しているのではなく、作成済み子Windowの表示状態を切り替える。 |
+| 一覧表示更新 | `Tools/CG2Launcher/LauncherGui.cpp:537-599`（`Refresh`） | RegistryとInstall状態を読み直し、`LB_RESETCONTENT/LB_ADDSTRING`や`CB_ADDSTRING`をControlへ送って表示文字列を更新する。実データと表示用文字列を分離している。 |
+| 入力処理 | `Tools/CG2Launcher/LauncherGui.cpp:1029-1685`（`WindowProc`） | `WM_COMMAND`のControl IDから、Projectを開く、新規作成、Install、Repair、Update、参加コード等の操作へ振り分ける。Drag & Dropと独自完了Messageも同じWindow Procedureで処理する。 |
+| 長時間処理 | `Tools/CG2Launcher/LauncherGui.cpp:777-875` | Download、更新、参加、Update確認はWorker Threadで実行し、進捗と結果を`PostMessageW`の`WM_APP` MessageでUI Threadへ返す。UI ControlをWorker Threadから直接操作しないため、画面応答を止めない。 |
+| Project/Engine業務処理 | `Tools/CG2Launcher/LauncherExperience.cpp:740-1133` | Manifest解決、Project/Engine Catalog取得、参加コード照合、Project取得、新規Project生成、必要Engine導入、Editor起動を担当する。GUI固有の`HWND`は扱わない。 |
+| Install・Verify・起動 | `Tools/CG2Launcher/LauncherUpdate.cpp:229-476` | Manifest記載FileのDownloadとHash検証、Version別DirectoryへのInstall、修復、Rollback、Projectが要求するVersionの`CG2.exe`起動を担当する。 |
+| HTTP取得 | `Tools/CG2Launcher/HttpDownload.cpp:66-121`（`DownloadHttpFile`） | WinHTTPでURL解析、接続、HTTP Status確認、分割受信を行い、一時Fileへ保存してから確定名へ置き換える。途中失敗時は不完全Fileを削除する。 |
+
+Launcherの表示経路は次の順になる。
+
+```text
+wmain
+  -> LauncherGui::Run
+  -> RegisterClassExW
+  -> CreateWindowExW（親Window）
+  -> WM_CREATE
+  -> BuildProjectsPage / BuildInstallsPage / BuildUpdatesPage / BuildSettingsPage
+  -> CreateWindowW / CreateWindowExW（標準Control）
+  -> ShowWindow
+  -> Windowsが各標準Controlを描画
+  -> GetMessageW / DispatchMessageW
+  -> WindowProcがButton、List、Drop、Worker完了Messageを処理
+```
+
+処理責務は、`LauncherGui`が表示と入力、`LauncherExperience`がProject単位の操作、`LauncherUpdate`がEngine配布とVersion管理、`HttpDownload`が通信、`PublisherService/PublisherGui`が配布者向け公開処理という分割になっている。UIの見た目を独自描画へ変更する場合でも、Project取得やInstall処理はGUIから分離されているため再利用できる。
 
 ## 1. 実行形態
 
@@ -1616,7 +2614,7 @@ Handlerの`supportsHotReload=false`ならReload関数を呼ばず`RequiresManual
 | Material | No-op Handler | 独立`.material` Loader/Cacheは現状なし。OBJの`.mtl`は対応OBJのModel Cacheを別途無効化した時に読み直され、`.mtl`変更通知単独ではModel Cacheを破棄しない |
 | Prefab | No-op Handler | 使用時にFileを読み直すため`Applied` |
 | InputAction | No-op Handler | 使用時にFileを読み直すため`Applied` |
-| Script | 自動DLL差替えなし | 実行中DLLを安全のため交換せず`RequiresManualAction`。明示的に再Build |
+| Script | Asset Managerの汎用Hot Reload対象外 | Source変更だけでは実行形式にならないため`RequiresManualAction`。DLLを再Buildすると、Play中の`EditorScriptManager`が更新時刻を検出し、候補DLLを検証してから差し替える |
 
 `Invalidate`は遅延再読込用、`Unload`はCache破棄とRegistry削除用である。Project上の削除処理は`AssetManager::Unload`を通し、種別固有CacheとRegistryの両方を片付ける。
 
@@ -1676,7 +2674,7 @@ ModelはEditor Adapterの`getDependencies`経路で、読込済みMaterial Data�
 3. 内容変更なら`AssetManager::NotifyFileChanged`へ集約する。
 4. Handlerが既存ManagerのCacheを安全に無効化する。
 5. `AssetNotifyResult`をRegistryへ戻し、UI/Logへ結果と理由を表示する。
-6. `RequiresManualAction`ならAnimationはPlay再開、Scriptは再Buildを利用者へ要求する。
+6. `RequiresManualAction`ならAnimationはPlay再開、Script Source変更はDLL再Buildを利用者へ要求する。Build後のDLL差し替えはScript Manager側の専用経路で扱う。
 7. Project Windowは選択Assetの依存先・参照元・Missing参照を表示する。削除前は参照元を警告し、Reimport後は`RefreshDependencies`で関係を取り直す。
 
 ### 9. 既知の制限と禁止事項
@@ -1684,7 +2682,7 @@ ModelはEditor Adapterの`getDependencies`経路で、読込済みMaterial Data�
 - Registry単体にはFile Watcher UIも常時監視Threadもない。
 - PathとAssetIdのRegistryをScene参照の全面的なUUID化へ置き換えたわけではない。
 - Unknown Assetは自動反映しない。
-- Script DLLの実行中差替えをHot Reload対応と記述しない。
+- ScriptのSource File変更と、Build済みDLLのHot Reloadを混同しない。Source変更だけでは実行内容は変わらず、DLL再Build後にScript Managerが専用経路で差し替える。
 - AnimationをFile単位で安全にInvalidateできると記述しない。
 - `.material`を独立Loaderが自動再読込すると記述しない。
 - Hashをセキュリティ検証へ流用しない。
@@ -1698,7 +2696,7 @@ ModelはEditor Adapterの`getDependencies`経路で、読込済みMaterial Data�
 | Audioを上書き | 使用中Voiceが停止し、次回Playで新Clipを読込 |
 | `.effect`を上書き | 新旧2系統のEffect Cacheが残らない |
 | Animationを上書き | 自動成功扱いにせず、Play再開を案内 |
-| Scriptを上書き | 実行中DLLを差し替えず、再Buildを案内 |
+| Script Sourceを上書き | DLL再Buildを案内。Build成功後はScript ManagerがDLL更新時刻を検出し、候補検証後に差し替え |
 | Project Window経由の移動 | AssetIdが同じままPathだけ更新 |
 | 外部Toolで移動後に単純再走査 | 自動同一視せず新Pathへ新IDとなり得る |
 | Registry再起動 | Path/IDは維持、Hash/依存/状態は再計算 |
@@ -3743,15 +4741,21 @@ Shadow / Reflection準備 -> Opaque / Alpha Cutout -> GBuffer(材質値と法線
 
 **方式**: **単一の 5×5 Shadow Atlas（各タイル 1024×1024、計25タイル）**に全種類の Shadow を詰める。
 
-**タイル予算**（`EditorSharedState.h:750-751` のコメントが明記）
+**タイル予算**（`Source/Engine/Core/EditorSharedState.h:715-724`）
+
+この付近ではShadow Map全体を5120×5120、Atlasを5×5と定義している。したがって各タイルは1024×1024になる。ここは実際の描画処理ではなく、Renderer全体が共有する解像度とタイル数の契約である。
 
 ```
 Sun cascade 4 + Point Light 最大3灯 × 6面 = 22 タイル / 25 タイル
 ```
 
-**Directional: CSM 4 Cascade**（`EditorRenderManager.cpp:2235` `kSunCascadeCount = 4u`）
+**Directional: CSM 4 Cascade**（`Source/Engine/Editor/EditorRenderManager.cpp:1298-1314`、`kSunCascadeCount` / `ShadowRenderPass`）
 
-Cascade 分割は**対数分割と均等分割の加重混合**。重み `kCascadeLogarithmicWeight = 0.68f`（`EditorRenderManager.cpp:2283-2296`）。
+この付近ではCascade数を4に固定し、1タイル分の描画情報を`ShadowRenderPass`として定義している。各PassはView Projection、AtlasのTile番号、Light番号を持ち、後段のShadow描画Loopへ渡される。
+
+Cascade 分割は**対数分割と均等分割の加重混合**。重み`kCascadeLogarithmicWeight = 0.68f`（`Source/Engine/Editor/EditorRenderManager.cpp:1504-1524`、`PlaceShadowAtlasPasses`）。
+
+この付近ではCameraのNear/Farから4個の分割距離を作る。各分割について対数距離と均等距離を計算し、0.68対0.32で混ぜるため、近距離解像度を確保しながら最初のCascadeが極端に狭くなるのを抑えている。
 
 ```
 split = 対数分割 × 0.68 + 均等分割 × 0.32
@@ -3764,12 +4768,34 @@ split = 対数分割 × 0.68 + 均等分割 × 0.32
 
 **Point: Cube Shadow Map（6面/灯、最大3灯）**
 
-`kCubeFaceCount = 6u`、`MakePointLightCubeFaceViewProjectionMatrix(...faceIndex)` で面ごとの View Projection を作る（`EditorRenderManager.cpp:833-870`）。
+`kCubeFaceCount = 6u`、`MakePointLightCubeFaceViewProjectionMatrix(...faceIndex)`で面ごとのView Projectionを作る（`Source/Engine/Editor/EditorRenderManager.cpp:847-897`）。
+
+実際のAtlas割り当ては`Source/Engine/Editor/EditorRenderManager.cpp:1586-1647`にある。この付近ではPoint Lightかを判定し、6面すべてのタイルを確保できる場合だけ6個の`ShadowRenderPass`を登録する。途中までしか確保できない場合は不完全な影による光漏れを避けるため、Point Lightの影自体を無効化する。
 
 > **注意**: 「Point Light は1方向 Shadow」という理解は現在のコードと一致しない。6面すべてを描いている。
 > 制限は面数ではなく**灯数（3灯）**で、これは Atlas のタイル予算から来ている。
 
-**Spot**: Point / Spot / Area 共通の位置ベース経路（「Point/Spot/Area: position-based, look from light toward center」`EditorRenderManager.cpp:810`）。
+**Spot**: `Source/Engine/Editor/EditorRenderManager.cpp:1649-1678`で1タイルを割り当て、`MakeLightViewProjectionMatrix`から透視投影のLight View Projectionを取得する。この付近ではAtlas満杯時に照明そのものは残し、`shadowEnabled`だけを無効化する。
+
+#### R-6.1 影処理をコードで追う順番
+
+| 段階 | 実装位置 | その行付近の処理 |
+| --- | --- | --- |
+| 共有設定 | `Source/Engine/Core/EditorSharedState.h:715-724` | Shadow Map解像度5120と5×5 Atlasを定義する。ここから1タイル1024×1024が決まる。 |
+| Passの型 | `Source/Engine/Editor/EditorRenderManager.cpp:1298-1314` | Cascade数と、1回のShadow描画に必要な行列・Tile・Light番号を定義する。 |
+| Atlas配置入口 | `Source/Engine/Editor/EditorRenderManager.cpp:1457-1475`（`PlaceShadowAtlasPasses`） | Sun、Point、SpotのPassを同じAtlasへ配置する処理の入口。影だけを無効化する場合もここで決める。 |
+| Directional分割 | `Source/Engine/Editor/EditorRenderManager.cpp:1504-1524` | Near/Farを4分割し、対数分割0.68＋均等分割0.32で各Cascade終端距離を作る。 |
+| Directional登録 | `Source/Engine/Editor/EditorRenderManager.cpp:1536-1583` | CascadeごとのLight View ProjectionとAtlas UV変換を作り、4個のShadow Passを登録する。 |
+| Point登録 | `Source/Engine/Editor/EditorRenderManager.cpp:1586-1647` | Cube 6面の行列とTileを登録する。6面を確保できなければPoint Shadowを無効化する。 |
+| Spot登録 | `Source/Engine/Editor/EditorRenderManager.cpp:1649-1678` | 1個の透視Shadow Passを登録する。Atlasが満杯なら影だけを無効化する。 |
+| 更新省略判定 | `Source/Engine/Editor/EditorRenderManager.cpp:2698-2721` | Scene/Light状態Hashと更新間隔から、今FrameにAtlasを描き直すか前回結果を再利用するか決める。 |
+| Caster収集 | `Source/Engine/Editor/EditorRenderManager.cpp:3193-3402`（`drawShadowObjects`） | Light視錐台外と半透明を除外し、同じMeshをBatch化する。Alpha CutoutとDouble SidedでPSOを切り替える。 |
+| GPU描画Command | `Source/Engine/Editor/EditorRenderManager.cpp:3472-3534` | AtlasをDepth Writeへ遷移し、TileごとにViewport/Scissorを設定してDepthをClearし、各Passの行列でCasterを描く。最後にShader Resourceへ戻す。 |
+| Shadow PSO | `Source/Engine/Editor/EditorPlatformManager.cpp:2508-2537` | Color出力なしのDepth専用PSOを作り、RasterizerのDepth Bias、Slope Bias、Bias Clampを設定する。 |
+| Shader側選択 | `Assets/Shaders/Shadow/ShadowSampling.hlsli:141-186` | Camera距離からCascadeを選び、末尾12%で次CascadeのShadowへBlendする。 |
+| Shader側Bias | `Assets/Shaders/Shadow/ShadowSampling.hlsli:52-60` | 面の傾きからWorld Biasを求め、投影後Depth単位へ換算して9-tap PCFへ渡す。 |
+
+つまり影処理を調べる場合、`PlaceShadowAtlasPasses`だけを読んでも実際のDrawは分からない。`1457-1678`でPass作成、`3193-3402`で描画対象選別、`3472-3534`でGPU Command発行、最後に`ShadowSampling.hlsli`で受光側判定、という順で追う。
 
 **他候補**: ライトごとに独立した Shadow Map テクスチャ、Virtual Shadow Map、Shadow Cache。
 
@@ -3781,21 +4807,21 @@ split = 対数分割 × 0.68 + 均等分割 × 0.32
 
 - **Shadow 付き Point Light は3灯まで**。4灯目以降は Shadow が出ない。Atlas を広げるかタイルを小さくするかの選択になる。
 - Point Light 1灯で6 Pass 増える。灯数に対する描画回数の増え方が急。
-- Cascade 境界は**末尾 12% でブレンドする**（`ShadowSampling.hlsli:167` `lerp(near, far, 0.88f)`）。
+- Cascade 境界は**末尾 12% でブレンドする**（`Assets/Shaders/Shadow/ShadowSampling.hlsli:141-186`）。
   最終 Cascade はブレンドしない。`cascadeBlend <= 0` で早期離脱し、大半のピクセルで 2 回目の 9-tap を省く。
-- Cascade 選択は**カメラからの距離**（`length(worldPosition - light.cameraPosition)`）を 3 つの閾値と比較して
-  分岐なしで加算する（`ShadowSampling.hlsli:141-146`）。View 深度ではなく距離なので、画面端でも Cascade が一定。
+- Cascade 選択は**カメラからの距離**（`length(worldPosition - light.cameraPosition)`）を3つの閾値と比較して
+  分岐なしで加算する（`Assets/Shaders/Shadow/ShadowSampling.hlsli:141-146`）。View深度ではなく距離なので、画面端でもCascadeが一定。
 - Filtering は **9-tap PCF**（`SampleSoftShadow9Tap`）。ハードウェア比較サンプラ（`SampleCmp`）は使わず、
-  静的サンプラの `ComparisonFunc` は `NEVER`（`EditorPlatformManager.cpp:1957`）。深度比較を自前で行っている。
+  静的サンプラの`ComparisonFunc`は`NEVER`。深度比較をShader内で自前処理する。
 - Acne 対策は 2 段。
-  - Rasterizer: `DepthBias 1200` / `SlopeScaledDepthBias 1.5` / `DepthBiasClamp 0.01`（`EditorPlatformManager.cpp:2589-2591`）。
+  - Rasterizer: `DepthBias 1200` / `SlopeScaledDepthBias 1.5` / `DepthBiasClamp 0.01`（`Source/Engine/Editor/EditorPlatformManager.cpp:2508-2531`）。
   - Shader: 受光面の傾きに応じた `worldBias = lerp(0.055f, 0.014f, saturate(normalDotLight))` を
-    NDC 単位へ換算し `[0.00002, 0.01]` にクランプする（`ShadowSampling.hlsli:52-57`）。
+    NDC単位へ換算し`[0.00002, 0.01]`にクランプする（`Assets/Shaders/Shadow/ShadowSampling.hlsli:52-57`）。
     真横を向いた面ほどバイアスを大きく、正面を向いた面ほど小さくする。`DepthBiasClamp` と Shader 側クランプの
     両方が Peter Panning（影の浮き）の上限として働く。
-- Atlas のタイル境界は **2 テクセル内側**に寄せてサンプルする（`ShadowSampling.hlsli:36-41`）。
+- Atlasのタイル境界は**2テクセル内側**に寄せてサンプルする（`Assets/Shaders/Shadow/ShadowSampling.hlsli:36-41`）。
   隣のタイルの深度を拾って影が漏れるのを防ぐ。単一 Atlas 方式に固有の対策。
-- Shadow の更新頻度はハッシュ比較で抑えている（`submittedShadowStateHash`）が、Cache の粒度はライト単位ではなく全体。
+- Shadowの更新頻度は`Source/Engine/Editor/EditorRenderManager.cpp:2698-2721`でHash比較と更新間隔により抑えているが、Cacheの粒度はライト単位ではなくAtlas全体。
 
 ---
 
@@ -3803,7 +4829,7 @@ split = 対数分割 × 0.68 + 均等分割 × 0.32
 
 **方式**: **Jolt Physics 5.5.0** を採用。固定時間刻み。
 
-**根拠**: `EditorJoltPhysicsManager.cpp` に `JPH::` 参照が 455箇所。並存する `EditorPhysicsManager.cpp`（4,764行）には `JPH::` 参照が 0 で、独自実装（浮力・破壊連携など Jolt の外側の処理）を担う。
+**根拠**: `EditorJoltPhysicsManager.cpp` に `JPH::` 参照が 455箇所。並存する `EditorPhysicsManager.cpp`（5,001行）には `JPH::` 参照が 0 で、独自実装（浮力・破壊連携など Jolt の外側の処理）を担う。
 
 **処理**: Play 中のみ `SceneLifecycle` 内で `1/60秒` 固定刻み（`EditorSceneLifecycleManager.cpp:83`）。`physicsSettings.fixedTimeStep` の既定も `1/60`（`EditorScene.cpp:730`）。
 
@@ -7121,7 +8147,7 @@ Broad Phase (大まかな衝突候補の列挙)
 
 - **Jolt Physics 5.5.0**（`EditorJoltPhysicsManager.cpp` に `JPH::` が 455箇所）
 - 固定刻み **1/60 秒**（`EditorSceneLifecycleManager.cpp:83`、`EditorScene.cpp:730`）
-- 破壊は **NvBlast**（PhysX 系）、浮力など独自処理は `EditorPhysicsManager.cpp`（4,764行、`JPH::` は 0箇所）
+- 破壊は **NvBlast**（PhysX 系）、浮力など独自処理は `EditorPhysicsManager.cpp`（5,001行、`JPH::` は 0箇所）
 
 **自作しない理由（推定）**: Broad Phase の空間分割と拘束ソルバの安定化は、
 「動くもの」を作るのと「積み上げても沈まないもの」を作るのの差が大きい。
@@ -7525,7 +8551,7 @@ API 境界での防御が、サポートコストを直接下げる。
 
 - 末尾追加しかできないので、**API の削除・シグネチャ変更が事実上できない**。古い API が残り続ける。
 - 415 Entry が1つのテーブル。分野ごとの分割がない。
-- DLL の Hot Reload（Play 中の差し替え）は持たない。
+- DLL Hot Reload時はGameObjectごとのInstanceを作り直すため、Script Instance内部だけに保持した一時状態は引き継がれない。新DLLのMetadata検証に失敗した場合は旧DLLを継続するが、Native DLL内部の不正Pointer操作やAccess Violationまでは隔離できない。
 
 ---
 
@@ -8029,6 +9055,190 @@ Release 配布物がクラッシュしたとき、**利用者の環境で何が�
 
 ただし現状は 68行の最小実装で、`MiniDumpNormal`（スタックのみ）。
 ヒープを含めないので変数の値は限定的にしか見えない。
+
+---
+
+## Window・入力・DirectX12 基盤のクラス化（R-52）
+
+### 何をする機能か
+
+Win32、DirectInput、DirectX12 の基盤を 3 つのクラスへまとめ、
+Handle・Key 配列・Device といった実体をグローバルから各クラスのメンバ変数へ移す。
+
+### 採用方式
+
+| クラス | ファイル | メンバ変数 | 所有するもの |
+| --- | --- | ---: | --- |
+| `WinApp` | `Source/Engine/Core/WinApp.h/.cpp` | 4 | HWND、HINSTANCE、Window Class 登録状態、終了コード |
+| `Input` | `Source/Engine/Core/Input.h/.cpp` | 3 + 状態4 | DirectInput 本体、Keyboard / Mouse Device、今フレームと前フレームの状態 |
+| `DirectXCommon` | `Source/Engine/Core/DirectXCommon.h/.cpp` | 18 | Device、Command 3 種、SwapChain、Back Buffer、Descriptor Heap 3 本、Fence、Timestamp |
+
+実体は `std::unique_ptr` で動的に確保し、`EditorPlatformManager::Initialize` で
+`make_unique`、`Finalize` で `Finalize()` → `reset()` する。
+Initialize 前と Finalize 後は Pointer が空になるので、呼び出し側が古い値を読み続けない。
+
+生成の順番は WinApp → Input → DirectXCommon。Input は協調 Level に、
+DirectXCommon は SwapChain に Window Handle を要するため、どちらも WinApp より後に作る。
+破棄は逆順で、SwapChain が Window を参照している間に Window を壊さないようにする。
+
+### 処理
+
+```
+EditorPlatformManager::Initialize
+  g_winApp   = make_unique<WinApp>();      winApp->Initialize(hInstance, logStream)
+  g_input    = make_unique<Input>();       input->Initialize(hInstance, g_winApp.get())
+  g_dxCommon = make_unique<DirectXCommon>(); dxCommon->Initialize(g_winApp.get(), logStream)
+
+EditorPlatformManager::Update
+  g_winApp->ProcessMessage()      … WM_QUIT を受け取ったら終了要求
+
+EditorFrameInputManager::Update
+  g_input->Update()               … 前フレーム退避 → Acquire → GetDeviceState
+
+EditorRenderManager::Draw
+  g_dxCommon->BeginFrame(pso)          … Command Allocator / List の巻き戻し
+  …（描画）
+  g_dxCommon->BeginBackBufferPass()    … PRESENT -> RENDER_TARGET
+  …（Back Buffer への合成と ImGui）
+  g_dxCommon->EndBackBufferPass()      … RENDER_TARGET -> PRESENT
+  g_dxCommon->SubmitCommandList(log)   … Close + ExecuteCommandLists
+  g_dxCommon->EndFrame(vsync, log)     … Present + Fence 待ち
+```
+
+### 採用理由
+
+- Key 配列と Device がグローバルにあると、「今フレーム」と「前フレーム」を
+  どこからでも書き換えられる。押した瞬間の判定は 2 フレーム分の状態が対になって
+  初めて成立するので、同じクラスが両方を持たないと取り違えが起きる。
+- Window Handle を配らず `GetHwnd()` 経由にすると、Window を作る前・壊した後に
+  触った場合が Pointer の有無として表せる。
+- Device・Command・SwapChain・Fence は「どの描画機能を作っても必ず要るもの」で、
+  Bloom や SSAO の Render Target とは寿命も作り直しの条件も違う。
+  基盤だけを 1 クラスへまとめると、Resize で作り直す範囲が明確になる。
+
+### 他候補
+
+| 候補 | 不採用理由 |
+| --- | --- |
+| Singleton（`Get()`）にする | 生成と破棄の順番を型で表せない。SwapChain と Window の破棄順を守れない |
+| グローバルのまま getter だけ足す | 実体がグローバルに残るので、どこからでも書き換えられる状態が変わらない |
+| 全 Render Target も DirectXCommon が持つ | 基盤と機能が同じクラスへ混ざり、Resize の影響範囲が読めなくなる |
+
+### 制約・弱点
+
+- 実体への Pointer は `EditorSharedState` に置いてある。参照する側から見れば
+  依然としてグローバルだが、状態そのものはクラスのメンバへ移った。
+- `EditorSceneObjectManager` の per-Object Resource（12 箇所）はまだ生ポインタで
+  `Release()` を呼ぶ。`usesSharedObjectBuffers` / `usesSharedCustomMesh` が true の
+  ときは共有 Pool からの借り物で、所有権が条件で変わる。ComPtr へ移すと
+  参照カウントの意味が変わるため、実機で確認できるまで手を付けていない。
+- XAudio2（2 箇所）、Media Foundation（2 箇所）、SAPI（2 箇所）の `Release()` は
+  DirectX12 ではないので対象外。`IXAudio2MasteringVoice` などは COM ではなく
+  `DestroyVoice()` を使う。
+- **未検証**: Build と静的な突き合わせまで。実機で Window 生成、入力、描画、
+  終了処理を通していない。
+
+### 改善候補
+
+- `EditorSceneObject` の Resource 所有権を「共有 Pool が持つ」「Object が持つ」の
+  どちらかへ寄せてから ComPtr 化する。
+- `EditorPlatformManager::Initialize` に残る PSO / Texture 生成も分離する。
+  基盤生成を抜いた今、残りは機能ごとの初期化なので切り出しやすい。
+
+---
+
+## 浮力処理の構造（R-51）
+
+### 何をする機能か
+
+Dynamic Rigidbody を Ocean の局所水面で切り、水没体積・浮心・水没面から浮力と流体抵抗を
+固定 Step で加える。Jolt の Buoyancy Helper を使わず、Jolt へは Force / Torque だけを渡す。
+
+### 採用方式
+
+実 Physics Shape 方式を本命とし、Shape が体積取得へ対応しない場合だけ旧グリッド方式へ落とす。
+
+| 関数 | 行数 | 責務 |
+| --- | --- | --- |
+| `ApplyBuoyancyForces` | 78 | 物体走査、有効性判定、World 姿勢解決、2 方式への振り分け |
+| `ApplyShapeBuoyancyForces` | 79 | 局所水面の作成、Jolt への水没体積問い合わせ、流体力計算の呼び出し |
+| `BuildLocalWaterSurface` | 206 | 5x5 Probe で FFT 水面を 25 点評価し、最小二乗 Plane を当てる |
+| `LocalWaterSurfaceModel::Sample` | 116 | 任意位置の水面高さ・法線・表面速度を双線形補間で返す |
+| `ApplyHydrodynamicForces` | 897 | 付加質量、静水圧と Heave、回転放射減衰、面ごとの抗力、Slamming、造波抵抗 |
+| `ApplyGridBuoyancyForces` | 265 | 船体 AABB へ仮想セルを詰める安全策 |
+
+### 処理
+
+1. `physicsStepObjects_` を走査し、非 Kinematic な Dynamic Rigidbody だけを対象にする。
+2. Buoyancy Component が無ければ 3D Collider から `RuntimeBuoyancySettings` を作る。
+3. 船体下面へ 5x5 = 25 点の Probe を並べ、`SampleEditorOceanSurface` で FFT 水面を評価する。
+4. 25 点そろったときだけ最小二乗 Plane を当て、法線を `0.85 * 最小二乗 + 0.15 * 平均` で混ぜる。
+5. Jolt へ Plane を渡し、`GetSubmergedVolume` で水没体積・浮心・水没面を得る。
+6. 各流体力を計算し、浮心と重心の位置関係から復元 Moment が自然に出る形で Jolt へ加える。
+
+### CPU 側と GPU 側の役割
+
+すべて CPU 側。GPU が関わるのは Ocean の FFT 水面生成（`EditorOceanFftManager`）で、
+浮力側はその Sample 要求を Key 付きで投げて前フレームの解決値を受け取る。
+
+### 採用理由
+
+- 船体 AABB へ仮想セルを詰める方式では、上部構造（マストなど）まで縦セルが広がり
+  転覆 Moment の原因になる。実 Shape を切れば凸包外へ浮力が掛からない。
+- 面の枚数は数百枚になりうるが、FFT 水面の評価を 25 点へ固定すれば
+  面数に比例した FFT 評価を避けられる。面ごとの水深は双線形補間で足りる。
+
+### 他候補
+
+| 候補 | 不採用理由 |
+| --- | --- |
+| Jolt の Buoyancy Helper | 単一 Plane しか扱えず、FFT 波の斜め傾斜を再現できない |
+| 面ごとに FFT を評価 | 面数に比例して Ocean の Sample 要求が増え、固定 Step が破綻する |
+| 仮想セル方式のみ | 上部構造へ浮力が掛かり転覆する。現在は安全策としてのみ残す |
+
+### 制約・弱点
+
+- `ApplyHydrodynamicForces` が 897 行あり、18 段の力計算が 1 関数に並んでいる。
+  各段は物理的に独立しているので更に分割できるが、共有する中間量（質量、投影面積、
+  相対水流速度、付加質量）が多く、文脈構造体の設計が必要。
+- 付加質量 Coriolis は並進部分だけで、完全な 6-DOF 行列ではない（Code 中に明記済み）。
+- 局所水面 Plane は 5x5 Probe の最小二乗で、25 点そろわないと平均法線へ落ちる。
+- **未検証**: 分割は Build と文の集合一致で確認しただけで、実機で浮力挙動を比較していない。
+
+### 改善候補
+
+- `ApplyHydrodynamicForces` を力の種類ごとに分け、共有量を専用の文脈構造体へ集める。
+- 旧グリッド方式を使う Shape 種別を計測し、不要なら削除して 265 行を減らす。
+
+---
+
+## Build 手順の注意（H-5）
+
+### Release 構成の内部コンパイラ Error
+
+Release は `WholeProgramOptimization`（`/GL` + `/LTCG`）が有効で、中間ファイルが
+古いまま残っていると Code 生成段階で内部コンパイラ Error が出る。
+
+```
+imgui.cpp : fatal error C1001: 内部コンパイラ エラーが発生しました。
+  (コンパイラ ファイル 'src/vctools/Compiler/Utc/src/p2/main.cpp'、行 258)
+LINK : fatal error LNK1000: Internal error during IMAGE::BuildImage
+```
+
+`imgui.cpp` が名指しされるが原因は個別ファイルではなく、Link 時 Code 生成で
+新旧の `.obj` が混ざることにある。中間ファイル置き場（`CG2/x64/Release`）を
+削除してから Build し直すと通る。
+
+### `/t:Rebuild` を使わない
+
+`/t:Rebuild` は `Clean` を走らせ、`ThirdParty/DirectXTex` の `ATGDeleteShaders` が
+生成済み Shader Header（`Shaders/Compiled/*.inc`）を削除する。その後の Build は
+`fxc.exe` を PATH から探せず `error MSB3073 ... コード 9009` で止まる。
+復旧するには Windows SDK の `fxc.exe` の場所を `WindowsSdkVerBinPath` へ入れ、
+`ThirdParty/DirectXTex/Shaders/CompileShaders.cmd` を実行し直す。
+
+中間ファイルを消したい場合は `/t:Rebuild` ではなく、構成ごとの中間ファイル置き場を
+直接削除する。
 
 ---
 

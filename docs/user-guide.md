@@ -1,6 +1,6 @@
 ﻿# CG2Engine 利用者ガイド
 
-更新基準: 2026-09-26
+更新基準: 2026-09-29
 
 この文書はEngine利用者向け情報の集約先である。Project作成、Scene編集、Play確認、Window、実践ワークフロー、トラブルシューティング、配布、共同制作、外部認識・Online・Hapticsをこの1冊で扱う。実装状態と内部構造は`engine-internals.md`、個別Componentの全Fieldは`component-reference.md`、Script API全件は`script-api-reference.md`を参照する。
 
@@ -97,6 +97,22 @@ Transformは親に対するLocal値である。親を持つObjectのWorld位置�
 | UI | Canvas + Text/Image/Button/Slider等 |
 
 Componentを付けただけで動かない場合は、Active、参照Asset、対象GameObject、Play中のみの機能かを確認する。
+
+### GameObject上部のTag、Layer、Staticについて
+
+2026-09-29時点では、Inspector上部の`Tag`、`Layer`、`Static`は配置確認用の仮UIであり、GameObjectごとの値として保存されない。Tagは`Untagged`、Layerは`Default`だけで、Scene保存、Prefab、Undo、共同編集、Native Script検索へ接続されていない。
+
+ゲーム上の分類には目的別の既存機能を使う。
+
+| 目的 | 使用するもの |
+| --- | --- |
+| 特定機能を持つObjectを探す | Component種類による検索 |
+| 物理衝突・Raycastを分ける | Collider等の衝突レイヤーとLayer Collision Matrix |
+| Bullet、Explosion等のDamage分類 | Weapon/AreaDamageのDamage TagとDamageTagModifier |
+| Metal、Water、Wood等の命中表面 | SurfaceTypeのSurface Tag |
+| 味方・敵等の陣営 | Team Component |
+
+汎用GameObject Tagが保存・検索できる前提でSceneを設計しない。内部の違いと処理経路は`engine-internals.md`の「0.13 『Tag』と呼ばれている機能の実態」を参照する。
 
 ## 7. CameraとGame View
 
@@ -1007,7 +1023,7 @@ GameObjectを選択していない時のInspector、またはメニュー「編�
 
 | 項目 | Runtimeへの接続 | 反映タイミング |
 | --- | --- | --- |
-| 解像度 | `ApplicationWindow`のWindow作成サイズ | 次回起動時 |
+| 解像度 | `WinApp`のWindow作成サイズ | 次回起動時 |
 | Window Mode | ボーダーレス全画面の有効/無効 | 次回起動時 |
 | VSync | `EditorRenderManager`の`Present`同期interval | 即時 |
 | FPS上限 | `GameScene`フレーム末尾のLimiter | 即時 |

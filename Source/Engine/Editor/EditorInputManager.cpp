@@ -92,7 +92,7 @@ namespace {
 			return false;
 		}
 
-		const bool directInputPressed = (g_mouseState.rgbButtons[mouseButtonIndex] & 0x80) != 0;
+		const bool directInputPressed = g_input != nullptr && g_input->PushMouseButton(mouseButtonIndex);
 		if (mouseButtonIndex == 0) {
 			// DirectInput can temporarily lose the mouse device while the editor/Game View changes focus.
 			// Keep the primary fire action usable through the current Win32 button state.
@@ -400,11 +400,11 @@ void EditorInputManager::Update(const uint8_t* keyState, float deltaTime) {
 			}
 			isJumpPressed = IsKeyPressed(keyState, input->inputJumpKey);
 
-			if ((g_mouseState.rgbButtons[1] & 0x80) != 0) {
+			if (g_input != nullptr && g_input->PushMouseButton(1)) {
 				float sens = input->inputMouseSensitivity * 0.003f;
 				float invert = input->inputInvertY ? -1.0f : 1.0f;
-				gameObject.rotate.y += static_cast<float>(g_mouseState.lX) * sens;
-				gameObject.rotate.x += static_cast<float>(g_mouseState.lY) * sens * invert;
+				gameObject.rotate.y += g_input->GetMouseMoveX() * sens;
+				gameObject.rotate.x += g_input->GetMouseMoveY() * sens * invert;
 				constexpr float kPitchLimit = 1.553f;
 				if (gameObject.rotate.x > kPitchLimit) gameObject.rotate.x = kPitchLimit;
 				if (gameObject.rotate.x < -kPitchLimit) gameObject.rotate.x = -kPitchLimit;

@@ -13,7 +13,7 @@ Engine配布、Launcher、Version固定、Migration、環境診断は[user-guide
 | [user-guide.md](user-guide.md) | Project作成、Editor操作、Window、実践手順、問題対処、配布、共同制作、外部機能の利用方法 |
 | [engine-internals.md](engine-internals.md) | 現行機能、所有関係、Runtime、描画、保存、Asset、Lighting、共同制作、外部機能の内部契約、**設計判断と技術選択** |
 | [component-reference.md](component-reference.md) | 全287 Component、Inspector Field、既定値、依存、Runtime契約 |
-| [script-api-reference.md](script-api-reference.md) | Native Script lifecycle、413 Runtime API、Wrapper、26 Template、Field API |
+| [script-api-reference.md](script-api-reference.md) | Native Script lifecycle、415 Runtime API、Wrapper、26 Template、Field API |
 | [documentation-authoring.md](documentation-authoring.md) | 文書を更新するときの調査方法、根拠、記載品質、完成監査 |
 | [ReadMe.md](ReadMe.md) | 文書構成、現行監査値、主要更新履歴 |
 
@@ -40,7 +40,35 @@ Version 14のSpeech / Vision / Haptics / Onlineは専用Wrapperと専用Debug Wi
 
 - `engine-internals.md`: 機能、採用方式、処理、採用理由、他候補、不採用理由、制約・弱点、改善候補を更新する。必要に応じてCPU/GPUの役割、主要クラス、負荷が増える場所も記載する。
 - `ReadMe.md`: 更新基準日、文書案内、現行監査値、主要更新履歴のうち影響する項目を更新し、詳細は`engine-internals.md`の該当章へ案内する。
-- ソースの`file:line`を根拠にしている箇所は、対象ファイルの行数が変わった場合に参照先も更新する。
+- 各処理の説明には、根拠となるソースを **`Source/.../File.cpp:開始行-終了行`** の形式で記載する。単なるファイル名だけで終わらせない。
+- 公開API、所有権、保存データ構造を説明する場合は`.h`、実際の処理順や分岐を説明する場合は`.cpp`を示す。両方が根拠になる場合は両方を併記する。
+- 行番号と一緒に`Class::Function`または型名も記載する。行番号がずれた場合でもSymbol検索で追跡できるようにする。
+- 行番号の直後に「その付近で何をしているか」を1〜3文で記載する。関連ファイルを列挙するだけでは説明完了としない。
+- 複数段の処理は「設定収集 → CPU側準備 → GPU Command発行 → Shader側評価」のように、追う順番と各段の実装位置を分けて示す。
+- ソースの`file:line`を根拠にしている箇所は、対象ファイルの行数が変わった場合に参照先も更新する。新機能追加時は本文だけでなく`engine-internals.md`冒頭の「主要実装参照索引」も更新する。
+- 読者がプログラミング経験者であることを前提にしない。最初に「何を実現する機能か」を日常語で説明し、その後に専門用語、処理順、コード上の根拠を段階的に示す。
+- 初出の専門用語は、略語を展開するだけで終わらせず「何であるか」「何のために必要か」「このEngineではどこで使うか」を説明する。例としてDLLなら、動的Library、生成、Load、Export、関数呼出し、解放までをつなげる。
+- 各主要機能には、必要な前提知識、入力、出力、処理主体、処理タイミング、失敗時の動作を記載する。「Managerが処理する」の一文だけで説明完了としない。
+- 上位の説明から下位実装へ進めるよう、「身近な例え → Engine内の役割 → 処理フロー → 用語とデータ → 実装位置 → 制約」の順を基本形とする。例えは理解補助に限定し、実装事実と混同しない。
+- `API`、`ABI`、`Handle`、`Pointer`、`Thread`、`Process`、`Buffer`、`Resource`等を説明なしで並べない。初心者向けの定義へ戻れる章を案内する。
+- `Tag`、`Layer`、`Pipeline`等のように複数の意味がある語は、何を指すかを分ける。UIに項目があるだけで保存・Runtime・Script APIまで実装済みと断定せず、入力から結果までの接続を確認する。
+
+実装参照の記載例:
+
+```text
+公開契約: Source/Engine/Editor/EditorPhysicsManager.h:18-245（EditorPhysicsManager）
+固定更新: Source/Engine/Editor/EditorPhysicsManager.cpp:527-607（EditorPhysicsManager::Update）
+```
+
+参照範囲は説明対象を追える最小範囲にする。巨大な`.cpp`全体や`1-5000`のような範囲は根拠として扱わない。
+
+推奨する記載単位は次のとおり。
+
+```text
+実装位置: Source/.../File.cpp:100-140（Class::Function）
+この付近の処理: 設定値からPass一覧を組み立て、各Passの行列と出力先を決める。
+次に追う場所: Source/.../File.cpp:300-340（実際のDraw Command発行）
+```
 
 実装から断定できない理由は「推定」、Build・Play・描画・通信などを確認していない結果は「未検証」と明記する。コメントや空白だけの変更では説明本文の更新は不要だが、根拠行番号がずれた場合は参照先を更新する。
 
@@ -138,6 +166,179 @@ Assetの参照カウント、非同期ロード、描画/物理の並列化。**
 
 `README.md`には初期実装時点の評価・未対応表が履歴として残っている。現在の分野横断状態、コードの所有関係、処理順は`engine-internals.md`を正とする。個別Field/APIはComponent・Scriptリファレンスを参照し、矛盾する古い評価行は現行仕様章を優先する。
 
+## 2026-09-30 更新: Window・入力・DirectX12 基盤をクラス化
+
+Win32 / DirectInput / DirectX12 の基盤をグローバルから 3 つのクラスへ移した。
+Debug / Development / Release の3構成すべてで0警告0エラー、
+`Tests/RunNativeSmokeTests.ps1` 3件成功、`Tools/CheckSourceHygiene.ps1` 違反0。
+
+### 追加したクラス
+
+| クラス | 行数 | メンバ変数 | 所有するもの |
+| --- | ---: | ---: | --- |
+| `WinApp` | 76 / 348 | 4 | HWND、HINSTANCE、Window Class 登録状態、終了コード |
+| `Input` | 110 / 223 | 7 | DirectInput 本体、Keyboard / Mouse Device、今フレームと前フレームの状態 |
+| `DirectXCommon` | 179 / 565 | 18 | Device、Command 3種、SwapChain、Back Buffer、Descriptor Heap 3本、Fence、Timestamp |
+
+`Source/Engine/Core/ApplicationWindow.h/.cpp`（自由関数とグローバル定数の集合）は
+`WinApp` へ置き換えて削除した。
+
+### グローバルから各クラスのメンバ変数へ移したもの
+
+```
+g_windowHandle                              -> WinApp::windowHandle_
+g_directInput / g_keyboardDevice / g_mouseDevice
+g_key[256] / g_preKey[256]
+g_mouseState / g_preMouseState              -> Input のメンバ
+g_device / g_commandQueue / g_commandAllocator / g_commandList
+g_swapChain / g_swapChainDesc / g_swapChainResources[2] / g_rtvHandles[2]
+g_rtvDescriptorHeap / g_srvDescriptorHeap / g_dsvDescriptorHeap
+g_fence / g_fenceValue / g_fenceEvent
+g_renderTimestampQueryHeap / g_renderTimestampReadback / g_renderTimestampFrequency
+                                            -> DirectXCommon のメンバ
+```
+
+実体は `std::unique_ptr` で動的に確保し、`Initialize` で `make_unique`、
+`Finalize` で `Finalize()` → `reset()` する。生成は WinApp → Input → DirectXCommon、
+破棄は逆順（SwapChain が Window を参照しているため）。
+
+### 毎フレームの描画の前処理と後処理
+
+`Draw()` の中に散っていた Command のリセット、Back Buffer の状態遷移、
+Close / Execute / Present / Fence 待ちを `DirectXCommon` の関数へ移した。
+
+| 関数 | 中身 |
+| --- | --- |
+| `BeginFrame(pso)` | Command Allocator と List の巻き戻し。巻き戻す順番と失敗判定を含む |
+| `BeginBackBufferPass()` | PRESENT -> RENDER_TARGET |
+| `EndBackBufferPass()` | RENDER_TARGET -> PRESENT |
+| `SubmitCommandList(log)` | Close + ExecuteCommandLists |
+| `EndFrame(vsync, log)` | Present + Fence 待ち |
+
+### Release の排除
+
+`->Release()` を **83箇所 → 18箇所** へ減らした。DirectX12 オブジェクトは
+基盤・Render Target・IBL・LUT・Texture・頂点 Buffer をすべて ComPtr へ移した。
+ComPtr は484箇所、`.Get()` は951箇所。
+
+残る18箇所とその理由:
+
+| 箇所 | 件数 | 残した理由 |
+| --- | ---: | --- |
+| `EditorSceneObjectManager` の per-Object Resource | 12 | `usesSharedObjectBuffers` / `usesSharedCustomMesh` が true のとき共有 Pool からの借り物で、**所有権が条件で変わる**。ComPtr へ移すと参照カウントの意味が変わるため、実機で確認できるまで保留 |
+| XAudio2 | 2 | DirectX12 ではない |
+| Media Foundation | 2 | 同上 |
+| SAPI | 2 | 同上 |
+
+### 途中で見つけて直した問題
+
+- **Descriptor Heap の二重解放**: `EditorPlatformManager::Finalize` が
+  `srvDescriptorHeap` / `dsvDescriptorHeap` / `rtvDescriptorHeap` を `Release()` していた。
+  所有権が `DirectXCommon` へ移ったため二重解放になる。削除した。
+- **未使用の重複コード 79行**: `Initialize` 内の `waitForGpu` / `resizeRenderTargets`
+  ラムダは一度も呼ばれておらず、`EditorSharedState::ResizeRenderTargets` と重複していた。
+  Back Buffer の所有者が変わった今は二重解放の原因にもなるため削除した。
+
+### 課題の達成条件に対する現状
+
+| 条件 | 変更前 | 変更後 |
+| --- | :-: | :-: |
+| Input のクラス化（クラス自作 / メンバ関数 / 初期化と毎フレームの分離 / メンバ変数 / 動的管理 / bool 関数） | △3 ❌2 ✅1 | ✅6 |
+| DirectX12 基盤のクラス化 | ❌ | ✅ |
+| 毎フレームの描画の前処理と後処理を関数に | ❌ | ✅ |
+| Release を排除し ComPtr へ | ❌ 83箇所 | △ 残18（うち DirectX12 は12、条件付き所有権のため保留） |
+| ComPtr から生ポインタを取り出す | ✅ | ✅ 951箇所 |
+| FPS 固定または可変対応 | ✅ | ✅ |
+| WindowsAPI のクラス化 | ❌ | ✅ |
+| 必要以上の include を書かない | △ | △（`WinApp.h` は4個、`Input.h` は4個。`EditorSharedState.h` の65個は未着手） |
+| 通常と静的メンバ関数の使い分け | ✅ | ✅（`WinApp::WindowProc` / `SetStandaloneWindowTitle` を追加） |
+| メンバ変数の getter | ✅ | ✅（`GetHwnd` / `GetDevice` / `GetCommandList` など） |
+| クラスの定数 | ✅ | ✅（`kClientWidth` / `kKeyCount` / `kBackBufferCount` など11個） |
+| 自作クラスのポインタを別クラスの関数へ | ✅ | ✅（`Input::Initialize(HINSTANCE, WinApp*)`、`DirectXCommon::Initialize(WinApp*, ostream&)`） |
+
+**未検証**: Build と静的な突き合わせまで。実機で Window 生成、入力、描画、終了処理を
+通していない。詳細は`engine-internals.md`の「Window・入力・DirectX12 基盤のクラス化（R-52）」。
+
+## 2026-09-29 更新: 浮力処理を責務で分割 / 規模の判断基準をAGENTS.mdへ明文化
+
+「行数は分割を検討するための目安とし、最終判断は責務の数、処理段階、依存関係、可読性、
+変更影響範囲に基づいて行う」という基準を `AGENTS.md` へ追記し、それに沿って
+1,000行超の関数を再評価した。Debug / Development / Release の3構成すべてで0警告0エラー、
+`Tests/RunNativeSmokeTests.ps1` 3件成功、`Tools/CheckSourceHygiene.ps1` 違反0。
+
+### 責務で再評価した結果
+
+指標を実測し、行数だけでは判断できない差を確認した。
+
+| 関数 | 行数 | 分岐密度 | 最大ネスト | 最頻出の先頭語 | 判断 |
+| --- | ---: | ---: | ---: | --- | --- |
+| `EditorRenderManager::Draw` | 4,965 | 7.96/100行 | 8タブ | — | 分割すべき（大見出し26＋中見出し19） |
+| `EditorPlatformManager::Initialize` | 4,270 | 4.82/100行 | 7タブ | — | 分割すべき（Error処理が本処理へ混在） |
+| `EditorScene::LoadScene` | 3,736 | 19.06/100行 | 8タブ | `component` 44% | 要判断（行種別ディスパッチャ） |
+| `EditorScene::SaveScene` | 2,617 | 10.89/100行 | 7タブ | `<<` 79% | 一体性を優先（規則的なSerialization） |
+| `EditorScene::CreateComponent` | 1,895 | 2.11/100行 | 3タブ | `component` 93% | **一体性を優先（登録表）** |
+| `EditorPhysicsManager::ApplyBuoyancyForces` | 1,459 | 6.17/100行 | **10タブ** | — | 分割すべき（深い行86%） |
+| `EditorWaterRailShooterSceneBuilder::Generate` | 1,232 | 3.90/100行 | 3タブ | — | 優先度低（大見出し8で読める） |
+
+`CreateComponent` 1,895行は分岐密度2.11・最大ネスト3タブ・同じ形の文が93%で、
+上から順に読むだけの登録表である。基準の「登録表は長くても一体性を優先する」に当てはまるため、
+**分割対象から外した**。
+
+### 浮力処理の分割
+
+指標が最も悪かった `ApplyBuoyancyForces`（最大ネスト10タブ、深い行86%）を分割した。
+
+| 関数 | 変更前 | 変更後 | 責務 |
+| --- | ---: | ---: | --- |
+| `ApplyBuoyancyForces` | 1,459 | **78** | 物体走査、有効性判定、World姿勢解決、2方式への振り分け |
+| `ApplyShapeBuoyancyForces` | — | 79 | 局所水面の作成、水没体積の問い合わせ、流体力計算の呼び出し |
+| `BuildLocalWaterSurface` | — | 206 | 5x5 ProbeでFFT水面を25点評価し最小二乗Planeを当てる |
+| `LocalWaterSurfaceModel::Sample` | — | 116 | 任意位置の水面を双線形補間で返す |
+| `ApplyHydrodynamicForces` | — | 897 | 付加質量・静水圧・Heave・回転放射減衰・面ごとの抗力・Slamming・造波抵抗 |
+| `ApplyGridBuoyancyForces` | — | 265 | 体積取得へ対応しないShape用の安全策 |
+
+`EditorPhysicsManager.cpp` に1,000行超の関数は無くなった（最大897行）。
+
+鍵になったのは、面ごとの水深問い合わせを担っていた `[&]` 捕捉ラムダ（局所変数11個を参照）を
+`LocalWaterSurfaceModel::Sample()` へ移したこと。ラムダのままでは関数境界を越えられず、
+流体力計算を切り出せなかった。あわせて `RuntimeBuoyancySettings` を
+`Source/Engine/Editor/EditorPhysicsBuoyancyTypes.h` へ移し、メンバ関数の引数に書けるようにした。
+
+詳細は`engine-internals.md`の「浮力処理の構造（R-51）」を参照。
+
+### 分割が計算を変えていないことの確認方法
+
+切り出しでは計算本体へ手を入れず、関数の先頭で抽出前と同じ識別子の参照別名を作った。
+そのうえで抽出前後の文を正規化して集合比較し、差分が境界の`return`・別名・文脈への
+書き出しだけであることを機械的に確認した。今回は1,304文→1,308文で、増分4文すべてが
+関数境界の追加分であることを突き合わせている。
+
+**未検証**: 実機で浮力挙動を比較していない。Buildと文の集合一致までが確認範囲。
+
+### Build手順の落とし穴（今回判明）
+
+- `Release|x64` が中間ファイルの新旧混在で内部コンパイラError（`C1001` / `LNK1000`）になる。
+  `imgui.cpp` が名指しされるが原因はLink時Code生成。HEADでも再現するため既存の問題。
+  構成ごとの中間ファイル置き場を消してからBuildすると通る。
+- `/t:Rebuild` は `ThirdParty/DirectXTex` の生成済みShader Headerを削除し、
+  以降のBuildが `MSB3073 ... コード 9009` で止まる。復旧手順は`engine-internals.md`の
+  「Build手順の注意（H-5）」に記載した。**中間ファイルを消すときは`/t:Rebuild`を使わない**。
+
+### 次の対象
+
+1. `EditorRenderManager::Draw` 4,965行 — ステージ2件を切り出して完了。中盤は`Draw`内で定義された`[&]`捕捉ラムダ約12個へ依存しており、浮力と同じくラムダを型へ移す作業が先に必要
+2. `EditorPlatformManager::Initialize` 4,270行 — 局所変数423個、末尾232行でグローバルへ引き渡す構造
+3. `EditorPhysicsManager::ApplyHydrodynamicForces` 897行 — 18段の力計算。共有する中間量が多く文脈構造体の設計が必要
+4. `EditorInspectorPanel.cpp` 10,513行 / `EditorScriptManager.cpp` 9,151行 — 巨大関数は持たないファイル側の分割
+
+## 2026-09-29 更新: 初心者向け前提、3D Pipeline、Component生成、Tag実態
+
+`engine-internals.md`冒頭へ、プログラミング未経験者が後続章を読むための前提を追加した。一般的なGPU Graphics Pipelineと1FrameのRender Pass列を分け、CPU準備、Input Assembler、Vertex Shader、Rasterizer、Pixel Shader、Output Merger、Post Process、Presentまでを現行実装へ対応付けた。
+
+Componentについては、現行が派生Class方式ではなく`EditorComponent`のfat structと`EditorComponentType`によるtype tag方式であることを明記した。Inspector追加、既定値生成、GameObject配列への格納、Managerによる型収集、Scene保存・読込、新Component追加時に必要な接続箇所を一続きで説明している。
+
+Inspector上部のGameObject Tag / Layer / Staticは現在仮UIであり、GameObjectごとの保存先やRuntime接続を持たない。動作中のComponent Type、Physics Layer、Damage Tag、Surface Tagとは別物として説明し、`user-guide.md`にも利用上の注意を追加した。
+
 ## 2026-09-29 更新: Release構成の無検査経路を閉じる / 確保器の取り違え防止 / 毎フレームの空処理削除
 
 保守性・安全性・安定性・可読性・無駄の排除を対象に、機能追加を伴わない改善を行った。
@@ -184,13 +385,12 @@ Debug/x64 と Release/x64 の両方で 0警告0エラー、`Tests/RunNativeSmoke
 
 残る課題（未着手。いずれも実機確認を伴うため分離して行う）:
 
-- `EditorRenderManager::Draw()`は5,190行。残る最大の塊は「Scene rendering to HDR RT」1,353行で、ここは別途分解が必要
+- `EditorRenderManager::Draw()`は4,965行（機能判定と影Atlas配置の2ステージを切り出した後）。残る最大の塊は「Scene rendering to HDR RT」で、`Draw()`内定義の`[&]`捕捉ラムダ約12個に依存するため、ラムダを型へ移す作業が先に必要
 - `Draw()`内に関数内`static`が15個ある（フレーム跨ぎの隠れ状態）。分割を進めるならメンバ変数へ移すのが前提になる
-- `EditorScene::LoadScene()` 3,720行 / `SaveScene()` 2,602行 / `CreateComponent()` 1,894行
-- `CG2.vcxproj`がThirdPartyライブラリを`C:\kogakuin\LE1\CG2\...`の絶対パスで参照している。別のマシンへcloneするとリンクできない
+- `EditorScene::LoadScene()` 3,736行 / `SaveScene()` 2,617行。`CreateComponent()` 1,895行は登録表なので分割対象から外した（2026-09-29の再評価）
 - `EditorComponent`（1,820行・1,596 Field）の既定値が宣言から約2,000行離れた別ファイルにある。宣言側のMember初期化子へ移すと1箇所管理になるが、Scene既定値が変わらないことの実機確認が必要
-- `EditorSharedState.h`が可変グローバル332個を持ち47ファイルから`using namespace`されている
-- `Engine/Input`がトップレベルにあり`Source/Engine/*`の配置規則と揃っていない
+- `EditorSharedState.h`の可変グローバル。Window / 入力 / DirectX12 基盤の分は WinApp / Input / DirectXCommon のメンバへ移したが、Render Target や PSO はまだグローバルにある
+- `Engine/Input`（Input Action の InputSystem）がトップレベルにあり`Source/Engine/*`の配置規則と揃っていない。DirectInput 側は`Source/Engine/Core/Input.h`へ移した
 - CIが無く、上記スクリプトはすべて手動実行
 
 ## 2026-09-13 更新: UI/Text・Prefab/Scene Streaming・Terrain/Foliage・Editor制作安定性の改善

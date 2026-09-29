@@ -825,6 +825,10 @@ namespace {
 	}
 }
 
+//========================================
+// 初期化処理と開始処理
+//========================================
+
 void EditorRailMovementManager::Initialize(
 	EditorScene* editorScene,
 	EditorPhysicsManager* physicsManager,
@@ -892,6 +896,10 @@ void EditorRailMovementManager::Start() {
 
 	isStarted_ = true;
 }
+
+//========================================
+// 更新処理
+//========================================
 
 void EditorRailMovementManager::Update(float deltaTime) {
 	if (!isStarted_ || editorScene_ == nullptr || deltaTime <= 0.0f) {
@@ -1174,6 +1182,10 @@ void EditorRailMovementManager::Update(float deltaTime) {
 			nextWorldPosition);
 	}
 }
+
+//------------------------------
+// 固定刻みでのレール移動
+//------------------------------
 
 void EditorRailMovementManager::FixedUpdate(float fixedDeltaTime) {
 	if (!isStarted_ || editorScene_ == nullptr || physicsManager_ == nullptr || fixedDeltaTime <= 0.0f) {
@@ -2107,6 +2119,10 @@ void EditorRailMovementManager::FixedUpdate(float fixedDeltaTime) {
 	}
 }
 
+//------------------------------
+// 固定刻み後の姿勢確定とイベント
+//------------------------------
+
 void EditorRailMovementManager::PostFixedUpdate(float fixedDeltaTime) {
 	if (!isStarted_ || editorScene_ == nullptr || physicsManager_ == nullptr || fixedDeltaTime <= 0.0f) {
 		return;
@@ -2455,6 +2471,10 @@ void EditorRailMovementManager::PostFixedUpdate(float fixedDeltaTime) {
 	}
 }
 
+//========================================
+// 描画処理と停止処理
+//========================================
+
 void EditorRailMovementManager::Draw() {
 }
 
@@ -2465,6 +2485,10 @@ void EditorRailMovementManager::Stop() {
 void EditorRailMovementManager::ResetSessionState() {
 	runtimeStates_.clear();
 }
+
+//========================================
+// 再生制御の設定
+//========================================
 
 bool EditorRailMovementManager::SetPaused(int32_t gameObjectId, bool isPaused) {
 	if (!isStarted_ || editorScene_ == nullptr) {
@@ -2554,6 +2578,10 @@ bool EditorRailMovementManager::SetNormalizedProgress(
 	return true;
 }
 
+//------------------------------
+// レール経路と進行位置の設定
+//------------------------------
+
 bool EditorRailMovementManager::SetRailPath(
 	int32_t gameObjectId,
 	int32_t railPathGameObjectId,
@@ -2630,6 +2658,10 @@ bool EditorRailMovementManager::SetOffset(
 			(std::max)(railMovementComponent->railMovementRange.y, 0.0f))};
 	return true;
 }
+
+//========================================
+// レール状態の参照
+//========================================
 
 bool EditorRailMovementManager::GetOffset(
 	int32_t gameObjectId,
@@ -2805,6 +2837,10 @@ bool EditorRailMovementManager::GetSpeedMultiplier(
 	speedMultiplier = runtimeStateIterator->second.targetSpeedMultiplier;
 	return true;
 }
+
+//========================================
+// イベント再武装と最近傍の探索
+//========================================
 
 bool EditorRailMovementManager::RearmEventMarkers(
 	int32_t gameObjectId,

@@ -9,15 +9,21 @@
 #include <wrl.h>
 #pragma warning(pop)
 
-//================================================================
-// 多段 Bloom、複数 Glare、3 パス SMAA を管理するクラス
-//================================================================
+//========================================
+// 高品質Post Process管理
+//========================================
 
 class EditorPostProcessQualityManager {
 public:
 	static constexpr uint32_t kPipelineCount = 9u;
 	static constexpr uint32_t kRootConstantCount = 16u;
 
+	//------------------------------
+	// 固定・解像度依存リソース初期化
+	//------------------------------
+
+	// Full-screen描画用PSO群とHistogram Compute PSOを作り、Bloom/SMAA/Glare等の
+	// 中間Render Targetを指定解像度から生成する。RTV HeapはこのManagerが所有する。
 	bool Initialize(
 		ID3D12Device* device,
 		ID3D12DescriptorHeap* srvDescriptorHeap,
@@ -28,7 +34,15 @@ public:
 		uint32_t renderWidth,
 		uint32_t renderHeight);
 
+	// Render Sizeに依存する中間Textureを再生成する。Exposure履歴も新しいSizeへ合わせる。
 	bool Resize(uint32_t renderWidth, uint32_t renderHeight);
+
+	//------------------------------
+	// Bloom処理
+	//------------------------------
+
+	// HDR色からThreshold/Soft Kneeで高輝度成分を抽出し、4段Downsampleと
+	// 3段Upsampleで異なる広がりを合成する。戻り値false時は呼出側が旧Bloom等へFallbackできる。
 	bool ExecuteBloom(
 		ID3D12GraphicsCommandList* commandList,
 		D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle,
@@ -36,11 +50,23 @@ public:
 		float bloomThreshold = 1.0f,
 		float bloomSoftKnee = 0.5f,
 		float bloomScatter = 0.72f);
+	//------------------------------
+	// Anti-Aliasing処理
+	//------------------------------
+
+	// 色差からEdgeを検出し、Edge形状からBlend Weightを求め、近傍色を混合する3 Pass SMAA。
+	// thresholdはEdge検出感度、cornerRoundingは角を過度に丸めないための調整値。
 	bool ExecuteSmaa(
 		ID3D12GraphicsCommandList* commandList,
 		D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle,
 		float threshold = 0.10f,
 		float cornerRounding = 25.0f);
+	//------------------------------
+	// Glare・Color Filter処理
+	//------------------------------
+
+	// 光源中心から指定方向へStreakをSampleし、Glare用Textureへ書く。
+	// preserveSource=trueでは元画像を残してEffectを加算し、複数Glareを連結できる。
 	bool ExecuteGlare(
 		ID3D12GraphicsCommandList* commandList,
 		D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle,
@@ -58,6 +84,8 @@ public:
 		float colorB,
 		bool preserveSource,
 		float sampleRatio);
+	// 色調FilterをFull-screen Passで適用する。複数回呼ぶ場合はA/B Targetを交互に使い、
+	// 同じTextureを同時に入力SRVと出力RTVへしない。
 	bool ExecuteFilter(
 		ID3D12GraphicsCommandList* commandList,
 		D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle,
@@ -66,6 +94,13 @@ public:
 		float colorR,
 		float colorG,
 		float colorB);
+	//------------------------------
+	// 自動露出処理
+	//------------------------------
+
+	// 指定Viewport内の輝度HistogramをComputeで集計し、目標輝度との差から露出を更新する。
+	// adaptationSpeedとdeltaTimeで前Frame露出へ徐々に追従させ、急な明暗変化を抑える。
+	// sourceColorResourceはSRV Handleだけでは行えないResource State遷移に使用する。
 	bool ExecuteAutoExposure(
 		ID3D12GraphicsCommandList* commandList,
 		D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle,
@@ -79,6 +114,10 @@ public:
 		float viewportUvY,
 		float viewportUvWidth,
 		float viewportUvHeight);
+
+	//------------------------------
+	// 出力取得・終了処理
+	//------------------------------
 
 	void Finalize();
 

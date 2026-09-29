@@ -12,6 +12,25 @@
 
 using namespace EditorSharedState;
 
+//========================================
+// Sceneフレーム制御の構成
+//========================================
+
+// GameSceneは、Engine全体の1Frameを構成する最上位の調停役である。
+// 各Managerの内部処理をここへ書くのではなく、依存順にInitialize / Update / Drawを呼ぶ。
+//
+// 1Frameの大きな順序:
+//   Platform Update       : OS Messageと終了要求
+//   Frame Input           : Keyboard/Mouseと描画Size
+//   Scene Lifecycle       : Play Runtime、Physics、Scene同期
+//   ImGui Begin           : UI入力受付の開始
+//   Editor Window Update  : 時間進行やNetwork等、描画前に必要な状態更新
+//   Editor Window Draw    : UI構築とScene/Game Viewの描画要求
+//   Renderer Draw         : DirectX 12 Command記録、実行、Present
+//   Frame History/Limit   : Profiler履歴とFPS上限
+//
+// UpdateとDrawの順番を変えると、入力が1Frame遅れる、古いTransformを描く、
+// ImGui DrawData確定前にGPUへ送る、といった不整合が起こり得る。
 namespace {
 	// Diagnostics の Frame History へ、このフレームの実時間と GPU 時間を積む。
 	// 集計値では潰れてしまう単発スパイクを、時系列として残すのが目的。
@@ -83,9 +102,9 @@ void GameScene::Initialize(_In_ HINSTANCE instanceHandle) {
 		SetStandaloneWindowTitle(gameBuildSettings_.productName);
 	}
 
-	//================================================================
+	//------------------------------
 	// Win32 / DirectX / 入力デバイスの初期化
-	//================================================================
+	//------------------------------
 
 	platformManager_.Initialize(instanceHandle);  // instanceHandle は CreateWindow と DirectInput 生成に使うアプリ実体ハンドル。
 
@@ -104,9 +123,9 @@ void GameScene::Initialize(_In_ HINSTANCE instanceHandle) {
 		return;
 	}
 
-	//================================================================
+	//------------------------------
 	// エディター機能ごとの初期化
-	//================================================================
+	//------------------------------
 
 	// 共同制作・Project・HotReload・Runtimeが同じAsset管理基盤を使えるよう、
 	// 他のManagerより先にAdapterを登録しておく(登録前にNotifyFileChanged等が
@@ -173,9 +192,9 @@ void GameScene::Update() {
 		updateFunction();
 	};
 
-	//================================================================
+	//------------------------------
 	// OS メッセージと終了要求の更新
-	//================================================================
+	//------------------------------
 
 	profileEditorUpdate("Platform.Update", [this]() {
 		platformManager_.Update();  // Windows メッセージを処理し、WM_QUIT が来たら終了フラグを立てる。
@@ -186,9 +205,9 @@ void GameScene::Update() {
 		return;
 	}
 
-	//================================================================
+	//------------------------------
 	// フレーム中に変化する編集状態の更新
-	//================================================================
+	//------------------------------
 
 	profileEditorUpdate("Frame Input", [this]() {
 		frameInputManager_.Update();  // DIK キー状態、カメラ操作、ウィンドウリサイズ後の描画サイズを更新する。
@@ -241,9 +260,9 @@ void GameScene::Draw() {
 		return;
 	}
 
-	//================================================================
+	//------------------------------
 	// UI と DirectX12 描画コマンドの発行
-	//================================================================
+	//------------------------------
 
 	profileEditorDraw("Platform.Draw", [this]() {
 		platformManager_.Draw();  // 描画フラグをフレーム先頭で下げ、ImGui Draw 後だけ Renderer が実行されるようにする。

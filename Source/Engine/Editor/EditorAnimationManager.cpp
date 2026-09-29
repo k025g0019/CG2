@@ -149,6 +149,10 @@ namespace {
 	}
 }
 
+//========================================
+// Animation初期化処理
+//========================================
+
 void EditorAnimationManager::Initialize(
 	EditorScene* editorScene,
 	EditorEffectManager* effectManager,
@@ -161,6 +165,12 @@ void EditorAnimationManager::Initialize(
 }
 
 void EditorAnimationManager::Start() {
+	//------------------------------
+	// Runtime状態初期化
+	//------------------------------
+
+	// 前回のPlayで進んだ時間・遷移状態・Asset Cacheを残すと、再生開始位置が再現できない。
+	// SceneのComponent設定は残し、再生中だけ必要な状態をPlay開始ごとに作り直す。
 	animationTimes_.clear();
 	animationUpdateRemainingSeconds_.clear();
 	animationAccumulatedDeltaSeconds_.clear();
@@ -173,6 +183,10 @@ void EditorAnimationManager::Start() {
 	if (editorScene_ == nullptr) {
 		return;
 	}
+
+	//------------------------------
+	// Animation対象収集
+	//------------------------------
 
 	for (const EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
 		if (!gameObject.isActive) {
@@ -189,6 +203,8 @@ void EditorAnimationManager::Start() {
 			continue;
 		}
 
+		// Animation停止時やProperty Animationの相対評価で元姿勢へ戻せるよう、
+		// Clip適用前のTransformをGameObject単位で保存する。
 		baseTransforms_[gameObject.id] = {
 			gameObject.translate,
 			gameObject.rotate,
@@ -215,16 +231,26 @@ void EditorAnimationManager::Start() {
 	}
 }
 
+//========================================
+// Animation更新処理
+//========================================
+
 void EditorAnimationManager::Update(float deltaTime) {
 	if (!isStarted_ || editorScene_ == nullptr || deltaTime <= 0.0f) {
 		return;
 	}
+
+	//------------------------------
+	// 距離別更新頻度制御
+	//------------------------------
 
 	for (EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
 		if (!gameObject.isActive || gameObject.name.rfind("__EffectParticle_", 0u) == 0u) {
 			continue;
 		}
 
+		// 遠距離Objectは毎Frame評価せず、CPU側のClip評価・状態遷移・Property反映を間引く。
+		// 経過時間自体はaccumulatedSecondsへ貯めるため、再生速度が距離で遅くなるわけではない。
 		float& remainingSeconds = animationUpdateRemainingSeconds_[gameObject.id];
 		float& accumulatedSeconds = animationAccumulatedDeltaSeconds_[gameObject.id];
 		remainingSeconds -= deltaTime;
@@ -253,6 +279,7 @@ void EditorAnimationManager::Update(float deltaTime) {
 			continue;
 		}
 
+		// 間引いた複数Frame分を一度に進め、Animationの論理時間と実時間のずれを抑える。
 		const float animationDeltaTime = accumulatedSeconds;
 		accumulatedSeconds = 0.0f;
 		remainingSeconds += updateInterval;
@@ -278,6 +305,12 @@ void EditorAnimationManager::Update(float deltaTime) {
 }
 
 void EditorAnimationManager::Stop() {
+	//------------------------------
+	// 再生前Transform復元
+	//------------------------------
+
+	// Play中にAnimationが書き換えたTransformをEditorデータへ残さない。
+	// 保存しておいた基準姿勢へ戻してからRuntime Cacheを破棄する。
 	if (editorScene_ != nullptr) {
 		for (EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
 			const auto propertyRuntimeIterator = propertyAnimationRuntimes_.find(gameObject.id);
@@ -332,6 +365,8 @@ bool EditorAnimationManager::GetAnimatorSkinningState(
 	int32_t gameObjectId,
 	int32_t& clipIndex,
 	float& playbackTime) const {
+	// RendererはAnimation内部構造を直接参照せず、このSnapshotからGPU Skinning用の
+	// Clip番号・時刻・Blend率を取得する。Manager間の所有権を分離するための境界である。
 	const auto runtimeIterator = animatorRuntimes_.find(gameObjectId);
 	if (runtimeIterator == animatorRuntimes_.end()) {
 		return false;
@@ -841,6 +876,12 @@ void EditorAnimationManager::CachePropertyAnimationClip(
 void EditorAnimationManager::StartAnimator(
 	const EditorGameObject& gameObject,
 	const EditorComponent& component) {
+	//------------------------------
+	// Animator Runtime生成
+	//------------------------------
+
+	// Componentは保存用設定、AnimatorRuntimeは現在Stateや遷移時間を持つ再生用状態。
+	// 保存データを直接書き換えないことで、Play停止時にEditor設定をそのまま保てる。
 	AnimatorRuntimeInstance runtime{};
 	const std::string modelAssetPath = GetModelAnimationAssetPath(gameObject);
 	ModelData modelData{};
@@ -1070,6 +1111,11 @@ void EditorAnimationManager::UpdateAnimator(
 	}
 
 	AnimatorRuntimeInstance& runtime = runtimeIterator->second;
+	//------------------------------
+	// Parameter更新・State遷移判定
+	//------------------------------
+
+	// 速度などEngineから得られるParameterを先に更新し、そのFrameの値で遷移条件を判定する。
 	UpdateAutomaticParameters(gameObject, component, runtime);
 	EvaluateStateMachine(runtime, component);
 	const int32_t currentStateIndex = (std::clamp)(
@@ -1079,6 +1125,13 @@ void EditorAnimationManager::UpdateAnimator(
 	const AnimationGraphState& currentState = runtime.graph.states[static_cast<size_t>(currentStateIndex)];
 	const float previousStateTime = runtime.stateTime;
 	runtime.stateTime += deltaTime * component.animationSpeed;
+
+	//------------------------------
+	// Pose Sampling・遷移Blend
+	//------------------------------
+
+	// 現在Stateと遷移元Stateを別々にSamplingし、遷移中だけ両Poseを補間する。
+	// Stateを瞬時に切り替えるより、位置・回転・Scaleの不連続を目立たなくできる。
 	SampledTransform pose = SampleState(runtime, currentStateIndex, runtime.stateTime);
 
 	if (runtime.previousState >= 0 && runtime.transitionDuration > kMinimumValue) {

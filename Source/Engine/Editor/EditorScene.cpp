@@ -474,9 +474,9 @@ namespace {
 	}
 
 	void ApplyPostProcessEffectDefaults(EditorComponent& component) {
-		//============================================================
+		//------------------------------
 		// Glare / Filter の種類別初期値
-		//============================================================
+		//------------------------------
 		// 旧Sceneの共有値は残しつつ、Inspector と描画では種類ごとの値を使う。
 
 		component.glareIntensityByMode.fill(component.glareIntensity);
@@ -750,9 +750,9 @@ namespace {
 	}
 }
 
-//============================================================
-// Component
-//============================================================
+//========================================
+// Component生成処理
+//========================================
 
 std::string ToString(EditorComponentType type) {
 	// 保存用の英語名へ変換する。Inspector の日本語表示は EditorInspectorPanel 側で行う
@@ -773,9 +773,9 @@ EditorComponentType ComponentTypeFromIndex(int32_t componentIndex) {
 	return static_cast<EditorComponentType>(componentIndex);
 }
 
-//============================================================
-// Scene
-//============================================================
+//========================================
+// Scene初期化処理
+//========================================
 
 EditorScene::EditorScene() : nextGameObjectId_(1) {
 	sceneUuid_ = CreateEditorTeamUuid();
@@ -783,6 +783,12 @@ EditorScene::EditorScene() : nextGameObjectId_(1) {
 }
 
 void EditorScene::InitializeDefaultScene() {
+	//------------------------------
+	// Scene状態初期化
+	//------------------------------
+
+	// 新規Sceneは既存ObjectだけでなくUndo/Redo履歴や物理設定も引き継がない。
+	// 編集途中の状態が新規Sceneへ混ざらないよう、生成前にScene所有データをまとめて初期化する。
 	gameObjects_.clear();
 	undoStack_.clear();
 	redoStack_.clear();
@@ -790,9 +796,9 @@ void EditorScene::InitializeDefaultScene() {
 	sceneUuid_ = CreateEditorTeamUuid();
 	ResetPhysicsSettings(physicsSettings_);
 
-	//============================================================
+	//------------------------------
 	// 起動時に必要な撮影・照明環境
-	//============================================================
+	//------------------------------
 
 	const int32_t environmentGameObjectId = CreateGameObject("Environment Light");
 	AddComponent(environmentGameObjectId, EditorComponentType::Environment);
@@ -814,9 +820,9 @@ void EditorScene::InitializeDefaultScene() {
 		pointLightGameObject->translate = {2.0f, 3.0f, -2.0f};
 	}
 
-	//============================================================
+	//------------------------------
 	// 課題確認用 Sprite
-	//============================================================
+	//------------------------------
 
 	const int32_t spriteGameObjectId = CreateGameObject("Sprite");
 	AddComponent(spriteGameObjectId, EditorComponentType::SpriteRenderer);
@@ -840,6 +846,8 @@ void EditorScene::InitializeDefaultScene() {
 }
 
 int32_t EditorScene::CreateGameObject(const std::string& name) {
+	// UUIDは共同編集やPrefab参照で使う永続識別子、IDは現在のScene内で高速に検索する識別子。
+	// 用途が異なるため、生成時に両方を割り当てる。
 	// 新規 GameObject の基本値
 	EditorGameObject gameObject{};
 	gameObject.uuid = CreateEditorTeamUuid();
@@ -914,7 +922,16 @@ int32_t EditorScene::DuplicateGameObject(int32_t gameObjectId) {
 		return kInvalidGameObjectId;
 	}
 
+	//------------------------------
+	// 複製先ID割り当て
+	//------------------------------
+
+	// 先に部分木全体の新IDを確定すると、子が親より先に処理されても参照先を正しく変換できる。
 	std::unordered_map<int32_t, int32_t> duplicatedIds;
+
+	//------------------------------
+	// GameObject・Component複製
+	//------------------------------
 
 	for (const EditorGameObject& sourceObject : sourceSubtree) {
 		duplicatedIds[sourceObject.id] = nextGameObjectId_;
@@ -980,6 +997,10 @@ bool EditorScene::RenameGameObject(int32_t gameObjectId, const std::string& name
 }
 
 bool EditorScene::SetParent(int32_t childId, int32_t parentId, bool preserveWorldTransform) {
+	//------------------------------
+	// 階層循環検査
+	//------------------------------
+
 	// 自分自身を親にすると循環するため拒否する
 	if (childId == parentId) {
 		return false;
@@ -1011,6 +1032,11 @@ bool EditorScene::SetParent(int32_t childId, int32_t parentId, bool preserveWorl
 		ancestorId = ancestor->parentId;
 	}
 
+	//------------------------------
+	// 親変更と姿勢復元
+	//------------------------------
+
+	// Hierarchy上の親だけを変えたい場合、見た目のWorld姿勢は変更前に保存しておく。
 	const Matrix4x4 previousWorldMatrix = preserveWorldTransform ?
 		GetWorldMatrix(childId) : MakeIdentity4x4();
 	const int32_t previousParentId = child->parentId;
@@ -1036,6 +1062,8 @@ bool EditorScene::SetParent(int32_t childId, int32_t parentId, bool preserveWorl
 }
 
 Matrix4x4 EditorScene::GetWorldMatrix(int32_t gameObjectId) const {
+	// Local行列へ親のLocal行列を順に合成し、Scene階層上のWorld行列を求める。
+	// 回数上限は、破損データに循環参照があっても無限ループさせないための防御である。
 	const EditorGameObject* gameObject = FindGameObject(gameObjectId);
 	if (gameObject == nullptr) {
 		return MakeIdentity4x4();
@@ -1116,6 +1144,8 @@ bool EditorScene::SetWorldMatrix(int32_t gameObjectId, const Matrix4x4& worldMat
 		return false;
 	}
 
+	// 親を持つObjectへWorld姿勢を設定するときは、親World行列の逆行列を掛けて
+	// 保存形式であるLocal姿勢へ戻す。親なしの場合だけWorldとLocalが一致する。
 	Matrix4x4 localMatrix = worldMatrix;
 	if (gameObject->parentId != kInvalidGameObjectId) {
 		const Matrix4x4 parentWorldMatrix = GetWorldMatrix(gameObject->parentId);
@@ -1227,11 +1257,15 @@ bool EditorScene::HasComponent(int32_t gameObjectId, EditorComponentType type) c
 	return false;
 }
 
-//============================================================
-// Save / Load
-//============================================================
+//========================================
+// Scene保存・読込処理
+//========================================
 
 bool EditorScene::SaveScene(const std::string& filePath) const {
+	//------------------------------
+	// 保存可否・出力先検証
+	//------------------------------
+
 	// 新しいProjectを古いEditorで開いた場合は、未知Fieldを消す保存を絶対に許可しない。
 	if (!ProjectVersionManager::IsCurrentProjectWriteAllowed()) {
 		return false;
@@ -1250,6 +1284,11 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 	file.write(
 		reinterpret_cast<const char*>(kSceneUtf8Bom),
 		static_cast<std::streamsize>(sizeof(kSceneUtf8Bom)));
+	//------------------------------
+	// Scene共通情報保存
+	//------------------------------
+
+	// 同じSerializerをSceneとPrefabで共有するため、先頭行で種類と形式Versionを明示する。
 	const bool isPrefab = destinationPath.extension() == ".prefab";
 	file << "FormatVersion|" << (isPrefab ? "Prefab" : "Scene") << "|"
 		 << (isPrefab ? GetCG2PrefabFormatVersion() : GetCG2SceneFormatVersion()) << "\n";
@@ -1277,6 +1316,11 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 	     << "|" << physicsSettings_.debugVectorScale;
 	file << "\n";
 
+	//------------------------------
+	// GameObject・Component保存
+	//------------------------------
+
+	// GameObject本体の行に続けて拡張行を出力する方式により、既存列の順番を壊さず機能を追加できる。
 	for (const EditorGameObject& gameObject : gameObjects_) {
 		// Play中だけ存在する内部ChunkはHierarchyだけでなくScene Assetにも永続化しない。
 		if (gameObject.name.rfind("__BlastChunk_", 0U) == 0U) {
@@ -3836,6 +3880,10 @@ bool EditorScene::SaveScene(const std::string& filePath) const {
 }
 
 bool EditorScene::LoadScene(const std::string& filePath) {
+	//------------------------------
+	// 形式Version・入力ファイル検証
+	//------------------------------
+
 	const std::filesystem::path sourcePath(filePath);
 	std::string formatError;
 	if (!ProjectVersionManager::IsAssetFormatSupported(
@@ -3847,6 +3895,12 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 		return false;
 	}
 
+	//------------------------------
+	// 読込用一時状態準備
+	//------------------------------
+
+	// 読込途中で失敗しても現在編集中のSceneを失わないよう、直接gameObjects_へ書き込まない。
+	// 全行の解析と整合性補正が完了した時点で初めて正式なScene状態へ反映する。
 	std::vector<EditorGameObject> loadedGameObjects;  // 読み込み途中の Scene。成功したら gameObjects_ へ置き換える
 	std::unordered_map<std::uint64_t, std::string> pendingComponentUuids;
 	std::string loadedSceneUuid = CreateEditorTeamUuid();
@@ -3856,6 +3910,11 @@ bool EditorScene::LoadScene(const std::string& filePath) {
 	std::string line;
 	bool isFirstLine = true;
 
+	//------------------------------
+	// 行単位デシリアライズ
+	//------------------------------
+
+	// 先頭Tokenを行種別として扱うことで、Component固有の拡張行を後方互換性を保ったまま追加できる。
 	while (std::getline(file, line)) {
 		if (isFirstLine && line.size() >= sizeof(kSceneUtf8Bom) &&
 			static_cast<unsigned char>(line[0]) == kSceneUtf8Bom[0] &&
@@ -7975,9 +8034,9 @@ bool EditorScene::SaveGameObjectFragment(
 	return fragmentScene.SaveScene(filePath);
 }
 
-//============================================================
-// Undo / Redo
-//============================================================
+//========================================
+// Undo・Redo処理
+//========================================
 
 void EditorScene::PushUndo() {
 	undoStack_.push_back(gameObjects_);  // 現在の GameObject 配列を丸ごと保存する
@@ -8021,9 +8080,9 @@ bool EditorScene::Redo() {
 	return true;
 }
 
-//============================================================
-// Find
-//============================================================
+//========================================
+// GameObject検索処理
+//========================================
 
 EditorGameObject* EditorScene::FindGameObject(int32_t gameObjectId) {
 	int32_t gameObjectIndex = FindGameObjectIndex(gameObjectId);  // ID から配列 index を取得して、編集可能ポインタを返す
@@ -8084,9 +8143,9 @@ void EditorScene::EnsurePersistentUuids() {
 	}
 }
 
-//============================================================
-// Private
-//============================================================
+//========================================
+// Scene内部補助処理
+//========================================
 
 EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 	// 全 Component が持つ共通初期値
@@ -9270,9 +9329,9 @@ EditorComponent EditorScene::CreateComponent(EditorComponentType type) const {
 		component.particleEndColor = component.color;
 	}
 
-	//============================================================
+	//------------------------------
 	// 汎用ゲームプレイ基盤の既定値
-	//============================================================
+	//------------------------------
 
 	component.cameraPriority = 0;
 	component.cameraFollowPositionSpace = 0;

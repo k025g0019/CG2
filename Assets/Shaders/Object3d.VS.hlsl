@@ -23,6 +23,7 @@ ConstantBuffer<TransformationMatrix> gTransformationMatrix : register(b0);
 #include "Water/OceanFftSampling.hlsli"
 #include "Common/SurfaceDeformation.hlsli"
 #include "Common/Skinning.hlsli"
+#include "Common/NormalTransform.hlsli"
 
 struct VertexShaderInput
 {
@@ -208,7 +209,7 @@ VertexShaderOutput main(VertexShaderInput input)
     const float4 worldPosition = mul(localPosition, gTransformationMatrix.World);
     output.position = mul(localPosition, gTransformationMatrix.WVP);
     output.texcoord = input.texcoord;
-    output.normal = normalize(mul(float4(localNormal, 0.0f), gTransformationMatrix.World).xyz);
+    output.normal = TransformNormalToWorld(localNormal, gTransformationMatrix.World);
     output.worldPosition = worldPosition.xyz;
     output.shadowPosition = mul(localPosition, gTransformationMatrix.lightWVP);
     output.oceanSamplingData = gTransformationMatrix.oceanParams0.x >= 1.5f

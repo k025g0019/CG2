@@ -2,7 +2,7 @@
 
 ## 概要
 
-更新基準: 2026-09-26
+更新基準: 2026-09-29
 
 このFolderは、CG2Engineの利用手順、内部設計、Component、C++ Script APIを6文書に集約する。機能ごとに文書を増やさず、利用者向け内容は`user-guide.md`、実装者向け内容は`engine-internals.md`の章として追加する。
 
@@ -11,7 +11,7 @@ Engine配布、Launcher、Version固定、Migration、環境診断は[user-guide
 | 文書 | 対象 |
 | --- | --- |
 | [user-guide.md](user-guide.md) | Project作成、Editor操作、Window、実践手順、問題対処、配布、共同制作、外部機能の利用方法 |
-| [engine-internals.md](engine-internals.md) | 現行機能、所有関係、Runtime、描画、保存、Asset、Lighting、共同制作、外部機能の内部契約 |
+| [engine-internals.md](engine-internals.md) | 現行機能、所有関係、Runtime、描画、保存、Asset、Lighting、共同制作、外部機能の内部契約、**設計判断と技術選択** |
 | [component-reference.md](component-reference.md) | 全287 Component、Inspector Field、既定値、依存、Runtime契約 |
 | [script-api-reference.md](script-api-reference.md) | Native Script lifecycle、413 Runtime API、Wrapper、26 Template、Field API |
 | [documentation-authoring.md](documentation-authoring.md) | 文書を更新するときの調査方法、根拠、記載品質、完成監査 |
@@ -33,6 +33,106 @@ Field Registry（`EditorLogFieldRegistry.generated.cpp`）は`Tools/generate_log
 Version 14のSpeech / Vision / Haptics / Onlineは専用Wrapperと専用Debug Windowを持つ。Version 15ではSpeechへ発話中 / 推論中状態とUI表示補助を追加した。2026-09-26に生成Registryも再生成し、外部連携の数値・Bool・Vector3・GameObject参照33 Fieldを汎用Property/ログ監視へ追加した。文字列と可変長配列は生成Registryの対象外であり、専用Wrapperを使う。
 
 過去章に「追加時点の件数」が残る場合は履歴であり、現行値にはこの表と各文書の最新監査章を使う。文書上のソース照合と、Build、Play、描画目視、音声出力、2台間通信の実機確認は分けて記録する。
+
+### 実装変更時の文書更新ルール
+
+新機能の追加、アルゴリズムや処理フローの変更、実行順、CPU/GPUの役割、所有関係、性能特性、制約、弱点の変更を行った場合は、実装と同じ変更内で次を更新する。
+
+- `engine-internals.md`: 機能、採用方式、処理、採用理由、他候補、不採用理由、制約・弱点、改善候補を更新する。必要に応じてCPU/GPUの役割、主要クラス、負荷が増える場所も記載する。
+- `ReadMe.md`: 更新基準日、文書案内、現行監査値、主要更新履歴のうち影響する項目を更新し、詳細は`engine-internals.md`の該当章へ案内する。
+- ソースの`file:line`を根拠にしている箇所は、対象ファイルの行数が変わった場合に参照先も更新する。
+
+実装から断定できない理由は「推定」、Build・Play・描画・通信などを確認していない結果は「未検証」と明記する。コメントや空白だけの変更では説明本文の更新は不要だが、根拠行番号がずれた場合は参照先を更新する。
+
+### 設計判断を説明するとき
+
+`engine-internals.md`の「設計判断と技術選択」章が、主要システムごとに
+「方式 / 処理 / 採用理由 / 他候補 / 不採用理由 / 弱点 / 改善候補」を1組でまとめている。
+他章が「何をどう実装しているか」を述べるのに対し、この章は**その方式を選んだ判断**を正とする。
+
+| 節 | 範囲 |
+| --- | --- |
+| R-1〜R-11 | GameObject/Component、Scene/Serialization、メインループ、Renderer、Lighting、Shadow、Physics、Asset、GPU最適化、Profiler、共同編集 |
+| F-1〜F-8（基礎編） | 座標系と行列規約、Depth BufferとZファイト、色空間とHDR、DirectX 12の使い方、半透明とブレンド、Shaderの扱い、CPU/GPU同期、メモリと所有権 |
+| F-9〜F-22（基礎編II） | 描画パイプラインの段、頂点レイアウト、Constant Bufferと256byte境界、Heap Type、PSO、Rasterizerと面の向き、ブレンドとDepth Write、サンプリングとMipmap、法線の変換、接空間、PBRのBRDF、SwapChainとPresent、MSAAを使わない理由、**やっていないことの一覧** |
+| R-13〜R-26 | AO、SSR、GI、Post Process順序、水面、破壊、Animation、Camera/Culling、Editor/Runtime分離、Undo/Snapshot、Script API、Multithreading、SunPortal、最適化 |
+| R-28〜R-37 | SSRのRay Marching詳細、ライト数上限と選別、Frustum判定形状、AssetのUnload、Undo/Redoの方式とメモリ、AnimationのBlend/State、Snapshot、LOD、Material、Prefab Override |
+| R-38 | 未検証として残っている細目（4件） |
+| G-1〜G-10（3Dの原理） | 座標変換の全段、同次座標とw、透視補正補間、ラスタライズと2×2クアッド、深度精度の分布とEarly-Z、テクスチャとMip LOD、逆転置行列の数学的導出、接空間の数学、GPUのSIMDと分岐発散、Draw Callのコスト |
+| G-11〜G-24（方式の仕組みと比較） | Forward/Deferred/Forward+、影の6方式、影のフィルタ6方式、AOの4方式、反射の5方式、GIの6方式、AAの5方式、半透明の6方式、Tone Mapping、Bloom、水面、Skinning、Culling、Physics |
+| G-25〜G-26（API の違い） | OpenGL / D3D11 / D3D12 / Vulkan の仕組みの違い、規約の違い（座標系・深度範囲・行列・テクスチャ原点・巻き方向）と移植で壊れる箇所 |
+| G-27〜G-36（設計方式の比較） | Component、Scene直列化、共同編集の同期、Scriptホスト、Profiler計測、GPU破片、Editor分離、Asset管理、Mipmap生成 + 全方式の一覧表 |
+| G-37〜G-40（3D基礎補足） | ベクトル・内積・外積、Rayと交差判定、浮動小数点誤差と座標スケール、時間刻みと積分 |
+| P-1〜P-13（プログラミング・C++基礎） | 値・参照・Pointer、RAIIと所有権、Copy/Move、計算量とContainer、継承とComposition、CacheとAllocation、Thread同期、CPU/GPU Fence、API/ABI、Error処理、Test・Profiler、設計原則、AI模擬面接用の質問表 |
+| G-41〜G-50（3D追加深掘り） | Mesh/Topology、Clipping、重心座標、SAT/GJK/EPA/CCD、空間分割、力と慣性、FK/IK、Sampling、色とAlpha、ScreenからWorld Ray |
+| P-14〜P-25（C++・実務追加深掘り） | Compile/Link、Template、Alignment、未定義動作、世代Handle、Serialization、TCP/UDP、State/Event、Real-time性能、Security、Build構成、面接回答の組み立て |
+| Q-1〜Q-8（段階別質問集） | C++、データ構造、3D数学、Rendering/GPU、Physics、Engine設計、Thread/Network、Debug/Performanceの模擬面接問題 |
+| G-51〜G-56（3D/GPU追補） | Texture Format/BC圧縮、Compute Thread Group、LOD、Camera/FOV、CPU/GPU Particle、Noiseと手続き生成 |
+| P-26〜P-33（Computer Science追補） | BFS/DFS/Dijkstra/A*、CPU Cache/Branch/SIMD、Virtual Memory、C++ Memory Model、Encoding/Endianness、Module依存、要件とTrade-off、Code Review |
+| U-1〜U-17（理解の深さを示す説明訓練） | 30秒/2分の回答構成、座標変換、描画Pipeline、PBR、Shadow、Temporal、Physics、所有権、Serialization、Thread、TCP、Profiler、規模限界、改善設計、弱点の説明、AI採点基準、実践課題 |
+
+| H-1〜H-4（外部依存とファイル形式） | 使っている外部ライブラリ15件と選定理由、**同梱しているが未使用のもの**、扱うファイル形式と各形式の利点、OS/プラットフォームAPI |
+| R-39〜R-50 | 共同編集プロトコル完全版（Tailscale / JSON over TCP / Heartbeat / **Lock機構** / ProjectId検証）、数学ライブラリ（自作・SIMD無し）、Audio、Input、Effect/VFX、Navigation・AI、外部認識4モジュール、UI/Text、Build配布、Spot Shadow詳細、その他Manager、未検証項目 |
+| M-1〜M-12（行列と回転の数学） | 各基本行列の中身、行列の各行が意味するもの、TRS合成の順序と間違えたときの症状、**回転の表現（オイラー角/クォータニオン/行列）とジンバルロック**、逆行列の実装方式とアフィン特化の余地、View行列の導出、射影行列の各要素の導出、Viewport行列、Transform階層の合成、**回転の補間（Lerp/Slerp/Nlerp）**、死んだコード |
+
+**G章の役割**: R章が「このエンジンの判断」、F章が「実装値」に対し、G章は**原理**と
+**採らなかった方式が実際にどう動くのか**を扱う。「なぜAを選んだか」を説明するにはBとCの仕組みを
+知っている必要があるため。G-36に全方式の対応表がある。
+
+**P章の役割**: 特定Engineの機能説明だけでは答えられない、C++、Memory、Container、計算量、Thread、API/ABI、Error処理、Test、設計原則を扱う。AIを模擬面接官として使う場合は、R章のEngine固有質問とG/M/P章の一般原理を交互に質問させる。
+
+**U章の役割**: 用語を知っているだけでなく、原理からData Flowを導出し、失敗条件、計測、規模限界、改善案まで説明できる状態を作る。模擬面接ではU-16の4段階基準で採点し、段階3の「設計理解」を目標にする。
+
+### AI模擬面接での使い方
+
+AIへ本書と`engine-internals.md`を渡す場合は、次の規則で質問させる。
+
+1. 一度に1問だけ出し、最初は機能と採用方式を質問する。
+2. 回答後に、処理フロー、採用理由、他候補、不採用理由、弱点、改善案を順に深掘りする。
+3. Engine固有の回答には一般原理を、一般論だけの回答にはCG2Engineの主要Class・CPU/GPUの役割・負荷箇所を追加質問する。
+4. 「推定」「未検証」は正解として断定せず、回答者へ根拠と確認方法を質問する。
+5. 文書の表現を暗記しているかではなく、自分の言葉でTrade-offを説明できるかを評価する。
+6. 古い章と新しい章が矛盾する場合は、更新基準が新しい章と現行Sourceを優先する。
+
+**H章で特に注意する点**: `PhysX`（剛体用途）と`imgui-node-editor`は**同梱されているが未使用**。
+剛体はJolt、破壊はNvBlast、浮力等は自作の3系統（R-7、H-2）。
+`meshoptimizer`は頂点の重複排除にのみ使い、LOD簡略化（`meshopt_simplify`）は使っていない（H-1、R-35）。
+
+**R-11は初版でLock機構とプロトコルの実体を落としていた。** 完全版はR-39を正とする。
+
+**F-17の法線バグは2026-09-29に修正済み。** World行列をそのまま法線へ掛けていたため
+非一様スケールでライティングが誤っていた（最大77.9度のずれを数値で確認）。
+同じ誤りが7つのVertex Shaderにあり、`Assets/Shaders/Common/NormalTransform.hlsli` の
+余因子方式へ統一した。回転のみ・一様スケールでは結果が一致するので**既存シーンの見た目は変わらない**。
+
+**M章で判明した設計上の弱点**: 回転を全面的に**オイラー角（Vector3）**で保持しており、
+クォータニオンはJoltとの境界だけで使って毎フレームEulerへ戻している（M-4）。
+ジンバルロックがあり、Quat→Euler変換は一意でない。回転の補間手段がオイラー角の線形補間しかないため、
+**アニメーションBlendで大角度差のときに遠回りし、真上真下で破綻する可能性がある**（M-10）。
+UnityとUnrealは内部クォータニオン・表示のみオイラー角にしてこれを回避している。
+実際に症状が出るかの確認はM-12の未検証項目。
+
+R-12（初版13件）とR-27（10件）の未検証項目は**すべて検証してR-6・R-28〜R-37へ反映済み**。
+
+記載規則が2つある。
+
+- 方式・処理・弱点は**ソースで確認した事実のみ**を書き、確認箇所を`file:line`で示す。
+- 実装から一意に決まらない「採用理由」は**（推定）**と明記する。設計者本人の判断と食い違う場合はこの章を書き換える。
+
+**特に注意する実測値**: `Assets/Shaders`配下の自前Shaderは797本あるが、Sourceから参照されているのは**79本**。
+残りはパイプラインに繋がっていない。`Compute/TiledLightCulling.CS.hlsl`、`AO/SSAO.PS.hlsl`、`Bake/`配下などが該当する。
+Shaderの存在を機能の根拠にしてはいけない（F-6）。
+
+**名前と実体が食い違っている箇所**（R-13）: `ssaoPipelineState`の実体は`AO/GTAO.PS.hlsl`、
+`ssaoBlurPipelineState`の実体は`Shadow/ContactShadow.PS.hlsl`（中身はAOの深度考慮バイラテラルフィルタ）。
+
+**F-22に「使っていない機能」の一覧**がある。Reverse-Z、MSAA、異方性フィルタ、法線の逆転置行列、
+頂点Tangent、Geometry Shader、ハードウェア比較サンプラ、Shader Variant、PSO Cache、
+Tearing許可フラグ、トリプルバッファ、Tiled Light Culling、汎用Mesh LOD、Material Asset、
+Assetの参照カウント、非同期ロード、描画/物理の並列化。**無いことを把握しているのと、知らないのは別。**
+
+**既知の不具合**（F-17）: 法線変換に逆転置行列を使っていないため、
+**非一様スケールを掛けたオブジェクトのライティングが誤る**。回転と一様スケールのみなら正しい。
 
 ### 現行仕様の読み方
 
@@ -56,6 +156,10 @@ Debug/x64 と Release/x64 の両方で 0警告0エラー、`Tests/RunNativeSmoke
 | **文字化けの再発防止** | BOMなしUTF-8だった14ファイルへBOMを付与。既存の文字化け4,239個（漢字部分は先行バイトが失われ復元不能）を上限とし、増加・BOM欠落・`assert(SUCCEEDED(`再導入を検査する | `Tools/CheckSourceHygiene.ps1` |
 | **巨大関数の分割** | `EditorRenderManager::Draw()` 5,441行 → **5,190行**。後段ポストプロセスの9 Passを無名namespaceの関数へ切り出した（Filter / Sharpen / Bloom / Glare / DoF / MotionBlur / AutoExposure / SMAA / BackBuffer合成）。GPU計測イベントの粒度は維持している | `EditorRenderManager.cpp` |
 | **Development構成の修復** | `Development|x64`が`NDEBUG`も`_DEBUG`も定義しておらず、Blastヘッダを含む翻訳単位が**コンパイル不能**だった（変更前から）。同構成は`PhysicsSdk\lib\release`をリンクするため`NDEBUG`を追加。3構成すべて0警告0エラーになった | `CG2.vcxproj` |
+| **法線変換の誤り** | World行列をそのまま法線へ掛けており、**非一様スケールでライティングが誤っていた**（数値検証で最大77.9度のずれ）。同じ誤りが7つのVertex Shaderにあった。`Assets/Shaders/Common/NormalTransform.hlsli` を新設し、余因子方式（せん断を含む任意の可逆行列で正しい）へ統一。回転のみ・一様スケールでは結果が一致するため既存シーンの見た目は不変 | F-17、G-7 |
+| **ThirdPartyの絶対パス** | `CG2.vcxproj`の`Release|x64`が`C:\kogakuin\LE1\CG2\ThirdParty\...`を参照しており、**他マシンでクローンするとリンクできなかった**。`PhysicsSdk.props`が既に`$(MSBuildThisFileDirectory)`で構成別に正しく解決していたため、重複していた絶対パス1行を削除してprops側へ一本化 | R-47 |
+| **死んだコードの削除** | 数学ライブラリに`Novice`（学習用2Dライブラリ）へのコメントアウト参照が3ファイル11箇所。`Vector&Matrix.cpp`は241行のうち104行（43%）が死んだコメントだった。計146行を削除（関数は全て残存を確認） | M-11 |
+| **コメント階層の整備** | `EditorRenderManager::Draw()` が大見出し0・中見出し55で、**最大1,352行が見出し無し**だった。AGENTS.mdの3段階規約に合わせ、26の描画パスを大見出しへ昇格し、パス内部へ中見出し13件を追加。**見出し無しの最大区間 1,352行 → 421行**。あわせて今回追加した`EditorHrCheck.h/.cpp`と`NormalTransform.hlsli`、抽出した9 Pass関数も3段階へ統一 | AGENTS.md「日本語コメントの階層ルール」 |
 | **手順の欠落** | `Tools/generate_log_field_registry.py` が`.gitignore`の`Tools/*`で未追跡だった。「Inspectorへ行を追加したら再実行してコミットする」と規定しているのに、クローン先に生成器が無い状態だったため追跡対象へ戻した。再実行して差分0（チェックイン済みRegistryは最新）。あわせて上表のField数を実測値2,011へ修正（1,981は30件古い） | `.gitignore` |
 
 調査して**問題が無いと確認できた**もの（今回は変更していない）:

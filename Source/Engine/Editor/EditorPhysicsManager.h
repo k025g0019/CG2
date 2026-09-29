@@ -12,8 +12,15 @@
 #pragma warning(push)
 #pragma warning(disable : 4820)
 
+// SceneのPhysics ComponentとJolt Physicsを接続するRuntime側の統括Manager。
+// CPU側で固定時間の蓄積、追加Force、Event集約を行い、衝突判定と剛体積分はJoltへ委譲する。
+// このクラスはSceneを所有せず、Initializeで受け取ったSceneがPlay中も生存することを前提とする。
 class EditorPhysicsManager {
 public:
+	//========================================
+	// Runtime Wire公開型
+	//========================================
+
 	using WireHandle = uint64_t;
 	static constexpr WireHandle kInvalidWireHandle = 0ULL;
 
@@ -80,6 +87,10 @@ public:
 		EditorJoltPhysicsManager::PhysicsHit hit{};  // 命中点、法線、対象 GameObject
 	};
 
+	//========================================
+	// Physics Lifecycle API
+	//========================================
+
 	EditorPhysicsManager() = default;  // RuntimeManager が直接保持する通常コンストラクタ
 	~EditorPhysicsManager() = default;  // Jolt の破棄は joltPhysicsManager_ が担当する
 	EditorPhysicsManager(const EditorPhysicsManager&) = delete;  // Jolt World を二重所有しないためコピー禁止
@@ -97,6 +108,11 @@ public:
 	bool SetGameObjectSimulationActive(int32_t gameObjectId, bool isActive);  // GameObjectの実行状態に合わせてJolt Bodyを物理Worldへ出し入れする
 	bool SetGameObjectTransform(int32_t gameObjectId, const Vector3& position, const Vector3& rotation);  // Poolから再利用するBodyのWorld姿勢を同期する
 	int32_t GetPhysicsBodyCount() const;  // Diagnostics 表示用。Jolt World にある Body 数を返す。
+
+	//========================================
+	// 衝突Query API
+	//========================================
+
 	bool Raycast(const Vector3& origin, const Vector3& direction, float distance, EditorJoltPhysicsManager::PhysicsHit& hit) const;  // Runtime から Physics.Raycast 相当を呼べる入口
 	bool RaycastIgnoringGameObject(const Vector3& origin, const Vector3& direction, float distance, int32_t ignoredGameObjectId, EditorJoltPhysicsManager::PhysicsHit& hit) const;  // サスペンションなど所有者自身を除外する Raycast
 	bool RaycastIgnoringGameObjects(const Vector3& origin, const Vector3& direction, float distance, const std::vector<int32_t>& ignoredGameObjectIds, EditorJoltPhysicsManager::PhysicsHit& hit) const;  // Attack Filter用の複数除外Raycast
@@ -110,6 +126,11 @@ public:
 	bool GetBodyDiagnostics(int32_t gameObjectId, Vector3& bodyPosition, bool& isAddedToWorld) const;  // Body実座標とWorld登録状態（診断用）
 	bool GetPhysicsShapeTriangles(int32_t gameObjectId, std::vector<EditorJoltPhysicsManager::PhysicsShapeTriangle>& shapeTriangles) const;  // Scene Viewが最終Physics Shapeをワイヤーフレーム表示するための取得口
 	bool BuildAutoConvexPreviewTriangles(int32_t gameObjectId, std::vector<EditorJoltPhysicsManager::PhysicsShapeTriangle>& shapeTriangles) const;  // Play前のAutoConvex最終凸包Previewを返す
+
+	//========================================
+	// Rigidbody・Joint操作API
+	//========================================
+
 	bool AddForceAtPosition(int32_t gameObjectId, const Vector3& force, const Vector3& worldPosition);  // 船体内部など World 位置へ力を加える入口
 	bool AddImpulse(int32_t gameObjectId, const Vector3& impulse);  // Runtime から Rigidbody.AddImpulse 相当を呼べる入口
 	bool AddTorque(int32_t gameObjectId, const Vector3& torque);  // Runtime から Rigidbody.AddTorque 相当を呼べる入口
@@ -122,6 +143,11 @@ public:
 	bool IsJointValid(uint64_t jointHandle) const;  // Runtime Joint Handleが有効か返す
 	uint64_t CreateJoint(EditorJoltPhysicsManager::RuntimeJointType jointType, int32_t ownerGameObjectId, int32_t connectedGameObjectId, const EditorJoltPhysicsManager::RuntimeJointSettings& jointSettings);  // 対応するRuntime Jointを生成する
 	bool SetJointSettings(uint64_t jointHandle, const EditorJoltPhysicsManager::RuntimeJointSettings& jointSettings);  // Joint種別を維持して設定を更新する
+
+	//========================================
+	// Rope・Wire操作API
+	//========================================
+
 	bool AttachRope(int32_t ownerGameObjectId, int32_t targetGameObjectId, const Vector3& ownerLocalAnchor, const Vector3& targetAnchor, float maximumLength);  // RopeConstraint を実行中に接続する。target=-1 なら targetAnchor は World 固定点
 	bool DetachRope(int32_t ownerGameObjectId);  // RopeConstraint を無効化して張力を止める
 	bool SetRopeLength(int32_t ownerGameObjectId, float maximumLength);  // ウインチ用途に実行中の最大長を変更する
@@ -147,6 +173,10 @@ public:
 	void SetPostFixedStepCallback(std::function<void(float)> callback);  // Jolt 更新(積分)直後、最終姿勢確定後に固定時間で実行する
 
 private:
+	//========================================
+	// 固定更新Cache・Runtime状態
+	//========================================
+
 	struct PhysicsStepObject {
 		EditorGameObject* gameObject = nullptr;  // この固定更新で参照するGameObject
 		EditorComponent* rigidBody = nullptr;  // Dynamic判定と速度・質量を共有するRigidbody
@@ -209,6 +239,10 @@ private:
 	float fixedTimeAccumulator_ = 0.0f;  // 可変 deltaTime を固定時間へ分割するための蓄積時間
 	float simulationElapsedTime_ = 0.0f;  // WindZone の連続した乱流位相を固定更新時間で進める
 	int32_t maxFixedSubSteps_ = 4;  // フレーム落ち時に 1 フレームで回す物理回数の上限
+
+	//========================================
+	// 追加Force・Debug内部処理
+	//========================================
 
 	void RebuildPhysicsStepCache();  // Sceneを1回だけ走査し、同じ固定更新中のComponent検索を共有する
 	void ApplyConstantForces();  // ConstantForce の設定値を Dynamic Rigidbody へ固定更新ごとに加える

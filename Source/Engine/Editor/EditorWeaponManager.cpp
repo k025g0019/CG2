@@ -185,6 +185,10 @@ namespace {
 	}
 }
 
+//========================================
+// 初期化処理と開始処理
+//========================================
+
 void EditorWeaponManager::Initialize(
 	EditorScene* editorScene,
 	EditorInputManager* inputManager,
@@ -288,6 +292,10 @@ void EditorWeaponManager::Start() {
 	}
 	isStarted_ = true;
 }
+
+//========================================
+// 命中結果の記録
+//========================================
 
 void EditorWeaponManager::RecordHitscanCollision(
 	const std::string& result,
@@ -411,6 +419,10 @@ void EditorWeaponManager::RecordProjectileCollision(
 	}
 }
 
+//========================================
+// 更新処理と停止処理
+//========================================
+
 void EditorWeaponManager::Update(float deltaTime) {
 	if (!isStarted_ || editorScene_ == nullptr || deltaTime < 0.0f) {
 		return;
@@ -494,6 +506,10 @@ void EditorWeaponManager::Stop() {
 	visualRecoilRuntimes_.clear();
 	isStarted_ = false;
 }
+
+//========================================
+// 発射の受け口
+//========================================
 
 bool EditorWeaponManager::FireHitscan(int32_t weaponGameObjectId) {
 	if (!isStarted_ || editorScene_ == nullptr) {
@@ -641,6 +657,10 @@ bool EditorWeaponManager::IsWeaponGroupFiring(int32_t groupGameObjectId) const {
 	return group != nullptr && group->weaponGroupIsFiring;
 }
 
+//------------------------------
+// 発射条件と照準の計算
+//------------------------------
+
 bool EditorWeaponManager::GetAccuracySpread(int32_t weaponGameObjectId, float& spreadDegrees) const {
 	const EditorGameObject* weapon = editorScene_ != nullptr
 		? editorScene_->FindGameObject(weaponGameObjectId)
@@ -690,6 +710,10 @@ Vector3 EditorWeaponManager::BuildProjectileDirection(
 		MultiplyVector3(kProjectileAimDistance, aimRay.direction));
 	return NormalizeVector3(SubtractVector3(aimTarget, spawnPosition));
 }
+
+//========================================
+// 発射要求のキュー投入
+//========================================
 
 bool EditorWeaponManager::QueueFireRequest(int32_t weaponGameObjectId, bool isProjectile) {
 	EditorGameObject* weaponGameObject = editorScene_ != nullptr
@@ -837,6 +861,10 @@ void EditorWeaponManager::QueueFirePattern(
 	}
 }
 
+//========================================
+// 武器グループの更新と発射判定
+//========================================
+
 void EditorWeaponManager::UpdateWeaponGroups(float deltaTime) {
 	for (size_t shotIndex = 0u; shotIndex < pendingWeaponGroupShots_.size();) {
 		PendingWeaponGroupShot& pendingShot = pendingWeaponGroupShots_[shotIndex];
@@ -956,6 +984,10 @@ void EditorWeaponManager::UpdatePendingShots(float deltaTime) {
 		pendingShots_.erase(pendingShots_.begin() + static_cast<std::ptrdiff_t>(shotIndex));
 	}
 }
+
+//========================================
+// 実弾処理(Hitscan / Projectile)
+//========================================
 
 bool EditorWeaponManager::ExecuteHitscanShot(int32_t weaponGameObjectId, float patternYawDegrees) {
 	EditorGameObject* weapon = editorScene_ != nullptr ? editorScene_->FindGameObject(weaponGameObjectId) : nullptr;
@@ -1423,6 +1455,10 @@ int32_t EditorWeaponManager::ExecuteProjectileShot(
 	return projectileGameObjectId;
 }
 
+//========================================
+// 集弾率と反動
+//========================================
+
 Vector3 EditorWeaponManager::ApplyAccuracy(
 	int32_t weaponGameObjectId,
 	const Vector3& direction,
@@ -1562,6 +1598,10 @@ void EditorWeaponManager::UpdateVisualRecoil(float deltaTime) {
 	}
 }
 
+//========================================
+// 着弾時の反応と表面判定
+//========================================
+
 void EditorWeaponManager::ExecuteImpactResponse(
 	int32_t weaponGameObjectId,
 	int32_t hitGameObjectId,
@@ -1688,6 +1728,10 @@ int32_t EditorWeaponManager::ResolveTeamId(int32_t gameObjectId) const {
 
 	return -2;
 }
+
+//------------------------------
+// 当たり判定の除外対象の決定
+//------------------------------
 
 bool EditorWeaponManager::IsInHierarchy(
 	int32_t gameObjectId,
@@ -1836,6 +1880,10 @@ bool EditorWeaponManager::CastAttackPhysics(
 			ignoredGameObjectIds,
 			hit);
 }
+
+//========================================
+// 射線チェック
+//========================================
 
 EditorComponent* EditorWeaponManager::FindFireLineComponent(int32_t weaponGameObjectId) const {
 	if (editorScene_ == nullptr) {
@@ -2014,6 +2062,10 @@ void EditorWeaponManager::QueueCompletionAction(int32_t weaponGameObjectId, int3
 			: component->weaponFirePatternCompletedActionName,
 		1.0f);
 }
+
+//========================================
+// 弾体の更新と起爆
+//========================================
 
 void EditorWeaponManager::UpdateProjectiles(float deltaTime) {
 	if (editorScene_ == nullptr || physicsManager_ == nullptr || objectPoolManager_ == nullptr) {
@@ -2433,6 +2485,10 @@ bool EditorWeaponManager::DetonateProjectile(int32_t projectileGameObjectId) {
 
 	return false;
 }
+
+//========================================
+// 被弾予測の参照と状態リセット
+//========================================
 
 void EditorWeaponManager::GetIncomingThreats(
 	int32_t targetGameObjectId,

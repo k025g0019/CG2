@@ -781,6 +781,10 @@ namespace {
 	}
 }
 
+//========================================
+// 初期化処理と開始処理
+//========================================
+
 void EditorAIManager::Initialize(EditorScene* editorScene, EditorPhysicsManager* physicsManager, std::vector<std::string>* consoleMessages) {
 	editorScene_ = editorScene;  // Play 中の AI が読む Scene。
 	physicsManager_ = physicsManager;  // Rigidbody 付き AI を動かす物理 API。
@@ -806,6 +810,10 @@ void EditorAIManager::Start() {
 	StartVoiceCommandRecognition();
 	PushConsoleMessage("AI: ThirdParty/AI の AI Component を開始しました。");
 }
+
+//========================================
+// 音声コマンド認識
+//========================================
 
 void EditorAIManager::StartVoiceCommandRecognition() {
 	StopVoiceCommandRecognition();
@@ -1015,6 +1023,10 @@ void EditorAIManager::StopVoiceCommandRecognition() {
 	voiceCommandBackend_.reset();
 }
 
+//========================================
+// 更新処理と描画処理
+//========================================
+
 void EditorAIManager::Update(float deltaTime) {
 	if (!isStarted_ || editorScene_ == nullptr || deltaTime <= 0.0f) {
 		return;
@@ -1139,6 +1151,10 @@ void EditorAIManager::Stop() {
 	isStarted_ = false;
 }
 
+//========================================
+// センサー結果の参照
+//========================================
+
 bool EditorAIManager::IsSensorDetected(int32_t gameObjectId) const {
 	for (const auto& sensorEntry : sensorResults_) {
 		const int32_t entryGameObjectId = static_cast<int32_t>(static_cast<uint64_t>(sensorEntry.first) >> 32);
@@ -1163,6 +1179,10 @@ bool EditorAIManager::TryGetSensorResult(
 	sensorResult = sensorIterator->second;
 	return true;
 }
+
+//========================================
+// エージェントの更新と視界センサー
+//========================================
 
 void EditorAIManager::UpdateAgent(EditorGameObject& gameObject, EditorComponent& aiComponent, float deltaTime) {
 	const EditorGameObject* targetGameObject = nullptr;
@@ -1288,6 +1308,10 @@ void EditorAIManager::UpdateVisionSensor(const EditorGameObject& gameObject, Edi
 	}
 }
 
+//========================================
+// 進行方向の決定（判断方式ごと）
+//========================================
+
 Vector3 EditorAIManager::MakeDesiredDirection(
 	const EditorGameObject& gameObject,
 	const EditorComponent& aiComponent,
@@ -1327,6 +1351,10 @@ Vector3 EditorAIManager::MakeDesiredDirection(
 
 	return MakeBehaviorModeDirection(gameObject, aiComponent, targetGameObject, deltaTime);
 }
+
+//------------------------------
+// Behavior Tree / State Machine
+//------------------------------
 
 Vector3 EditorAIManager::MakeBehaviorTreeDirection(
 	const EditorGameObject& gameObject,
@@ -1487,6 +1515,10 @@ Vector3 EditorAIManager::MakeStateMachineDirection(
 	return MakeBehaviorModeDirection(gameObject, patrolComponent, targetGameObject, deltaTime);
 }
 
+//------------------------------
+// GOAP / HTN
+//------------------------------
+
 Vector3 EditorAIManager::MakeGoapDirection(
 	const EditorGameObject& gameObject,
 	const EditorComponent& aiComponent,
@@ -1552,6 +1584,10 @@ Vector3 EditorAIManager::MakeHtnDirection(
 	agentStates_[gameObject.id] = 1;  // HTN の末端タスク: 経路移動。
 	return MakePathfindingDirection(gameObject, aiComponent, targetGameObject);
 }
+
+//------------------------------
+// 経路探索 / 操舵 / 群れ
+//------------------------------
 
 Vector3 EditorAIManager::MakePathfindingDirection(
 	const EditorGameObject& gameObject,
@@ -1748,6 +1784,10 @@ Vector3 EditorAIManager::MakeBehaviorModeDirection(
 	return direction;
 }
 
+//------------------------------
+// Python スクリプトによる判断
+//------------------------------
+
 bool EditorAIManager::TryRunPythonDirection(
 	const EditorGameObject& gameObject,
 	const EditorComponent& aiComponent,
@@ -1868,6 +1908,10 @@ bool EditorAIManager::TryRunPythonSensor(
 	pythonWarningLogged_[gameObject.id] = false;
 	return true;
 }
+
+//========================================
+// 移動処理と障害物回避
+//========================================
 
 void EditorAIManager::MoveAgent(EditorGameObject& gameObject, EditorComponent& aiComponent, const Vector3& desiredDirection, float deltaTime) {
 	const float maxSpeed = (std::max)(aiComponent.navMaxSpeed, 0.0f);

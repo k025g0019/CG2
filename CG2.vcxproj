@@ -136,7 +136,6 @@ copy /Y "$(ProjectDir)Source\Engine\Core\EditorScriptApi.h" "$(TargetDir)ScriptA
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>EffekseerRendererDX12.lib;Effekseer.lib;LLGI.lib;libfbxsdk.lib;onnxruntime.lib;winhttp.lib;mfplat.lib;mfreadwrite.lib;mfuuid.lib;mf.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>C:\kogakuin\LE1\CG2\ThirdParty\PhysicsSdk\lib\release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <Manifest>
       <EnableDpiAwareness>PerMonitorHighDPIAware</EnableDpiAwareness>

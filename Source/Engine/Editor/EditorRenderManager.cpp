@@ -22,6 +22,26 @@
 
 using namespace EditorSharedState;
 
+//========================================
+// Editor描画処理の構成
+//========================================
+
+// このファイルはEditor/Standalone共通の描画経路を、1本のCommand Listへ記録する。
+// 巨大なDraw関数を読むときは、DirectX 12の個々のAPI呼び出しから追うのではなく、
+// 次の「どの画像を作り、次のPassへ何を渡すか」という順で追う。
+//
+//   Scene/Game ViewのCameraとViewportを決定
+//     -> Light、Material、Transform等のCPU DataをGPU用Bufferへ反映
+//     -> Shadow / Reflection等、Main Lightingが参照する事前Pass
+//     -> Opaque GeometryをHDR TargetとDepthへ描画
+//     -> Depth Pyramid、Normal、Motion Vector等の画面空間Dataを生成
+//     -> AO / SSR / SSGI / Transparent / Water等を合成
+//     -> Bloom / AA / Tone Mapping等のPost Process
+//     -> ImGuiを重ねてSwapChainをPresent
+//
+// ResourceBarrierは「GPU Memoryを移動する命令」ではない。
+// 同じResourceを次の用途で安全に使うため、前後の利用状態と実行順をGPUへ宣言する。
+// SRV、RTV、DSV、UAV、COPYの切替を読むと、Pass間のData Flowを追いやすい。
 namespace {
 	constexpr UINT kCurrentSkinMatrixRootParameter = 20u;
 	constexpr UINT kPreviousSkinMatrixRootParameter = 21u;
@@ -141,7 +161,7 @@ namespace {
 			return 3;
 		}
 
-		return 1; // 隴幢 E E E  E E E 髫 E E E ・ E E E 陞ｳ螢 E E E ・・Point 邵 E E E ・ E E E  Point Light 邵 E E E ・ E E E 邵 E E E 蜉ｱ窶 E E E 隰・ E E E  E E E 邵 E E E 繝ｻ E E E 繝ｻ
+		return 1;
 	}
 
 	Vector3 GetForwardDirectionFromRotation(const Vector3& rotation) {
@@ -149,7 +169,6 @@ namespace {
 			{1.0f, 1.0f, 1.0f},
 			rotation,
 			{0.0f, 0.0f, 0.0f});
-		// 陜玲 E E E ・ E E E  E E E ・ E E E 邵 E E E ・ E E E 邵 E E E 莉｣繝ｻ髯 E E E 謔溘 E郢 E E E 蜑 E E E E  E E E 諛奁E E  E 顔ｸ E E E 竏墁E E  E  E E E 晢 E E E  E E E 郢 E E E ・ E E E 郢晢 E E E  E E E 陷題ざ蟀 E E E 郢晏生縺醍ｹ晏現 E E E 晉 E E  E E E 蛛ｵ E E E  E 郢晢 E E E  E E E 郢晢 E E E  E E E 郢晏ｳ E E E 竏郁惺莉｣・ E E E 郢 E E E 荵敖繝ｻ
 		const Vector3 worldForward = Transform({0.0f, 0.0f, 1.0f}, rotationMatrix);
 		return Normalize(worldForward);
 	}
@@ -629,7 +648,7 @@ namespace {
 				sceneObject.customMeshLocalBoundsSize.x * 0.5f,
 				sceneObject.customMeshLocalBoundsSize.y * 0.5f,
 				sceneObject.customMeshLocalBoundsSize.z * 0.5f
-			}; // 陞ｳ貁E E  E 鍋ｹ昴・縺咏ｹ晢 E E E  E E E 邵 E E E ・ E E E 陷企宦・ E E E 繝ｻ繝ｻ邵 E E E 竏ｬ・ E E E ・ E E E 邵 E E E ・ E E E 髴趣 E E E  E E E 郢 E E E 阮吮味 AABB 邵 E E E 荵晢 E E E 臥 E E E  E E E 譏ｴ繝ｻ邵 E E E ・ E E E 邵 E E E ・ E E E 髴大床 E E E E ・ E E E 邵 E E E 蜷 E E E ・狗ｸ E E E 繝ｻ
+			};
 			const Vector3 scaledHalfSize = {
 				std::fabs(localHalfSize.x * sceneObject.transform.scale.x),
 				std::fabs(localHalfSize.y * sceneObject.transform.scale.y),
@@ -643,13 +662,11 @@ namespace {
 		}
 
 		float meshRadius = 1.25f;
-		// 陜難 E E E  E E E 隴幢 E E E  E E E 陟厄 E E E  E E E 邵 E E E ・ E E E 隴鯉ｽ E E E 驕擾 E E E  E E E 郢 E E E ・ E E E 郢 E E E ・ E E E 郢 E E E ・ E E E 邵 E E E ・ E E E 邵 E E E ・ E E E 邵 E E E ・ E E E 邵 E E E 竏晢 E E E  E E E 謐ｺ謫らｸ E E E ・ E E E 邵 E E E 鄙ｫ・企怕 E E E E 邵 E E E 繝ｻ・ E E E 蜿 E E E ・ E E E ・ E E E 邵 E E E ・ E E E 郢 E E E 蛹 E E E ・樒ｸ E E E 繝ｻ
 		return GetMaxAbsScale(sceneObject.transform.scale) * meshRadius;
 	}
 
 	Vector3 GetSafeLightDirection(const DirectionalLight* directionalLightData) {
 		Vector3 lightDirection = {0.35f, -1.0f, 0.25f};
-		// 郢晢 E E E  E E E 郢 E E E ・ E E E 郢晏沺謔ｴ騾墓ｻ薙 E隴弱 E E E E E  E 堤 E E E  E E E 繧井ｸ・ E E E  E E E 竏ｽ・ E E E 鄙ｫ E E E  E 郢 E E E 閾 E E E 繝ｻ郢 E E E 蟲 E E E 笘 E E E E 鯉ｽ E E E 陞ｳ螢 E E E 蟀 E E E 陷 E E E 莉｣ E E E 繝ｻ
 		if (directionalLightData != nullptr) {
 			lightDirection = directionalLightData->direction;
 		}
@@ -665,7 +682,7 @@ namespace {
 		const std::vector<EditorSceneObject>& editorSceneObjects,
 		const Transforms& legacyTransform,
 		bool isLegacyPreviewVisible) {
-		Vector3 center{}; // center 邵 E E E ・ E E E 郢晢 E E E  E E E 郢 E E E ・ E E E 郢晏現繝ｻ雎 E E E E  E E E 陝 E・・ E E E ・ E E E 郢 E E E 雋樣 E E E ・ E E E  E E E 莉｣・・Scene 邵 E E E ・ E E E 闕ｳ・ E E E 陟｢繝ｻ・ E E E 蜥 E E E ・ E E E ・ E E E 邵 E E E 繝ｻ
+		Vector3 center{};
 		int32_t modelCount = 0;
 
 		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
@@ -696,7 +713,6 @@ namespace {
 		const Vector3& shadowCenter,
 		bool isLegacyPreviewVisible) {
 		float shadowRadius = 6.0f;
-		// 隴崢闖ｴ螳茨 E E E  E E E 繝ｻ蟲・ E E E  E E E 雋橸 E E E  E E E 荳奁E E  E ・ E E E  E E E 荳奁E E  E  E E E 邵 E E E ・ E E E 邵 E E E 竏ｬ・ E E E 鬘鯉ｽ E E E 譎槫 E E E  E E E 郢 E E E ・ E E E 郢晁E E  E 縺夂ｹ E E E ・ E E E 郢 E E E ・ E E E 郢晏現繝ｻ陟厄 E E E  E E E 髫暦 E E E  E E E 陷剁E E  E 橸 E E E  E E E ・ E E E 郢 E E E 蝣 E E E ・ E E E ・ E E E 闖ｫ譏ｴ笘 E E E E  E E E 荵敖繝ｻ
 
 		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
 			if (sceneObject.type != EditorSceneObjectType::Model) {
@@ -713,23 +729,21 @@ namespace {
 			shadowRadius = (std::max)(shadowRadius, distanceFromCenter + legacyRadius);
 		}
 
-		// 陟弱・笘 E E E E  E E E 蠑ｱ・玖厁E E  E  E E E 驕ｽ繝ｻ蟲・ E E E  E E E ・ E E E 髫暦 E E E  E E E 陷剁E E  E 橸 E E E  E E E ・ E E E 郢 E E E 蜻茨 E E E  E E E ・ E E E 邵 E E E 蜷 E E E 笳・ E E E  E E E 竏堋繝ｾceneView 邵 E E E ・ E E E 隰 E E E 蜀怜 E鬮 E E E 蜊 E・邵 E E E ・ E E E 陷 E E E 蛹 E E E ・冗ｸ E E E 蟶吮 E E E 闕ｳ莨∝応郢 E E E 蜻域亜邵 E E E 貁E E  E 雷郢 E E E 荵敖繝ｻ
 		return (std::clamp)(shadowRadius + 3.0f, 6.0f, 180.0f);
 	}
 
 	Matrix4x4 MakeLookAtMatrix(const Vector3& eye, const Vector3& target, const Vector3& up) {
-		Vector3 zAxis = Normalize(Subtract(target, eye)); // zAxis 邵 E E E ・ E E E 郢晢 E E E  E E E 郢 E E E ・ E E E 郢晏現縺咲 E E E 晢 E E E  E E E 郢晢 E E E  E E E 邵 E E E 謔滁E E  E ・ E E E  E E E 荳樒 E隴・ E E E  E E E 陷 E E E 莉｣ E E E 繝ｻ
+		Vector3 zAxis = Normalize(Subtract(target, eye));
 		if (Length(zAxis) <= 0.0001f) {
 			zAxis = {0.0f, 0.0f, 1.0f};
 		}
 
 		Vector3 xAxis = Normalize(Cross(up, zAxis));
-		// xAxis 邵 E E E ・ E E E 騾匁E E  E  E E E 鬮 E E E ・ E E E 陷 E E E ・ E E E 隴・ E E E  E E E 陷 E E E 莉｣ E E E ・ E E E p 邵 E E E ・ E E E 陝ｷ・ E E E 髯 E E E 蠕娯・郢 E E E 謌托 E E E  E E E ・ E E E 隴厁E E  E  E E E  up 郢 E E E 蜑 E E E E  E E E ・ E E E 邵 E E E 繝ｻ E E E 繝ｻ
 		if (Length(xAxis) <= 0.0001f) {
 			xAxis = Normalize(Cross(Vector3{1.0f, 0.0f, 0.0f}, zAxis));
 		}
 
-		Vector3 yAxis = Cross(zAxis, xAxis); // yAxis 邵 E E E ・ E E E 陷題ざ蟀 E E E 陷 E E E 莉｣竊定愾・ E E E 隴・ E E E  E E E 陷 E E E 莉｣ E E E  E 郢 E E E 謌托 E E E  E E E 諛奁E E  E 玖叉鬁E E  E  E E E  E E E 陷 E E E 莉｣ E E E 繝ｻ
+		Vector3 yAxis = Cross(zAxis, xAxis);
 
 		Matrix4x4 viewMatrix{};
 		viewMatrix.matrix[0][0] = xAxis.x;
@@ -1281,12 +1295,18 @@ namespace {
 		return settings;
 	}
 
-	//================================================================
-	// ToneMapping 後のポストプロセス Pass。Draw() から切り出した。
-	// commandList や PipelineState は Draw() 側でも g_ への別名に過ぎないため、
-	// ここでは EditorSharedState の実体を直接参照し、引数はフレームごとに
-	// 変わる値だけに絞っている。
-	//================================================================
+	//========================================
+	// ToneMapping 後のポストプロセス Pass
+	//========================================
+
+	// Draw() から切り出した Pass 群。commandList や PipelineState は Draw() 側でも
+	// g_ への別名に過ぎないため、ここでは EditorSharedState の実体を直接参照し、
+	// 引数はフレームごとに変わる値だけへ絞っている。
+	// GPU 計測イベントは Pass 境界をまたぐため Draw() 側へ残してある。
+
+	//------------------------------
+	// 露出とアンチエイリアス
+	//------------------------------
 
 	// 画面平均輝度から露出を 1x1 の履歴 Texture へ更新する。適用したら true を返す。
 	// 前回時刻は関数内 static で持つ。Draw() 側にあったときと同じく 1 本しか存在しない。
@@ -1387,6 +1407,10 @@ namespace {
 		RecordEditorProfilerDrawCall();
 		g_commandList->DrawInstanced(3, 1, 0, 0);
 	}
+
+	//------------------------------
+	// GameView 限定の Pass
+	//------------------------------
 
 	// 画面全体に対する GameView 矩形の UV と、1 ピクセル分の UV 幅。
 	// DoF / Motion Blur は GameView の中だけへ効かせるため、同じ 6 値を必要とする。
@@ -1553,6 +1577,10 @@ namespace {
 		return PostProcessSource{destinationSrvHandle, destinationResource};
 	}
 
+	//------------------------------
+	// Bloom と Glare
+	//------------------------------
+
 	// glare*ByMode 配列のうち Bloom 本体が使う添字。多段 Bloom と最終合成の
 	// 二か所が同じ枠を参照するため、値をここ 1 か所で持つ。
 	constexpr size_t kBloomGlareModeIndex = 1u;
@@ -1651,6 +1679,10 @@ namespace {
 		return result;
 	}
 
+	//------------------------------
+	// Filter と Sharpen
+	//------------------------------
+
 	// Filter を有効な Mode 分だけ順番に掛け、次に読むべき SRV Handle を返す。
 	// 1 つも実行されなければ sourceSrvHandle をそのまま返す。
 	D3D12_GPU_DESCRIPTOR_HANDLE ExecuteFilterPasses(
@@ -1739,11 +1771,24 @@ namespace {
 void EditorRenderManager::Initialize() {
 }
 
+//========================================
+// Scene・Game View描画処理
+//========================================
+
 void EditorRenderManager::Draw() {
+	// この関数はCPU側で1Frame分の描画Commandを組み立てる。
+	// 学習時は次の単位で区切って読む。
+	// 1. Frameを跨いで再利用するCache/履歴の更新条件
+	// 2. SharedStateにあるDirectX Resourceへの参照取得
+	// 3. SceneからLight/Object/PostProcess設定を収集
+	// 4. 各描画PassのCommand記録
+	// 5. Command実行、Present、Fenceによる再利用保証
+	// `auto&`が多いのはResourceを複製しているのではなく、EditorSharedStateの
+	// 実体へ短い名前で参照しているだけである。所有権はここへ移動しない。
 	const std::chrono::steady_clock::time_point frameStartTime =
 		std::chrono::steady_clock::now();
 	uint32_t batchInstanceCursor = 0u;
-	static bool hasLoggedFirstRenderEnter = false; // 隴崢陋ｻ譏ｴ繝ｻ Draw 邵 E E E ・ E E E 陷茨 E E E  E E E 郢 E E E 蠕娯螺邵 E E E 荵晢 E E E ・1 陜玲 E E E  E E E 笁E E  E 邵 E E E 鬘鯉ｽ E E E 蛟ｬ鮖ｸ邵 E E E 蜷 E E E ・狗ｸ E E E 繝ｻ
+	static bool hasLoggedFirstRenderEnter = false;
 	static bool hasLoggedFirstPresent = false;
 	static bool hasSubmittedShadowMap = false;
 	static std::uint64_t submittedShadowStateHash = 0u;
@@ -1770,13 +1815,13 @@ void EditorRenderManager::Draw() {
 	const float oceanElapsedTime = isPlaying
 		? GetEditorOceanElapsedTime()
 		: 0.0f;
-	// 隴崢陋ｻ譏ｴ繝ｻ Present 邵 E E E ・ E E E 邵 E E E ・ E E E 陋ｻ・ E E E 鬩墓鱒 E E E E 邵 E E E 貁E E  E  E 郢 E E E 繝ｻ1 陜玲 E E E  E E E 笁E E  E 邵 E E E 鬘鯉ｽ E E E 蛟ｬ鮖ｸ邵 E E E 蜷 E E E ・狗ｸ E E E 繝ｻ
 
-	auto& hr = g_hr; // hr 邵 E E E ・ E E E  DirectX API 邵 E E E ・ E E E 隰御 E E E 吝℡郢 E E E 雋槫 E E E  E E E 邵 E E E 螟ｧ蜿咏ｹ E E E 蜿 E E E 繝ｻ隴帙 EHRESULT邵 E E E 繝ｻ
+	auto& hr = g_hr;
+	// ここからの参照群は、PlatformManagerが生成したDevice/Queue/SwapChainと、
+	// 各初期化処理が作成したPSO/Texture/BufferをDraw内で使いやすくするAlias。
+	// ComPtrやResourceのLifetimeはEditorSharedState側が保持する。
 	auto& device = g_device;
-	// device 邵 E E E ・ E E E 闔蛾宦・ E E E 蠕後 E隰 E E E 蜀怜 E隲 E E E ・ E E E 陟托 E E E  E E E 邵 E E E ・ E E E  Resource 郢 E E E 螳夲 E E E  E E E ・ E E E 陷会｣ E E E 闖ｴ諛医・邵 E E E 蜷 E E E ・玖ｭ弱 E E E E E  E  E 邵 E E E 貁E E  E  E E E ∫ E E E  E E E ・ E E E 陷 E E E 繧峨・邵 E E E 蜷 E E E ・狗ｸ E E E 繝ｻ
 	auto& commandQueue = g_commandQueue;
-	// commandQueue / Allocator / List 邵 E E E ・ E E E  GPU 邵 E E E ・ E E E 隰 E E E 蜀怜 E陷 E E E ・ E E E 闔会ｽ E E E 郢 E E E 蟶敖竏夲 E E E 狗ｸ E E E 貁E E  E  E E E ∫ E E E  E E E ・ E E E 闖ｴ・ E E E 邵 E E E 繝ｻ E E E 繝ｻ
 	auto& commandAllocator = g_commandAllocator;
 	auto& commandList = g_commandList;
 	auto& renderTimestampQueryHeap = g_renderTimestampQueryHeap;
@@ -1788,13 +1833,9 @@ void EditorRenderManager::Draw() {
 	auto& useAdapter = g_useAdapter;
 
 	auto& swapChain = g_swapChain;
-	// swapChain 邵 E E E ・ E E E 隰 E E E 蜀怜 E邵 E E E 蜉ｱ笳・back buffer 郢 E E E 繝ｻWindow 邵 E E E ・ E E E  Present 邵 E E E 蜷 E E E ・狗ｸ E E E 貁E E  E  E E E ∫ E E E  E E E ・ E E E 闖ｴ・ E E E 邵 E E E 繝ｻ E E E 繝ｻ
 	auto& srvDescriptorHeap = g_srvDescriptorHeap;
-	// srvDescriptorHeap 邵 E E E ・ E E E  Texture SRV 邵 E E E ・ E E E  ImGui SRV 郢 E E E 繝ｻShader 邵 E E E ・ E E E 雋ゑ E E E  E E E 邵 E E E 繝ｻDescriptorHeap邵 E E E 繝ｻ
 	auto& swapChainResources = g_swapChainResources;
-	// swapChainResources 邵 E E E ・ E E E  Barrier 陝 E E E E  E E E 髮趣 E E E  E E E 邵 E E E ・ E E E  back buffer 陞ｳ貊会ｽ E E E 阮卍繝ｻ
 	auto& rtvHandles = g_rtvHandles;
-	// rtvHandles / dsvHandle 邵 E E E ・ E E E  RenderTarget 邵 E E E ・ E E E  DepthStencil 郢 E E E 繝ｻOMSetRenderTargets 邵 E E E ・ E E E 雋ゑ E E E  E E E 邵 E E E 蜷 E E E  E E E 繝ｻ
 	auto& dsvHandle = g_dsvHandle;
 	auto& depthStencilResource = g_depthStencilResource;
 	auto& depthSrvHandleGPU = g_depthSrvHandleGPU;
@@ -1802,7 +1843,6 @@ void EditorRenderManager::Draw() {
 	auto& opaqueDepthCopySrvHandleGPU = g_opaqueDepthCopySrvHandleGPU;
 
 	auto& rootSignature = g_rootSignature;
-	// rootSignature / graphicsPipelineState 邵 E E E ・ E E E  Shader 邵 E E E ・ E E E  RenderState 邵 E E E ・ E E E 陜暦 E E E  E E E 陞ｳ螟奁E E  E  E E E ・ E E E 陞ｳ螢 E E E  E E E 繝ｻ
 	auto& graphicsPipelineState = g_graphicsPipelineState;
 	auto& planarScenePipelineState = g_planarScenePipelineState;
 	auto& planarSurfacePipelineState = g_planarSurfacePipelineState;
@@ -1815,7 +1855,6 @@ void EditorRenderManager::Draw() {
 	auto& waterTessellationPipelineState = g_waterTessellationPipelineState;
 	auto& refractiveSurfacePipelineState = g_refractiveSurfacePipelineState;
 	auto& refractiveSurfaceCullNonePipelineState = g_refractiveSurfaceCullNonePipelineState;
-	// shadowPipelineState 邵 E E E ・ E E E 郢晢 E E E  E E E 郢 E E E ・ E E E 郢晞メ・ E E E 荵溘○邵 E E E ・ E E E  DepthTexture 郢 E E E 蜑 E E E E  E E E 諛奁E E  E 玖氣繧臥舁EPSO邵 E E E 繝ｻ
 	auto& shadowMapResource = g_shadowMapResource;
 	auto& shadowDsvHandle = g_shadowDsvHandle;
 	auto& shadowMapSrvGpuHandle = g_shadowMapSrvGpuHandle;
@@ -1868,57 +1907,42 @@ void EditorRenderManager::Draw() {
 	auto& customColorGradingLutUploadResource = g_customColorGradingLutUploadResource;
 	auto& loadedColorGradingLutAssetPath = g_loadedColorGradingLutAssetPath;
 	auto& spriteMaterialResource = g_spriteMaterialResource;
-	// spriteMaterialResource / sphereMaterialResource 邵 E E E ・ E E E  PixelShader 邵 E E E ・ E E E  Material CBV邵 E E E 繝ｻ
 	auto& spriteMaterialData = g_spriteMaterialData;
 	auto& sphereMaterialResource = g_sphereMaterialResource;
 	auto& sphereMaterialData = g_sphereMaterialData;
 
 	auto& directionalLightResource = g_directionalLightResource;
 	auto& emissiveLightResource = g_emissiveLightResource;
-	auto& emissiveLightData = g_emissiveLightData; // directionalLightResource 邵 E E E ・ E E E  PixelShader 邵 E E E ・ E E E 陝ｷ・ E E E 髯 E E E 謔溘 E雋 E・CBV邵 E E E 繝ｻ
+	auto& emissiveLightData = g_emissiveLightData;
 	auto& directionalLightData = g_directionalLightData;
-	// directionalLightData 邵 E E E ・ E E E 陟厄 E E E  E E E 髯 E E E 謔溘 E郢 E E E 蛛ｵ E E E 帷 E E E  E E E ・ E E E 郢晏沺蟀 E E E 陷 E E E 莉｣竏郁惺蛹 E E E ・冗ｸ E E E 蟶呻 E E E 狗ｸ E E E 貁E E  E  E E E ∫ E E E  E E E ・ E E E 郢 E E E 繧・ E E E  E E E ・ E E E 邵 E E E 繝ｻ E E E 繝ｻ
 	auto& spriteTransformationMatrixData = g_spriteTransformationMatrixData;
-	// spriteTransformationMatrixData 邵 E E E ・ E E E 隴鯉ｽ E E E  Sprite 郢晏干 E E E 樒ｹ晁侭 E E E 礼 E E E 晢 E E E  E E E 騾匁E E  E  E E E  WVP / World 邵 E E E ・ E E E 隴厁E E  E  E E E 邵 E E E 蟠趣 E E E  E E E ・ E E E 邵 E E E ・ E E E 陷亥現 E E E 繝ｻ
 	auto& sphereTransformationMatrixResource = g_sphereTransformationMatrixResource;
-	// sphereTransformationMatrixResource / Data 邵 E E E ・ E E E 隴鯉ｽ E E E  3D 郢晏干 E E E 樒ｹ晁侭 E E E 礼 E E E 晢 E E E  E E E 騾匁E E  E  E E E  WVP / World邵 E E E 繝ｻ
 	auto& sphereTransformationMatrixData = g_sphereTransformationMatrixData;
 
 	auto& modelData = g_modelData;
-	// modelData 邵 E E E ・ E E E  plane.obj 邵 E E E ・ E E E 鬯・ E E E 縺幁E E  E  E E E ・ E E E 郢 E E E 繝ｻDrawInstanced 邵 E E E ・ E E E 雋ゑ E E E  E E E 邵 E E E 蜷 E E E 笳・ E E E  E E E 竏壺・闖ｴ・ E E E 邵 E E E 繝ｻ E E E 繝ｻ
 	auto& primitiveVertexBufferViews = g_editorPrimitiveVertexBufferViews;
-	// primitiveVertexBufferViews 邵 E E E ・ E E E 陜難 E E E  E E E 隴幢 E E E  E E E 陟厄 E E E  E E E 邵 E E E 譁絶・邵 E E E ・ E E E  GPU 鬯・ E E E 縺・Buffer邵 E E E 繝ｻ
 	auto& primitiveVertexCounts = g_editorPrimitiveVertexCounts;
-	// primitiveVertexCounts 邵 E E E ・ E E E 陜難 E E E  E E E 隴幢 E E E  E E E 陟厄 E E E  E E E 邵 E E E 譁絶・邵 E E E ・ E E E  DrawInstanced 鬯・ E E E 縺幁E E  E  E E E ・ E E E 邵 E E E 繝ｻ
 	auto& spriteIndices = g_spriteIndices;
-	// spriteIndices 邵 E E E ・ E E E  Sprite 邵 E E E ・ E E E  DrawIndexedInstanced 邵 E E E ・ E E E  index 隰 E E E ・ E E E 邵 E E E ・ E E E 闖ｴ・ E E E 邵 E E E 繝ｻ E E E 繝ｻ
 	auto& transform = g_transform;
-	// transform / spriteTransform / cameraTransform / uvTransform 邵 E E E ・ E E E 闔 E E E E  E E E 繝ｵ郢晢 E E E  E E E 郢晢 E E E  E E E 郢晢 E E E  E E E 邵 E E E ・ E E E 髯 E E E 謔溘 E闖ｴ諛医・陷医・ E E E 繝ｻ
 	auto& spriteTransform = g_spriteTransform;
 	auto& cameraTransform = g_cameraTransform;
 	auto& uvTransform = g_uvTransform;
 
 	auto& modelVertexBufferView = g_modelVertexBufferView;
-	// model / sprite BufferView 邵 E E E ・ E E E  IASetVertexBuffers 邵 E E E ・ E E E 雋ゑ E E E  E E E 邵 E E E 繝ｻGPU 鬯・ E E E 縺幁E E  E  E E E 繝ｻ・ E E E ・ E E E 邵 E E E 繝ｻ
 	auto& spriteVertexBufferView = g_spriteVertexBufferView;
 
 	auto& spriteIndexBufferView = g_spriteIndexBufferView;
-	// spriteIndexBufferView 邵 E E E ・ E E E  Sprite 陜怜ｹ・ E E E  E E E 雋橸 E E E  E E E ・ E E E 邵 E E E ・ E E E  IndexBuffer邵 E E E 繝ｻ
-	auto& viewport = g_viewport; // viewport / scissorRect 邵 E E E ・ E E E  SceneView 陷繝ｻ笁E E  E 邵 E E E 莉｣竏郁 E E E  E E E 荳奁E E  E  E E E 邵 E E E 貁E E  E  E E E ∫ E E E  E E E ・ E E E 隰 E E E 蜀怜 E驕擾 E E E  E E E 陟厄 E E E  E E E 邵 E E E 繝ｻ
+	auto& viewport = g_viewport;
 	auto& scissorRect = g_scissorRect;
 
 	auto& cameraMatrix = g_cameraMatrix;
-	// camera/view/projection 髯 E E E 謔溘 E邵 E E E ・ E E E  3D 郢晢 E E E  E E E 郢昴・ E E E 晉 E E  E E E 繝ｻSceneView 邵 E E E ・ E E E 隰壼供 E E E E ・ E E E 邵 E E E 蜷 E E E ・狗ｸ E E E 貁E E  E  E E E ∫ E E E  E E E ・ E E E 闖ｴ・ E E E 邵 E E E 繝ｻ E E E 繝ｻ
 	auto& viewMatrix = g_viewMatrix;
 	auto& projectionMatrix = g_projectionMatrix;
 
 	auto& spriteProjectionMatrix = g_spriteProjectionMatrix;
-	// spriteProjectionMatrix 邵 E E E ・ E E E  Sprite 郢 E E E 繝ｻ2D 陟趣 E E E  E E E 隶灘生縲定ｬ E E E 荳奁E E  E  E E E 邵 E E E 貁E E  E  E E E ∫ E E E  E E E ・ E E E 雎 E E E E  E E E 陝 E・・ E E E ・ E E E 髯 E E E 謔溘 E邵 E E E 繝ｻ
-	auto& sceneClearColor = g_sceneClearColor; // sceneClearColor 邵 E E E ・ E E E  RenderTarget 郢 E E E 雋橸 E E E  E E E 蜉ｱ・顔ｸ E E E ・ E E E 邵 E E E ・ E E E 邵 E E E 蜻 E E E 繝ｬ隴趣 E E E  E E E 豼 E E E ・ E E E 邵 E E E 繝ｻ
+	auto& sceneClearColor = g_sceneClearColor;
 	auto& editorSceneObjects = g_editorSceneObjectManager.GetSceneObjects();
-	// editorSceneObjects 邵 E E E ・ E E E 鬩溷調・ E E E ・ E E E 雋ょ現竏ｩ GameObject 邵 E E E ・ E E E 陝 E E E E  E E E 陟｢諛岩・郢 E E E 繝ｻDirectX 隰 E E E 蜀怜 E陝 E E E E  E E E 髮趣 E E E  E E E 邵 E E E 繝ｻ
 	auto& fence = g_fence;
-	// fence / fenceValue / fenceEvent 邵 E E E ・ E E E  Present 陟募 E E E 娯・ GPU 陞ｳ蠕｡・ E E E 繝ｻ・定輔 E笁E E  E 邵 E E E 貁E E  E  E E E ∫ E E E  E E E ・ E E E 陷 E E E 譴 E E E 謔 E叉ﾂ陟台 E E E 環繝ｻ
 	auto& fenceValue = g_fenceValue;
 	auto& fenceEvent = g_fenceEvent;
 	renderProfile.sceneObjectCount = static_cast<uint32_t>((std::min)(
@@ -1936,14 +1960,13 @@ void EditorRenderManager::Draw() {
 		profiledInstanceCount,
 		static_cast<std::uint64_t>((std::numeric_limits<uint32_t>::max)())));
 
-	auto& textureFilePaths = g_textureFilePaths; // textureFilePaths 邵 E E E ・ E E E  Texture 隰 E E E ・ E E E 邵 E E E ・ E E E 闕ｳ莨∝応陋 E E E ・ E E E 陞ｳ螢 E E E 竊楢抁E E E E E E 邵 E E E 繝ｻ E E E 繝ｻ
+	auto& textureFilePaths = g_textureFilePaths;
 	auto& textureSrvHandlesGPU = g_textureSrvHandlesGPU;
-	// textureSrvHandlesGPU 邵 E E E ・ E E E  Shader 邵 E E E ・ E E E  Texture SRV 郢 E E E 蜻茨 E E E  E E E ・ E E E 邵 E E E 繝ｻGPU 郢昜ｸ莞ｦ郢晏ｳ E E E  E E E 晉 E E  E E E 繝ｻ
 	auto& isLegacyPreviewVisible = g_isLegacyPreviewVisible;
-	// isLegacyPreviewVisible 邵 E E E ・ E E E 隴鯉ｽ E E E 郢晢 E E E  E E E 郢昴・ E E E 晉 E E 晏干 E E E 樒ｹ晁侭 E E E 礼 E E E 晢 E E E  E E E 郢 E E E 蜻育 E E E 堤 E E E  E E E 荳環 E E E 邵 E E E ・ E E E 邵 E E E 繝ｻ E E E  E 邵 E E E ・ E E E 郢晁E E  E 釁E E  E  E E E  E E E ・ E E E 邵 E E E 繝ｻ
 
-	// 陋ｻ譎 E E E E E E  E  E E E 髢辯慕ｸ E E E 竏ｫ・ E E E 繧・ E E E  E E E 繝ｻ・ E E E 蠕個・ E E E Gui::Render 陷鷹亂繝ｻ郢晁E E  E 釁E E  E  E 晢 E E E  E E E 郢晢 E E E  E E E 邵 E E E ・ E E E 邵 E E E ・ E E E  GPU 隰 E E E 蜀怜 E郢 E E E 螳夲 E E E  E E E 蠕鯉ｽ冗ｸ E E E ・ E E E 邵 E E E 繝ｻ E E E 繝ｻ
 	if (!g_isInitialized || g_isFinalized || !g_isDrawRequested) {
+		// 初期化前、終了処理後、またはImGui側が描画を要求していないFrameでは、
+		// CommandAllocatorやSwapChainへ触らずに戻る。
 		return;
 	}
 
@@ -1952,6 +1975,8 @@ void EditorRenderManager::Draw() {
 		hasLoggedFirstRenderEnter = true;
 	}
 
+	// ここからCPU側のScene Dataを、後続Passが読むFrame用GPU Dataへまとめる。
+	// CollectSceneLightsはScene内LightをGPU側の固定上限へ収め、件数を返す。
 	int32_t lightCount = CollectSceneLights(directionalLightData);
 	// Environment は背景画像の読み込み判定より前に反映し、Skybox と PBR が同じ有効状態を使う。
 	ApplyEnvironmentComponent(directionalLightData);
@@ -2068,9 +2093,7 @@ void EditorRenderManager::Draw() {
 	g_lightProbeManager.FillGridData(emissiveLightData->probeGrid);
 
 	cameraMatrix = MakeAffineMatrix(cameraTransform.scale, cameraTransform.rotate, cameraTransform.translate);
-	// cameraMatrix 邵 E E E ・ E E E  SceneView 郢 E E E ・ E E E 郢晢 E E E  E E E 郢晢 E E E  E E E 邵 E E E ・ E E E  Transform 邵 E E E 荵晢 E E E 芽抁E E  E 奁E E  E 狗ｹ晢 E E E  E E E 郢晢 E E E  E E E 郢晢 E E E  E E E 郢晁歓 E E E E 謔溘 E邵 E E E 繝ｻ
 	viewMatrix = Inverse(cameraMatrix);
-	// viewMatrix 邵 E E E ・ E E E  cameraMatrix 邵 E E E ・ E E E 鬨 E E E 繝ｻ・ E E E 謔溘 E邵 E E E 繝ｻD 郢晢 E E E  E E E 郢昴・ E E E 晉 E E  E E E 蛛ｵ縺咲 E E E 晢 E E E  E E E 郢晢 E E E  E E E 驕ｨ・ E E E 鬮 E E E 阮吮・驕假 E E E  E E E 邵 E E E 蜷 E E E  E E E 繝ｻ
 	const PerformanceSettings performanceSettings = GetPerformanceSettings();
 	bool shouldRenderGameView =
 		g_isGameViewVisible && (isPlaying || !g_isSceneViewVisible);
@@ -2099,18 +2122,14 @@ void EditorRenderManager::Draw() {
 	for (int32_t lightIndex = 0; lightIndex < kMaxSceneLights; lightIndex++) {
 		directionalLightData[lightIndex].cameraPosition = activeCameraPosition;
 	}
-	// PBR 邵 E E E ・ E E E 髫穂ｹ滂ｽ E E E 螢 E E E 蟀 E E E 陷 E E E 莉｣ E E E ・把eneView 陷・ E E E  E E E 陷亥現 E E E ・嫗meView 陷雁E E  E E E 蟲 E E E 隴弱 E E E E E  E  E  Camera Component 郢 E E E 蜑 E E E E  E E E ・ E E E 邵 E E E 繝ｻ E E E 繝ｻ
 
-	// spriteWorldMatrix 邵 E E E ・ E E E 隴鯉ｽ E E E  Sprite 郢晏干 E E E 樒ｹ晁侭 E E E 礼 E E E 晢 E E E  E E E 邵 E E E ・ E E E  Transform 郢 E E E 螳夲 E E E  E E E 謔溘 E陋ｹ謔ｶ・ E E E 邵 E E E 貁E E  E  E E E らｸ E E E ・ E E E 邵 E E E 繝ｻ
 	Matrix4x4 spriteWorldMatrix = MakeAffineMatrix(
 		spriteTransform.scale,
 		spriteTransform.rotate,
 		spriteTransform.translate);
 
 	Matrix4x4 spriteWorldViewProjectionMatrix = Multiply(spriteWorldMatrix, spriteProjectionMatrix);
-	// spriteWorldViewProjectionMatrix 邵 E E E ・ E E E  Sprite 邵 E E E ・ E E E  World 邵 E E E ・ E E E  2D 雎 E E E E  E E E 陝 E・・ E E E ・ E E E 郢 E E E 雋樒ｲ玖ｬ瑚 E・ E E E 邵 E E E 繝ｻWVP邵 E E E 繝ｻ
 	Matrix4x4 worldMatrix = MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
-	// worldMatrix 邵 E E E ・ E E E 隴鯉ｽ E E E  3D 郢晢 E E E  E E E 郢昴・ E E E 晉 E E 晏干 E E E 樒ｹ晁侭 E E E 礼 E E E 晢 E E E  E E E 邵 E E E ・ E E E  Transform 郢 E E E 螳夲 E E E  E E E 謔溘 E陋ｹ謔ｶ・ E E E 邵 E E E 貁E E  E  E E E らｸ E E E ・ E E E 邵 E E E 繝ｻ
 	PostProcessSettings ppSettings = GetPostProcessSettings();
 	ppSettings.glareSampleRatio = (std::min)(
 		ppSettings.glareSampleRatio,
@@ -2156,13 +2175,12 @@ void EditorRenderManager::Draw() {
 	Matrix4x4 sceneViewProjectionMatrix = Multiply(viewMatrix, sceneRenderProjectionMatrix);
 	Matrix4x4 inverseViewProjectionMatrix = Inverse(sceneViewProjectionMatrix);
 	Matrix4x4 worldViewProjectionMatrix = Multiply(worldMatrix, sceneViewProjectionMatrix);
-	// worldViewProjectionMatrix 邵 E E E ・ E E E  3D 郢晢 E E E  E E E 郢昴・ E E E 晉 E E  E E E 繝ｻSceneView 邵 E E E ・ E E E 隰壼供 E E E E ・ E E E 邵 E E E 蜷 E E E ・・WVP邵 E E E 繝ｻ
 	Matrix4x4 gameViewProjectionMatrix = Multiply(g_gameViewMatrix, gameRenderProjectionMatrix);
 	Matrix4x4 inverseGameViewProjectionMatrix = Inverse(gameViewProjectionMatrix);
 
-	//================================================================
+	//========================================
 	// 描画機能ごとの必要リソース判定
-	//================================================================
+	//========================================
 	const bool shouldRenderAmbientOcclusion =
 		ppSettings.hasPostProcessComponent &&
 		ppSettings.compositeAmbientOcclusionStrength > 0.0f;
@@ -2228,9 +2246,9 @@ void EditorRenderManager::Draw() {
 	bool hasPlanarReflectionCapture = false;
 	bool hasPlanarReflectionComposite = false;
 
-	//================================================================
+	//========================================
 	// Sun CSM とローカルライト影の Atlas 配置
-	//================================================================
+	//========================================
 
 	constexpr uint32_t kSunCascadeCount = 4u;
 	// 通常ライトは16灯まで評価するが、影は5x5 Atlasに収まる分だけ描画する。
@@ -2451,9 +2469,9 @@ void EditorRenderManager::Draw() {
 		nextLocalShadowTileIndex++;
 	}
 
-	//================================================================
+	//========================================
 	// シャドウマップの更新判定
-	//================================================================
+	//========================================
 	constexpr std::uint64_t kFnvOffsetBasis = 14695981039346656037ull;
 	std::uint64_t shadowStateHash = kFnvOffsetBasis;
 	AppendHashBytes(shadowStateHash, &lightCount, sizeof(lightCount));
@@ -2570,10 +2588,8 @@ void EditorRenderManager::Draw() {
 	bool hasRecordedShadowMapUpdate = false;
 
 	Matrix4x4 uvTransformMatrix = MakeAffineMatrix(uvTransform.scale, uvTransform.rotate, uvTransform.translate);
-	// uvTransformMatrix 邵 E E E ・ E E E  Material 邵 E E E ・ E E E 雋ゑ E E E  E E E 邵 E E E 繝ｻUV 陞溽判驪 E E E 髯 E E E 謔溘 E邵 E E E 繝ｻ
 	spriteTransformationMatrixData->previousWVP = spriteTransformationMatrixData->WVP;
 	spriteTransformationMatrixData->WVP = spriteWorldViewProjectionMatrix;
-	// 隴鯉ｽ E E E 郢晏干 E E E 樒ｹ晁侭 E E E 礼 E E E 晢 E E E  E E E 騾匁E E  E  E E E 邵 E E E ・ E E E 陞ｳ螢 E E E 辟夂ｹ晁E  E繝｣郢晁E E  E 斐＜邵 E E E ・ E E E 闔 E E E E  E E E 繝ｵ郢晢 E E E  E E E 郢晢 E E E  E E E 郢晢 E E E  E E E 邵 E E E ・ E E E 髯 E E E 謔溘 E郢 E E E 蜻亥 E E E 檎ｸ E E E 蟠趣 E E E  E E E ・ E E E 郢 E E E  E E E 邵 E E E 繝ｻ
 	spriteTransformationMatrixData->World = spriteWorldMatrix;
 	spriteTransformationMatrixData->lightWVP = Multiply(spriteWorldMatrix, lightViewProjectionMatrixPerLight[0]);
 	sphereTransformationMatrixData->previousWVP = sphereTransformationMatrixData->WVP;
@@ -2600,7 +2616,6 @@ void EditorRenderManager::Draw() {
 	sphereTransformationMatrixData->temporalParams = {};
 
 	spriteMaterialData->uvTransform = uvTransformMatrix;
-	// Sprite 邵 E E E ・ E E E  3D 郢晢 E E E  E E E 郢昴・ E E E 晉 E E  E E E ・ E E E  Material 邵 E E E ・ E E E 陷 E E E 蠕個ｧ UV 陞溽判驪 E E E 郢 E E E 雋樊ｸ夊ｭ擾 E E E  E E E 邵 E E E 蜷 E E E ・狗ｸ E E E 繝ｻ
 	sphereMaterialData->uvTransform = uvTransformMatrix;
 	spriteMaterialData->oceanEnabled = 0.0f;
 	sphereMaterialData->oceanEnabled = 0.0f;
@@ -2729,7 +2744,6 @@ void EditorRenderManager::Draw() {
 		true);
 
 	hr = commandAllocator->Reset();
-	// CommandAllocator / CommandList 郢 E E E 蜑 E E E E  E E E 鄙ｫ繝ｵ郢晢 E E E  E E E 郢晢 E E E  E E E 郢晢 E E E  E E E 邵 E E E ・ E E E 隰 E E E 蜀怜 E髫 E E E 蛟ｬ鮖ｸ騾匁E E  E  E E E 邵 E E E ・ E E E  Reset 邵 E E E 蜷 E E E ・狗ｸ E E E 繝ｻ
 	if (FAILED(hr)) {
 		Log(g_logStream, std::format("CommandAllocator Reset failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
 		g_isDrawRequested = false;
@@ -2760,10 +2774,10 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"Ocean FFT");
 
-	//================================================================
+	//========================================
 	// Ocean FFT 更新
 	// Scene に Ocean がある時だけGPU波面を更新し、同一設定の海面へ共有する。
-	//================================================================
+	//========================================
 
 	EditorSceneObject* primaryOceanSceneObject = nullptr;
 	struct OceanInteractionSource {
@@ -2893,6 +2907,10 @@ void EditorRenderManager::Draw() {
 		g_environmentTextureSrvHandleGPU.ptr != 0u
 			? g_environmentTextureSrvHandleGPU
 			: textureSrvHandlesGPU[2];
+	//------------------------------
+	// 環境 Texture の読み込み
+	//------------------------------
+
 	auto ensureEnvironmentTexture = [&]() {
 		if (!g_isEnvironmentTextureDirty &&
 			g_environmentTextureAssetPath == g_loadedEnvironmentTextureAssetPath) {
@@ -2955,6 +2973,10 @@ void EditorRenderManager::Draw() {
 	// 背景と PBR 反射は同じ環境画像を使う。読み込みに失敗した画像を有効扱いにせず、
 	// Shader 側の Environment グラデーションへ確実にフォールバックさせる。
 	directionalLightData->environmentTextureEnabled = skyEnvironmentTextureEnabled;
+
+	//------------------------------
+	// Color Grading LUT の用意
+	//------------------------------
 
 	auto restoreIdentityColorGradingLut = [&]() {
 		if (identityColorGradingLut == nullptr) {
@@ -3030,7 +3052,10 @@ void EditorRenderManager::Draw() {
 	ensureColorGradingLut();
 
 	UINT backBufferIndex = swapChain->GetCurrentBackBufferIndex();
-	// backBufferIndex 邵 E E E ・ E E E 闔蛾宦螻楢 E E E  E E E 蜀怜 E邵 E E E 蜷 E E E ・・SwapChain buffer 邵 E E E ・ E E E 騾 E E E ・ E E E 陷 E E E ・ E E E 邵 E E E 繝ｻ
+
+	//------------------------------
+	// Shadow Map へのオブジェクト描画
+	//------------------------------
 
 	auto drawShadowObjects = [&](const Matrix4x4& shadowViewProjection) {
 		static std::vector<std::vector<const EditorSceneObject*>> shadowBatches;
@@ -3173,7 +3198,6 @@ void EditorRenderManager::Draw() {
 			}
 
 			size_t meshTypeIndex = static_cast<size_t>(sceneObject.meshType);
-			// meshTypeIndex 邵 E E E ・ E E E 陟厄 E E E  E E E 邵 E E E ・ E E E 隰 E E E 荳奁E E  E  E E E 陜難 E E E  E E E 隴幢 E E E  E E E 陟厄 E E E  E E E 邵 E E E ・ E E E  VertexBuffer 騾 E E E ・ E E E 陷 E E E ・ E E E 邵 E E E 繝ｻ
 			if (meshTypeIndex >= kEditorModelMeshTypeCount ||
 				primitiveVertexCounts[meshTypeIndex] == 0u) {
 				meshTypeIndex = static_cast<size_t>(EditorModelMeshType::Plane);
@@ -3247,6 +3271,10 @@ void EditorRenderManager::Draw() {
 	// Light Probe のキャプチャは影パスと同じ「任意ViewProjectionでシーン全体を
 	// 描く」形だが、色が要るので材質とベースカラーも束縛する。
 	// 半透明は間接光への寄与が曖昧なので、影と同じく対象外にする。
+	//------------------------------
+	// Light Probe キャプチャ用の描画
+	//------------------------------
+
 	auto drawLightProbeCaptureObjects = [&]() {
 		for (const EditorSceneObject& sceneObject : editorSceneObjects) {
 			if (sceneObject.type != EditorSceneObjectType::Model ||
@@ -3379,13 +3407,13 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"Light Probe Bake");
 
-	//================================================================
+	//========================================
 	// Light Probe GI: 1フレームにつき数個ずつProbeを焼く
-	//----------------------------------------------------------------
+	//========================================
 	// 影を描いた直後に走らせるので、Bakeされる間接光は同じフレームの
 	// 影と整合する。キャプチャは前回のProbeを間接光として読み戻すため、
 	// 焼き直しを重ねるほどバウンス数が増えていく。
-	//================================================================
+	//========================================
 
 	// 作りたてのProbeを0クリアし、描画が読む状態へ整える。
 	g_lightProbeManager.PrepareFrame(commandList.Get());
@@ -3477,11 +3505,10 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"Scene HDR");
 
-	//================================================================
-	// Scene rendering to HDR RT
-	//================================================================
+	//========================================
+	// SceneのHDR Render Target描画
+	//========================================
 
-	// HDR RT 郢 E E E 繝ｻPIXEL_SHADER_RESOURCE 遶翫・RENDER_TARGET 邵 E E E ・ E E E 鬩匁E E  E  E E E 驕假 E E E  E E E  (陷鷹亂繝ｵ郢晢 E E E  E E E 郢晢 E E E  E E E 郢晢 E E E  E E E 邵 E E E ・ E E E  post-process 陟募 E E E 後 E PS 霑･・ E E E 隲 E E E 繝ｻ
 	D3D12_RESOURCE_BARRIER hdrBarrier{};
 	hdrBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 	hdrBarrier.Transition.pResource = hdrRenderTarget;
@@ -3513,7 +3540,7 @@ void EditorRenderManager::Draw() {
 		sceneClearColor[1],
 		sceneClearColor[2],
 		sceneClearColor[3]
-	}; // HDR RenderTexture 邵 E E E ・ E E E 髢 E E E 譴 E E E 蜍ｹ郢 E E E 繝ｻInspector 邵 E E E ・ E E E 髢 E E E 譴 E E E 蜍ｹ豼 E E E ・ E E E 邵 E E E ・ E E E 闕ｳ E E E 髢 E E E ・ E E E 邵 E E E 霈披雷郢 E E E 荵敖繝ｻ
+	};
 	commandList->ClearRenderTargetView(hdrRtvHandle, hdrClearColor, 0, nullptr);
 
 	D3D12_RESOURCE_BARRIER materialMaskBarrier{};
@@ -3572,6 +3599,10 @@ void EditorRenderManager::Draw() {
 		skyCloudSettings.color = environmentComponent->volumetricCloudColor;
 		break;
 	}
+
+	//------------------------------
+	// Skybox 描画
+	//------------------------------
 
 	auto drawSkybox = [&](
 			const D3D12_VIEWPORT& targetViewport,
@@ -3641,6 +3672,10 @@ void EditorRenderManager::Draw() {
 	};
 
 	ID3D12PipelineState* defaultDrawPso = graphicsPipelineState.Get();
+	//------------------------------
+	// 材質 Texture の束縛
+	//------------------------------
+
 	auto bindMaterialTextureHandles = [
 		commandList,
 		planarReflectionSrvHandleGPU](
@@ -3674,6 +3709,10 @@ void EditorRenderManager::Draw() {
 		Refractive,
 		Transparent
 	};
+
+	//------------------------------
+	// SceneObject 描画本体
+	//------------------------------
 
 	auto drawSceneObjects = [&](
 			bool isGameViewPass,
@@ -3714,6 +3753,10 @@ void EditorRenderManager::Draw() {
 			cullingOverrideViewProjectionMatrix != nullptr
 				? *cullingOverrideViewProjectionMatrix
 				: (isGameViewPass ? gameViewProjectionMatrix : sceneViewProjectionMatrix);
+		//------------------------------
+		// 描画順の決定
+		//------------------------------
+
 		// 描画パスごとの並べ替え領域は容量を保持し、毎フレームの再確保を避ける。
 		static std::vector<const EditorSceneObject*> orderedSceneObjects;
 		static std::vector<const EditorSceneObject*> transparentSceneObjects;
@@ -3812,6 +3855,10 @@ void EditorRenderManager::Draw() {
 		static std::vector<int32_t> batchedGameObjectIds;
 		automaticBatches.clear();
 		batchedGameObjectIds.clear();
+
+		//------------------------------
+		// 自動バッチングの判定
+		//------------------------------
 
 		auto canUseAutomaticBatch = [&](const EditorSceneObject& sceneObject) {
 			return drawFilter != SceneObjectDrawFilter::Transparent &&
@@ -4232,6 +4279,10 @@ void EditorRenderManager::Draw() {
 		}
 	};
 
+	//------------------------------
+	// 反射面マスク描画
+	//------------------------------
+
 	auto drawReflectionMaskObjects = [&](bool isGameViewPass, int32_t planarMaskGameObjectId) {
 		if (!shouldRenderMaterialMask ||
 			materialMaskRenderTarget == nullptr ||
@@ -4326,6 +4377,10 @@ void EditorRenderManager::Draw() {
 		commandList->OMSetRenderTargets(1, &hdrRtvHandle, FALSE, &dsvHandle);
 	};
 
+	//------------------------------
+	// VFX 描画
+	//------------------------------
+
 	auto drawEffects = [&](
 		const Matrix4x4& targetViewProjectionMatrix,
 		const Matrix4x4& targetViewMatrix,
@@ -4399,6 +4454,10 @@ void EditorRenderManager::Draw() {
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		commandList->OMSetRenderTargets(1, &targetRtvHandle, FALSE, &dsvHandle);
 	};
+
+	//------------------------------
+	// ImGui 座標の back buffer 基準への補正
+	//------------------------------
 
 	// ImGui の画面座標(ViewportsEnable 中はデスクトップ基準)を back buffer 基準へ戻す。
 	const float gameRenderX = g_editorGameX - g_editorRenderOriginX;
@@ -4498,6 +4557,10 @@ void EditorRenderManager::Draw() {
 		submittedPlanarReflectionTarget = nullptr;
 	}
 
+	//------------------------------
+	// 平面反射の更新判定
+	//------------------------------
+
 	// Play中の平面反射は前回結果を再利用し、GPUが重い時だけ更新頻度を下げる。
 	uint32_t oceanReflectionUpdateInterval = 1u;
 
@@ -4557,9 +4620,9 @@ void EditorRenderManager::Draw() {
 			commandList->ResourceBarrier(1, &reflectionDepthBarrier);
 		}
 
-		//============================================================
+		//------------------------------
 		// 平面反射のキャプチャ
-		//============================================================
+		//------------------------------
 		// 反射 RT は Viewport を分けて共有し、Scene / Game それぞれに最寄りの反射面を描画する。
 		// 合成はメインシーンの色・深度・同じ反射面 ID のマスクが完成した後に行う。
 		commandList->ClearRenderTargetView(planarReflectionRtvHandle, hdrClearColor, 0, nullptr);
@@ -4832,9 +4895,9 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"Water Surface");
 
-	//================================================================
+	//========================================
 	// Water Surface: Opaque Color / Depth を参照する専用パス
-	//================================================================
+	//========================================
 
 	const bool shouldRenderWaterSurface =
 		primaryOceanSceneObject != nullptr &&
@@ -5009,9 +5072,9 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"Refractive Surface");
 
-	//================================================================
+	//========================================
 	// Refractive Surface: 水面合成後のColor / 不透明Depthを参照するガラス専用パス
-	//================================================================
+	//========================================
 
 	if (shouldRenderRefractiveSurface) {
 		const auto bindRefractiveViewConstants = [&commandList](
@@ -5175,9 +5238,9 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"GBuffer");
 
-	//================================================================
+	//========================================
 	// GBuffer: 不透明モデルの材質値と法線マップ適用後の法線を保存
-	//================================================================
+	//========================================
 
 	auto drawGBufferObjects = [&](bool isGameViewPass) {
 		static std::vector<std::vector<const EditorSceneObject*>> gBufferBatches;
@@ -5406,12 +5469,10 @@ void EditorRenderManager::Draw() {
 		commandList->ResourceBarrier(1, &materialMaskBarrier);
 	}
 
-	// HDR RT 郢 E E E 繝ｻRENDER_TARGET 遶翫・PIXEL_SHADER_RESOURCE 邵 E E E ・ E E E 鬩匁E E  E  E E E 驕假 E E E  E E E  (ToneMapping 邵 E E E ・ E E E 髫 E E E ・ E E E 郢 E E E 竏夲 E E E 狗ｹ E E E 蛹 E E E 竕ｧ邵 E E E ・ E E E )
 	hdrBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 	hdrBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 	commandList->ResourceBarrier(1, &hdrBarrier);
 
-	// Depth 郢 E E E 繝ｻDEPTH_WRITE 遶翫・PIXEL_SHADER_RESOURCE 邵 E E E ・ E E E 鬩匁E E  E  E E E 驕假 E E E  E E E  (SSR 邵 E E E ・ E E E  SSAO 邵 E E E 迹夲 E E E  E E E ・ E E E 郢 E E E 竏夲 E E E 狗ｹ E E E 蛹 E E E 竕ｧ邵 E E E ・ E E E )
 	if (depthStencilResource != nullptr &&
 		(!planarViews.empty() || hasActiveRenderView)) {
 		D3D12_RESOURCE_BARRIER depthBarrier{};
@@ -5429,9 +5490,9 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"Planar Reflection Composite");
 
-	//================================================================
+	//========================================
 	// 平面反射の合成
-	//================================================================
+	//========================================
 	// メインシーンを描いた後の色・深度・反射面マスクを使う。
 	// Scene View と Game View は異なるカメラなので、各 View を別々に射影する。
 
@@ -5527,9 +5588,9 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"Depth Hierarchy and GPU Culling");
 
-	//================================================================
+	//========================================
 	// Compute: 深度ピラミッドとワールド法線の生成
-	//================================================================
+	//========================================
 
 	if (shouldBuildDepthHierarchy &&
 		depthStencilResource != nullptr &&
@@ -5604,9 +5665,9 @@ void EditorRenderManager::Draw() {
 			&depthInverseViewProjection.matrix[0][0]);
 
 		if (shouldUseGpuCulling) {
-			//============================================================
+			//------------------------------
 			// GPU Occlusion Culling 用のワールド AABB を作る
-			//============================================================
+			//------------------------------
 
 			static std::vector<EditorGpuCullingInput> gpuCullingInputs;
 			gpuCullingInputs.clear();
@@ -5723,9 +5784,9 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"Ambient Occlusion");
 
-	//================================================================
-	// Post-process: Bloom + ToneMapping
-	//================================================================
+	//========================================
+	// 画面空間Effect用Viewport準備
+	//========================================
 
 	D3D12_VIEWPORT fullViewport{};
 	fullViewport.Width = static_cast<float>(g_renderWidth);
@@ -5741,13 +5802,15 @@ void EditorRenderManager::Draw() {
 	ID3D12Resource* hdrPostSourceResource = hasPlanarReflectionComposite
 		? hdrCompositeRenderTarget : hdrRenderTarget;
 
-	//================================================================
-	// SSR (Screen Space Reflection)
+	//========================================
+	// GTAO計算と深度考慮Blur
+	//========================================
 
 	commandList->SetGraphicsRootSignature(postProcessRootSignature.Get());
 	commandList->SetDescriptorHeaps(1, descriptorHeaps);
 
-	// SSAO: Scene Depth 遶翫・SSAO A 遶翫・SSAO B
+	// Scene DepthとGBuffer Normalから遮蔽率を求め、別Targetで深度考慮Blurを行う。
+	// 1.0が遮蔽なし、0.0へ近いほど間接光を暗くする値として後段の合成へ渡す。
 	if (shouldRenderAmbientOcclusion &&
 		depthStencilResource != nullptr &&
 		ssaoRenderTargets[0] != nullptr &&
@@ -5822,15 +5885,13 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"SSGI");
 
-	//================================================================
+	//========================================
 	// SSGI: 半解像度で解き -> Temporalで均し -> フル解像度のHDRへ加算
-	//----------------------------------------------------------------
+	//========================================
 	// 半解像度にするのは、SSGIが少数サンプルで重い割に低周波な情報しか
 	// 持たないため。残るちらつきはTemporal Reprojectionで時間方向に均す。
 	// サンプル不足のPixelはシェーダ側で0へ落ちるので、そこはHDRに既に
 	// 載っているLight Probeの間接光がそのまま残る。
-	//================================================================
-
 	const uint32_t ssgiHistoryWriteIndex = g_ssgiHistoryWriteIndex;
 	const uint32_t ssgiHistoryReadIndex = 1u - ssgiHistoryWriteIndex;
 
@@ -5885,9 +5946,9 @@ void EditorRenderManager::Draw() {
 		commandList->SetGraphicsRootSignature(postProcessRootSignature.Get());
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-		//------------------------------------------------------------
+		//------------------------------
 		// 1) 半解像度でSSGIを解く
-		//------------------------------------------------------------
+		//------------------------------
 		transitionResource(
 			g_ssgiRenderTarget,
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
@@ -5938,9 +5999,9 @@ void EditorRenderManager::Draw() {
 			D3D12_RESOURCE_STATE_RENDER_TARGET,
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-		//------------------------------------------------------------
+		//------------------------------
 		// 2) Motion Vector で前フレームへ位置合わせして混ぜる
-		//------------------------------------------------------------
+		//------------------------------
 		transitionResource(
 			g_ssgiHistoryRenderTargets[ssgiHistoryWriteIndex],
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
@@ -5997,9 +6058,9 @@ void EditorRenderManager::Draw() {
 			D3D12_RESOURCE_STATE_RENDER_TARGET,
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-		//------------------------------------------------------------
+		//------------------------------
 		// 3) フル解像度のHDRへ加算合成
-		//------------------------------------------------------------
+		//------------------------------
 		transitionResource(
 			hdrPostSourceResource,
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
@@ -6060,11 +6121,11 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"VolumetricLightShaft");
 
-	//================================================================
+	//========================================
 	// Volumetric Light Shaft (Sun Beams): 深度バッファをレイマーチし、
 	// 隙間から漏れたSun光の散乱をHDRへ加算する。表面の有無に関係なく、
 	// 空気そのものに浮かぶ光の筋(God Ray)を描く専用パス。
-	//================================================================
+	//========================================
 
 	if (shouldRenderVolumetricLightShaft &&
 		hdrPostSourceResource != nullptr &&
@@ -6131,9 +6192,9 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"Temporal and SSR");
 
-	//================================================================
+	//========================================
 	// Compute: SSR と時間方向の履歴解決
-	//================================================================
+	//========================================
 
 	if (shouldExecuteTemporalOrSsr &&
 		hdrPostSourceResource != nullptr &&
@@ -6255,9 +6316,9 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"Weighted OIT");
 
-	//================================================================
+	//========================================
 	// Weighted Blended OIT 合成
-	//================================================================
+	//========================================
 
 	if (shouldRenderWeightedOit) {
 		std::array<D3D12_RESOURCE_BARRIER, 2u> oitReadBarriers{};
@@ -6320,10 +6381,10 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"Underwater and Caustics");
 
-	//================================================================
+	//========================================
 	// Underwater / Caustics
 	// 海面がある時だけ、Scene と Game の各カメラに対応する深度復元を行う。
-	//================================================================
+	//========================================
 
 	if (primaryOceanSceneObject != nullptr &&
 		underwaterCausticsPipelineState != nullptr &&
@@ -6510,9 +6571,9 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"Bloom");
 
-	//================================================================
+	//========================================
 	// 多段Bloomを実行し、失敗時は既存Bloomを最終合成に使う
-	//================================================================
+	//========================================
 	const BloomPassResult bloomPassResult =
 		ExecuteBloomPass(ppSettings, hdrPostSourceSrvHandle, bloomSrvHandlesGPU[0]);
 	const bool isQualityBloomExecuted = bloomPassResult.isQualityBloomExecuted;
@@ -6523,9 +6584,9 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"Glare");
 
-	//================================================================
+	//========================================
 	// Blender 風 Glare: Bloom 明部を Ghosts / Streaks / Fog Glow 等へ変換する
-	//================================================================
+	//========================================
 
 	// Ghost/Streak等はシェーダー内で自分の色(glareColorByModeその物)を焼き込み済み。
 	// 最終合成で「ブルーム」の色をもう一度掛けると二重着色になるため、
@@ -6541,10 +6602,10 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"Depth of Field");
 
-	//================================================================
+	//========================================
 	// Depth of Field: 現在の HDR 結果と depth を元に被写界深度ブラー
 	// 入力と同じ RenderTarget へ書かないよう、HDR と Composite を交互に使う。
-	//================================================================
+	//========================================
 	const float inverseRenderWidth = 1.0f / (std::max)(static_cast<float>(g_renderWidth), 1.0f);
 	const float inverseRenderHeight = 1.0f / (std::max)(static_cast<float>(g_renderHeight), 1.0f);
 	const float gameViewportOriginU = gameRenderX * inverseRenderWidth;
@@ -6579,10 +6640,10 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"Motion Blur");
 
-	//================================================================
+	//========================================
 	// Motion Blur: velocity を使って移動ブラー
 	// 現在の HDR 入力とは別の RenderTarget へ書き、読み書き競合を防ぐ。
-	//================================================================
+	//========================================
 	{
 		const PostProcessSource motionBlurResult = ExecuteMotionBlurPass(
 			ppSettings,
@@ -6601,9 +6662,9 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"Exposure and Tone Mapping");
 
-	//================================================================
+	//========================================
 	// 1x1 の履歴 Texture へ画面平均露出を更新する
-	//================================================================
+	//========================================
 
 	// 露出の測定範囲は、GameView 表示中はその矩形、そうでなければ SceneView の矩形。
 	const bool isAutoExposureExecuted = ExecuteAutoExposurePass(
@@ -6612,7 +6673,12 @@ void EditorRenderManager::Draw() {
 		hdrPostSourceResource,
 		shouldRenderGameView ? gameViewport : viewport);
 
-	// Final tone mapping + bloom composite: HDR RT + BloomA 遶翫・LDR RT
+	//========================================
+	// 最終Tone Mapping・Bloom合成
+	//========================================
+
+	// HDR Scene色、Bloom、AO、露出、Color GradingをLDRのPostProcess Targetへまとめる。
+	// この段階で表示可能な色域へ変換するため、後段FilterはLDR結果を入力にする。
 	{
 		D3D12_RESOURCE_BARRIER postProcessBarrier{};
 		postProcessBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -6729,9 +6795,9 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"Post Filter");
 
-	//================================================================
+	//========================================
 	// Blender 風 Filter: ToneMapping 後の画面へ 3x3 畳み込みを適用する
-	//================================================================
+	//========================================
 
 	const D3D12_GPU_DESCRIPTOR_HANDLE filteredPostProcessSrvHandle =
 		ExecuteFilterPasses(ppSettings, postProcessSrvHandleGPU);
@@ -6742,10 +6808,9 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"Sharpen");
 
-	//================================================================
-	// 闕ｳ・ E E E : Sharpen
-	// ToneMapping 陟募 E E E 後 E騾匁E E  E  E E E 陷剁E E  E 奁E E  E 定氣莉｣・ E E E 邵 E E E ・ E E E 邵 E E E 螟ｧ・ E E E 霈披 E E E 驍ｱ・ E E E 郢 E E E 竏壺 E E E 邵 E E E 竏ｵ諤咎お繝ｻFXAA 邵 E E E ・ E E E 雋ゑ E E E  E E E 邵 E E E 蜷 E E E  E E E 繝ｻ
-	//================================================================
+	//========================================
+	// Sharpen処理
+	//========================================
 	const bool isSharpenExecuted = ExecuteSharpenPass(
 		ppSettings,
 		fullViewport,
@@ -6760,9 +6825,9 @@ void EditorRenderManager::Draw() {
 		renderTimestampQueryHeap.Get(),
 		"Antialias");
 
-	//================================================================
+	//========================================
 	// SMAA 3パスで輪郭検出、重み計算、近傍合成を順番に行う
-	//================================================================
+	//========================================
 	// Sharpen を掛けた場合はその出力(Composite)を、掛けていなければ Filter の出力を AA へ渡す。
 	const D3D12_GPU_DESCRIPTOR_HANDLE finalAntialiasSourceSrvHandle = ExecuteSmaaPass(
 		ppSettings,
@@ -6812,14 +6877,13 @@ void EditorRenderManager::Draw() {
 			0u);
 	}
 
-	hr = commandList->Close(); // CommandList 郢 E E E 蟶晏陶邵 E E E 蛟･ E E E ・娜U 邵 E E E ・ E E E 陞ｳ貁E E  E ・ E E E 蠕後堤 E E E  E E E 髦 E E E ・玖ｿ E E E ・ E E E 隲 E E E 荵昶・驕抵 E E E  E E E 陞ｳ螢 E E E 笘 E E E E  E E E 荵敖繝ｻ
+	hr = commandList->Close();
 	if (FAILED(hr)) {
 		Log(g_logStream, std::format("CommandList Close failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
 		g_isDrawRequested = false;
 		return;
 	}
 
-	// commandLists 邵 E E E ・ E E E  ExecuteCommandLists 邵 E E E ・ E E E 雋ゑ E E E  E E E 邵 E E E 蜻守ｷ帝匁E E  E  E E E  CommandList 鬩滓ｦ翫・邵 E E E 繝ｻ
 	ID3D12CommandList* commandLists[] = {commandList.Get()};
 	commandQueue->ExecuteCommandLists(1, commandLists);
 
@@ -6842,7 +6906,7 @@ void EditorRenderManager::Draw() {
 		hasLoggedFirstPresent = true;
 	}
 
-	fenceValue++; // fenceValue 郢 E E E 蟶敖・ E E E 郢 E E E 竏堋竏ｽ・ E E E 髮∝ｱ鍋ｸ E E E ・ E E E 隰 E E E 蜀怜 E陞ｳ蠕｡・ E E E 繝ｻ・ E E E 蜥 E E E ・ E E E ・ E E E 郢 E E E 繝ｻGPU 邵 E E E ・ E E E 髫 E E E 蛟ｬ鮖ｸ邵 E E E 蜷 E E E ・狗ｸ E E E 繝ｻ
+	fenceValue++;
 	hr = commandQueue->Signal(fence.Get(), fenceValue);
 	if (FAILED(hr)) {
 		Log(g_logStream, std::format("CommandQueue Signal failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
@@ -6850,7 +6914,6 @@ void EditorRenderManager::Draw() {
 		return;
 	}
 
-	// GPU 邵 E E E 蠕｡・ E E E 髮∝ｱ鍋ｸ E E E ・ E E E 隰 E E E 蜀怜 E郢 E E E 蝣 E E E ・ E E E 繧・斡郢 E E E 荵昶穐邵 E E E ・ E E E 陟輔 E笁E E  E 邵 E E E 竏ｵ・ E E E ・ E E E 郢晁E E  E 釁E E  E  E 晢 E E E  E E E 郢晢 E E E  E E E 邵 E E E ・ E E E 郢晢 E E E  E E E 郢 E E E ・ E E E 郢晢 E E E  E E E 郢 E E E ・ E E E 郢 E E E 蜻亥 E E E 檎ｸ E E E 閧 E E E 驪 E E E 邵 E E E 蛹 E E E 窶 E E E 郢 E E E 繧・ E E E  E E E 迚吶・邵 E E E ・ E E E 邵 E E E 蜷 E E E ・狗ｸ E E E 繝ｻ
 	if (fence->GetCompletedValue() < fenceValue) {
 		hr = fence->SetEventOnCompletion(fenceValue, fenceEvent);
 		if (FAILED(hr)) {
@@ -6927,5 +6990,4 @@ void EditorRenderManager::Draw() {
 		: 0.0f;
 
 	g_isDrawRequested = false;
-	// 闔 E E E E  E E E 繝ｵ郢晢 E E E  E E E 郢晢 E E E  E E E 郢晢 E E E  E E E 邵 E E E ・ E E E 隰 E E E 蜀怜 E髫補扱・ E E E 繧・ E E E 定ｱ E E E 驛 E E E E  E E E ・ E E E 邵 E E E 蜉ｱ笳・ E E E  E E E ・ E E E 邵 E E E ・ E E E 邵 E E E 竏ｵ・ E E E ・ E E E 邵 E E E ・ E E E  ImGui::Render 邵 E E E ・ E E E 邵 E E E ・ E E E  Renderer 郢 E E E 蜻茨 E E E  E E E ・ E E E 郢 E E E 竏夲 E E E 狗ｸ E E E 繝ｻ
 }

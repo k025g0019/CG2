@@ -2,11 +2,9 @@
 <#
     Source 配下の C++ ソースについて、あとから直すのが高くつく3点だけを検査する。
 
-    1. 文字化け (U+FFFD) の増加
-       EditorSharedState.h と EditorPlatformManager.cpp には、Shift-JIS の
-       コメントが UTF-8 へ取り込まれた際に壊れた文字が計 4,239 個ある。漢字部分は
-       先行バイトが失われていて復元できない(推測で書き直すと内容の捏造になる)。
-       これ以上増やさないことだけを機械的に守る。
+    1. 文字化けの混入
+       Source 配下には U+FFFD と典型的な文字化け断片を許可しない。UTF-8 以外の
+       文字コードで保存したり、壊れた文字列を貼り付けたりした場合に検出する。
 
     2. UTF-8 BOM の欠落
        本体は /utf-8 でコンパイルするので BOM が無くても通るが、BOM 無し UTF-8 を
@@ -21,8 +19,8 @@
     終了コード 0 = 問題なし。1 = 違反あり。
 #>
 param(
-    # 既知の文字化け総数。この値より増えたら失敗する。減らした場合はこの値も下げる。
-    [int]$AllowedReplacementCharacterCount = 4239,
+    # Source 配下では文字化けを許可しない。移行作業中だけ明示的に上限を指定できる。
+    [int]$AllowedReplacementCharacterCount = 0,
 
     [switch]$Quiet
 )
@@ -39,8 +37,10 @@ $sourceFiles = Get-ChildItem -LiteralPath $sourceRoot -Recurse -File -Include *.
 
 $replacementTotal = 0
 $replacementFiles = @()
+$mojibakeFragmentHits = @()
 $missingBomFiles = @()
 $assertHresultHits = @()
+$mojibakeFragmentPattern = "縺|繧|繝|譁|蜿|邵|郢|陷|隴|ぁE|めE|亁E|綁E|琁E|宁E|匁E|吁E|晁E|、E\s*$|。E\s*$"
 
 foreach ($sourceFile in $sourceFiles) {
     $bytes = [System.IO.File]::ReadAllBytes($sourceFile.FullName)
@@ -61,6 +61,10 @@ foreach ($sourceFile in $sourceFiles) {
             Path  = $sourceFile.FullName.Substring($workspaceRoot.Length + 1)
             Count = $replacementCount
         }
+    }
+
+    if ($text -match $mojibakeFragmentPattern) {
+        $mojibakeFragmentHits += $sourceFile.FullName.Substring($workspaceRoot.Length + 1)
     }
 
     # --- 3. assert(SUCCEEDED(...)) 検査 ---
@@ -92,12 +96,19 @@ Write-Section "[1] 文字化け (U+FFFD): $replacementTotal 個 / 上限 $Allowe
 foreach ($replacementFile in ($replacementFiles | Sort-Object -Property Count -Descending)) {
     Write-Section ("    {0,6} 個  {1}" -f $replacementFile.Count, $replacementFile.Path)
 }
+foreach ($mojibakeFragmentHit in $mojibakeFragmentHits) {
+    Write-Section "    文字化け断片  $mojibakeFragmentHit"
+}
 if ($replacementTotal -gt $AllowedReplacementCharacterCount) {
     Write-Host "    NG: 文字化けが増えています。Shift-JIS で保存されたファイルがないか確認してください。" -ForegroundColor Red
     $hasViolation = $true
 }
 elseif ($replacementTotal -lt $AllowedReplacementCharacterCount) {
     Write-Section "    改善しています。-AllowedReplacementCharacterCount の既定値を $replacementTotal へ下げてください。"
+}
+if ($mojibakeFragmentHits.Count -gt 0) {
+    Write-Host "    NG: 典型的な文字化け断片が残っています。" -ForegroundColor Red
+    $hasViolation = $true
 }
 
 # --- 結果 2 ---

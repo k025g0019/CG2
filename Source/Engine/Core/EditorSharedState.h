@@ -93,35 +93,34 @@ using Microsoft::WRL::ComPtr;
 
 namespace EditorSharedState {
 	// ================================
-	// WAV �t�@�C���ǂݍ��ݗp�̃f�[�^�\��
+	// WAV 読み込み用のデータ構造
 	// ================================
 	struct ChunkHeader {
-		char id[4]; // id �� "RIFF"�A"fmt "�A"data" �Ȃǂ� 4 �����`�����N���B
-		int32_t size; // size �͂��̃`�����N�{�̂̃o�C�g���B
+		char id[4];
+		int32_t size;
 	};
 
 	struct RiffHeader {
-		ChunkHeader chunk; // chunk �� RIFF �t�@�C���S�̂̃`�����N���B
-		char type[4]; // type �� WAV �t�@�C���ł��邱�Ƃ�\�� "WAVE"�B
+		ChunkHeader chunk;
+		char type[4];
 	};
 
 	struct FormatChunk {
-		ChunkHeader chunk; // chunk �� "fmt " �`�����N�� ID �ƃT�C�Y�B
-		WAVEFORMATEX format; // format �� �T���v�����O���[�g��`�����l�����Ȃǂ� WAV �`�����B
+		ChunkHeader chunk;
+		WAVEFORMATEX format;
 	};
 
 	struct SoundData {
-		WAVEFORMATEX wfex; // wfex �� XAudio2 SourceVoice �쐬�ɓn�� WAV �`�����B
-		BYTE* pBuffer; // pBuffer �� WAV �� PCM �f�[�^�{�́B
-		uint32_t bufferSize; // bufferSize �� pBuffer �̃o�C�g���B
+		WAVEFORMATEX wfex;
+		BYTE* pBuffer;
+		uint32_t bufferSize;
 	};
 
 	inline ID3D12Resource* CreateBufferResource(ID3D12Device* device, size_t sizeInBytes);
-	// GPU UploadBuffer �� OBJ �ǂݍ��݂Ɏg�� helper �錾�B
 	inline MaterialData LoadMaterialTemplateFile(const std::string& directoryPath, const std::string& filename);
 	inline ModelData LoadObjFile(const std::string& directoryPath, const std::string& filename);
 
-	inline SoundData SoundLoadWave(const char* filePath); // WAV �ǂݍ��݂Ɖ���Ɏg�� helper �錾�B
+	inline SoundData SoundLoadWave(const char* filePath);
 	inline void SoundUnload(SoundData* soundData);
 	// 起動時Shaderを最後まで検査し、失敗した全Pathを1回の画面表示へまとめる。
 	inline std::vector<std::string> g_shaderCompilationFailures;
@@ -150,17 +149,17 @@ namespace EditorSharedState {
 
 	inline D3D12_CPU_DESCRIPTOR_HANDLE GetCPUDescriptorHandle(
 		ID3D12DescriptorHeap* descriptorHeap, UINT descriptorSize, UINT index) {
+		// Heap 先頭から Descriptor のバイト幅だけ進め、指定番号の Handle を返す。
 		D3D12_CPU_DESCRIPTOR_HANDLE handle = descriptorHeap->GetCPUDescriptorHandleForHeapStart();
-		// handle �� Heap �擪�� CPU DescriptorHandle�B
-		handle.ptr += descriptorSize * index; // descriptorSize * index �����i�߂āAindex �Ԗڂ� CPU Handle �����B
+		handle.ptr += descriptorSize * index;
 		return handle;
 	}
 
 	inline D3D12_GPU_DESCRIPTOR_HANDLE GetGPUDescriptorHandle(
 		ID3D12DescriptorHeap* descriptorHeap, UINT descriptorSize, UINT index) {
+		// CPU Handle と同じ規則で、Shader へ渡す GPU Handle を求める。
 		D3D12_GPU_DESCRIPTOR_HANDLE handle = descriptorHeap->GetGPUDescriptorHandleForHeapStart();
-		// handle �� Heap �擪�� GPU DescriptorHandle�B
-		handle.ptr += descriptorSize * index; // descriptorSize * index �����i�߂āAindex �Ԗڂ� GPU Handle �����B
+		handle.ptr += descriptorSize * index;
 		return handle;
 	}
 
@@ -177,10 +176,8 @@ namespace EditorSharedState {
 			return emptyImage;
 		}
 
-		// metadata �͓ǂݍ��񂾉摜�̕��E�����E�`�����󂯎��B
 		DirectX::TexMetadata metadata{};
 
-		// image �� WIC / HDR / DDS ����ǂݍ��񂾌��摜�f�[�^�B
 		DirectX::ScratchImage image{};
 
 		std::filesystem::path path(resolvedFilePath);
@@ -236,7 +233,6 @@ namespace EditorSharedState {
 			return image;
 		}
 
-		// mipImages �� GPU �T���v�����O�p�� mipmap ��ǉ������摜�f�[�^�B
 		DirectX::ScratchImage mipImages{};
 
 		const DirectX::TEX_FILTER_FLAGS mipFilter = useSrgbMipFilter
@@ -266,7 +262,7 @@ namespace EditorSharedState {
 			return nullptr;
 		}
 
-		// resourceDesc �� metadata �ɍ��킹�� 2D Texture Resource �̐ݒ�B
+		// UploadTextureData から転送するため、初期状態は COPY_DEST にする。
 		D3D12_RESOURCE_DESC resourceDesc{};
 		resourceDesc.Width = static_cast<UINT>(metadata.width);
 		resourceDesc.Height = static_cast<UINT>(metadata.height);
@@ -276,13 +272,11 @@ namespace EditorSharedState {
 		resourceDesc.SampleDesc.Count = 1;
 		resourceDesc.Dimension = static_cast<D3D12_RESOURCE_DIMENSION>(metadata.dimension);
 
-		// heapProperties �� GPU ��p��������� Texture ��u���w��B
 		D3D12_HEAP_PROPERTIES heapProperties{};
 		heapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
 
-		ID3D12Resource* resource = nullptr; // resource �͍쐬���ĕԂ� Texture Resource�B
+		ID3D12Resource* resource = nullptr;
 
-		// ������� COPY_DEST �́A��� UploadTextureData ����R�s�[���邽�߁B
 		HRESULT hr = device->CreateCommittedResource(
 			&heapProperties,
 			D3D12_HEAP_FLAG_NONE,
@@ -310,12 +304,12 @@ namespace EditorSharedState {
 			return nullptr;
 		}
 
-		std::vector<D3D12_SUBRESOURCE_DATA> subresources; // subresources �� mipmap �e�i�� UpdateSubresources �ɓn�����߂̔z��B
+		// DirectXTex の各 mip を D3D12 の Subresource 配列へ変換する。
+		std::vector<D3D12_SUBRESOURCE_DATA> subresources;
 		subresources.reserve(mipImages.GetImageCount());
 
-		const DirectX::Image* images = mipImages.GetImages(); // images �� DirectXTex ���ێ����� mipmap �e�i�̉摜�|�C���^�B
+		const DirectX::Image* images = mipImages.GetImages();
 		for (size_t index = 0; index < mipImages.GetImageCount(); ++index) {
-			// subresource �� 1 mip ���̃s�N�Z���|�C���^�ƍs/�X���C�X���B
 			D3D12_SUBRESOURCE_DATA subresource{};
 			subresource.pData = images[index].pixels;
 			subresource.RowPitch = static_cast<LONG_PTR>(images[index].rowPitch);
@@ -324,14 +318,11 @@ namespace EditorSharedState {
 		}
 
 		UINT64 intermediateSize = GetRequiredIntermediateSize(texture, 0, static_cast<UINT>(subresources.size()));
-		// intermediateSize �͑S mip �� GPU Texture �փR�s�[���邽�߂ɕK�v�� UploadBuffer �T�C�Y�B
 		ID3D12Resource* intermediateResource = CreateBufferResource(device, intermediateSize);
-		// intermediateResource �� texture �փR�s�[���邽�߂̈ꎞ UploadBuffer�B
 		if (intermediateResource == nullptr) {
 			return nullptr;
 		}
 
-		// UpdateSubresources �� UploadBuffer ���� Default Heap Texture �փR�s�[���߂�ςށB
 		const UINT64 uploadedSize = UpdateSubresources(
 			commandList,
 			texture,
@@ -345,7 +336,7 @@ namespace EditorSharedState {
 			return nullptr;
 		}
 
-		// barrier �� Texture ���R�s�[���Ԃ��� Shader �ǂݎ���Ԃ֕ς��閽�߁B
+		// 転送後は Texture を Shader から読み取れる状態へ遷移させる。
 		D3D12_RESOURCE_BARRIER barrier{};
 		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		barrier.Transition.pResource = texture;
@@ -362,11 +353,9 @@ namespace EditorSharedState {
 			return nullptr;
 		}
 
-		// uploadHeapProperties �� CPU ���� Map ���ď������߂� Upload Heap �w��B
 		D3D12_HEAP_PROPERTIES uploadHeapProperties{};
 		uploadHeapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
 
-		// resourceDesc �� sizeInBytes ���̔ėp Buffer Resource �ݒ�B
 		D3D12_RESOURCE_DESC resourceDesc{};
 		resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
 		resourceDesc.Width = sizeInBytes;
@@ -376,9 +365,8 @@ namespace EditorSharedState {
 		resourceDesc.SampleDesc.Count = 1;
 		resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
-		ID3D12Resource* resource = nullptr; // resource �͍쐬���ĕԂ� Upload Buffer�B
+		ID3D12Resource* resource = nullptr;
 
-		// GENERIC_READ �� CPU �������݌�� GPU ����ǂޒ萔/���_ Buffer �Ɏg���B
 		HRESULT hr = device->CreateCommittedResource(
 			&uploadHeapProperties,
 			D3D12_HEAP_FLAG_NONE,
@@ -415,13 +403,11 @@ namespace EditorSharedState {
 		}
 		
 		ComPtr<IDxcBlobEncoding> shaderSource = shaderSourceSource;
-		// shaderSourceBuffer �� DXC �ɓn���\�[�X�R�[�h�̃|�C���^�E�T�C�Y�E�����R�[�h�B
 		DxcBuffer shaderSourceBuffer{};
 		shaderSourceBuffer.Ptr = shaderSource->GetBufferPointer();
 		shaderSourceBuffer.Size = shaderSource->GetBufferSize();
 		shaderSourceBuffer.Encoding = DXC_CP_UTF8;
 
-		// arguments �� entry point�AShader Model�ADebug ���A�œK���A�s��z�u�̎w��B
 		std::vector<std::wstring> includeDirectories{};
 		includeDirectories.push_back(L"Assets/Shaders");
 		includeDirectories.push_back(L"Assets/Shaders/lygia");
@@ -459,7 +445,7 @@ namespace EditorSharedState {
 			arguments.push_back(includeDirectory.c_str());
 		}
 
-		ComPtr<IDxcResult> shaderResult; // shaderResult �� DXC �̃R���p�C�����ʖ{�́B
+		ComPtr<IDxcResult> shaderResult;
 		hr = dxcCompiler->Compile(
 			&shaderSourceBuffer,
 			arguments.data(),
@@ -468,11 +454,11 @@ namespace EditorSharedState {
 			IID_PPV_ARGS(shaderResult.GetAddressOf()));
 		EDITOR_HR_VERIFY(hr);
 
-		HRESULT compileStatus = S_OK; // compileStatus �� DXC ���Ԃ����ŏI�I�ȃR���p�C�����ہB
+		HRESULT compileStatus = S_OK;
 		hr = shaderResult->GetStatus(&compileStatus);
 		EDITOR_HR_VERIFY(hr);
 
-		ComPtr<IDxcBlobUtf8> shaderError; // shaderError �� HLSL �R���p�C���G���[��x���̕�����B
+		ComPtr<IDxcBlobUtf8> shaderError;
 		shaderResult->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(shaderError.GetAddressOf()), nullptr);
 		if (shaderError != nullptr && shaderError->GetStringLength() != 0) {
 			Log(shaderError->GetStringPointer());
@@ -489,7 +475,7 @@ namespace EditorSharedState {
 			return nullptr;
 		}
 
-		ComPtr<IDxcBlob> shaderBlob; // shaderBlob �� GPU �ɓn���ŏI�I�� DXIL �o�C�g�R�[�h�B
+		ComPtr<IDxcBlob> shaderBlob;
 		hr = shaderResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(shaderBlob.GetAddressOf()), nullptr);
 		EDITOR_HR_VERIFY(hr);
 
@@ -500,27 +486,24 @@ namespace EditorSharedState {
 	}
 
 	inline MaterialData LoadMaterialTemplateFile(const std::string& directoryPath, const std::string& filename) {
-		// materialData �� .mtl ����ǂݎ���� Texture �p�X��Ԃ����߂̍\���́B
 		MaterialData materialData{};
 
-		std::ifstream file(directoryPath + "/" + filename); // file �� directoryPath/filename �� .mtl �t�@�C���B
+		std::ifstream file(directoryPath + "/" + filename);
 		if (!file.is_open()) {
 			Log(std::format("Material file is missing: {}/{}", directoryPath, filename));
 			return materialData;
 		}
 
-		std::string line; // line �� .mtl �� 1 �s���ǂނ��߂̕�����B
+		std::string line;
 		while (std::getline(file, line)) {
-			std::string identifier; // identifier �� map_Kd �ȂǁA�s�擪�̖��ߖ��B
+			std::string identifier;
 			std::istringstream lineStream(line);
 			lineStream >> identifier;
 
-			// map_Kd �� Diffuse Texture �t�@�C���������� .mtl ���߁B
 			if (identifier == "map_Kd") {
 				lineStream >> materialData.textureFilePath;
 
 				materialData.textureFilePath = directoryPath + "/" + materialData.textureFilePath;
-				// OBJ ���猩�����΃p�X���A�ǂݍ��݂Ɏg���� directoryPath �t���p�X�֒����B
 			}
 		}
 
@@ -528,7 +511,6 @@ namespace EditorSharedState {
 	}
 
 	inline ModelData LoadObjFile(const std::string& directoryPath, const std::string& filename) {
-		// modelData �� OBJ �̒��_�z��� Material �����܂Ƃ߂ĕԂ��B
 		ModelData modelData{};
 
 		const std::filesystem::path resolvedModelPath =
@@ -538,18 +520,18 @@ namespace EditorSharedState {
 			return modelData;
 		}
 
-		std::vector<Vector4> positions; // positions / texcoords / normals �� OBJ �� v / vt / vn ���ꎞ�ۑ�����z��B
+		std::vector<Vector4> positions;
 		std::vector<Vector2> texcoords;
 		std::vector<Vector3> normals;
 
-		std::string line; // line �� OBJ �� 1 �s���ǂނ��߂̕�����B
+		std::string line;
 
 		while (std::getline(file, line)) {
-			std::string identifier; // identifier �� v�Avt�Avn�Af�Amtllib �Ȃǂ̍s��ʁB
+			std::string identifier;
 			std::istringstream lineStream(line);
 			lineStream >> identifier;
 
-			// v �͒��_�ʒu�BX �𔽓]���ĉE��/������W�n�̈Ⴂ�����킹��B
+			// OBJ の右手座標系を Engine の左手座標系へ合わせる。
 			if (identifier == "v") {
 				Vector4 position{};
 				lineStream >> position.x >> position.y >> position.z;
@@ -558,28 +540,24 @@ namespace EditorSharedState {
 				positions.push_back(position);
 			}
 			else if (identifier == "vt") {
-				// vt �� Texture ���W�B�摜���W�n�ɍ��킹�邽�� Y �𔽓]����B
 				Vector2 texcoord{};
 				lineStream >> texcoord.x >> texcoord.y;
 				texcoord.y = 1.0f - texcoord.y;
 				texcoords.push_back(texcoord);
 			}
 			else if (identifier == "vn") {
-				// vn �͖@���B�ʒu�Ɠ������W�n�ɍ��킹�邽�� X �𔽓]����B
 				Vector3 normal{};
 				lineStream >> normal.x >> normal.y >> normal.z;
 				normal.x *= -1.0f;
 				normals.push_back(normal);
 			}
 			else if (identifier == "f") {
-				// triangle �� 1 �ʕ��� 3 ���_���ꎞ�ۑ�����z��B
 				VertexData triangle[3]{};
 				for (int32_t faceVertex = 0; faceVertex < 3; ++faceVertex) {
-					std::string vertexDefinition; // vertexDefinition �� "�ʒu/UV/�@��" �`���� 1 ���_�w��B
+					std::string vertexDefinition;
 					lineStream >> vertexDefinition;
 
 					std::istringstream vertexStream(vertexDefinition);
-					// vertexStream �� '/' ��؂�� index ������𕪉����邽�߂� stream�B
 					std::string positionIndexString;
 					std::string texcoordIndexString;
 					std::string normalIndexString;
@@ -588,7 +566,6 @@ namespace EditorSharedState {
 					std::getline(vertexStream, normalIndexString, '/');
 
 					uint32_t positionIndex = static_cast<uint32_t>(std::stoi(positionIndexString)) - 1;
-					// OBJ �� index �� 1 �n�܂�Ȃ̂ŁAC++ �z��p�� 0 �n�܂�֒����B
 					uint32_t texcoordIndex = static_cast<uint32_t>(std::stoi(texcoordIndexString)) - 1;
 					uint32_t normalIndex = static_cast<uint32_t>(std::stoi(normalIndexString)) - 1;
 
@@ -597,16 +574,16 @@ namespace EditorSharedState {
 					triangle[faceVertex].normal = normals[normalIndex];
 				}
 
-				modelData.vertices.push_back(triangle[2]); // ���_���𔽓]���A���W�n�ϊ���̖ʂ̌��������킹��B
+				// 座標系の変換後も表面の向きが維持されるよう、頂点順を反転する。
+				modelData.vertices.push_back(triangle[2]);
 				modelData.vertices.push_back(triangle[1]);
 				modelData.vertices.push_back(triangle[0]);
 			}
 			else if (identifier == "mtllib") {
-				std::string materialFilename; // materialFilename �� OBJ ���Q�Ƃ��� .mtl �t�@�C�����B
+				std::string materialFilename;
 				lineStream >> materialFilename;
 
 				modelData.material = LoadMaterialTemplateFile(resolvedModelPath.parent_path().string(), materialFilename);
-				// .mtl ��ǂݍ��݁ATexture �p�X�� modelData �ɕێ�����B
 			}
 		}
 
@@ -614,7 +591,6 @@ namespace EditorSharedState {
 	}
 
 	inline SoundData SoundLoadWave(const char* filePath) {
-		// soundData �� WAV ����ǂݎ�����`������ PCM �o�b�t�@��Ԃ��B
 		SoundData soundData{};
 
 		if (filePath == nullptr) {
@@ -627,7 +603,6 @@ namespace EditorSharedState {
 			return soundData;
 		}
 
-		// riff �� WAV �t�@�C���擪�� RIFF/WAVE �w�b�_�B
 		RiffHeader riff{};
 		file.read(reinterpret_cast<char*>(&riff), sizeof(riff));
 		if (!file ||
@@ -636,7 +611,7 @@ namespace EditorSharedState {
 			return soundData;
 		}
 
-		// format �� "fmt " �`�����N�BXAudio2 �� SourceVoice �쐬�Ɏg���B
+		// fmt と data の間に未知の Chunk があっても読み飛ばせるよう、順番に走査する。
 		FormatChunk format{};
 		bool hasFormatChunk = false;
 		ChunkHeader chunk{};
@@ -682,7 +657,6 @@ namespace EditorSharedState {
 			return soundData;
 		}
 
-		// data �� PCM �{�̂����� "data" �`�����N��T�����߂̃w�b�_�B
 		ChunkHeader data{};
 		bool hasDataChunk = false;
 		while (file.read(reinterpret_cast<char*>(&data), sizeof(data))) {
@@ -695,7 +669,7 @@ namespace EditorSharedState {
 				break;
 			}
 
-			file.seekg(static_cast<std::streamoff>(data.size), std::ios_base::cur); // data �ȊO�̃`�����N�̓T�C�Y�������ǂݔ�΂��Ď��̃`�����N������B
+			file.seekg(static_cast<std::streamoff>(data.size), std::ios_base::cur);
 			if (!file) {
 				return soundData;
 			}
@@ -705,15 +679,15 @@ namespace EditorSharedState {
 			return soundData;
 		}
 
-		uint32_t dataSize = static_cast<uint32_t>(data.size); // dataSize �� PCM �o�b�t�@�̃o�C�g���B
-		auto pBuffer = new char[static_cast<size_t>(dataSize)]; // pBuffer �� XAudio2 �ɓn�� PCM �f�[�^�BSoundUnload �ŉ������B
+		uint32_t dataSize = static_cast<uint32_t>(data.size);
+		auto pBuffer = new char[static_cast<size_t>(dataSize)];
 		file.read(pBuffer, static_cast<std::streamsize>(dataSize));
 		if (!file) {
 			delete[] pBuffer;
 			return soundData;
 		}
 
-		soundData.wfex = format.format; // �ǂݍ��񂾌`������ PCM �o�b�t�@�� SoundData �ɋl�߂�B
+		soundData.wfex = format.format;
 		soundData.pBuffer = reinterpret_cast<BYTE*>(pBuffer);
 		soundData.bufferSize = dataSize;
 		return soundData;
@@ -735,9 +709,9 @@ namespace EditorSharedState {
 #pragma warning(disable : 4101 4189 4514 5045)
 
 namespace EditorSharedState {
-	constexpr uint32_t kRuntimeTextureCount = 4; // kRuntimeTextureCount �͋N�����ɌŒ�Ŋm�ۂ���W�� Texture ���B
-	constexpr uint32_t kRuntimeSwapChainBufferCount = 2; // kRuntimeSwapChainBufferCount �� SwapChain �� back buffer ���B
-	constexpr uint32_t kRuntimeSpriteIndexCount = 6; // kRuntimeSpriteIndexCount �� Sprite �l�p�`�� 2 �O�p�`�ŕ`�� index ���B
+	constexpr uint32_t kRuntimeTextureCount = 4;
+	constexpr uint32_t kRuntimeSwapChainBufferCount = 2;
+	constexpr uint32_t kRuntimeSpriteIndexCount = 6;
 	constexpr uint32_t kRuntimeShadowMapSize = 5120; // 5x5 atlas。Sun CSM とPoint Lightのキューブ影(6面)を同居させる。
 	// 画像SRVを置く共通Descriptor Heapの総容量。普通のGame Engineと同じ桁へ合わせている。
 	// D3D12の保証上限は1,000,000で、1個32B程度のため65536でも約2MB。足りなければここだけ増やす。
@@ -749,22 +723,23 @@ namespace EditorSharedState {
 	constexpr uint32_t kMaxSceneLights = 16;
 	constexpr uint32_t kShadowAtlasTiles = 5; // 5x5 grid = 25 タイル。各タイルは 1024x1024。
 	// タイル予算: Sun cascade 4 + Point Light最大3灯 x 6面 = 22。25タイルなら収まる。
-	constexpr uint32_t kRuntimeHdrSrvDescriptorIndex = 16; // HDR RT �� SRV �� DescriptorHeap �� 16 �ԖځB
-	constexpr uint32_t kRuntimeBloomSrvDescriptorIndexA = 17; // Bloom A �� SRV �� 17 �ԖځB
-	constexpr uint32_t kRuntimeBloomSrvDescriptorIndexB = 18; // Bloom B �� SRV �� 18 �ԖځB
-	constexpr uint32_t kRuntimePostProcessSrvDescriptorIndex = 19; // ToneMap ��� LDR RT �� FXAA �̓��͂Ƃ��� 19 �ԖځB
-	constexpr uint32_t kRuntimeDepthSrvDescriptorIndex = 20; // Scene Depth �� SSAO �œǂނ��߂� SRV�B
-	constexpr uint32_t kRuntimeSsaoSrvDescriptorIndexA = 21; // SSAO ���ڂ������ʂ� SRV�B
-	constexpr uint32_t kRuntimeSsaoSrvDescriptorIndexB = 22; // SSAO �ڂ������ʂ� SRV�B
-	constexpr uint32_t kRuntimeHdrCompositeSrvDescriptorIndex = 23; // ���ˍ����� HDR �� SRV�B
-	constexpr uint32_t kRuntimeIblIrradianceSrvDescriptorIndex = 24; // IBL �g�U irradiance cube �� SRV�B
-	constexpr uint32_t kRuntimeIblPrefilterSrvDescriptorIndex = 25; // IBL ���O�t�B���^�[�ς� cube �� SRV�B
-	constexpr uint32_t kRuntimeIblEnvironmentSrvDescriptorIndex = 26; // IBL �� cube �� SRV�B
-	constexpr uint32_t kRuntimeIblBrdfLutSrvDescriptorIndex = 27; // IBL BRDF LUT �� SRV�B
+	// 16～30 番は従来の描画経路が固定利用するため、順番を変更しない。
+	constexpr uint32_t kRuntimeHdrSrvDescriptorIndex = 16;
+	constexpr uint32_t kRuntimeBloomSrvDescriptorIndexA = 17;
+	constexpr uint32_t kRuntimeBloomSrvDescriptorIndexB = 18;
+	constexpr uint32_t kRuntimePostProcessSrvDescriptorIndex = 19;
+	constexpr uint32_t kRuntimeDepthSrvDescriptorIndex = 20;
+	constexpr uint32_t kRuntimeSsaoSrvDescriptorIndexA = 21;
+	constexpr uint32_t kRuntimeSsaoSrvDescriptorIndexB = 22;
+	constexpr uint32_t kRuntimeHdrCompositeSrvDescriptorIndex = 23;
+	constexpr uint32_t kRuntimeIblIrradianceSrvDescriptorIndex = 24;
+	constexpr uint32_t kRuntimeIblPrefilterSrvDescriptorIndex = 25;
+	constexpr uint32_t kRuntimeIblEnvironmentSrvDescriptorIndex = 26;
+	constexpr uint32_t kRuntimeIblBrdfLutSrvDescriptorIndex = 27;
 	constexpr uint32_t kRuntimeColorGradingLutSrvDescriptorIndex = 113u;
-	constexpr uint32_t kRuntimeMaterialMaskSrvDescriptorIndex = 28; // Object3d �̋��ʗ� / �e���}�X�N SRV�B
-	constexpr uint32_t kRuntimePlanarReflectionSrvDescriptorIndex = 29; // ���ʔ��˗p�ɕʃJ�����ŕ`���� HDR RT �� SRV�B
-	constexpr uint32_t kRuntimeEnvironmentSrvDescriptorIndex = 30; // ���摜 / HDRI �� SRV�B
+	constexpr uint32_t kRuntimeMaterialMaskSrvDescriptorIndex = 28;
+	constexpr uint32_t kRuntimePlanarReflectionSrvDescriptorIndex = 29;
+	constexpr uint32_t kRuntimeEnvironmentSrvDescriptorIndex = 30;
 	constexpr uint32_t kRuntimeDepthPyramidDescriptorStartIndex = 31u; // 深度ピラミッドは SRV/UAV を交互に 31～54 番へ配置する。
 	constexpr uint32_t kRuntimeReconstructedNormalSrvDescriptorIndex = 55u; // 深度から再構築したワールド法線の SRV。
 	constexpr uint32_t kRuntimeReconstructedNormalUavDescriptorIndex = 56u; // ワールド法線を書き込む UAV。
@@ -781,90 +756,80 @@ namespace EditorSharedState {
 	constexpr uint32_t kRuntimeOitRevealageDuplicateSrvDescriptorIndex = 122u;
 	constexpr uint32_t kRuntimeOpaqueDepthCopySrvDescriptorIndex = 114u;
 	constexpr uint32_t kRuntimeRtvCount = 17; // +3: SSGI 半解像度(現在フレーム + 履歴2枚) // swap2 + HDR/Bloom/Post/SSAO/Composite/Mask/Planar + OIT 2枚
-	inline HINSTANCE g_instanceHandle = nullptr; // g_instanceHandle �� Win32 Window �� DirectInput �������Ɏg���A�v�����́B
-	inline int g_exitCode = 0; // g_exitCode �� WinMain �֕Ԃ��I���R�[�h�B
-	inline bool g_isInitialized = false; // g_isInitialized �� PlatformManager �̏�������������������\���t���O�B
-	inline bool g_isInitializationFailed = false; // g_isInitializationFailed �͏��������s�Ō㑱 Manager ���~�߂邽�߂̃t���O�B
-	inline bool g_isEndRequested = false; // g_isEndRequested �� WinMain �̃��C�����[�v�𔲂��邽�߂̏I���v���t���O�B
-	inline bool g_isFinalized = false; // g_isFinalized �� Finalize �ς݃��\�[�X�֓�d�A�N�Z�X���Ȃ����߂̃t���O�B
-	inline bool g_isDrawRequested = false; // g_isDrawRequested �� ImGui::Render ��� Renderer �� GPU �`�悵�Ă悢����\���t���O�B
-	inline std::ofstream g_logStream; // g_logStream �͎��s���O�� Shader compile ���O�̏o�͐�B
-	inline HWND g_windowHandle = nullptr; // g_windowHandle �� SwapChain�AImGui Win32 backend�ADirectInput �Ɏg�� HWND�B
-	inline HRESULT g_hr = S_OK; // g_hr �͒��߂� HRESULT �����L���ăf�o�b�O�m�F���邽�߂̒l�B
-	inline IDirectInput8* g_directInput = nullptr; // g_directInput �̓L�[�{�[�h�E�}�E�X�f�o�C�X�𐶐����� DirectInput �{�́B
-	inline IDirectInputDevice8* g_keyboardDevice = nullptr; // g_keyboardDevice �� DIK_* �̉�����Ԃ�ǂޓ��̓f�o�C�X�B
-	inline IDirectInputDevice8* g_mouseDevice = nullptr; // g_mouseDevice �̓}�E�X�̑��Έړ��ʁE�{�^����Ԃ�ǂޓ��̓f�o�C�X�B
-	inline DIMOUSESTATE g_mouseState{}; // g_mouseState �̓}�E�X�̊e���ړ��ʂƃ{�^��������ԁB
+	// PlatformManager で生成し、RenderManager などから共有する Runtime 状態。
+	inline HINSTANCE g_instanceHandle = nullptr;
+	inline int g_exitCode = 0;
+	inline bool g_isInitialized = false;
+	inline bool g_isInitializationFailed = false;
+	inline bool g_isEndRequested = false;
+	inline bool g_isFinalized = false;
+	inline bool g_isDrawRequested = false;
+	inline std::ofstream g_logStream;
+	inline HWND g_windowHandle = nullptr;
+	inline HRESULT g_hr = S_OK;
+	inline IDirectInput8* g_directInput = nullptr;
+	inline IDirectInputDevice8* g_keyboardDevice = nullptr;
+	inline IDirectInputDevice8* g_mouseDevice = nullptr;
+	inline DIMOUSESTATE g_mouseState{};
 	inline DIMOUSESTATE g_preMouseState{};  // Scriptの押した瞬間・離した瞬間判定に使う前フレーム状態。
 	inline bool g_runtimeCursorLocked = false;  // Play中のCameraまたはScriptがカーソル固定を要求している。
 	inline bool g_runtimeCursorVisible = true;  // Win32 ShowCursorの現在要求値。
 
-	// g_key �͍��t���[���� 256 �L�[������ԁB
 	inline BYTE g_key[256] = {};
 
-	// g_preKey �͑O�t���[���� 256 �L�[������ԁB
 	inline BYTE g_preKey[256] = {};
 
-	// g_message �� Win32 ���b�Z�[�W���[�v�ŏ������̃��b�Z�[�W�B
 	inline MSG g_message{};
 
-	inline IXAudio2* g_xAudio2 = nullptr; // g_xAudio2 �͉����Đ��G���W���{�́B
-	inline IXAudio2MasteringVoice* g_masterVoice = nullptr; // g_masterVoice �͍ŏI�o�͐�� XAudio2 Voice�B
+	inline IXAudio2* g_xAudio2 = nullptr;
+	inline IXAudio2MasteringVoice* g_masterVoice = nullptr;
 
-	// g_soundData �͓ǂݍ��� wav �� PCM �o�b�t�@�ƃt�H�[�}�b�g�B
 	inline SoundData g_soundData{};
 
-	inline IXAudio2SourceVoice* g_sourceVoice = nullptr; // g_sourceVoice �� g_soundData ���Đ����� XAudio2 SourceVoice�B
-	inline ComPtr<IDXGIFactory7> g_dxgiFactory; // g_dxgiFactory �� Adapter �� SwapChain ����� DXGI Factory�B
-	inline ComPtr<IDXGIAdapter4> g_useAdapter; // g_useAdapter �� D3D12Device ���쐬�������� GPU�B
-	inline ComPtr<ID3D12Device> g_device; // g_device �� DirectX12 ���\�[�X�����ƕ`�施�߂̒��S�B
-	inline ComPtr<ID3D12CommandQueue> g_commandQueue; // g_commandQueue / Allocator / List �� GPU �֕`�施�߂𑗂邽�߂̈ꎮ�B
+	inline IXAudio2SourceVoice* g_sourceVoice = nullptr;
+	inline ComPtr<IDXGIFactory7> g_dxgiFactory;
+	inline ComPtr<IDXGIAdapter4> g_useAdapter;
+	inline ComPtr<ID3D12Device> g_device;
+	inline ComPtr<ID3D12CommandQueue> g_commandQueue;
 	inline ComPtr<ID3D12CommandAllocator> g_commandAllocator;
 	inline ComPtr<ID3D12GraphicsCommandList> g_commandList;
 	inline ComPtr<ID3D12QueryHeap> g_renderTimestampQueryHeap;
 	inline ComPtr<ID3D12Resource> g_renderTimestampReadback;
 	inline std::uint64_t g_renderTimestampFrequency = 0u;
 
-	inline ComPtr<IDXGISwapChain4> g_swapChain; // g_swapChain �� Window �ɕ\������ back buffer ��B
+	inline ComPtr<IDXGISwapChain4> g_swapChain;
 
-	// g_swapChainDesc �� back buffer ���E�`���E�T�C�Y�̐ݒ�B
 	inline DXGI_SWAP_CHAIN_DESC1 g_swapChainDesc{};
 
 	inline ID3D12DescriptorHeap* g_rtvDescriptorHeap = nullptr;
-	// g_*DescriptorHeap �� RTV / SRV / DSV ���܂Ƃ߂ĕێ����� DescriptorHeap�B
 	inline ID3D12DescriptorHeap* g_srvDescriptorHeap = nullptr;
 	inline ID3D12DescriptorHeap* g_dsvDescriptorHeap = nullptr;
 
-	// g_swapChainResources �� SwapChain �� back buffer ���́B
 	inline ID3D12Resource* g_swapChainResources[kRuntimeSwapChainBufferCount] = {nullptr, nullptr};
 
-	// g_rtvDesc �� g_rtvHandles �� back buffer �� RenderTarget �Ƃ��Ďg���ݒ�ƃn���h���B
 	inline D3D12_RENDER_TARGET_VIEW_DESC g_rtvDesc{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_rtvHandles[kRuntimeSwapChainBufferCount]{};
 
-	// g_depthClearValue / g_dsvDesc / g_dsvHandle �� DepthStencil �� Clear �� View �쐬�Ɏg���B
 	inline D3D12_CLEAR_VALUE g_depthClearValue{};
 	inline D3D12_DEPTH_STENCIL_VIEW_DESC g_dsvDesc{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_dsvHandle{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_shadowDsvHandle{};
 
-	inline ID3D12Resource* g_depthStencilResource = nullptr; // g_depthStencilResource �� 3D �`��̑O��֌W�𔻒肷�� Depth �o�b�t�@�B
+	inline ID3D12Resource* g_depthStencilResource = nullptr;
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_depthSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_depthSrvHandleGPU{};
 	inline ID3D12Resource* g_opaqueDepthCopyResource = nullptr;
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_opaqueDepthCopySrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_opaqueDepthCopySrvHandleGPU{};
-	inline ID3D12Resource* g_shadowMapResource = nullptr; // ���s�������猩���[�x���������މe�p DepthTexture�B
+	inline ID3D12Resource* g_shadowMapResource = nullptr;
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_shadowMapSrvCpuHandle{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_shadowMapSrvGpuHandle{};
 
-	// HDR render target (R16G16B16A16_FLOAT) ? �V�[���� HDR ��Ԃŕ`�����߂� RT
 	inline ID3D12Resource* g_hdrRenderTarget = nullptr;
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_hdrRtvHandle{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_hdrSrvHandleCPU{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_hdrSrvHandleGPU{};
 
-	// Bloom ping-pong render targets (1/4 �𑜓x)
 	inline ID3D12Resource* g_bloomRenderTargets[2] = {};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_bloomRtvHandles[2]{};
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_bloomSrvHandlesCPU[2]{};
@@ -909,7 +874,7 @@ namespace EditorSharedState {
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_oitSrvHandlesCPU[2]{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_oitSrvHandlesGPU[2]{};
 
-	inline uint32_t g_renderWidth = 1u; // g_renderWidth / Height �� SwapChain �� DepthStencil �̌��݃T�C�Y�B
+	inline uint32_t g_renderWidth = 1u;
 	inline uint32_t g_renderHeight = 1u;
 
 	struct EditorRenderProfile {
@@ -931,11 +896,11 @@ namespace EditorSharedState {
 	inline std::string g_lastPhysicsBodyFailure = "-";
 	inline uint32_t g_physicsBodyFailureCount = 0u;
 
-	inline ComPtr<IDxcUtils> g_dxcUtils; // g_dxc* �� HLSL �̓ǂݍ��݁E�R���p�C���Einclude �����Ɏg�� DXC �I�u�W�F�N�g�B
+	inline ComPtr<IDxcUtils> g_dxcUtils;
 	inline ComPtr<IDxcCompiler3> g_dxcCompiler;
 	inline ComPtr<IDxcIncludeHandler> g_includeHandler;
 
-	inline ComPtr<IDxcBlob> g_vertexShaderBlob; // g_vertexShaderBlob / g_pixelShaderBlob �̓R���p�C���ς� Shader �o�C�g�R�[�h�B
+	inline ComPtr<IDxcBlob> g_vertexShaderBlob;
 	inline ComPtr<IDxcBlob> g_pixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_objectReflectionMaskPixelShaderBlob;
 	inline ComPtr<IDxcBlob> g_shadowVertexShaderBlob;
@@ -972,11 +937,10 @@ namespace EditorSharedState {
 	inline ComPtr<IDxcBlob> g_skinnedMotionVectorVertexShaderBlob;
 
 
-	inline ComPtr<ID3DBlob> g_signatureBlob; // g_signatureBlob / g_errorBlob �� RootSignature �V���A���C�Y���ʂƎ��s���O�B
+	inline ComPtr<ID3DBlob> g_signatureBlob;
 	inline ComPtr<ID3DBlob> g_errorBlob;
 
 	inline ComPtr<ID3D12RootSignature> g_rootSignature;
-	// g_rootSignature / g_graphicsPipelineState �� Draw ���Ɏg���Œ� GPU Pipeline �ݒ�B
 	inline ComPtr<ID3D12PipelineState> g_graphicsPipelineState;
 	inline ComPtr<ID3D12PipelineState> g_planarScenePipelineState;
 	inline ComPtr<ID3D12PipelineState> g_planarSurfacePipelineState;
@@ -1037,23 +1001,18 @@ namespace EditorSharedState {
 	// IBL uses existing root signature with added descriptor ranges
 
 	inline ID3D12Resource* g_spriteMaterialResource = nullptr;
-	// g_spriteMaterialResource / Data �� Sprite �`��p Material �萔�o�b�t�@�� mapped �|�C���^�B
 	inline Material* g_spriteMaterialData = nullptr;
 
 	inline ID3D12Resource* g_sphereMaterialResource = nullptr;
-	// g_sphereMaterialResource / Data �� 3D ���f���`��p Material �萔�o�b�t�@�� mapped �|�C���^�B
 	inline Material* g_sphereMaterialData = nullptr;
 
 	inline ID3D12Resource* g_directionalLightResource = nullptr;
-	// g_directionalLightResource / Data �� PixelShader �֓n�����s�����萔�o�b�t�@�� mapped �|�C���^�B
 	inline DirectionalLight* g_directionalLightData = nullptr;
 
 	inline ID3D12Resource* g_emissiveLightResource = nullptr;
-	// g_emissiveLightResource / Data �� PixelShader �֓n�����ˌ����萔�o�b�t�@�� mapped �|�C���^�B
 	inline EmissiveLightArray* g_emissiveLightData = nullptr;
 
 	inline ID3D12Resource* g_spriteTransformationMatrixResource = nullptr;
-	// g_*TransformationMatrixResource / Data �� Sprite �� 3D �v���r���[�� WVP/World �s��B
 	inline TransformationMatrix* g_spriteTransformationMatrixData = nullptr;
 	inline ID3D12Resource* g_sphereTransformationMatrixResource = nullptr;
 	inline TransformationMatrix* g_sphereTransformationMatrixData = nullptr;
@@ -1063,55 +1022,48 @@ namespace EditorSharedState {
 	inline ID3D12Resource* g_batchInstanceResource = nullptr;
 	inline EditorBatchInstanceData* g_batchInstanceData = nullptr;
 
-	// g_modelData �͋N�����ɓǂݍ��ފ��� OBJ ���f���B
 	inline ModelData g_modelData{};
-	constexpr size_t kEditorModelMeshTypeCount = static_cast<size_t>(EditorModelMeshType::Count); // ��{�`���b�V���z��̗v�f���B
-	inline ModelData g_editorPrimitiveModelData[kEditorModelMeshTypeCount]{}; // ��{�`���Ƃ� CPU �����_�f�[�^�B
-	inline ID3D12Resource* g_editorPrimitiveVertexResources[kEditorModelMeshTypeCount] = {}; // ��{�`���Ƃ� GPU ���_ Buffer�B
+	constexpr size_t kEditorModelMeshTypeCount = static_cast<size_t>(EditorModelMeshType::Count);
+	inline ModelData g_editorPrimitiveModelData[kEditorModelMeshTypeCount]{};
+	inline ID3D12Resource* g_editorPrimitiveVertexResources[kEditorModelMeshTypeCount] = {};
 	inline D3D12_VERTEX_BUFFER_VIEW g_editorPrimitiveVertexBufferViews[kEditorModelMeshTypeCount]{};
-	// Draw ���Ɏg����{�`�� BufferView�B
-	inline uint32_t g_editorPrimitiveVertexCounts[kEditorModelMeshTypeCount] = {}; // DrawInstanced �ɓn����{�`�̒��_���B
+	inline uint32_t g_editorPrimitiveVertexCounts[kEditorModelMeshTypeCount] = {};
 
-	inline std::vector<VertexData> g_vertices; // g_vertices �͋����v���r���[�p�ɐ����������_�z��B
+	inline std::vector<VertexData> g_vertices;
 
-	// g_sprite / g_spriteVertices / g_spriteIndices �͋� Sprite �v���r���[�̎l�p�`�f�[�^�B
 	inline Sprite g_sprite{};
 	inline VertexData g_spriteVertices[4]{};
 	inline uint32_t g_spriteIndices[kRuntimeSpriteIndexCount]{};
 
-	// g_transform / g_spriteTransform �͋��v���r���[�p�Ag_cameraTransform �� SceneView �J�����p�B
 	inline Transforms g_transform{};
 	inline Transforms g_spriteTransform{};
 	inline Transforms g_cameraTransform{};
 
-	// g_uvTransform �� Material �� UV �s�����邽�߂� Transform�B
 	inline Transforms g_uvTransform{};
 
-	inline ID3D12Resource* g_vertexResource = nullptr; // g_*Resource �͋��v���r���[�p�� VertexBuffer / IndexBuffer ���́B
+	inline ID3D12Resource* g_vertexResource = nullptr;
 	inline ID3D12Resource* g_modelVertexResource = nullptr;
 	inline ID3D12Resource* g_spriteVertexResource = nullptr;
 	inline ID3D12Resource* g_spriteIndexResource = nullptr;
 
-	// g_*BufferView �� Draw ���� IASetVertexBuffers / IASetIndexBuffer �֓n�����B
 	inline D3D12_VERTEX_BUFFER_VIEW g_vertexBufferView{};
 	inline D3D12_VERTEX_BUFFER_VIEW g_modelVertexBufferView{};
 	inline D3D12_VERTEX_BUFFER_VIEW g_spriteVertexBufferView{};
 	inline D3D12_INDEX_BUFFER_VIEW g_spriteIndexBufferView{};
 
 	inline float g_editorWindowWidth = 0.0f;
-	// g_editorWindowWidth / Height �� ImGui �� DirectX viewport �����L���� Window �T�C�Y�B
 	inline float g_editorWindowHeight = 0.0f;
 
-	inline float g_editorLeftWidth = 250.0f; // g_editorLeft/Right/Bottom �� Docking �O�̏����p�l�����E�����B
+	inline float g_editorLeftWidth = 250.0f;
 	inline float g_editorRightWidth = 320.0f;
 	inline float g_editorBottomHeight = 190.0f;
 
-	inline float g_editorSceneX = 0.0f; // g_editorScene* �� SceneView �̍�����W�ƕ��E�����B
+	inline float g_editorSceneX = 0.0f;
 	inline float g_editorSceneY = 0.0f;
 	inline float g_editorSceneWidth = 0.0f;
 	inline float g_editorSceneHeight = 0.0f;
 
-	inline float g_editorGameX = 0.0f; // g_editorGame* �� GameView �̍�����W�ƕ��E�����B
+	inline float g_editorGameX = 0.0f;
 	inline float g_editorGameY = 0.0f;
 	inline float g_editorGameWidth = 0.0f;
 	inline float g_editorGameHeight = 0.0f;
@@ -1123,8 +1075,8 @@ namespace EditorSharedState {
 	inline float g_editorRenderOriginX = 0.0f;
 	inline float g_editorRenderOriginY = 0.0f;
 
-	inline bool g_isSceneViewVisible = false; // g_isSceneViewVisible �� SceneView �֕`�悷���`�����t���[���L�����ǂ����B
-	inline bool g_isGameViewVisible = false; // g_isGameViewVisible �� GameView �֕`�悷���`���L�����ǂ����B
+	inline bool g_isSceneViewVisible = false;
+	inline bool g_isGameViewVisible = false;
 	inline bool g_isAnimationWindowVisible = false;  // true なら Docking 可能な Animation Window を表示する。
 	inline bool g_isSplineEditorVisible = false;  // trueなら汎用Spline Editorを表示する。
 	inline bool g_isGameplayTimelineWindowVisible = false;  // trueなら汎用Event Timelineを表示する。
@@ -1135,22 +1087,19 @@ namespace EditorSharedState {
 	inline bool g_isExternalFeatureWindowVisible = false;  // trueなら音声認識/画像認識/オンライン/HapticsのDebug Windowを表示する。
 	inline bool g_isHookWireDebugWindowVisible = false;  // trueならHook構成とRuntime Wireの検査Windowを表示する。
 	inline bool g_isHookWireSceneGizmoVisible = true;  // trueならSceneViewへHook→力伝達先の線とAnchorを重ねる。
-	inline bool g_isGameViewUsingSceneCamera = true; // true �Ȃ� Camera Component ���Ȃ����� Scene �J�������p���Ă���B
+	inline bool g_isGameViewUsingSceneCamera = true;
 
-	// g_viewport / g_scissorRect �� DirectX �� SceneView �������֕`�����߂̋�`�B
 	inline D3D12_VIEWPORT g_viewport{};
 	inline D3D12_RECT g_scissorRect{};
 
-	// g_cameraMatrix / g_viewMatrix / g_projectionMatrix �� SceneView 3D �\���p�s��B
 	inline Matrix4x4 g_cameraMatrix{};
 	inline Matrix4x4 g_viewMatrix{};
 	inline Matrix4x4 g_projectionMatrix{};
 
-	// g_game*Matrix �� GameView �� Camera Component �o�͂Ɏg���s��B
 	inline Matrix4x4 g_gameCameraMatrix{};
 	inline Matrix4x4 g_gameViewMatrix{};
 	inline Matrix4x4 g_gameProjectionMatrix{};
-	inline Vector3 g_gameCameraPosition{};  // GameView �� PBR ���ˌv�Z�Ɏg�� Camera Component �̃��[���h�ʒu�B
+	inline Vector3 g_gameCameraPosition{};
 	inline bool g_runtimeGameCameraOverrideActive = false;  // CameraBlendがGame View姿勢を上書きしている間true。
 	inline Transforms g_runtimeGameCameraOverrideTransform{};  // CameraBlendが計算したWorld姿勢。
 	inline Vector3 g_runtimeGameCameraPositionOffset{};  // CameraShakeが加えるWorld位置差分。
@@ -1163,49 +1112,39 @@ namespace EditorSharedState {
 	inline std::array<ImFont*, kUiFontVariantCount> g_uiFontVariants{};
 #endif
 
-	// g_spriteProjectionMatrix �� Sprite ����ʍ��W�ŕ\�����邽�߂̐��ˉe�s��B
 	inline Matrix4x4 g_spriteProjectionMatrix{};
 
-	inline float g_editorCameraMoveSpeed = 0.12f; // g_editorCamera*Speed �� SceneView �J��������̑��x�ݒ�B
+	inline float g_editorCameraMoveSpeed = 0.12f;
 	inline float g_editorCameraRotateSpeed = 0.006f;
 	inline float g_editorCameraWheelMoveSpeed = 0.5f;
 	inline float g_editorCameraPanSpeed = 0.01f;
 	inline float g_editorCameraFastRate = 1000.0f;
 
-	// g_sceneClearColor �� SceneView �w�i�F RGBA�B
 	inline float g_sceneClearColor[4] = {0.1f, 0.25f, 0.5f, 1.0f};
 
-	inline bool g_isSceneGizmoVisible = true; // g_is*GizmoVisible �� SceneView �⏕�\���̕\���t���O�B
+	inline bool g_isSceneGizmoVisible = true;
 	inline bool g_isLightGizmoVisible = false;
 	inline bool g_isCameraGizmoVisible = false;
 
-	// g_directionalLightIconPosition �̓��C�g�A�C�R���̃��[���h���W�B
 	inline Vector3 g_directionalLightIconPosition = {-1.8f, 1.4f, 0.0f};
 
 	inline EditorSceneObjectManager g_editorSceneObjectManager;
-	// g_editorSceneObjectManager �� GameObject �ƑΉ����� DirectX �`��p SceneObject �����B
 	inline int32_t g_selectedPlacedSceneObjectIndex = -1;
-	// g_selectedPlacedSceneObjectIndex �͑I�� SceneObject �̔z�� index�B-1 �͖��I���B
-	inline ComPtr<ID3D12Fence> g_fence; // g_fence / g_fenceValue / g_fenceEvent �� CPU �� GPU �̓����Ɏg���B
+	inline ComPtr<ID3D12Fence> g_fence;
 	inline uint64_t g_fenceValue = 0;
 	inline HANDLE g_fenceEvent = nullptr;
 
 	inline std::wstring g_textureFilePaths[kRuntimeTextureCount];
-	// g_textureFilePaths �� GPU �ɓǂݍ��ޕW�� Texture �� UTF-16 �p�X�B
 	inline std::string g_textureFilePathStrings[kRuntimeTextureCount];
-	// g_textureFilePathStrings / g_editorTextureFilePaths �� Project �p�l���ň��� UTF-8 �p�X�B
 	inline std::vector<std::string> g_editorTextureFilePaths;
 
-	// g_textureMetadatas / Resources �� Texture �̏��� GPU ���́B
 	inline DirectX::TexMetadata g_textureMetadatas[kRuntimeTextureCount]{};
 	inline ID3D12Resource* g_textureResources[kRuntimeTextureCount] = {nullptr, nullptr, nullptr, nullptr};
 
-	// g_intermediateResources �� Texture upload �p�̈ꎞ Buffer�B
 	inline ID3D12Resource* g_intermediateResources[kRuntimeTextureCount] = {nullptr, nullptr, nullptr, nullptr};
 
-	inline UINT g_srvDescriptorSize = 0; // g_srvDescriptorSize �� SRV Heap ���Ŏ��� Descriptor �֐i�ޕ��B
+	inline UINT g_srvDescriptorSize = 0;
 
-	// g_textureSrvHandlesCPU/GPU �� Texture SRV �� CPU �쐬�p�EGPU �`��p�n���h���B
 	inline D3D12_CPU_DESCRIPTOR_HANDLE g_textureSrvHandlesCPU[kRuntimeTextureCount]{};
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_textureSrvHandlesGPU[kRuntimeTextureCount]{};
 	inline ID3D12Resource* g_environmentTextureResource = nullptr;
@@ -1236,22 +1175,18 @@ namespace EditorSharedState {
 	inline D3D12_GPU_DESCRIPTOR_HANDLE g_colorGradingLutSrvHandleGPU{};
 	inline uint32_t g_iblPrefilterMipCount = 0;
 
-	// g_editorRuntimeManager �� Play ���� Input / Physics ���X�V���� Runtime�B
 	inline EditorRuntimeManager g_editorRuntimeManager{};
 
-	// g_feelKitHaptics �� XInput �R���g���[���[�̐U�����Ǘ����� FeelKitHaptics �C���X�^���X�B
 	inline FeelKitHaptics g_feelKitHaptics{};
 
-	// g_editorSceneCameraController �� SceneView �̃L�[�{�[�h�E�}�E�X�J��������������B
 	inline EditorSceneCameraController g_editorSceneCameraController{};
 
-	inline int g_selectedSceneObject = 0; // g_selectedSceneObject �͋��v���r���[�I��ԍ��B0:Model�A1:Sprite�A2:Light�A3:Camera�B
-	inline int g_activeEditorTool = 1; // g_activeEditorTool �� Scene �M�Y�������ʁB1:�ړ��A2:��]�A3:�g�k�A4:�����B
-	inline int g_editorViewportTabIndex = 0; // g_editorViewportTabIndex �� SceneView �̃^�u�ԍ��B0:Scene�A1:Game�A2:AssetStore�B
-	inline std::string g_selectedAssetPath; // g_selectedAssetPath �� Project �p�l���őI�𒆂̃A�Z�b�g�p�X�B
-	inline std::string g_currentScenePath; // g_currentScenePath �͍��J���Ă��� .scene �̕ۑ���B���ۑ��V�[���ł͋󕶎��B
+	inline int g_selectedSceneObject = 0;
+	inline int g_activeEditorTool = 1;
+	inline int g_editorViewportTabIndex = 0;
+	inline std::string g_selectedAssetPath;
+	inline std::string g_currentScenePath;
 
-	// g_hierarchyFilter / g_assetFilter �͊e�������̓��̓o�b�t�@�B
 	inline bool g_isStandaloneGame = false;  // 書き出した Player として起動中なら true。
 	inline std::vector<std::string> g_gameBuildScenePaths;  // Player に含めた遷移可能 Scene 一覧。
 
@@ -1338,33 +1273,28 @@ namespace EditorSharedState {
 	inline char g_hierarchyFilter[128] = {};
 	inline char g_assetFilter[128] = {};
 
-	inline bool g_isConsoleCleared = false; // g_isConsoleCleared �� Console �N���A�{�^�������𔽉f����t���O�B
-	inline bool g_isSceneRangeSelecting = false; // g_isSceneRangeSelecting �� SceneView �̋�`�I���h���b�O���t���O�B
-	inline bool g_isSceneMiddleCameraDragging = false; // g_isScene*CameraDragging �͒��{�^���ړ��E�E�{�^����]�̃h���b�O��ԁB
+	inline bool g_isConsoleCleared = false;
+	inline bool g_isSceneRangeSelecting = false;
+	inline bool g_isSceneMiddleCameraDragging = false;
 	inline bool g_isSceneRightCameraDragging = false;
 
-	inline bool g_isGizmoLocalMode = true; // g_isGizmoLocalMode �̓M�Y���� Local / World �ǂ���̎��œ��������̃t���O�B
-	inline bool g_isGizmoSnapEnabled = false; // g_isGizmoSnapEnabled �̓M�Y���X�i�b�v���g�����ǂ����̃t���O�B
-	inline bool g_isSceneAssistVisible = true; // g_isSceneAssistVisible �� SceneView ��������̕\���t���O�B
-	inline bool g_isLegacyPreviewVisible = false; // g_isLegacyPreviewVisible �͋��v���r���[ Model/Sprite ��\�����邩�̃t���O�B
+	inline bool g_isGizmoLocalMode = true;
+	inline bool g_isGizmoSnapEnabled = false;
+	inline bool g_isSceneAssistVisible = true;
+	inline bool g_isLegacyPreviewVisible = false;
 
-	// g_gizmoSnapValues �� X/Y/Z �e���̃X�i�b�v�ʁB
 	inline float g_gizmoSnapValues[3] = {0.5f, 0.5f, 0.5f};
 
-	inline auto g_sceneRangeStart = ImVec2(0.0f, 0.0f); // g_sceneRangeStart / End �� SceneView ��`�I���̊J�n�_�ƌ��ݓ_�B
+	inline auto g_sceneRangeStart = ImVec2(0.0f, 0.0f);
 	inline auto g_sceneRangeEnd = ImVec2(0.0f, 0.0f);
 
-	inline EditorScene g_editorScene; // g_editorScene �� GameObject / Component / Prefab ��ێ�����ҏW Scene�B
+	inline EditorScene g_editorScene;
 	inline bool g_isEditorSceneInitialized = false;
-	// g_isEditorSceneInitialized / RuntimeInitialized �� Scene �� Play Runtime �̏������ς݃t���O�B
 	inline bool g_isEditorRuntimeInitialized = false;
 
 	inline int32_t g_selectedEditorGameObjectId = -1;
-	// g_selectedEditorGameObjectId �� Inspector / Hierarchy �őI�𒆂� GameObject ID�B
 	inline std::vector<int32_t> g_selectedEditorGameObjectIds;
-	// g_selectedEditorGameObjectIds �͔͈͑I���╡���ҏW�Ŏg���I�� GameObject ID �ꗗ�B
 	inline int32_t g_previousSelectedEditorGameObjectId = -1;
-	// g_previousSelectedEditorGameObjectId �͑I��ύX���o�p�̑O�� GameObject ID�B
 
 	inline bool IsGameObjectSelected(int32_t gameObjectId) {
 		return std::find(
@@ -1411,12 +1341,10 @@ namespace EditorSharedState {
 		SetSelectedGameObjectIds(selectedGameObjectIds);
 	}
 
-	// g_selectedGameObjectName �� Inspector �̖��O�ҏW�p char �o�b�t�@�B
 	inline char g_selectedGameObjectName[128] = {};
 
-	inline int32_t g_selectedAddComponentIndex = 0; // g_selectedAddComponentIndex �� Inspector �̒ǉ� Component �R���{�I��ԍ��B
+	inline int32_t g_selectedAddComponentIndex = 0;
 
-	// g_editorConsoleMessages �� Console �p�l���֕\�����郍�O������ꗗ�B
 	inline std::vector<std::string> g_editorConsoleMessages = {
 		"Editor: Ready",
 		"Scene: Empty startup",
@@ -1424,23 +1352,19 @@ namespace EditorSharedState {
 	};
 
 	inline EditorSelectionManager g_editorSelectionManager;
-	// g_editorSelectionManager �� GameObject �I���� SceneObject �I���𓯊�����B
 	inline EditorSceneSynchronizer g_editorSceneSynchronizer;
-	// g_editorSceneSynchronizer �� EditorScene ����`��p SceneObject �����B
-	inline EditorAssetFactory g_editorAssetFactory; // g_editorAssetFactory �� Project ����̔z�u�� GameObject �� Component �����B
-	inline EditorMainMenuBar g_editorMainMenuBar; // g_editorMainMenuBar �͏㕔���j���[�� Play/Stop �{�^����`�悷��B
-	inline EditorHierarchyPanel g_editorHierarchyPanel; // g_editorHierarchyPanel �� GameObject �c���[�Ɛe�q�t����`��E��������B
-	inline EditorInspectorPanel g_editorInspectorPanel; // g_editorInspectorPanel �͑I��Ώۂ� Transform �� Component ��ҏW����B
-	inline EditorBottomPanel g_editorBottomPanel; // g_editorBottomPanel �� Project �A�Z�b�g�ꗗ�� Console ��\������B
-	inline bool g_isEditorManagerInitialized = false; // g_isEditorManagerInitialized �� Panel / Manager �̎Q�Ɛݒ肪�ς񂾂���\���B
-	inline bool g_isDockLayoutInitialized = false; // g_isDockLayoutInitialized �� DockBuilder �����z�u����x�������s���邽�߂̃t���O�B
+	inline EditorAssetFactory g_editorAssetFactory;
+	inline EditorMainMenuBar g_editorMainMenuBar;
+	inline EditorHierarchyPanel g_editorHierarchyPanel;
+	inline EditorInspectorPanel g_editorInspectorPanel;
+	inline EditorBottomPanel g_editorBottomPanel;
+	inline bool g_isEditorManagerInitialized = false;
+	inline bool g_isDockLayoutInitialized = false;
 
 	inline ID3D12Resource* CreateRuntimeDepthStencilResource(uint32_t width, uint32_t height) {
-		// heapProperties �� DepthStencil �� GPU ��p�������ɒu�����߂̎w��B
 		D3D12_HEAP_PROPERTIES heapProperties{};
 		heapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
 
-		// resourceDesc �� width / height �ɍ��킹�� 2D DepthStencil Texture �̐ݒ�B
 		D3D12_RESOURCE_DESC resourceDesc{};
 		resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
 		resourceDesc.Width = width;
@@ -1451,9 +1375,8 @@ namespace EditorSharedState {
 		resourceDesc.SampleDesc.Count = 1;
 		resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
 
-		ID3D12Resource* resource = nullptr; // resource �� CreateCommittedResource ���쐬���ĕԂ� DepthStencil ���́B
+		ID3D12Resource* resource = nullptr;
 
-		// createResult �� DepthStencil �쐬 API �̐��ہB
 		HRESULT createResult = g_device->CreateCommittedResource(
 			&heapProperties,
 			D3D12_HEAP_FLAG_NONE,
@@ -1492,12 +1415,10 @@ namespace EditorSharedState {
 	}
 
 	inline void WaitForGpu() {
-		g_fenceValue++; // g_fenceValue ��i�߂āA���̃t���[���ő҂� GPU �����ԍ������B
+		g_fenceValue++;
 		HRESULT signalResult = g_commandQueue->Signal(g_fence.Get(), g_fenceValue);
-		// Signal �� CommandQueue �ցA�����܂ł� GPU ��Ɣԍ���o�^����B
 		EDITOR_HR_VERIFY(signalResult);
 
-		// GPU ���܂� g_fenceValue �܂ŏI����Ă��Ȃ���΁AEvent ���g���� CPU ��҂�����B
 		if (g_fence->GetCompletedValue() < g_fenceValue) {
 			signalResult = g_fence->SetEventOnCompletion(g_fenceValue, g_fenceEvent);
 			EDITOR_HR_VERIFY(signalResult);
@@ -1506,42 +1427,36 @@ namespace EditorSharedState {
 	}
 
 	inline void UpdateEditorLayout() {
-		constexpr float editorMenuHeight = 20.0f; // editorMenuHeight �͏㕔���j���[�AeditorSceneHeaderHeight �� SceneView �^�u�̍����B
+		constexpr float editorMenuHeight = 20.0f;
 		constexpr float editorSceneHeaderHeight = 24.0f;
 
 		g_editorLeftWidth = (std::clamp)(g_editorLeftWidth, 160.0f, 420.0f);
-		// �e�p�l�����E�����𑀍�\�Ȕ͈͂ɐ������ASceneView ���ׂ�Ȃ��悤�ɂ���B
 		g_editorRightWidth = (std::clamp)(g_editorRightWidth, 220.0f, 520.0f);
 		g_editorBottomHeight = (std::clamp)(g_editorBottomHeight, 120.0f, 320.0f);
 
-		g_editorSceneX = g_editorLeftWidth; // SceneView ����͍��p�l�����ƃ��j���[�E�^�u�������猈�߂�B
+		g_editorSceneX = g_editorLeftWidth;
 		g_editorSceneY = editorMenuHeight + editorSceneHeaderHeight;
 
 		g_editorSceneWidth = g_editorWindowWidth - g_editorLeftWidth - g_editorRightWidth;
-		// SceneView ���� Window �����獶�E�E�p�l�����������c��B
 		g_editorSceneHeight = g_editorWindowHeight - g_editorSceneY - g_editorBottomHeight;
-		// SceneView ������ Window ��������㕔�̈�Ɖ����p�l�����������c��B
-		g_editorSceneWidth = (std::max)(g_editorSceneWidth, 240.0f); // DirectX viewport �� 0 �T�C�Y������邽�߁A�Œᕝ�E�������m�ۂ���B
+		g_editorSceneWidth = (std::max)(g_editorSceneWidth, 240.0f);
 		g_editorSceneHeight = (std::max)(g_editorSceneHeight, 180.0f);
 	}
 
 	inline void ResizeRenderTargets(uint32_t width, uint32_t height) {
-		// �T�C�Y���ς���Ă��Ȃ��ꍇ�� SwapChain �� DepthStencil ����蒼���Ȃ��B
 		if (width == g_renderWidth && height == g_renderHeight) {
 			return;
 		}
 
-		WaitForGpu(); // �Â� back buffer �� GPU ���g���I���܂ő҂��Ă��� Release ����B
+		WaitForGpu();
 
 		for (ID3D12Resource*& swapChainResource : g_swapChainResources) {
-			// ResizeBuffers �O�ɑS back buffer �Q�Ƃ��������B
 			if (swapChainResource != nullptr) {
 				swapChainResource->Release();
 				swapChainResource = nullptr;
 			}
 		}
 
-		// DepthStencil ���`��T�C�Y�Ɉˑ����邽�ߌÂ����̂��������B
 		if (g_depthStencilResource != nullptr) {
 			g_depthStencilResource->Release();
 			g_depthStencilResource = nullptr;
@@ -1552,10 +1467,9 @@ namespace EditorSharedState {
 			g_opaqueDepthCopyResource = nullptr;
 		}
 
-		g_renderWidth = width; // g_renderWidth / Height �͐V������� back buffer �T�C�Y�B
+		g_renderWidth = width;
 		g_renderHeight = height;
 
-		// SwapChain �� back buffer ��V�����T�C�Y�ōĊm�ۂ���B
 		HRESULT resizeResult = g_swapChain->ResizeBuffers(
 			2,
 			g_renderWidth,
@@ -1569,7 +1483,6 @@ namespace EditorSharedState {
 		bool runtimeSwapChainBuffersReady = true;
 		for (uint32_t bufferIndex = 0; bufferIndex < kRuntimeSwapChainBufferCount; bufferIndex++) {
 			resizeResult = g_swapChain->GetBuffer(bufferIndex, IID_PPV_ARGS(&g_swapChainResources[bufferIndex]));
-			// Resize ��� back buffer ���擾���� RTV ���č쐬����B
 			if (!EDITOR_HR_OK(resizeResult) || g_swapChainResources[bufferIndex] == nullptr) {
 				runtimeSwapChainBuffersReady = false;
 				continue;
@@ -1590,7 +1503,6 @@ namespace EditorSharedState {
 
 		g_depthStencilResource = CreateRuntimeDepthStencilResource(g_renderWidth, g_renderHeight);
 		g_opaqueDepthCopyResource = CreateRuntimeOpaqueDepthCopyResource(g_renderWidth, g_renderHeight);
-		// DepthStencil ���V�����`��T�C�Y�ɍ��킹�čč쐬����B
 
 		// Depth の再生成が失敗すると DepthStencilView / SRV / Barrier がすべて
 		// nullptr を参照する。描画を続けられないので、ここで終了要求を出す。
@@ -1626,7 +1538,6 @@ namespace EditorSharedState {
 				g_opaqueDepthCopySrvHandleCPU);
 		}
 
-		// HDR RT �� Bloom RTs ���č쐬����
 		UINT rtvSize = g_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
 		auto recreateRenderTarget = [&](ID3D12Resource*& resource, uint32_t rtWidth, uint32_t rtHeight,
@@ -1667,7 +1578,6 @@ namespace EditorSharedState {
 			DXGI_FORMAT_R16G16B16A16_FLOAT,
 			GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 2));
 
-		// Bloom RTs (indices 3, 4) ? 1/4 �𑜓x
 		uint32_t bloomWidth = (std::max)(1u, g_renderWidth / 4);
 		uint32_t bloomHeight = (std::max)(1u, g_renderHeight / 4);
 		for (uint32_t i = 0; i < 2; i++) {
@@ -1676,7 +1586,6 @@ namespace EditorSharedState {
 				GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 3u + i));
 		}
 
-		// ToneMap ��� LDR RT (index 5) �� FXAA ���ǂނ��߁A��ʃT�C�Y�Ɠ����傫���ō��B
 		recreateRenderTarget(g_postProcessRenderTarget, g_renderWidth, g_renderHeight,
 			DXGI_FORMAT_R8G8B8A8_UNORM,
 			GetCPUDescriptorHandle(g_rtvDescriptorHeap, rtvSize, 5u));
@@ -1749,7 +1658,6 @@ namespace EditorSharedState {
 			g_device->CreateShaderResourceView(g_bloomRenderTargets[i], &srvDesc, g_bloomSrvHandlesCPU[i]);
 		}
 
-		// ToneMap �ς݂� LDR RT �� FXAA �œǂނ��߂� SRV�B
 		{
 			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 			srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -1816,7 +1724,6 @@ namespace EditorSharedState {
 		}
 
 
-		// �ގ��}�X�N SRV �� SSR �������ɋ��ʗ��Ƒe�������邽�߂Ɏg���B
 		{
 			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 			srvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
@@ -1831,7 +1738,6 @@ namespace EditorSharedState {
 			g_device->CreateShaderResourceView(g_materialMaskRenderTarget, &srvDesc, g_materialMaskSrvHandleCPU);
 		}
 
-		// ���ʔ��� SRV �͔��˃J�����ŕ`�������ʂ����ʂ֓\�鎞�Ɏg���B
 		{
 			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 			srvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;

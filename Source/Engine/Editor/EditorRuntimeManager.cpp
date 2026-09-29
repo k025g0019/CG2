@@ -9,9 +9,25 @@
 #include <filesystem>
 #include <numbers>
 
+//========================================
+// Runtime Manager初期化処理
+//========================================
+
+// Runtime Managerは各Gameplay Systemの所有者であり、1Frame内の呼出順を決める。
+// Manager同士が必要とする参照をここで接続し、各Manager内部へ全体制御を持ち込まない。
 void EditorRuntimeManager::Initialize(EditorScene* editorScene, std::vector<std::string>* consoleMessages) {
+	//------------------------------
+	// Scene・Log参照設定
+	//------------------------------
+
 	editorScene_ = editorScene;  // Play / Stop のたびに操作する Scene
 	consoleMessages_ = consoleMessages;  // Runtime 内のイベントログ出力先
+
+	//------------------------------
+	// Gameplay Manager初期化
+	//------------------------------
+
+	// 各ManagerはSceneを所有せず、Runtime Managerが保持する同じSceneを参照する。
 	effectManager_.Initialize(editorScene_, consoleMessages_);
 	effekseerManager_.InitializeScene(editorScene_, consoleMessages_);
 	vfxManager_.Initialize(editorScene_, consoleMessages_);
@@ -59,6 +75,11 @@ void EditorRuntimeManager::Initialize(EditorScene* editorScene, std::vector<std:
 		&effectManager_,
 		&physicsManager_);
 	logMonitorManager_.Initialize(editorScene_, &profilerManager_, &weaponManager_, &runtimePropertyManager_);
+	//------------------------------
+	// Object Pool再利用時の状態復元
+	//------------------------------
+
+	// Pool Objectは破棄・再生成されないため、HPやCooldown等のRuntime状態を明示的に戻す。
 	objectPoolManager_.SetRuntimeResetCallback([this](int32_t gameObjectId) {
 		if (editorScene_ == nullptr) {
 			return;
@@ -104,6 +125,11 @@ void EditorRuntimeManager::Initialize(EditorScene* editorScene, std::vector<std:
 	cameraEffectManager_.Initialize(editorScene_);
 	localMoveManager_.Initialize(editorScene_, &physicsManager_);
 	railMovementManager_.Initialize(editorScene_, &physicsManager_, &inputManager_, &scriptManager_);
+	//------------------------------
+	// Physics固定更新Callback設定
+	//------------------------------
+
+	// Railの目標位置を物理Step前に渡し、Step後に確定Transformを読み戻す。
 	physicsManager_.SetPreFixedStepCallback([this](float fixedDeltaTime) {
 		railMovementManager_.FixedUpdate(fixedDeltaTime);
 	});
@@ -144,6 +170,11 @@ void EditorRuntimeManager::Initialize(EditorScene* editorScene, std::vector<std:
 
 #pragma warning(push)
 #pragma warning(disable : 5045)
+
+//========================================
+// Runtime Frame更新処理
+//========================================
+
 void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 	if (!isPlaying_ || editorScene_ == nullptr) {
 		return;
@@ -155,6 +186,7 @@ void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 		return;
 	}
 
+	// Scene適用中はManagerが参照するObject配列が入れ替わるため、通常Updateを同時に進めない。
 	if (UpdateSceneLoading()) {
 		return;
 	}
@@ -163,11 +195,17 @@ void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 		return;
 	}
 
+	//------------------------------
+	// Frame時間・入力確定
+	//------------------------------
+
+	// Replay中は実機入力を記録済み入力へ置き換え、同じFrame入力を再現する。
 	keyState = replayManager_.ResolveFrameInput(keyState, deltaTime);
 	const float unscaledDeltaTime = deltaTime;
 	const float gameTimeScale = runtimePropertyManager_.UpdateTimeScale(unscaledDeltaTime);
 	deltaTime = unscaledDeltaTime * gameTimeScale * EditorSharedState::g_pvShootManualTimeScale;
 
+	// Scriptが要求したScene操作は、Manager更新の安全な区切りでだけ消費する。
 	auto processSceneRequests = [this]() {
 		EditorSceneLoadRequest sceneLoadRequest{};
 
@@ -197,10 +235,15 @@ void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 		return false;
 	};
 
+	// 各処理群へ同じProfiler Scope形式を適用し、計測漏れを防ぐ補助Lambda。
 	auto profileUpdate = [this](const char* sampleName, auto&& updateFunction) {
 		EditorProfilerManager::Scope profilerScope(profilerManager_, sampleName);
 		updateFunction();
 	};
+
+	//------------------------------
+	// 入力・Script・Gameplay更新
+	//------------------------------
 
 	physicsManager_.BeginDebugFrame();  // この後に Script / AI / Audio が発行する Cast だけを今フレームの表示対象にする。
 
@@ -254,6 +297,11 @@ void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 		return;
 	}
 
+	//------------------------------
+	// Physics固定更新
+	//------------------------------
+
+	// 可変Frame時間をAccumulatorへ積み、必要回数だけ固定幅のPhysics Stepを進める。
 	int32_t fixedStepCount = 0;
 	profileUpdate("Physics", [this, deltaTime, &fixedStepCount]() {
 		fixedStepCount = runtimePropertyManager_.IsPhysicsPaused()
@@ -264,6 +312,7 @@ void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 	scriptManager_.SetPhysicsEvents(physicsManager_.GetFrameEvents());  // このフレームで発生した接触イベントを FixedUpdate から参照できるようにする
 	scriptManager_.SetWireEvents(physicsManager_.GetFrameWireEvents());  // 同じ固定更新で確定したWireイベントも通知する
 
+	// Physicsが進んだ回数と同じだけScript FixedUpdateを呼び、接触Eventと時間進行を一致させる。
 	profileUpdate("C++ Script FixedUpdate", [this, fixedStepCount, fixedTimeStep]() {
 		if (fixedStepCount >= 4) {
 			scriptManager_.FixedUpdate(fixedTimeStep);  // 1 フレーム内の最大固定更新回数は 4 回に制限しているため、ここで 4 回目を処理する
@@ -281,6 +330,10 @@ void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 			scriptManager_.FixedUpdate(fixedTimeStep);  // 物理結果の後に FixedUpdate を呼び、OnCollision 相当の判定に使える順へそろえる
 		}
 	});
+
+	//------------------------------
+	// Physics後の表現更新
+	//------------------------------
 
 	// Physics で確定した速度と Transform を Animator が読み、その Event から同じフレームの Effect を発生させる。
 	profileUpdate("Animation and Constraint", [this, deltaTime, &profileUpdate]() {
@@ -313,11 +366,16 @@ void EditorRuntimeManager::Update(const uint8_t* keyState, float deltaTime) {
 }
 #pragma warning(pop)
 
+//========================================
+// Runtime Debug描画処理
+//========================================
+
 void EditorRuntimeManager::Draw() {
 	if (!isPlaying_) {
 		return;
 	}
 
+	// Gameplay本体のMesh描画ではなく、入力、AI、Rail、Physics等のDebug表示を各Managerへ委譲する。
 	EditorProfilerManager::Scope profilerScope(profilerManager_, "Runtime Debug Draw");
 	inputManager_.Draw();
 	effectManager_.Draw();
@@ -330,12 +388,20 @@ void EditorRuntimeManager::Draw() {
 	physicsManager_.Draw();
 }
 
+//========================================
+// Play Mode切替処理
+//========================================
+
 void EditorRuntimeManager::TogglePlay() {
 	if (editorScene_ == nullptr) {
 		return;
 	}
 
 	if (isPlaying_) {
+		//------------------------------
+		// Play停止・編集Scene復元
+		//------------------------------
+
 		// Stop 時は Play 開始前の Scene に戻す
 		CancelPendingSceneLoad();
 		StopRuntimeSystems();
@@ -354,6 +420,11 @@ void EditorRuntimeManager::TogglePlay() {
 		return;
 	}
 
+	//------------------------------
+	// Play開始・編集Scene退避
+	//------------------------------
+
+	// Runtime変更を編集Dataへ残さないため、開始直前のScene全体をBackupする。
 	sceneBackup_ = *editorScene_;  // Play 開始前の編集状態を保存する
 	sceneBackupPath_ = EditorSharedState::g_currentScenePath;
 	hasSceneBackup_ = true;
@@ -437,11 +508,16 @@ const EditorExternalFeatureManager& EditorRuntimeManager::GetExternalFeatureMana
 	return externalFeatureManager_;
 }
 
+//========================================
+// Runtime System開始処理
+//========================================
+
 void EditorRuntimeManager::StartRuntimeSystems(bool shouldReinitializeScript) {
 	if (editorScene_ == nullptr) {
 		return;
 	}
 
+	// Scene切替後等でScriptのScene参照を作り直す必要がある場合だけ再初期化する。
 	if (shouldReinitializeScript) {
 		scriptManager_.Initialize(
 			editorScene_,
@@ -470,6 +546,11 @@ void EditorRuntimeManager::StartRuntimeSystems(bool shouldReinitializeScript) {
 			&waveSpawnerManager_);
 	}
 
+	//------------------------------
+	// Manager開始順制御
+	//------------------------------
+
+	// 以降のStart処理からPlay中判定が必要になるため、開始前にFlagを立てる。
 	isPlaying_ = true;
 	objectPoolManager_.PreparePools();
 	// Blastが子Chunkを非Active化してからJoltが初期Body一覧を構築する。
@@ -508,7 +589,12 @@ void EditorRuntimeManager::StartRuntimeSystems(bool shouldReinitializeScript) {
 	PublishSceneRuntimeState();
 }
 
+//========================================
+// Runtime System停止処理
+//========================================
+
 void EditorRuntimeManager::StopRuntimeSystems() {
+	// 開始時の依存関係を逆方向に解き、参照先が先に破棄されない順で停止する。
 	logMonitorManager_.Stop();
 	sceneOptimizationManager_.Stop();
 	saveManager_.Stop();
@@ -541,16 +627,22 @@ void EditorRuntimeManager::StopRuntimeSystems() {
 	isPlaying_ = false;
 }
 
+//========================================
+// Play中Scene切替処理
+//========================================
+
 bool EditorRuntimeManager::LoadSceneForPlay(const std::string& scenePath) {
 	if (editorScene_ == nullptr || !isPlaying_) {
 		return false;
 	}
 
+	// Load失敗時に現在のPlayを継続できるよう、SceneとPathを一時退避する。
 	const EditorScene previousScene = *editorScene_;
 	const std::string previousScenePath = EditorSharedState::g_currentScenePath;
 	StopRuntimeSystems();
 
 	if (!editorScene_->LoadScene(scenePath)) {
+		// 失敗した空/途中Sceneを使わず、旧Sceneを戻して全Managerの参照を再接続する。
 		*editorScene_ = previousScene;
 		EditorSharedState::g_currentScenePath = previousScenePath;
 		Initialize(editorScene_, consoleMessages_);

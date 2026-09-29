@@ -45,8 +45,15 @@
 #pragma warning(push)
 #pragma warning(disable : 4820)
 
+// EditorのPlay開始から停止まで、各Component Runtimeの呼出順と寿命を統括するManager。
+// Sceneそのものは外部所有であり、Play開始時のBackupと停止時の復元だけを担当する。
+// 個別System間の直接依存を減らすため、Script・Physics・Animationなどの接続もここで構成する。
 class EditorRuntimeManager {
 public:
+	//========================================
+	// Play Mode制御API
+	//========================================
+
 	EditorRuntimeManager() = default;  // 共有状態として 1 つだけ保持する
 	~EditorRuntimeManager() = default;  // 所有 Manager の破棄に任せる
 	EditorRuntimeManager(const EditorRuntimeManager&) = delete;  // Play 状態と Jolt World を二重所有しないためコピー禁止
@@ -59,6 +66,11 @@ public:
 	void Draw();  // Play 中のデバッグ描画を呼ぶ
 	void TogglePlay();  // Play / Stop を切り替える
 	bool IsPlaying() const;  // 現在 Play 中かを返す
+
+	//========================================
+	// Runtime System参照API
+	//========================================
+
 	EditorScriptManager& GetScriptManager();  // Inspector から Script デバッグ状態を見るために返す
 	const EditorScriptManager& GetScriptManager() const;  // 読み取り専用版
 	EditorAnimationManager& GetAnimationManager();  // Inspector から Animation 状態を見るために返す
@@ -90,6 +102,11 @@ public:
 	bool PlayEffect(int32_t gameObjectId);  // .effect と .efk を拡張子に応じて再生する。
 	void StopEffect(int32_t gameObjectId);  // 内蔵 GPU Particle と Effekseer の両方を停止する。
 	int32_t GetAliveEffectCount(int32_t gameObjectId) const;  // 両実行系の生存数を合算する。
+
+	//========================================
+	// Scene Runtime・部分復旧API
+	//========================================
+
 	bool RequestSceneLoad(const std::string& scenePath);  // Scene Button から Script 不要で安全な遷移を要求する。
 	bool RequestSceneLoadAsync(const std::string& scenePath, bool isAdditive);  // Worker ThreadでSceneを読み、フレーム境界で反映する。
 	bool RequestSceneUnload(const std::string& scenePath);  // Additive読込したSceneのObject群を破棄する。
@@ -105,6 +122,10 @@ public:
 	bool HasAreaState(int32_t areaRootGameObjectId) const;  // Captureu済みならtrue。
 
 private:
+	//========================================
+	// Area Snapshot内部状態
+	//========================================
+
 	struct AreaObjectState {
 		int32_t gameObjectId = -1;
 		Vector3 translate{0.0f, 0.0f, 0.0f};
@@ -118,6 +139,10 @@ private:
 
 	void CollectAreaGameObjectIds(int32_t rootGameObjectId, std::vector<int32_t>& outGameObjectIds) const;  // rootとその全子孫を集める。
 	std::unordered_map<int32_t, std::vector<AreaObjectState>> areaStates_;  // エリアRoot ID → Capture時点の状態一覧。
+
+	//========================================
+	// Runtime System所有状態
+	//========================================
 
 	EditorScene* editorScene_ = nullptr;  // Play 実行対象の Scene
 	std::vector<std::string>* consoleMessages_ = nullptr;  // Play 中の物理 / Script ログを出す Console
@@ -160,6 +185,10 @@ private:
 	bool isPlaying_ = false;  // Play 中なら true
 	bool hasSceneBackup_ = false;  // sceneBackup_ が有効なら true
 
+	//========================================
+	// 非同期Scene読込状態
+	//========================================
+
 	struct AsyncSceneLoadResult {
 		bool wasLoaded = false;  // ファイル解析に成功したか
 		EditorScene loadedScene;  // Worker Threadで構築したScene
@@ -196,6 +225,10 @@ private:
 	};
 
 	SceneTransitionRuntimeState sceneTransitionState_;  // Scene切替演出のRuntime状態
+
+	//========================================
+	// Runtime開始・停止内部処理
+	//========================================
 
 	void UpdateSceneTransition(float deltaTime);  // 演出Phaseを進め、覆い終わった瞬間に実Sceneを読み込む。
 	void BeginSceneTransitionRevealPhase();  // 新Scene読込直後にDive終了姿勢を確定してRevealへ移る。

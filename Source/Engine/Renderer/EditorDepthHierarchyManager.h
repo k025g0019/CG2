@@ -9,14 +9,20 @@
 #include <wrl.h>
 #pragma warning(pop)
 
-//================================================================
-// Scene 深度を GPU の後段処理で再利用するための管理クラス
-//================================================================
+//========================================
+// Scene深度階層管理
+//========================================
 
 class EditorDepthHierarchyManager {
 public:
 	static constexpr uint32_t kMaxDepthPyramidLevelCount = 12u;
 
+	//------------------------------
+	// 固定・解像度依存リソース初期化
+	//------------------------------
+
+	// Full Resolution Depth変換、Mip縮小、Normal再構築の3つのCompute PSOを作る。
+	// 続けて指定解像度から必要Mip数を求め、LevelごとのTexture/SRV/UAVを生成する。
 	bool Initialize(
 		ID3D12Device* device,
 		ID3D12DescriptorHeap* srvDescriptorHeap,
@@ -27,12 +33,25 @@ public:
 		uint32_t renderWidth,
 		uint32_t renderHeight);
 
+	// Window/Render Target Size変更時にTextureだけを作り直す。
+	// PSOとRoot Signatureは解像度非依存なので再生成しない。
 	bool Resize(uint32_t renderWidth, uint32_t renderHeight);
 
+	//------------------------------
+	// 深度階層・Normal生成
+	//------------------------------
+
+	// sceneDepthをMip 0へ変換し、前Levelを2x2縮小して最終Levelまで構築する。
+	// 同じDepthと逆ViewProjection行列からWorld位置を復元し、隣接位置の差分で
+	// 画面空間Effect用Normalも作る。実行後のSRVはGPU Culling/SSR/AOが参照する。
 	bool Generate(
 		ID3D12GraphicsCommandList* commandList,
 		D3D12_GPU_DESCRIPTOR_HANDLE sceneDepthSrvHandle,
 		const float* inverseViewProjectionMatrix);
+
+	//------------------------------
+	// 出力取得・終了処理
+	//------------------------------
 
 	void Finalize();
 

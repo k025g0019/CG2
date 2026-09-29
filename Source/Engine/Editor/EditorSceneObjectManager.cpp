@@ -18,7 +18,31 @@
 
 #pragma warning(disable : 5045)
 
+//========================================
+// SceneObject描画リソース管理の構成
+//========================================
+
+// EditorSceneObjectは、編集用GameObjectをそのままGPUへ渡すものではない。
+// Model/Sprite/Material/Transform等を、RendererがDrawしやすい形へ展開した描画Proxyである。
+// このManagerは主に次を担当する。
+//
+//   GameObject/Asset側の指定
+//     -> Model/TextureをLoadまたは共有Cacheから取得
+//     -> Vertex/Index/Material/Skin Matrix用GPU Resourceを確保
+//     -> EditorSceneObjectへView、Descriptor、World Matrixを保持
+//     -> RendererがEditorSceneObjectを列挙してDraw
+//
+// 所有権を追うときは、Resource本体、Descriptor番号、Atlas範囲、共有Cacheの
+// 参照数を別々に見る。SceneObjectを消すときは、GPU Resourceだけでなく
+// これらの管理情報も対で返却しないと、Leakや再利用時の衝突になる。
 namespace {
+	//------------------------------
+	// Skinning Pose補間
+	//------------------------------
+
+	// 2つのSkin Pose間をBone Matrixの各要素で線形補間する。
+	// 実装が単純な反面、回転をQuaternionとして補間する方式ではないため、
+	// 大角度差では不自然な回転や行列の直交性崩れが起こり得る。
 	void InterpolateSkinMatrices(
 		const std::vector<Matrix4x4>& firstMatrices,
 		const std::vector<Matrix4x4>& secondMatrices,
@@ -49,6 +73,8 @@ namespace {
 		int32_t clipIndex,
 		float playbackTime,
 		std::vector<Matrix4x4>& sampledMatrices) {
+		// Clipが無効ならBind Pose相当の既定行列へ戻す。
+		// 空配列を成功扱いにすると、Shaderが存在しないBone Bufferを読むためfalseを返す。
 		if (clipIndex < 0 || clipIndex >= static_cast<int32_t>(modelData.animationClips.size())) {
 			sampledMatrices = modelData.defaultSkinMatrices;
 			return !sampledMatrices.empty();
@@ -66,6 +92,8 @@ namespace {
 			sampleTime = std::fmod(sampleTime, clip.durationSeconds);
 		}
 
+		// 時刻以上になる最初のFrameを二分探索する。1Frameずつ探すより、
+		// Key数が増えた場合もO(log N)で前後Frameを見つけられる。
 		const auto upperFrameIterator = std::lower_bound(
 			clip.skinPoseFrames.begin(),
 			clip.skinPoseFrames.end(),
@@ -479,7 +507,12 @@ int32_t EditorSceneObjectManager::CreateObject(
 	return static_cast<int32_t>(sceneObjects_.size() - 1);
 }
 
+//========================================
+// SceneObject Texture設定処理
+//========================================
+
 bool EditorSceneObjectManager::SetCustomTexture(int32_t sceneObjectIndex, const std::string& textureAssetPath) {
+	// SceneObject番号、Device、Pathのどれかが無効ならResourceを変更しない。
 	if (sceneObjectIndex < 0 ||
 		sceneObjectIndex >= static_cast<int32_t>(sceneObjects_.size()) ||
 		device_ == nullptr ||
@@ -488,12 +521,14 @@ bool EditorSceneObjectManager::SetCustomTexture(int32_t sceneObjectIndex, const 
 	}
 
 	EditorSceneObject& sceneObject = sceneObjects_[static_cast<size_t>(sceneObjectIndex)];
+	// 同じTextureが有効な状態で設定済みなら、参照数を増減させず現在の借用を維持する。
 	if (sceneObject.textureAssetPath == textureAssetPath &&
 		sceneObject.customTextureResource != nullptr &&
 		sceneObject.customTextureSrvGpuHandle.ptr != 0u) {
 		return true;
 	}
 
+	// 先に旧Textureの参照を返す。成功後まで保持すると、一時的に2枚分のDescriptorを消費する。
 	ClearCustomTexture(sceneObjectIndex);
 	// Upload Bufferと実体は共有Cacheが所有し、SceneObjectはSRVを借りるだけにする。
 	const bool isLoaded = AcquireSharedModelTexture(
@@ -517,6 +552,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE EditorSceneObjectManager::GetOrLoadUiTexture(
 
 	const auto cachedTextureIterator = cachedUiTextures_.find(textureAssetPath);
 
+	// UI Textureは同じIcon等を毎Frame要求するため、PathをKeyにSRVを再利用する。
 	if (cachedTextureIterator != cachedUiTextures_.end()) {
 		return cachedTextureIterator->second.srvGpuHandle;
 	}
@@ -554,6 +590,7 @@ bool EditorSceneObjectManager::SetMaterialTexture(
 	}
 
 	EditorSceneObject& sceneObject = sceneObjects_[static_cast<size_t>(sceneObjectIndex)];
+	// Slot列挙値をMaterial Texture配列のIndexとして使用する。
 	const size_t textureSlotArrayIndex = static_cast<size_t>(textureSlotIndex);
 	if (sceneObject.materialTextureAssetPaths[textureSlotArrayIndex] == textureAssetPath &&
 		sceneObject.materialTextureResources[textureSlotArrayIndex] != nullptr &&
@@ -631,6 +668,7 @@ void EditorSceneObjectManager::ClearMaterialTexture(
 }
 
 void EditorSceneObjectManager::ClearAllMaterialTextures(int32_t sceneObjectIndex) {
+	// BaseColor/Normal/Metallic等の全Slotを同じ解放経路へ通し、参照数の戻し忘れを防ぐ。
 	for (int32_t textureSlotIndex = 0;
 		 textureSlotIndex < static_cast<int32_t>(EditorMaterialTextureSlot::Count);
 		 textureSlotIndex++) {
@@ -670,6 +708,11 @@ bool EditorSceneObjectManager::LoadTextureResource(
 		return false;
 	}
 
+	//------------------------------
+	// SRV Descriptor確保
+	//------------------------------
+
+	// Texture本体だけ作れてもShaderから参照するDescriptorが無ければ描画できない。
 	descriptorIndex = AcquireCustomTextureDescriptorIndex();
 	if (descriptorIndex < 0) {
 		return false;
@@ -695,6 +738,11 @@ bool EditorSceneObjectManager::LoadTextureResource(
 		}
 	}
 
+	//------------------------------
+	// CPU画像読込・Mip生成
+	//------------------------------
+
+	// ScratchImageはCPU Memory上の画像列。ここではまだGPUがSampleできる状態ではない。
 	DirectX::ScratchImage mipImages = LoadTexture(
 		ConvertString(textureAssetPath),
 		textureForceSrgb,
@@ -708,6 +756,11 @@ bool EditorSceneObjectManager::LoadTextureResource(
 		return false;
 	}
 
+	//------------------------------
+	// GPU Texture転送
+	//------------------------------
+
+	// Copy Commandを記録するAllocator/Listは、前回実行完了後でなければResetできない。
 	HRESULT commandResult = g_commandAllocator->Reset();
 	if (FAILED(commandResult)) {
 		ReleaseTextureResource(textureResource, uploadResource, srvGpuHandle, descriptorIndex);
@@ -720,6 +773,7 @@ bool EditorSceneObjectManager::LoadTextureResource(
 		return false;
 	}
 
+	// Upload Heapを中継し、Default HeapのTextureへ全MipのCopy Commandを積む。
 	uploadResource = UploadTextureData(device_, g_commandList.Get(), textureResource, mipImages);
 	if (uploadResource == nullptr) {
 		ReleaseTextureResource(textureResource, uploadResource, srvGpuHandle, descriptorIndex);
@@ -732,6 +786,7 @@ bool EditorSceneObjectManager::LoadTextureResource(
 		return false;
 	}
 
+	// CommandをQueueへ提出しただけではCopy完了ではない。直後にSRVとして公開する前にFenceを待つ。
 	ID3D12CommandList* commandLists[] = {g_commandList.Get()};
 	g_commandQueue->ExecuteCommandLists(1, commandLists);
 	g_fenceValue++;
@@ -741,6 +796,7 @@ bool EditorSceneObjectManager::LoadTextureResource(
 		return false;
 	}
 
+	// この同期はLoadを単純にする代わりにCPUを停止させる。大量Assetでは非同期Uploadが改善候補になる。
 	if (g_fence->GetCompletedValue() < g_fenceValue) {
 		commandResult = g_fence->SetEventOnCompletion(g_fenceValue, g_fenceEvent);
 		if (FAILED(commandResult)) {
@@ -751,6 +807,11 @@ bool EditorSceneObjectManager::LoadTextureResource(
 		WaitForSingleObject(g_fenceEvent, INFINITE);
 	}
 
+	//------------------------------
+	// Shader Resource View生成
+	//------------------------------
+
+	// Resource本体とSRVは別物。SRVがFormatとMip範囲をShaderへ公開する見方を定義する。
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 	srvDesc.Format = textureMetadata.format;
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -770,6 +831,7 @@ void EditorSceneObjectManager::ReleaseTextureResource(
 	ID3D12Resource*& uploadResource,
 	D3D12_GPU_DESCRIPTOR_HANDLE& srvGpuHandle,
 	int32_t& descriptorIndex) {
+	// Upload ResourceはGPU転送完了後に不要だが、所有経路を統一するためTextureと同時に解放する。
 	if (uploadResource != nullptr) {
 		uploadResource->Release();
 		uploadResource = nullptr;
@@ -780,6 +842,7 @@ void EditorSceneObjectManager::ReleaseTextureResource(
 		textureResource = nullptr;
 	}
 
+	// Descriptor番号をFree Listへ返し、別Textureが同じHeap Slotを再利用できるようにする。
 	if (descriptorIndex >= 0) {
 		ReleaseCustomTextureDescriptorIndex(descriptorIndex);
 	}
@@ -1134,6 +1197,10 @@ void EditorSceneObjectManager::InvalidateAssetResources(const std::string& asset
 	}
 }
 
+//========================================
+// SceneObject描画リソース解放処理
+//========================================
+
 void EditorSceneObjectManager::ReleaseObject(int32_t sceneObjectIndex) {
 	if (sceneObjectIndex < 0 ||
 		sceneObjectIndex >= static_cast<int32_t>(sceneObjects_.size())) {
@@ -1141,9 +1208,11 @@ void EditorSceneObjectManager::ReleaseObject(int32_t sceneObjectIndex) {
 	}
 
 	EditorSceneObject& sceneObject = sceneObjects_[static_cast<size_t>(sceneObjectIndex)];  // 指定番号の描画用 GPU Resource を解放する
+	// 共有TextureとMeshは各専用関数で参照数を戻し、Object固有Bufferより先に関連付けを外す。
 	ClearCustomTexture(sceneObjectIndex);
 	ClearAllMaterialTextures(sceneObjectIndex);
 	ClearCustomModelMesh(sceneObjectIndex);
+	// Pool利用ObjectはResource本体を共有しているため、ComPtr/ResourceをReleaseせずSlotだけ返す。
 	if (sceneObject.usesSharedObjectBuffers) {
 		ReleaseObjectBufferSlot(sceneObject.objectBufferSlot);
 	}
@@ -1158,6 +1227,7 @@ void EditorSceneObjectManager::ReleaseObject(int32_t sceneObjectIndex) {
 			sceneObject.materialResource->Release();
 		}
 	}
+	// CPU側のMapped PointerとGPU Addressも無効化し、解放後の書込を防ぐ。
 	sceneObject.transformationResource = nullptr;
 	sceneObject.transformationData = nullptr;
 	sceneObject.gameTransformationResource = nullptr;
@@ -1180,6 +1250,7 @@ void EditorSceneObjectManager::ReleaseAll() {
 
 	sceneObjects_.clear();  // Resource 解放後に配列自体を空にする
 
+	// UI CacheはSceneObjectの参照数管理外なので、Scene配列解放後にCache所有Resourceを直接解放する。
 	for (auto& cachedTexturePair : cachedUiTextures_) {
 		CachedUiTexture& cachedTexture = cachedTexturePair.second;
 		ReleaseTextureResource(
@@ -1218,12 +1289,14 @@ const std::vector<EditorSceneObject>& EditorSceneObjectManager::GetSceneObjects(
 }
 
 int32_t EditorSceneObjectManager::AcquireCustomTextureDescriptorIndex() {
+	// 解放済みSlotを優先して再利用し、Descriptor HeapのIndexが増え続けるのを防ぐ。
 	if (!freeCustomTextureDescriptorIndices_.empty()) {
 		int32_t descriptorIndex = freeCustomTextureDescriptorIndices_.back();
 		freeCustomTextureDescriptorIndices_.pop_back();
 		return descriptorIndex;
 	}
 
+	// Heap Capacityを超えるIndexはGPU Handle計算がHeap外を指すため、-1で失敗を通知する。
 	if (nextCustomTextureDescriptorIndex_ >=
 		static_cast<int32_t>(EditorSharedState::kRuntimeSrvDescriptorHeapCapacity)) {
 		return -1;
@@ -1235,10 +1308,12 @@ int32_t EditorSceneObjectManager::AcquireCustomTextureDescriptorIndex() {
 }
 
 void EditorSceneObjectManager::ReleaseCustomTextureDescriptorIndex(int32_t descriptorIndex) {
+	// Engine固定Textureが使用する予約領域はRuntime Assetへ再配布しない。
 	if (descriptorIndex < static_cast<int32_t>(EditorSharedState::kRuntimeReservedSrvDescriptorCount)) {
 		return;
 	}
 
+	// 同じIndexを2回Free Listへ入れると、2 Textureへ同一Descriptorを配ってしまう。
 	if (std::find(
 		    freeCustomTextureDescriptorIndices_.begin(),
 		    freeCustomTextureDescriptorIndices_.end(),
@@ -1250,6 +1325,10 @@ void EditorSceneObjectManager::ReleaseCustomTextureDescriptorIndex(int32_t descr
 	// SRVが空いたので、上限超過で失敗した画像を次の要求で1回だけ読み直せるようにする。
 	hasFreedTextureDescriptor_ = true;
 }
+
+//========================================
+// Texture共有Cache処理
+//========================================
 
 bool EditorSceneObjectManager::AcquireSharedModelTexture(
 	const std::string& textureAssetPath,
@@ -1263,6 +1342,7 @@ bool EditorSceneObjectManager::AcquireSharedModelTexture(
 		return false;
 	}
 
+	// Pathが同じTextureはResource/SRVを共有し、Objectごとの重複UploadとVRAM消費を防ぐ。
 	const auto sharedTextureIterator = sharedModelTextures_.find(textureAssetPath);
 	if (sharedTextureIterator != sharedModelTextures_.end()) {
 		SharedModelTexture& sharedTexture = sharedTextureIterator->second;
@@ -1297,6 +1377,7 @@ bool EditorSceneObjectManager::AcquireSharedModelTexture(
 		return false;
 	}
 
+	// 新規Loadに成功した時点で、要求元SceneObjectの1参照を登録する。
 	sharedTexture.referenceCount = 1;
 	textureResource = sharedTexture.textureResource;
 	srvGpuHandle = sharedTexture.srvGpuHandle;
@@ -1321,6 +1402,7 @@ void EditorSceneObjectManager::ReleaseSharedModelTexture(const std::string& text
 		return;
 	}
 
+	// 借用Objectが1つ減ったことを記録し、最後の参照だけがResourceを実際に解放する。
 	sharedTexture.referenceCount--;
 	if (sharedTexture.referenceCount > 0) {
 		return;
@@ -1340,6 +1422,7 @@ ID3D12Resource* EditorSceneObjectManager::CreateVertexResource(size_t sizeInByte
 		return nullptr;
 	}
 
+	// 頻繁にCPUから頂点/定数を書き換える用途なので、Map可能なUpload Heapを選ぶ。
 	D3D12_HEAP_PROPERTIES uploadHeapProperties{};
 	uploadHeapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
 
@@ -1380,6 +1463,11 @@ bool EditorSceneObjectManager::AllocateMeshAtlasRange(
 		return false;
 	}
 
+	//------------------------------
+	// 既存Atlas Page割当
+	//------------------------------
+
+	// Alignment境界までOffsetを進め、Vertex/Index Viewが要求するByte境界を守る。
 	auto tryAllocate = [&](MeshAtlasPage& page) {
 		const size_t alignedOffset = (page.used + alignment - 1u) & ~(alignment - 1u);
 		if (page.mappedData == nullptr || alignedOffset + dataSize > page.capacity) {
@@ -1398,6 +1486,11 @@ bool EditorSceneObjectManager::AllocateMeshAtlasRange(
 		}
 	}
 
+	//------------------------------
+	// Atlas Page追加
+	//------------------------------
+
+	// 既存Pageに空きが無い場合だけ16MiB単位で増やす。巨大Meshは1件が入るSizeまで拡張する。
 	constexpr size_t kDefaultAtlasPageSize = 16u * 1024u * 1024u;
 	MeshAtlasPage newPage{};
 	newPage.capacity = (std::max)(kDefaultAtlasPageSize, dataSize + alignment);
@@ -1441,6 +1534,7 @@ bool EditorSceneObjectManager::InitializeObjectBufferPools() {
 		return false;
 	}
 
+	// Constant Buffer Viewの開始Addressは256byte境界が必要なので、構造体Sizeを切り上げる。
 	constexpr size_t transformationStride =
 		(sizeof(TransformationMatrix) + kConstantBufferAlignment - 1u) & ~(kConstantBufferAlignment - 1u);
 	constexpr size_t materialStride =
@@ -1475,6 +1569,7 @@ bool EditorSceneObjectManager::AcquireObjectBufferSlot(uint32_t& slot) {
 	if (!InitializeObjectBufferPools()) {
 		return false;
 	}
+	// 破棄ObjectのSlotを先に再利用し、Pool上の未使用領域を増やさない。
 	if (!freeObjectBufferSlots_.empty()) {
 		slot = freeObjectBufferSlots_.back();
 		freeObjectBufferSlots_.pop_back();

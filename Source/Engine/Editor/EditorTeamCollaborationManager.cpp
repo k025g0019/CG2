@@ -1326,6 +1326,10 @@ EditorTeamCollaborationManager::~EditorTeamCollaborationManager() {
 	Finalize();
 }
 
+//========================================
+// 初期化処理と終了処理
+//========================================
+
 void EditorTeamCollaborationManager::Initialize(
 	EditorScene* editorScene,
 	std::vector<std::string>* consoleMessages) {
@@ -1372,6 +1376,10 @@ void EditorTeamCollaborationManager::Finalize() {
 
 	isInitialized_ = false;
 }
+
+//========================================
+// 更新処理
+//========================================
 
 void EditorTeamCollaborationManager::Update(float deltaTime, bool isPlaying) {
 	if (!isInitialized_) {
@@ -1550,6 +1558,10 @@ void EditorTeamCollaborationManager::Update(float deltaTime, bool isPlaying) {
 	}
 }
 
+//========================================
+// 接続管理
+//========================================
+
 bool EditorTeamCollaborationManager::StartServer() {
 	if (!isInitialized_) {
 		return false;
@@ -1593,6 +1605,10 @@ bool EditorTeamCollaborationManager::TestServerConnection() {
 		: "Team: " + error);
 	return connected;
 }
+
+//------------------------------
+// 常駐サーバーの起動と自動起動設定
+//------------------------------
 
 bool EditorTeamCollaborationManager::IsDedicatedServerRunning() const {
 	if (IsDedicatedServerProcess(dedicatedServerProcessId_)) return true;
@@ -1752,6 +1768,10 @@ bool EditorTeamCollaborationManager::SetDedicatedServerAutoStartAtLogon(bool ena
 	return true;
 }
 
+//========================================
+// 編集ロックの判定と要求
+//========================================
+
 EditorTeamConnectionStatus EditorTeamCollaborationManager::GetStatus() const {
 	return networkState_->status.load(std::memory_order_acquire);
 }
@@ -1882,6 +1902,10 @@ void EditorTeamCollaborationManager::ReleaseTargetLock(
 	}
 }
 
+//------------------------------
+// 自分の作業状況の通知
+//------------------------------
+
 void EditorTeamCollaborationManager::ReportActivity(
 	const std::string& panel,
 	const std::string& action,
@@ -1901,6 +1925,10 @@ void EditorTeamCollaborationManager::SetBuildActivity(bool isBuilding) {
 	presenceElapsedSeconds_ = kPresenceIntervalSeconds;
 	UpdateMemberPresence(0.0f);
 }
+
+//========================================
+// 共同編集アイテムの参照と表示
+//========================================
 
 EditorTeamItemTargetSummary EditorTeamCollaborationManager::GetTargetItemSummary(
 	const std::string& targetType,
@@ -2089,6 +2117,10 @@ std::string EditorTeamCollaborationManager::GetGameObjectEditorLabel(int32_t gam
 		? changedIterator->second
 		: std::string{};
 }
+
+//========================================
+// 設定と変更履歴の保存
+//========================================
 
 void EditorTeamCollaborationManager::LoadSettings() {
 	strncpy_s(userNameBuffer_.data(), userNameBuffer_.size(), "User", _TRUNCATE);
@@ -2323,6 +2355,10 @@ void EditorTeamCollaborationManager::SaveSettings() const {
 	}
 }
 
+//------------------------------
+// 変更履歴(ChangeLog)の読み書き
+//------------------------------
+
 void EditorTeamCollaborationManager::LoadChangeLog() {
 	std::ifstream file(kTeamChangeLogPath, std::ios::binary);
 	std::string line;
@@ -2391,6 +2427,10 @@ void EditorTeamCollaborationManager::AppendChangeLog(
 
 	file << SerializeChangeEvent(changeEvent, "log") << "\r\n";
 }
+
+//========================================
+// ローカル変更の検出とキュー投入
+//========================================
 
 void EditorTeamCollaborationManager::CaptureSceneChanges(bool forcesBroadcast) {
 	if (editorScene_ == nullptr) {
@@ -2482,6 +2522,10 @@ void EditorTeamCollaborationManager::CaptureSceneChanges(bool forcesBroadcast) {
 		QueueLocalChange(std::move(changeEvent));
 	}
 }
+
+//------------------------------
+// Asset 変更の走査
+//------------------------------
 
 void EditorTeamCollaborationManager::ScanAssetChanges(bool recordsBaselineOnly) {
 	std::unordered_map<std::string, std::string> registeredUuids;
@@ -2767,6 +2811,10 @@ void EditorTeamCollaborationManager::QueueLocalChange(EditorTeamChangeEvent chan
 		QueueChangeEventMessage(changeEvent, "change");
 	}
 }
+
+//========================================
+// 受信メッセージの処理
+//========================================
 
 void EditorTeamCollaborationManager::ProcessIncomingMessages() {
 	std::vector<std::string> incomingMessages;
@@ -3076,6 +3124,10 @@ void EditorTeamCollaborationManager::ProcessIncomingMessages() {
 	}
 }
 
+//========================================
+// Handshake と互換性確認
+//========================================
+
 void EditorTeamCollaborationManager::SendCompatibilityHello() {
 	ProjectVersionSettings projectSettings{};
 	std::string error;
@@ -3270,6 +3322,10 @@ void EditorTeamCollaborationManager::ProcessHandshakeResult(
 	StopNetworkThread();
 }
 
+//------------------------------
+// 履歴の再送要求と同期完了
+//------------------------------
+
 void EditorTeamCollaborationManager::RequestMissingHistory(std::uint64_t serverRevision) {
 	serverRevision_ = serverRevision;
 	historySyncInProgress_ = true;
@@ -3310,6 +3366,10 @@ void EditorTeamCollaborationManager::CompleteHistorySynchronization(std::uint64_
 	networkState_->status.store(EditorTeamConnectionStatus::Online, std::memory_order_release);
 	AddConsoleMessage("Team: Revision " + std::to_string(lastSyncedRevision_) + " まで同期しました");
 }
+
+//========================================
+// Heartbeat による生存確認
+//========================================
 
 void EditorTeamCollaborationManager::UpdateHeartbeat(float deltaTime) {
 	if (networkState_->transport == nullptr) {
@@ -3441,6 +3501,10 @@ void EditorTeamCollaborationManager::ReleaseLocksOwnedBy(const std::string& owne
 		std::remove(pendingJoinCatchUpUserIds_.begin(), pendingJoinCatchUpUserIds_.end(), ownerUserId),
 		pendingJoinCatchUpUserIds_.end());
 }
+
+//========================================
+// 共同編集アイテムの直列化と適用
+//========================================
 
 bool EditorTeamCollaborationManager::IsTeamItemChange(
 	const EditorTeamChangeEvent& changeEvent) const {
@@ -3609,6 +3673,10 @@ void EditorTeamCollaborationManager::QueueTeamItemDelete(const TeamItem& item) {
 	ApplyTeamItemChange(change);
 	QueueLocalChange(std::move(change));
 }
+
+//========================================
+// リモート変更の適用
+//========================================
 
 void EditorTeamCollaborationManager::JumpToTarget(
 	const std::string& targetType,
@@ -3976,6 +4044,10 @@ void EditorTeamCollaborationManager::ProcessRemoteChange(
 	SaveSettings();
 }
 
+//------------------------------
+// Play 中に保留した変更の適用と競合コピー
+//------------------------------
+
 void EditorTeamCollaborationManager::ApplyDeferredPlayModeChanges() {
 	if (deferredPlayModeChanges_.empty()) return;
 
@@ -4082,6 +4154,10 @@ void EditorTeamCollaborationManager::PrepareConflictCopies(
 		std::filesystem::copy_options::overwrite_existing,
 		fileError);
 }
+
+//========================================
+// 参加者の在席と選択ロック
+//========================================
 
 void EditorTeamCollaborationManager::UpdateMemberPresence(float deltaTime) {
 	const float elapsedSeconds = (std::max)(deltaTime, 0.0f);
@@ -4301,6 +4377,10 @@ void EditorTeamCollaborationManager::UpdateSelectionLock(float deltaTime) {
 	}
 }
 
+//------------------------------
+// ロックの時間切れと状態配信
+//------------------------------
+
 void EditorTeamCollaborationManager::UpdateLockTimeouts(float deltaTime) {
 	if (!isHost_) {
 		return;
@@ -4418,6 +4498,10 @@ void EditorTeamCollaborationManager::BroadcastLockState(const std::string& objec
 		targetType,
 		{}));
 }
+
+//========================================
+// Asset / Script / Scene Snapshot の適用
+//========================================
 
 bool EditorTeamCollaborationManager::ApplyAssetChange(
 	const EditorTeamChangeEvent& changeEvent) {
@@ -4661,6 +4745,10 @@ bool EditorTeamCollaborationManager::ApplySceneSnapshot(
 	return true;
 }
 
+//========================================
+// 送信キューとネットワークスレッド
+//========================================
+
 void EditorTeamCollaborationManager::QueueOutgoingMessage(
 	const std::string& message,
 	bool isTransferChunk,
@@ -4792,6 +4880,10 @@ void EditorTeamCollaborationManager::QueueCurrentSceneSnapshotForUser(
 	snapshotEvent.revision = currentRevision_;
 	QueueChangeEventMessage(snapshotEvent, "commit", targetUserId);
 }
+
+//------------------------------
+// ネットワークスレッドの起動と停止
+//------------------------------
 
 void EditorTeamCollaborationManager::StartNetworkThread(bool startsAsServer) {
 	StopNetworkThread();
@@ -4940,6 +5032,10 @@ void EditorTeamCollaborationManager::AddConsoleMessage(const std::string& messag
 		consoleMessages_->push_back(message);
 	}
 }
+
+//========================================
+// 描画処理
+//========================================
 
 void EditorTeamCollaborationManager::Draw(bool* isWindowVisible) {
 #ifdef USE_IMGUI

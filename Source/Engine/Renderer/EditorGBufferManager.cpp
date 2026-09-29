@@ -28,6 +28,10 @@ namespace {
 		}};
 }
 
+//========================================
+// GBuffer初期化処理
+//========================================
+
 bool EditorGBufferManager::Initialize(
 	ID3D12Device* device,
 	ID3D12DescriptorHeap* srvDescriptorHeap,
@@ -53,6 +57,8 @@ bool EditorGBufferManager::Initialize(
 		return false;
 	}
 
+	// PSOは解像度に依存しないが、Render Target TextureはViewport解像度に依存する。
+	// 初期化時は両方を作り、以後のResizeではTextureだけを再生成する。
 	device_ = device;
 	srvDescriptorHeap_ = srvDescriptorHeap;
 	srvDescriptorSize_ = srvDescriptorSize;
@@ -95,6 +101,8 @@ bool EditorGBufferManager::Initialize(
 }
 
 bool EditorGBufferManager::Resize(uint32_t renderWidth, uint32_t renderHeight) {
+	// 同じ解像度ならGPU Resourceを作り直さない。Window最小化などの0サイズは
+	// CreateSizeDependentResources側で最小1Pixelへ丸める。
 	if (!isInitialized_) {
 		return false;
 	}
@@ -107,6 +115,10 @@ bool EditorGBufferManager::Resize(uint32_t renderWidth, uint32_t renderHeight) {
 	return CreateSizeDependentResources(renderWidth, renderHeight);
 }
 
+//========================================
+// GBuffer描画処理
+//========================================
+
 bool EditorGBufferManager::Begin(
 	ID3D12GraphicsCommandList* commandList,
 	D3D12_CPU_DESCRIPTOR_HANDLE depthStencilViewHandle) {
@@ -114,6 +126,8 @@ bool EditorGBufferManager::Begin(
 		return false;
 	}
 
+	// Lightingから読まれていたTextureをRenderTargetへ戻してからMRTへ設定する。
+	// Albedo、Normal、Material、Emission、Motion Vectorを1回のGeometry Passで同時出力する。
 	std::array<D3D12_RESOURCE_BARRIER, kRenderTargetCount> barriers{};
 	std::array<D3D12_CPU_DESCRIPTOR_HANDLE, kRenderTargetCount> renderTargetHandles{};
 
@@ -166,6 +180,7 @@ void EditorGBufferManager::BindPipelineState(
 		? doubleSidedPipelineState_.Get()
 		: pipelineState_.Get();
 
+	// Double Sided MaterialだけCullなしPSOへ切り替え、通常MaterialはBack Face Cullingを維持する。
 	if (targetPipelineState != nullptr) {
 		commandList->SetPipelineState(targetPipelineState);
 	}
@@ -177,6 +192,7 @@ void EditorGBufferManager::BindBatchedPipelineState(
 	if (!isRendering_ || commandList == nullptr) {
 		return;
 	}
+	// Batched PSOはInstance BufferからWorld/Material情報を読む専用Vertex Shaderを使う。
 	ID3D12PipelineState* targetPipelineState = isDoubleSided
 		? batchedDoubleSidedPipelineState_.Get()
 		: batchedPipelineState_.Get();
@@ -190,6 +206,7 @@ void EditorGBufferManager::End(ID3D12GraphicsCommandList* commandList) {
 		return;
 	}
 
+	// Geometry Pass完了後、Deferred LightingやSSRがSRVとして読める状態へ遷移する。
 	std::array<D3D12_RESOURCE_BARRIER, kRenderTargetCount> barriers{};
 
 	for (uint32_t renderTargetIndex = 0u;
@@ -260,12 +277,17 @@ bool EditorGBufferManager::IsReady() const {
 	return true;
 }
 
+//========================================
+// GBuffer Pipeline生成処理
+//========================================
+
 bool EditorGBufferManager::CreatePipelineStates(
 	IDxcBlob* vertexShaderBlob,
 	IDxcBlob* batchedVertexShaderBlob,
 	IDxcBlob* pixelShaderBlob,
 	const D3D12_INPUT_ELEMENT_DESC* inputElementDescs,
 	UINT inputElementCount) {
+	// MRTの順序とFormatはPixel ShaderのSV_Target番号およびLighting側SRV解釈と一致させる。
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC pipelineStateDesc{};
 	pipelineStateDesc.pRootSignature = objectRootSignature_.Get();
 	pipelineStateDesc.InputLayout.pInputElementDescs = inputElementDescs;
@@ -341,9 +363,11 @@ bool EditorGBufferManager::CreateSizeDependentResources(
 		return false;
 	}
 
+	// 5枚のGBufferを必ず同じ寸法で生成し、Pixel座標による対応関係を保証する。
 	renderWidth_ = (std::max)(renderWidth, 1u);
 	renderHeight_ = (std::max)(renderHeight, 1u);
 
+	// 各TextureにRTVとSRVを1つずつ作り、Geometry Passの書込と後段Passの読込を両立する。
 	for (uint32_t renderTargetIndex = 0u;
 		renderTargetIndex < kRenderTargetCount;
 		renderTargetIndex++) {

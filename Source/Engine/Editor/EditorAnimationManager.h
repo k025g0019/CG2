@@ -17,8 +17,15 @@
 class EditorEffectManager;
 class EditorScriptManager;
 
+// Animation Component、Animator State Machine、Property Animationを同じPlay時間軸で更新するManager。
+// ClipやGraphはAsset由来の定義、AnimatorRuntimeInstanceはGameObjectごとの可変状態として分離する。
+// RendererにはGPU Skinningに必要な最小情報だけを公開し、Pose評価の所有権はこのManagerへ集約する。
 class EditorAnimationManager {
 public:
+	//========================================
+	// Animation Lifecycle API
+	//========================================
+
 	EditorAnimationManager() = default;
 	~EditorAnimationManager() = default;
 	EditorAnimationManager(const EditorAnimationManager&) = delete;
@@ -35,6 +42,10 @@ public:
 	void Update(float deltaTime);  // State Machine、Blend Tree、Event、Root Motion を順番に更新する。
 	void Stop();  // Runtime Pose と Parameter を破棄し、Play 開始前の Transform へ戻す。
 
+	//========================================
+	// 再生状態・Parameter参照API
+	//========================================
+
 	bool IsAnimationPlaying(int32_t gameObjectId) const;  // Animation または Animator が動作中なら true を返す。
 	float GetAnimationTime(int32_t gameObjectId) const;  // Animator は現在 State、Animation は Clip の再生秒を返す。
 	bool GetAnimatorSkinningState(
@@ -50,6 +61,10 @@ public:
 	bool GetBool(int32_t gameObjectId, const std::string& parameterName, bool& value) const;  // Bool / Trigger Parameter の現在値を取得する。
 	bool GetVector2(int32_t gameObjectId, const std::string& parameterName, Vector2& value) const;  // Vector2 Parameter の現在値を取得する。
 	bool GetVector3(int32_t gameObjectId, const std::string& parameterName, Vector3& value) const;  // Vector3 Parameter の現在値を取得する。
+
+	//========================================
+	// 再生制御・Parameter更新API
+	//========================================
 
 	bool SetFloat(int32_t gameObjectId, const std::string& parameterName, float value);  // Float Parameter を更新する。
 	bool SetInt(int32_t gameObjectId, const std::string& parameterName, int32_t value);  // Int Parameter を更新する。
@@ -72,6 +87,10 @@ public:
 		bool loop);  // 攻撃や被弾などの一時 Clip を Base State より上へ重ねる。
 
 private:
+	//========================================
+	// Animation Runtime内部型
+	//========================================
+
 	struct BaseTransform {
 		Vector3 translate{0.0f, 0.0f, 0.0f};  // Play 開始時の配置。
 		Vector3 rotate{0.0f, 0.0f, 0.0f};  // Play 開始時の回転。
@@ -130,6 +149,10 @@ private:
 	std::unordered_map<int32_t, float> animationUpdateRemainingSeconds_;  // 距離別Pose更新までの残り時間。
 	std::unordered_map<int32_t, float> animationAccumulatedDeltaSeconds_;  // 間引いた時間を次のPose評価へまとめて渡す。
 	bool isStarted_ = false;  // Play 中だけ Update を許可する。
+
+	//========================================
+	// Clip評価・Pose反映内部処理
+	//========================================
 
 	void CacheAnimationClip(const EditorGameObject& gameObject, const EditorComponent& component);  // 旧 Animation 用 Clip を読む。
 	void CachePropertyAnimationClip(const EditorGameObject& gameObject, const EditorComponent& component);  // .animclip と対象 Property の基準値を読む。

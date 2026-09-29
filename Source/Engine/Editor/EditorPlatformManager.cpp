@@ -184,13 +184,12 @@ namespace {
 	}
 
 	//================================================================
-	// 初期化失敗時の終亁E��汁E
 	//================================================================
 
 	void RequestInitializationFailure() {
-		g_isInitializationFailed = true; // g_isInitializationFailed は GameScene が後綁EManager 初期化を止めるためのフラグ、E
-		g_isEndRequested = true; // g_isEndRequested は WinMain のループへ入らなぁE��ぁE��する終亁E��求フラグ、E
-		g_exitCode = 1; // 1 は初期化失敗を表す終亁E��ード、E
+		g_isInitializationFailed = true; // GameScene が後続の Manager 初期化を止めるためのフラグ。
+		g_isEndRequested = true;
+		g_exitCode = 1;
 	}
 
 	// 起動後に復帰不能な描画失敗(Device Removed で back buffer が取得できない等)が
@@ -202,7 +201,6 @@ namespace {
 	}
 
 	VertexData MakePrimitiveVertex(float x, float y, float z, float u, float v, const Vector3& normal) {
-		// 基本形メチE��ュの 1 頂点を作る。position はローカル座標、texcoord は checker 表示用、E
 		return VertexData{
 			{x, y, z, 1.0f},
 			{u, v},
@@ -215,7 +213,7 @@ namespace {
 		const VertexData& a,
 		const VertexData& b,
 		const VertexData& c) {
-		// DrawInstanced は triangle list なので、三角形単位で頂点を追加する、E
+		// DrawInstanced は triangle list なので、三角形単位で頂点を追加する。
 		vertices.push_back(a);
 		vertices.push_back(b);
 		vertices.push_back(c);
@@ -227,7 +225,6 @@ namespace {
 		const VertexData& b,
 		const VertexData& c,
 		const VertexData& d) {
-		// 四角形は 2 枚�E三角形に刁E��て追加する、E
 		AddPrimitiveTriangle(vertices, a, b, c);
 		AddPrimitiveTriangle(vertices, c, b, d);
 	}
@@ -247,7 +244,7 @@ namespace {
 	}
 
 	std::vector<VertexData> CreateBoxVertices(const Vector3& halfSize) {
-		std::vector<VertexData> vertices; // vertices は Box 6 面刁E�E三角形頂点、E
+		std::vector<VertexData> vertices;
 		vertices.reserve(36);
 
 		const float x = halfSize.x;
@@ -295,7 +292,7 @@ namespace {
 	}
 
 	std::vector<VertexData> CreateCylinderVertices(uint32_t segmentCount) {
-		std::vector<VertexData> vertices; // vertices は側面、上面、下面を持つ冁E��メチE��ュ、E
+		std::vector<VertexData> vertices;
 		vertices.reserve(static_cast<size_t>(segmentCount) * 12u);
 
 		for (uint32_t segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
@@ -332,7 +329,7 @@ namespace {
 	}
 
 	std::vector<VertexData> CreateConeVertices(uint32_t segmentCount) {
-		std::vector<VertexData> vertices; // vertices は側面と底面を持つ冁E��メチE��ュ、E
+		std::vector<VertexData> vertices;
 		vertices.reserve(static_cast<size_t>(segmentCount) * 6u);
 
 		for (uint32_t segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
@@ -364,7 +361,7 @@ namespace {
 	}
 
 	std::vector<VertexData> CreateTorusVertices(uint32_t majorSegmentCount, uint32_t minorSegmentCount) {
-		std::vector<VertexData> vertices; // vertices はド�Eナツ形状のト�EラスメチE��ュ、E
+		std::vector<VertexData> vertices;
 		vertices.reserve(static_cast<size_t>(majorSegmentCount) * static_cast<size_t>(minorSegmentCount) * 6u);
 
 		for (uint32_t majorIndex = 0; majorIndex < majorSegmentCount; majorIndex++) {
@@ -411,7 +408,7 @@ namespace {
 	}
 
 	std::vector<VertexData> CreateIcoVertices() {
-		std::vector<VertexData> vertices; // vertices は低�Eリゴン基本形として使ぁE�E面体メチE��ュ、E
+		std::vector<VertexData> vertices;
 		vertices.reserve(24);
 		constexpr Vector3 top{0.0f, 0.6f, 0.0f};
 		constexpr Vector3 bottom{0.0f, -0.6f, 0.0f};
@@ -422,7 +419,6 @@ namespace {
 
 		auto addFace = [&](const Vector3& a, const Vector3& b, const Vector3& c) {
 			Vector3 normal = Normalize(Cross(Subtract(b, a), Subtract(c, a)));
-			// 面法線を計算してフラチE��シェーチE��ングにする、E
 			AddPrimitiveTriangle(
 				vertices,
 				MakePrimitiveVertex(a.x, a.y, a.z, 0.5f, 0.0f, normal),
@@ -443,7 +439,7 @@ namespace {
 	}
 
 	std::vector<VertexData> CreateSphereVertices(uint32_t subdivision, float radius) {
-		std::vector<VertexData> vertices; // vertices は緯度経度で作る琁E�E三角形頂点、E
+		std::vector<VertexData> vertices;
 		vertices.reserve(static_cast<size_t>(subdivision) * static_cast<size_t>(subdivision) * 6u);
 
 		const float lonEvery = 2.0f * std::numbers::pi_v<float> / static_cast<float>(subdivision);
@@ -491,7 +487,7 @@ namespace {
 	}
 
 	ModelData CreatePrimitiveModelData(EditorModelMeshType meshType, const ModelData& fallbackPlaneModelData) {
-		ModelData modelData{}; // modelData は基本形ごとの頂点配�Eを�Eれる戻り値、E
+		ModelData modelData{};
 
 		switch (meshType) {
 		case EditorModelMeshType::Plane:
@@ -539,7 +535,7 @@ namespace {
 		D3D12_VERTEX_BUFFER_VIEW* primitiveVertexBufferViews,
 		uint32_t* primitiveVertexCounts) {
 		for (size_t meshTypeIndex = 0; meshTypeIndex < kEditorModelMeshTypeCount; meshTypeIndex++) {
-			auto meshType = static_cast<EditorModelMeshType>(meshTypeIndex); // 配�E番号を基本形 enum として扱ぁE��E
+			auto meshType = static_cast<EditorModelMeshType>(meshTypeIndex);
 			primitiveModelData[meshTypeIndex] = CreatePrimitiveModelData(meshType, fallbackPlaneModelData);
 			primitiveVertexCounts[meshTypeIndex] =
 				static_cast<uint32_t>(primitiveModelData[meshTypeIndex].vertices.size());
@@ -549,7 +545,6 @@ namespace {
 			}
 
 			size_t bufferSize = sizeof(VertexData) * primitiveModelData[meshTypeIndex].vertices.size();
-			// 頂点配�Eを丸ごと UploadBuffer に置く、E
 			primitiveVertexResources[meshTypeIndex] = CreateBufferResource(device, bufferSize);
 
 			VertexData* mappedVertexData = nullptr;
@@ -576,18 +571,16 @@ namespace {
 }
 
 void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
-	InstallCrashHandler(); // クラチE��ュ時に dump を残せるよぁE��最初に例外ハンドラを登録する、E
+	InstallCrashHandler();
 
 	//================================================================
-	// ログファイルの作�E
 	//================================================================
 
-	std::filesystem::create_directory("logs"); // logs フォルダは実行ごとの .Log ファイルを保存する場所、E
-	std::time_t now = std::time(nullptr); // now / localTime はログファイル名に使ぁE��在時刻、E
+	std::filesystem::create_directory("logs"); // logs フォルダには実行ごとの .Log ファイルを保存する。
+	std::time_t now = std::time(nullptr);
 	std::tm localTime{};
 	localtime_s(&localTime, &now);
 
-	// dateString は yyyyMMdd_HHmmss 形式�Eログファイル名部刁E��E
 	std::string dateString = std::format(
 		"{:04}{:02}{:02}_{:02}{:02}{:02}",
 		localTime.tm_year + 1900,
@@ -597,41 +590,37 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		localTime.tm_min,
 		localTime.tm_sec);
 
-	auto logFilePath = std::string("logs/" + dateString + ".Log"); // logFilePath は今回の実行ログの保存�E、E
-	std::ofstream logStream(logFilePath); // logStream は初期化ログとシェーダーコンパイルログを書き込む出力�E、E
+	auto logFilePath = std::string("logs/" + dateString + ".Log");
+	std::ofstream logStream(logFilePath);
 
-	// ログが開けなぁE��合�E、以降�E初期化状況を記録できなぁE��め起動を止める、E
 	if (!logStream) {
 		RequestInitializationFailure();
 		return;
 	}
 
 	HWND windowHandle = CreateMainWindow(instanceHandle, logStream);
-	// windowHandle は DirectX SwapChain と DirectInput の協調レベル設定に使ぁEHWND、E
+	// Window Handle は DirectX SwapChain と DirectInput の協調レベル設定に使用する。
 
-	// Window 作�E失敗時は DirectX / ImGui ぁEHWND を使えなぁE��め終亁E��る、E
 	if (windowHandle == nullptr) {
 		RequestInitializationFailure();
 		return;
 	}
 
-	HRESULT hr = S_OK; // hr は Win32 / DirectX / XAudio2 API の成否を受け取る�E送EHRESULT、E
-	IDirectInput8* directInput = nullptr; // directInput はキーボ�Eドデバイスを作る DirectInput 本体、E
+	HRESULT hr = S_OK;
+	IDirectInput8* directInput = nullptr;
 	hr = DirectInput8Create(
 		instanceHandle, DIRECTINPUT_VERSION, IID_IDirectInput8, reinterpret_cast<void**>(&directInput), nullptr);
 	EDITOR_HR_VERIFY(hr);
 
-	// directInput が作れなぁE��合、エチE��ター操作�E入力を取得できなぁE��め起動を止める、E
 	if (FAILED(hr) || directInput == nullptr) {
 		RequestInitializationFailure();
 		return;
 	}
 
-	IDirectInputDevice8* keyboardDevice = nullptr; // keyboardDevice は DIK_* の押下状態を取得するため�Eキーボ�Eド�E力デバイス、E
+	IDirectInputDevice8* keyboardDevice = nullptr;
 	hr = directInput->CreateDevice(GUID_SysKeyboard, &keyboardDevice, nullptr);
 	EDITOR_HR_VERIFY(hr);
 
-	// キーボ�Eドデバイス作�E失敗時は directInput を解放してから終亁E��る、E
 	if (FAILED(hr) || keyboardDevice == nullptr) {
 		directInput->Release();
 		RequestInitializationFailure();
@@ -639,16 +628,13 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	}
 
 	hr = keyboardDevice->SetDataFormat(&c_dfDIKeyboard);
-	// c_dfDIKeyboard は DirectInput の 256 キー配�E形式で入力を受け取る持E��、E
 	EDITOR_HR_VERIFY(hr);
 
-	// foreground / nonexclusive は他アプリと入力を奪ぁE��わなぁE��チE��ター向け設定、E
 	hr = keyboardDevice->SetCooperativeLevel(
 		windowHandle, DISCL_FOREGROUND | DISCL_NONEXCLUSIVE | DISCL_NOWINKEY);
 	EDITOR_HR_VERIFY(hr);
 
 	//================================================================
-	// DirectInput マウスチE��イス作�E
 	//================================================================
 
 	IDirectInputDevice8* mouseDevice = nullptr;
@@ -666,48 +652,41 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		windowHandle, DISCL_FOREGROUND | DISCL_NONEXCLUSIVE);
 	EDITOR_HR_VERIFY(hr);
 
-	// key / preKey は初期化直後�E今フレーム・前フレーム入力状態、E
 	BYTE key[256] = {};
 	BYTE preKey[256] = {};
 
 #ifdef _DEBUG
 	//================================================================
-	// DirectX12 チE��チE��レイヤー
 	//================================================================
 
 	ComPtr<ID3D12Debug1> debugController;
-	// debugController は DirectX12 のエラーめE��告を Visual Studio に出すため�E制御オブジェクト、E
 
-	// Debug ビルドだぁEGPU 検証を有効にし、危険な API 使用を早めに検�Eする、E
 	if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(debugController.GetAddressOf())))) {
 		debugController->EnableDebugLayer();
 		debugController->SetEnableGPUBasedValidation(TRUE);
 	}
 #endif
 
-	// message は Win32 メチE��ージループで使ぁE��在メチE��ージ、E
 	MSG message{};
 	Log(logStream, "main loop started");
 
 	//================================================================
-	// XAudio2 の初期匁E
+	// XAudio2 を初期化する。
 	//================================================================
 
-	IXAudio2* xAudio2 = nullptr; // xAudio2 は音声再生エンジン本体、E
+	IXAudio2* xAudio2 = nullptr; // 音声再生エンジン本体。
 	hr = XAudio2Create(&xAudio2, 0, XAUDIO2_DEFAULT_PROCESSOR);
 	EDITOR_HR_VERIFY(hr);
 
-	// XAudio2 が作れなぁE��合、E��声リソースを保持できなぁE��め終亁E��る、E
 	if (FAILED(hr) || xAudio2 == nullptr) {
 		RequestInitializationFailure();
 		return;
 	}
 
-	IXAudio2MasteringVoice* masterVoice = nullptr; // masterVoice は最終的にスピ�Eカーへ送る出劁EVoice、E
+	IXAudio2MasteringVoice* masterVoice = nullptr;
 	hr = xAudio2->CreateMasteringVoice(&masterVoice);
 	EDITOR_HR_VERIFY(hr);
 
-	// masterVoice 作�E失敗時は XAudio2 本体を解放して終亁E��る、E
 	if (FAILED(hr) || masterVoice == nullptr) {
 		xAudio2->Release();
 		RequestInitializationFailure();
@@ -721,41 +700,38 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	IXAudio2SourceVoice* sourceVoice = nullptr;
 
 	//================================================================
-	// DirectX12 の初期匁E
+	// DirectX 12 を初期化する。
 	//================================================================
 
-	ComPtr<IDXGIFactory7> dxgiFactory; // dxgiFactory は GPU Adapter と SwapChain を作るための DXGI 入口、E
+	ComPtr<IDXGIFactory7> dxgiFactory; // GPU Adapter と SwapChain を作成する DXGI Factory。
 	hr = CreateDXGIFactory1(IID_PPV_ARGS(dxgiFactory.GetAddressOf()));
 	EDITOR_HR_VERIFY(hr);
 
-	ComPtr<IDXGIAdapter4> useAdapter; // useAdapter は実際に D3D12Device を作る物琁EGPU、E
+	ComPtr<IDXGIAdapter4> useAdapter; // D3D12Device の作成に使用する物理 GPU。
 	for (UINT adapterIndex = 0;; ++adapterIndex) {
-		ComPtr<IDXGIAdapter4> candidateAdapter; // candidateAdapter は性能優先頁E��列挙した GPU 候補、E
+		ComPtr<IDXGIAdapter4> candidateAdapter;
 		if (dxgiFactory->EnumAdapterByGpuPreference(
 			adapterIndex, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
 			IID_PPV_ARGS(candidateAdapter.GetAddressOf())) == DXGI_ERROR_NOT_FOUND) {
 			break;
 		}
 
-		// adapterDesc は GPU 名と Software Adapter 判定に使ぁE��報、E
 		DXGI_ADAPTER_DESC3 adapterDesc{};
 		hr = candidateAdapter->GetDesc3(&adapterDesc);
 		EDITOR_HR_VERIFY(hr);
 
-		// Software Adapter は WARP なので、ゲーム描画に使ぁE��EGPU 候補から外す、E
 		if (adapterDesc.Flags & DXGI_ADAPTER_FLAG3_SOFTWARE) {
 			continue;
 		}
 
-		useAdapter = candidateAdapter; // 最初に見つかった宁EGPU を使用 Adapter として採用する、E
+		useAdapter = candidateAdapter; // 最初に見つかった物理 GPU を使用 Adapter として採用する。
 		Log(logStream, std::format("Use Adapter:{}", ConvertString(std::wstring{adapterDesc.Description})));
 		break;
 	}
 	assert(useAdapter != nullptr);
 
-	ComPtr<ID3D12Device> device; // device は DirectX12 リソース生�Eとコマンド発行�E中忁E��なめEGPU チE��イス、E
+	ComPtr<ID3D12Device> device;
 	hr = D3D12CreateDevice(useAdapter.Get(), D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(device.GetAddressOf()));
-	// FeatureLevel は 12.2 から頁E��試し、PC が対応する一番高い機�Eレベルで作る、E
 	if (SUCCEEDED(hr)) {
 		Log(logStream, "FeatureLevel:12.2");
 	}
@@ -775,22 +751,19 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	Log(logStream, "Complete create D3D12Device!!!");
 
 #ifdef _DEBUG
-	ComPtr<ID3D12InfoQueue> infoQueue; // infoQueue は DirectX12 の重大エラーをデバッガ停止に変えるため�E診断キュー、E
+	ComPtr<ID3D12InfoQueue> infoQueue;
 	if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(infoQueue.GetAddressOf())))) {
 		// Keep Debug Layer messages in the Visual Studio output without raising 0x0000087A exceptions.
 		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, FALSE);
 		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, FALSE);
 		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, FALSE);
 
-		// denyIds は既知のノイズ警告を Debug 出力から除外するため�E ID 一覧、E
 		D3D12_MESSAGE_ID denyIds[] = {
 			D3D12_MESSAGE_ID_RESOURCE_BARRIER_MISMATCHING_COMMAND_LIST_TYPE,
 		};
 
-		// severities は惁E��メチE��ージを抑制するための重大度一覧、E
 		D3D12_MESSAGE_SEVERITY severities[] = {D3D12_MESSAGE_SEVERITY_INFO};
 
-		// filter は denyIds / severities めEInfoQueue に渡すため�E設定、E
 		D3D12_INFO_QUEUE_FILTER filter{};
 		filter.DenyList.NumIDs = _countof(denyIds);
 		filter.DenyList.pIDList = denyIds;
@@ -800,14 +773,12 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	}
 #endif
 
-	ComPtr<ID3D12CommandQueue> commandQueue; // commandQueue は GPU に CommandList を送るキュー、E
+	ComPtr<ID3D12CommandQueue> commandQueue; // GPU に CommandList を送るキュー。
 
-	// commandQueueDesc は標準�E Direct CommandQueue を作るための設定、E
 	D3D12_COMMAND_QUEUE_DESC commandQueueDesc{};
 	hr = device->CreateCommandQueue(&commandQueueDesc, IID_PPV_ARGS(commandQueue.GetAddressOf()));
 	EDITOR_HR_VERIFY(hr);
 
-	// CommandQueue がなぁE��描画命令めEGPU に送れなぁE��め終亁E��る、E
 	if (FAILED(hr) || commandQueue == nullptr) {
 		RequestInitializationFailure();
 		return;
@@ -858,42 +829,36 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	}
 
 
-	ComPtr<ID3D12CommandAllocator> commandAllocator; // commandAllocator は CommandList が記録する命令メモリを管琁E��る、E
+	ComPtr<ID3D12CommandAllocator> commandAllocator;
 	hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(commandAllocator.GetAddressOf()));
 	EDITOR_HR_VERIFY(hr);
 
-	// CommandAllocator がなぁE�� CommandList めEReset できなぁE��め終亁E��る、E
 	if (FAILED(hr) || commandAllocator == nullptr) {
 		RequestInitializationFailure();
 		return;
 	}
 
 	ComPtr<ID3D12GraphicsCommandList> commandList;
-	// commandList は描画・コピ�E・ResourceBarrier の命令を記録するオブジェクト、E
 	hr = device->CreateCommandList(
 		0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator.Get(), nullptr, IID_PPV_ARGS(commandList.GetAddressOf()));
 	EDITOR_HR_VERIFY(hr);
 
-	// CommandList がなぁE��初期チE��スチャアチE�Eロードも描画もできなぁE��め終亁E��る、E
 	if (FAILED(hr) || commandList == nullptr) {
 		RequestInitializationFailure();
 		return;
 	}
 
-	hr = commandList->Close(); // 作�E直後�E CommandList は開いてぁE��ため、一度 Close して通常の Reset 手頁E��合わせる、E
+	hr = commandList->Close();
 	EDITOR_HR_VERIFY(hr);
 
-	// clientRect は Window 冁E�E描画可能領域。SwapChain サイズの初期値に使ぁE��E
 	RECT clientRect{};
 	GetClientRect(windowHandle, &clientRect);
 
 	uint32_t renderWidth = (std::max)(1u, static_cast<uint32_t>(clientRect.right - clientRect.left));
-	// renderWidth / renderHeight は最小化などで 0 にならなぁE��ぁE1 以上にする、E
 	uint32_t renderHeight = (std::max)(1u, static_cast<uint32_t>(clientRect.bottom - clientRect.top));
 
-	ComPtr<IDXGISwapChain4> swapChain; // swapChain は Window に表示するバックバッファ列、E
+	ComPtr<IDXGISwapChain4> swapChain; // Window に表示するバックバッファ列。
 
-	// swapChainDesc はバックバッファ数、形式、表示方式を持E��する設定、E
 	DXGI_SWAP_CHAIN_DESC1 swapChainDesc{};
 	swapChainDesc.Width = renderWidth;
 	swapChainDesc.Height = renderHeight;
@@ -907,17 +872,14 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		reinterpret_cast<IDXGISwapChain1**>(swapChain.GetAddressOf()));
 	EDITOR_HR_VERIFY(hr);
 
-	// SwapChain がなぁE�� Window へ Present できなぁE��め終亁E��る、E
 	if (FAILED(hr) || swapChain == nullptr) {
 		RequestInitializationFailure();
 		return;
 	}
 
-	// rtvDescriptorHeap は SwapChain バックバッファめERenderTarget として参�Eする Heap、E
 	ID3D12DescriptorHeap* rtvDescriptorHeap =
 		CreateDescriptorHeap(device.Get(), D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kRuntimeRtvCount, false);
 
-	// srvDescriptorHeap は Texture SRV と ImGui 用 SRV めEShader から参�Eする Heap、E
 	ID3D12DescriptorHeap* srvDescriptorHeap =
 		CreateDescriptorHeap(
 			device.Get(),
@@ -925,23 +887,21 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			kRuntimeSrvDescriptorHeapCapacity,
 			true);
 
-	// dsvDescriptorHeap は DepthStencil を参照する Heap、E
+	// DepthStencil を参照する DSV Descriptor Heap。
 	ID3D12DescriptorHeap* dsvDescriptorHeap =
 		CreateDescriptorHeap(device.Get(), D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 2, false);
 
-	// swapChainResources は 2 枚�Eバックバッファ実体、E
 	ID3D12Resource* swapChainResources[2] = {nullptr};
 	hr = swapChain->GetBuffer(0, IID_PPV_ARGS(&swapChainResources[0]));
 	EDITOR_HR_VERIFY(hr);
 	hr = swapChain->GetBuffer(1, IID_PPV_ARGS(&swapChainResources[1]));
 	EDITOR_HR_VERIFY(hr);
 
-	// rtvDesc はバックバッファめE2D RenderTarget として扱ぁE��定、E
 	D3D12_RENDER_TARGET_VIEW_DESC rtvDesc{};
 	rtvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 	rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
 
-	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandles[2]; // rtvHandles は吁E��チE��バッファに対応すめECPU 側 RTV ハンドル、E
+	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandles[2];
 	rtvHandles[0] = GetCPUDescriptorHandle(
 		rtvDescriptorHeap, device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV), 0);
 	device->CreateRenderTargetView(swapChainResources[0], &rtvDesc, rtvHandles[0]);
@@ -949,25 +909,22 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		rtvDescriptorHeap, device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV), 1);
 	device->CreateRenderTargetView(swapChainResources[1], &rtvDesc, rtvHandles[1]);
 
-	// depthClearValue は DepthStencil めEClear する時�E初期値、E
 	D3D12_CLEAR_VALUE depthClearValue{};
 	depthClearValue.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
 	depthClearValue.DepthStencil.Depth = 1.0f;
 	depthClearValue.DepthStencil.Stencil = 0;
 
-	// dsvDesc は DepthStencilResource めEDSV として使ぁE��め�E設定、E
 	D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
 	dsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
 	dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
 
 	D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = dsvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
-	// dsvHandle は DepthStencilView を作�Eする CPU 側ハンドル、E
 
 	auto createDepthStencilResource = [&device, &depthClearValue](
 			uint32_t width,
 			uint32_t height,
 			D3D12_RESOURCE_STATES initialState) -> ID3D12Resource* {
-		// depthStencilResourceDesc は SceneView と同じサイズの Depth バッファ設定、E
+		// Scene View と同じサイズの Depth バッファを設定する。
 		D3D12_RESOURCE_DESC depthStencilResourceDesc{};
 		depthStencilResourceDesc.Width = width;
 		depthStencilResourceDesc.Height = height;
@@ -978,11 +935,11 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		depthStencilResourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
 		depthStencilResourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
 
-		// depthStencilHeapProperties は GPU 専用メモリ上に Depth バッファを置く指定、E
+		// Depth バッファは GPU 専用メモリへ配置する。
 		D3D12_HEAP_PROPERTIES depthStencilHeapProperties{};
 		depthStencilHeapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
 
-		ID3D12Resource* newDepthStencilResource = nullptr; // newDepthStencilResource は作�Eして返す DepthStencil 実体、E
+		ID3D12Resource* newDepthStencilResource = nullptr;
 		HRESULT createDepthResult = device->CreateCommittedResource(
 			&depthStencilHeapProperties,
 			D3D12_HEAP_FLAG_NONE,
@@ -999,7 +956,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		renderWidth,
 		renderHeight,
 		D3D12_RESOURCE_STATE_DEPTH_WRITE);
-	// depthStencilResource は現在の描画サイズに合わせた Depth バッファ、E
+	// 現在の描画サイズに合わせた Depth バッファ。
 	ID3D12Resource* opaqueDepthCopyResource = createDepthStencilResource(
 		renderWidth,
 		renderHeight,
@@ -1167,7 +1124,6 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		device->CreateShaderResourceView(bloomRenderTargets[i], &hdrSrvDesc, bloomSrvHandlesCPU[i]);
 	}
 
-	// ToneMap ��� LDR RT �́AFXAA ���ŏI BackBuffer �֏o���O�ɓǂޒ��� RenderTexture�B
 	ID3D12Resource* postProcessRenderTarget = createRenderTargetResource(
 		renderWidth, renderHeight, DXGI_FORMAT_R8G8B8A8_UNORM);
 	D3D12_CPU_DESCRIPTOR_HANDLE postProcessRtvHandle = GetCPUDescriptorHandle(rtvDescriptorHeap, rtvSize, 5u);
@@ -1313,9 +1269,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	device->CreateShaderResourceView(
 		oitRevealageRenderTarget, &oitRevealageSrvDesc, oitDuplicateRevealageSrvHandle);
 
-	ComPtr<IDxcUtils> dxcUtils; // dxcUtils は HLSL ファイル読み込みと IncludeHandler 作�Eに使ぁEDXC 補助、E
-	ComPtr<IDxcCompiler3> dxcCompiler; // dxcCompiler は HLSL めEDXIL へコンパイルする DXC コンパイラ、E
-	ComPtr<IDxcIncludeHandler> includeHandler; // includeHandler は shader の #include を解決するための標準ハンドラ、E
+	ComPtr<IDxcUtils> dxcUtils;
+	ComPtr<IDxcCompiler3> dxcCompiler; // HLSL を DXIL へコンパイルする DXC コンパイラ。
+	ComPtr<IDxcIncludeHandler> includeHandler; // Shader の #include を解決する標準ハンドラ。
 	hr = DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(dxcUtils.GetAddressOf()));
 	EDITOR_HR_VERIFY(hr);
 	hr = DxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(dxcCompiler.GetAddressOf()));
@@ -1323,7 +1279,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	hr = dxcUtils->CreateDefaultIncludeHandler(includeHandler.GetAddressOf());
 	EDITOR_HR_VERIFY(hr);
 
-	// vertexShaderBlob は VS main のコンパイル済みバイトコード、E
+	// VS main のコンパイル済みバイトコード。
 	// 途中の1件で打ち切らず全Shaderを検査し、失敗一覧を最後にまとめて通知する。
 	g_shaderCompilationFailures.clear();
 	ComPtr<IDxcBlob> vertexShaderBlob = CompileShader(
@@ -1333,7 +1289,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		L"Assets/Shaders/Instancing/BatchedObject.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(),
 		includeHandler.Get(), logStream);
 
-	// pixelShaderBlob は PS main のコンパイル済みバイトコード、E
+	// PS main のコンパイル済みバイトコード。
 	ComPtr<IDxcBlob> pixelShaderBlob = CompileShader(
 		L"Assets/Shaders/Object3d.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
@@ -1737,13 +1693,12 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		Log(logStream, failureMessage);
 		const std::wstring wideFailureMessage = ConvertString(failureMessage);
 		MessageBoxW(windowHandle, wideFailureMessage.c_str(), L"CG2Engine - Engine Resource Error", MB_OK | MB_ICONERROR);
-		RequestInitializationFailure(); // �K�{�V�F�[�_�[�� 1 �ł��������� PSO �쐬�֐i�߂Ȃ��B
+		RequestInitializationFailure();
 		return;
 	}
 
 	Log(logStream, "Init Stage: shader compile completed");
 
-	// descriptorRange は Texture SRV めERootSignature の DescriptorTable に渡す篁E��、E
 	D3D12_DESCRIPTOR_RANGE descriptorRange[1] = {};
 	descriptorRange[0].BaseShaderRegister = 0;
 	descriptorRange[0].NumDescriptors = 1;
@@ -1810,7 +1765,6 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 	}
 
-	// descriptionRootSignature �� Shader �ւ� CBV / SRV / Sampler �̊��蓖�Ē�`�B
 	D3D12_ROOT_SIGNATURE_DESC descriptionRootSignature{};
 	descriptionRootSignature.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
@@ -1977,13 +1931,13 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	descriptionRootSignature.pStaticSamplers = staticSamplers;
 	descriptionRootSignature.NumStaticSamplers = _countof(staticSamplers);
 
-	ComPtr<ID3DBlob> signatureBlob; // signatureBlob は RootSignature のシリアライズ結果、E
-	ComPtr<ID3DBlob> errorBlob; // errorBlob は RootSignature シリアライズ失敗時のエラー斁E���E、E
+	ComPtr<ID3DBlob> signatureBlob; // RootSignature のシリアライズ結果。
+	ComPtr<ID3DBlob> errorBlob;
 	Log(logStream, "Init Stage: creating material and transform buffers");
 	ID3D12Resource* spriteMaterialResource = CreateBufferResource(device.Get(), sizeof(Material));
-	// spriteMaterialResource は Sprite 描画用 Material 定数バッファ、E
+	// Sprite 描画用の Material 定数バッファ。
 	Material* spriteMaterialData = nullptr;
-	// spriteMaterialData は CPU から直接書き込める Sprite Material の mapped ポインタ、E
+	// CPU から直接書き込める Sprite Material のマップ済みポインタ。
 	spriteMaterialResource->Map(0, nullptr, reinterpret_cast<void**>(&spriteMaterialData));
 	spriteMaterialData->color = {1.0f, 1.0f, 1.0f, 1.0f};
 	spriteMaterialData->enableLighting = FALSE;
@@ -2005,9 +1959,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	spriteMaterialData->uvTransform = MakeIdentity4x4();
 
 	ID3D12Resource* sphereMaterialResource = CreateBufferResource(device.Get(), sizeof(Material));
-	// sphereMaterialResource は 3D モチE��描画用 Material 定数バッファ、E
 	Material* sphereMaterialData = nullptr;
-	// sphereMaterialData は CPU から直接書き込める 3D Material の mapped ポインタ、E
+	// CPU から直接書き込める 3D Material のマップ済みポインタ。
 	sphereMaterialResource->Map(0, nullptr, reinterpret_cast<void**>(&sphereMaterialData));
 	sphereMaterialData->color = {1.0f, 1.0f, 1.0f, 1.0f};
 	sphereMaterialData->enableLighting = TRUE;
@@ -2030,9 +1983,8 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	ID3D12Resource* directionalLightResource = CreateBufferResource(device.Get(),
 	                                                                sizeof(DirectionalLight) * kMaxSceneLights);
-	// directionalLightResource は PixelShader に渡す平行�E源定数バッファ、E
 	DirectionalLight* directionalLightData = nullptr;
-	// directionalLightData は Inspector から色・向き・強さを書き換える mapped ポインタ、E
+	// Inspector から色・向き・強さを書き換えるマップ済みポインタ。
 	directionalLightResource->Map(0, nullptr, reinterpret_cast<void**>(&directionalLightData));
 	for (uint32_t i = 0; i < kMaxSceneLights; i++) {
 		directionalLightData[i].color = {0.0f, 0.0f, 0.0f, 1.0f};
@@ -2077,12 +2029,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	emissiveLightData->count = 0;
 
 
-	// spriteTransformationMatrixResource は Sprite の WVP / World 行�E用定数バッファ、E
 	ID3D12Resource* spriteTransformationMatrixResource = CreateBufferResource(
 		device.Get(), sizeof(TransformationMatrix));
 
 	TransformationMatrix* spriteTransformationMatrixData = nullptr;
-	// spriteTransformationMatrixData は CPU から Sprite 行�Eを書き込む mapped ポインタ、E
 	spriteTransformationMatrixResource->Map(
 		0, nullptr, reinterpret_cast<void**>(&spriteTransformationMatrixData));
 	spriteTransformationMatrixData->WVP = MakeIdentity4x4();
@@ -2092,12 +2042,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	spriteTransformationMatrixData->World = MakeIdentity4x4();
 	spriteTransformationMatrixData->lightWVP = MakeIdentity4x4();
 
-	// sphereTransformationMatrixResource は旧 3D プレビューの WVP / World 行�E用定数バッファ、E
 	ID3D12Resource* sphereTransformationMatrixResource = CreateBufferResource(
 		device.Get(), sizeof(TransformationMatrix));
 
 	TransformationMatrix* sphereTransformationMatrixData = nullptr;
-	// sphereTransformationMatrixData は CPU から 3D 行�Eを書き込む mapped ポインタ、E
 	sphereTransformationMatrixResource->Map(
 		0, nullptr, reinterpret_cast<void**>(&sphereTransformationMatrixData));
 	sphereTransformationMatrixData->WVP = MakeIdentity4x4();
@@ -2140,12 +2088,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	}
 	Log(logStream, "Init Stage: material and transform buffers completed");
 
-	// RootSignature は Shader がどの Resource をどのスロチE��で読むかを固定する、E
 	hr = D3D12SerializeRootSignature(
 		&descriptionRootSignature, D3D_ROOT_SIGNATURE_VERSION_1, signatureBlob.GetAddressOf(),
 		errorBlob.GetAddressOf());
 	if (FAILED(hr)) {
-		// errorBlob がある場合�E HLSL/RootSignature 側の具体的な失敗理由をログへ出す、E
 		if (errorBlob != nullptr) {
 			Log(reinterpret_cast<char*>(errorBlob->GetBufferPointer()));
 		}
@@ -2154,7 +2100,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	Log(logStream, "Init Stage: object root signature serialized");
 
-	ComPtr<ID3D12RootSignature> rootSignature; // rootSignature は PipelineState に設定すめEGPU 側 RootSignature 実体、E
+	ComPtr<ID3D12RootSignature> rootSignature; // PipelineState に設定する GPU 側の RootSignature。
 	hr = device->CreateRootSignature(
 		0, signatureBlob->GetBufferPointer(), signatureBlob->GetBufferSize(),
 		IID_PPV_ARGS(rootSignature.GetAddressOf()));
@@ -2190,23 +2136,19 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	inputElementDescs[4].Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
 	inputElementDescs[4].AlignedByteOffset = D3D12_APPEND_ALIGNED_ELEMENT;
 
-	// blendDesc は RenderTarget へ色を書き込む方法。現状は不透�E描画の標準設定、E
 	D3D12_BLEND_DESC blendDesc{};
 	blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
 
-	// rasterizerDesc は三角形を塗りつぶし、裏表カリングをしなぁE��定、E
 	D3D12_RASTERIZER_DESC rasterizerDesc{};
 	rasterizerDesc.FillMode = D3D12_FILL_MODE_SOLID;
 	rasterizerDesc.CullMode = D3D12_CULL_MODE_BACK;
 	rasterizerDesc.DepthClipEnable = TRUE;
 
-	// depthStencilDesc は手前の物体を優先して描くための深度チE��ト設定、E
 	D3D12_DEPTH_STENCIL_DESC depthStencilDesc{};
 	depthStencilDesc.DepthEnable = TRUE;
 	depthStencilDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
 	depthStencilDesc.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
 
-	// graphicsPipelineStateDesc は Shader、�E力レイアウト、Blend、Depth をまとめた描画設定、E
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC graphicsPipelineStateDesc{};
 	graphicsPipelineStateDesc.pRootSignature = rootSignature.Get();
 	graphicsPipelineStateDesc.InputLayout.pInputElementDescs = inputElementDescs;
@@ -2230,11 +2172,9 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	graphicsPipelineStateDesc.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
 
 	ComPtr<ID3D12PipelineState> graphicsPipelineState;
-	// graphicsPipelineState は Draw 時に CommandList へセチE��する PSO 実体、E
 	hr = device->CreateGraphicsPipelineState(&graphicsPipelineStateDesc,
 	                                         IID_PPV_ARGS(graphicsPipelineState.GetAddressOf()));
 
-	// PSO がなぁE�� Shader と RenderState が確定せず描画できなぁE��め終亁E��る、E
 	if (FAILED(hr) || graphicsPipelineState == nullptr) {
 		Log(logStream, std::format("Object3d PSO Create failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
 		RequestInitializationFailure();
@@ -3169,7 +3109,6 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	}
 
 	ModelData modelData = LoadObjFile("resources", "plane.obj");
-	// modelData は旧プレビューと既定アセチE��用に読み込む plane.obj の頂点チE�Eタ、E
 	if (modelData.vertices.empty()) {
 		Log(logStream, "resources/plane.obj is missing or invalid; using the procedural plane.");
 		modelData.vertices = CreatePlaneVertices();
@@ -3180,30 +3119,26 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		modelData.material.textureFilePath = "resources/editorDefault/uvChecker.png";
 	}
 
-	constexpr uint32_t kSubdivision = 64; // kSubdivision は旧琁E�Eレビューを作る緯度・経度刁E��数、E
+	constexpr uint32_t kSubdivision = 64;
 	constexpr float kLonEvery = 2.0f * std::numbers::pi_v<float> / static_cast<float>(kSubdivision);
-	// kLonEvery / kLatEvery は琁E��チE��ュ 1 セグメントあたりの角度、E
 	constexpr float kLatEvery = std::numbers::pi_v<float> / static_cast<float>(kSubdivision);
 
-	std::vector<VertexData> vertices; // vertices は旧琁E�Eレビュー用に CPU で生�Eする三角形頂点列、E
+	std::vector<VertexData> vertices;
 	vertices.reserve(kSubdivision * kSubdivision * 6);
 	for (uint32_t latIndex = 0; latIndex < kSubdivision; ++latIndex) {
 		float lat = -std::numbers::pi_v<float> / 2.0f + kLatEvery * static_cast<float>(latIndex);
-		// lat / latNext は現在セルの下�E・上�Eの緯度角、E
 		float latNext = lat + kLatEvery;
 
 		for (uint32_t lonIndex = 0; lonIndex < kSubdivision; ++lonIndex) {
 			float lon = kLonEvery * static_cast<float>(lonIndex) + std::numbers::pi_v<float>;
-			// lon / lonNext は現在セルの左側・右側の経度角、E
+			// lon と lonNext は現在のセルの左右に対応する経度角。
 			float lonNext = lon + kLonEvery;
 
 			float u0 = static_cast<float>(lonIndex) / static_cast<float>(kSubdivision);
-			// u0/u1/v0/v1 は琁E��に uvChecker を貼るため�E UV 篁E��、E
 			float u1 = static_cast<float>(lonIndex + 1) / static_cast<float>(kSubdivision);
 			float v0 = 1.0f - static_cast<float>(latIndex) / static_cast<float>(kSubdivision);
 			float v1 = 1.0f - static_cast<float>(latIndex + 1) / static_cast<float>(kSubdivision);
 
-			// a/b/c/d は琁E�� 1 セルの四隅。position と normal は単位球座標から作る、E
 			VertexData a{
 				{std::cos(lat) * std::cos(lon), std::sin(lat), std::cos(lat) * std::sin(lon), 1.0f},
 				{u0, v0},
@@ -3226,7 +3161,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 					{std::cos(latNext) * std::cos(lonNext), std::sin(latNext), std::cos(latNext) * std::sin(lonNext)})
 			};
 
-			vertices.push_back(a); // 四角形セルめE2 枚�E三角形に刁E��て VertexBuffer へ追加する、E
+			vertices.push_back(a);
 			vertices.push_back(b);
 			vertices.push_back(c);
 			vertices.push_back(c);
@@ -3235,13 +3170,12 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		}
 	}
 
-	// sprite は旧 Sprite プレビューの基準位置とサイズ、E
+	// 旧 Sprite プレビューの基準位置とサイズ。
 	Sprite sprite{
 		.position = {128.0f, 128.0f},
 		.size = {256.0f, 256.0f}
 	};
 
-	// spriteVertices は中忁E��点の四角形を表ぁE4 頂点、E
 	VertexData spriteVertices[] = {
 		{{-0.5f, -0.5f, 0.0f, 1.0f}, {0.0f, 1.0f}, {0.0f, 0.0f, -1.0f}},
 		{{-0.5f, 0.5f, 0.0f, 1.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, -1.0f}},
@@ -3249,34 +3183,31 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		{{0.5f, 0.5f, 0.0f, 1.0f}, {1.0f, 0.0f}, {0.0f, 0.0f, -1.0f}},
 	};
 
-	// spriteIndices は四角形めE2 三角形で描くための IndexBuffer、E
+	// 四角形を 2 枚の三角形で描くための Index Buffer。
 	uint32_t spriteIndices[] = {
 		0, 1, 2,
 		2, 1, 3,
 	};
 
-	// transform は旧 3D モチE��プレビューの初期 Transform、E
 	Transforms transform{
 		.scale = {0.55f, 0.55f, 0.55f},
 		.rotate = {0.0f, 0.0f, 0.0f},
 		.translate = {0.0f, 0.0f, 0.0f}
 	};
 
-	// spriteTransform は旧 Sprite プレビューの Transform。Sprite サイズめEscale に入れる、E
+	// 旧 Sprite プレビューの Transform。Sprite のサイズを scale に設定する。
 	Transforms spriteTransform{
 		.scale = {sprite.size.x, sprite.size.y, 1.0f},
 		.rotate = {0.0f, 0.0f, 0.0f},
 		.translate = {sprite.position.x, sprite.position.y, 0.0f}
 	};
 
-	// cameraTransform は SceneView 用エチE��ターカメラの初期位置、E
 	Transforms cameraTransform{
 		.scale = {1.0f, 1.0f, 1.0f},
 		.rotate = {0.0f, 0.0f, 0.0f},
 		.translate = {0.0f, 0.0f, -5.0f}
 	};
 
-	// uvTransform は Material の UV 変換行�Eを作るための初期 Transform、E
 	Transforms uvTransform{
 		.scale = {1.0f, 1.0f, 1.0f},
 		.rotate = {0.0f, 0.0f, 0.0f},
@@ -3284,7 +3215,6 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	};
 
 	ID3D12Resource* vertexResource = CreateBufferResource(device.Get(), sizeof(VertexData) * vertices.size());
-	// vertexResource は旧琁E�Eレビューの頂点めEGPU へ渡ぁEUpload Buffer、E
 	if (vertexResource == nullptr) {
 		Log(logStream, "Sphere vertex buffer creation failed.");
 		RequestInitializationFailure();
@@ -3304,7 +3234,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		return;
 	}
 
-	VertexData* mappedVertexData = nullptr; // mappedVertexData は vertexResource に CPU から頂点を書き込むためのポインタ、E
+	VertexData* mappedVertexData = nullptr; // vertexResource へ CPU から頂点を書き込むためのポインタ。
 	hr = vertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedVertexData));
 	if (FAILED(hr) || mappedVertexData == nullptr) {
 		Log(logStream, std::format("Sphere vertex buffer Map failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
@@ -3315,13 +3245,12 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	std::memcpy(mappedVertexData, vertices.data(), sizeof(VertexData) * vertices.size());
 
-	// vertexBufferView は旧琁E�Eレビューの頂点 Buffer めEDraw に渡す情報、E
 	D3D12_VERTEX_BUFFER_VIEW vertexBufferView{};
 	vertexBufferView.BufferLocation = vertexResource->GetGPUVirtualAddress();
 	vertexBufferView.SizeInBytes = static_cast<UINT>(sizeof(VertexData) * vertices.size());
 	vertexBufferView.StrideInBytes = sizeof(VertexData);
 
-	// modelVertexResource は plane.obj の頂点めEGPU へ渡ぁEUpload Buffer、E
+	// plane.obj の頂点を GPU へ渡す Upload Buffer。
 	ID3D12Resource* modelVertexResource = CreateBufferResource(device.Get(),
 	                                                           sizeof(VertexData) * modelData.vertices.size());
 	if (modelVertexResource == nullptr) {
@@ -3331,7 +3260,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	}
 
 	VertexData* mappedModelVertexData = nullptr;
-	// mappedModelVertexData は modelVertexResource に CPU から頂点を書き込むためのポインタ、E
+	// modelVertexResource へ CPU から頂点を書き込むためのポインタ。
 	hr = modelVertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedModelVertexData));
 	if (FAILED(hr) || mappedModelVertexData == nullptr) {
 		Log(logStream, std::format("Plane vertex buffer Map failed. hr=0x{:08X}", static_cast<uint32_t>(hr)));
@@ -3342,18 +3271,18 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 	std::memcpy(mappedModelVertexData, modelData.vertices.data(), sizeof(VertexData) * modelData.vertices.size());
 
-	// modelVertexBufferView は plane.obj の頂点 Buffer めEDraw に渡す情報、E
+	// plane.obj の頂点 Buffer を Draw に渡すための View。
 	D3D12_VERTEX_BUFFER_VIEW modelVertexBufferView{};
 	modelVertexBufferView.BufferLocation = modelVertexResource->GetGPUVirtualAddress();
 	modelVertexBufferView.SizeInBytes = static_cast<UINT>(sizeof(VertexData) * modelData.vertices.size());
 	modelVertexBufferView.StrideInBytes = sizeof(VertexData);
 
-	ModelData primitiveModelData[kEditorModelMeshTypeCount]{}; // primitiveModelData は基本形ごとの CPU 頂点チE�Eタ、E
+	ModelData primitiveModelData[kEditorModelMeshTypeCount]{};
 	ID3D12Resource* primitiveVertexResources[kEditorModelMeshTypeCount] = {};
-	// primitiveVertexResources は基本形ごとの GPU 頂点 Buffer、E
+	// 基本形ごとの GPU 頂点 Buffer。
 	D3D12_VERTEX_BUFFER_VIEW primitiveVertexBufferViews[kEditorModelMeshTypeCount]{};
-	// primitiveVertexBufferViews は Draw 時に IA へ渡ぁEBufferView、E
-	uint32_t primitiveVertexCounts[kEditorModelMeshTypeCount] = {}; // primitiveVertexCounts は DrawInstanced の頂点数、E
+	// Draw 時に IA へ渡す基本形ごとの Buffer View。
+	uint32_t primitiveVertexCounts[kEditorModelMeshTypeCount] = {}; // DrawInstanced に渡す基本形ごとの頂点数。
 	CreatePrimitiveMeshBuffers(
 		device.Get(),
 		modelData,
@@ -3363,46 +3292,45 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		primitiveVertexCounts);
 
 	ID3D12Resource* spriteVertexResource = CreateBufferResource(device.Get(), sizeof(spriteVertices));
-	// spriteVertexResource は Sprite 四角形の頂点めEGPU へ渡ぁEUpload Buffer、E
+	// Sprite 四角形の頂点を GPU へ渡す Upload Buffer。
 	VertexData* mappedSpriteVertexData = nullptr;
-	// mappedSpriteVertexData は Sprite 頂点を書き込むための CPU mapped ポインタ、E
+	// Sprite 頂点を書き込むための CPU 側マップ済みポインタ。
 	hr = spriteVertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedSpriteVertexData));
 	EDITOR_HR_VERIFY(hr);
 	std::memcpy(mappedSpriteVertexData, spriteVertices, sizeof(spriteVertices));
 
-	// spriteVertexBufferView は Sprite 頂点 Buffer めEDraw に渡す情報、E
+	// Sprite 頂点 Buffer を Draw に渡すための View。
 	D3D12_VERTEX_BUFFER_VIEW spriteVertexBufferView{};
 	spriteVertexBufferView.BufferLocation = spriteVertexResource->GetGPUVirtualAddress();
 	spriteVertexBufferView.SizeInBytes = sizeof(spriteVertices);
 	spriteVertexBufferView.StrideInBytes = sizeof(VertexData);
 
 	ID3D12Resource* spriteIndexResource = CreateBufferResource(device.Get(), sizeof(spriteIndices));
-	// spriteIndexResource は Sprite 四角形の IndexBuffer、E
-	uint32_t* mappedSpriteIndexData = nullptr; // mappedSpriteIndexData は Sprite Index めECPU から書き込むためのポインタ、E
+	// Sprite 四角形の Index Buffer。
+	uint32_t* mappedSpriteIndexData = nullptr; // Sprite の Index を CPU から書き込むためのポインタ。
 	hr = spriteIndexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedSpriteIndexData));
 	EDITOR_HR_VERIFY(hr);
 	std::memcpy(mappedSpriteIndexData, spriteIndices, sizeof(spriteIndices));
 
-	// spriteIndexBufferView は Sprite IndexBuffer めEDrawIndexed に渡す情報、E
+	// Sprite の Index Buffer を DrawIndexed に渡すための View。
 	D3D12_INDEX_BUFFER_VIEW spriteIndexBufferView{};
 	spriteIndexBufferView.BufferLocation = spriteIndexResource->GetGPUVirtualAddress();
 	spriteIndexBufferView.SizeInBytes = sizeof(spriteIndices);
 	spriteIndexBufferView.Format = DXGI_FORMAT_R32_UINT;
 
 	constexpr float editorMenuHeight = 20.0f;
-	// editorMenuHeight / editorSceneHeaderHeight は初期 SceneView 矩形の Y 座標計算に使ぁE��定高さ、E
 	constexpr float editorSceneHeaderHeight = 24.0f;
 
 	float editorWindowWidth = static_cast<float>(renderWidth);
-	// editorWindowWidth / Height は ImGui と SceneView 用に float で保持する Window サイズ、E
+	// ImGui と Scene View で使用する Window サイズを float で保持する。
 	float editorWindowHeight = static_cast<float>(renderHeight);
 
-	float editorLeftWidth = 250.0f; // editorLeft/Right/Bottom は初期 Docking 前�E吁E��ネル幁E�E高さ、E
+	float editorLeftWidth = 250.0f;
 	float editorRightWidth = 320.0f;
 	float editorBottomHeight = 190.0f;
 
 	float editorSceneX = editorLeftWidth;
-	// editorSceneX/Y/Width/Height は DirectX viewport めESceneView に合わせるための矩形、E
+	// DirectX の Viewport を Scene View に合わせるための矩形。
 	float editorSceneY = editorMenuHeight + editorSceneHeaderHeight;
 	float editorSceneWidth =
 		editorWindowWidth - editorLeftWidth - editorRightWidth;
@@ -3410,7 +3338,6 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		editorWindowHeight - editorSceneY - editorBottomHeight;
 	auto updateEditorLayout = [&]() {
 		editorLeftWidth = (std::clamp)(editorLeftWidth, 160.0f, 420.0f);
-		// パネル幁E�E高さに下限上限を持たせ、SceneView が極端に潰れなぁE��ぁE��する、E
 		editorRightWidth = (std::clamp)(editorRightWidth, 220.0f, 520.0f);
 		editorBottomHeight = (std::clamp)(editorBottomHeight, 120.0f, 320.0f);
 		editorSceneX = editorLeftWidth;
@@ -3422,7 +3349,6 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	};
 	updateEditorLayout();
 
-	// viewport は DirectX が描画する画面上�E矩形、E
 	D3D12_VIEWPORT viewport{};
 	viewport.TopLeftX = editorSceneX;
 	viewport.TopLeftY = editorSceneY;
@@ -3432,14 +3358,12 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	viewport.Width = editorSceneWidth;
 	viewport.Height = editorSceneHeight;
 
-	// scissorRect は SceneView の外へ描画しなぁE��め�E刁E��取り矩形、E
 	D3D12_RECT scissorRect{};
 	scissorRect.left = static_cast<LONG>(editorSceneX);
 	scissorRect.top = static_cast<LONG>(editorSceneY);
 	scissorRect.right = static_cast<LONG>(editorSceneX + editorSceneWidth);
 	scissorRect.bottom = static_cast<LONG>(editorSceneY + editorSceneHeight);
 
-	// textureFilePaths は起動時に GPU へアチE�Eロードする標準テクスチャ一覧、E
 	std::wstring textureFilePaths[] = {
 		L"resources/editorDefault/uvChecker.png",
 		L"resources/editorDefault/monsterBall.png",
@@ -3457,7 +3381,6 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	}
 
 	std::string textureFilePathStrings[_countof(textureFilePaths)];
-	// textureFilePathStrings は Project パネルで扱ぁE��すい UTF-8 版パス、E
 	for (uint32_t textureIndex = 0; textureIndex < _countof(textureFilePaths); ++textureIndex) {
 		textureFilePathStrings[textureIndex] = ConvertString(textureFilePaths[textureIndex]);
 	}
@@ -3468,11 +3391,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	}
 
 	DirectX::ScratchImage mipImages[_countof(textureFilePaths)];
-	// mipImages は DirectXTex が生成しぁEmipmap 付き画像データ、E
+	// DirectXTex が生成した mipmap 付き画像データ。
 	DirectX::TexMetadata textureMetadatas[_countof(textureFilePaths)];
-	// textureMetadatas は吁ETexture のサイズ、形式、mip 数、E
+	// 各 Texture のサイズ、形式、mip 数を保持するメタデータ。
 
-	// textureResources は GPU 上�E Texture 実体、E
 	ID3D12Resource* textureResources[_countof(textureFilePaths)] = {nullptr};
 	for (uint32_t textureIndex = 0; textureIndex < _countof(textureFilePaths); ++textureIndex) {
 		mipImages[textureIndex] = LoadTexture(textureFilePaths[textureIndex]);
@@ -3495,20 +3417,17 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		}
 	}
 
-	// cameraMatrix はエチE��ターカメラ Transform から作るワールド行�E、E
 	Matrix4x4 cameraMatrix = MakeAffineMatrix(
 		cameraTransform.scale, cameraTransform.rotate, cameraTransform.translate);
 
-	Matrix4x4 viewMatrix = Inverse(cameraMatrix); // viewMatrix は cameraMatrix の送E���E。ワールド座標をカメラ空間へ移す、E
+	Matrix4x4 viewMatrix = Inverse(cameraMatrix);
 
-	// projectionMatrix は SceneView の 3D 表示用透視投影行�E、E
 	Matrix4x4 projectionMatrix = MakePerspectiveFovMatrix(
 		0.45f,
 		editorSceneWidth / editorSceneHeight,
 		0.1f,
 		100.0f);
 
-	// spriteProjectionMatrix は 2D Sprite を画面座標で描くための正封E��行�E、E
 	Matrix4x4 spriteProjectionMatrix = MakeOrthographicMatrix(
 		0.0f,
 		0.0f,
@@ -3517,52 +3436,46 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		0.0f,
 		100.0f);
 
-	float editorCameraMoveSpeed = 0.12f; // editorCamera*Speed は Inspector から調整できる Scene カメラ操作速度、E
+	float editorCameraMoveSpeed = 0.12f; // Inspector から調整できる Scene カメラの移動速度。
 	float editorCameraRotateSpeed = 0.006f;
 	float editorCameraWheelMoveSpeed = 0.5f;
 	float editorCameraPanSpeed = 0.01f;
 	float editorCameraFastRate = 4.0f;
 
-	// sceneClearColor は SceneView の背景色 RGBA、E
+	// Scene View の背景色 RGBA。
 	float sceneClearColor[4] = {0.1f, 0.25f, 0.5f, 1.0f};
 
-	bool isSceneGizmoVisible = true; // is*GizmoVisible は SceneView 上�E補助表示を�Eり替えるフラグ、E
+	bool isSceneGizmoVisible = true;
 	bool isLightGizmoVisible = false;
 	bool isCameraGizmoVisible = false;
 
-	// directionalLightIconPosition はライトアイコンめESceneView に表示するワールド座標、E
+	// Directional Light のアイコンを Scene View に表示するワールド座標。
 	Vector3 directionalLightIconPosition = {-1.8f, 1.4f, 0.0f};
 
 	EditorSceneObjectManager editorSceneObjectManager;
-	// editorSceneObjectManager は GameObject に対応すめEDirectX 描画用 SceneObject を保持する、E
+	// GameObject に対応する DirectX 描画用の SceneObject を保持する。
 	editorSceneObjectManager.Initialize(device.Get());
 
 	std::vector<EditorSceneObject>& editorSceneObjects = editorSceneObjectManager.GetSceneObjects();
-	// editorSceneObjects は SceneObjectManager 冁E��配�Eへの参�E、E
 	int32_t selectedPlacedSceneObjectIndex = -1;
-	// selectedPlacedSceneObjectIndex は SceneObject 配�Eの選択中 index、E1 は未選択、E
-	ComPtr<ID3D12Fence> fence; // fence は CPU ぁEGPU 処琁E��亁E��征E��ための同期オブジェクト、E
-	uint64_t fenceValue = 0; // fenceValue は Signal ごとに進める GPU 完亁E��認用カウンタ、E
+	ComPtr<ID3D12Fence> fence;
+	uint64_t fenceValue = 0;
 	hr = device->CreateFence(fenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(fence.GetAddressOf()));
 	EDITOR_HR_VERIFY(hr);
 
 	HANDLE fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-	// fenceEvent は GPU 完亁E��知めECPU ぁEWaitForSingleObject で征E��ための Win32 Event、E
 	assert(fenceEvent != nullptr);
 
-	// Event 作�Eに失敗すると GPU 征E��ができなぁE��め、描画開始前に終亁E��る、E
 	if (fenceEvent == nullptr) {
 		RequestInitializationFailure();
 		return;
 	}
 
 	auto waitForGpu = [&]() {
-		fenceValue++; // fenceValue を進め、今回征E�� GPU 作業番号を作る、E
+		fenceValue++;
 		HRESULT signalResult = commandQueue->Signal(fence.Get(), fenceValue);
-		// Signal は commandQueue に現在の fenceValue を完亁E��定として登録する、E
 		EDITOR_HR_VERIFY(signalResult);
 
-		// GPU がまだ持E��値まで終わってぁE��ければ、Event を登録して CPU を征E��させる、E
 		if (fence->GetCompletedValue() < fenceValue) {
 			HRESULT eventResult = fence->SetEventOnCompletion(fenceValue, fenceEvent);
 			EDITOR_HR_VERIFY(eventResult);
@@ -3571,22 +3484,20 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	};
 
 	auto resizeRenderTargets = [&](uint32_t width, uint32_t height) {
-		// 既に同じサイズなめESwapChain と DepthStencil を作り直さなぁE��E
 		if (renderWidth == width && renderHeight == height) {
 			return;
 		}
 
-		waitForGpu(); // ResizeBuffers 前に GPU が古ぁEback buffer を使ぁE��わるまで征E��、E
+		waitForGpu();
 
 		for (ID3D12Resource*& swapChainResource : swapChainResources) {
-			// 古ぁESwapChain buffer は ResizeBuffers 前に忁E�� Release する、E
 			if (swapChainResource != nullptr) {
 				swapChainResource->Release();
 				swapChainResource = nullptr;
 			}
 		}
 
-		// 古ぁEDepthStencil も描画サイズが変わるため作り直す、E
+		// 描画サイズの変更に合わせ、古い DepthStencil も作り直す。
 		if (depthStencilResource != nullptr) {
 			depthStencilResource->Release();
 			depthStencilResource = nullptr;
@@ -3597,10 +3508,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			opaqueDepthCopyResource = nullptr;
 		}
 
-		renderWidth = width; // renderWidth / renderHeight は新しい SwapChain サイズ、E
+		renderWidth = width; // 新しい SwapChain の幅を保持する。
 		renderHeight = height;
 
-		// ResizeBuffers は SwapChain の back buffer 実体を新しいサイズで再生成する、E
+		// SwapChain の Back Buffer を新しいサイズで再生成する。
 		HRESULT resizeResult = swapChain->ResizeBuffers(
 			swapChainDesc.BufferCount,
 			renderWidth,
@@ -3614,7 +3525,6 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		// 渡すことになるため、取得できた Buffer だけ RTV を張り直す。
 		bool swapChainBuffersReady = true;
 		for (uint32_t bufferIndex = 0; bufferIndex < swapChainDesc.BufferCount; ++bufferIndex) {
-			// Resize 後�E新しい back buffer を取得して RTV を張り直す、E
 			HRESULT getBufferResult =
 				swapChain->GetBuffer(bufferIndex, IID_PPV_ARGS(&swapChainResources[bufferIndex]));
 			if (!EDITOR_HR_OK(getBufferResult) || swapChainResources[bufferIndex] == nullptr) {
@@ -3639,7 +3549,7 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			renderWidth,
 			renderHeight,
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-		// DepthStencil も新しい renderWidth / renderHeight に合わせて再生成する、E
+		// DepthStencil も新しい描画サイズに合わせて再生成する。
 		device->CreateDepthStencilView(depthStencilResource, &dsvDesc, dsvHandle);
 		device->CreateShaderResourceView(
 			opaqueDepthCopyResource,
@@ -3647,15 +3557,14 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 			opaqueDepthCopySrvHandleCPU);
 	};
 
-	hr = commandAllocator->Reset(); // チE��スチャアチE�Eロード用に CommandAllocator と CommandList を記録可能状態へ戻す、E
+	hr = commandAllocator->Reset();
 	EDITOR_HR_VERIFY(hr);
 	hr = commandList->Reset(commandAllocator.Get(), nullptr);
 	EDITOR_HR_VERIFY(hr);
 
-	// intermediateResources は Texture upload のための一晁EUpload Buffer、E
+	// Texture Upload に使用する一時的な Upload Buffer。
 	ID3D12Resource* intermediateResources[_countof(textureFilePaths)] = {nullptr};
 	for (uint32_t textureIndex = 0; textureIndex < _countof(textureFilePaths); ++textureIndex) {
-		// UploadTextureData は textureResources に mipImages をコピ�Eする命令めECommandList へ積�E、E
 		intermediateResources[textureIndex] = UploadTextureData(
 			device.Get(), commandList.Get(), textureResources[textureIndex], mipImages[textureIndex]);
 		if (intermediateResources[textureIndex] == nullptr) {
@@ -3668,20 +3577,19 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	}
 
 	UINT srvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-	// srvDescriptorSize は SRV Heap 冁E��次の Descriptor へ進むバイト幁E��E
 	D3D12_CPU_DESCRIPTOR_HANDLE textureSrvHandlesCPU[_countof(textureFilePaths)];
-	// textureSrvHandlesCPU は CreateShaderResourceView に渡ぁECPU 側 SRV ハンドル、E
+	// CreateShaderResourceView に渡す CPU 側の SRV Handle。
 	D3D12_GPU_DESCRIPTOR_HANDLE textureSrvHandlesGPU[_countof(textureFilePaths)];
-	// textureSrvHandlesGPU は Draw 時に Shader へ渡ぁEGPU 側 SRV ハンドル、E
+	// Draw 時に Shader へ渡す GPU 側の SRV Handle。
 	for (uint32_t textureIndex = 0; textureIndex < _countof(textureFilePaths); ++textureIndex) {
-		// srvDesc は 2D Texture SRV として mipmap 付き画像を Shader から読む設定、E
+		// mipmap 付き画像を 2D Texture SRV として Shader から読む設定。
 		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 		srvDesc.Format = textureMetadatas[textureIndex].format;
 		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		srvDesc.Texture2D.MipLevels = static_cast<UINT>(textureMetadatas[textureIndex].mipLevels);
 
-		// index + 1 にするのは 0 番めEImGui 用 SRV に空けるため、E
+		// 0 番を ImGui 用 SRV として空けるため、Texture は index + 1 に配置する。
 		textureSrvHandlesCPU[textureIndex] = GetCPUDescriptorHandle(srvDescriptorHeap, srvDescriptorSize,
 		                                                            textureIndex + 1);
 		textureSrvHandlesGPU[textureIndex] = GetGPUDescriptorHandle(srvDescriptorHeap, srvDescriptorSize,
@@ -3698,14 +3606,13 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 		srvDescriptorSize,
 		kRuntimeEnvironmentSrvDescriptorIndex);
 
-	hr = commandList->Close(); // Texture upload 用 CommandList を閉じて GPU に実行させる、E
+	hr = commandList->Close(); // Texture Upload 用 CommandList を閉じて GPU に実行させる。
 	EDITOR_HR_VERIFY(hr);
 
-	// uploadCommandLists は ExecuteCommandLists に渡ぁECommandList 配�E、E
 	ID3D12CommandList* uploadCommandLists[] = {commandList.Get()};
 	commandQueue->ExecuteCommandLists(1, uploadCommandLists);
 
-	fenceValue++; // 初期アチE�E��ードが完亁E��るまで征E��、以降�E描画で Texture を安�Eに参�Eする、E
+	fenceValue++;
 	hr = commandQueue->Signal(fence.Get(), fenceValue);
 	EDITOR_HR_VERIFY(hr);
 	if (fence->GetCompletedValue() < fenceValue) {
@@ -4371,22 +4278,22 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 
 #ifdef USE_IMGUI
 
-	IMGUI_CHECKVERSION(); // ImGui のバ�Eジョン整合性を確認してから Context を作る、E
+	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 
-	ImGuiIO& io = ImGui::GetIO(); // io は Docking 有効化や Font 設定を行う ImGui の入出力設定、E
-	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable; // DockingEnable でウィンドウのドラチE��移動�Eドッキングを許可する、E
+	ImGuiIO& io = ImGui::GetIO(); // Docking の有効化や Font 設定を行う ImGui の入出力設定。
+	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 	io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // タブをメイン Window 外へ出した時、個別の OS Window として表示する。
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 	// Game ViewのUI(Button/Toggle/Slider)をGamepadの十字キー・スティックで選択できるようにする。
 	// Editor側のWindow操作も同じ経路で動くが、入力はImGuiのNav処理内で完結する。
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
-	io.ConfigDockingWithShift = false; // Shift なしで Docking できるようにして Unity 風の操作感にする、E
+	io.ConfigDockingWithShift = false; // Shift なしで Docking できる Unity 風の操作にする。
 	io.ConfigViewportsNoTaskBarIcon = true; // 分離した Editor タブをタスクバーへ個別に並べない。
 	io.ConfigWindowsMoveFromTitleBarOnly = true;
 	const float editorUiScale = GetEditorUiScale(windowHandle);
 	ApplyEditorVisualTheme(editorUiScale);
-	ImGui_ImplWin32_Init(windowHandle); // Win32 backend は HWND からマウス・キーボ�Eド�E力を受け取る、E
+	ImGui_ImplWin32_Init(windowHandle);
 
 	// 動的 Font Atlas が文字サイズごとの Glyph Texture を更新できるよう、複数 SRV 対応 API を使う。
 	g_imguiSrvDescriptorAllocator.descriptorHeap = srvDescriptorHeap;
@@ -4645,10 +4552,10 @@ void EditorPlatformManager::Initialize(_In_ HINSTANCE instanceHandle) {
 	}
 
 	// 16px は Editor UI の基準値。Game View の Text は要求サイズで動的に再ラスタライズされる。
-	io.Fonts->Build(); // Font Atlas をここで構築し、最初�Eフレームで日本語フォントを使える状態にする、E
+	io.Fonts->Build();
 #endif
 
-	g_instanceHandle = instanceHandle; // ここから下�E、Initialize 冁E�Eローカル生�E物めEEditorSharedState の共有状態へ移す、E
+	g_instanceHandle = instanceHandle;
 	g_logStream = std::move(logStream);
 	// HRESULT 失敗行を実行ログ(logs/<日時>.Log)へも残す。g_logStream は
 	// Finalize まで生きるグローバルなので、寿命の逆転は起きない。
@@ -4948,8 +4855,6 @@ void EditorPlatformManager::Update() {
 		return;
 	}
 
-	// ���T�C�Y��t���X�N���[���ؑւł� WM_SIZE / WM_PAINT ����C�ɗ��܂邽�߁A
-	// 1 �t���[���ŃL���[����ɂ��āA�Â��E�B���h�E�T�C�Y�̂܂ܕ`�������Ȃ��悤�ɂ���B
 	while (PeekMessage(&g_message, nullptr, 0, 0, PM_REMOVE) != FALSE) {
 		TranslateMessage(&g_message);
 		DispatchMessage(&g_message);

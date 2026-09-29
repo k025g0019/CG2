@@ -14,6 +14,10 @@
 
 namespace CG2Collaboration {
 
+//========================================
+// TCP Transport共通処理
+//========================================
+
 namespace {
 	// WSAStartup/WSACleanup をTransport生成数に関わらず1回ずつにする。
 	// Editor内Host と CG2TeamServer のどちらでも同じ実装を使うため、参照数で管理する。
@@ -21,6 +25,7 @@ namespace {
 	std::int32_t g_winsockReferenceCount = 0;
 
 	bool AcquireWinsock(std::string& error) {
+		// 複数Transportが存在してもWSAStartupを重複実行せず、利用数だけを増やす。
 		std::lock_guard<std::mutex> lock(g_winsockMutex);
 
 		if (g_winsockReferenceCount > 0) {
@@ -54,6 +59,7 @@ namespace {
 	}
 
 	void SetNonBlocking(SOCKET targetSocket) {
+		// Network Threadが1 Socketのrecv/sendで停止し、他Peerや切断要求を処理できなくなるのを防ぐ。
 		u_long nonBlockingMode = 1u;
 		ioctlsocket(targetSocket, FIONBIO, &nonBlockingMode);
 	}
@@ -63,6 +69,7 @@ namespace {
 	bool SendAllBytes(SOCKET targetSocket, const std::string& payload) {
 		std::size_t sentTotal = 0u;
 
+		// TCPのsend戻り値は要求Byte数より小さい場合がある。Message途中で次の送信へ進まない。
 		while (sentTotal < payload.size()) {
 			const int sentByteCount = send(
 				targetSocket,
@@ -88,6 +95,12 @@ namespace {
 }
 
 struct TcpCollaborationTransport::Impl {
+	//------------------------------
+	// Thread間共有状態
+	//------------------------------
+
+	// Socket処理はworkerThread、Editor側APIはMain Threadから呼ばれる。
+	// Message本体はMutex、単純な状態/件数はAtomicで保護する。
 	std::thread workerThread;
 	std::mutex queueMutex;
 	std::mutex errorMutex;
@@ -117,11 +130,13 @@ struct TcpCollaborationTransport::Impl {
 	}
 
 	void PushIncoming(std::string&& message) {
+		// Network ThreadからMain Threadへ渡す受信Queue。ParseやScene変更はMain Thread側で行う。
 		std::lock_guard<std::mutex> lock(queueMutex);
 		incomingMessages.push_back(std::move(message));
 	}
 
 	std::vector<TransportMessage> TakeOutgoing() {
+		// Queue内容をswapで一括取得し、送信中はMutexを保持しない。
 		std::vector<TransportMessage> taken;
 		std::lock_guard<std::mutex> lock(queueMutex);
 		taken.swap(outgoingMessages);
@@ -131,6 +146,8 @@ struct TcpCollaborationTransport::Impl {
 	// 受信Bufferから改行区切りでMessageを切り出す。
 	// 戻り値 false は「Bufferが上限を超えた＝壊れた送信元」で、呼び出し側が切断する。
 	bool DrainReceiveBuffer(std::string& pendingText) {
+		// TCPはMessage境界を保持しないため、1回のrecvに半分のMessageや複数Messageが入り得る。
+		// 改行まで揃った部分だけを上位へ渡し、末尾の未完成部分は次回recvまで残す。
 		std::size_t lineEnd = pendingText.find('\n');
 
 		while (lineEnd != std::string::npos) {
@@ -154,6 +171,10 @@ struct TcpCollaborationTransport::Impl {
 	void RunServerLoop();
 	void RunClientLoop();
 };
+
+//========================================
+// Server待受・中継処理
+//========================================
 
 void TcpCollaborationTransport::Impl::RunServerLoop() {
 	// Host名解決は不要。IPv6 Dual Stackで待ち受け、IPv4(LAN)とIPv6の両方を受け入れる。
@@ -188,6 +209,7 @@ void TcpCollaborationTransport::Impl::RunServerLoop() {
 		return;
 	}
 
+	// 再起動直後のTIME_WAITで同じPortをBindできない時間を減らす。
 	const BOOL reuseAddress = TRUE;
 	setsockopt(
 		listenSocket,
@@ -228,12 +250,17 @@ void TcpCollaborationTransport::Impl::RunServerLoop() {
 		return;
 	}
 
+	// acceptをNon-blockingにし、接続が無い間も送信Queueと停止要求を処理する。
 	SetNonBlocking(listenSocket);
 	SetDescription("0.0.0.0:" + std::to_string(listenPort));
 	state.store(TransportState::Listening, std::memory_order_release);
 
 	std::vector<SOCKET> clientSockets;
 	std::unordered_map<SOCKET, std::string> receiveBuffers;
+
+	//------------------------------
+	// 接続受付・送受信Loop
+	//------------------------------
 
 	while (!stopsRequested.load(std::memory_order_acquire)) {
 		SOCKET clientSocket = accept(listenSocket, nullptr, nullptr);
@@ -258,6 +285,7 @@ void TcpCollaborationTransport::Impl::RunServerLoop() {
 			}
 		}
 
+		// このLoop開始時点までにMain Threadが積んだMessageをまとめて取り出す。
 		const std::vector<TransportMessage> outgoing = TakeOutgoing();
 
 		// 進捗はClient数に関わらず1回だけ積む(Client数分の重複加算を避ける)。
@@ -267,6 +295,7 @@ void TcpCollaborationTransport::Impl::RunServerLoop() {
 			}
 		}
 
+		// 同じ変更を接続中の全ClientへBroadcastする。失敗したSocketだけを配列から除外する。
 		for (auto clientIterator = clientSockets.begin(); clientIterator != clientSockets.end();) {
 			const SOCKET activeSocket = *clientIterator;
 			bool keepsClient = true;
@@ -300,6 +329,7 @@ void TcpCollaborationTransport::Impl::RunServerLoop() {
 			}
 
 			if (!keepsClient) {
+				// erase後はIteratorが無効になるため、eraseが返す次要素から継続する。
 				closesocket(activeSocket);
 				receiveBuffers.erase(activeSocket);
 				clientIterator = clientSockets.erase(clientIterator);
@@ -310,6 +340,7 @@ void TcpCollaborationTransport::Impl::RunServerLoop() {
 			}
 		}
 
+		// Busy LoopでCPU Coreを占有しないためのPolling間隔。通信LatencyとのTrade-offになる。
 		std::this_thread::sleep_for(std::chrono::milliseconds(8));
 	}
 
@@ -321,9 +352,14 @@ void TcpCollaborationTransport::Impl::RunServerLoop() {
 	peerCount.store(0, std::memory_order_release);
 }
 
+//========================================
+// Client接続・再接続処理
+//========================================
+
 void TcpCollaborationTransport::Impl::RunClientLoop() {
 	bool hasConnectedBefore = false;
 
+	// 外側Loopは初回接続だけでなく、切断後の再接続にも使用する。
 	while (!stopsRequested.load(std::memory_order_acquire)) {
 		// ホスト名・IPv4・IPv6のいずれでも解決する。
 		// Tailscale MagicDNS(例 ms.tailxxxx.ts.net)はここで解決されるため、
@@ -341,6 +377,7 @@ void TcpCollaborationTransport::Impl::RunClientLoop() {
 			&resolvedAddresses);
 
 		if (resolveResult != 0 || resolvedAddresses == nullptr) {
+			// DNS/MagicDNS失敗は即終了せず、設定された間隔後に再解決する。
 			SetError(
 				"Collaboration Serverのホスト名を解決できません\nHost: " +
 				endpoint.host + ":" + portText);
@@ -362,6 +399,7 @@ void TcpCollaborationTransport::Impl::RunClientLoop() {
 		std::string resolvedDescription;
 
 		// 解決されたAddressを順に試す(IPv6が先に返ってもIPv4へFallbackできる)。
+		// 1つのHost名へ複数Addressが返るため、接続成功する候補まで順番に試す。
 		for (addrinfo* candidate = resolvedAddresses;
 			candidate != nullptr && serverSocket == INVALID_SOCKET;
 			candidate = candidate->ai_next) {
@@ -380,6 +418,8 @@ void TcpCollaborationTransport::Impl::RunClientLoop() {
 			bool isConnected = connectResult == 0;
 
 			if (!isConnected && WSAGetLastError() == WSAEWOULDBLOCK) {
+				// Non-blocking connectの完了は書込可能状態で通知される。
+				// select成功だけでは接続成功と断定せず、SO_ERRORも確認する。
 				fd_set writableSockets;
 				FD_ZERO(&writableSockets);
 				FD_SET(candidateSocket, &writableSockets);
@@ -462,6 +502,10 @@ void TcpCollaborationTransport::Impl::RunClientLoop() {
 		std::string pendingText;
 		bool keepsConnection = true;
 
+		//------------------------------
+		// 接続中送受信Loop
+		//------------------------------
+
 		while (keepsConnection && !stopsRequested.load(std::memory_order_acquire)) {
 			const std::vector<TransportMessage> outgoing = TakeOutgoing();
 
@@ -527,6 +571,7 @@ bool TcpCollaborationTransport::Listen(
 	std::uint16_t port,
 	const TransportConfig& config,
 	std::string& error) {
+	// 既存Client/Server Threadを停止してから、新しい待受設定へ切り替える。
 	Disconnect();
 
 	if (!impl_->hasWinsock) {
@@ -544,6 +589,7 @@ bool TcpCollaborationTransport::Listen(
 	impl_->isServer.store(true, std::memory_order_release);
 	impl_->stopsRequested.store(false, std::memory_order_release);
 	impl_->state.store(TransportState::Connecting, std::memory_order_release);
+	// WorkerはTransport APIのQueueだけを操作し、Scene Dataへ直接触れない。
 	Impl* impl = impl_.get();
 	impl_->workerThread = std::thread([impl]() { impl->RunServerLoop(); });
 	return true;
@@ -590,12 +636,14 @@ bool TcpCollaborationTransport::Send(const TransportMessage& message) {
 		return false;
 	}
 
+	// Main ThreadではSocket送信せずQueueへ積むだけにし、遠隔通信でEditor Frameを止めない。
 	std::lock_guard<std::mutex> lock(impl_->queueMutex);
 	impl_->outgoingMessages.push_back(message);
 	return true;
 }
 
 void TcpCollaborationTransport::Poll(std::vector<std::string>& outMessages) {
+	// 受信済みMessageを呼出側VectorへMoveし、Network Queueの文字列Copyを避ける。
 	std::lock_guard<std::mutex> lock(impl_->queueMutex);
 
 	if (impl_->incomingMessages.empty()) {
@@ -610,6 +658,7 @@ void TcpCollaborationTransport::Poll(std::vector<std::string>& outMessages) {
 }
 
 void TcpCollaborationTransport::Disconnect() {
+	// 停止Flagを先に公開し、WorkerがLoopから抜けた後にjoinする。
 	impl_->stopsRequested.store(true, std::memory_order_release);
 
 	if (impl_->workerThread.joinable()) {
@@ -617,6 +666,7 @@ void TcpCollaborationTransport::Disconnect() {
 	}
 
 	{
+		// 切断後に古い変更を次回接続先へ誤送信しないよう、未送信Queueを破棄する。
 		std::lock_guard<std::mutex> lock(impl_->queueMutex);
 		impl_->outgoingMessages.clear();
 	}

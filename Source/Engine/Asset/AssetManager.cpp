@@ -14,8 +14,20 @@
 #include <system_error>
 #include <unordered_set>
 
+//========================================
+// Asset操作・Hot Reload処理の構成
+//========================================
+
+// AssetManagerはAsset種別ごとの実処理を直接実装せず、登録されたHandlerへ委譲する。
+// Registryが「どのAssetが存在し、何へ依存するか」を管理するのに対し、
+// Managerは「変更通知を受けて、再読込・無効化・解放を実行する」役割を持つ。
 namespace {
+	//------------------------------
+	// Path・Hash補助処理
+	//------------------------------
+
 	std::string ToLowerExtension(const std::string& path) {
+		// Windowsでは拡張子の大文字小文字が混在するため、比較前に小文字へ統一する。
 		std::string extension = std::filesystem::path(path).extension().string();
 		std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char character) {
 			return static_cast<char>(std::tolower(character));
@@ -59,6 +71,7 @@ namespace {
 		}
 
 		std::uint64_t hash = 1469598103934665603ull;
+		// File全体をMemoryへ載せず64KiB単位で読み、大きなModel/Textureでも一時Memoryを固定する。
 		std::array<char, 65536> buffer{};
 
 		while (file.good()) {
@@ -77,6 +90,10 @@ namespace {
 		return hashStream.str();
 	}
 }
+
+//========================================
+// Asset種別判定処理
+//========================================
 
 AssetType DetermineAssetTypeFromPath(const std::string& path) {
 	const std::string extension = ToLowerExtension(path);
@@ -137,6 +154,8 @@ const char* ToString(AssetType assetType) {
 }
 
 std::vector<std::string> ExtractProjectPathReferences(const std::string& text) {
+	// Text Asset内の任意文字列からProject Asset Pathだけを抽出する。
+	// 完全な各Format Parserではないため、引用符・改行・区切り記号までを1 Pathとして扱う。
 	constexpr const char* projectPrefixes[] = {"Assets/", "resources/"};
 	std::unordered_set<std::string> paths;
 
@@ -174,11 +193,13 @@ std::vector<std::string> ExtractProjectPathReferences(const std::string& text) {
 }
 
 AssetManager& AssetManager::Get() {
+	// Process内でHandler/Hash Cacheを1つに保つためのMeyers Singleton。
 	static AssetManager instance;
 	return instance;
 }
 
 void AssetManager::RegisterHandler(AssetType assetType, AssetTypeHandler handler) {
+	// 同じ種別を再登録した場合は、新しいAdapterで置き換える。
 	handlers_[assetType] = std::move(handler);
 }
 
@@ -191,6 +212,10 @@ AssetType AssetManager::DetermineAssetType(const std::string& path) const {
 }
 
 namespace {
+	//------------------------------
+	// Hot Reload可否判定
+	//------------------------------
+
 	AssetNotifyResult ComputeNotifyResult(
 		const std::unordered_map<AssetType, AssetTypeHandler>& handlers,
 		const std::string& path) {
@@ -212,6 +237,7 @@ namespace {
 
 		const AssetTypeHandler& handler = handlerIterator->second;
 
+		// 自動反映できないAssetでも変更自体は認識し、手動操作が必要な理由を返す。
 		if (!handler.supportsHotReload) {
 			return AssetNotifyResult{
 				AssetReloadResult::RequiresManualAction,
@@ -220,6 +246,7 @@ namespace {
 					: handler.unsupportedReason};
 		}
 
+		// Reload Callbackが無いHandlerは、外部状態を持たず通知だけで反映済みとみなす。
 		if (!handler.reload) {
 			return AssetNotifyResult{AssetReloadResult::Applied, {}};
 		}
@@ -236,6 +263,10 @@ namespace {
 	}
 }
 
+//========================================
+// Asset変更通知処理
+//========================================
+
 AssetNotifyResult AssetManager::NotifyFileChanged(const std::string& path) {
 	const AssetNotifyResult result = ComputeNotifyResult(handlers_, path);
 
@@ -248,6 +279,7 @@ AssetNotifyResult AssetManager::NotifyFileChanged(const std::string& path) {
 }
 
 void AssetManager::Invalidate(const std::string& path) {
+	// InvalidateはCacheを無効化するが、AssetがProjectから消えたとは扱わない。
 	const AssetType assetType = DetermineAssetTypeFromPath(path);
 	const auto handlerIterator = handlers_.find(assetType);
 
@@ -259,6 +291,7 @@ void AssetManager::Invalidate(const std::string& path) {
 }
 
 void AssetManager::Unload(const std::string& path) {
+	// Unloadは利用Resourceを解放し、Registryからも削除された状態へ進める。
 	const AssetType assetType = DetermineAssetTypeFromPath(path);
 	const auto handlerIterator = handlers_.find(assetType);
 
@@ -290,6 +323,10 @@ std::vector<std::string> AssetManager::GetDependencies(const std::string& path) 
 		".json",
 		".xml"};
 
+	//------------------------------
+	// Text Asset依存抽出
+	//------------------------------
+
 	for (const char* textAssetExtension : textAssetExtensions) {
 		if (extension != textAssetExtension) {
 			continue;
@@ -314,6 +351,11 @@ std::vector<std::string> AssetManager::GetDependencies(const std::string& path) 
 		return dependencies;
 	}
 
+	//------------------------------
+	// Binary・専用Format依存抽出
+	//------------------------------
+
+	// Model等はText検索では内部参照を判定できないため、種別HandlerのParserへ任せる。
 	const AssetType assetType = DetermineAssetTypeFromPath(path);
 	const auto handlerIterator = handlers_.find(assetType);
 
@@ -325,6 +367,7 @@ std::vector<std::string> AssetManager::GetDependencies(const std::string& path) 
 }
 
 std::string AssetManager::GetHash(const std::string& path) {
+	// File Sizeと更新時刻が変わっていなければHash再計算を省き、Project走査時のI/Oを減らす。
 	std::error_code fileError;
 	const std::uint64_t fileSize = static_cast<std::uint64_t>(std::filesystem::file_size(path, fileError));
 
@@ -349,6 +392,7 @@ std::string AssetManager::GetHash(const std::string& path) {
 		return cacheIterator->second.hash;
 	}
 
+	// Metadataが変わったFileだけ内容Hashを読み直す。
 	const std::string hash = CalculateFileHashChunked(path);
 
 	if (hash.empty()) {

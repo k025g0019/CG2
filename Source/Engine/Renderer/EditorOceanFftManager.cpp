@@ -36,6 +36,10 @@ namespace {
 
 }
 
+//========================================
+// Ocean FFT初期化処理
+//========================================
+
 bool EditorOceanFftManager::Initialize(
 	ID3D12Device* device,
 	IDxcBlob* updateSpectrumShaderBlob,
@@ -69,6 +73,10 @@ bool EditorOceanFftManager::Initialize(
 	return true;
 }
 
+//========================================
+// Ocean FFT Simulation処理
+//========================================
+
 bool EditorOceanFftManager::Execute(
 	ID3D12GraphicsCommandList* commandList,
 	const EditorOceanRenderSettings& oceanSettings,
@@ -77,6 +85,8 @@ bool EditorOceanFftManager::Execute(
 		return false;
 	}
 
+	// 風向・風速・Resolutionなど周波数分布へ影響する変更時だけ初期Spectrumを再生成する。
+	// 毎Frame再生成するとFFT本体よりCPU Uploadが支配的になるため設定差分で判定する。
 	const bool needsSpectrumRebuild = NeedsSpectrumRebuild(oceanSettings);
 	const bool hasSimulationSettingsChanged = HasSimulationSettingsChanged(oceanSettings);
 	const float effectiveOceanTime =
@@ -339,6 +349,10 @@ bool EditorOceanFftManager::Execute(
 	return true;
 }
 
+//========================================
+// Ocean描画Resource接続処理
+//========================================
+
 void EditorOceanFftManager::BindGraphicsResources(
 	ID3D12GraphicsCommandList* commandList) const {
 	if (!isInitialized_ || commandList == nullptr) {
@@ -384,6 +398,8 @@ void EditorOceanFftManager::BindPostProcessDisplacement(
 }
 
 void EditorOceanFftManager::ApplyToSceneObject(EditorSceneObject& sceneObject) const {
+	// SceneObjectはFFT Resourceを所有しない。描画Frame中だけ有効なHandleを渡し、
+	// Manager Finalize時の二重解放を防ぐ。
 	if (!sceneObject.ocean.isEnabled || !IsReadyFor(sceneObject.ocean)) {
 		return;
 	}
@@ -410,6 +426,8 @@ bool EditorOceanFftManager::QueueSurfaceSample(
 	uint64_t sampleKey,
 	const Vector2& localPosition,
 	SurfaceSample& surfaceSample) {
+	// Readbackは数Frame遅れるため、要求登録と結果取得を同じAPIで行う。
+	// 戻り値trueは今回要求した値ではなく、同じKeyで過去に解決済みの値があることを示す。
 	surfaceSample = {};
 
 	const auto resolvedIterator = resolvedSurfaceSamples_.find(sampleKey);
@@ -444,6 +462,11 @@ bool EditorOceanFftManager::QueueSurfaceSample(
 }
 
 void EditorOceanFftManager::ResolveReadback() {
+	//------------------------------
+	// GPU Surface Sample読戻し
+	//------------------------------
+
+	// 前FrameまでにGPUが書いたSampleをCPUへ戻し、浮力計算で使える局所値へ変換する。
 	if (!hasPendingSurfaceSampleReadback_ ||
 		submittedSurfaceSampleCount_ == 0u ||
 		surfaceSampleReadbackResource_ == nullptr) {
@@ -551,6 +574,11 @@ bool EditorOceanFftManager::IsReadyFor(
 }
 
 void EditorOceanFftManager::Finalize() {
+	//------------------------------
+	// FFT Resource解放
+	//------------------------------
+
+	// Resourceだけでなく前回Sample履歴も破棄し、次のSceneで速度差分が跳ねないようにする。
 	surfaceSampleReadbackResource_.Reset();
 	surfaceSampleOutputResource_.Reset();
 	surfaceSampleRequestResource_.Reset();
@@ -595,6 +623,10 @@ void EditorOceanFftManager::Finalize() {
 	normalFoamReadIndex_ = 0u;
 	normalFoamShaderReadable_ = {false, false};
 }
+
+//========================================
+// Ocean FFT Pipeline生成処理
+//========================================
 
 bool EditorOceanFftManager::CreateRootSignatureAndPipelineStates(
 	IDxcBlob* updateSpectrumShaderBlob,
@@ -763,6 +795,7 @@ bool EditorOceanFftManager::CreateSurfaceSampleResources() {
 
 bool EditorOceanFftManager::CreateSimulationResources(
 	const EditorOceanRenderSettings& oceanSettings) {
+	// FFTは2の累乗Resolutionを前提とする。要求値を正規化し、全周波数Fieldを同一寸法で確保する。
 	for (Microsoft::WRL::ComPtr<ID3D12Resource>& normalFoamResource : normalFoamOutputResources_) {
 		normalFoamResource.Reset();
 	}
@@ -908,6 +941,8 @@ void EditorOceanFftManager::BuildInitialSpectrum(
 	const EditorOceanRenderSettings& oceanSettings,
 	SpectrumValue* destination,
 	uint32_t spectrumValueCount) {
+	// 初期Spectrumは設定変更時にCPUで一度だけ生成し、時間発展はCompute Shaderへ任せる。
+	// 同じSeedと設定から同じ海面を再現できるよう、Frameごとの乱数生成は行わない。
 	if (destination == nullptr ||
 		spectrumValueCount != fftResolution_ * fftResolution_) {
 		return;
@@ -1101,6 +1136,8 @@ bool EditorOceanFftManager::HasSimulationSettingsChanged(
 void EditorOceanFftManager::ExecuteFft2D(
 	ID3D12GraphicsCommandList* commandList,
 	ID3D12Resource* fieldResource) {
+	// 2D FFTをRow FFT、Transpose、Row FFT、Transposeの順で構成する。
+	// 各Dispatch間は同じUAVを読み書きするためBarrierで順序を保証する。
 	if (commandList == nullptr || fieldResource == nullptr || temporaryFieldResource_ == nullptr) {
 		return;
 	}

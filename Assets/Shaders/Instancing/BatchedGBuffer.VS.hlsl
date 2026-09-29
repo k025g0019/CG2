@@ -1,4 +1,5 @@
 ﻿#include "BatchedInstanceCommon.hlsli"
+#include "../Common/NormalTransform.hlsli"
 
 struct VertexShaderInput
 {
@@ -40,7 +41,7 @@ VertexShaderOutput main(VertexShaderInput input, uint instanceId : SV_InstanceID
     output.previousClipPosition = mul(input.position, instanceData.previousWVP);
     output.motionVectorScale = instanceData.temporalParams.zw;
     output.texcoord = input.texcoord;
-    output.normal = normalize(mul(float4(input.normal, 0.0f), instanceData.World).xyz);
+    output.normal = TransformNormalToWorld(input.normal, instanceData.World);
     output.worldPosition = worldPosition.xyz;
     output.oceanData = 0.0f;
     output.oceanSamplingData = 0.0f;

@@ -6,14 +6,33 @@
 #include <array>
 #include <cstring>
 
+//========================================
+// GPU可視判定処理の構成
+//========================================
+
+// GPU CullingのData Flow:
+//
+//   CPU: GameObjectごとのWorld AABBとDraw情報をUpload Bufferへ書く
+//     -> Pass 1: Frustum Planeに対してAABBを検査
+//     -> Pass 2: Frustum内だけをDepth Pyramidと比較してOcclusion判定
+//     -> Pass 3: 可視結果をIndirect Draw Argumentへ変換
+//     -> Renderer: GPU上の結果をPredication/Indirect Drawで利用
+//
+// 可視結果を同じFrameにCPUへMapするとGPU完了待ちが発生し、並列性を失う。
+// そのため通常経路ではGPU Resourceのまま次のDrawへ渡す。
+// Scene ViewとGame ViewはCameraが異なるので、可視結果と提出Object対応表を分離する。
 namespace {
-	constexpr uint32_t kSceneViewDescriptorStartIndex = 83u;
+	constexpr uint32_t kSceneViewDescriptorStartIndex = 83u; // Scene View用SRV/UAVを置くDescriptor Heap上の先頭位置。
 	// Temporalは160～197を使うため、その直後をGame View専用領域にする。
 	constexpr uint32_t kGameViewDescriptorStartIndex = 198u;
-	constexpr uint32_t kDescriptorsPerView = 7u;
-	constexpr uint32_t kComputeConstantCount = 24u;
-	constexpr uint32_t kThreadGroupSize = 64u;
+	constexpr uint32_t kDescriptorsPerView = 7u;             // Object、可視Flag、間接引数に必要なDescriptor数。
+	constexpr uint32_t kComputeConstantCount = 24u;          // Object数、Depth Size、Bias、行列、Viewport変換の32bit値数。
+	constexpr uint32_t kThreadGroupSize = 64u;               // Compute Shaderのnumthreads.xと必ず一致させる。
 }
+
+//========================================
+// GPU可視判定初期化処理
+//========================================
 
 bool EditorGpuCullingManager::Initialize(
 	ID3D12Device* device,
@@ -23,6 +42,12 @@ bool EditorGpuCullingManager::Initialize(
 	IDxcBlob* occlusionCullingShaderBlob,
 	IDxcBlob* buildIndirectArgsShaderBlob) {
 
+	//------------------------------
+	// 初期化引数検証
+	//------------------------------
+
+	// 一部のShaderだけで動かす経路はない。3 Passのどれかが欠ける場合は、
+	// 中途半端な可視結果をRendererへ渡さないよう初期化自体を失敗させる。
 	if (device == nullptr || srvDescriptorHeap == nullptr || srvDescriptorSize == 0u ||
 		frustumCullingShaderBlob == nullptr || occlusionCullingShaderBlob == nullptr ||
 		buildIndirectArgsShaderBlob == nullptr) {
@@ -33,6 +58,10 @@ bool EditorGpuCullingManager::Initialize(
 	srvDescriptorHeap_ = srvDescriptorHeap;
 	srvDescriptorSize_ = srvDescriptorSize;
 
+	//------------------------------
+	// Compute Pipeline初期化
+	//------------------------------
+
 	if (!CreateRootSignatureAndPipelineStates(
 		frustumCullingShaderBlob,
 		occlusionCullingShaderBlob,
@@ -41,12 +70,24 @@ bool EditorGpuCullingManager::Initialize(
 		return false;
 	}
 
+	//------------------------------
+	// View別Buffer初期化
+	//------------------------------
+
+	// Scene/Game ViewはCameraとViewportが異なる。同じ可視Flagを共有すると、
+	// 一方で画面外のObjectがもう一方でも消えるため、Buffer一式を分離する。
 	if (!CreateBuffers(EditorGpuCullingView::Scene) ||
 		!CreateBuffers(EditorGpuCullingView::Game)) {
 		Finalize();
 		return false;
 	}
 
+	//------------------------------
+	// 間接描画形式初期化
+	//------------------------------
+
+	// Command SignatureはGPU Buffer内のByte列を、Draw引数としてどう解釈するかを定義する。
+	// 頂点描画とIndex描画では構造が異なるため、2種類を用意する。
 	D3D12_INDIRECT_ARGUMENT_DESC indirectArgument{};
 	indirectArgument.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW;
 	D3D12_COMMAND_SIGNATURE_DESC commandSignatureDescription{};
@@ -73,6 +114,10 @@ bool EditorGpuCullingManager::Initialize(
 	return true;
 }
 
+//========================================
+// Frame単位GPU可視判定処理
+//========================================
+
 bool EditorGpuCullingManager::Execute(
 	ID3D12GraphicsCommandList* commandList,
 	EditorGpuCullingView view,
@@ -86,6 +131,10 @@ bool EditorGpuCullingManager::Execute(
 	float viewportUvScaleX,
 	float viewportUvScaleY) {
 
+	//------------------------------
+	// 実行条件検証
+	//------------------------------
+
 	ViewResources* resources = GetViewResources(view);
 	if (!isInitialized_ || resources == nullptr || commandList == nullptr || depthPyramidSrvHandle.ptr == 0u ||
 		viewProjectionMatrix == nullptr || depthPyramidWidth == 0u || depthPyramidHeight == 0u ||
@@ -93,21 +142,25 @@ bool EditorGpuCullingManager::Execute(
 		return false;
 	}
 
+	// Bufferは固定上限で確保しているため、提出数をCapacity内へ制限する。
+	// 上限外のObjectはこのGPU判定へ入らないので、呼出側では不可視扱いにしてはいけない。
 	const uint32_t objectCount = (std::min)(
 		static_cast<uint32_t>(cullingInputs.size()),
 		kMaximumObjectCount);
 
 	if (objectCount == 0u) {
+		// 前FrameのID対応表を残すと、存在しないObjectの間接引数を参照するため消去する。
 		resources->submittedObjectCount = 0u;
 		resources->submittedObjectIndexByGameObjectId.clear();
 		return true;
 	}
 
-	//================================================================
+	//------------------------------
 	// CPU で確定したワールド AABB を Upload Buffer へ書き込む
-	//================================================================
+	//------------------------------
 
 	void* mappedObjectData = nullptr;
+	// CPUはUpload Bufferへ書くだけなので、Map時の読取予定範囲を0にしてDriverへ伝える。
 	D3D12_RANGE noReadRange{0u, 0u};
 	HRESULT result = resources->objectUploadResource->Map(0u, &noReadRange, &mappedObjectData);
 
@@ -121,6 +174,8 @@ bool EditorGpuCullingManager::Execute(
 		static_cast<size_t>(objectCount) * sizeof(EditorGpuCullingInput));
 	resources->objectUploadResource->Unmap(0u, nullptr);
 
+	// 後続のObject描画はGameObject IDしか持たないため、GPU配列上のIndexをCPU側にも記録する。
+	// ここで保持するのは可視結果ではなく、間接引数Buffer内の位置だけである。
 	resources->submittedGameObjectIds.resize(objectCount);
 	resources->submittedObjectIndexByGameObjectId.clear();
 	resources->submittedObjectIndexByGameObjectId.reserve(objectCount);
@@ -130,10 +185,15 @@ bool EditorGpuCullingManager::Execute(
 		resources->submittedObjectIndexByGameObjectId[cullingInputs[objectIndex].gameObjectId] = objectIndex;
 	}
 
+	//------------------------------
+	// Compute共通定数設定
+	//------------------------------
+
 	std::array<uint32_t, kComputeConstantCount> constants{};
 	constants[0] = objectCount;
 	constants[1] = depthPyramidWidth;
 	constants[2] = depthPyramidHeight;
+	// Depth Pyramidとの境界誤差で、見えているObjectを誤って隠さないためのDepth余裕値。
 	float depthBias = 0.0015f;
 	std::memcpy(&constants[3], &depthBias, sizeof(float));
 	std::memcpy(&constants[4], viewProjectionMatrix, sizeof(float) * 16u);
@@ -149,9 +209,9 @@ bool EditorGpuCullingManager::Execute(
 
 	commandList->SetComputeRootSignature(computeRootSignature_.Get());
 
-	//================================================================
+	//------------------------------
 	// Pass 1: ワールド AABB を視錐台へ通し、画面外の物体を除外する
-	//================================================================
+	//------------------------------
 
 	D3D12_RESOURCE_BARRIER frustumVisibilityBarrier{};
 	frustumVisibilityBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -159,6 +219,7 @@ bool EditorGpuCullingManager::Execute(
 	frustumVisibilityBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 	frustumVisibilityBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 	frustumVisibilityBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+	// 前FrameまでShader読取用だったFlag Bufferを、Compute書込可能なUAVへ切り替える。
 	commandList->ResourceBarrier(1u, &frustumVisibilityBarrier);
 
 	commandList->SetPipelineState(frustumCullingPipelineState_.Get());
@@ -168,20 +229,23 @@ bool EditorGpuCullingManager::Execute(
 	commandList->SetComputeRootDescriptorTable(3u, resources->frustumVisibilityUavHandle);
 	commandList->SetComputeRoot32BitConstants(4u, kComputeConstantCount, constants.data(), 0u);
 	RecordEditorProfilerDispatch();
+	// 切り上げ除算により、Object数が64の倍数でなくても末尾Object用Threadを起動する。
+	// Shader側はThread IDがobjectCount以上なら何もせず終了する。
 	commandList->Dispatch((objectCount + kThreadGroupSize - 1u) / kThreadGroupSize, 1u, 1u);
 
 	D3D12_RESOURCE_BARRIER frustumVisibilityUnorderedAccessBarrier{};
 	frustumVisibilityUnorderedAccessBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
 	frustumVisibilityUnorderedAccessBarrier.UAV.pResource = resources->frustumVisibilityResource.Get();
+	// UAV Barrierは同じResourceに対する書込完了を、次の読取Passより前へ確定させる。
 	commandList->ResourceBarrier(1u, &frustumVisibilityUnorderedAccessBarrier);
 
 	frustumVisibilityBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 	frustumVisibilityBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 	commandList->ResourceBarrier(1u, &frustumVisibilityBarrier);
 
-	//================================================================
+	//------------------------------
 	// Pass 2: 視錐台内の物体だけを Hi-Z 深度と比較する
-	//================================================================
+	//------------------------------
 
 	D3D12_RESOURCE_BARRIER visibilityBarrier{};
 	visibilityBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -192,6 +256,7 @@ bool EditorGpuCullingManager::Execute(
 	commandList->ResourceBarrier(1u, &visibilityBarrier);
 
 	commandList->SetPipelineState(occlusionCullingPipelineState_.Get());
+	// t0=Object、t1=Depth Pyramid、t2=Frustum結果、u0=最終可視Flag。
 	commandList->SetComputeRootDescriptorTable(0u, resources->objectSrvHandle);
 	commandList->SetComputeRootDescriptorTable(1u, depthPyramidSrvHandle);
 	commandList->SetComputeRootDescriptorTable(2u, resources->frustumVisibilitySrvHandle);
@@ -209,9 +274,9 @@ bool EditorGpuCullingManager::Execute(
 	visibilityBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 	commandList->ResourceBarrier(1u, &visibilityBarrier);
 
-	//================================================================
+	//------------------------------
 	// Pass 3: 可視状態を D3D12_DRAW_ARGUMENTS の頂点数へ変換する
-	//================================================================
+	//------------------------------
 
 	D3D12_RESOURCE_BARRIER drawArgumentsBarrier{};
 	drawArgumentsBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -222,6 +287,8 @@ bool EditorGpuCullingManager::Execute(
 	commandList->ResourceBarrier(1u, &drawArgumentsBarrier);
 
 	commandList->SetPipelineState(buildIndirectArgsPipelineState_.Get());
+	// 可視なら元のVertex/Index数、不可視なら0をArgumentへ書く。
+	// Draw数を0にすることでCPU分岐なしにRasterizerへ仕事を送らない。
 	commandList->SetComputeRootDescriptorTable(0u, resources->objectSrvHandle);
 	commandList->SetComputeRootDescriptorTable(1u, resources->visibilitySrvHandle);
 	commandList->SetComputeRootDescriptorTable(2u, resources->visibilitySrvHandle);
@@ -243,11 +310,16 @@ bool EditorGpuCullingManager::Execute(
 	return true;
 }
 
+//========================================
+// GPU可視判定終了処理
+//========================================
+
 void EditorGpuCullingManager::ResolveReadback() {
 	// GPU結果は次FrameのSetPredicationから直接参照するため、CPU Mapは不要。
 }
 
 void EditorGpuCullingManager::Finalize() {
+	// ViewResourcesの代入でComPtrをResetし、Scene/Game両方のBufferを解放する。
 	for (ViewResources& resources : viewResources_) {
 		resources = {};
 	}
@@ -309,6 +381,8 @@ bool EditorGpuCullingManager::BeginPredication(
 		return false;
 	}
 
+	// 1 Object分の構造先頭には可視時の頂点/Index数が入る。
+	// NOT_EQUAL_ZEROにより、0なら直後のDrawをGPU側で読み飛ばす。
 	const UINT64 predicateOffset =
 		static_cast<UINT64>(objectIndexIterator->second) * sizeof(IndirectArguments);
 	commandList->SetPredication(
@@ -372,9 +446,15 @@ bool EditorGpuCullingManager::ExecuteIndirectDrawIndexed(
 
 void EditorGpuCullingManager::EndPredication(ID3D12GraphicsCommandList* commandList) const {
 	if (commandList != nullptr) {
+		// nullptrを設定してPredicationを解除する。解除しないと、後続の無関係なDrawまで
+		// 直前Objectの可視Flagで条件付き実行される。
 		commandList->SetPredication(nullptr, 0u, D3D12_PREDICATION_OP_EQUAL_ZERO);
 	}
 }
+
+//========================================
+// GPU可視判定内部リソース生成
+//========================================
 
 bool EditorGpuCullingManager::CreateRootSignatureAndPipelineStates(
 	IDxcBlob* frustumCullingShaderBlob,
@@ -384,6 +464,7 @@ bool EditorGpuCullingManager::CreateRootSignatureAndPipelineStates(
 	std::array<D3D12_DESCRIPTOR_RANGE, 4u> descriptorRanges{};
 	std::array<D3D12_ROOT_PARAMETER, 5u> rootParameters{};
 
+	// 先頭3 TableはShader読取SRV、最後のTableは結果書込UAVとして同じ配置を3 PSOで共有する。
 	for (uint32_t descriptorIndex = 0u; descriptorIndex < descriptorRanges.size(); descriptorIndex++) {
 		D3D12_DESCRIPTOR_RANGE& descriptorRange = descriptorRanges[descriptorIndex];
 		descriptorRange.RangeType = descriptorIndex < 3u
@@ -405,6 +486,7 @@ bool EditorGpuCullingManager::CreateRootSignatureAndPipelineStates(
 	rootParameters[4].Constants.ShaderRegister = 0u;
 	rootParameters[4].Constants.Num32BitValues = kComputeConstantCount;
 
+	// Depth Pyramidは補間すると周辺Depthが混ざり判定が変わるため、Point Samplingを使う。
 	D3D12_STATIC_SAMPLER_DESC pointSampler{};
 	pointSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
 	pointSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;

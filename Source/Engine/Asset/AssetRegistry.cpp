@@ -14,6 +14,13 @@
 
 #pragma comment(lib, "ole32.lib")
 
+//========================================
+// Asset Registry処理の構成
+//========================================
+
+// RegistryはPathと永続AssetIdの対応、Hash、依存関係、Reload状態を保持する。
+// Pathを直接IDにしないことで、明示的なMove通知では参照Identityを維持できる。
+// 保存FileにはPathとIDだけを残し、Hashや依存は現行Fileから再構築する。
 namespace {
 	constexpr const char* kAssetRegistryPath = "ProjectSettings/AssetRegistry.txt";
 	// std::filesystem::pathはconstexprコンストラクタを持たないため、生文字列の配列にしている。
@@ -49,6 +56,10 @@ namespace {
 	}
 }
 
+//========================================
+// Registry読込・保存処理
+//========================================
+
 AssetId AssetRegistry::GenerateAssetId() {
 	return GenerateGuidText();
 }
@@ -59,6 +70,7 @@ AssetRegistry& AssetRegistry::Get() {
 }
 
 void AssetRegistry::Load() {
+	// 1 Session中の重複読込でMemory上の変更を上書きしないよう、一度だけ読む。
 	if (isLoaded_) {
 		return;
 	}
@@ -72,6 +84,7 @@ void AssetRegistry::Load() {
 
 	std::string line;
 
+	// 1行を「Project相対Path|AssetId」として復元する。不正行はRegistry全体を止めず読み飛ばす。
 	while (std::getline(file, line)) {
 		if (!line.empty() && line.back() == '\r') {
 			line.pop_back();
@@ -104,6 +117,7 @@ void AssetRegistry::Save() const {
 	std::error_code directoryError;
 	std::filesystem::create_directories(filePath.parent_path(), directoryError);
 
+	// 現在のRegistryを全件書き直す。途中失敗時のAtomic Replaceは今後の改善対象。
 	std::ofstream file(filePath, std::ios::binary | std::ios::trunc);
 
 	if (!file.is_open()) {
@@ -118,6 +132,7 @@ void AssetRegistry::Save() const {
 }
 
 AssetRecord& AssetRegistry::GetOrCreateRecord(const std::string& path) {
+	// 既存Pathには同じRecordを返し、通知のたびにAssetIdが変わることを防ぐ。
 	const auto pathIterator = pathToId_.find(path);
 
 	if (pathIterator != pathToId_.end()) {
@@ -141,6 +156,11 @@ AssetRecord& AssetRegistry::GetOrCreateRecord(const std::string& path) {
 }
 
 void AssetRegistry::RefreshRecordFromFile(AssetRecord& record) const {
+	//------------------------------
+	// File由来情報更新
+	//------------------------------
+
+	// Hashと依存を現行Fileから再計算する。AssetIdはIdentityなので変更しない。
 	std::error_code fileError;
 	const bool exists = std::filesystem::exists(record.path, fileError);
 
@@ -160,6 +180,7 @@ void AssetRegistry::RefreshRecordFromFile(AssetRecord& record) const {
 }
 
 const AssetRecord* AssetRegistry::NotifyAssetAdded(const std::string& path) {
+	// 追加通知時点でFile情報も読み、RegistryにPathだけの不完全Recordを残さない。
 	AssetRecord& record = GetOrCreateRecord(path);
 	RefreshRecordFromFile(record);
 
@@ -183,6 +204,7 @@ void AssetRegistry::NotifyAssetRemoved(const std::string& path) {
 		return;
 	}
 
+	// Path索引とID索引を対で削除する。片方だけ残すとFindByPath/FindByIdの結果が矛盾する。
 	records_.erase(pathIterator->second);
 	pathToId_.erase(pathIterator);
 	isDependencyIndexDirty_ = true;
@@ -199,6 +221,7 @@ const AssetRecord* AssetRegistry::NotifyAssetMoved(
 		return NotifyAssetAdded(newPath);
 	}
 
+	// Moveでは同じAssetIdを新Pathへ付け替え、Prefab等が保持するID参照を維持する。
 	const AssetId id = pathIterator->second;
 	pathToId_.erase(pathIterator);
 	pathToId_[newPath] = id;
@@ -223,6 +246,7 @@ void AssetRegistry::UpdateReloadState(
 	}
 
 	AssetRecord& record = records_[pathIterator->second];
+	// Diagnosticsが直近の反映結果と理由を表示できるよう、成功/手動対応/失敗をRecordへ残す。
 	record.lastReloadResult = result.result;
 	record.lastReloadReason = result.reason;
 	record.loadState = result.result == AssetReloadResult::Applied
@@ -257,11 +281,16 @@ std::vector<const AssetRecord*> AssetRegistry::GetAllRecords() const {
 	return allRecords;
 }
 
+//========================================
+// Project Asset全体走査処理
+//========================================
+
 void AssetRegistry::RefreshFromDisk() {
 	Load();
 
 	std::error_code iteratorError;
 
+	// Assetsとresourcesを再帰走査し、実在FileのRecordを更新する。
 	for (const char* scanRootName : kScanRootNames) {
 		const std::filesystem::path scanRoot(scanRootName);
 
@@ -305,11 +334,17 @@ void AssetRegistry::RefreshFromDisk() {
 		NotifyAssetRemoved(missingPath);
 	}
 
+	// 全Recordが揃った後で依存PathをIDへ解決し、逆引き索引を作る。
 	RebuildDependencyIndex();
 	Save();
 }
 
+//========================================
+// Asset依存索引再構築処理
+//========================================
+
 void AssetRegistry::RebuildDependencyIndex() {
+	// reverseDependencies_は「このAssetを参照しているAsset」を高速に引くための逆索引。
 	reverseDependencies_.clear();
 
 	for (auto& idRecordPair : records_) {
@@ -317,6 +352,8 @@ void AssetRegistry::RebuildDependencyIndex() {
 		record.dependencyLinks.clear();
 		record.dependencyLinks.reserve(record.dependencies.size());
 
+		// Forward依存のPathをRegistryのAssetIdへ解決する。未登録PathはIDを空のまま残し、
+		// Missing Dependencyとして利用者へ報告できるようにする。
 		for (const std::string& dependencyPath : record.dependencies) {
 			AssetDependencyLink link{};
 			link.path = dependencyPath;
@@ -348,6 +385,7 @@ void AssetRegistry::RebuildDependencyIndex() {
 }
 
 std::vector<AssetDependencyLink> AssetRegistry::GetForwardDependencies(const AssetId& id) const {
+	// 遅延再構築により、複数File変更のたびに全索引を作り直すCostをまとめる。
 	if (isDependencyIndexDirty_) {
 		const_cast<AssetRegistry*>(this)->RebuildDependencyIndex();
 	}

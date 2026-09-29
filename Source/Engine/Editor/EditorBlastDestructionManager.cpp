@@ -146,6 +146,10 @@ EditorBlastDestructionManager::~EditorBlastDestructionManager() {
 	Stop();
 }
 
+//========================================
+// 初期化処理と更新処理
+//========================================
+
 void EditorBlastDestructionManager::Initialize(
 	EditorScene* editorScene,
 	EditorPhysicsManager* physicsManager,
@@ -291,6 +295,10 @@ void EditorBlastDestructionManager::Stop() {
 	}
 }
 
+//========================================
+// Bake キャッシュの管理
+//========================================
+
 std::string EditorBlastDestructionManager::ResolveSourceMeshPath(const EditorGameObject& owner) const {
 	const std::array<EditorComponentType, 3> sourceTypes{
 		EditorComponentType::MeshFilter,
@@ -414,6 +422,10 @@ bool EditorBlastDestructionManager::LoadCacheManifest(
 	}
 	return true;
 }
+
+//------------------------------
+// 分割形状の Bake と読み込み
+//------------------------------
 
 bool EditorBlastDestructionManager::BakeCache(
 	const std::string& sourceAssetPath,
@@ -650,6 +662,10 @@ bool EditorBlastDestructionManager::LoadOrBakeCache(
 	PushConsoleMessage("Blast Bake完了: " + owner.name + " Chunks=" + std::to_string(chunks.size()));
 	return true;
 }
+
+//========================================
+// Destructible の構築
+//========================================
 
 bool EditorBlastDestructionManager::CreateGeneratedChunkObjects(
 	const EditorGameObject& owner,
@@ -969,6 +985,10 @@ bool EditorBlastDestructionManager::BuildDestructible(
 	return true;
 }
 
+//========================================
+// ダメージ適用と分割
+//========================================
+
 bool EditorBlastDestructionManager::ApplyDamage(
 	int32_t gameObjectId,
 	const Vector3& worldPosition,
@@ -1097,6 +1117,10 @@ bool EditorBlastDestructionManager::ApplyDamage(
 	}
 	return appliedAnyDamage;
 }
+
+//------------------------------
+// 分割結果の Scene への反映
+//------------------------------
 
 void EditorBlastDestructionManager::ApplySplitToScene(
 	DestructibleRuntime& runtime,
@@ -1285,6 +1309,10 @@ void EditorBlastDestructionManager::ApplySplitToScene(
 		" vanished=" + std::to_string(vanishedChunkCount));
 }
 
+//========================================
+// 破片の見た目と配置計画
+//========================================
+
 EditorBlastDestructionManager::DebrisSettings EditorBlastDestructionManager::MakeDebrisSettings(
 	const EditorComponent& component) {
 	DebrisSettings settings{};
@@ -1454,6 +1482,10 @@ int32_t EditorBlastDestructionManager::FindClusterCarrier(
 	}
 	return nearestCarrierGameObjectId;
 }
+
+//========================================
+// 破片の物理化と GPU 破片
+//========================================
 
 void EditorBlastDestructionManager::DetachChunkAsPhysics(
 	DestructibleRuntime& runtime,
@@ -1656,6 +1688,10 @@ void EditorBlastDestructionManager::AttachClusterFollower(
 	runtime.dynamicChunkGameObjectIds.insert(chunkGameObjectId);
 }
 
+//========================================
+// 破片の寿命と追従の更新
+//========================================
+
 void EditorBlastDestructionManager::UpdateTimedPhysicsChunks(
 	DestructibleRuntime& runtime,
 	float deltaTime) {
@@ -1771,6 +1807,10 @@ void EditorBlastDestructionManager::UpdateClusterFollowers(
 		runtime.clusterFollowers.end());
 }
 
+//------------------------------
+// 破片の停止と非表示
+//------------------------------
+
 void EditorBlastDestructionManager::FreezeChunkPhysics(int32_t chunkGameObjectId) {
 	EditorGameObject* chunk = editorScene_ != nullptr ? editorScene_->FindGameObject(chunkGameObjectId) : nullptr;
 	if (chunk == nullptr) {
@@ -1869,6 +1909,10 @@ void EditorBlastDestructionManager::DisableIntactRoot(int32_t ownerGameObjectId)
 	}
 	physicsManager_->SetGameObjectSimulationActive(ownerGameObjectId, false);
 }
+
+//========================================
+// 破壊状態の参照
+//========================================
 
 bool EditorBlastDestructionManager::IsFractured(int32_t gameObjectId) const {
 	const auto iterator = destructibles_.find(gameObjectId);

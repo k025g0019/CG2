@@ -5,6 +5,25 @@
 #include <algorithm>
 #include <cstring>
 
+//========================================
+// 高品質Post Process処理の構成
+//========================================
+
+// Post Processは、Lightingまで完了したHDR画像を最終表示へ整える段階である。
+// このManagerは画面全体へFull-screen Triangleを描くPassと、Histogram用Computeを持つ。
+//
+// 主なData Flow:
+//   HDR Scene Color
+//     -> Bloom Prefilter（閾値より明るい成分を抽出）
+//     -> Downsample（低解像度Mipへ広げる）
+//     -> Upsample（複数Scaleを加算してGlowを作る）
+//     -> SMAA Edge / Weight / Neighborhood Blend
+//     -> Glare / Filter等を必要に応じて適用
+//     -> Final Composite側がExposureやTone Mappingと合わせて表示
+//
+// Auto Exposureでは画面輝度HistogramをGPUで集計する。平均色だけでは、
+// 太陽のような少数の極端なPixelに引っ張られるため、分布から露出を決める。
+// 解像度依存TextureはResizeで作り直し、PSO/Root Signatureは再利用する。
 namespace {
 	constexpr uint32_t kPostProcessDescriptorStartIndex = 90u;
 	constexpr uint32_t kExposureDescriptorStartIndex = 109u;
@@ -50,9 +69,9 @@ bool EditorPostProcessQualityManager::Initialize(
 	uint32_t renderWidth,
 	uint32_t renderHeight) {
 
-	//================================================================
+	//------------------------------
 	// 描画パスの固定リソースを作成する
-	//================================================================
+	//------------------------------
 
 	if (device == nullptr || srvDescriptorHeap == nullptr || srvDescriptorSize == 0u ||
 		fullscreenVertexShaderBlob == nullptr || histogramComputeShaderBlob == nullptr) {
@@ -101,6 +120,7 @@ bool EditorPostProcessQualityManager::Initialize(
 }
 
 bool EditorPostProcessQualityManager::Resize(uint32_t renderWidth, uint32_t renderHeight) {
+	// 中間Render Targetは入力画像とPixel対応するため、Window Size変更時に再生成する。
 	if (!isInitialized_ || renderWidth == 0u || renderHeight == 0u) {
 		return false;
 	}
@@ -121,6 +141,10 @@ bool EditorPostProcessQualityManager::Resize(uint32_t renderWidth, uint32_t rend
 	return true;
 }
 
+//========================================
+// Bloom描画処理
+//========================================
+
 bool EditorPostProcessQualityManager::ExecuteBloom(
 	ID3D12GraphicsCommandList* commandList,
 	D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle,
@@ -136,6 +160,7 @@ bool EditorPostProcessQualityManager::ExecuteBloom(
 	const auto getSrvHandle = [this](ResourceType resourceType) {
 		return srvHandles_[static_cast<size_t>(resourceType)];
 	};
+	// Shaderへ渡す1 Pixel分のUV幅を、各縮小Levelの実Sizeから求める。
 	const auto getInverseSize = [this](ResourceType resourceType) {
 		const size_t resourceIndex = static_cast<size_t>(resourceType);
 		return std::array<float, 2u>{
@@ -144,15 +169,15 @@ bool EditorPostProcessQualityManager::ExecuteBloom(
 		};
 	};
 
-	//================================================================
+	//------------------------------
 	// HDR の明部を抽出し、4 段の解像度へ縮小する
-	//================================================================
+	//------------------------------
 
 	std::array<float, kRootConstantCount> constants{};
 	constants[0] = 1.0f / static_cast<float>(renderWidth_);
 	constants[1] = 1.0f / static_cast<float>(renderHeight_);
-	constants[2] = bloomThreshold;
-	constants[3] = bloomSoftKnee;
+	constants[2] = bloomThreshold; // この輝度を超えた成分をGlowの入力にする。
+	constants[3] = bloomSoftKnee;  // 閾値付近を滑らかに立ち上げ、境界の硬いHaloを防ぐ。
 
 	if (!DrawPass(
 		commandList,
@@ -175,6 +200,7 @@ bool EditorPostProcessQualityManager::ExecuteBloom(
 		ResourceType::BloomDown3,
 	};
 
+	// 解像度を落とすほど広い範囲を少ないSampleでBlurでき、異なる大きさのGlow成分を作れる。
 	for (uint32_t passIndex = 0u; passIndex < downsampleSources.size(); passIndex++) {
 		const ResourceType sourceType = downsampleSources[passIndex];
 		const std::array<float, 2u> inverseSourceSize = getInverseSize(sourceType);
@@ -193,9 +219,9 @@ bool EditorPostProcessQualityManager::ExecuteBloom(
 		}
 	}
 
-	//================================================================
+	//------------------------------
 	// 小さいMipからTent Filterで戻し、広い光のにじみを合成する
-	//================================================================
+	//------------------------------
 
 	constexpr std::array<ResourceType, 3u> lowResolutionSources = {
 		ResourceType::BloomDown3,
@@ -213,6 +239,7 @@ bool EditorPostProcessQualityManager::ExecuteBloom(
 		ResourceType::BloomUp0,
 	};
 
+	// 小さいLevelから順に1段上の明部と混ぜ、広いGlowを元解像度側へ戻す。
 	for (uint32_t passIndex = 0u; passIndex < lowResolutionSources.size(); passIndex++) {
 		const ResourceType lowResolutionType = lowResolutionSources[passIndex];
 		const std::array<float, 2u> inverseLowResolutionSize = getInverseSize(lowResolutionType);
@@ -238,6 +265,10 @@ bool EditorPostProcessQualityManager::ExecuteBloom(
 	return true;
 }
 
+//========================================
+// SMAA描画処理
+//========================================
+
 bool EditorPostProcessQualityManager::ExecuteSmaa(
 	ID3D12GraphicsCommandList* commandList,
 	D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle,
@@ -254,10 +285,11 @@ bool EditorPostProcessQualityManager::ExecuteSmaa(
 	constants[2] = (std::clamp)(threshold, 0.001f, 0.5f);
 	constants[3] = (std::clamp)(cornerRounding, 0.0f, 100.0f);
 
-	//================================================================
+	//------------------------------
 	// Edge Detection -> Blend Weight -> Neighborhood Blend
-	//================================================================
+	//------------------------------
 
+	// Pass 1: 周辺Pixelとの色差から横/縦Edgeを抽出する。
 	if (!DrawPass(
 		commandList,
 		kSmaaEdgePipelineIndex,
@@ -268,6 +300,7 @@ bool EditorPostProcessQualityManager::ExecuteSmaa(
 		return false;
 	}
 
+	// Pass 2: Edgeの連続長と交差形状から、左右上下へ混ぜるWeightを計算する。
 	if (!DrawPass(
 		commandList,
 		kSmaaWeightPipelineIndex,
@@ -278,6 +311,7 @@ bool EditorPostProcessQualityManager::ExecuteSmaa(
 		return false;
 	}
 
+	// Pass 3: 元色をWeightに従って近傍と混ぜ、階段状の輪郭を滑らかにする。
 	if (!DrawPass(
 		commandList,
 		kSmaaNeighborhoodPipelineIndex,
@@ -290,6 +324,10 @@ bool EditorPostProcessQualityManager::ExecuteSmaa(
 
 	return true;
 }
+
+//========================================
+// Glare描画処理
+//========================================
 
 bool EditorPostProcessQualityManager::ExecuteGlare(
 	ID3D12GraphicsCommandList* commandList,
@@ -313,10 +351,11 @@ bool EditorPostProcessQualityManager::ExecuteGlare(
 		return false;
 	}
 
-	//================================================================
+	//------------------------------
 	// Bloom で抽出済みの明部から、選択した Glare 形状を作る
-	//================================================================
+	//------------------------------
 
+	// 入力と同じTextureへ書くことはできないため、A/Bのうち入力でない方を出力に選ぶ。
 	const ResourceType destinationResourceType =
 		sourceColorSrvHandle.ptr == srvHandles_[static_cast<size_t>(ResourceType::GlareOutputA)].ptr
 		? ResourceType::GlareOutputB
@@ -330,7 +369,7 @@ bool EditorPostProcessQualityManager::ExecuteGlare(
 	constants[2] = static_cast<float>(glareMode);
 	constants[3] = (std::max)(intensity, 0.0f);
 	constants[4] = (std::clamp)(size, 0.1f, 8.0f);
-	constants[5] = angleDegrees * 3.1415926535f / 180.0f;
+	constants[5] = angleDegrees * 3.1415926535f / 180.0f; // UIのDegreeをShader計算用Radianへ変換する。
 	constants[6] = static_cast<float>((std::clamp)(streakCount, 2, 8));
 	constants[7] = (std::clamp)(fade, 0.0f, 1.0f);
 	constants[8] = (std::clamp)(colorModulation, 0.0f, 1.0f);
@@ -357,6 +396,10 @@ bool EditorPostProcessQualityManager::ExecuteGlare(
 	return isGlareExecuted;
 }
 
+//========================================
+// Color Filter描画処理
+//========================================
+
 bool EditorPostProcessQualityManager::ExecuteFilter(
 	ID3D12GraphicsCommandList* commandList,
 	D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle,
@@ -370,9 +413,9 @@ bool EditorPostProcessQualityManager::ExecuteFilter(
 		return false;
 	}
 
-	//================================================================
+	//------------------------------
 	// Blender の Filter ノード相当の 3x3 畳み込みを適用する
-	//================================================================
+	//------------------------------
 
 	std::array<float, kRootConstantCount> constants{};
 	constants[0] = 1.0f / static_cast<float>(renderWidth_);
@@ -383,6 +426,7 @@ bool EditorPostProcessQualityManager::ExecuteFilter(
 	constants[5] = (std::max)(colorG, 0.0f);
 	constants[6] = (std::max)(colorB, 0.0f);
 
+	// 複数Filterを連結できるよう、直前出力がAならB、BならAへ書く。
 	const ResourceType destinationResourceType =
 		sourceColorSrvHandle.ptr == srvHandles_[static_cast<size_t>(ResourceType::FilterOutputA)].ptr
 		? ResourceType::FilterOutputB
@@ -402,6 +446,10 @@ bool EditorPostProcessQualityManager::ExecuteFilter(
 
 	return isFilterExecuted;
 }
+
+//========================================
+// 自動露出更新処理
+//========================================
 
 bool EditorPostProcessQualityManager::ExecuteAutoExposure(
 	ID3D12GraphicsCommandList* commandList,
@@ -428,6 +476,12 @@ bool EditorPostProcessQualityManager::ExecuteAutoExposure(
 		return false;
 	}
 
+	//------------------------------
+	// 前Frame HistogramのCPU表示用読戻し
+	//------------------------------
+
+	// 露出計算自体はGPUで完結する。ReadbackはDiagnostics表示用であり、
+	// 現在FrameのGPUを待たず、既にCopy済みの前Frame結果だけをMapする。
 	if (isHistogramReadbackPending_ && histogramReadbackResource_ != nullptr) {
 		void* histogramMappedAddress = nullptr;
 		const D3D12_RANGE readRange{0u, static_cast<SIZE_T>(kHistogramBinCount * sizeof(uint32_t))};
@@ -438,6 +492,7 @@ bool EditorPostProcessQualityManager::ExecuteAutoExposure(
 			&histogramMappedAddress)) &&
 			histogramMappedAddress != nullptr) {
 			const uint32_t* histogramValues = static_cast<const uint32_t*>(histogramMappedAddress);
+			// Graph表示は最大Binを1.0として正規化する。総Pixel数による高さの変化を除くためである。
 			uint32_t maximumBinValue = 1u;
 
 			for (uint32_t binIndex = 0u; binIndex < kHistogramBinCount; binIndex++) {
@@ -458,9 +513,9 @@ bool EditorPostProcessQualityManager::ExecuteAutoExposure(
 		isHistogramReadbackPending_ = false;
 	}
 
-	//================================================================
+	//------------------------------
 	// HDR対数輝度を256 binへ集計する
-	//================================================================
+	//------------------------------
 
 	ID3D12DescriptorHeap* descriptorHeaps[] = {srvDescriptorHeap_};
 	commandList->SetDescriptorHeaps(1u, descriptorHeaps);
@@ -488,8 +543,10 @@ bool EditorPostProcessQualityManager::ExecuteAutoExposure(
 		0u,
 		nullptr);
 
+	// Full Resolutionを全Pixel集計せず固定Sample数へ落とし、解像度が上がってもCostを一定にする。
 	constexpr uint32_t kHistogramSampleWidth = 256u;
 	constexpr uint32_t kHistogramSampleHeight = 144u;
+	// 線形輝度は範囲が広いためlog2へ変換し、暗部から高輝度まで256 Binへ均等に割り当てる。
 	constexpr float kMinimumLogLuminance = -12.0f;
 	constexpr float kMaximumLogLuminance = 8.0f;
 	std::array<uint32_t, kHistogramConstantCount> histogramConstants{};
@@ -761,9 +818,9 @@ bool EditorPostProcessQualityManager::CreateRootSignatureAndPipelineStates(
 		}
 	}
 
-	//================================================================
+	//------------------------------
 	// 輝度Histogram専用Compute Root Signature / PSO
-	//================================================================
+	//------------------------------
 
 	std::array<D3D12_DESCRIPTOR_RANGE, 2u> histogramDescriptorRanges{};
 	histogramDescriptorRanges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;

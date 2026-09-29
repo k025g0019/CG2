@@ -14,8 +14,15 @@
 #include <unordered_map>
 #include <vector>
 
+// Particleの生存判定・運動・再利用をCompute Shaderで処理し、CPU側GameObjectを生成せず描画するManager。
+// CPUはSpawn要求と衝突Proxyだけを渡し、Particle本体とAlive/Dead ListはGPU上で完結させる。
+// 大量Particleを個別Component化しない代わりに、生成後の個別選択や任意操作には対応しない。
 class EditorGpuParticleManager {
 public:
+	//========================================
+	// GPU Particle公開設定
+	//========================================
+
 	static constexpr uint32_t kMaxParticleCount = 32768u;
 	static constexpr uint32_t kMaxCollisionProxyCount = 32u;
 
@@ -25,6 +32,10 @@ public:
 		Vector3 extent{0.5f, 0.5f, 0.5f};  // Box半径、Sphere半径(x)、Capsule半径(x)/半高さ(y)。
 		float padding = 0.0f;
 	};
+
+	//========================================
+	// 初期化・更新・描画API
+	//========================================
 
 	bool Initialize(
 		ID3D12Device* device,
@@ -56,6 +67,10 @@ public:
 		const Matrix4x4& viewMatrix);  // Camera軸を使うBillboardとしてGPUインスタンシング描画する。
 
 private:
+	//========================================
+	// CPU・HLSL共有データ
+	//========================================
+
 	struct GpuFloat4 {
 		float x = 0.0f;
 		float y = 0.0f;
@@ -111,6 +126,10 @@ private:
 		float collisionProxyPadding[3]{0.0f, 0.0f, 0.0f};
 	};
 
+	//========================================
+	// GPU Resource生成内部処理
+	//========================================
+
 	bool CreateBuffers(ID3D12Device* device);  // Particle本体とAlive/DeadリストをGPUに作る。
 	bool CreateComputePipeline(
 		ID3D12Device* device,
@@ -136,6 +155,10 @@ private:
 		ID3D12Resource* resource,
 		D3D12_RESOURCE_STATES beforeState,
 		D3D12_RESOURCE_STATES afterState);
+
+	//========================================
+	// GPU Resource・状態管理
+	//========================================
 
 	Microsoft::WRL::ComPtr<ID3D12Resource> particleBuffer_;
 	Microsoft::WRL::ComPtr<ID3D12Resource> particleUploadBuffer_;

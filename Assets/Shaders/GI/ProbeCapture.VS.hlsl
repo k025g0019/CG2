@@ -34,6 +34,7 @@ cbuffer ProbeCaptureView : register(b3)
 #define SURFACE_SHADOW_PASS 1
 #include "../Common/SurfaceDeformation.hlsli"
 #include "../Common/Skinning.hlsli"
+#include "../Common/NormalTransform.hlsli"
 
 struct VertexShaderInput {
     float4 position : POSITION0;
@@ -72,7 +73,7 @@ VertexShaderOutput main(VertexShaderInput input) {
     const float4 worldPosition = mul(localPosition, gTransformationMatrix.World);
     output.position = mul(worldPosition, gProbeViewProjection);
     output.texcoord = input.texcoord;
-    output.normal = normalize(mul(float4(localNormal, 0.0f), gTransformationMatrix.World).xyz);
+    output.normal = TransformNormalToWorld(localNormal, gTransformationMatrix.World);
     output.worldPosition = worldPosition.xyz;
     return output;
 }

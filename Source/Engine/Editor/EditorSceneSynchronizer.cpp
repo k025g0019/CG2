@@ -681,9 +681,9 @@ namespace {
 			? reflectionProbeComponent->roughness
 			: 0.0f;
 
-		//============================================================
+		//------------------------------
 		// Cubemap Reflection Probe の Box Projection 範囲
-		//============================================================
+		//------------------------------
 
 		const bool isCubemapProbeActive =
 			reflectionProbeComponent != nullptr &&
@@ -712,6 +712,10 @@ namespace {
 	}
 }
 
+//========================================
+// Scene同期初期化処理
+//========================================
+
 void EditorSceneSynchronizer::Initialize(
 	EditorScene* editorScene,
 	EditorSceneObjectManager* sceneObjectManager,
@@ -721,14 +725,26 @@ void EditorSceneSynchronizer::Initialize(
 	animationManager_ = animationManager;
 }
 
+//========================================
+// GameObject・描画Proxy同期処理
+//========================================
+
+// 編集・Runtime側のGameObjectを正とし、Rendererが直接扱うEditorSceneObjectへ変換する。
+// GameObjectをそのまま描かないのは、GPU Buffer、Descriptor、Mesh View等の描画専用状態を
+// Scene保存Dataから分離し、Resourceの寿命をSceneObjectManagerへ集約するためである。
 void EditorSceneSynchronizer::Update(
 	const std::vector<std::string>& textureFilePaths,
 	int32_t& selectedPlacedSceneObjectIndex) {
+	// Offscreen Skinningの分散更新に使うFrame番号。Object IDと組み合わせて更新Frameをずらす。
 	static uint32_t synchronizationFrameIndex = 0u;
 	synchronizationFrameIndex++;
 	if (editorScene_ == nullptr || sceneObjectManager_ == nullptr) {
 		return;
 	}
+
+	//------------------------------
+	// Component参照索引作成
+	//------------------------------
 
 	std::vector<EditorSceneObject>& sceneObjects = sceneObjectManager_->GetSceneObjects();  // 描画用 SceneObject 配列を直接編集する
 	const std::vector<EditorGameObject>& gameObjects = editorScene_->GetGameObjects();
@@ -737,6 +753,7 @@ void EditorSceneSynchronizer::Update(
 	synchronizedGameObjects.clear();
 	synchronizedGameObjects.reserve(gameObjects.size());
 
+	// GameObject IDを配列Indexとして引ける表を作り、SceneObjectごとの全件検索を避ける。
 	int32_t maximumGameObjectId = -1;
 	for (const EditorGameObject& gameObject : gameObjects) {
 		maximumGameObjectId = (std::max)(maximumGameObjectId, gameObject.id);
@@ -759,6 +776,11 @@ void EditorSceneSynchronizer::Update(
 		}
 	}
 
+	//------------------------------
+	// Scene全体描画設定収集
+	//------------------------------
+
+	// Billboard方向、Global Probe、Lens Flare有効性はObject単体だけでは決まらないため先に集める。
 	const EditorGameObject* activeCameraObject = nullptr;
 	const EditorComponent* globalLightProbe = nullptr;
 	bool hasActiveFlareLayer = false;
@@ -786,6 +808,10 @@ void EditorSceneSynchronizer::Update(
 			hasActiveFlareLayer |= component.type == EditorComponentType::FlareLayer;
 		}
 	}
+
+	//------------------------------
+	// 不要描画Proxy削除
+	//------------------------------
 
 	// 後ろから削除することで erase 後の index ずれを避ける
 	for (int32_t sceneObjectIndex = static_cast<int32_t>(sceneObjects.size()) - 1;
@@ -853,6 +879,10 @@ void EditorSceneSynchronizer::Update(
 		}
 	}
 
+	//------------------------------
+	// GameObject・SceneObject対応表作成
+	//------------------------------
+
 	static std::vector<int32_t> sceneObjectIndices;
 	static const EditorComponent emptyRenderer{};
 	static const MaterialData emptyMaterial{};
@@ -869,6 +899,10 @@ void EditorSceneSynchronizer::Update(
 		}
 	}
 
+	//------------------------------
+	// 描画Proxy作成・更新
+	//------------------------------
+
 	// GameObject 側に Renderer があれば、対応する SceneObject を作る / 更新する
 	for (const SynchronizedGameObjectData& synchronizedData : synchronizedGameObjects) {
 		const EditorGameObject& gameObject = *synchronizedData.gameObject;
@@ -879,6 +913,7 @@ void EditorSceneSynchronizer::Update(
 		const EditorComponent* spriteRenderer = synchronizedData.spriteRenderer;
 		std::optional<EditorComponent> spriteRendererOverride;
 
+		// TilemapはRenderer側に画像が無い場合、Tilemap ComponentのAssetを描画Textureとして補う。
 		if (spriteRenderer != nullptr &&
 			spriteRenderer->type == EditorComponentType::TilemapRenderer &&
 			synchronizedData.tilemap != nullptr &&
@@ -914,6 +949,7 @@ void EditorSceneSynchronizer::Update(
 			spriteRenderer->isActive &&
 			(!isLensFlare || hasActiveFlareLayer);
 
+		// 描画Componentを持たないGameObjectはScene/Script/Physicsには残るが、描画Proxyは不要。
 		if (!hasModelRenderer && !hasSpriteRenderer) {
 			continue;
 		}
@@ -937,6 +973,10 @@ void EditorSceneSynchronizer::Update(
 		if (gameObject.id >= 0 && static_cast<size_t>(gameObject.id) < sceneObjectIndices.size()) {
 			sceneObjectIndex = sceneObjectIndices[static_cast<size_t>(gameObject.id)];
 		}
+
+		//------------------------------
+		// 未生成描画Proxy作成
+		//------------------------------
 
 		if (sceneObjectIndex < 0) {
 			int32_t textureIndex = 2;  // モデルは checker texture、スプライトは SpriteRenderer の texture を使う
@@ -978,6 +1018,10 @@ void EditorSceneSynchronizer::Update(
 			}
 		}
 
+		//------------------------------
+		// World Transform同期
+		//------------------------------
+
 		// GameObject の Transform を描画用 SceneObject へコピーする
 		EditorSceneObject& sceneObject =
 			sceneObjects[static_cast<size_t>(sceneObjectIndex)];
@@ -986,6 +1030,7 @@ void EditorSceneSynchronizer::Update(
 		sceneObject.transform.scale = worldScale;
 		sceneObject.worldMatrix = synchronizedWorldMatrix;
 
+		// Billboard/Lens FlareはObject自身の回転でなく、Active Cameraと同じ向きへ描画面を向ける。
 		if (spriteRenderer != nullptr &&
 			(spriteRenderer->type == EditorComponentType::BillboardRenderer ||
 			 spriteRenderer->type == EditorComponentType::LensFlare) &&
@@ -1010,6 +1055,7 @@ void EditorSceneSynchronizer::Update(
 			sceneObject.transform.scale.y *= (std::max)(spriteRenderer->colliderSize.y, 0.01f);
 		}
 
+		// Component設定からScale/Rotationを補正したObjectは、元のHierarchy World行列を使えないため再構築する。
 		const bool requiresDerivedRenderMatrix =
 			(spriteRenderer != nullptr &&
 			 (spriteRenderer->type == EditorComponentType::BillboardRenderer ||
@@ -1026,6 +1072,10 @@ void EditorSceneSynchronizer::Update(
 		}
 		sceneObject.name = gameObject.name;
 		sceneObject.surface = {};
+
+		//------------------------------
+		// Surface描画設定同期
+		//------------------------------
 
 		if (terrain != nullptr && terrain->isActive) {
 			sceneObject.surface.mode = 1;
@@ -1070,6 +1120,10 @@ void EditorSceneSynchronizer::Update(
 		}
 
 		sceneObject.materialData->surfaceMode = sceneObject.surface.mode;
+
+		//------------------------------
+		// Material・Texture同期
+		//------------------------------
 
 		if (sceneObject.type == EditorSceneObjectType::Sprite) {
 			// Sprite は SpriteRenderer の assetPath に合わせて textureIndex を更新する
@@ -1147,9 +1201,9 @@ void EditorSceneSynchronizer::Update(
 				sceneObject.materialData->useTexture = FALSE;
 			}
 
-			//============================================================
+			//------------------------------
 			// PBR Map を個別 SRV へ同期
-			//============================================================
+			//------------------------------
 
 			auto synchronizeMaterialTexture = [this, sceneObjectIndex](
 				EditorMaterialTextureSlot textureSlot,
@@ -1218,6 +1272,10 @@ void EditorSceneSynchronizer::Update(
 				sceneObject.materialData->useHeightMap = FALSE;
 			}
 
+			//------------------------------
+			// Model Mesh同期
+			//------------------------------
+
 			if (hasOcean) {
 				if (sceneObject.assetPath != modelAssetPath || !sceneObject.usesCustomMesh) {
 					const ModelData oceanModelData = BuildOceanModelData(
@@ -1279,6 +1337,11 @@ void EditorSceneSynchronizer::Update(
 				sceneObjectManager_->ClearCustomModelMesh(sceneObjectIndex);
 			}
 
+			//------------------------------
+			// Skinning Pose更新
+			//------------------------------
+
+			// 画面外Skinned Meshも完全停止せず、間隔を空けて更新して復帰時の大きなPose飛びを抑える。
 			const bool shouldUpdateOffscreenSkinPose =
 				(static_cast<uint32_t>(gameObject.id) + synchronizationFrameIndex) %
 					kOffscreenSkinPoseUpdateInterval == 0u;

@@ -16,7 +16,33 @@
 #include <string>
 #include <vector>
 
+//========================================
+// アプリケーション起動処理の構成
+//========================================
+
+// このファイルはWindowsアプリの入口だけを担当する。
+// 通常起動では、Projectの互換性を確認してGameSceneへ制御を渡す。
+// 一方、Scene生成、Game Build、環境診断、Migrationは画面を開かない
+// コマンドライン処理なので、GameSceneを作る前に完了して終了する。
+//
+// 通常起動の流れ:
+//   WinMain
+//     -> --projectで作業Directoryを決定
+//     -> Engine/Project Versionの互換性を確認
+//     -> GameScene::Initialize
+//     -> Update / Drawを終了要求まで反復
+//     -> GameScene::Finalize
+//
+// ここへ個別のGameplay処理を追加しない。
+// GameplayはScene、GameObject、Componentの順に下位へ委譲する。
 namespace {
+	//------------------------------
+	// コマンドライン起動補助
+	//------------------------------
+
+	// GUIを開かずに実行するBuild/Migration/環境診断の結果を、Launcherが
+	// 後から読めるUTF-8のLogへ保存する。BOMはWindows上のViewerが
+	// 日本語Encodingを誤判定しにくくするために明示している。
 	void SaveGameBuildCommandResult(const std::string& resultMessage) {
 		std::error_code fileError;
 		std::filesystem::create_directories("BuildLogs", fileError);
@@ -41,6 +67,8 @@ namespace {
 	}
 
 	std::vector<std::wstring> GetWideArguments() {
+		// WinMainのLPSTRは現在のCode Pageに依存するため、日本語Pathを安全に
+		// 受け取れない。GetCommandLineWからUTF-16の引数を取り直す。
 		int argumentCount = 0;
 		LPWSTR* arguments = CommandLineToArgvW(GetCommandLineW(), &argumentCount);
 		std::vector<std::wstring> result;
@@ -56,6 +84,8 @@ namespace {
 	}
 
 	std::wstring Utf8ToWide(const std::string& text) {
+		// Engine内部のUTF-8 Messageを、MessageBoxWが要求するUTF-16へ変換する。
+		// MB_ERR_INVALID_CHARSを付け、不正なUTF-8を黙って別文字へ置換しない。
 		if (text.empty()) return {};
 		const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
 			text.data(), static_cast<int>(text.size()), nullptr, 0);
@@ -67,6 +97,8 @@ namespace {
 	}
 
 	std::filesystem::path GetExecutableDirectory() {
+		// Current Directoryは--projectで変化するため、実行Fileと同梱物の確認には
+		// GetModuleFileNameWから得た実行File基準のDirectoryを使う。
 		std::wstring path(32768U, L'\0');
 		const DWORD length = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
 		path.resize(length);
@@ -74,6 +106,8 @@ namespace {
 	}
 
 	bool PrepareProjectCompatibility(const std::filesystem::path& projectRoot, bool allowsPrompt) {
+		// Project Dataを新しいEngineで不用意に上書きしないための入口。
+		// Open可否とSave可否を分け、Migrationが必要ならBackupを伴う処理へ進む。
 		ProjectVersionSettings settings{};
 		std::string error;
 		if (!ProjectVersionManager::Load(projectRoot, settings, error)) {
@@ -153,9 +187,9 @@ int WINAPI WinMain(
 	}
 	if (!isStandalonePackage && !PrepareProjectCompatibility(std::filesystem::current_path(), true)) return 5;
 
-	//============================================================
+	//------------------------------
 	// 開発用の非表示Scene生成
-	//============================================================
+	//------------------------------
 
 	if (commandLineText.find("--generate-water-rail-shooter-0817") != std::string::npos) {
 		std::string resultMessage;
@@ -164,9 +198,9 @@ int WINAPI WinMain(
 		return isGenerated ? 0 : 1;
 	}
 
-	//============================================================
+	//------------------------------
 	// ゲーム書き出しのコマンドライン実行
-	//============================================================
+	//------------------------------
 
 	if (commandLineText.find("--build-game") != std::string::npos) {
 		EditorGameBuildSettings buildSettings{};

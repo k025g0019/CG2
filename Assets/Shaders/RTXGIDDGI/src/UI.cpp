@@ -1,4 +1,4 @@
-/*
+﻿/*
 * Copyright (c) 2019-2023, NVIDIA CORPORATION.  All rights reserved.
 *
 * NVIDIA CORPORATION and its licensors retain all intellectual property
@@ -1075,7 +1075,7 @@ namespace Graphics
                     }
 
                     // Probe Brightness Threshold
-                    if (AddSlider(desc.probeBrightnessThreshold, 0.f, 1.f, 0.01f, "###volumeProbeBrightnessThreshold", "Probe Brightness Threshold", "Adjust the probe brightness threshold. This specifies a threshold value used during probe radiance blending that determines the maximum allowed difference in brightness between the previous and current irradiance values. This prevents impulses from drastically changing a texel�s irradiance in a single update cycle."))
+                    if (AddSlider(desc.probeBrightnessThreshold, 0.f, 1.f, 0.01f, "###volumeProbeBrightnessThreshold", "Probe Brightness Threshold", "Adjust the probe brightness threshold. This specifies a threshold value used during probe radiance blending that determines the maximum allowed difference in brightness between the previous and current irradiance values. This prevents impulses from drastically changing a texel's irradiance in a single update cycle."))
                     {
                         volume->SetProbeBrightnessThreshold(desc.probeBrightnessThreshold);
                     }

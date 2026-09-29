@@ -1,4 +1,5 @@
-﻿struct WaterTransform
+﻿#include "../Common/NormalTransform.hlsli"
+struct WaterTransform
 {
     row_major float4x4 WVP;
     row_major float4x4 World;
@@ -33,7 +34,7 @@ VSOutput main(VSInput input)
     const float4 worldPosition = mul(localPosition, gWaterTransform.World);
     output.position = mul(localPosition, gWaterTransform.WVP);
     output.texcoord = input.texcoord;
-    output.normal = normalize(mul(float4(input.normal, 0.0f), gWaterTransform.World).xyz);
+    output.normal = TransformNormalToWorld(input.normal, gWaterTransform.World);
     output.worldPosition = worldPosition.xyz;
     return output;
 }

@@ -1,4 +1,5 @@
-#include "SkinningCommon.hlsli"
+﻿#include "SkinningCommon.hlsli"
+#include "../Common/NormalTransform.hlsli"
 
 struct SkinnedTransform
 {
@@ -35,7 +36,7 @@ VSOutput main(VSInput input)
     const float4 worldPosition = mul(skinnedPosition, gSkinnedTransform.World);
     output.position = mul(skinnedPosition, gSkinnedTransform.WVP);
     output.texcoord = input.texcoord;
-    output.normal = normalize(mul(float4(skinnedNormal, 0.0f), gSkinnedTransform.World).xyz);
+    output.normal = TransformNormalToWorld(skinnedNormal, gSkinnedTransform.World);
     output.worldPosition = worldPosition.xyz;
     return output;
 }

@@ -9,14 +9,20 @@
 #include <wrl.h>
 #pragma warning(pop)
 
-//================================================================
-// 画面空間反射と時間方向履歴を管理する GPU Compute クラス
-//================================================================
+//========================================
+// 画面空間反射・Temporal履歴管理
+//========================================
 
 class EditorTemporalRenderingManager {
 public:
 	static constexpr uint32_t kPipelineCount = 11u;
 
+	//------------------------------
+	// 固定・解像度依存リソース初期化
+	//------------------------------
+
+	// Compute Shader群からRoot Signature/PSOを作り、指定解像度の履歴Textureを生成する。
+	// Shader BlobはPipeline配列順と一致している必要があり、欠損時は部分動作させない。
 	bool Initialize(
 		ID3D12Device* device,
 		ID3D12DescriptorHeap* srvDescriptorHeap,
@@ -25,8 +31,19 @@ public:
 		uint32_t renderWidth,
 		uint32_t renderHeight);
 
+	// Viewportを格納するTexture全体のSizeが変わった場合に履歴Resourceを作り直す。
+	// Size不変なら履歴を保ったまま何もせずtrueを返す。
 	bool Resize(uint32_t renderWidth, uint32_t renderHeight);
 
+	//------------------------------
+	// SSR・Temporal解決
+	//------------------------------
+
+	// 現在色、Depth、Object Motion、再構築Normal、Depth Pyramidを入力として、
+	// Velocity/Disocclusion/Reactive Maskを作り、SSRとColor履歴を現在Frameへ再投影する。
+	// viewHistoryIndexはScene ViewとGame Viewの履歴を分離するIndex。
+	// advanceHistoryFrame=falseでは同じFrame内の別Viewport処理で履歴Write先を進めない。
+	// 戻り値trueは必要PassのCommand記録と出力Handle更新に成功したことを表す。
 	bool Execute(
 		ID3D12GraphicsCommandList* commandList,
 		D3D12_GPU_DESCRIPTOR_HANDLE sourceColorSrvHandle,
@@ -49,8 +66,14 @@ public:
 		float sharpness = 0.08f,
 		float blendRatio = 0.90f);
 
+	//------------------------------
+	// 出力取得・終了処理
+	//------------------------------
+
 	void Finalize();
 
+	// Executeが最後に確定した色TextureのSRVを返す。
+	// SSRのみ、Temporal AA有効等の組合せにより実体Resourceは変わる。
 	D3D12_GPU_DESCRIPTOR_HANDLE GetOutputSrvHandle() const;
 	ID3D12Resource* GetOutputResource() const;  // Auto Exposure等が正しいTemporal出力を遷移できるよう実Resourceを返す。
 	D3D12_GPU_DESCRIPTOR_HANDLE GetVelocitySrvHandle() const;

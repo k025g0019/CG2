@@ -322,6 +322,10 @@ namespace {
 	}
 }
 
+//========================================
+// 初期化処理と開始処理
+//========================================
+
 void EditorTargetingManager::Initialize(
 	EditorScene* editorScene,
 	EditorInputManager* inputManager,
@@ -369,6 +373,10 @@ void EditorTargetingManager::Start() {
 
 	UpdateTargetSelectors(0.0f, true);
 }
+
+//========================================
+// 更新処理
+//========================================
 
 void EditorTargetingManager::Update(float deltaTime) {
 	if (!isStarted_ || editorScene_ == nullptr || deltaTime < 0.0f) {
@@ -451,6 +459,10 @@ void EditorTargetingManager::Update(float deltaTime) {
 	UpdateTargetSteering(deltaTime);
 }
 
+//------------------------------
+// エイムアシスト
+//------------------------------
+
 void EditorTargetingManager::UpdateAimAssist(float deltaTime) {
 	for (EditorGameObject& owner : editorScene_->GetGameObjects()) {
 		const EditorComponent* assist = EditorComponentUtility::FindComponent(owner, EditorComponentType::AimAssist);
@@ -485,6 +497,10 @@ void EditorTargetingManager::UpdateAimAssist(float deltaTime) {
 		UpdateReticleUi(*screenAim);
 	}
 }
+
+//========================================
+// 迎撃点の計算
+//========================================
 
 bool EditorTargetingManager::SolveIntercept(const Vector3& origin, int32_t targetGameObjectId, float projectileSpeed, float maximumTime, Vector3& position, float& time) const {
 	const EditorGameObject* target = editorScene_ != nullptr ? editorScene_->FindGameObject(targetGameObjectId) : nullptr;
@@ -530,6 +546,10 @@ bool EditorTargetingManager::GetInterceptPrediction(int32_t ownerGameObjectId, V
 	if (prediction == nullptr || !prediction->isActive || !prediction->interceptValid) return false;
 	position = prediction->interceptPredictedPosition; time = prediction->interceptTime; return true;
 }
+
+//========================================
+// 弾道予測
+//========================================
 
 void EditorTargetingManager::UpdateBallisticPredictions() {
 	if (editorScene_ == nullptr) {
@@ -758,6 +778,10 @@ bool EditorTargetingManager::GetBallisticTrajectoryPoint(
 	return true;
 }
 
+//========================================
+// 停止処理
+//========================================
+
 void EditorTargetingManager::Stop() {
 	isStarted_ = false;
 	steeringElapsedSeconds_.clear();
@@ -782,6 +806,10 @@ void EditorTargetingManager::Stop() {
 		}
 	}
 }
+
+//========================================
+// 対象候補の列挙と参照
+//========================================
 
 bool EditorTargetingManager::GetCurrentTarget(
 	int32_t targetSelectorGameObjectId,
@@ -941,6 +969,10 @@ bool EditorTargetingManager::GetCandidateTargets(
 	return !targetGameObjectIds.empty();
 }
 
+//========================================
+// 対象の明示指定と照準レイ
+//========================================
+
 bool EditorTargetingManager::SetExplicitTarget(
 	int32_t targetSelectorGameObjectId,
 	int32_t targetGameObjectId) {
@@ -1012,6 +1044,10 @@ bool EditorTargetingManager::GetNormalizedPosition(
 	normalizedPosition = screenAimComponent->screenAimNormalizedPosition;
 	return true;
 }
+
+//========================================
+// 対象選択の更新
+//========================================
 
 void EditorTargetingManager::UpdateTargetSelectors(float deltaTime, bool forceUpdate) {
 	if (editorScene_ == nullptr) {
@@ -1274,6 +1310,10 @@ void EditorTargetingManager::UpdateTargetSelectors(float deltaTime, bool forceUp
 		}
 	}
 }
+
+//========================================
+// 対象への追従（操舵）
+//========================================
 
 void EditorTargetingManager::UpdateTargetSteering(float deltaTime) {
 	if (editorScene_ == nullptr || deltaTime <= 0.0f) {
@@ -1580,6 +1620,10 @@ bool EditorTargetingManager::GetSteeringMoveMode(int32_t steeringGameObjectId, i
 	moveMode = (std::clamp)(steeringComponent->targetSteeringMoveMode, 0, 6);
 	return true;
 }
+
+//========================================
+// レティクル UI の更新
+//========================================
 
 void EditorTargetingManager::UpdateReticleUi(const EditorComponent& screenAimComponent) {
 	if (editorScene_ == nullptr || screenAimComponent.screenAimReticleGameObjectId < 0) {

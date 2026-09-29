@@ -44,6 +44,10 @@ namespace {
 	}
 }
 
+//========================================
+// GPU Particle初期化処理
+//========================================
+
 bool EditorGpuParticleManager::Initialize(
 	ID3D12Device* device,
 	IDxcBlob* clearComputeShader,
@@ -67,6 +71,8 @@ bool EditorGpuParticleManager::Initialize(
 	}
 
 	Finalize();
+	// Buffer、Compute Pipeline、Graphics Pipelineの順に生成する。
+	// 後段は前段Resourceを前提とするため、途中失敗はfalseで呼出側へ返し描画を開始しない。
 	device_ = device;
 
 	if (!CreateBuffers(device)) {
@@ -93,6 +99,11 @@ bool EditorGpuParticleManager::Initialize(
 }
 
 void EditorGpuParticleManager::Finalize() {
+	//------------------------------
+	// GPU Resource解放
+	//------------------------------
+
+	// 常時MapしているCollision Proxy Upload Bufferだけは、解放前に明示的にUnmapする。
 	particleBuffer_.Reset();
 	particleUploadBuffer_.Reset();
 	aliveListBuffer_.Reset();
@@ -121,9 +132,15 @@ void EditorGpuParticleManager::Finalize() {
 }
 
 void EditorGpuParticleManager::RequestReset() {
+	// CPU側でParticle配列を持たないため、Reset要求は次回CommandList記録時にGPUへ反映する。
+	// Play停止時にGPUを同期して待たず、通常の描画順序内で安全に初期化できる。
 	needsInitialClear_ = true;
 	hasEverSpawned_ = false;
 }
+
+//========================================
+// GPU Particle更新処理
+//========================================
 
 void EditorGpuParticleManager::Update(
 	ID3D12GraphicsCommandList* commandList,
@@ -146,6 +163,11 @@ void EditorGpuParticleManager::Update(
 		return;
 	}
 
+	//------------------------------
+	// 初回Clear・Alive/Dead List再構築
+	//------------------------------
+
+	// Alive/Dead Listの先頭要素をCounterとして使い、Particle slotをGPU内で再利用する。
 	const bool isResetFrame = needsInitialClear_;
 	if (isResetFrame) {
 		UploadInitialClear(commandList);
@@ -217,6 +239,11 @@ void EditorGpuParticleManager::Update(
 		commandList->ResourceBarrier(static_cast<UINT>(updateBarriers.size()), updateBarriers.data());
 	}
 
+	//------------------------------
+	// Spawn要求反映
+	//------------------------------
+
+	// Effect側でまとめたSpawn要求だけをUploadし、空FrameではCPU-GPU転送を発生させない。
 	if (!spawns.empty()) {
 		for (const EditorEffectManager::GpuParticleSpawn& spawn : spawns) {
 			EnsureModelMesh(spawn.renderAssetPath);
@@ -226,6 +253,10 @@ void EditorGpuParticleManager::Update(
 		hasEverSpawned_ = true;
 	}
 }
+
+//========================================
+// GPU Particle描画処理
+//========================================
 
 void EditorGpuParticleManager::Draw(
 	ID3D12GraphicsCommandList* commandList,
@@ -257,6 +288,7 @@ void EditorGpuParticleManager::Draw(
 	commandList->SetGraphicsRootSignature(graphicsRootSignature_.Get());
 	commandList->SetPipelineState(graphicsPipelineState_.Get());
 	ParticleDrawConstants drawConstants{};
+	// BillboardはView行列の逆行列からCameraの右・上方向を取り出し、Vertex Shaderで四角形を展開する。
 	drawConstants.viewProjection = viewProjection;
 	const Matrix4x4 cameraMatrix = Inverse(viewMatrix);
 	drawConstants.cameraRight = {
@@ -309,7 +341,13 @@ void EditorGpuParticleManager::Draw(
 	aliveListState_ = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 }
 
+//========================================
+// GPU Resource生成処理
+//========================================
+
 bool EditorGpuParticleManager::CreateBuffers(ID3D12Device* device) {
+	// Particle本体はDefault Heap、CPUから渡すSpawn/Collision情報はUpload Heapへ配置する。
+	// Alive/Dead ListはCounterを含むためParticle最大数より1要素多く確保する。
 	const UINT64 particleBufferSize = sizeof(GpuParticleData) * kMaxParticleCount;
 	const UINT64 listBufferSize = sizeof(uint32_t) * (kMaxParticleCount + 1u);
 
@@ -397,6 +435,8 @@ bool EditorGpuParticleManager::CreateComputePipeline(
 	IDxcBlob* clearComputeShader,
 	IDxcBlob* updateComputeShader,
 	IDxcBlob* spawnComputeShader) {
+	// Root ParameterのRegister番号はCompute Shader側定義と一致させる必要がある。
+	// Constants、Particle UAV、Alive/Dead UAV、Spawn SRV、Depth SRV、Collider SRVの順で接続する。
 	D3D12_DESCRIPTOR_RANGE depthDescriptorRange{};
 	depthDescriptorRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
 	depthDescriptorRange.NumDescriptors = 1u;
@@ -475,6 +515,7 @@ bool EditorGpuParticleManager::CreateGraphicsPipeline(
 	IDxcBlob* modelPixelShader,
 	DXGI_FORMAT renderTargetFormat,
 	DXGI_FORMAT depthStencilFormat) {
+	// BillboardとModel ParticleでParticle Bufferは共有し、Vertex入力の有無だけが異なるPSOを作る。
 	D3D12_ROOT_PARAMETER rootParameters[3]{};
 	rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
 	rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
@@ -524,6 +565,7 @@ bool EditorGpuParticleManager::CreateGraphicsPipeline(
 
 	D3D12_DEPTH_STENCIL_DESC depthStencilDesc{};
 	depthStencilDesc.DepthEnable = TRUE;
+	// 半透明Particleが後続描画のDepthを塞がないよう、Depth Testは行うがDepth Writeは無効にする。
 	depthStencilDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
 	depthStencilDesc.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
 	depthStencilDesc.StencilEnable = FALSE;
@@ -563,6 +605,8 @@ bool EditorGpuParticleManager::CreateGraphicsPipeline(
 }
 
 void EditorGpuParticleManager::UploadInitialClear(ID3D12GraphicsCommandList* commandList) {
+	// commandValue=1は全slotをDead Listへ登録する完全初期化。
+	// Counterだけを消す通常FrameのClearとは用途が異なる。
 	ParticleComputeConstants clearConstants{};
 	clearConstants.maxParticleCount = kMaxParticleCount;
 	clearConstants.commandValue = 1u;
@@ -589,6 +633,7 @@ void EditorGpuParticleManager::UploadInitialClear(ID3D12GraphicsCommandList* com
 void EditorGpuParticleManager::UploadSpawns(
 	ID3D12GraphicsCommandList* commandList,
 	const std::vector<EditorEffectManager::GpuParticleSpawn>& spawns) {
+	// 1Frameの要求数を最大Particle数へ制限し、Upload Bufferの範囲外書込みを防ぐ。
 	const uint32_t uploadCount = (std::min)(
 		static_cast<uint32_t>(spawns.size()),
 		kMaxParticleCount);
@@ -636,6 +681,8 @@ void EditorGpuParticleManager::UploadSpawns(
 
 EditorGpuParticleManager::GpuParticleData EditorGpuParticleManager::ConvertSpawn(
 	const EditorEffectManager::GpuParticleSpawn& spawn) {
+	// C++側Effect設定をHLSLと同じFloat4配列へPackingする。
+	// Layoutを変更する場合はCompute/Vertex Shader側構造体も同時に変更する必要がある。
 	GpuParticleData particle{};
 	particle.positionLifetime = {spawn.position.x, spawn.position.y, spawn.position.z, (std::max)(spawn.lifetime, 0.01f)};
 	particle.velocitySize = {spawn.velocity.x, spawn.velocity.y, spawn.velocity.z, (std::max)(spawn.startSize, 0.001f)};
@@ -692,6 +739,7 @@ uint32_t EditorGpuParticleManager::EnsureModelMesh(const std::string& assetPath)
 		return 0u;
 	}
 
+	// 同一AssetはGPU頂点Bufferを共有し、ParticleごとのMesh複製を避ける。
 	const auto existingModelIterator = modelMeshes_.find(assetPath);
 	if (existingModelIterator != modelMeshes_.end()) {
 		return existingModelIterator->second.renderGroup;
@@ -702,6 +750,7 @@ uint32_t EditorGpuParticleManager::EnsureModelMesh(const std::string& assetPath)
 		return 0u;
 	}
 
+	// Asset固有の大きさを単位サイズへ正規化し、ParticleのstartSize/endSizeを共通尺度にする。
 	const float maximumSize = (std::max)(
 		(std::max)(std::abs(modelData.localBoundsSize.x), std::abs(modelData.localBoundsSize.y)),
 		(std::max)(std::abs(modelData.localBoundsSize.z), 0.0001f));
@@ -754,6 +803,7 @@ void EditorGpuParticleManager::TransitionResource(
 	ID3D12Resource* resource,
 	D3D12_RESOURCE_STATES beforeState,
 	D3D12_RESOURCE_STATES afterState) {
+	// 同一状態へのBarrierは不要。Resource状態は呼出側が追跡した値を渡す契約とする。
 	if (commandList == nullptr || resource == nullptr || beforeState == afterState) {
 		return;
 	}

@@ -3,11 +3,6 @@
 
 #include <cmath>
 
-//void VectorScreenPrintf(int x, int y, const Vector3& vector, const char* label) {
-//	Novice::ScreenPrintf(x, y, "%0.02f", vector.x);
-//	Novice::ScreenPrintf(x + 50, y, " %0.02f", vector.y);
-//	Novice::ScreenPrintf(x + 100, y, "%0.02f %s", vector.z, label);
-//}
 
 Vector3 Add(const Vector3& v1, const Vector3& v2) {
 	Vector3 result;  // result は v1 + v2 の成分ごとの加算結果。

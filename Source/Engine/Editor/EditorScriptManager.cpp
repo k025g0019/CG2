@@ -327,6 +327,10 @@ namespace {
 
 }
 
+//========================================
+// Script実行環境初期化処理
+//========================================
+
 void EditorScriptManager::Initialize(
 	EditorScene* editorScene,
 	EditorInputManager* inputManager,
@@ -336,6 +340,8 @@ void EditorScriptManager::Initialize(
 	EditorAIManager* aiManager,
 	EditorPhysicsManager* physicsManager,
 	std::vector<std::string>* consoleMessages) {
+	// Script DLLはScene・Physics・Audio等へ直接依存せず、Managerが公開するBridge経由で操作する。
+	// ここでBridge先をまとめて保持し、Game側コードとEngine内部の境界を一箇所に集約する。
 	editorScene_ = editorScene;  // RuntimeManager と同じ Scene を参照し、Play 中だけ Script を処理する。
 	inputManager_ = inputManager;  // PlayerInput の Action 名を DLL Script から問い合わせる時に使う。
 	animationManager_ = animationManager;  // Animation の再生状態と現在時刻を DLL Script から読む時に使う。
@@ -452,7 +458,17 @@ bool EditorScriptManager::IsSceneRuntimeLoaded(const std::string& scenePath) con
 		normalizedScenePath) != loadedScenePaths_.end();
 }
 
+//========================================
+// Script開始処理
+//========================================
+
 void EditorScriptManager::Start() {
+	//------------------------------
+	// Module・Binding再構築
+	//------------------------------
+
+	// DLL(Module)はAsset単位、BindingはGameObject上のScript Component単位で管理する。
+	// 同じDLLを複数Objectが使ってもModuleを重複Loadせず、Instanceだけを分離する。
 	if (editorScene_ == nullptr) {
 		return;
 	}
@@ -472,6 +488,8 @@ void EditorScriptManager::Start() {
 }
 
 void EditorScriptManager::RegisterRuntimeHierarchy(int32_t rootGameObjectId) {
+	// Runtime中にPrefab生成や複製で増えた部分木を既存Bindingへ後付け登録する。
+	// 親だけでなく子孫も走査しないと、生成Prefab内部のScriptが開始されない。
 	if (!isStarted_ || editorScene_ == nullptr) {
 		return;
 	}
@@ -555,11 +573,20 @@ void EditorScriptManager::RegisterRuntimeHierarchy(int32_t rootGameObjectId) {
 	}
 }
 
+//========================================
+// Script可変時間更新処理
+//========================================
+
 void EditorScriptManager::Update(const uint8_t* keyState, float deltaTime) {
 	if (!isStarted_ || editorScene_ == nullptr) {
 		return;
 	}
 
+	//------------------------------
+	// 入力状態・Hot Reload更新
+	//------------------------------
+
+	// current/previousの二世代を保持し、押下中と押した瞬間をDLL側で区別できるようにする。
 	CopyKeyState(keyState);
 
 	if (hotReloadCheckFrameTimer_ <= 0) {
@@ -581,6 +608,12 @@ void EditorScriptManager::Update(const uint8_t* keyState, float deltaTime) {
 		}
 	}
 
+	//------------------------------
+	// Inspector公開Field同期
+	//------------------------------
+
+	// Componentは保存・Inspector表示側、Script Instanceは実行側の値を持つ。
+	// Hashが変化したときだけ同期し、文字列を含む全Fieldの毎Frameコピーを避ける。
 	const bool shouldSynchronizeFields = fieldSynchronizationFrameTimer_ <= 0;
 
 	if (shouldSynchronizeFields) {
@@ -611,6 +644,11 @@ void EditorScriptManager::Update(const uint8_t* keyState, float deltaTime) {
 		}
 	}
 
+	//------------------------------
+	// Event通知・Update呼出
+	//------------------------------
+
+	// UI/Input Eventを通常Updateより先に届けることで、同じFrameのGame Logicが最新入力を扱える。
 	DispatchQueuedUiEvents();
 	DispatchInputActions();
 
@@ -655,6 +693,8 @@ void EditorScriptManager::Update(const uint8_t* keyState, float deltaTime) {
 		scriptBinding.accumulatedUpdateDeltaTime = 0.0f;
 		scriptBinding.updateIntervalRemaining = scriptUpdateInterval;
 
+		// 新APIはObjectごとのInstanceを呼び、旧APIは互換性維持のためGameObject IDを渡す。
+		// 両経路をここで吸収し、Game側ScriptのAPI Version差をRuntime全体へ漏らさない。
 		if (UsesInstanceApi(*scriptModule) && scriptBinding.instance != nullptr &&
 			scriptModule->updateInstanceFunction != nullptr) {
 			EditorProfilerManager::Scope profilerScope(
@@ -691,12 +731,20 @@ void EditorScriptManager::Update(const uint8_t* keyState, float deltaTime) {
 	pendingRuntimeHierarchyRegistrations_.clear();
 }
 
+//========================================
+// Script固定時間更新処理
+//========================================
+
 void EditorScriptManager::FixedUpdate(float fixedDeltaTime) {
 	if (!isStarted_ || editorScene_ == nullptr) {
 		return;
 	}
 
 	lastFixedDeltaTime_ = fixedDeltaTime;  // DLL 側の FixedUpdate にそのまま渡す秒数。
+
+	//------------------------------
+	// Physics Event通知
+	//------------------------------
 
 	// 接触した GameObject に付いた Script だけへ通知し、Script 数 x 接触数の全走査を避ける。
 	for (const EditorJoltPhysicsManager::PhysicsEvent& physicsEvent : physicsEvents_) {
@@ -746,6 +794,11 @@ void EditorScriptManager::FixedUpdate(float fixedDeltaTime) {
 		}
 	}
 
+	//------------------------------
+	// Wire Event・FixedUpdate呼出
+	//------------------------------
+
+	// 接触・Wire Eventを先に通知するため、FixedUpdate内ではそのStepの結果を参照できる。
 	DispatchWireEvents();
 
 	for (const ScriptBinding& scriptBinding : scriptBindings_) {
@@ -786,6 +839,8 @@ void EditorScriptManager::SetWireEvents(
 }
 
 void EditorScriptManager::DispatchWireEvents() {
+	// 1本のWireは両端と所有者の最大3Objectに関係する。
+	// 同じObjectが複数役を兼ねる場合は重複通知を除き、1Eventにつき1回だけCallbackする。
 	for (const EditorPhysicsManager::RuntimeWireEvent& wireEvent : wireEvents_) {
 		EditorScriptWireEvent scriptWireEvent{};
 		scriptWireEvent.handle = wireEvent.handle;
@@ -927,7 +982,13 @@ void EditorScriptManager::DispatchAnimationEvent(
 	}
 }
 
+//========================================
+// Script終了処理
+//========================================
+
 void EditorScriptManager::Stop() {
+	// DLLをUnloadする前に各InstanceのStop/破棄Callbackを実行する。
+	// Unload後は関数Pointerが無効になるため、この順序を逆にしてはいけない。
 	if (isStarted_) {
 		for (auto& scriptModulePair : scriptModules_) {
 			StopBindingsForModule(scriptModulePair.second);
@@ -940,6 +1001,7 @@ void EditorScriptManager::Stop() {
 	physicsEvents_.clear();
 	wireEvents_.clear();
 	pendingRuntimeHierarchyRegistrations_.clear();
+	// Moduleを解放した後は、Module内Instanceを指すBindingも同じ終了処理内で破棄する。
 	UnloadAllModules();
 	scriptBindings_.clear();
 	scriptBindingIndicesByGameObjectId_.clear();
@@ -1389,9 +1451,9 @@ bool EditorScriptManager::ScriptHasAreaStateBridge(int32_t areaRootGameObjectId)
 	return EditorSharedState::g_editorRuntimeManager.HasAreaState(areaRootGameObjectId);
 }
 
-//================================================================
-// Navigation Bridge
-//================================================================
+//========================================
+// Navigation連携処理
+//========================================
 
 bool EditorScriptManager::ScriptNavSetDestinationBridge(
 	int32_t gameObjectId,
@@ -1499,9 +1561,9 @@ bool EditorScriptManager::ScriptNavGetPathFailureReasonBridge(
 	return true;
 }
 
-//================================================================
-// NVIDIA Blast 1.1.5 Bridge
-//================================================================
+//========================================
+// NVIDIA Blast連携処理
+//========================================
 
 bool EditorScriptManager::ScriptBlastApplyDamageBridge(
 	int32_t gameObjectId,
@@ -1556,9 +1618,9 @@ bool EditorScriptManager::ScriptBlastIsChunkDetachedBridge(int32_t gameObjectId,
 		gameObjectId, chunkIndex);
 }
 
-//================================================================
-// Camera Bridge
-//================================================================
+//========================================
+// Camera連携処理
+//========================================
 
 namespace {
 	// Camera / CinemachineCamera のどちらでも同じAPIから触れるようにする。
@@ -1912,9 +1974,9 @@ bool EditorScriptManager::ScriptCameraSetLookDirectionBridge(
 	return true;
 }
 
-//================================================================
-// Audio Voice Bridge
-//================================================================
+//========================================
+// Audio Voice連携処理
+//========================================
 
 EditorScriptAudioHandle EditorScriptManager::ScriptAudioPlayWithHandleBridge(int32_t gameObjectId) {
 	if (gActiveScriptManager == nullptr || gActiveScriptManager->audioManager_ == nullptr) {
@@ -2049,9 +2111,9 @@ bool EditorScriptManager::ScriptAudioFadeToBridge(
 		gActiveScriptManager->audioManager_->FadeVoiceTo(audioHandle, targetVolume, durationSeconds);
 }
 
-//================================================================
-// UI Bridge
-//================================================================
+//========================================
+// UI連携処理
+//========================================
 
 namespace {
 	// Text / Button / Toggle / Slider など、buttonLabel等のUI値を持つComponentを1つ返す。
@@ -2235,9 +2297,9 @@ bool EditorScriptManager::ScriptUiGetToggleValueBridge(int32_t gameObjectId, boo
 	return true;
 }
 
-//================================================================
-// Terrain Bridge
-//================================================================
+//========================================
+// Terrain連携処理
+//========================================
 
 namespace {
 	// Terrainの高さをCPUで評価する。描画(頂点シェーダ)とColliderと同じHeightMap・同じ式を使う。
@@ -2311,9 +2373,9 @@ bool EditorScriptManager::ScriptTerrainContainsWorldPositionBridge(
 	return EvaluateTerrainHeightAtWorld(terrainGameObjectId, worldX, worldZ, true, nullptr);
 }
 
-//================================================================
-// Renderer / Material Bridge
-//================================================================
+//========================================
+// Renderer・Material連携処理
+//========================================
 
 namespace {
 	// ModelRenderer / SkinnedMeshRenderer のどちらでも同じAPIから触れるようにする。
@@ -2590,9 +2652,9 @@ bool EditorScriptManager::ScriptRendererGetMaterialTextureBridge(
 	return true;
 }
 
-//================================================================
-// VFX Instance Bridge
-//================================================================
+//========================================
+// VFX Instance連携処理
+//========================================
 
 namespace {
 	// VFX Handleの内部構成。上位8bitで再生経路を分け、Script側からは1つのHandle型に見せる。
@@ -8567,9 +8629,9 @@ bool EditorScriptManager::RequestSceneLoadByBuildIndexInternal(int32_t sceneInde
 		EditorSharedState::g_gameBuildScenePaths[static_cast<size_t>(sceneIndex)]);
 }
 
-//================================================================
-// 外部認識・オンライン連携 Bridge
-//================================================================
+//========================================
+// 外部認識・オンライン連携処理
+//========================================
 // Component 設定が必要な操作は EditorExternalFeatureManager、状態取得は
 // 各 System(Speech / Vision / Haptics / Online)へそのまま流す。
 

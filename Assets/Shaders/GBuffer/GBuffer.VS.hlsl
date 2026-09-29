@@ -26,6 +26,7 @@ ConstantBuffer<TransformationMatrix> gTransformationMatrix : register(b0);
 #include "../Water/OceanFftSampling.hlsli"
 #include "../Common/SurfaceDeformation.hlsli"
 #include "../Common/Skinning.hlsli"
+#include "../Common/NormalTransform.hlsli"
 
 struct VertexShaderInput
 {
@@ -241,7 +242,7 @@ VertexShaderOutput main(VertexShaderInput input)
     output.previousClipPosition = mul(previousLocalPosition, gTransformationMatrix.previousWVP);
     output.motionVectorScale = gTransformationMatrix.temporalParams.zw;
     output.texcoord = input.texcoord;
-    output.normal = normalize(mul(float4(localNormal, 0.0f), gTransformationMatrix.World).xyz);
+    output.normal = TransformNormalToWorld(localNormal, gTransformationMatrix.World);
     output.worldPosition = worldPosition.xyz;
     output.oceanSamplingData = gTransformationMatrix.oceanParams0.x >= 1.5f
         ? float4(

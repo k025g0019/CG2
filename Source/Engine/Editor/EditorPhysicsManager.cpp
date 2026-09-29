@@ -10,10 +10,10 @@
 #include <utility>
 
 namespace {
-	//================================================================
+	//------------------------------
 	// 実行時の浮力設定
 	// Buoyancy がなければ Dynamic Rigidbody の3D Colliderから安全な既定値を作る
-	//================================================================
+	//------------------------------
 	struct RuntimeBuoyancySettings {
 		int32_t oceanGameObjectId = -1;
 		Vector3 centerOffset = {0.0f, 0.0f, 0.0f};
@@ -432,6 +432,10 @@ namespace {
 	}
 }
 
+//========================================
+// Physics初期化処理
+//========================================
+
 void EditorPhysicsManager::Initialize(EditorScene* editorScene, std::vector<std::string>* consoleMessages) {
 	editorScene_ = editorScene;  // RuntimeManager から渡された Play 対象 Scene
 	consoleMessages_ = consoleMessages;  // Jolt の接触イベントを Console へ流す
@@ -455,6 +459,10 @@ void EditorPhysicsManager::BeginDebugFrame() {
 }
 
 void EditorPhysicsManager::StartSimulation() {
+	//------------------------------
+	// Runtime物理状態初期化
+	//------------------------------
+
 	// Play 開始時の Scene 状態から Jolt Body を作る
 	fixedTimeAccumulator_ = 0.0f;
 	simulationElapsedTime_ = 0.0f;
@@ -474,6 +482,8 @@ void EditorPhysicsManager::StartSimulation() {
 	frameWireEvents_.clear();
 	nextWireHandle_ = 1ULL;
 
+	// RopeやSuspensionの現在値は保存設定ではなくSimulation結果なので、
+	// Play開始時に必ず既定状態へ戻し、前回Playの結果を持ち越さない。
 	if (editorScene_ != nullptr) {
 		for (EditorGameObject& gameObject : editorScene_->GetGameObjects()) {
 			EditorComponent* ropeComponent = EditorComponentUtility::FindComponent(
@@ -506,8 +516,13 @@ void EditorPhysicsManager::StartSimulation() {
 		}
 	}
 
+	// Scene側のRuntime値を初期化してからBodyを生成し、Jolt初期状態との食い違いを防ぐ。
 	joltPhysicsManager_.Start();
 }
+
+//========================================
+// Physics固定時間更新処理
+//========================================
 
 int32_t EditorPhysicsManager::Update(float deltaTime) {
 	if (editorScene_ == nullptr) {
@@ -525,6 +540,11 @@ int32_t EditorPhysicsManager::Update(float deltaTime) {
 		RebuildPhysicsStepCache();
 	}
 
+	//------------------------------
+	// 固定Step力計算・Jolt更新
+	//------------------------------
+
+	// 描画FPSとは独立した一定幅で積分することで、端末性能による重力・接触・力積の差を抑える。
 	while (fixedTimeAccumulator_ >= fixedTimeStep_ && fixedStepCount < maxFixedSubSteps_) {
 		// 外部の物理制御も必ず Jolt と同じ固定時間で力を加える。
 		if (preFixedStepCallback_) {
@@ -564,6 +584,8 @@ int32_t EditorPhysicsManager::Update(float deltaTime) {
 			postFixedStepCallback_(fixedTimeStep_);
 		}
 		simulationElapsedTime_ += fixedTimeStep_;
+		// 1描画Frameに複数Step進む場合があるため、Stepごとの接触をFrame Eventへ集約する。
+		// Script側は物理内部のSubStep回数を意識せず、発生したEventをすべて受け取れる。
 		const std::vector<EditorJoltPhysicsManager::PhysicsEvent>& stepEvents = joltPhysicsManager_.GetStepEvents();
 		frameEvents_.insert(frameEvents_.end(), stepEvents.begin(), stepEvents.end());
 		fixedTimeAccumulator_ -= fixedTimeStep_;
@@ -587,6 +609,10 @@ void EditorPhysicsManager::Draw() {
 }
 
 void EditorPhysicsManager::StopSimulation() {
+	//------------------------------
+	// Runtime物理状態破棄
+	//------------------------------
+
 	// Play 停止時に Jolt World を破棄する。Scene 自体は RuntimeManager がバックアップから復元する。
 	fixedTimeAccumulator_ = 0.0f;
 	simulationElapsedTime_ = 0.0f;
@@ -607,6 +633,8 @@ void EditorPhysicsManager::StopSimulation() {
 }
 
 void EditorPhysicsManager::RegisterRuntimeHierarchy(int32_t rootGameObjectId) {
+	// Play中に生成されたObjectはStart時のBody構築に含まれないため、部分木単位でJoltへ追加する。
+	// Componentを持たない中間親も走査し、その子にあるCollider/RigidBodyを取りこぼさない。
 	if (editorScene_ == nullptr || !joltPhysicsManager_.IsActive()) {
 		return;
 	}
@@ -666,6 +694,8 @@ bool EditorPhysicsManager::Raycast(
 	const Vector3& direction,
 	float distance,
 	EditorJoltPhysicsManager::PhysicsHit& hit) const {
+	// 実判定はJoltへ委譲し、EditorPhysicsManagerは結果と同時にDebug表示用の入力も記録する。
+	// Game Logic用判定と可視化で別々にRayを計算しないため、調査時に同じ形状を確認できる。
 	const bool hasHit = joltPhysicsManager_.Raycast(origin, direction, distance, hit);
 	RecordDebugCast(PhysicsDebugCastType::Ray, origin, direction, distance, 0.0f, 0.0f, hasHit, hit);
 	return hasHit;
@@ -3347,9 +3377,9 @@ void EditorPhysicsManager::ApplyBuoyancyForces(float fixedDeltaTime) {
 			worldRotation,
 			worldPosition);
 
-		//================================================================
+		//------------------------------
 		// 実 Physics Shape を使う浮力
-		//================================================================
+		//------------------------------
 		// 船体 AABB の空間へ仮想セルを詰めるのではなく、Jolt が実際に衝突へ使う
 		// Box / Sphere / Capsule / ConvexHull を局所水面 Plane で切る。
 		// これにより上部構造や凸包外の空間へ浮力が掛からず、水没体積の重心が浮心になる。

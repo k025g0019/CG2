@@ -5,13 +5,28 @@
 #include <algorithm>
 #include <cstring>
 
+//========================================
+// 深度階層生成処理の構成
+//========================================
+
+// Depth Hierarchyは、Full ResolutionのDepthから段階的に縮小したMip列を作る。
+// 1Texelが広い画面領域の代表Depthを持つため、大きなBounding Boxは粗いMipを
+// 少数回Sampleするだけで「手前のDepthに隠れているか」を近似判定できる。
+//
+//   Scene Depth
+//     -> Mip 0へ変換
+//     -> 2x2領域を集約してMip 1, 2, ...を生成
+//     -> GPU Occlusion CullingやSSR Ray Marchingが参照
+//
+// 同じDepthからView/World位置を復元し、隣接位置の差分からNormalも再構築する。
+// GBuffer Normalを別に持たないPassでも画面空間Effectへ面方向を渡すためである。
 namespace {
-	constexpr uint32_t kDepthPyramidDescriptorStartIndex = 31u;
+	constexpr uint32_t kDepthPyramidDescriptorStartIndex = 31u; // Level 0のSRVを置く固定Descriptor位置。
 	constexpr uint32_t kDepthPyramidDescriptorStride = 2u;
 	constexpr uint32_t kReconstructedNormalSrvDescriptorIndex = 55u;
 	constexpr uint32_t kReconstructedNormalUavDescriptorIndex = 56u;
 	constexpr uint32_t kComputeConstantCount = 20u;
-	constexpr uint32_t kThreadGroupSize = 8u;
+	constexpr uint32_t kThreadGroupSize = 8u; // 8x8 Threadで1 Groupあたり64 Pixelを処理する。
 
 	uint32_t GetDepthPyramidSrvDescriptorIndex(uint32_t levelIndex) {
 		return kDepthPyramidDescriptorStartIndex + levelIndex * kDepthPyramidDescriptorStride;
@@ -21,6 +36,10 @@ namespace {
 		return GetDepthPyramidSrvDescriptorIndex(levelIndex) + 1u;
 	}
 }
+
+//========================================
+// 深度階層初期化処理
+//========================================
 
 bool EditorDepthHierarchyManager::Initialize(
 	ID3D12Device* device,
@@ -32,9 +51,9 @@ bool EditorDepthHierarchyManager::Initialize(
 	uint32_t renderWidth,
 	uint32_t renderHeight) {
 
-	//================================================================
+	//------------------------------
 	// 初期化前提の検証
-	//================================================================
+	//------------------------------
 
 	if (device == nullptr ||
 		srvDescriptorHeap == nullptr ||
@@ -45,6 +64,8 @@ bool EditorDepthHierarchyManager::Initialize(
 		return false;
 	}
 
+	// DeviceはComPtrで保持してManagerの生存中に失効しないようにする。
+	// Descriptor Heap本体の所有権はPlatform側にあり、ここでは非所有Pointerとして借りる。
 	device_ = device;
 	srvDescriptorHeap_ = srvDescriptorHeap;
 	srvDescriptorSize_ = srvDescriptorSize;
@@ -68,6 +89,7 @@ bool EditorDepthHierarchyManager::Initialize(
 }
 
 bool EditorDepthHierarchyManager::Resize(uint32_t renderWidth, uint32_t renderHeight) {
+	// 0 PixelのTextureはD3D12で作成できないため、最小化中等の無効Sizeを拒否する。
 	if (!isInitialized_ || renderWidth == 0u || renderHeight == 0u) {
 		return false;
 	}
@@ -76,6 +98,7 @@ bool EditorDepthHierarchyManager::Resize(uint32_t renderWidth, uint32_t renderHe
 		return true;
 	}
 
+	// 古いSizeのSRV/UAV Handleを残すと、解放済みResourceを後段が参照するため一度すべて無効化する。
 	ReleaseSizeDependentResources();
 	renderWidth_ = renderWidth;
 	renderHeight_ = renderHeight;
@@ -98,6 +121,10 @@ bool EditorDepthHierarchyManager::Generate(
 	D3D12_GPU_DESCRIPTOR_HANDLE sceneDepthSrvHandle,
 	const float* inverseViewProjectionMatrix) {
 
+	//------------------------------
+	// 生成条件検証
+	//------------------------------
+
 	if (!isInitialized_ ||
 		commandList == nullptr ||
 		sceneDepthSrvHandle.ptr == 0u ||
@@ -106,13 +133,14 @@ bool EditorDepthHierarchyManager::Generate(
 		return false;
 	}
 
-	//================================================================
+	//------------------------------
 	// 深度ピラミッド生成
-	//================================================================
+	//------------------------------
 
 	commandList->SetComputeRootSignature(computeRootSignature_.Get());
 
 	for (uint32_t levelIndex = 0u; levelIndex < activeLevelCount_; levelIndex++) {
+		// 各Levelは独立Textureとして持ち、前LevelのSRVを現在LevelのUAVへ縮小する。
 		ID3D12Resource* destinationResource = depthPyramidResources_[levelIndex].Get();
 
 		D3D12_RESOURCE_BARRIER destinationBarrier{};
@@ -123,6 +151,8 @@ bool EditorDepthHierarchyManager::Generate(
 		destinationBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 		commandList->ResourceBarrier(1u, &destinationBarrier);
 
+		// Level 0だけはHardware DepthをLinearな階層用表現へ変換し、
+		// Level 1以降は前Levelの2x2範囲を集約する別Shaderを使う。
 		const bool isFirstLevel = levelIndex == 0u;
 		const uint32_t sourceWidth = isFirstLevel ? renderWidth_ : depthPyramidWidths_[levelIndex - 1u];
 		const uint32_t sourceHeight = isFirstLevel ? renderHeight_ : depthPyramidHeights_[levelIndex - 1u];
@@ -145,6 +175,7 @@ bool EditorDepthHierarchyManager::Generate(
 		commandList->SetComputeRootDescriptorTable(1u, depthPyramidUavHandles_[levelIndex]);
 		commandList->SetComputeRoot32BitConstants(2u, 4u, depthConstants, 0u);
 
+		// Texture端の端数Pixelも処理するためGroup数を切り上げる。
 		const uint32_t dispatchGroupX =
 			(depthPyramidWidths_[levelIndex] + kThreadGroupSize - 1u) / kThreadGroupSize;
 		const uint32_t dispatchGroupY =
@@ -152,6 +183,7 @@ bool EditorDepthHierarchyManager::Generate(
 		RecordEditorProfilerDispatch();
 		commandList->Dispatch(dispatchGroupX, dispatchGroupY, 1u);
 
+		// 次Levelが現在LevelをSRVとして読む前に、UAV書込完了を保証する。
 		D3D12_RESOURCE_BARRIER unorderedAccessBarrier{};
 		unorderedAccessBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
 		unorderedAccessBarrier.UAV.pResource = destinationResource;
@@ -162,9 +194,9 @@ bool EditorDepthHierarchyManager::Generate(
 		commandList->ResourceBarrier(1u, &destinationBarrier);
 	}
 
-	//================================================================
+	//------------------------------
 	// 深度からワールド法線を再構築
-	//================================================================
+	//------------------------------
 
 	D3D12_RESOURCE_BARRIER normalBarrier{};
 	normalBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -174,6 +206,8 @@ bool EditorDepthHierarchyManager::Generate(
 	normalBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 	commandList->ResourceBarrier(1u, &normalBarrier);
 
+	// 逆ViewProjectionはDepthとScreen UVからWorld位置を復元するために使う。
+	// 隣接PixelのWorld位置差を外積し、面の向きを表すNormalを求める。
 	std::array<uint32_t, kComputeConstantCount> normalConstants{};
 	normalConstants[0] = renderWidth_;
 	normalConstants[1] = renderHeight_;
@@ -208,6 +242,7 @@ bool EditorDepthHierarchyManager::Generate(
 }
 
 void EditorDepthHierarchyManager::Finalize() {
+	// Size依存Textureを先に解放してから、それを生成・利用するPSOとDevice参照を解放する。
 	ReleaseSizeDependentResources();
 	reconstructNormalPipelineState_.Reset();
 	depthDownsamplePipelineState_.Reset();
@@ -248,6 +283,11 @@ bool EditorDepthHierarchyManager::CreateRootSignatureAndPipelineStates(
 	IDxcBlob* depthDownsampleShaderBlob,
 	IDxcBlob* reconstructNormalShaderBlob) {
 
+	//------------------------------
+	// Root Parameter定義
+	//------------------------------
+
+	// t0に入力Texture、u0に出力Texture、b0相当にSize/行列をRoot Constantsで渡す。
 	D3D12_DESCRIPTOR_RANGE srvRange{};
 	srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
 	srvRange.NumDescriptors = 1u;
@@ -308,6 +348,7 @@ bool EditorDepthHierarchyManager::CreateRootSignatureAndPipelineStates(
 		return false;
 	}
 
+	// 3 ShaderはResource配置が同じなので、同一Root SignatureからPSOだけを作り分ける。
 	auto createComputePipelineState = [this](
 		IDxcBlob* shaderBlob,
 		Microsoft::WRL::ComPtr<ID3D12PipelineState>& pipelineState) {
@@ -342,6 +383,10 @@ bool EditorDepthHierarchyManager::CreateRootSignatureAndPipelineStates(
 }
 
 bool EditorDepthHierarchyManager::CreateDepthPyramidResources(uint32_t renderWidth, uint32_t renderHeight) {
+	//------------------------------
+	// Level別Texture生成
+	//------------------------------
+
 	uint32_t levelWidth = renderWidth;
 	uint32_t levelHeight = renderHeight;
 	activeLevelCount_ = 0u;
@@ -354,6 +399,7 @@ bool EditorDepthHierarchyManager::CreateDepthPyramidResources(uint32_t renderWid
 		resourceDescription.Height = levelHeight;
 		resourceDescription.DepthOrArraySize = static_cast<UINT16>(1u);
 		resourceDescription.MipLevels = static_cast<UINT16>(1u);
+		// 2 Channelには階層判定で必要なDepth範囲を保持する。
 		resourceDescription.Format = DXGI_FORMAT_R32G32_FLOAT;
 		resourceDescription.SampleDesc.Count = 1u;
 		resourceDescription.SampleDesc.Quality = 0u;
@@ -405,10 +451,12 @@ bool EditorDepthHierarchyManager::CreateDepthPyramidResources(uint32_t renderWid
 		depthPyramidHeights_[levelIndex] = levelHeight;
 		activeLevelCount_++;
 
+		// 1x1まで到達した時点で、それ以上縮小しても情報量が変わらない。
 		if (levelWidth == 1u && levelHeight == 1u) {
 			break;
 		}
 
+		// 奇数Sizeは切り上げ、最終行・列のDepthを階層から落とさない。
 		levelWidth = (std::max)(1u, (levelWidth + 1u) / 2u);
 		levelHeight = (std::max)(1u, (levelHeight + 1u) / 2u);
 	}
@@ -427,6 +475,7 @@ bool EditorDepthHierarchyManager::CreateReconstructedNormalResource(
 	resourceDescription.Height = renderHeight;
 	resourceDescription.DepthOrArraySize = static_cast<UINT16>(1u);
 	resourceDescription.MipLevels = static_cast<UINT16>(1u);
+	// Normalの符号と小数精度を保つためUNORMではなく16bit Floatを使う。
 	resourceDescription.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 	resourceDescription.SampleDesc.Count = 1u;
 	resourceDescription.SampleDesc.Quality = 0u;
@@ -475,6 +524,7 @@ bool EditorDepthHierarchyManager::CreateReconstructedNormalResource(
 }
 
 void EditorDepthHierarchyManager::ReleaseSizeDependentResources() {
+	// Resource解放と同時にHandle/Sizeも0へ戻し、Resize失敗後に古い値を返さない。
 	for (Microsoft::WRL::ComPtr<ID3D12Resource>& depthPyramidResource : depthPyramidResources_) {
 		depthPyramidResource.Reset();
 	}

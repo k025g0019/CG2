@@ -1,4 +1,5 @@
 ﻿#include "BatchedInstanceCommon.hlsli"
+#include "../Common/NormalTransform.hlsli"
 
 struct DrawParameters
 {
@@ -48,7 +49,7 @@ VertexShaderOutput main(VertexShaderInput input, uint instanceId : SV_InstanceID
     const float4 worldPosition = mul(input.position, instanceData.World);
     output.position = mul(input.position, instanceData.WVP);
     output.texcoord = input.texcoord;
-    output.normal = normalize(mul(float4(input.normal, 0.0f), instanceData.World).xyz);
+    output.normal = TransformNormalToWorld(input.normal, instanceData.World);
     output.worldPosition = worldPosition.xyz;
     output.shadowPosition = mul(input.position, instanceData.lightWVP);
     output.oceanData = 0.0f;

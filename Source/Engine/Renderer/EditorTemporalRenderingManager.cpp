@@ -6,6 +6,23 @@
 #include <cmath>
 #include <cstring>
 
+//========================================
+// Temporal履歴処理の構成
+//========================================
+
+// Temporal処理は、現在Frameだけでは不足するSampleを過去Frameから再利用する。
+// 単に同じUVの色を混ぜるのではなく、次の順で履歴が同じSurfaceかを判定する。
+//
+//   Depth + 前/現ViewProjection + Object Motion
+//     -> 前Frameの参照位置を表すVelocity
+//     -> 近傍へVelocityを広げ、細いObjectの穴を減らす
+//     -> Previous Depthとの差からDisocclusionを検出
+//     -> Material/輝度変化からReactive Maskを作る
+//     -> 信用できる履歴だけを現在色/SSRへBlend
+//     -> 現在Depthと行列を次Frame用履歴として保存
+//
+// Camera Cut、Viewport変更、機能ON/OFFでは座標対応が成立しないため履歴を破棄する。
+// Scene ViewとGame ViewのCameraを混ぜないよう、履歴Textureと前Frame行列はView別に持つ。
 namespace {
 	// 0-159 は固定描画機能と ImGui が使用する。Temporal は履歴を View ごとに
 	// 分離するため、動的Texture領域の直前に連続した専用範囲を確保する。
@@ -27,6 +44,10 @@ namespace {
 	}
 }
 
+//========================================
+// Temporalリソース初期化処理
+//========================================
+
 bool EditorTemporalRenderingManager::Initialize(
 	ID3D12Device* device,
 	ID3D12DescriptorHeap* srvDescriptorHeap,
@@ -35,14 +56,15 @@ bool EditorTemporalRenderingManager::Initialize(
 	uint32_t renderWidth,
 	uint32_t renderHeight) {
 
-	//================================================================
+	//------------------------------
 	// 初期化に必要な DirectX 12 オブジェクトを検証
-	//================================================================
+	//------------------------------
 
 	if (device == nullptr || srvDescriptorHeap == nullptr || srvDescriptorSize == 0u) {
 		return false;
 	}
 
+	// Pipeline番号とShaderの役割が固定されているため、欠けたPassだけを飛ばすことはできない。
 	for (IDxcBlob* computeShaderBlob : computeShaderBlobs) {
 		if (computeShaderBlob == nullptr) {
 			return false;
@@ -69,6 +91,7 @@ bool EditorTemporalRenderingManager::Initialize(
 }
 
 bool EditorTemporalRenderingManager::Resize(uint32_t renderWidth, uint32_t renderHeight) {
+	// 履歴TextureはPixel座標で前Frameと対応するため、Size変更後に古い履歴を再利用できない。
 	if (!isInitialized_ || renderWidth == 0u || renderHeight == 0u) {
 		return false;
 	}
@@ -77,6 +100,7 @@ bool EditorTemporalRenderingManager::Resize(uint32_t renderWidth, uint32_t rende
 		return true;
 	}
 
+	// 解像度依存Resourceの解放時に履歴Valid Flagも下がり、Resize直後は現在Frameだけを使う。
 	ReleaseSizeDependentResources();
 	renderWidth_ = renderWidth;
 	renderHeight_ = renderHeight;
@@ -88,6 +112,10 @@ bool EditorTemporalRenderingManager::Resize(uint32_t renderWidth, uint32_t rende
 
 	return true;
 }
+
+//========================================
+// SSR・Temporal履歴解決処理
+//========================================
 
 bool EditorTemporalRenderingManager::Execute(
 	ID3D12GraphicsCommandList* commandList,
@@ -111,6 +139,10 @@ bool EditorTemporalRenderingManager::Execute(
 	float sharpness,
 	float blendRatio) {
 
+	//------------------------------
+	// 入力Resource検証
+	//------------------------------
+
 	if (!isInitialized_ || commandList == nullptr || sourceColorSrvHandle.ptr == 0u ||
 		sceneDepthSrvHandle.ptr == 0u || objectMotionVectorSrvHandle.ptr == 0u ||
 		reconstructedNormalSrvHandle.ptr == 0u ||
@@ -121,6 +153,7 @@ bool EditorTemporalRenderingManager::Execute(
 	}
 
 	if (!ssrEnabled && !temporalEnabled) {
+		// どちらも無効なら出力を作る必要がない。単純Copyは呼出側の既存色を使う。
 		return false;
 	}
 
@@ -131,6 +164,10 @@ bool EditorTemporalRenderingManager::Execute(
 			}
 		}
 	}
+
+	//------------------------------
+	// 履歴継続条件判定
+	//------------------------------
 
 	const float viewportRect[4] = {
 		viewportX,
@@ -147,6 +184,7 @@ bool EditorTemporalRenderingManager::Execute(
 				viewportRect[viewportElementIndex]) > 0.5f;
 	}
 
+	// Viewportや処理構成が変わると、同じ履歴Pixelが別の画面位置・別のEffect結果を表す。
 	if (ssrEnabled != lastSsrEnabled_[viewHistoryIndex] ||
 		temporalEnabled != lastTemporalEnabled_[viewHistoryIndex] ||
 		hasViewportChanged) {
@@ -154,6 +192,10 @@ bool EditorTemporalRenderingManager::Execute(
 	}
 
 	commandList->SetComputeRootSignature(computeRootSignature_.Get());
+
+	//------------------------------
+	// 全Pass共通定数設定
+	//------------------------------
 
 	std::array<uint32_t, kComputeConstantCount> constants{};
 	constants[0] = renderWidth_;
@@ -163,6 +205,7 @@ bool EditorTemporalRenderingManager::Execute(
 	std::memcpy(&constants[2], &inverseRenderWidth, sizeof(float));
 	std::memcpy(&constants[3], &inverseRenderHeight, sizeof(float));
 	std::memcpy(&constants[4], inverseViewProjectionMatrix, sizeof(float) * 16u);
+	// 履歴が無効なFrameでは前行列に現在行列を入れ、見かけ上のCamera Velocityを0にする。
 	std::memcpy(
 		&constants[20],
 		isHistoryValid_[viewHistoryIndex]
@@ -171,6 +214,11 @@ bool EditorTemporalRenderingManager::Execute(
 		sizeof(float) * 16u);
 	std::memcpy(&constants[40], viewportRect, sizeof(viewportRect));
 
+	//------------------------------
+	// View別Ping-Pong履歴選択
+	//------------------------------
+
+	// Write Index 0のFrameは1を前Frameとして読み、次回は役割を反転する。
 	const bool isGameViewHistory = viewHistoryIndex == 1u;
 	const uint32_t historyWriteIndex = historyWriteIndices_[viewHistoryIndex];
 	const ResourceType previousDepthType = isGameViewHistory
@@ -209,13 +257,14 @@ bool EditorTemporalRenderingManager::Execute(
 		return srvHandles_[static_cast<size_t>(resourceType)];
 	};
 
-	//================================================================
+	//------------------------------
 	// カメラ移動量と非連続領域を求める
-	//================================================================
+	//------------------------------
 
 	float historyValidValue = isHistoryValid_[viewHistoryIndex] ? 1.0f : 0.0f;
 	std::memcpy(&constants[36], &historyValidValue, sizeof(float));
 
+	// DepthからCamera移動分のVelocityを復元し、Object Motion Vectorを重ねる。
 	if (!Dispatch(
 		commandList,
 		0u,
@@ -225,6 +274,7 @@ bool EditorTemporalRenderingManager::Execute(
 		return false;
 	}
 
+	// 近傍で最も有効なVelocityを広げ、細いGeometryや輪郭部の未記録Pixelを補う。
 	if (!Dispatch(
 		commandList,
 		1u,
@@ -234,9 +284,11 @@ bool EditorTemporalRenderingManager::Execute(
 		return false;
 	}
 
+	// 前Frameの再投影Depthとの差がこの閾値を超えるPixelは、新しく現れた面として履歴を捨てる。
 	float disocclusionThreshold = 0.0025f;
 	std::memcpy(&constants[37], &disocclusionThreshold, sizeof(float));
 
+	// 高輝度変化やMaterial Maskも含め、履歴比率を下げるReactive Maskを作る。
 	if (!Dispatch(
 		commandList,
 		2u,
@@ -258,10 +310,11 @@ bool EditorTemporalRenderingManager::Execute(
 	D3D12_GPU_DESCRIPTOR_HANDLE resolvedColorSrvHandle = sourceColorSrvHandle;
 
 	if (ssrEnabled) {
-		//============================================================
+		//------------------------------
 		// Hi-Z を使って SSR を追跡し、前フレーム結果と安定化する
-		//============================================================
+		//------------------------------
 
+		// RayのWorld起点と最大距離をSSR Trace用定数へ上書きする。
 		std::memcpy(&constants[36], &cameraPosition[0], sizeof(float) * 3u);
 		float reflectionDistance = 80.0f;
 		std::memcpy(&constants[39], &reflectionDistance, sizeof(float));
@@ -274,6 +327,7 @@ bool EditorTemporalRenderingManager::Execute(
 			depthPyramidSrvHandles[4]
 		};
 
+		// Hi-Zの粗いLevelから空間を飛ばし、Depth交差候補へ近づいたら細かいLevelで判定する。
 		if (!Dispatch(
 			commandList,
 			4u,
@@ -284,6 +338,7 @@ bool EditorTemporalRenderingManager::Execute(
 			return false;
 		}
 
+		// Trace結果のHit UVから現在Scene ColorをSampleし、現在Frameの反射色を作る。
 		if (!Dispatch(
 			commandList,
 			5u,
@@ -295,6 +350,7 @@ bool EditorTemporalRenderingManager::Execute(
 
 		std::memcpy(&constants[36], &historyValidValue, sizeof(float));
 
+		// Motion Vectorで前Frame SSRを再投影し、Disocclusion部を除外して時間方向へ蓄積する。
 		if (!Dispatch(
 			commandList,
 			6u,
@@ -304,6 +360,7 @@ bool EditorTemporalRenderingManager::Execute(
 			return false;
 		}
 
+		// Depth/Normal差を見ながら反射Noiseを空間Filterし、面境界を越えた色漏れを抑える。
 		if (!Dispatch(
 			commandList,
 			7u,
@@ -313,6 +370,7 @@ bool EditorTemporalRenderingManager::Execute(
 			return false;
 		}
 
+		// Roughness等のMaterial Maskに従って、Denoise済み反射を元のHDR色へ合成する。
 		if (!Dispatch(
 			commandList,
 			8u,
@@ -325,11 +383,12 @@ bool EditorTemporalRenderingManager::Execute(
 		resolvedColorSrvHandle = getSrvHandle(ResourceType::ReflectionComposite);
 	}
 
-	//================================================================
+	//------------------------------
 	// 色履歴を近傍色へ制限してゴーストを抑え、次フレーム深度を保存
-	//================================================================
+	//------------------------------
 
 	if (temporalEnabled) {
+		// Blend率は1.0にすると現在Frameへ永遠に追従しなくなるため、上限を0.98に制限する。
 		const float temporalHistoryBlend = (std::clamp)(blendRatio, 0.0f, 0.98f);
 		const float temporalSharpness = (std::clamp)(sharpness, 0.0f, 1.0f);
 		std::memcpy(&constants[36], &historyValidValue, sizeof(float));
@@ -337,6 +396,7 @@ bool EditorTemporalRenderingManager::Execute(
 		std::memcpy(&constants[38], &temporalSharpness, sizeof(float));
 		constants[39] = 0u;
 
+		// 現在近傍の色範囲へ履歴をClampしてからBlendし、移動物体の残像を抑える。
 		if (!Dispatch(
 			commandList,
 			9u,
@@ -357,6 +417,8 @@ bool EditorTemporalRenderingManager::Execute(
 			return false;
 		}
 
+		// View別履歴Textureは独立しているが、後段へ渡す出力Textureは共通。
+		// 対象Viewport矩形だけCopyし、もう一方のView領域を上書きしない。
 		D3D12_RESOURCE_BARRIER copyBarriers[2]{};
 		copyBarriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		copyBarriers[0].Transition.pResource = colorHistoryResource;
@@ -421,6 +483,7 @@ bool EditorTemporalRenderingManager::Execute(
 		outputResourceType_ = ResourceType::ReflectionComposite;
 	}
 
+	// 現在DepthをView別Previous Depthへ保存し、次FrameのDisocclusion判定に使う。
 	if (!Dispatch(
 		commandList,
 		10u,
@@ -438,6 +501,7 @@ bool EditorTemporalRenderingManager::Execute(
 		previousViewportRects_[viewHistoryIndex].data(),
 		viewportRect,
 		sizeof(viewportRect));
+	// 全Passが成功した後だけ履歴を有効化する。途中失敗したDataを次Frameへ持ち越さない。
 	isHistoryValid_[viewHistoryIndex] = true;
 	lastSsrEnabled_[viewHistoryIndex] = ssrEnabled;
 	lastTemporalEnabled_[viewHistoryIndex] = temporalEnabled;

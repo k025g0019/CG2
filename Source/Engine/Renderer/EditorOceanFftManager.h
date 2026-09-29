@@ -12,12 +12,20 @@
 #include <unordered_map>
 #include <vector>
 
-//================================================================
+//========================================
 // Ocean の FFT 波面を既存の連続 LOD メッシュへ供給する GPU 管理クラス
-//================================================================
+//========================================
+
+// 周波数領域の波スペクトルをGPU上で時間発展させ、2次元逆FFTで変位・法線・Foamを生成する。
+// 描画用Textureだけでなく、浮力計算向けのSurface Sampleを遅延Readbackする責務も持つ。
+// GPU結果は即座にCPUへ戻らないため、QueueSurfaceSampleは直前に解決済みの値を返す設計である。
 
 class EditorOceanFftManager {
 public:
+	//========================================
+	// Ocean FFT公開型
+	//========================================
+
 	static constexpr uint32_t kMaximumFftResolution = 2048u;
 	static constexpr uint32_t kMaximumSurfaceSampleCount = 1024u;
 
@@ -28,6 +36,10 @@ public:
 		float foam = 0.0f;
 		bool isValid = false;
 	};
+
+	//========================================
+	// Simulation・描画接続API
+	//========================================
 
 	bool Initialize(
 		ID3D12Device* device,
@@ -53,6 +65,10 @@ public:
 	void Finalize();
 
 private:
+	//========================================
+	// CPU・HLSL共有データ
+	//========================================
+
 	struct OceanFftConstants {
 		float oceanTime = 0.0f;
 		float gravity = 9.81f;
@@ -100,6 +116,10 @@ private:
 	static_assert(sizeof(SurfaceSampleRequest) == 16u);
 	static_assert(sizeof(SurfaceSampleResult) == 64u);
 
+	//========================================
+	// Pipeline・Resource生成内部処理
+	//========================================
+
 	bool CreateRootSignatureAndPipelineStates(
 		IDxcBlob* updateSpectrumShaderBlob,
 		IDxcBlob* fftRowShaderBlob,
@@ -128,6 +148,10 @@ private:
 	static void InsertUavBarrier(
 		ID3D12GraphicsCommandList* commandList,
 		ID3D12Resource* resource);
+
+	//========================================
+	// FFT Resource・Readback状態
+	//========================================
 
 	Microsoft::WRL::ComPtr<ID3D12Device> device_;
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> computeRootSignature_;

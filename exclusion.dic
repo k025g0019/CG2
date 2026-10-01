@@ -1,4 +1,4 @@
-
+﻿
 WinMain
 WindowProc
 DirectX
@@ -32,3 +32,6 @@ DXGIFactory
 IDXGIAdapter4
 D3D12CreateDevice
 FeatureLevel
+texcoord
+Texcoord
+TEXCOORD

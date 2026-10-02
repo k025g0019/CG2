@@ -1504,49 +1504,49 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			//------------------------------
 			input->Update();
 
-			//if (key[DIK_ESCAPE]) {
-			//	PostQuitMessage(0);
-			//}
+			if (input->PushKey(DIK_ESCAPE)) {
+				PostQuitMessage(0);
+			}
 
-			//if (key[DIK_LEFT]) {
-			//	cameraTransform.rotate.y -= cameraRotateSpeed;
-			//}
-			//if (key[DIK_RIGHT]) {
-			//	cameraTransform.rotate.y += cameraRotateSpeed;
-			//}
-			//if (key[DIK_UP]) {
-			//	cameraTransform.rotate.x -= cameraRotateSpeed;
-			//}
-			//if (key[DIK_DOWN]) {
-			//	cameraTransform.rotate.x += cameraRotateSpeed;
-			//}
+			if (input->TriggerKey(DIK_LEFT)) {
+				cameraTransform.rotate.y -= cameraRotateSpeed;
+			}
+			if (input->PushKey(DIK_RIGHT)) {
+				cameraTransform.rotate.y += cameraRotateSpeed;
+			}
+			if (input->PushKey(DIK_UP)) {
+				cameraTransform.rotate.x -= cameraRotateSpeed;
+			}
+			if (input->PushKey(DIK_DOWN)) {
+				cameraTransform.rotate.x += cameraRotateSpeed;
+			}
 
-			//if (key[DIK_A]) {
-			//	cameraTransform.translate.x -= cameraMoveSpeed;
-			//}
-			//if (key[DIK_D]) {
-			//	cameraTransform.translate.x += cameraMoveSpeed;
-			//}
-			//if (key[DIK_Q]) {
-			//	cameraTransform.translate.y += cameraMoveSpeed;
-			//}
-			//if (key[DIK_E]) {
-			//	cameraTransform.translate.y -= cameraMoveSpeed;
-			//}
-			//if (key[DIK_W]) {
-			//	cameraTransform.translate.z += cameraMoveSpeed;
-			//}
-			//if (key[DIK_S]) {
-			//	cameraTransform.translate.z -= cameraMoveSpeed;
-			//}
+			if (input->PushKey(DIK_A)) {
+				cameraTransform.translate.x -= cameraMoveSpeed;
+			}
+			if (input->PushKey(DIK_D)) {
+				cameraTransform.translate.x += cameraMoveSpeed;
+			}
+			if (input->PushKey(DIK_Q)) {
+				cameraTransform.translate.y += cameraMoveSpeed;
+			}
+			if (input->PushKey(DIK_E)) {
+				cameraTransform.translate.y -= cameraMoveSpeed;
+			}
+			if (input->PushKey(DIK_W)) {
+				cameraTransform.translate.z += cameraMoveSpeed;
+			}
+			if (input->PushKey(DIK_S)) {
+				cameraTransform.translate.z -= cameraMoveSpeed;
+			}
 
-			//bool isReturnTrigger =
-			//	((key[DIK_RETURN] != 0) && (preKey[DIK_RETURN] == 0));
-			//if (isReturnTrigger) {
-			//	uvTransform.translate = {0.0f, 0.0f, 0.0f};
-			//	cameraTransform.rotate = {0.0f, 0.0f, 0.0f};
-			//	cameraTransform.translate = {0.0f, 0.0f, -5.0f};
-			//}
+			bool isReturnTrigger =
+				((input->PushKey(DIK_RETURN) != 0) && (input->PushKey(DIK_RETURN) == 0));
+			if (isReturnTrigger) {
+				uvTransform.translate = {0.0f, 0.0f, 0.0f};
+				cameraTransform.rotate = {0.0f, 0.0f, 0.0f};
+				cameraTransform.translate = {0.0f, 0.0f, -5.0f};
+			}
 
 #ifdef USE_IMGUI
 			//------------------------------

@@ -11,20 +11,25 @@ public:
 	template<class T> using ComPtr = Microsoft::WRL::ComPtr<T>;
 
 public:
-   
-    
+
+
     // 初期化
     void Initialize(HINSTANCE instanceHandle, HWND windowHandle);
 
     // 更新
     void Update();
 
+	// キーが押されたかどうかを判定する関数
+    bool PushKey(BYTE keyNumber);
+
+	// キーが押された瞬間かどうかを判定する関数
+	bool TriggerKey(BYTE keyNumber);
 private:
     BYTE key_[256]{};
     BYTE preKey_[256]{};
     // キーボードのデバイス
 	ComPtr<IDirectInputDevice8> keyboard_;
     // DirectInput本体
-    Microsoft::WRL::ComPtr<IDirectInput8> directInput_;
+    ComPtr<IDirectInput8> directInput_;
 
 };

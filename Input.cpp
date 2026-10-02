@@ -2,7 +2,7 @@
 
 using namespace Microsoft::WRL;
 #include <cassert>
-
+#include <cstring>
 #pragma comment(lib, "dinput8.lib")
 #pragma comment(lib, "dxguid.lib")
 
@@ -36,15 +36,38 @@ void Input::Initialize(HINSTANCE instanceHandle, HWND windowHandle) {
 }
 
 void Input::Update() {
+
+    // 更新前のキー状態を保存する
+    memcpy(preKey_, key_, sizeof(key_));
+
+    // キーボードを取得する
     keyboard_->Acquire();
-    // キーボードの状態を取得
-    BYTE keyboardState[256];
-    HRESULT result = keyboard_->GetDeviceState(sizeof(keyboardState), keyboardState);
+
+    // 現在のキー状態をメンバー変数へ保存する
+    HRESULT result =
+        keyboard_->GetDeviceState(sizeof(key_), key_);
+
+    // ウィンドウ切替などで入力を失った場合は再取得する
     if (FAILED(result)) {
-        // デバイスが失われた場合、再取得を試みる
-        if ((result == DIERR_INPUTLOST) || (result == DIERR_NOTACQUIRED)) {
-            keyboard_->Acquire();
-        }
-	}
+        keyboard_->Acquire();
+
+        // 再取得した後、キー状態をもう一度読み込む
+        result = keyboard_->GetDeviceState(sizeof(key_), key_);
+    }
 }
 
+bool Input::PushKey(BYTE keyNumber) {
+    // キーが押されたかどうかを判定
+    if(key_[keyNumber]) {
+        return true;
+    }
+    return false;
+}
+
+bool Input::TriggerKey(BYTE keyNumber) {
+    // キーが押された瞬間かどうかを判定
+    if (key_[keyNumber] && !preKey_[keyNumber]) {
+        return true;
+    }
+    return false;
+}

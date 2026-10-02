@@ -39,6 +39,7 @@
 #include "StringUtility.h"
 #include "Vector&Matrix.h"
 #include "Vector.h"
+#include "Input.h"
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -117,7 +118,7 @@ namespace {
 		Matrix4x4 World;
 	};
 
-	
+
 	struct Sprite {
 		Vector2 position;
 		Vector2 size;
@@ -144,9 +145,9 @@ namespace {
 	// 音声データ定義
 	//========================================
 
-	
+
 	// WAVEファイル構造体定義
-	
+
 	struct ChunkHeader {
 		char id[4];
 		int32_t size;
@@ -596,27 +597,11 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	}
 
 	HRESULT hr = S_OK;
-	IDirectInput8* directInput = nullptr;
-	hr = DirectInput8Create(
-		instanceHandle, DIRECTINPUT_VERSION, IID_IDirectInput8, reinterpret_cast<void**>(&directInput), nullptr);
-	assert(SUCCEEDED(hr));
-	if (FAILED(hr) || directInput == nullptr) {
-		return 1;
-	}
-
-	IDirectInputDevice8* keyboardDevice = nullptr;
-	hr = directInput->CreateDevice(GUID_SysKeyboard, &keyboardDevice, nullptr);
-	assert(SUCCEEDED(hr));
-	if (FAILED(hr) || keyboardDevice == nullptr) {
-		directInput->Release();
-		return 1;
-	}
-
-	hr = keyboardDevice->SetDataFormat(&c_dfDIKeyboard);
-	assert(SUCCEEDED(hr));
-	hr = keyboardDevice->SetCooperativeLevel(
-		windowHandle, DISCL_FOREGROUND | DISCL_NONEXCLUSIVE | DISCL_NOWINKEY);
-	assert(SUCCEEDED(hr));
+	//ポインタ
+	Input* input = nullptr;
+	// 入力初期化
+	input = new Input();
+	input->Initialize(instanceHandle, windowHandle);
 
 	BYTE key[256] = {};
 	BYTE preKey[256] = {};
@@ -1370,7 +1355,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	spriteIndexBufferView.BufferLocation = spriteIndexResource->GetGPUVirtualAddress();
 	spriteIndexBufferView.SizeInBytes = sizeof(spriteIndices);
 	spriteIndexBufferView.Format = DXGI_FORMAT_R32_UINT;
-	
+
 	//------------------------------
 	// Viewport・Scissor初期化
 	//------------------------------
@@ -1815,15 +1800,9 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		xAudio2 = nullptr;
 	}
 
-	if (keyboardDevice != nullptr) {
-		keyboardDevice->Unacquire();
-		keyboardDevice->Release();
-		keyboardDevice = nullptr;
-	}
-	if (directInput != nullptr) {
-		directInput->Release();
-		directInput = nullptr;
-	}
+	// 入力解放
+	delete input;
+	input = nullptr;
 
 	Log(logStream, "application finished");
 

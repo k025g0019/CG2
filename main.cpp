@@ -480,6 +480,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	std::time_t now = std::time(nullptr);
 	std::tm localTime{};
 	localtime_s(&localTime, &now);
+	uint32_t instanceCount = 10;
 	std::string dateString = std::format(
 		"{:04}{:02}{:02}_{:02}{:02}{:02}",
 		localTime.tm_year + 1900,
@@ -761,26 +762,26 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	assert(SUCCEEDED(hr));
 
 	ComPtr<IDxcBlob> vertexShaderBlob = CompileShader(
-		L"Object3d.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Particle.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
 	ComPtr<IDxcBlob> pixelShaderBlob = CompileShader(
-		L"Object3d.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
+		L"Particle.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(),
 		logStream);
 
-	D3D12_DESCRIPTOR_RANGE descriptorRange[1] = {};
-	descriptorRange[0].BaseShaderRegister = 0;
-	descriptorRange[0].NumDescriptors = 1;
-	descriptorRange[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-	descriptorRange[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+	D3D12_DESCRIPTOR_RANGE descriptorRangeForInstancing[1] = {};
+	descriptorRangeForInstancing[0].BaseShaderRegister = 0;
+	descriptorRangeForInstancing[0].NumDescriptors = 1;
+	descriptorRangeForInstancing[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	descriptorRangeForInstancing[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
 	D3D12_ROOT_SIGNATURE_DESC descriptionRootSignature{};
 	descriptionRootSignature.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
 	D3D12_ROOT_PARAMETER rootParameters[4] = {};
-	rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+	rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
 	rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-	rootParameters[0].Descriptor.ShaderRegister = 0;
-	rootParameters[0].Descriptor.RegisterSpace = 0;
+	rootParameters[0].DescriptorTable.pDescriptorRanges = descriptorRangeForInstancing;
+	rootParameters[0].DescriptorTable.NumDescriptorRanges = _countof(descriptorRangeForInstancing);
 
 	rootParameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 	rootParameters[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
@@ -794,8 +795,8 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 
 	rootParameters[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
 	rootParameters[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-	rootParameters[3].DescriptorTable.pDescriptorRanges = descriptorRange;
-	rootParameters[3].DescriptorTable.NumDescriptorRanges = _countof(descriptorRange);
+	rootParameters[3].DescriptorTable.pDescriptorRanges = descriptorRangeForInstancing;
+	rootParameters[3].DescriptorTable.NumDescriptorRanges = _countof(descriptorRangeForInstancing);
 
 	descriptionRootSignature.pParameters = rootParameters;
 	descriptionRootSignature.NumParameters = _countof(rootParameters);
@@ -847,10 +848,18 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	directionalLightData->intensity = 1.0f;
 
 
+	constexpr uint32_t kNumInstance = 10; // インスタンス数
+
+	Transforms transforms[kNumInstance];
+	for (uint32_t index = 0; index < kNumInstance; index++) {
+		transforms[index].scale = {1.0f, 1.0f, 1.0f};
+		transforms[index].rotate = {0.0f, 0.0f, 0.0f};
+		transforms[index].translate = {index * 0.1f, index * 0.1f, index * 0.1f};
+	}
 	// WVP 定数バッファには座標変換行列を書き込む
 	ComPtr<ID3D12Resource> spriteTransformationMatrixResource;
 	spriteTransformationMatrixResource.Attach(
-		CreateBufferResource(device.Get(), sizeof(TransformationMatrix)));
+		CreateBufferResource(device.Get(), sizeof(TransformationMatrix) * kNumInstance));
 	TransformationMatrix* spriteTransformationMatrixData = nullptr;
 	spriteTransformationMatrixResource->Map(
 		0, nullptr, reinterpret_cast<void**>(&spriteTransformationMatrixData));
@@ -858,13 +867,49 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	spriteTransformationMatrixData->World = MakeIdentity4x4();
 	ComPtr<ID3D12Resource> sphereTransformationMatrixResource;
 	sphereTransformationMatrixResource.Attach(
-		CreateBufferResource(device.Get(), sizeof(TransformationMatrix)));
+		CreateBufferResource(device.Get(), sizeof(TransformationMatrix) * kNumInstance));
 	TransformationMatrix* sphereTransformationMatrixData = nullptr;
 	sphereTransformationMatrixResource->Map(
 		0, nullptr, reinterpret_cast<void**>(&sphereTransformationMatrixData));
 	sphereTransformationMatrixData->WVP = MakeIdentity4x4();
 	sphereTransformationMatrixData->World = MakeIdentity4x4();
+	UINT srvDescriptorSize =
+		device->GetDescriptorHandleIncrementSize(
+			D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+	// Instancing用SRVを作成
+	D3D12_SHADER_RESOURCE_VIEW_DESC instancingSrvDesc{};
+	instancingSrvDesc.Format = DXGI_FORMAT_UNKNOWN;
+	instancingSrvDesc.Shader4ComponentMapping =
+		D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 
+	instancingSrvDesc.ViewDimension =
+		D3D12_SRV_DIMENSION_BUFFER;
+
+	instancingSrvDesc.Buffer.FirstElement = 0;
+	instancingSrvDesc.Buffer.Flags =
+		D3D12_BUFFER_SRV_FLAG_NONE;
+
+	instancingSrvDesc.Buffer.NumElements = kNumInstance;
+
+	instancingSrvDesc.Buffer.StructureByteStride =
+		sizeof(TransformationMatrix);
+
+	D3D12_CPU_DESCRIPTOR_HANDLE instancingSrvHandleCPU =
+		GetCPUDescriptorHandle(
+			srvDescriptorHeap.Get(),
+			srvDescriptorSize,
+			3);
+
+	D3D12_GPU_DESCRIPTOR_HANDLE instancingSrvHandleGPU =
+		GetGPUDescriptorHandle(
+			srvDescriptorHeap.Get(),
+			srvDescriptorSize,
+			3);
+
+	device->CreateShaderResourceView(
+		spriteTransformationMatrixResource.Get(),
+		&instancingSrvDesc,
+		instancingSrvHandleCPU);
 	hr = D3D12SerializeRootSignature(
 		&descriptionRootSignature, D3D_ROOT_SIGNATURE_VERSION_1, signatureBlob.GetAddressOf(),
 		errorBlob.GetAddressOf());
@@ -1313,6 +1358,11 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			sphereTransformationMatrixData->World = worldMatrix;
 			spriteMaterialData->uvTransform = uvTransformMatrix;
 			sphereMaterialData->uvTransform = uvTransformMatrix;
+
+			for (uint32_t index = 0; index < kNumInstance; index++) {
+				transforms[index].WVP = worldViewProjectionMatrix;
+				transforms[index].World = worldMatrix;
+			}
 			hr = commandAllocator->Reset();
 			assert(SUCCEEDED(hr));
 			hr = commandList->Reset(commandAllocator.Get(), graphicsPipelineState.Get());
@@ -1359,7 +1409,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 				1, sphereTransformationMatrixResource->GetGPUVirtualAddress());
 			commandList->SetGraphicsRootDescriptorTable(3, textureSrvHandlesGPU[sphereTextureIndex]);
 			commandList->IASetVertexBuffers(0, 1, &modelVertexBufferView);
-			commandList->DrawInstanced(static_cast<UINT>(modelData.vertices.size()), 1, 0, 0);
+			commandList->DrawInstanced(static_cast<UINT>(modelData.vertices.size()), instanceCount, 0, 0);
 #ifdef USE_IMGUI
 			ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList.Get());
 

@@ -1,4 +1,4 @@
-﻿#pragma warning(push, 0)
+#pragma warning(push, 0)
 #include <Windows.h>
 #include <array>
 #include <cassert>
@@ -897,6 +897,13 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 
 	D3D12_BLEND_DESC blendDesc{};
 	blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+	blendDesc.RenderTarget[0].BlendEnable = TRUE;
+	blendDesc.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
+	blendDesc.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+	blendDesc.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+	blendDesc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+	blendDesc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
+	blendDesc.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
 
 	D3D12_RASTERIZER_DESC rasterizerDesc{};
 	rasterizerDesc.FillMode = D3D12_FILL_MODE_SOLID;
@@ -938,7 +945,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 		return 1;
 	}
 
-	ModelData modelData = LoadObjFile("resources", "plane.obj");
+	ModelData modelData = LoadObjFile("resources/fence", "fence.obj");
 
 	constexpr uint32_t kSubdivision = 64;
 	constexpr float kLonEvery = 2.0f * std::numbers::pi_v<float> / static_cast<float>(kSubdivision);
@@ -1088,8 +1095,8 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	scissorRect.bottom = kClientHeight;
 
 	std::wstring textureFilePaths[] = {
-		L"resources/uvChecker.png",
-		L"resources/monsterBall.png",
+		L"resources/fence/fence.png",
+		L"resources/fence/fence.png",
 		ConvertString(modelData.material.textureFilePath),
 	};
 	DirectX::ScratchImage mipImages[_countof(textureFilePaths)];
@@ -1252,6 +1259,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			ImGui_ImplDX12_NewFrame();
 			ImGui_ImplWin32_NewFrame();
 			ImGui::NewFrame();
+			ImGui::Begin("Debug");
 			ImGui::SetNextWindowPos(ImVec2(960.0f, 20.0f), ImGuiCond_Once);
 			ImGui::SetNextWindowSize(ImVec2(300.0f, 260.0f), ImGuiCond_Once);
 			ImGui::Begin("UVTransform");
@@ -1278,8 +1286,13 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			ImGui::SliderFloat3("CamTranslate", &cameraTransform.translate.x, -20.0f, 20.0f);
 			ImGui::Separator();
 			ImGui::Text("Texture Switch");
+			ImGui::Text("color");
+
+			ImGui::ColorEdit4("MaterialColor", &sphereMaterialData->color.x);
 			ImGui::Checkbox("monsterBall", &isMonsterBallTexture);
 			sphereMaterialData->enableLighting = isLighting ? TRUE : FALSE;
+
+			ImGui::End();
 			ImGui::End();
 			ImGui::Render();
 #endif

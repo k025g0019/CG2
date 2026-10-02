@@ -1,4 +1,4 @@
-﻿struct Material {
+struct Material {
     float4 color;
     int enableLighting;
     float3 padding;
@@ -41,6 +41,9 @@ PixelShaderOutput main(PixelShaderInput input) {
         output.color.rgb *= gDirectionalLight.color.rgb * halfLambert * gDirectionalLight.intensity;
     }
 
+    if (textureColor.a < 0.5f) {
+        discard;
+    }
     return output;
 }
 

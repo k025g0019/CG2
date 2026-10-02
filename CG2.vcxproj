@@ -150,6 +150,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClCompile Include="Log.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="Matrix.cpp" />
+    <ClCompile Include="Model.cpp" />
     <ClCompile Include="StringUtility.cpp" />
     <ClCompile Include="Vector&amp;Matrix.cpp" />
     <ClCompile Include="Vector.cpp" />
@@ -168,6 +169,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClInclude Include="Imgui.h" />
     <ClInclude Include="Log.h" />
     <ClInclude Include="Matrix.h" />
+    <ClInclude Include="Model.h" />
     <ClInclude Include="StringUtility.h" />
     <ClInclude Include="Vector&amp;Matrix.h" />
     <ClInclude Include="Vector.h" />

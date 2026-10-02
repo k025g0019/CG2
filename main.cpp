@@ -603,8 +603,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	input = new Input();
 	input->Initialize(instanceHandle, windowHandle);
 
-	BYTE key[256] = {};
-	BYTE preKey[256] = {};
+
 
 	//------------------------------
 	// DirectXデバッグ初期化
@@ -1503,52 +1502,45 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 			//------------------------------
 			// 入力更新
 			//------------------------------
-			memcpy(preKey, key, sizeof(key));
-			hr = keyboardDevice->Acquire();
-			hr = keyboardDevice->GetDeviceState(sizeof(key), key);
-			if (FAILED(hr)) {
-				keyboardDevice->Acquire();
-				hr = keyboardDevice->GetDeviceState(sizeof(key), key);
-			}
+			input->Update();
 
-			if (key[DIK_ESCAPE]) {
+			if (input->PushKey(DIK_ESCAPE)) {
 				PostQuitMessage(0);
 			}
 
-			if (key[DIK_LEFT]) {
+			if (input->TriggerKey(DIK_LEFT)) {
 				cameraTransform.rotate.y -= cameraRotateSpeed;
 			}
-			if (key[DIK_RIGHT]) {
+			if (input->PushKey(DIK_RIGHT)) {
 				cameraTransform.rotate.y += cameraRotateSpeed;
 			}
-			if (key[DIK_UP]) {
+			if (input->PushKey(DIK_UP)) {
 				cameraTransform.rotate.x -= cameraRotateSpeed;
 			}
-			if (key[DIK_DOWN]) {
+			if (input->PushKey(DIK_DOWN)) {
 				cameraTransform.rotate.x += cameraRotateSpeed;
 			}
 
-			if (key[DIK_A]) {
+			if (input->PushKey(DIK_A)) {
 				cameraTransform.translate.x -= cameraMoveSpeed;
 			}
-			if (key[DIK_D]) {
+			if (input->PushKey(DIK_D)) {
 				cameraTransform.translate.x += cameraMoveSpeed;
 			}
-			if (key[DIK_Q]) {
+			if (input->PushKey(DIK_Q)) {
 				cameraTransform.translate.y += cameraMoveSpeed;
 			}
-			if (key[DIK_E]) {
+			if (input->PushKey(DIK_E)) {
 				cameraTransform.translate.y -= cameraMoveSpeed;
 			}
-			if (key[DIK_W]) {
+			if (input->PushKey(DIK_W)) {
 				cameraTransform.translate.z += cameraMoveSpeed;
 			}
-			if (key[DIK_S]) {
+			if (input->PushKey(DIK_S)) {
 				cameraTransform.translate.z -= cameraMoveSpeed;
 			}
 
-			bool isReturnTrigger =
-				((key[DIK_RETURN] != 0) && (preKey[DIK_RETURN] == 0));
+			bool isReturnTrigger = input->TriggerKey(DIK_RETURN);
 			if (isReturnTrigger) {
 				uvTransform.translate = {0.0f, 0.0f, 0.0f};
 				cameraTransform.rotate = {0.0f, 0.0f, 0.0f};

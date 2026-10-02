@@ -7,16 +7,29 @@
 
 class Input {
 public:
+    // namespace省略
+	template<class T> using ComPtr = Microsoft::WRL::ComPtr<T>;
+
+public:
+
+
     // 初期化
     void Initialize(HINSTANCE instanceHandle, HWND windowHandle);
 
     // 更新
     void Update();
 
-private:
-    // DirectInput本体
-    Microsoft::WRL::ComPtr<IDirectInput8> directInput_;
+	// キーが押されたかどうかを判定する関数
+    bool PushKey(BYTE keyNumber);
 
-    // キーボード入力デバイス
-    Microsoft::WRL::ComPtr<IDirectInputDevice8> keyboard_;
+	// キーが押された瞬間かどうかを判定する関数
+	bool TriggerKey(BYTE keyNumber);
+private:
+    BYTE key_[256]{};
+    BYTE preKey_[256]{};
+    // キーボードのデバイス
+	ComPtr<IDirectInputDevice8> keyboard_;
+    // DirectInput本体
+    ComPtr<IDirectInput8> directInput_;
+
 };

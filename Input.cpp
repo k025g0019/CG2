@@ -2,14 +2,13 @@
 
 using namespace Microsoft::WRL;
 #include <cassert>
-#define DIRECTINPUT_VERSION 0x0800
+
 #pragma comment(lib, "dinput8.lib")
 #pragma comment(lib, "dxguid.lib")
 
 void Input::Initialize(HINSTANCE instanceHandle, HWND windowHandle) {
 
     HRESULT result;
-	ComPtr<IDirectInput8> directInput_ = nullptr;
 	// DirectInputのインスタンスを作る
     result = DirectInput8Create(
         instanceHandle,
@@ -37,6 +36,15 @@ void Input::Initialize(HINSTANCE instanceHandle, HWND windowHandle) {
 }
 
 void Input::Update() {
-	//更新処理
+    keyboard_->Acquire();
+    // キーボードの状態を取得
+    BYTE keyboardState[256];
+    HRESULT result = keyboard_->GetDeviceState(sizeof(keyboardState), keyboardState);
+    if (FAILED(result)) {
+        // デバイスが失われた場合、再取得を試みる
+        if ((result == DIERR_INPUTLOST) || (result == DIERR_NOTACQUIRED)) {
+            keyboard_->Acquire();
+        }
+	}
 }
 

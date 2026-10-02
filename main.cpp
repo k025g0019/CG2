@@ -1540,8 +1540,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 				cameraTransform.translate.z -= cameraMoveSpeed;
 			}
 
-			bool isReturnTrigger =
-				((input->PushKey(DIK_RETURN) != 0) && (input->PushKey(DIK_RETURN) == 0));
+			bool isReturnTrigger = input->TriggerKey(DIK_RETURN);
 			if (isReturnTrigger) {
 				uvTransform.translate = {0.0f, 0.0f, 0.0f};
 				cameraTransform.rotate = {0.0f, 0.0f, 0.0f};

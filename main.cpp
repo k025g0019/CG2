@@ -82,41 +82,52 @@ namespace {
 	//------------------------------
 	// 頂点・マテリアルデータ
 	//------------------------------
+
+	// 変換行列データ
 	struct Transforms {
 		Vector3 scale;
 		Vector3 rotate;
 		Vector3 translate;
 	};
 
+	// 頂点データ
 	struct VertexData {
 		Vector4 position;
 		Vector2 texcoord;
 		Vector3 normal;
 	};
 
+	// マテリアルデータ
 	struct Material {
 		Vector4 color;
 		int32_t enableLighting;
 		float padding[3];
 		Matrix4x4 uvTransform;
 	};
-
+	// ライトデータ
 	struct DirectionalLight {
 		Vector4 color;
 		Vector3 direction;
 		float intensity;
 	};
 
+	// インスタンス行列データ
 	struct TransformationMatrix {
 		Matrix4x4 WVP;
 		Matrix4x4 World;
 	};
 
+	
 	struct Sprite {
 		Vector2 position;
 		Vector2 size;
 	};
 
+	// パーティクルデータ
+	struct Particle {
+		Transforms transform;
+		Vector3 velocity;
+	};
 	//------------------------------
 	// モデル読み込みデータ
 	//------------------------------
@@ -132,21 +143,28 @@ namespace {
 	//========================================
 	// 音声データ定義
 	//========================================
+
+	
+	// WAVEファイル構造体定義
+	
 	struct ChunkHeader {
 		char id[4];
 		int32_t size;
 	};
 
+	// RIFFヘッダ構造体定義
 	struct RiffHeader {
 		ChunkHeader chunk;
 		char type[4];
 	};
 
+	// fmtチャンク構造体定義
 	struct FormatChunk {
 		ChunkHeader chunk;
 		WAVEFORMATEX format;
 	};
 
+	// dataチャンク構造体定義
 	struct SoundData {
 		WAVEFORMATEX wfex;
 		BYTE* pBuffer;

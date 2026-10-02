@@ -13,7 +13,7 @@ LONG WINAPI ExportDump(EXCEPTION_POINTERS* exception) noexcept {
 	// ダンプファイルのパスを決定する
 	SYSTEMTIME time;
 	GetLocalTime(&time);
-	wchar_t filePath[MAX_PATH] = { 0 };
+	wchar_t filePath[MAX_PATH] = {0};
 	CreateDirectory(L"./Dumps", nullptr);
 	StringCchPrintfW(
 		filePath, MAX_PATH, L"./Dumps/%04d%02d%02d_%02d%02d%02d.dmp",
@@ -28,7 +28,7 @@ LONG WINAPI ExportDump(EXCEPTION_POINTERS* exception) noexcept {
 
 	DWORD processId = GetCurrentProcessId();
 	DWORD threadId = GetCurrentThreadId();
-	MINIDUMP_EXCEPTION_INFORMATION minidumpInformation{ 0 };
+	MINIDUMP_EXCEPTION_INFORMATION minidumpInformation{0};
 	minidumpInformation.ThreadId = threadId;
 	minidumpInformation.ExceptionPointers = exception;
 	minidumpInformation.ClientPointers = TRUE;

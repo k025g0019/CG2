@@ -1,10 +1,11 @@
-﻿#include "ApplicationWindow.h"
+#include "ApplicationWindow.h"
 
 #include "Log.h"
 
 #ifdef USE_IMGUI
 #pragma warning(push, 0)
 #include "externals/imgui/imgui.h"
+#include "externals/imgui/imgui_impl_dx12.h"
 #include "externals/imgui/imgui_impl_win32.h"
 #pragma warning(pop)
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);

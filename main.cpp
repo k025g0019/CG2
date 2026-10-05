@@ -31,15 +31,15 @@
 #pragma warning(pop)
 #pragma warning(disable : 4820)
 
-#include "ApplicationWindow.h"
 #include "CrashHandler.h"
 #include "Imgui.h"
+#include "Input.h"
 #include "Log.h"
 #include "Matrix.h"
 #include "StringUtility.h"
 #include "Vector&Matrix.h"
 #include "Vector.h"
-#include "Input.h"
+#include "WinApp.h"
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -60,7 +60,6 @@ using Microsoft::WRL::ComPtr;
 #endif
 
 namespace {
-
 	//========================================
 	// 描画データ定義
 	//========================================
@@ -105,6 +104,7 @@ namespace {
 		float padding[3];
 		Matrix4x4 uvTransform;
 	};
+
 	// ライトデータ
 	struct DirectionalLight {
 		Vector4 color;
@@ -129,6 +129,7 @@ namespace {
 		Transforms transform;
 		Vector3 velocity;
 	};
+
 	//------------------------------
 	// モデル読み込みデータ
 	//------------------------------
@@ -590,9 +591,11 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	if (!logStream) {
 		return 1;
 	}
-
-	HWND windowHandle = CreateMainWindow(instanceHandle, logStream);
-	if (windowHandle == nullptr) {
+	WinApp* winApp = nullptr;
+	winApp = new WinApp();
+	winApp->Initialize();
+	HWND hwnd = winApp->GetHwnd();
+	if (hwnd == nullptr) {
 		return 1;
 	}
 
@@ -601,8 +604,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	Input* input = nullptr;
 	// 入力初期化
 	input = new Input();
-	input->Initialize(instanceHandle, windowHandle);
-
+	input->Initialize(winApp->GetHInstance(), winApp->GetHwnd());
 
 
 	//------------------------------
@@ -768,7 +770,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	swapChainDesc.BufferCount = 2;
 	swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 	hr = dxgiFactory->CreateSwapChainForHwnd(
-		commandQueue.Get(), windowHandle, &swapChainDesc, nullptr, nullptr,
+		commandQueue.Get(), hwnd, &swapChainDesc, nullptr, nullptr,
 		reinterpret_cast<IDXGISwapChain1**>(swapChain.GetAddressOf()));
 	assert(SUCCEEDED(hr));
 	if (FAILED(hr) || swapChain == nullptr) {
@@ -936,7 +938,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	descriptionRootSignature.pParameters = rootParameters;
 	descriptionRootSignature.NumParameters =
 		_countof(rootParameters);
-
 
 
 	D3D12_STATIC_SAMPLER_DESC staticSampler{};
@@ -1471,7 +1472,7 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 	ImGui::StyleColorsDark();
-	ImGui_ImplWin32_Init(windowHandle);
+	ImGui_ImplWin32_Init(hwnd);
 	ImGui_ImplDX12_Init(
 		device.Get(),
 		static_cast<int>(swapChainDesc.BufferCount),
@@ -1619,9 +1620,8 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 				Multiply(viewMatrix, projectionMatrix);
 
 			for (uint32_t index = 0;
-				index < kNumInstance;
-				++index) {
-
+			     index < kNumInstance;
+			     ++index) {
 				Matrix4x4 instanceWorldMatrix =
 					MakeAffineMatrix(
 						transforms[index].scale,
@@ -1807,7 +1807,6 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	if (fenceEvent != nullptr) {
 		CloseHandle(fenceEvent);
 	}
-
 
 
 	return static_cast<int>(message.wParam);

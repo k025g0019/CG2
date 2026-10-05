@@ -1,4 +1,4 @@
-#include "ApplicationWindow.h"
+#include "WinApp.h"
 
 #include "Log.h"
 
@@ -11,38 +11,34 @@
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 #endif
 
-HWND CreateMainWindow(HINSTANCE instanceHandle, std::ostream& logStream) {
-	// ウィンドウクラスを登録する
-	WNDCLASS windowClass{};
+void WinApp::Initialize() {
+	//HRESULT hr = CoInitializeEx(0, COINIT_MULTITHREADED);
+
 	// メッセージを処理する関数
 	windowClass.lpfnWndProc = WindowProc;
 	// クラス名
 	windowClass.lpszClassName = kWindowClassName;
 	// インスタンスハンドル
-	windowClass.hInstance = instanceHandle;
+	windowClass.hInstance = GetModuleHandle(nullptr);
 	// 標準の矢印カーソル
 	windowClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
-
 	// ウィンドウクラスを OS へ登録する
-	if (RegisterClass(&windowClass) == 0) {
-		Log(logStream, "RegisterClass failed");
-		return nullptr;
-	}
-	Log(logStream, "window class registered");
+
+	RegisterClass(&windowClass);
+
 
 	// クライアント領域の希望サイズ
 	RECT windowRect{0, 0, kClientWidth, kClientHeight};
 	// タイトルバーなどを含めた実際のウィンドウサイズへ調整する
-	if (AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE) == 0) {
-		Log(logStream, "AdjustWindowRect failed");
-		return nullptr;
-	}
-	Log(logStream, "window rect adjusted");
+	AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
 
-	// ウィンドウ本体を生成する
-	HWND windowHandle = CreateWindow(
-		windowClass.lpszClassName,
-		kWindowTitle,
+	//------------------------------
+	// ウィンドウ生成
+	//------------------------------
+	hwnd = CreateWindowEx(
+		0,
+		kWindowClassName,
+		L"DirectXGame",
 		WS_OVERLAPPEDWINDOW,
 		CW_USEDEFAULT,
 		CW_USEDEFAULT,
@@ -51,26 +47,23 @@ HWND CreateMainWindow(HINSTANCE instanceHandle, std::ostream& logStream) {
 		nullptr,
 		nullptr,
 		windowClass.hInstance,
-		nullptr);
+		nullptr
+	);
 
-	if (windowHandle == nullptr) {
-		Log(logStream, "CreateWindow failed");
-		return nullptr;
+	if (hwnd == nullptr) {
+		return;
 	}
-	Log(logStream, "window created");
 
 	// 生成したウィンドウを画面へ表示する
-	ShowWindow(windowHandle, SW_SHOW);
-	UpdateWindow(windowHandle);
-	Log(logStream, "window shown");
-
-	return windowHandle;
+	ShowWindow(hwnd, SW_SHOW);
+	UpdateWindow(hwnd);
 }
 
-LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPARAM lParam) {
+
+LRESULT CALLBACK WinApp::WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
 #ifdef USE_IMGUI
 	// ImGui が処理したメッセージはここで打ち切る
-	if (ImGui_ImplWin32_WndProcHandler(windowHandle, message, wParam, lParam)) {
+	if (ImGui_ImplWin32_WndProcHandler(hwnd, message, wParam, lParam)) {
 		return true;
 	}
 #endif
@@ -81,6 +74,11 @@ LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPAR
 		PostQuitMessage(0);
 		return 0;
 	default:
-		return DefWindowProcW(windowHandle, message, wParam, lParam);
+		return DefWindowProcW(hwnd, message, wParam, lParam);
 	}
+}
+
+void WinApp::Finalize() {
+	CloseWindow(hwnd);
+	CoUninitialize();
 }

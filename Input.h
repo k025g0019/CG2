@@ -4,6 +4,7 @@
 
 #define DIRECTINPUT_VERSION 0x0800
 #include <dinput.h>
+#include "WinApp.h"
 
 class Input {
 public:
@@ -13,8 +14,9 @@ public:
 public:
 
 
+
     // 初期化
-    void Initialize(HINSTANCE instanceHandle, HWND windowHandle);
+    void Initialize(HINSTANCE hInstance,HWND hwnd);
 
     // 更新
     void Update();
@@ -31,5 +33,8 @@ private:
 	ComPtr<IDirectInputDevice8> keyboard_;
     // DirectInput本体
     ComPtr<IDirectInput8> directInput_;
+
+    //WindowsApi
+	WinApp* winApp = nullptr;
 
 };

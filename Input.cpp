@@ -6,12 +6,13 @@ using namespace Microsoft::WRL;
 #pragma comment(lib, "dinput8.lib")
 #pragma comment(lib, "dxguid.lib")
 
-void Input::Initialize(HINSTANCE instanceHandle, HWND windowHandle) {
+void Input::Initialize(HINSTANCE hInstance, HWND hwnd) {
+ 
 
     HRESULT result;
 	// DirectInputのインスタンスを作る
     result = DirectInput8Create(
-        instanceHandle,
+        hInstance,
         DIRECTINPUT_VERSION,
         IID_IDirectInput8,
         reinterpret_cast<void**>(directInput_.GetAddressOf()),
@@ -30,7 +31,7 @@ void Input::Initialize(HINSTANCE instanceHandle, HWND windowHandle) {
 
     // 排他制御levelセット
     result = keyboard_->SetCooperativeLevel(
-        windowHandle,
+        hwnd,
         DISCL_FOREGROUND | DISCL_NONEXCLUSIVE | DISCL_NOWINKEY);
     assert(SUCCEEDED(result));
 }

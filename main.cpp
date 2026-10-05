@@ -32,6 +32,7 @@
 #pragma warning(disable : 4820)
 
 #include "CrashHandler.h"
+#include "DirectXCommon.h"
 #include "Imgui.h"
 #include "Input.h"
 #include "Log.h"
@@ -344,7 +345,8 @@ namespace {
 		IDxcIncludeHandler* includeHandler,
 		std::ofstream& logStream) {
 		Log(logStream, std::format("Begin CompileShader, path:{}, profile:{}",
-		                           ConvertString(filePath), ConvertString(std::wstring{profile})));
+		                           StringUtility::ConvertString(filePath),
+		                           StringUtility::ConvertString(std::wstring{profile})));
 
 		ComPtr<IDxcBlobEncoding> shaderSource;
 		HRESULT hr = dxcUtils->LoadFile(filePath.c_str(), nullptr, shaderSource.GetAddressOf());
@@ -386,7 +388,8 @@ namespace {
 		assert(SUCCEEDED(hr));
 
 		Log(logStream, std::format("Compile Succeeded, path:{}, profile:{}",
-		                           ConvertString(filePath), ConvertString(std::wstring{profile})));
+		                           StringUtility::ConvertString(filePath),
+		                           StringUtility::ConvertString(std::wstring{profile})));
 
 		return shaderBlob;
 	}
@@ -570,7 +573,9 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	// アプリケーション・入力初期化
 	//------------------------------
 	InstallCrashHandler();
-
+	//DirectXCommon* directXCommon = nullptr;
+	//directXCommon = new DirectXCommon();
+	//directXCommon->Initialize();
 	// 実行ごとに時刻付きログを作り、同名ファイルによる上書きを避ける。
 	std::filesystem::create_directory("logs");
 	std::time_t now = std::time(nullptr);
@@ -686,7 +691,8 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		}
 
 		useAdapter = candidateAdapter;
-		Log(logStream, std::format("Use Adapter:{}", ConvertString(std::wstring{adapterDesc.Description})));
+		Log(logStream, std::format("Use Adapter:{}",
+		                           StringUtility::ConvertString(std::wstring{adapterDesc.Description})));
 		break;
 	}
 	assert(useAdapter != nullptr);
@@ -1374,7 +1380,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	std::wstring textureFilePaths[] = {
 		L"resources/uvChecker.png",
 		L"resources/uvChecker.png",
-		ConvertString(modelData.material.textureFilePath),
+		StringUtility::ConvertString(modelData.material.textureFilePath),
 	};
 	DirectX::ScratchImage mipImages[_countof(textureFilePaths)];
 	DirectX::TexMetadata textureMetadatas[_countof(textureFilePaths)];
@@ -1797,7 +1803,8 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 	// 入力解放
 	delete input;
-
+	//delete directXCommon;
+	//directXCommon = nullptr;
 	input = nullptr;
 	CloseHandle(fenceEvent);
 	winApp->Finalize();

@@ -554,7 +554,7 @@ namespace {
 //========================================
 // アプリケーションエントリーポイント
 //========================================
-int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
+int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	// WinMainの全体像
 	// 1. アプリケーション、入力、音声を初期化する
 	// 2. DirectX 12のデバイスと描画設定を作る
@@ -1794,8 +1794,12 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 
 	// 入力解放
 	delete input;
-	input = nullptr;
 
+	input = nullptr;
+	CloseHandle(fenceEvent);
+	winApp->Finalize();
+	delete winApp;
+	winApp = nullptr;
 	Log(logStream, "application finished");
 
 #ifdef USE_IMGUI
@@ -1807,8 +1811,5 @@ int WINAPI WinMain(_In_ HINSTANCE instanceHandle, _In_opt_ HINSTANCE, _In_ LPSTR
 	if (fenceEvent != nullptr) {
 		CloseHandle(fenceEvent);
 	}
-
-
-	return static_cast<int>(message.wParam);
 }
 #pragma warning(pop)

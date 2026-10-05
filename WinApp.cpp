@@ -12,7 +12,7 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 #endif
 
 void WinApp::Initialize() {
-	HRESULT hr = CoInitializeEx(0, COINIT_MULTITHREADED);
+	//HRESULT hr = CoInitializeEx(0, COINIT_MULTITHREADED);
 
 	// メッセージを処理する関数
 	windowClass.lpfnWndProc = WindowProc;
@@ -32,6 +32,27 @@ void WinApp::Initialize() {
 	// タイトルバーなどを含めた実際のウィンドウサイズへ調整する
 	AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
 
+	//------------------------------
+	// ウィンドウ生成
+	//------------------------------
+	hwnd = CreateWindowEx(
+		0,
+		kWindowClassName,
+		L"DirectXGame",
+		WS_OVERLAPPEDWINDOW,
+		CW_USEDEFAULT,
+		CW_USEDEFAULT,
+		windowRect.right - windowRect.left,
+		windowRect.bottom - windowRect.top,
+		nullptr,
+		nullptr,
+		windowClass.hInstance,
+		nullptr
+	);
+
+	if (hwnd == nullptr) {
+		return;
+	}
 
 	// 生成したウィンドウを画面へ表示する
 	ShowWindow(hwnd, SW_SHOW);
@@ -55,4 +76,9 @@ LRESULT CALLBACK WinApp::WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPAR
 	default:
 		return DefWindowProcW(hwnd, message, wParam, lParam);
 	}
+}
+
+void WinApp::Finalize() {
+	CloseWindow(hwnd);
+	CoUninitialize();
 }

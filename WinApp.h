@@ -12,12 +12,13 @@ constexpr int32_t kClientHeight = 720;
 
 class WinApp {
 public:
+	WNDCLASS windowClass{};
 	static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 	void Initialize();
 	HWND GetHwnd() const { return hwnd; };
 	HINSTANCE GetHInstance() const { return windowClass.hInstance; };
+	void Finalize();
 
 private:
 	HWND hwnd = nullptr;
-	WNDCLASS windowClass{};
 };

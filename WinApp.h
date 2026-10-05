@@ -18,6 +18,8 @@ public:
 	HWND GetHwnd() const { return hwnd; };
 	HINSTANCE GetHInstance() const { return windowClass.hInstance; };
 	void Finalize();
+	//メッセージの処理
+	bool ProcessMessage();
 
 private:
 	HWND hwnd = nullptr;

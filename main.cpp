@@ -1487,7 +1487,10 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	//========================================
 	// メインループ
 	//========================================
-	while (message.message != WM_QUIT) {
+	while (true) {
+		if (winApp->ProcessMessage()) {
+			break;
+		}
 		//------------------------------
 		// ウィンドウメッセージ処理
 		//------------------------------

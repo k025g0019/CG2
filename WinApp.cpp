@@ -1,6 +1,6 @@
 #include "WinApp.h"
 
-#include "Log.h"
+#include <cassert>
 
 #ifdef USE_IMGUI
 #pragma warning(push, 0)
@@ -12,7 +12,8 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 #endif
 
 void WinApp::Initialize() {
-	//HRESULT hr = CoInitializeEx(0, COINIT_MULTITHREADED);
+	HRESULT hr = CoInitializeEx(0, COINIT_MULTITHREADED);
+	assert(SUCCEEDED(hr));
 
 	// メッセージを処理する関数
 	windowClass.lpfnWndProc = WindowProc;
@@ -38,7 +39,7 @@ void WinApp::Initialize() {
 	hwnd = CreateWindowEx(
 		0,
 		kWindowClassName,
-		L"DirectXGame",
+		kWindowTitle,
 		WS_OVERLAPPEDWINDOW,
 		CW_USEDEFAULT,
 		CW_USEDEFAULT,

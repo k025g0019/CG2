@@ -183,6 +183,10 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     </None>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="DirectXCommon.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Development|x64'">false</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="Logger.cpp" />
     <ClCompile Include="WinApp.cpp" />
     <ClCompile Include="CrashHandler.cpp" />
     <ClCompile Include="externals\imgui\imgui.cpp">
@@ -238,6 +242,10 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClCompile Include="Vector.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="DirectXCommon.h">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Development|x64'">false</ExcludedFromBuild>
+    </ClInclude>
+    <ClInclude Include="Logger.h" />
     <ClInclude Include="WinApp.h" />
     <ClInclude Include="CrashHandler.h" />
     <ClInclude Include="externals\imgui\imconfig.h" />

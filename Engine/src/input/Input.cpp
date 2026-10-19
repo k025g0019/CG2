@@ -1,5 +1,5 @@
-#include "Input.h"
-#include "WinApp.h"
+#include "Input/Input.h"
+#include "base/WinApp.h"
 using namespace Microsoft::WRL;
 #include <cassert>
 #include <cstring>

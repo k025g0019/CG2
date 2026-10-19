@@ -1,0 +1,260 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="ソース ファイル">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="ヘッダー ファイル">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="リソース ファイル">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="imgui">
+      <UniqueIdentifier>{0fc57e08-4840-4f27-b01e-17156160a80e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="シェーダー ファイル">
+      <UniqueIdentifier>{35A82471-0AA5-4AB9-ABF4-C8AF1D80242D}</UniqueIdentifier>
+      <Extensions>hlsl;hlsli</Extensions>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\2d">
+      <UniqueIdentifier>{30e96ffe-c895-4c5d-8c4c-de62d55693bb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\3d">
+      <UniqueIdentifier>{ce921f5b-4bd3-4903-a776-1b33ca35c160}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\audio">
+      <UniqueIdentifier>{70ee490b-f24f-4acb-872d-85107690d3dc}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\base">
+      <UniqueIdentifier>{4e295f20-8f3d-4852-af9a-18ebd1b606dc}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\collsion">
+      <UniqueIdentifier>{759a63ba-8738-4060-9ac1-ee27b0eca4fa}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\debug">
+      <UniqueIdentifier>{15d67f02-2ae0-46b3-966e-4673ba7fd82e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\gameplay">
+      <UniqueIdentifier>{65a1fee7-25d5-4528-bdbd-80c5374607ce}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\input">
+      <UniqueIdentifier>{ff1a2433-9391-4ed8-a366-43635d86ac5e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\map">
+      <UniqueIdentifier>{e40cde3a-8c7b-488e-ac7b-97211b850cca}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\math">
+      <UniqueIdentifier>{e7d98e89-0d92-4f10-90f6-00da6ebd00cb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\motion">
+      <UniqueIdentifier>{79af7ddb-c517-4a2d-ab55-26f57cc6488d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\physics">
+      <UniqueIdentifier>{f9f46a2c-3fa1-4e6c-a516-23d5c7642904}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\spatial">
+      <UniqueIdentifier>{f67d6507-cf0a-4320-89d8-966d41a03f26}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\engine">
+      <UniqueIdentifier>{4892987d-c0ed-4c5f-8af5-63900a1d978a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\engine\2d">
+      <UniqueIdentifier>{aa5da6e3-71e3-4bb1-9e85-63dc402f836c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\engine\3d">
+      <UniqueIdentifier>{10fa3fd9-fbc9-471f-86e3-777965c2f477}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\engine\audio">
+      <UniqueIdentifier>{abe04a1e-1fed-4a68-837e-d206e03ff200}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\engine\base">
+      <UniqueIdentifier>{398103fd-9df7-4afe-bfe0-01bb1c324dde}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\engine\collsion">
+      <UniqueIdentifier>{34a0e7c3-dad0-4753-8673-c618de32afa5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\engine\debug">
+      <UniqueIdentifier>{6928c0c6-e2de-4903-8b9f-2cab38504d2f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\engine\gameplay">
+      <UniqueIdentifier>{671e1af9-eee0-4dde-a215-359a797fb434}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\engine\input">
+      <UniqueIdentifier>{3d99cda9-1dd3-4f35-843b-990e8a6a4e75}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\engine\map">
+      <UniqueIdentifier>{5b14bf13-6028-4ab2-a3be-ebda9d70da77}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\engine\math">
+      <UniqueIdentifier>{5cc3a0e5-888f-4f39-b1cc-e8c905956e2b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\engine\motion">
+      <UniqueIdentifier>{2bc5422d-e45f-4729-aca0-1ebc96fd69a1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\engine\physics">
+      <UniqueIdentifier>{e36411b6-25a3-4867-8c68-93adc85e7922}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\engine\spatial">
+      <UniqueIdentifier>{2b09b178-a33b-49c7-83d2-b4d36cbdcfb3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\application">
+      <UniqueIdentifier>{1424568a-4545-434a-9ebe-e129b6933a5f}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include=".editorconfig" />
+    <None Include="resources\shaders\Particle.hlsli">
+      <Filter>シェーダー ファイル</Filter>
+    </None>
+    <None Include="resources\shaders\Objec3d.hlsli">
+      <Filter>シェーダー ファイル</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <FxCompile Include="resources\shaders\Object3d.VS.hlsl">
+      <Filter>シェーダー ファイル</Filter>
+    </FxCompile>
+    <FxCompile Include="resources\shaders\Object3d.PS.hlsl">
+      <Filter>シェーダー ファイル</Filter>
+    </FxCompile>
+    <FxCompile Include="resources\shaders\Particle.PS.hlsl">
+      <Filter>シェーダー ファイル</Filter>
+    </FxCompile>
+    <FxCompile Include="resources\shaders\Particle.VS.hlsl">
+      <Filter>シェーダー ファイル</Filter>
+    </FxCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="externals\imgui\imgui.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\imgui\imgui_demo.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\imgui\imgui_draw.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\imgui\imgui_impl_dx12.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\imgui\imgui_impl_win32.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\imgui\imgui_tables.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="externals\imgui\imgui_widgets.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="main.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Engine\src\base\CrashHandler.cpp">
+      <Filter>ソース ファイル\engine\base</Filter>
+    </ClCompile>
+    <ClCompile Include="Engine\src\base\DirectXCommon.cpp">
+      <Filter>ソース ファイル\engine\base</Filter>
+    </ClCompile>
+    <ClCompile Include="Engine\src\math\Matrix.cpp">
+      <Filter>ソース ファイル\engine\math</Filter>
+    </ClCompile>
+    <ClCompile Include="Engine\src\3d\Model.cpp">
+      <Filter>ソース ファイル\engine\3d</Filter>
+    </ClCompile>
+    <ClCompile Include="Engine\src\motion\StringUtility.cpp">
+      <Filter>ソース ファイル\engine\motion</Filter>
+    </ClCompile>
+    <ClCompile Include="Engine\src\math\Vector&amp;Matrix.cpp">
+      <Filter>ソース ファイル\engine\math</Filter>
+    </ClCompile>
+    <ClCompile Include="Engine\src\math\Vector.cpp">
+      <Filter>ソース ファイル\engine\math</Filter>
+    </ClCompile>
+    <ClCompile Include="Engine\src\base\WinApp.cpp">
+      <Filter>ソース ファイル\engine\base</Filter>
+    </ClCompile>
+    <ClCompile Include="Engine\src\debug\Imgui.cpp">
+      <Filter>ソース ファイル\engine\debug</Filter>
+    </ClCompile>
+    <ClCompile Include="Engine\src\debug\Log.cpp">
+      <Filter>ソース ファイル\engine\debug</Filter>
+    </ClCompile>
+    <ClCompile Include="Engine\src\debug\Logger.cpp">
+      <Filter>ソース ファイル\engine\debug</Filter>
+    </ClCompile>
+    <ClCompile Include="Engine\src\input\Input.cpp">
+      <Filter>ソース ファイル\engine\input</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="externals\imgui\imconfig.h">
+      <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="externals\imgui\imgui.h">
+      <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="externals\imgui\imgui_impl_dx12.h">
+      <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="externals\imgui\imgui_impl_win32.h">
+      <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="externals\imgui\imgui_internal.h">
+      <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="externals\imgui\imstb_rectpack.h">
+      <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="externals\imgui\imstb_textedit.h">
+      <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="externals\imgui\imstb_truetype.h">
+      <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="Engine\include\base\CrashHandler.h">
+      <Filter>ヘッダー ファイル\base</Filter>
+    </ClInclude>
+    <ClInclude Include="Engine\include\base\DirectXCommon.h">
+      <Filter>ヘッダー ファイル\base</Filter>
+    </ClInclude>
+    <ClInclude Include="Engine\include\debug\Imgui.h">
+      <Filter>ヘッダー ファイル\debug</Filter>
+    </ClInclude>
+    <ClInclude Include="Engine\include\input\Input.h">
+      <Filter>ヘッダー ファイル\input</Filter>
+    </ClInclude>
+    <ClInclude Include="Engine\include\debug\Log.h">
+      <Filter>ヘッダー ファイル\debug</Filter>
+    </ClInclude>
+    <ClInclude Include="Engine\include\debug\Logger.h">
+      <Filter>ヘッダー ファイル\debug</Filter>
+    </ClInclude>
+    <ClInclude Include="Engine\include\math\Matrix.h">
+      <Filter>ヘッダー ファイル\math</Filter>
+    </ClInclude>
+    <ClInclude Include="Engine\include\3d\Model.h">
+      <Filter>ヘッダー ファイル\3d</Filter>
+    </ClInclude>
+    <ClInclude Include="Engine\include\motion\StringUtility.h">
+      <Filter>ヘッダー ファイル\motion</Filter>
+    </ClInclude>
+    <ClInclude Include="Engine\include\math\Vector&amp;Matrix.h">
+      <Filter>ヘッダー ファイル\math</Filter>
+    </ClInclude>
+    <ClInclude Include="Engine\include\math\Vector.h">
+      <Filter>ヘッダー ファイル\math</Filter>
+    </ClInclude>
+    <ClInclude Include="Engine\include\base\WinApp.h">
+      <Filter>ヘッダー ファイル\base</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="externals\imgui\LICENSE.txt">
+      <Filter>imgui</Filter>
+    </Text>
+  </ItemGroup>
+</Project>

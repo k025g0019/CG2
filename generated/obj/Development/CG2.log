@@ -1,0 +1,20 @@
+﻿  DirectXCommon.cpp
+  Logger.cpp
+  WinApp.cpp
+  CrashHandler.cpp
+  Input.cpp
+  Log.cpp
+  Matrix.cpp
+  Model.cpp
+  StringUtility.cpp
+  Vector&Matrix.cpp
+  Vector.cpp
+  Imgui.cpp
+  main.cpp
+  main.obj : MSIL .netmodule または /GL を伴ってコンパイルされたモジュールが見つかりました。/LTCG を使用して再開始してください。リンカーのパフォーマンスを向上させるためには、コマンドラインに /LTCG を追加してください。
+  コード生成しています。
+  コード生成が終了しました。
+  CG2.vcxproj -> C:\kogakuin\LE1\CG2\generated\outputs\Development\CG2.exe
+  C:\kogakuin\LE1\CG2\generated\outputs\Development\CG2.exe: message: 依存関係を配置しています
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。

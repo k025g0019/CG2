@@ -31,6 +31,8 @@
 #pragma warning(pop)
 #pragma warning(disable : 4820)
 
+#include <execution>
+
 #include "CrashHandler.h"
 #include "DirectXCommon.h"
 #include "Imgui.h"
@@ -50,7 +52,8 @@
 #pragma comment(lib, "xaudio2.lib")
 
 using Microsoft::WRL::ComPtr;
-
+# pragma once
+constexpr double PI = 3.14159265358979323846;
 
 #ifdef USE_IMGUI
 #pragma warning(push, 0)
@@ -64,6 +67,7 @@ namespace {
 	//========================================
 	// 描画データ定義
 	//========================================
+
 
 	//------------------------------
 	// 基本座標データ
@@ -129,6 +133,21 @@ namespace {
 	struct Particle {
 		Transforms transform;
 		Vector3 velocity;
+		Vector3 rotationSpeed;
+		float radius;
+		Vector2 angle;
+		Vector2 angleVelocity;
+		Vector3 angleSpeed;
+	};
+
+
+	// 
+
+	struct Emitter {
+		Transforms transform;
+		uint32_t count;
+		float frequency;
+		float frequencyTime;
 	};
 
 	//------------------------------
@@ -496,6 +515,25 @@ namespace {
 		return modelData;
 	}
 
+
+	//Emitter構造体の定義
+
+	std::list<Particle> Emit(const Emitter& emitter, float deltaTime) {
+		std::list<Particle> newParticles;
+		while (emitter.frequencyTime >= emitter.frequency) {
+			Particle particle{};
+			particle.transform = emitter.transform;
+			particle.velocity = {0.0f, 1.0f, 0.0f};
+			particle.rotationSpeed = {0.0f, 0.0f, 1.0f};
+			particle.radius = 1.0f;
+			particle.angle = {0.0f, 0.0f};
+			particle.angleVelocity = {0.1f, 0.1f};
+			particle.angleSpeed = {0.1f, 0.1f, 0.1f};
+			newParticles.push_back(particle);
+		}
+		return newParticles;
+	}
+
 	//========================================
 	// WAV音声管理処理
 	//========================================
@@ -580,7 +618,15 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	std::tm localTime{};
 	localtime_s(&localTime, &now);
 
+	// デルタタイムを固定することで、処理速度に依存せずに一定の速度で動作するようにする。
+	constexpr float kDeltaTime = 1.0f / 60.0f;
+	int particleMax = 500;
+	float particleNowTime = 0.0f;
 
+	Matrix4x4 backToFrontMatrix = MakeRotateYMatrix(std::numbers::pi_v<float>);
+
+	std::string black = "resources/black.png";
+	std::string white = "resources/white.png";
 	std::string dateString = std::format(
 		"{:04}{:02}{:02}_{:02}{:02}{:02}",
 		localTime.tm_year + 1900,
@@ -812,16 +858,10 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	//------------------------------
 	// インスタンスTransform初期化
 	//------------------------------
-	constexpr uint32_t kNumInstance = 10; // インスタンス数
+	std::vector<Particle*> particle;
+	particle.reserve(particleMax);
 
-	Transforms transforms[kNumInstance];
-	for (uint32_t index = 0; index < kNumInstance; ++index) {
-		transforms[index].scale = {1.0f, 1.0f, 1.0f};
-		transforms[index].rotate = {0.0f, 0.0f, 0.0f};
-		transforms[index].translate = {
-			static_cast<float>(index) * 0.1f, static_cast<float>(index) * 0.1f, static_cast<float>(index) * 0.1f
-		};
-	}
+
 	//------------------------------
 	// インスタンス行列Buffer初期化
 	//------------------------------
@@ -830,7 +870,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	instancingResource.Attach(
 		CreateBufferResource(
 			device,
-			sizeof(TransformationMatrix) * kNumInstance));
+			sizeof(TransformationMatrix) * particleMax));
 
 	TransformationMatrix* instancingData = nullptr;
 
@@ -841,7 +881,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 	assert(SUCCEEDED(hr));
 
-	for (uint32_t index = 0; index < kNumInstance; ++index) {
+	for (uint32_t index = 0; index < particle.size(); ++index) {
 		instancingData[index].WVP = MakeIdentity4x4();
 		instancingData[index].World = MakeIdentity4x4();
 	}
@@ -882,7 +922,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	instancingSrvDesc.ViewDimension =
 		D3D12_SRV_DIMENSION_BUFFER;
 	instancingSrvDesc.Buffer.FirstElement = 0;
-	instancingSrvDesc.Buffer.NumElements = kNumInstance;
+	instancingSrvDesc.Buffer.NumElements = particleMax;
 	instancingSrvDesc.Buffer.StructureByteStride =
 		sizeof(TransformationMatrix);
 	instancingSrvDesc.Buffer.Flags =
@@ -949,7 +989,12 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	hr = device->CreateRootSignature(
 		0, signatureBlob->GetBufferPointer(), signatureBlob->GetBufferSize(),
 		IID_PPV_ARGS(rootSignature.GetAddressOf()));
+	Log(logStream, std::format(
+		    "CreateRootSignature HRESULT: 0x{:08X}",
+		    static_cast<uint32_t>(hr)));
+
 	assert(SUCCEEDED(hr));
+
 
 	//------------------------------
 	// パイプラインステート初期化
@@ -1119,7 +1164,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		.translate = {0.0f, 0.0f, 0.0f}
 	};
 	bool isMonsterBallTexture = true;
-
+	bool useBillboard = true;
 	//------------------------------
 	// 頂点・インデックスバッファ初期化
 	//------------------------------
@@ -1308,61 +1353,88 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 			cameraTransform.translate = {0.0f, 0.0f, -5.0f};
 		}
 
-		//#ifdef USE_IMGUI
-		//		//------------------------------
-		//		// デバッグUI更新
-		//		//------------------------------
-		//		ImGui_ImplDX12_NewFrame();
-		//		ImGui_ImplWin32_NewFrame();
-		//		ImGui::NewFrame();
-		//		ImGui::Begin("Debug");
-		//		ImGui::SetNextWindowPos(ImVec2(960.0f, 20.0f), ImGuiCond_Once);
-		//		ImGui::SetNextWindowSize(ImVec2(300.0f, 260.0f), ImGuiCond_Once);
-		//		ImGui::Begin("UVTransform");
-		//		ImGui::Text("UV Transform");
-		//		ImGui::SliderFloat2("Scale", &uvTransform.scale.x, 0.1f, 4.0f);
-		//		ImGui::SliderFloat("RotateZ", &uvTransform.rotate.z, -3.14f, 3.14f);
-		//		ImGui::SliderFloat2("Translate", &uvTransform.translate.x, -2.0f, 2.0f);
-		//		ImGui::Separator();
-		//		ImGui::Text("Material");
-		//		bool isLighting = sphereMaterialData->enableLighting != FALSE;
-		//		ImGui::Checkbox("EnableLighting", &isLighting);
-		//		ImGui::ColorEdit4("MaterialColor", &sphereMaterialData->color.x);
-		//		ImGui::Separator();
-		//		ImGui::Text("Light");
-		//		ImGui::ColorEdit4("Color", &directionalLightData->color.x);
-		//		ImGui::SliderFloat3("Direction", &directionalLightData->direction.x, -1.0f, 1.0f);
-		//		ImGui::SliderFloat("Intensity", &directionalLightData->intensity, 0.0f, 2.0f);
-		//		ImGui::Separator();
-		//		ImGui::Text("Object");
-		//		ImGui::SliderFloat3("Rotate", &transform.rotate.x, -3.14f, 3.14f);
-		//		ImGui::Separator();
-		//		ImGui::Text("DebugCamera");
-		//		ImGui::SliderFloat3("CamRotate", &cameraTransform.rotate.x, -3.14f, 3.14f);
-		//		ImGui::SliderFloat3("CamTranslate", &cameraTransform.translate.x, -20.0f, 20.0f);
-		//		ImGui::Separator();
-		//		ImGui::Text("Texture Switch");
-		//		ImGui::Text("color");
-		//
-		//		ImGui::ColorEdit4("MaterialColor", &sphereMaterialData->color.x);
-		//		ImGui::Checkbox("monsterBall", &isMonsterBallTexture);
-		//		sphereMaterialData->enableLighting = isLighting ? TRUE : FALSE;
-		//
-		//		ImGui::End();
-		//		ImGui::End();
-		//		ImGui::Render();
-		//#endif
+#ifdef USE_IMGUI
+		ImGui_ImplDX12_NewFrame();
+		ImGui_ImplWin32_NewFrame();
+		ImGui::NewFrame();
 
+		ImGui::Begin("Settings");
+		ImGui::Checkbox("useBillboard", &useBillboard);
+		ImGui::End();
+
+		ImGui::Render();
+#endif
+
+		particleNowTime += kDeltaTime;
+
+
+		while (particleNowTime >= 0.01f && particle.size() < particleMax) {
+			particleNowTime -= 0.01f;
+
+			auto newParticle = new Particle();
+
+			int index = static_cast<int>(particle.size());
+			newParticle->radius = static_cast<float>(rand() % 15 + 1);
+			newParticle->angle.x = static_cast<float>(rand() % 360) * std::numbers::pi_v<float> / 180.0f;
+			newParticle->angle.y = static_cast<float>(rand() % 360) * std::numbers::pi_v<float> / 180.0f;
+			newParticle->transform.scale = {1.0f, 1.0f, 1.0f};
+			newParticle->transform.rotate = {0.0f, 0.0f, 0.0f};
+			constexpr float kPeriod = 5.0f;
+
+
+			newParticle->angleVelocity.x =
+				2.0f * std::numbers::pi_v<float> / kPeriod;
+			newParticle->angleVelocity.y =
+				2.0f * std::numbers::pi_v<float> / kPeriod;
+			newParticle->transform.translate = {
+				sin(newParticle->angle.x) * cos(newParticle->angle.y) * newParticle->radius,
+				sin(newParticle->angle.x) * newParticle->radius,
+				cos(newParticle->angle.y) * newParticle->radius
+			};
+
+			newParticle->angleSpeed = {
+				static_cast<float>(rand() % 10 - 5),
+				static_cast<float>(rand() % 10 - 5),
+				static_cast<float>(rand() % 10 - 5)
+			};
+
+			newParticle->velocity = {
+				0.0f, 0.0f, 0.0f
+			};
+			newParticle->rotationSpeed = {
+				static_cast<float>(rand() % 10 - 5) / 100.0f,
+				static_cast<float>(rand() % 10 - 5) / 100.0f,
+				static_cast<float>(rand() % 10 - 5) / 100.0f
+			};
+
+			particle.push_back(newParticle);
+		}
 		//------------------------------
 		// 座標・シェーダー入力更新
 		//------------------------------
 		cameraMatrix = MakeAffineMatrix(
-			cameraTransform.scale, cameraTransform.rotate, cameraTransform.translate);
+			cameraTransform.scale,
+			cameraTransform.rotate,
+			cameraTransform.translate
+		);
+
 		viewMatrix = Inverse(cameraMatrix);
+
+		// ビルボード行列
+		Matrix4x4 billboardMatrix = MakeIdentity4x4();
+
+		if (useBillboard) {
+			billboardMatrix = Multiply(backToFrontMatrix, cameraMatrix);
+
+			billboardMatrix.matrix[3][0] = 0.0f;
+			billboardMatrix.matrix[3][1] = 0.0f;
+			billboardMatrix.matrix[3][2] = 0.0f;
+		}
 		Matrix4x4 spriteWorldMatrix = MakeAffineMatrix(
 			spriteTransform.scale, spriteTransform.rotate, spriteTransform.translate);
 		Matrix4x4 spriteWorldViewProjectionMatrix = Multiply(spriteWorldMatrix, spriteProjectionMatrix);
 		Matrix4x4 worldMatrix = MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
+
 		Matrix4x4 worldViewProjectionMatrix = Multiply(worldMatrix, Multiply(viewMatrix, projectionMatrix));
 		Matrix4x4 uvTransformMatrix = MakeAffineMatrix(
 			uvTransform.scale, uvTransform.rotate, uvTransform.translate);
@@ -1376,22 +1448,59 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		// インスタンス行列更新
 		//------------------------------
 
+		//------------------------------
+		// インスタンス行列更新
+		//------------------------------
+
 		Matrix4x4 viewProjectionMatrix =
 			Multiply(viewMatrix, projectionMatrix);
 
 		for (uint32_t index = 0;
-		     index < kNumInstance;
+		     index < particle.size();
 		     ++index) {
-			Matrix4x4 instanceWorldMatrix =
-				MakeAffineMatrix(
-					transforms[index].scale,
-					transforms[index].rotate,
-					transforms[index].translate);
+			Particle* currentParticle = particle[index];
+
+			//------------------------------
+			// 位置更新
+			//------------------------------
+			// 角度を進める
+			currentParticle->angle.x +=
+				currentParticle->angleVelocity.x * kDeltaTime;
+			currentParticle->angle.y +=
+				currentParticle->angleVelocity.y * kDeltaTime;
+			// 球面上の位置を計算
+			float angleX = currentParticle->angle.x;
+			float angleY = currentParticle->angle.y;
+			float radius = currentParticle->radius;
+
+			currentParticle->transform.translate.x = cos(angleX) * sin(angleY) * radius;
+			currentParticle->transform.translate.y = cos(angleY) * radius;
+			currentParticle->transform.translate.z = sin(angleX) * sin(angleY) * radius;
+
+
+			//------------------------------
+			// 行列更新
+			//------------------------------
+
+			Matrix4x4 scaleMatrix = MakeAffineMatrix(
+				currentParticle->transform.scale,
+				{0.0f, 0.0f, 0.0f},
+				{0.0f, 0.0f, 0.0f}
+			);
+
+			Matrix4x4 translateMatrix = MakeAffineMatrix(
+				{1.0f, 1.0f, 1.0f},
+				{0.0f, 0.0f, 0.0f},
+				currentParticle->transform.translate
+			);
+
+			Matrix4x4 instanceWorldMatrix = Multiply(
+				Multiply(scaleMatrix, billboardMatrix),
+				translateMatrix
+			);
 
 			instancingData[index].WVP =
-				Multiply(
-					instanceWorldMatrix,
-					viewProjectionMatrix);
+				Multiply(instanceWorldMatrix, viewProjectionMatrix);
 
 			instancingData[index].World =
 				instanceWorldMatrix;
@@ -1475,7 +1584,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 		commandList->DrawInstanced(
 			static_cast<UINT>(modelData.vertices.size()),
-			kNumInstance,
+			particle.size(),
 			0,
 			0);
 #ifdef USE_IMGUI

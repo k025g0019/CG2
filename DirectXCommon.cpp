@@ -22,6 +22,7 @@
 #pragma comment(lib, "dxguid.lib")
 #pragma comment(lib, "dxcompiler.lib")
 
+
 using Microsoft::WRL::ComPtr;
 
 

@@ -1,4 +1,4 @@
-#include "Vector&Matrix.h"
+#include "math/Vector&Matrix.h"
 
 #include <algorithm>
 

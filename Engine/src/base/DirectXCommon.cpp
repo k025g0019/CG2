@@ -1,8 +1,8 @@
-#include "DirectXCommon.h"
+#include "base/DirectXCommon.h"
 
-#include "Logger.h"
-#include "StringUtility.h"
-#include "WinApp.h"
+#include "base/WinApp.h"
+#include "debug/Logger.h"
+#include "motion/StringUtility.h"
 
 #include <cassert>
 #include <format>

@@ -1,8 +1,8 @@
-﻿#include "Matrix.h"
+#include "math/Matrix.h"
 
 #include <cmath>
 
-#include "Vector&Matrix.h"
+#include "math/Vector&Matrix.h"
 
 
 #pragma warning(push)

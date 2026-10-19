@@ -33,16 +33,16 @@
 
 #include <execution>
 
-#include "CrashHandler.h"
-#include "DirectXCommon.h"
-#include "Imgui.h"
-#include "Input.h"
-#include "Log.h"
-#include "Matrix.h"
-#include "StringUtility.h"
-#include "Vector&Matrix.h"
-#include "Vector.h"
-#include "WinApp.h"
+#include "base/CrashHandler.h"
+#include "base/DirectXCommon.h"
+#include "base/WinApp.h"
+#include "debug/Imgui.h"
+#include "debug/Log.h"
+#include "input/Input.h"
+#include "math/Matrix.h"
+#include "math/Vector&Matrix.h"
+#include "math/Vector.h"
+#include "motion/StringUtility.h"
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -712,7 +712,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 
 	ComPtr<IDxcBlob> vertexShaderBlob = CompileShader(
-		L"Particle.VS.hlsl",
+		L"resources/shaders/Particle.VS.hlsl",
 		L"vs_6_0",
 		directXCommon->GetDXCUtils(),
 		directXCommon->GetDXCCompiler(),
@@ -720,7 +720,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		logStream);
 
 	ComPtr<IDxcBlob> pixelShaderBlob = CompileShader(
-		L"Particle.PS.hlsl",
+		L"resources/shaders/Particle.PS.hlsl",
 		L"ps_6_0",
 		directXCommon->GetDXCUtils(),
 		directXCommon->GetDXCCompiler(),
@@ -1584,7 +1584,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 		commandList->DrawInstanced(
 			static_cast<UINT>(modelData.vertices.size()),
-			particle.size(),
+			static_cast<UINT>(particle.size()),
 			0,
 			0);
 #ifdef USE_IMGUI
@@ -1625,5 +1625,6 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	winApp->Finalize();
 	delete winApp;
 	winApp = nullptr;
+	return 0;
 }
 #pragma warning(pop)

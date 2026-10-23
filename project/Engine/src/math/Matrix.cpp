@@ -1,8 +1,73 @@
-#include "math/Matrix.h"
+﻿#include "math/Matrix.h"
 
 #include <cmath>
 
 #include "math/Vector&Matrix.h"
+
+Matrix4x4 operator+(const Matrix4x4& lhs, const Matrix4x4& rhs) {
+	return Add(lhs, rhs);
+}
+
+Matrix4x4 operator-(const Matrix4x4& lhs, const Matrix4x4& rhs) {
+	return Subtract(lhs, rhs);
+}
+
+Matrix4x4 operator-(const Matrix4x4& matrix) {
+	return matrix * -1.0f;
+}
+
+Matrix4x4 operator*(const Matrix4x4& lhs, const Matrix4x4& rhs) {
+	return Multiply(lhs, rhs);
+}
+
+Matrix4x4 operator*(const Matrix4x4& matrix, float scalar) {
+	Matrix4x4 result{};
+	for (int row = 0; row < 4; ++row) {
+		for (int column = 0; column < 4; ++column) {
+			result.matrix[row][column] = matrix.matrix[row][column] * scalar;
+		}
+	}
+	return result;
+}
+
+Matrix4x4 operator*(float scalar, const Matrix4x4& matrix) {
+	return matrix * scalar;
+}
+
+Matrix4x4 operator/(const Matrix4x4& matrix, float scalar) {
+	Matrix4x4 result{};
+	for (int row = 0; row < 4; ++row) {
+		for (int column = 0; column < 4; ++column) {
+			result.matrix[row][column] = matrix.matrix[row][column] / scalar;
+		}
+	}
+	return result;
+}
+
+Matrix4x4& operator+=(Matrix4x4& lhs, const Matrix4x4& rhs) {
+	lhs = lhs + rhs;
+	return lhs;
+}
+
+Matrix4x4& operator-=(Matrix4x4& lhs, const Matrix4x4& rhs) {
+	lhs = lhs - rhs;
+	return lhs;
+}
+
+Matrix4x4& operator*=(Matrix4x4& lhs, const Matrix4x4& rhs) {
+	lhs = lhs * rhs;
+	return lhs;
+}
+
+Matrix4x4& operator*=(Matrix4x4& matrix, float scalar) {
+	matrix = matrix * scalar;
+	return matrix;
+}
+
+Matrix4x4& operator/=(Matrix4x4& matrix, float scalar) {
+	matrix = matrix / scalar;
+	return matrix;
+}
 
 
 #pragma warning(push)

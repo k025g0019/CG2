@@ -5,6 +5,20 @@ struct Matrix4x4 {
 	float matrix[4][4];
 };
 
+// 行列積は既存の Multiply と同じ順序で計算する。
+Matrix4x4 operator+(const Matrix4x4& lhs, const Matrix4x4& rhs);
+Matrix4x4 operator-(const Matrix4x4& lhs, const Matrix4x4& rhs);
+Matrix4x4 operator-(const Matrix4x4& matrix);
+Matrix4x4 operator*(const Matrix4x4& lhs, const Matrix4x4& rhs);
+Matrix4x4 operator*(const Matrix4x4& matrix, float scalar);
+Matrix4x4 operator*(float scalar, const Matrix4x4& matrix);
+Matrix4x4 operator/(const Matrix4x4& matrix, float scalar);
+Matrix4x4& operator+=(Matrix4x4& lhs, const Matrix4x4& rhs);
+Matrix4x4& operator-=(Matrix4x4& lhs, const Matrix4x4& rhs);
+Matrix4x4& operator*=(Matrix4x4& lhs, const Matrix4x4& rhs);
+Matrix4x4& operator*=(Matrix4x4& matrix, float scalar);
+Matrix4x4& operator/=(Matrix4x4& matrix, float scalar);
+
 
 constexpr int kRowHeight = 20;
 constexpr int kColumnWidth = 60;

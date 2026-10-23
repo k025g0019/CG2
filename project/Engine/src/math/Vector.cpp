@@ -1,7 +1,139 @@
-#include "math/Vector.h"
+﻿#include "math/Vector.h"
 
 
 #include <cmath>
+
+Vector2 operator+(const Vector2& lhs, const Vector2& rhs) {
+	return {lhs.x + rhs.x, lhs.y + rhs.y};
+}
+
+Vector2 operator-(const Vector2& lhs, const Vector2& rhs) {
+	return {lhs.x - rhs.x, lhs.y - rhs.y};
+}
+
+Vector2 operator-(const Vector2& vector) {
+	return {-vector.x, -vector.y};
+}
+
+Vector2 operator*(const Vector2& vector, float scalar) {
+	return {vector.x * scalar, vector.y * scalar};
+}
+
+Vector2 operator*(float scalar, const Vector2& vector) {
+	return vector * scalar;
+}
+
+Vector2 operator/(const Vector2& vector, float scalar) {
+	return {vector.x / scalar, vector.y / scalar};
+}
+
+Vector2& operator+=(Vector2& lhs, const Vector2& rhs) {
+	lhs = lhs + rhs;
+	return lhs;
+}
+
+Vector2& operator-=(Vector2& lhs, const Vector2& rhs) {
+	lhs = lhs - rhs;
+	return lhs;
+}
+
+Vector2& operator*=(Vector2& vector, float scalar) {
+	vector = vector * scalar;
+	return vector;
+}
+
+Vector2& operator/=(Vector2& vector, float scalar) {
+	vector = vector / scalar;
+	return vector;
+}
+
+Vector3 operator+(const Vector3& lhs, const Vector3& rhs) {
+	return Add(lhs, rhs);
+}
+
+Vector3 operator-(const Vector3& lhs, const Vector3& rhs) {
+	return Subtract(lhs, rhs);
+}
+
+Vector3 operator-(const Vector3& vector) {
+	return Multiply(-1.0f, vector);
+}
+
+Vector3 operator*(const Vector3& vector, float scalar) {
+	return Multiply(scalar, vector);
+}
+
+Vector3 operator*(float scalar, const Vector3& vector) {
+	return Multiply(scalar, vector);
+}
+
+Vector3 operator/(const Vector3& vector, float scalar) {
+	return {vector.x / scalar, vector.y / scalar, vector.z / scalar};
+}
+
+Vector3& operator+=(Vector3& lhs, const Vector3& rhs) {
+	lhs = lhs + rhs;
+	return lhs;
+}
+
+Vector3& operator-=(Vector3& lhs, const Vector3& rhs) {
+	lhs = lhs - rhs;
+	return lhs;
+}
+
+Vector3& operator*=(Vector3& vector, float scalar) {
+	vector = vector * scalar;
+	return vector;
+}
+
+Vector3& operator/=(Vector3& vector, float scalar) {
+	vector = vector / scalar;
+	return vector;
+}
+
+Vector4 operator+(const Vector4& lhs, const Vector4& rhs) {
+	return {lhs.x + rhs.x, lhs.y + rhs.y, lhs.z + rhs.z, lhs.w + rhs.w};
+}
+
+Vector4 operator-(const Vector4& lhs, const Vector4& rhs) {
+	return {lhs.x - rhs.x, lhs.y - rhs.y, lhs.z - rhs.z, lhs.w - rhs.w};
+}
+
+Vector4 operator-(const Vector4& vector) {
+	return {-vector.x, -vector.y, -vector.z, -vector.w};
+}
+
+Vector4 operator*(const Vector4& vector, float scalar) {
+	return {vector.x * scalar, vector.y * scalar, vector.z * scalar, vector.w * scalar};
+}
+
+Vector4 operator*(float scalar, const Vector4& vector) {
+	return vector * scalar;
+}
+
+Vector4 operator/(const Vector4& vector, float scalar) {
+	return {vector.x / scalar, vector.y / scalar, vector.z / scalar, vector.w / scalar};
+}
+
+Vector4& operator+=(Vector4& lhs, const Vector4& rhs) {
+	lhs = lhs + rhs;
+	return lhs;
+}
+
+Vector4& operator-=(Vector4& lhs, const Vector4& rhs) {
+	lhs = lhs - rhs;
+	return lhs;
+}
+
+Vector4& operator*=(Vector4& vector, float scalar) {
+	vector = vector * scalar;
+	return vector;
+}
+
+Vector4& operator/=(Vector4& vector, float scalar) {
+	vector = vector / scalar;
+	return vector;
+}
 
 //void VectorScreenPrintf(int x, int y, const Vector3& vector, const char* label) {
 //	Novice::ScreenPrintf(x, y, "%0.02f", vector.x);

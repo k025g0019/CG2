@@ -23,6 +23,7 @@
 #include <format>
 #include <fstream>
 #include <numbers>
+#include <random>
 #include <sdkddkver.h>
 #include <sstream>
 #include <string>
@@ -72,16 +73,9 @@ namespace {
 	//------------------------------
 	// 基本座標データ
 	//------------------------------
-	struct Vector4 {
-		float x;
-		float y;
-		float z;
-		float w;
-	};
-
-	struct Vector2 {
-		float x;
-		float y;
+	struct AABB {
+		Vector3 min;
+		Vector3 max;
 	};
 
 	//------------------------------
@@ -123,6 +117,11 @@ namespace {
 		Matrix4x4 World;
 	};
 
+	struct ParticleForGPU {
+		Matrix4x4 WVP;
+		Matrix4x4 World;
+		Vector4 color;
+	};
 
 	struct Sprite {
 		Vector2 position;
@@ -138,16 +137,24 @@ namespace {
 		Vector2 angle;
 		Vector2 angleVelocity;
 		Vector3 angleSpeed;
+		Vector4 color;
+		float lifeTime = 3.0f;
+		float currentTime = 0.0f;
 	};
 
 
-	// 
+	// エミッターデータ
 
 	struct Emitter {
 		Transforms transform;
 		uint32_t count;
 		float frequency;
 		float frequencyTime;
+	};
+
+	struct AccelerationField {
+		Vector3 acceleration;
+		AABB area;
 	};
 
 	//------------------------------
@@ -225,6 +232,13 @@ namespace {
 		D3D12_GPU_DESCRIPTOR_HANDLE handle = descriptorHeap->GetGPUDescriptorHandleForHeapStart();
 		handle.ptr += descriptorSize * index;
 		return handle;
+	}
+
+
+	bool IsCollision(const AABB& a, const Vector3& point) {
+		return (a.min.x <= point.x && point.x <= a.max.x) &&
+			(a.min.y <= point.y && point.y <= a.max.y) &&
+			(a.min.z <= point.z && point.z <= a.max.z);
 	}
 
 	//========================================
@@ -866,13 +880,16 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	// インスタンス行列Buffer初期化
 	//------------------------------
 
-	ComPtr<ID3D12Resource> instancingResource;
+	ComPtr<ID3D12Resource> instancingResource =
+		CreateBufferResource(device, sizeof(TransformationMatrix) * particleMax);
+
+
 	instancingResource.Attach(
 		CreateBufferResource(
 			device,
-			sizeof(TransformationMatrix) * particleMax));
+			sizeof(ParticleForGPU) * particleMax));
 
-	TransformationMatrix* instancingData = nullptr;
+	ParticleForGPU* instancingData = nullptr;
 
 	hr = instancingResource->Map(
 		0,
@@ -884,20 +901,21 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	for (uint32_t index = 0; index < particle.size(); ++index) {
 		instancingData[index].WVP = MakeIdentity4x4();
 		instancingData[index].World = MakeIdentity4x4();
+		instancingData[index].color = {1.0f, 1.0f, 1.0f};
 	}
 	// WVP 定数バッファには座標変換行列を書き込む
 	ComPtr<ID3D12Resource> spriteTransformationMatrixResource;
 	spriteTransformationMatrixResource.Attach(
-		CreateBufferResource(device, sizeof(TransformationMatrix)));
-	TransformationMatrix* spriteTransformationMatrixData = nullptr;
+		CreateBufferResource(device, sizeof(ParticleForGPU)));
+	ParticleForGPU* spriteTransformationMatrixData = nullptr;
 	spriteTransformationMatrixResource->Map(
 		0, nullptr, reinterpret_cast<void**>(&spriteTransformationMatrixData));
 	spriteTransformationMatrixData->WVP = MakeIdentity4x4();
 	spriteTransformationMatrixData->World = MakeIdentity4x4();
 	ComPtr<ID3D12Resource> sphereTransformationMatrixResource;
 	sphereTransformationMatrixResource.Attach(
-		CreateBufferResource(device, sizeof(TransformationMatrix)));
-	TransformationMatrix* sphereTransformationMatrixData = nullptr;
+		CreateBufferResource(device, sizeof(ParticleForGPU)));
+	ParticleForGPU* sphereTransformationMatrixData = nullptr;
 	sphereTransformationMatrixResource->Map(
 		0, nullptr, reinterpret_cast<void**>(&sphereTransformationMatrixData));
 	sphereTransformationMatrixData->WVP = MakeIdentity4x4();
@@ -924,10 +942,10 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	instancingSrvDesc.Buffer.FirstElement = 0;
 	instancingSrvDesc.Buffer.NumElements = particleMax;
 	instancingSrvDesc.Buffer.StructureByteStride =
-		sizeof(TransformationMatrix);
+		sizeof(ParticleForGPU);
 	instancingSrvDesc.Buffer.Flags =
 		D3D12_BUFFER_SRV_FLAG_NONE;
-
+	instancingSrvDesc.Buffer.StructureByteStride = sizeof(ParticleForGPU);
 	D3D12_CPU_DESCRIPTOR_HANDLE instancingSrvHandleCPU =
 		GetCPUDescriptorHandle(
 			srvDescriptorHeap,
@@ -995,6 +1013,8 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 	assert(SUCCEEDED(hr));
 
+	std::random_device seedGenerator;
+	std::mt19937 randomEngine(seedGenerator());
 
 	//------------------------------
 	// パイプラインステート初期化
@@ -1031,7 +1051,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 	D3D12_DEPTH_STENCIL_DESC depthStencilDesc{};
 	depthStencilDesc.DepthEnable = TRUE;
-	depthStencilDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+	depthStencilDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
 	depthStencilDesc.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
 
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC graphicsPipelineStateDesc{};
@@ -1140,6 +1160,11 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		2, 1, 3,
 	};
 
+	AccelerationField accelerationField;
+	accelerationField.acceleration = {20.0f, -9.8f, 0.0f};
+	accelerationField.area.min = {-100.0f, -100.0f, -100.0f};
+	accelerationField.area.max = {100.0f, 100.0f, 100.0f};
+
 	//------------------------------
 	// Transform初期化
 	//------------------------------
@@ -1168,6 +1193,8 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	//------------------------------
 	// 頂点・インデックスバッファ初期化
 	//------------------------------
+
+
 	ComPtr<ID3D12Resource> vertexResource;
 	vertexResource.Attach(CreateBufferResource(device, sizeof(VertexData) * vertices.size()));
 
@@ -1184,6 +1211,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	ComPtr<ID3D12Resource> modelVertexResource;
 	modelVertexResource.Attach(CreateBufferResource(
 		device, sizeof(VertexData) * modelData.vertices.size()));
+
 	VertexData* mappedModelVertexData = nullptr;
 	hr = modelVertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedModelVertexData));
 	assert(SUCCEEDED(hr));
@@ -1366,6 +1394,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 #endif
 
 		particleNowTime += kDeltaTime;
+		std::uniform_real_distribution<float> distribution(-1.0f, 1.0f);
 
 
 		while (particleNowTime >= 0.01f && particle.size() < particleMax) {
@@ -1374,38 +1403,19 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 			auto newParticle = new Particle();
 
 			int index = static_cast<int>(particle.size());
-			newParticle->radius = static_cast<float>(rand() % 15 + 1);
-			newParticle->angle.x = static_cast<float>(rand() % 360) * std::numbers::pi_v<float> / 180.0f;
-			newParticle->angle.y = static_cast<float>(rand() % 360) * std::numbers::pi_v<float> / 180.0f;
-			newParticle->transform.scale = {1.0f, 1.0f, 1.0f};
+			newParticle->transform.scale = {0.2f, 0.2f, 0.2f};
 			newParticle->transform.rotate = {0.0f, 0.0f, 0.0f};
-			constexpr float kPeriod = 5.0f;
 
+			float angle = static_cast<float>(index) * 2.4f;
 
-			newParticle->angleVelocity.x =
-				2.0f * std::numbers::pi_v<float> / kPeriod;
-			newParticle->angleVelocity.y =
-				2.0f * std::numbers::pi_v<float> / kPeriod;
 			newParticle->transform.translate = {
-				sin(newParticle->angle.x) * cos(newParticle->angle.y) * newParticle->radius,
-				sin(newParticle->angle.x) * newParticle->radius,
-				cos(newParticle->angle.y) * newParticle->radius
+				distribution(randomEngine),
+				distribution(randomEngine),
+				distribution(randomEngine)
 			};
 
-			newParticle->angleSpeed = {
-				static_cast<float>(rand() % 10 - 5),
-				static_cast<float>(rand() % 10 - 5),
-				static_cast<float>(rand() % 10 - 5)
-			};
-
-			newParticle->velocity = {
-				0.0f, 0.0f, 0.0f
-			};
-			newParticle->rotationSpeed = {
-				static_cast<float>(rand() % 10 - 5) / 100.0f,
-				static_cast<float>(rand() % 10 - 5) / 100.0f,
-				static_cast<float>(rand() % 10 - 5) / 100.0f
-			};
+			newParticle->velocity = {0.0f, 0.5f, 0.0f};
+			newParticle->color = {1.0f, 1.0f, 1.0f, 1.0f};
 
 			particle.push_back(newParticle);
 		}
@@ -1447,7 +1457,19 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		//------------------------------
 		// インスタンス行列更新
 		//------------------------------
+		for (auto it = particle.begin(); it != particle.end();) {
+			Particle* p = *it;
 
+			p->currentTime += kDeltaTime;
+
+			if (p->currentTime >= p->lifeTime) {
+				delete p;
+				it = particle.erase(it);
+			}
+			else {
+				++it;
+			}
+		}
 		//------------------------------
 		// インスタンス行列更新
 		//------------------------------
@@ -1462,26 +1484,18 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 			//------------------------------
 			// 位置更新
-			//------------------------------
-			// 角度を進める
-			currentParticle->angle.x +=
-				currentParticle->angleVelocity.x * kDeltaTime;
-			currentParticle->angle.y +=
-				currentParticle->angleVelocity.y * kDeltaTime;
-			// 球面上の位置を計算
-			float angleX = currentParticle->angle.x;
-			float angleY = currentParticle->angle.y;
-			float radius = currentParticle->radius;
-
-			currentParticle->transform.translate.x = cos(angleX) * sin(angleY) * radius;
-			currentParticle->transform.translate.y = cos(angleY) * radius;
-			currentParticle->transform.translate.z = sin(angleX) * sin(angleY) * radius;
 
 
+			if (IsCollision(accelerationField.area, currentParticle->transform.translate)) {
+				currentParticle->velocity += accelerationField.acceleration * kDeltaTime;
+			}
+
+			currentParticle->transform.translate += currentParticle->velocity * kDeltaTime;
 			//------------------------------
 			// 行列更新
 			//------------------------------
 
+			currentParticle->color.w = 1.0f - (currentParticle->currentTime / currentParticle->lifeTime);
 			Matrix4x4 scaleMatrix = MakeAffineMatrix(
 				currentParticle->transform.scale,
 				{0.0f, 0.0f, 0.0f},
@@ -1504,6 +1518,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 			instancingData[index].World =
 				instanceWorldMatrix;
+			instancingData[index].color = currentParticle->color;
 		}
 		//========================================
 		// 描画処理

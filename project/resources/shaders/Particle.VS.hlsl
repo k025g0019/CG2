@@ -1,3 +1,5 @@
+
+
 #include "Particle.hlsli"
 
 //========================================
@@ -8,6 +10,7 @@ struct TransformationMatrix
 {
     float4x4 WVP;
     float4x4 World;
+    float4 color;
 };
 
 StructuredBuffer<TransformationMatrix> gTransformationMatrix : register(t0);
@@ -43,6 +46,7 @@ VertexShaderOutput main(
         input.position,
         gTransformationMatrix[instanceId].WVP);
 
+    output.color = gTransformationMatrix[instanceId].color;
 
     //------------------------------
     // UV・法線変換

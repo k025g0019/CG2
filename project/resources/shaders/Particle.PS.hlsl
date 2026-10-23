@@ -24,6 +24,7 @@ struct PixelShaderInput
     float4 position : SV_POSITION;
     float2 texcoord : TEXCOORD0;
     float3 normal : NORMAL0;
+    float4 color : COLOR0;
 };
 
 struct PixelShaderOutput
@@ -36,7 +37,7 @@ PixelShaderOutput main(PixelShaderInput input)
     PixelShaderOutput output;
     float4 transformedTexcoord = mul(float4(input.texcoord, 0.0f, 1.0f), gMaterial.uvTransform);
     float4 textureColor = gTexture.Sample(gSampler, transformedTexcoord.xy);
-    output.color = gMaterial.color * textureColor;
+    output.color = gMaterial.color * textureColor * input.color;
 
     if (output.color.a == 0.0f)
     {

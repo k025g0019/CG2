@@ -1,0 +1,43 @@
+name: CheckUnwantedFiles
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+env:
+  UNWANTED_Name_PATTERNS: "*.pdb *.ilk *.user *.ncd *.suo *.log *.dmp *.zip imgui.ini desktop.ini dexcompiler.dll dxil.dll *.cache *.obj *.o *.lib *.exp *.idb *.ipdb *.iobj *.pdb *.ilk *.user *.ncd *.suo *.log *.dmp *.zip imgui.ini desktop.ini dexcompiler.dll dxil.dll"
+
+  UNWANTED_DIR\patterns: "generated x64 win32 arm64 .vs bin ipch logs Dump"
+jobs:
+  check-files:
+    name: 不要なファイルを検索
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v6
+
+        - name: 不要なファイルを検索
+          run: |
+            DIR_CONDITIons=()
+            for pattern in $UNWANTED_DIR\patterns; do
+              DIR_CONDITIons+=(-o -iname "$pattern" )
+            done
+            unset DIR_conditions[0]
+
+            NAME_CONDitions =()
+            for pattern in $UNWANTED_Name_PATTERNS; do
+              NAME_CONDITIons+=(-o -iname "$pattern" )
+            done
+            unset NAME_CONDITTIONS[0]
+
+            UNWATED_LIST=$(find . \( "${DIR_CONDITIons[@]}" \) -o \( "${NAME_CONDITIons[@]}" \) -type f)
+            if [ -n "$UNWANTED_LIST" ]; then
+              echo "不要なファイルが見つかりました:"
+              echo "$UNWANTED_LIST"
+              exit 1
+            else
+              echo "不要なファイルは見つかりませんでした。"
+            fi

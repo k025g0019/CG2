@@ -169,6 +169,9 @@ namespace {
 		MaterialData material;
 	};
 
+	struct CameraForGPU {
+		Vector3 worldPosition;
+	};
 	//========================================
 	// 音声データ定義
 	//========================================

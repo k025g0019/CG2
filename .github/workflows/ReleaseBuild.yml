@@ -1,4 +1,4 @@
-name: DebugBuild
+name: ReleaseBuild
 on:
   push:
     branches:
@@ -7,7 +7,7 @@ env:
   # リポジトリーのルートディレクトリを基点としたソリューションファイルのパス
   SOLUTION_FILE_PATH: project/CG2.sln
   # Visual Studio の構成(Debug / Release)
-  CONFIGURATION: Debug
+  CONFIGURATION: Release
   
 jobs:
   check:
@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@v6
         with:
             msbuild-architecture: x64
-      - name: Build
+      - name: Release
         run:
           msbuild ${{env.SOLUTION_FILE_PATH}} /p:Platform=x64,Configuration=${{env.CONFIGURATION}}
           

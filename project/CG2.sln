@@ -18,13 +18,14 @@ Global
 		{E2675A88-50E0-460F-B75F-9F665CC7968C}.Debug|x64.Build.0 = Debug|x64
 		{E2675A88-50E0-460F-B75F-9F665CC7968C}.Development|x64.ActiveCfg = Development|x64
 		{E2675A88-50E0-460F-B75F-9F665CC7968C}.Development|x64.Build.0 = Development|x64
-		{E2675A88-50E0-460F-B75F-9F665CC7968C}.Release|x64.ActiveCfg = Development|x64
-		{E2675A88-50E0-460F-B75F-9F665CC7968C}.Release|x64.Build.0 = Development|x64
+		{E2675A88-50E0-460F-B75F-9F665CC7968C}.Release|x64.ActiveCfg = Release|x64
+		{E2675A88-50E0-460F-B75F-9F665CC7968C}.Release|x64.Build.0 = Release|x64
 		{371B9FA9-4C90-4AC6-A123-ACED756D6C77}.Debug|x64.ActiveCfg = Debug|x64
 		{371B9FA9-4C90-4AC6-A123-ACED756D6C77}.Debug|x64.Build.0 = Debug|x64
 		{371B9FA9-4C90-4AC6-A123-ACED756D6C77}.Development|x64.ActiveCfg = Development|x64
 		{371B9FA9-4C90-4AC6-A123-ACED756D6C77}.Development|x64.Build.0 = Development|x64
 		{371B9FA9-4C90-4AC6-A123-ACED756D6C77}.Release|x64.ActiveCfg = Release|x64
+		{371B9FA9-4C90-4AC6-A123-ACED756D6C77}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

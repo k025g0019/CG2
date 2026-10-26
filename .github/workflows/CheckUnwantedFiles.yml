@@ -17,7 +17,7 @@ jobs:
 
     steps:
       - name: リポジトリをチェックアウト
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
         - name: 不要なファイルを検索
           run: |

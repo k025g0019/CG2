@@ -1,0 +1,24 @@
+﻿name: ReleaseBuild
+on:
+  push:
+    branches:
+      - master
+env:
+  # リポジトリーのルートディレクトリを基点としたソリューションファイルのパス
+  SOLUTION_FILE_PATH: project/CG2.sln
+  # Visual Studio の構成(Debug / Release)
+  CONFIGURATION: Release
+
+jobs:
+  check:
+    runs-on: windows-2025-vs2026
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v3
+        with:
+          msbuild-architecture: x64
+      - name: Release
+        run:
+          msbuild ${{env.SOLUTION_FILE_PATH}} /p:Platform=x64,Configuration=${{env.CONFIGURATION}}

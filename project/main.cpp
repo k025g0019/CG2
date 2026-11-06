@@ -138,7 +138,7 @@ namespace {
 		Vector2 angleVelocity;
 		Vector3 angleSpeed;
 		Vector4 color;
-		float lifeTime = 3.0f;
+		float lifeTime = 1.0f;
 		float currentTime = 0.0f;
 	};
 
@@ -172,6 +172,7 @@ namespace {
 	struct CameraForGPU {
 		Vector3 worldPosition;
 	};
+
 	//========================================
 	// 音声データ定義
 	//========================================
@@ -637,7 +638,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 	// デルタタイムを固定することで、処理速度に依存せずに一定の速度で動作するようにする。
 	constexpr float kDeltaTime = 1.0f / 60.0f;
-	int particleMax = 500;
+	int particleMax = 500000;
 	float particleNowTime = 0.0f;
 
 	Matrix4x4 backToFrontMatrix = MakeRotateYMatrix(std::numbers::pi_v<float>);
@@ -707,25 +708,25 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		return 1;
 	}
 
-	SoundData soundData = SoundLoadWave("resources/sound/maou_19_12345.wav");
-	IXAudio2SourceVoice* sourceVoice = nullptr;
-	hr = xAudio2->CreateSourceVoice(&sourceVoice, &soundData.wfex);
-	assert(SUCCEEDED(hr));
-	if (FAILED(hr) || sourceVoice == nullptr) {
-		SoundUnload(&soundData);
-		masterVoice->DestroyVoice();
-		xAudio2->Release();
-		return 1;
-	}
+	//SoundData soundData = SoundLoadWave("resources/sound/maou_19_12345.wav");
+	//IXAudio2SourceVoice* sourceVoice = nullptr;
+	//hr = xAudio2->CreateSourceVoice(&sourceVoice, &soundData.wfex);
+	//assert(SUCCEEDED(hr));
+	//if (FAILED(hr) || sourceVoice == nullptr) {
+	//	SoundUnload(&soundData);
+	//	masterVoice->DestroyVoice();
+	//	xAudio2->Release();
+	//	return 1;
+	//}
 
-	XAUDIO2_BUFFER soundBuffer{};
-	soundBuffer.pAudioData = soundData.pBuffer;
-	soundBuffer.AudioBytes = soundData.bufferSize;
-	soundBuffer.Flags = XAUDIO2_END_OF_STREAM;
-	hr = sourceVoice->SubmitSourceBuffer(&soundBuffer);
-	assert(SUCCEEDED(hr));
-	hr = sourceVoice->Start(0);
-	assert(SUCCEEDED(hr));
+	//XAUDIO2_BUFFER soundBuffer{};
+	//soundBuffer.pAudioData = soundData.pBuffer;
+	//soundBuffer.AudioBytes = soundData.bufferSize;
+	//soundBuffer.Flags = XAUDIO2_END_OF_STREAM;
+	//hr = sourceVoice->SubmitSourceBuffer(&soundBuffer);
+	//assert(SUCCEEDED(hr));
+	//hr = sourceVoice->Start(0);
+	//assert(SUCCEEDED(hr));
 
 
 	ComPtr<IDxcBlob> vertexShaderBlob = CompileShader(
@@ -1164,7 +1165,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	};
 
 	AccelerationField accelerationField;
-	accelerationField.acceleration = {20.0f, -9.8f, 0.0f};
+	accelerationField.acceleration = {0.0f, -9.8f, 0.0f};
 	accelerationField.area.min = {-100.0f, -100.0f, -100.0f};
 	accelerationField.area.max = {100.0f, 100.0f, 100.0f};
 
@@ -1255,8 +1256,8 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	// テクスチャリソース初期化
 	//------------------------------
 	std::wstring textureFilePaths[] = {
-		L"resources/uvChecker.png",
-		L"resources/uvChecker.png",
+		L"resources/hosi.png",
+		L"resources/hosi.png",
 		StringUtility::ConvertString(modelData.material.textureFilePath),
 	};
 	DirectX::ScratchImage mipImages[_countof(textureFilePaths)];
@@ -1345,7 +1346,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 			PostQuitMessage(0);
 		}
 
-		if (input->TriggerKey(DIK_LEFT)) {
+		if (input->PushKey(DIK_LEFT)) {
 			cameraTransform.rotate.y -= cameraRotateSpeed;
 		}
 		if (input->PushKey(DIK_RIGHT)) {
@@ -1398,27 +1399,34 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 		particleNowTime += kDeltaTime;
 		std::uniform_real_distribution<float> distribution(-1.0f, 1.0f);
+		std::uniform_real_distribution<float> distribution2(0.0f, 1.0f);
 
-
-		while (particleNowTime >= 0.01f && particle.size() < particleMax) {
-			particleNowTime -= 0.01f;
+		while (particleNowTime >= 0.0005f && particle.size() < particleMax) {
+			particleNowTime -= 0.0005f;
 
 			auto newParticle = new Particle();
 
 			int index = static_cast<int>(particle.size());
-			newParticle->transform.scale = {0.2f, 0.2f, 0.2f};
+			newParticle->transform.scale = {
+				distribution2(randomEngine), distribution2(randomEngine), distribution2(randomEngine)
+			};
 			newParticle->transform.rotate = {0.0f, 0.0f, 0.0f};
 
 			float angle = static_cast<float>(index) * 2.4f;
 
 			newParticle->transform.translate = {
-				distribution(randomEngine),
-				distribution(randomEngine),
-				distribution(randomEngine)
+				distribution(randomEngine) * 0.1f,
+				distribution(randomEngine) * 0.1f,
+				distribution(randomEngine) * 0.1f
 			};
 
-			newParticle->velocity = {0.0f, 0.5f, 0.0f};
-			newParticle->color = {1.0f, 1.0f, 1.0f, 1.0f};
+			newParticle->velocity = {
+				distribution(randomEngine) * 2.0f, distribution2(randomEngine) * 15.0f + 5.0f,
+				distribution(randomEngine) * 2.0f
+			};
+			newParticle->color = {
+				distribution2(randomEngine), distribution2(randomEngine), distribution2(randomEngine), 1.0f
+			};
 
 			particle.push_back(newParticle);
 		}
@@ -1615,12 +1623,12 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	//========================================
 	// 終了処理
 	//========================================
-	if (sourceVoice != nullptr) {
-		sourceVoice->Stop(0);
-		sourceVoice->FlushSourceBuffers();
-		sourceVoice->DestroyVoice();
-	}
-	SoundUnload(&soundData);
+	//if (sourceVoice != nullptr) {
+	//	sourceVoice->Stop(0);
+	//	sourceVoice->FlushSourceBuffers();
+	//	sourceVoice->DestroyVoice();
+	//}
+	//SoundUnload(&soundData);
 
 	if (masterVoice != nullptr) {
 		masterVoice->DestroyVoice();

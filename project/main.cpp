@@ -23,7 +23,6 @@
 #include <format>
 #include <fstream>
 #include <numbers>
-#include <random>
 #include <sdkddkver.h>
 #include <sstream>
 #include <string>
@@ -34,6 +33,7 @@
 
 #include <execution>
 
+#include "3d/ParticleEffect.h"
 #include "base/CrashHandler.h"
 #include "base/DirectXCommon.h"
 #include "base/WinApp.h"
@@ -71,14 +71,6 @@ namespace {
 
 
 	//------------------------------
-	// 基本座標データ
-	//------------------------------
-	struct AABB {
-		Vector3 min;
-		Vector3 max;
-	};
-
-	//------------------------------
 	// 頂点・マテリアルデータ
 	//------------------------------
 
@@ -111,50 +103,9 @@ namespace {
 		float intensity;
 	};
 
-	// インスタンス行列データ
-	struct TransformationMatrix {
-		Matrix4x4 WVP;
-		Matrix4x4 World;
-	};
-
-	struct ParticleForGPU {
-		Matrix4x4 WVP;
-		Matrix4x4 World;
-		Vector4 color;
-	};
-
 	struct Sprite {
 		Vector2 position;
 		Vector2 size;
-	};
-
-	// パーティクルデータ
-	struct Particle {
-		Transforms transform;
-		Vector3 velocity;
-		Vector3 rotationSpeed;
-		float radius;
-		Vector2 angle;
-		Vector2 angleVelocity;
-		Vector3 angleSpeed;
-		Vector4 color;
-		float lifeTime = 1.0f;
-		float currentTime = 0.0f;
-	};
-
-
-	// エミッターデータ
-
-	struct Emitter {
-		Transforms transform;
-		uint32_t count;
-		float frequency;
-		float frequencyTime;
-	};
-
-	struct AccelerationField {
-		Vector3 acceleration;
-		AABB area;
 	};
 
 	//------------------------------
@@ -238,12 +189,6 @@ namespace {
 		return handle;
 	}
 
-
-	bool IsCollision(const AABB& a, const Vector3& point) {
-		return (a.min.x <= point.x && point.x <= a.max.x) &&
-			(a.min.y <= point.y && point.y <= a.max.y) &&
-			(a.min.z <= point.z && point.z <= a.max.z);
-	}
 
 	//========================================
 	// テクスチャ・GPUリソース生成処理
@@ -534,24 +479,6 @@ namespace {
 	}
 
 
-	//Emitter構造体の定義
-
-	std::list<Particle> Emit(const Emitter& emitter, float deltaTime) {
-		std::list<Particle> newParticles;
-		while (emitter.frequencyTime >= emitter.frequency) {
-			Particle particle{};
-			particle.transform = emitter.transform;
-			particle.velocity = {0.0f, 1.0f, 0.0f};
-			particle.rotationSpeed = {0.0f, 0.0f, 1.0f};
-			particle.radius = 1.0f;
-			particle.angle = {0.0f, 0.0f};
-			particle.angleVelocity = {0.1f, 0.1f};
-			particle.angleSpeed = {0.1f, 0.1f, 0.1f};
-			newParticles.push_back(particle);
-		}
-		return newParticles;
-	}
-
 	//========================================
 	// WAV音声管理処理
 	//========================================
@@ -638,11 +565,8 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 	// デルタタイムを固定することで、処理速度に依存せずに一定の速度で動作するようにする。
 	constexpr float kDeltaTime = 1.0f / 60.0f;
-	int particleMax = 500000;
-	float particleNowTime = 0.0f;
-
-	Matrix4x4 backToFrontMatrix = MakeRotateYMatrix(std::numbers::pi_v<float>);
-
+	constexpr float kFountainEmissionInterval = 0.0005f;
+	float fountainEmissionTime = 0.0f;
 	std::string black = "resources/black.png";
 	std::string white = "resources/white.png";
 	std::string dateString = std::format(
@@ -873,57 +797,25 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	directionalLightData->direction = {0.0f, -1.0f, 0.0f};
 	directionalLightData->intensity = 1.0f;
 
-	//------------------------------
-	// インスタンスTransform初期化
-	//------------------------------
-	std::vector<Particle*> particle;
-	particle.reserve(particleMax);
-
-
-	//------------------------------
-	// インスタンス行列Buffer初期化
-	//------------------------------
-
-	ComPtr<ID3D12Resource> instancingResource =
-		CreateBufferResource(device, sizeof(TransformationMatrix) * particleMax);
-
-
-	instancingResource.Attach(
-		CreateBufferResource(
-			device,
-			sizeof(ParticleForGPU) * particleMax));
-
-	ParticleForGPU* instancingData = nullptr;
-
-	hr = instancingResource->Map(
-		0,
-		nullptr,
-		reinterpret_cast<void**>(&instancingData));
-
-	assert(SUCCEEDED(hr));
-
-	for (uint32_t index = 0; index < particle.size(); ++index) {
-		instancingData[index].WVP = MakeIdentity4x4();
-		instancingData[index].World = MakeIdentity4x4();
-		instancingData[index].color = {1.0f, 1.0f, 1.0f};
-	}
-	// WVP 定数バッファには座標変換行列を書き込む
+	// スプライト用のインスタンス行列バッファ。
 	ComPtr<ID3D12Resource> spriteTransformationMatrixResource;
 	spriteTransformationMatrixResource.Attach(
-		CreateBufferResource(device, sizeof(ParticleForGPU)));
-	ParticleForGPU* spriteTransformationMatrixData = nullptr;
+		CreateBufferResource(device, sizeof(ParticleInstanceData)));
+	ParticleInstanceData* spriteTransformationMatrixData = nullptr;
 	spriteTransformationMatrixResource->Map(
 		0, nullptr, reinterpret_cast<void**>(&spriteTransformationMatrixData));
 	spriteTransformationMatrixData->WVP = MakeIdentity4x4();
 	spriteTransformationMatrixData->World = MakeIdentity4x4();
+	spriteTransformationMatrixData->color = {1.0f, 1.0f, 1.0f, 1.0f};
 	ComPtr<ID3D12Resource> sphereTransformationMatrixResource;
 	sphereTransformationMatrixResource.Attach(
-		CreateBufferResource(device, sizeof(ParticleForGPU)));
-	ParticleForGPU* sphereTransformationMatrixData = nullptr;
+		CreateBufferResource(device, sizeof(ParticleInstanceData)));
+	ParticleInstanceData* sphereTransformationMatrixData = nullptr;
 	sphereTransformationMatrixResource->Map(
 		0, nullptr, reinterpret_cast<void**>(&sphereTransformationMatrixData));
 	sphereTransformationMatrixData->WVP = MakeIdentity4x4();
 	sphereTransformationMatrixData->World = MakeIdentity4x4();
+	sphereTransformationMatrixData->color = {1.0f, 1.0f, 1.0f, 1.0f};
 
 	//------------------------------
 	// インスタンシングSRV初期化
@@ -932,50 +824,39 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	constexpr UINT kModelInstancingSrvIndex = 4;
 	constexpr UINT kSpriteInstancingSrvIndex = 5;
 
-	// Instancing用SRVを作成
-	//------------------------------
-	// 3Dモデル用SRV作成
-	//------------------------------
-
-	D3D12_SHADER_RESOURCE_VIEW_DESC instancingSrvDesc{};
-	instancingSrvDesc.Format = DXGI_FORMAT_UNKNOWN;
-	instancingSrvDesc.Shader4ComponentMapping =
-		D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-	instancingSrvDesc.ViewDimension =
-		D3D12_SRV_DIMENSION_BUFFER;
-	instancingSrvDesc.Buffer.FirstElement = 0;
-	instancingSrvDesc.Buffer.NumElements = particleMax;
-	instancingSrvDesc.Buffer.StructureByteStride =
-		sizeof(ParticleForGPU);
-	instancingSrvDesc.Buffer.Flags =
-		D3D12_BUFFER_SRV_FLAG_NONE;
-	instancingSrvDesc.Buffer.StructureByteStride = sizeof(ParticleForGPU);
-	D3D12_CPU_DESCRIPTOR_HANDLE instancingSrvHandleCPU =
-		GetCPUDescriptorHandle(
-			srvDescriptorHeap,
-			srvDescriptorSize,
-			kModelInstancingSrvIndex);
-
-	D3D12_GPU_DESCRIPTOR_HANDLE instancingSrvHandleGPU =
-		GetGPUDescriptorHandle(
-			srvDescriptorHeap,
-			srvDescriptorSize,
-			kModelInstancingSrvIndex);
-
-	device->CreateShaderResourceView(
-		instancingResource.Get(),
-		&instancingSrvDesc,
-		instancingSrvHandleCPU);
+	ParticleEffect particleEffect;
+	ParticleEffect::Settings particleSettings{};
+	if (!particleEffect.Initialize(
+		device, srvDescriptorHeap, srvDescriptorSize,
+		kModelInstancingSrvIndex, particleSettings)) {
+		return 1;
+	}
+	ParticleEffect::EmitParameters fountainParameters{};
+	fountainParameters.particle.position = {0.0f, 0.0f, 0.0f};
+	fountainParameters.positionJitter = {0.1f, 0.1f, 0.1f};
+	fountainParameters.particle.velocity = {0.0f, 12.5f, 0.0f};
+	fountainParameters.velocityJitter = {1.0f, 7.5f, 1.0f};
+	fountainParameters.particle.acceleration = {0.0f, -9.8f, 0.0f};
+	fountainParameters.particle.scale = {0.5f, 0.5f, 0.5f};
+	fountainParameters.scaleJitter = {0.5f, 0.5f, 0.5f};
+	fountainParameters.particle.color = {0.7f, 0.0f, 0.0f, 1.0f};
+	fountainParameters.colorJitter = {0.3f, 0.0f, 0.0f, 0.0f};
+	fountainParameters.particle.lifeTime = 1.0f;
 
 
 	//------------------------------
 	// Sprite用SRV作成
 	//------------------------------
 
-	D3D12_SHADER_RESOURCE_VIEW_DESC spriteInstancingSrvDesc =
-		instancingSrvDesc;
-
+	D3D12_SHADER_RESOURCE_VIEW_DESC spriteInstancingSrvDesc{};
+	spriteInstancingSrvDesc.Format = DXGI_FORMAT_UNKNOWN;
+	spriteInstancingSrvDesc.Shader4ComponentMapping =
+		D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	spriteInstancingSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+	spriteInstancingSrvDesc.Buffer.FirstElement = 0;
 	spriteInstancingSrvDesc.Buffer.NumElements = 1;
+	spriteInstancingSrvDesc.Buffer.StructureByteStride = sizeof(ParticleInstanceData);
+	spriteInstancingSrvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
 
 	D3D12_CPU_DESCRIPTOR_HANDLE spriteInstancingSrvHandleCPU =
 		GetCPUDescriptorHandle(
@@ -1016,9 +897,6 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		    static_cast<uint32_t>(hr)));
 
 	assert(SUCCEEDED(hr));
-
-	std::random_device seedGenerator;
-	std::mt19937 randomEngine(seedGenerator());
 
 	//------------------------------
 	// パイプラインステート初期化
@@ -1164,10 +1042,6 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		2, 1, 3,
 	};
 
-	AccelerationField accelerationField;
-	accelerationField.acceleration = {0.0f, -9.8f, 0.0f};
-	accelerationField.area.min = {-100.0f, -100.0f, -100.0f};
-	accelerationField.area.max = {100.0f, 100.0f, 100.0f};
 
 	//------------------------------
 	// Transform初期化
@@ -1397,39 +1271,15 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		ImGui::Render();
 #endif
 
-		particleNowTime += kDeltaTime;
-		std::uniform_real_distribution<float> distribution(-1.0f, 1.0f);
-		std::uniform_real_distribution<float> distribution2(0.0f, 1.0f);
-
-		while (particleNowTime >= 0.0005f && particle.size() < particleMax) {
-			particleNowTime -= 0.0005f;
-
-			auto newParticle = new Particle();
-
-			int index = static_cast<int>(particle.size());
-			newParticle->transform.scale = {
-				distribution2(randomEngine), distribution2(randomEngine), distribution2(randomEngine)
-			};
-			newParticle->transform.rotate = {0.0f, 0.0f, 0.0f};
-
-			float angle = static_cast<float>(index) * 2.4f;
-
-			newParticle->transform.translate = {
-				distribution(randomEngine) * 0.1f,
-				distribution(randomEngine) * 0.1f,
-				distribution(randomEngine) * 0.1f
-			};
-
-			newParticle->velocity = {
-				distribution(randomEngine) * 2.0f, distribution2(randomEngine) * 15.0f + 5.0f,
-				distribution(randomEngine) * 2.0f
-			};
-			newParticle->color = {
-				distribution2(randomEngine), distribution2(randomEngine), distribution2(randomEngine), 1.0f
-			};
-
-			particle.push_back(newParticle);
+		fountainEmissionTime += kDeltaTime;
+		std::size_t emitCount = 0;
+		while (fountainEmissionTime >= kFountainEmissionInterval) {
+			fountainEmissionTime -= kFountainEmissionInterval;
+			++emitCount;
 		}
+		fountainParameters.count = emitCount;
+		particleEffect.Emit(fountainParameters);
+
 		//------------------------------
 		// 座標・シェーダー入力更新
 		//------------------------------
@@ -1441,16 +1291,6 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 		viewMatrix = Inverse(cameraMatrix);
 
-		// ビルボード行列
-		Matrix4x4 billboardMatrix = MakeIdentity4x4();
-
-		if (useBillboard) {
-			billboardMatrix = Multiply(backToFrontMatrix, cameraMatrix);
-
-			billboardMatrix.matrix[3][0] = 0.0f;
-			billboardMatrix.matrix[3][1] = 0.0f;
-			billboardMatrix.matrix[3][2] = 0.0f;
-		}
 		Matrix4x4 spriteWorldMatrix = MakeAffineMatrix(
 			spriteTransform.scale, spriteTransform.rotate, spriteTransform.translate);
 		Matrix4x4 spriteWorldViewProjectionMatrix = Multiply(spriteWorldMatrix, spriteProjectionMatrix);
@@ -1465,72 +1305,9 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		sphereTransformationMatrixData->World = worldMatrix;
 		spriteMaterialData->uvTransform = uvTransformMatrix;
 		sphereMaterialData->uvTransform = uvTransformMatrix;
-		//------------------------------
-		// インスタンス行列更新
-		//------------------------------
-		for (auto it = particle.begin(); it != particle.end();) {
-			Particle* p = *it;
-
-			p->currentTime += kDeltaTime;
-
-			if (p->currentTime >= p->lifeTime) {
-				delete p;
-				it = particle.erase(it);
-			}
-			else {
-				++it;
-			}
-		}
-		//------------------------------
-		// インスタンス行列更新
-		//------------------------------
-
 		Matrix4x4 viewProjectionMatrix =
 			Multiply(viewMatrix, projectionMatrix);
-
-		for (uint32_t index = 0;
-		     index < particle.size();
-		     ++index) {
-			Particle* currentParticle = particle[index];
-
-			//------------------------------
-			// 位置更新
-
-
-			if (IsCollision(accelerationField.area, currentParticle->transform.translate)) {
-				currentParticle->velocity += accelerationField.acceleration * kDeltaTime;
-			}
-
-			currentParticle->transform.translate += currentParticle->velocity * kDeltaTime;
-			//------------------------------
-			// 行列更新
-			//------------------------------
-
-			currentParticle->color.w = 1.0f - (currentParticle->currentTime / currentParticle->lifeTime);
-			Matrix4x4 scaleMatrix = MakeAffineMatrix(
-				currentParticle->transform.scale,
-				{0.0f, 0.0f, 0.0f},
-				{0.0f, 0.0f, 0.0f}
-			);
-
-			Matrix4x4 translateMatrix = MakeAffineMatrix(
-				{1.0f, 1.0f, 1.0f},
-				{0.0f, 0.0f, 0.0f},
-				currentParticle->transform.translate
-			);
-
-			Matrix4x4 instanceWorldMatrix = Multiply(
-				Multiply(scaleMatrix, billboardMatrix),
-				translateMatrix
-			);
-
-			instancingData[index].WVP =
-				Multiply(instanceWorldMatrix, viewProjectionMatrix);
-
-			instancingData[index].World =
-				instanceWorldMatrix;
-			instancingData[index].color = currentParticle->color;
-		}
+		particleEffect.Update(kDeltaTime, cameraMatrix, viewProjectionMatrix, useBillboard);
 		//========================================
 		// 描画処理
 		//========================================
@@ -1581,38 +1358,19 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 
 		//------------------------------
-		// 3Dモデル描画
+		// パーティクル描画
 		//------------------------------
 
 		uint32_t sphereTextureIndex =
 			isMonsterBallTexture ? 1u : 0u;
 
-		commandList->SetGraphicsRootConstantBufferView(
-			0,
-			sphereMaterialResource->GetGPUVirtualAddress());
-
-		commandList->SetGraphicsRootDescriptorTable(
-			1,
-			instancingSrvHandleGPU);
-
-		commandList->SetGraphicsRootConstantBufferView(
-			2,
-			directionalLightResource->GetGPUVirtualAddress());
-
-		commandList->SetGraphicsRootDescriptorTable(
-			3,
-			textureSrvHandlesGPU[sphereTextureIndex]);
-
-		commandList->IASetVertexBuffers(
-			0,
-			1,
-			&modelVertexBufferView);
-
-		commandList->DrawInstanced(
-			static_cast<UINT>(modelData.vertices.size()),
-			static_cast<UINT>(particle.size()),
-			0,
-			0);
+		ParticleEffect::DrawContext particleDrawContext{};
+		particleDrawContext.material = sphereMaterialResource.Get();
+		particleDrawContext.light = directionalLightResource.Get();
+		particleDrawContext.texture = textureSrvHandlesGPU[sphereTextureIndex];
+		particleDrawContext.vertexBuffer = modelVertexBufferView;
+		particleDrawContext.vertexCount = static_cast<UINT>(modelData.vertices.size());
+		particleEffect.Draw(commandList, particleDrawContext);
 #ifdef USE_IMGUI
 		ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList);
 

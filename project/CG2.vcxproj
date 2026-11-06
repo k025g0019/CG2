@@ -253,6 +253,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     </ClCompile>
     <ClCompile Include="Engine\src\math\Matrix.cpp" />
     <ClCompile Include="Engine\src\3d\Model.cpp" />
+    <ClCompile Include="Engine\src\3d\ParticleEffect.cpp" />
     <ClCompile Include="Engine\src\motion\StringUtility.cpp" />
     <ClCompile Include="Engine\src\math\Vector&amp;Matrix.cpp" />
     <ClCompile Include="Engine\src\math\Vector.cpp" />
@@ -263,6 +264,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     </ClInclude>
     <ClInclude Include="Engine\include\debug\Logger.h" />
     <ClInclude Include="Engine\include\base\WinApp.h" />
+    <ClInclude Include="Engine\include\3d\ParticleEffect.h" />
     <ClInclude Include="Engine\include\base\CrashHandler.h" />
     <ClInclude Include="externals\imgui\imconfig.h" />
     <ClInclude Include="externals\imgui\imgui.h" />

@@ -1,4 +1,4 @@
-#pragma warning(push, 0)
+﻿#pragma warning(push, 0)
 #include <Windows.h>
 #include <array>
 #include <cassert>
@@ -22,8 +22,6 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
-#include <numbers>
-#include <random>
 #include <sdkddkver.h>
 #include <sstream>
 #include <string>
@@ -34,6 +32,8 @@
 
 #include <execution>
 
+#include "3d/ParticleEffect.h"
+#include "Application/GameScene.h"
 #include "base/CrashHandler.h"
 #include "base/DirectXCommon.h"
 #include "base/WinApp.h"
@@ -71,14 +71,6 @@ namespace {
 
 
 	//------------------------------
-	// 基本座標データ
-	//------------------------------
-	struct AABB {
-		Vector3 min;
-		Vector3 max;
-	};
-
-	//------------------------------
 	// 頂点・マテリアルデータ
 	//------------------------------
 
@@ -111,52 +103,6 @@ namespace {
 		float intensity;
 	};
 
-	// インスタンス行列データ
-	struct TransformationMatrix {
-		Matrix4x4 WVP;
-		Matrix4x4 World;
-	};
-
-	struct ParticleForGPU {
-		Matrix4x4 WVP;
-		Matrix4x4 World;
-		Vector4 color;
-	};
-
-	struct Sprite {
-		Vector2 position;
-		Vector2 size;
-	};
-
-	// パーティクルデータ
-	struct Particle {
-		Transforms transform;
-		Vector3 velocity;
-		Vector3 rotationSpeed;
-		float radius;
-		Vector2 angle;
-		Vector2 angleVelocity;
-		Vector3 angleSpeed;
-		Vector4 color;
-		float lifeTime = 3.0f;
-		float currentTime = 0.0f;
-	};
-
-
-	// エミッターデータ
-
-	struct Emitter {
-		Transforms transform;
-		uint32_t count;
-		float frequency;
-		float frequencyTime;
-	};
-
-	struct AccelerationField {
-		Vector3 acceleration;
-		AABB area;
-	};
-
 	//------------------------------
 	// モデル読み込みデータ
 	//------------------------------
@@ -172,6 +118,7 @@ namespace {
 	struct CameraForGPU {
 		Vector3 worldPosition;
 	};
+
 	//========================================
 	// 音声データ定義
 	//========================================
@@ -237,12 +184,6 @@ namespace {
 		return handle;
 	}
 
-
-	bool IsCollision(const AABB& a, const Vector3& point) {
-		return (a.min.x <= point.x && point.x <= a.max.x) &&
-			(a.min.y <= point.y && point.y <= a.max.y) &&
-			(a.min.z <= point.z && point.z <= a.max.z);
-	}
 
 	//========================================
 	// テクスチャ・GPUリソース生成処理
@@ -533,24 +474,6 @@ namespace {
 	}
 
 
-	//Emitter構造体の定義
-
-	std::list<Particle> Emit(const Emitter& emitter, float deltaTime) {
-		std::list<Particle> newParticles;
-		while (emitter.frequencyTime >= emitter.frequency) {
-			Particle particle{};
-			particle.transform = emitter.transform;
-			particle.velocity = {0.0f, 1.0f, 0.0f};
-			particle.rotationSpeed = {0.0f, 0.0f, 1.0f};
-			particle.radius = 1.0f;
-			particle.angle = {0.0f, 0.0f};
-			particle.angleVelocity = {0.1f, 0.1f};
-			particle.angleSpeed = {0.1f, 0.1f, 0.1f};
-			newParticles.push_back(particle);
-		}
-		return newParticles;
-	}
-
 	//========================================
 	// WAV音声管理処理
 	//========================================
@@ -635,15 +558,6 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	std::tm localTime{};
 	localtime_s(&localTime, &now);
 
-	// デルタタイムを固定することで、処理速度に依存せずに一定の速度で動作するようにする。
-	constexpr float kDeltaTime = 1.0f / 60.0f;
-	int particleMax = 500;
-	float particleNowTime = 0.0f;
-
-	Matrix4x4 backToFrontMatrix = MakeRotateYMatrix(std::numbers::pi_v<float>);
-
-	std::string black = "resources/black.png";
-	std::string white = "resources/white.png";
 	std::string dateString = std::format(
 		"{:04}{:02}{:02}_{:02}{:02}{:02}",
 		localTime.tm_year + 1900,
@@ -707,25 +621,25 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		return 1;
 	}
 
-	SoundData soundData = SoundLoadWave("resources/sound/maou_19_12345.wav");
-	IXAudio2SourceVoice* sourceVoice = nullptr;
-	hr = xAudio2->CreateSourceVoice(&sourceVoice, &soundData.wfex);
-	assert(SUCCEEDED(hr));
-	if (FAILED(hr) || sourceVoice == nullptr) {
-		SoundUnload(&soundData);
-		masterVoice->DestroyVoice();
-		xAudio2->Release();
-		return 1;
-	}
+	//SoundData soundData = SoundLoadWave("resources/sound/maou_19_12345.wav");
+	//IXAudio2SourceVoice* sourceVoice = nullptr;
+	//hr = xAudio2->CreateSourceVoice(&sourceVoice, &soundData.wfex);
+	//assert(SUCCEEDED(hr));
+	//if (FAILED(hr) || sourceVoice == nullptr) {
+	//	SoundUnload(&soundData);
+	//	masterVoice->DestroyVoice();
+	//	xAudio2->Release();
+	//	return 1;
+	//}
 
-	XAUDIO2_BUFFER soundBuffer{};
-	soundBuffer.pAudioData = soundData.pBuffer;
-	soundBuffer.AudioBytes = soundData.bufferSize;
-	soundBuffer.Flags = XAUDIO2_END_OF_STREAM;
-	hr = sourceVoice->SubmitSourceBuffer(&soundBuffer);
-	assert(SUCCEEDED(hr));
-	hr = sourceVoice->Start(0);
-	assert(SUCCEEDED(hr));
+	//XAUDIO2_BUFFER soundBuffer{};
+	//soundBuffer.pAudioData = soundData.pBuffer;
+	//soundBuffer.AudioBytes = soundData.bufferSize;
+	//soundBuffer.Flags = XAUDIO2_END_OF_STREAM;
+	//hr = sourceVoice->SubmitSourceBuffer(&soundBuffer);
+	//assert(SUCCEEDED(hr));
+	//hr = sourceVoice->Start(0);
+	//assert(SUCCEEDED(hr));
 
 
 	ComPtr<IDxcBlob> vertexShaderBlob = CompileShader(
@@ -842,27 +756,16 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	//------------------------------
 	// マテリアル・ライト初期化
 	//------------------------------
-	ComPtr<ID3D12Resource> spriteMaterialResource;
-	spriteMaterialResource.Attach(CreateBufferResource(device, sizeof(Material)));
-	Material* spriteMaterialData = nullptr;
-	spriteMaterialResource->Map(0, nullptr, reinterpret_cast<void**>(&spriteMaterialData));
-	spriteMaterialData->color = {1.0f, 1.0f, 1.0f, 1.0f};
-	spriteMaterialData->enableLighting = FALSE;
-	spriteMaterialData->padding[0] = 0.0f;
-	spriteMaterialData->padding[1] = 0.0f;
-	spriteMaterialData->padding[2] = 0.0f;
-	spriteMaterialData->uvTransform = MakeIdentity4x4();
-
-	ComPtr<ID3D12Resource> sphereMaterialResource;
-	sphereMaterialResource.Attach(CreateBufferResource(device, sizeof(Material)));
-	Material* sphereMaterialData = nullptr;
-	sphereMaterialResource->Map(0, nullptr, reinterpret_cast<void**>(&sphereMaterialData));
-	sphereMaterialData->color = {1.0f, 1.0f, 1.0f, 1.0f};
-	sphereMaterialData->enableLighting = TRUE;
-	sphereMaterialData->padding[0] = 0.0f;
-	sphereMaterialData->padding[1] = 0.0f;
-	sphereMaterialData->padding[2] = 0.0f;
-	sphereMaterialData->uvTransform = MakeIdentity4x4();
+	ComPtr<ID3D12Resource> particleMaterialResource;
+	particleMaterialResource.Attach(CreateBufferResource(device, sizeof(Material)));
+	Material* particleMaterialData = nullptr;
+	particleMaterialResource->Map(0, nullptr, reinterpret_cast<void**>(&particleMaterialData));
+	*particleMaterialData = {
+		.color = {1.0f, 1.0f, 1.0f, 1.0f},
+		.enableLighting = TRUE,
+		.padding = {0.0f, 0.0f, 0.0f},
+		.uvTransform = MakeIdentity4x4()
+	};
 
 	ComPtr<ID3D12Resource> directionalLightResource;
 	directionalLightResource.Attach(CreateBufferResource(device, sizeof(DirectionalLight)));
@@ -872,126 +775,11 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	directionalLightData->direction = {0.0f, -1.0f, 0.0f};
 	directionalLightData->intensity = 1.0f;
 
-	//------------------------------
-	// インスタンスTransform初期化
-	//------------------------------
-	std::vector<Particle*> particle;
-	particle.reserve(particleMax);
-
-
-	//------------------------------
-	// インスタンス行列Buffer初期化
-	//------------------------------
-
-	ComPtr<ID3D12Resource> instancingResource =
-		CreateBufferResource(device, sizeof(TransformationMatrix) * particleMax);
-
-
-	instancingResource.Attach(
-		CreateBufferResource(
-			device,
-			sizeof(ParticleForGPU) * particleMax));
-
-	ParticleForGPU* instancingData = nullptr;
-
-	hr = instancingResource->Map(
-		0,
-		nullptr,
-		reinterpret_cast<void**>(&instancingData));
-
-	assert(SUCCEEDED(hr));
-
-	for (uint32_t index = 0; index < particle.size(); ++index) {
-		instancingData[index].WVP = MakeIdentity4x4();
-		instancingData[index].World = MakeIdentity4x4();
-		instancingData[index].color = {1.0f, 1.0f, 1.0f};
+	constexpr UINT kParticleSrvIndex = 4;
+	GameScene gameScene;
+	if (!gameScene.Initialize(device, srvDescriptorHeap, srvDescriptorSize, kParticleSrvIndex, xAudio2)) {
+		return 1;
 	}
-	// WVP 定数バッファには座標変換行列を書き込む
-	ComPtr<ID3D12Resource> spriteTransformationMatrixResource;
-	spriteTransformationMatrixResource.Attach(
-		CreateBufferResource(device, sizeof(ParticleForGPU)));
-	ParticleForGPU* spriteTransformationMatrixData = nullptr;
-	spriteTransformationMatrixResource->Map(
-		0, nullptr, reinterpret_cast<void**>(&spriteTransformationMatrixData));
-	spriteTransformationMatrixData->WVP = MakeIdentity4x4();
-	spriteTransformationMatrixData->World = MakeIdentity4x4();
-	ComPtr<ID3D12Resource> sphereTransformationMatrixResource;
-	sphereTransformationMatrixResource.Attach(
-		CreateBufferResource(device, sizeof(ParticleForGPU)));
-	ParticleForGPU* sphereTransformationMatrixData = nullptr;
-	sphereTransformationMatrixResource->Map(
-		0, nullptr, reinterpret_cast<void**>(&sphereTransformationMatrixData));
-	sphereTransformationMatrixData->WVP = MakeIdentity4x4();
-	sphereTransformationMatrixData->World = MakeIdentity4x4();
-
-	//------------------------------
-	// インスタンシングSRV初期化
-	//------------------------------
-
-	constexpr UINT kModelInstancingSrvIndex = 4;
-	constexpr UINT kSpriteInstancingSrvIndex = 5;
-
-	// Instancing用SRVを作成
-	//------------------------------
-	// 3Dモデル用SRV作成
-	//------------------------------
-
-	D3D12_SHADER_RESOURCE_VIEW_DESC instancingSrvDesc{};
-	instancingSrvDesc.Format = DXGI_FORMAT_UNKNOWN;
-	instancingSrvDesc.Shader4ComponentMapping =
-		D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-	instancingSrvDesc.ViewDimension =
-		D3D12_SRV_DIMENSION_BUFFER;
-	instancingSrvDesc.Buffer.FirstElement = 0;
-	instancingSrvDesc.Buffer.NumElements = particleMax;
-	instancingSrvDesc.Buffer.StructureByteStride =
-		sizeof(ParticleForGPU);
-	instancingSrvDesc.Buffer.Flags =
-		D3D12_BUFFER_SRV_FLAG_NONE;
-	instancingSrvDesc.Buffer.StructureByteStride = sizeof(ParticleForGPU);
-	D3D12_CPU_DESCRIPTOR_HANDLE instancingSrvHandleCPU =
-		GetCPUDescriptorHandle(
-			srvDescriptorHeap,
-			srvDescriptorSize,
-			kModelInstancingSrvIndex);
-
-	D3D12_GPU_DESCRIPTOR_HANDLE instancingSrvHandleGPU =
-		GetGPUDescriptorHandle(
-			srvDescriptorHeap,
-			srvDescriptorSize,
-			kModelInstancingSrvIndex);
-
-	device->CreateShaderResourceView(
-		instancingResource.Get(),
-		&instancingSrvDesc,
-		instancingSrvHandleCPU);
-
-
-	//------------------------------
-	// Sprite用SRV作成
-	//------------------------------
-
-	D3D12_SHADER_RESOURCE_VIEW_DESC spriteInstancingSrvDesc =
-		instancingSrvDesc;
-
-	spriteInstancingSrvDesc.Buffer.NumElements = 1;
-
-	D3D12_CPU_DESCRIPTOR_HANDLE spriteInstancingSrvHandleCPU =
-		GetCPUDescriptorHandle(
-			srvDescriptorHeap,
-			srvDescriptorSize,
-			kSpriteInstancingSrvIndex);
-
-	D3D12_GPU_DESCRIPTOR_HANDLE spriteInstancingSrvHandleGPU =
-		GetGPUDescriptorHandle(
-			srvDescriptorHeap,
-			srvDescriptorSize,
-			kSpriteInstancingSrvIndex);
-
-	device->CreateShaderResourceView(
-		spriteTransformationMatrixResource.Get(),
-		&spriteInstancingSrvDesc,
-		spriteInstancingSrvHandleCPU);
 
 	//------------------------------
 	// ルートシグネチャ生成
@@ -1016,9 +804,6 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 	assert(SUCCEEDED(hr));
 
-	std::random_device seedGenerator;
-	std::mt19937 randomEngine(seedGenerator());
-
 	//------------------------------
 	// パイプラインステート初期化
 	//------------------------------
@@ -1041,10 +826,10 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
 	blendDesc.RenderTarget[0].BlendEnable = TRUE;
 	blendDesc.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
-	blendDesc.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+	blendDesc.RenderTarget[0].DestBlend = D3D12_BLEND_ONE;
 	blendDesc.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
 	blendDesc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
-	blendDesc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
+	blendDesc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ONE;
 	blendDesc.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
 
 	D3D12_RASTERIZER_DESC rasterizerDesc{};
@@ -1092,124 +877,13 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	//------------------------------
 	ModelData modelData = LoadObjFile("resources", "plane.obj");
 
-	//------------------------------
-	// 球頂点生成
-	//------------------------------
-	constexpr uint32_t kSubdivision = 64;
-	constexpr float kLonEvery = 2.0f * std::numbers::pi_v<float> / static_cast<float>(kSubdivision);
-	constexpr float kLatEvery = std::numbers::pi_v<float> / static_cast<float>(kSubdivision);
-
-	std::vector<VertexData> vertices;
-	vertices.reserve(kSubdivision * kSubdivision * 6);
-	for (uint32_t latIndex = 0; latIndex < kSubdivision; ++latIndex) {
-		float lat = -std::numbers::pi_v<float> / 2.0f + kLatEvery * static_cast<float>(latIndex);
-		float latNext = lat + kLatEvery;
-
-		for (uint32_t lonIndex = 0; lonIndex < kSubdivision; ++lonIndex) {
-			float lon = kLonEvery * static_cast<float>(lonIndex) + std::numbers::pi_v<float>;
-			float lonNext = lon + kLonEvery;
-
-			float u0 = static_cast<float>(lonIndex) / static_cast<float>(kSubdivision);
-			float u1 = static_cast<float>(lonIndex + 1) / static_cast<float>(kSubdivision);
-			float v0 = 1.0f - static_cast<float>(latIndex) / static_cast<float>(kSubdivision);
-			float v1 = 1.0f - static_cast<float>(latIndex + 1) / static_cast<float>(kSubdivision);
-
-			VertexData a{
-				{std::cos(lat) * std::cos(lon), std::sin(lat), std::cos(lat) * std::sin(lon), 1.0f},
-				{u0, v0},
-				Normalize({std::cos(lat) * std::cos(lon), std::sin(lat), std::cos(lat) * std::sin(lon)})
-			};
-			VertexData b{
-				{std::cos(latNext) * std::cos(lon), std::sin(latNext), std::cos(latNext) * std::sin(lon), 1.0f},
-				{u0, v1},
-				Normalize({std::cos(latNext) * std::cos(lon), std::sin(latNext), std::cos(latNext) * std::sin(lon)})
-			};
-			VertexData c{
-				{std::cos(lat) * std::cos(lonNext), std::sin(lat), std::cos(lat) * std::sin(lonNext), 1.0f},
-				{u1, v0},
-				Normalize({std::cos(lat) * std::cos(lonNext), std::sin(lat), std::cos(lat) * std::sin(lonNext)})
-			};
-			VertexData d{
-				{std::cos(latNext) * std::cos(lonNext), std::sin(latNext), std::cos(latNext) * std::sin(lonNext), 1.0f},
-				{u1, v1},
-				Normalize(
-					{std::cos(latNext) * std::cos(lonNext), std::sin(latNext), std::cos(latNext) * std::sin(lonNext)})
-			};
-
-			vertices.push_back(a);
-			vertices.push_back(b);
-			vertices.push_back(c);
-			vertices.push_back(c);
-			vertices.push_back(b);
-			vertices.push_back(d);
-		}
-	}
-
-	//------------------------------
-	// Sprite頂点・インデックス定義
-	//------------------------------
-	Sprite sprite{
-		.position = {128.0f, 128.0f},
-		.size = {256.0f, 256.0f}
-	};
-	VertexData spriteVertices[] = {
-		{{-0.5f, -0.5f, 0.0f, 1.0f}, {0.0f, 1.0f}, {0.0f, 0.0f, -1.0f}},
-		{{-0.5f, 0.5f, 0.0f, 1.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, -1.0f}},
-		{{0.5f, -0.5f, 0.0f, 1.0f}, {1.0f, 1.0f}, {0.0f, 0.0f, -1.0f}},
-		{{0.5f, 0.5f, 0.0f, 1.0f}, {1.0f, 0.0f}, {0.0f, 0.0f, -1.0f}},
-	};
-	uint32_t spriteIndices[] = {
-		0, 1, 2,
-		2, 1, 3,
-	};
-
-	AccelerationField accelerationField;
-	accelerationField.acceleration = {20.0f, -9.8f, 0.0f};
-	accelerationField.area.min = {-100.0f, -100.0f, -100.0f};
-	accelerationField.area.max = {100.0f, 100.0f, 100.0f};
-
-	//------------------------------
-	// Transform初期化
-	//------------------------------
-	Transforms transform{
-		.scale = {0.55f, 0.55f, 0.55f},
-		.rotate = {0.0f, 0.0f, 0.0f},
-		.translate = {0.0f, 0.0f, 0.0f}
-	};
-	Transforms spriteTransform{
-		.scale = {sprite.size.x, sprite.size.y, 1.0f},
-		.rotate = {0.0f, 0.0f, 0.0f},
-		.translate = {sprite.position.x, sprite.position.y, 0.0f}
-	};
+	// 発射位置と開花位置を同時に見られるショー用の初期視点。
+	constexpr Vector3 kShowCameraPosition{1.5f, 9.0f, -80.0f};
 	Transforms cameraTransform{
 		.scale = {1.0f, 1.0f, 1.0f},
 		.rotate = {0.0f, 0.0f, 0.0f},
-		.translate = {0.0f, 0.0f, -10.0f}
+		.translate = kShowCameraPosition
 	};
-	Transforms uvTransform{
-		.scale = {1.0f, 1.0f, 1.0f},
-		.rotate = {0.0f, 0.0f, 0.0f},
-		.translate = {0.0f, 0.0f, 0.0f}
-	};
-	bool isMonsterBallTexture = true;
-	bool useBillboard = true;
-	//------------------------------
-	// 頂点・インデックスバッファ初期化
-	//------------------------------
-
-
-	ComPtr<ID3D12Resource> vertexResource;
-	vertexResource.Attach(CreateBufferResource(device, sizeof(VertexData) * vertices.size()));
-
-	VertexData* mappedVertexData = nullptr;
-	hr = vertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedVertexData));
-	assert(SUCCEEDED(hr));
-	std::memcpy(mappedVertexData, vertices.data(), sizeof(VertexData) * vertices.size());
-
-	D3D12_VERTEX_BUFFER_VIEW vertexBufferView{};
-	vertexBufferView.BufferLocation = vertexResource->GetGPUVirtualAddress();
-	vertexBufferView.SizeInBytes = static_cast<UINT>(sizeof(VertexData) * vertices.size());
-	vertexBufferView.StrideInBytes = sizeof(VertexData);
 
 	ComPtr<ID3D12Resource> modelVertexResource;
 	modelVertexResource.Attach(CreateBufferResource(
@@ -1225,40 +899,10 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	modelVertexBufferView.SizeInBytes = static_cast<UINT>(sizeof(VertexData) * modelData.vertices.size());
 	modelVertexBufferView.StrideInBytes = sizeof(VertexData);
 
-	// Sprite 用の頂点バッファも別途作成しておく
-	ComPtr<ID3D12Resource> spriteVertexResource;
-	spriteVertexResource.Attach(CreateBufferResource(device, sizeof(spriteVertices)));
-	VertexData* mappedSpriteVertexData = nullptr;
-	hr = spriteVertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedSpriteVertexData));
-	assert(SUCCEEDED(hr));
-	std::memcpy(mappedSpriteVertexData, spriteVertices, sizeof(spriteVertices));
-
-	D3D12_VERTEX_BUFFER_VIEW spriteVertexBufferView{};
-	spriteVertexBufferView.BufferLocation = spriteVertexResource->GetGPUVirtualAddress();
-	spriteVertexBufferView.SizeInBytes = sizeof(spriteVertices);
-	spriteVertexBufferView.StrideInBytes = sizeof(VertexData);
-
-	ComPtr<ID3D12Resource> spriteIndexResource;
-	spriteIndexResource.Attach(CreateBufferResource(device, sizeof(spriteIndices)));
-	uint32_t* mappedSpriteIndexData = nullptr;
-	hr = spriteIndexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedSpriteIndexData));
-	assert(SUCCEEDED(hr));
-	std::memcpy(mappedSpriteIndexData, spriteIndices, sizeof(spriteIndices));
-
-	D3D12_INDEX_BUFFER_VIEW spriteIndexBufferView{};
-	spriteIndexBufferView.BufferLocation = spriteIndexResource->GetGPUVirtualAddress();
-	spriteIndexBufferView.SizeInBytes = sizeof(spriteIndices);
-	spriteIndexBufferView.Format = DXGI_FORMAT_R32_UINT;
-
-
 	//------------------------------
 	// テクスチャリソース初期化
 	//------------------------------
-	std::wstring textureFilePaths[] = {
-		L"resources/uvChecker.png",
-		L"resources/uvChecker.png",
-		StringUtility::ConvertString(modelData.material.textureFilePath),
-	};
+	std::wstring textureFilePaths[] = {L"resources/hosi.png"};
 	DirectX::ScratchImage mipImages[_countof(textureFilePaths)];
 	DirectX::TexMetadata textureMetadatas[_countof(textureFilePaths)];
 	std::array<ComPtr<ID3D12Resource>, _countof(textureFilePaths)> textureResources{};
@@ -1276,17 +920,10 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		cameraTransform.scale, cameraTransform.rotate, cameraTransform.translate);
 	Matrix4x4 viewMatrix = Inverse(cameraMatrix);
 	Matrix4x4 projectionMatrix = MakePerspectiveFovMatrix(
-		0.45f,
+		0.65f,
 		static_cast<float>(WinApp::kClientWidth) / static_cast<float>(WinApp::kClientHeight),
 		0.1f,
-		100.0f);
-	Matrix4x4 spriteProjectionMatrix = MakeOrthographicMatrix(
-		0.0f,
-		0.0f,
-		static_cast<float>(WinApp::kClientWidth),
-		static_cast<float>(WinApp::kClientHeight),
-		0.0f,
-		100.0f);
+		200.0f);
 	constexpr float cameraMoveSpeed = 0.1f;
 	constexpr float cameraRotateSpeed = 0.02f;
 
@@ -1323,6 +960,13 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 	directXCommon->ExecuteCommandListAndWait();
 
+	const ParticleEffect::DrawContext particleDrawContext{
+		.material = particleMaterialResource.Get(),
+		.light = directionalLightResource.Get(),
+		.texture = textureSrvHandlesGPU[0],
+		.vertexBuffer = modelVertexBufferView,
+		.vertexCount = static_cast<UINT>(modelData.vertices.size())
+	};
 
 	//========================================
 	// メインループ
@@ -1341,87 +985,64 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		//------------------------------
 		input->Update();
 
-		if (input->PushKey(DIK_ESCAPE)) {
-			PostQuitMessage(0);
-		}
-
-		if (input->TriggerKey(DIK_LEFT)) {
-			cameraTransform.rotate.y -= cameraRotateSpeed;
-		}
-		if (input->PushKey(DIK_RIGHT)) {
-			cameraTransform.rotate.y += cameraRotateSpeed;
-		}
-		if (input->PushKey(DIK_UP)) {
-			cameraTransform.rotate.x -= cameraRotateSpeed;
-		}
-		if (input->PushKey(DIK_DOWN)) {
-			cameraTransform.rotate.x += cameraRotateSpeed;
-		}
-
-		if (input->PushKey(DIK_A)) {
-			cameraTransform.translate.x -= cameraMoveSpeed;
-		}
-		if (input->PushKey(DIK_D)) {
-			cameraTransform.translate.x += cameraMoveSpeed;
-		}
-		if (input->PushKey(DIK_Q)) {
-			cameraTransform.translate.y += cameraMoveSpeed;
-		}
-		if (input->PushKey(DIK_E)) {
-			cameraTransform.translate.y -= cameraMoveSpeed;
-		}
-		if (input->PushKey(DIK_W)) {
-			cameraTransform.translate.z += cameraMoveSpeed;
-		}
-		if (input->PushKey(DIK_S)) {
-			cameraTransform.translate.z -= cameraMoveSpeed;
-		}
-
-		bool isReturnTrigger = input->TriggerKey(DIK_RETURN);
-		if (isReturnTrigger) {
-			uvTransform.translate = {0.0f, 0.0f, 0.0f};
-			cameraTransform.rotate = {0.0f, 0.0f, 0.0f};
-			cameraTransform.translate = {0.0f, 0.0f, -5.0f};
-		}
-
 #ifdef USE_IMGUI
 		ImGui_ImplDX12_NewFrame();
 		ImGui_ImplWin32_NewFrame();
 		ImGui::NewFrame();
-
-		ImGui::Begin("Settings");
-		ImGui::Checkbox("useBillboard", &useBillboard);
-		ImGui::End();
-
-		ImGui::Render();
+		if (input->TriggerKey(DIK_F1)) {
+			gameScene.ToggleEditor();
+		}
+		const bool editorCapturesKeyboard = ImGui::GetIO().WantCaptureKeyboard;
+#else
+		constexpr bool editorCapturesKeyboard = false;
 #endif
 
-		particleNowTime += kDeltaTime;
-		std::uniform_real_distribution<float> distribution(-1.0f, 1.0f);
+		if (!editorCapturesKeyboard) {
+			if (input->TriggerKey(DIK_ESCAPE)) {
+				PostQuitMessage(0);
+			}
+			if (input->TriggerKey(DIK_SPACE)) {
+				gameScene.TogglePlayback();
+			}
 
+			if (input->PushKey(DIK_LEFT)) {
+				cameraTransform.rotate.y -= cameraRotateSpeed;
+			}
+			if (input->PushKey(DIK_RIGHT)) {
+				cameraTransform.rotate.y += cameraRotateSpeed;
+			}
+			if (input->PushKey(DIK_UP)) {
+				cameraTransform.rotate.x -= cameraRotateSpeed;
+			}
+			if (input->PushKey(DIK_DOWN)) {
+				cameraTransform.rotate.x += cameraRotateSpeed;
+			}
 
-		while (particleNowTime >= 0.01f && particle.size() < particleMax) {
-			particleNowTime -= 0.01f;
+			if (input->PushKey(DIK_A)) {
+				cameraTransform.translate.x -= cameraMoveSpeed;
+			}
+			if (input->PushKey(DIK_D)) {
+				cameraTransform.translate.x += cameraMoveSpeed;
+			}
+			if (input->PushKey(DIK_Q)) {
+				cameraTransform.translate.y += cameraMoveSpeed;
+			}
+			if (input->PushKey(DIK_E)) {
+				cameraTransform.translate.y -= cameraMoveSpeed;
+			}
+			if (input->PushKey(DIK_W)) {
+				cameraTransform.translate.z += cameraMoveSpeed;
+			}
+			if (input->PushKey(DIK_S)) {
+				cameraTransform.translate.z -= cameraMoveSpeed;
+			}
 
-			auto newParticle = new Particle();
-
-			int index = static_cast<int>(particle.size());
-			newParticle->transform.scale = {0.2f, 0.2f, 0.2f};
-			newParticle->transform.rotate = {0.0f, 0.0f, 0.0f};
-
-			float angle = static_cast<float>(index) * 2.4f;
-
-			newParticle->transform.translate = {
-				distribution(randomEngine),
-				distribution(randomEngine),
-				distribution(randomEngine)
-			};
-
-			newParticle->velocity = {0.0f, 0.5f, 0.0f};
-			newParticle->color = {1.0f, 1.0f, 1.0f, 1.0f};
-
-			particle.push_back(newParticle);
+			if (input->TriggerKey(DIK_RETURN)) {
+				cameraTransform.rotate = {0.0f, 0.0f, 0.0f};
+				cameraTransform.translate = kShowCameraPosition;
+			}
 		}
+
 		//------------------------------
 		// 座標・シェーダー入力更新
 		//------------------------------
@@ -1433,96 +1054,11 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 		viewMatrix = Inverse(cameraMatrix);
 
-		// ビルボード行列
-		Matrix4x4 billboardMatrix = MakeIdentity4x4();
-
-		if (useBillboard) {
-			billboardMatrix = Multiply(backToFrontMatrix, cameraMatrix);
-
-			billboardMatrix.matrix[3][0] = 0.0f;
-			billboardMatrix.matrix[3][1] = 0.0f;
-			billboardMatrix.matrix[3][2] = 0.0f;
-		}
-		Matrix4x4 spriteWorldMatrix = MakeAffineMatrix(
-			spriteTransform.scale, spriteTransform.rotate, spriteTransform.translate);
-		Matrix4x4 spriteWorldViewProjectionMatrix = Multiply(spriteWorldMatrix, spriteProjectionMatrix);
-		Matrix4x4 worldMatrix = MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
-
-		Matrix4x4 worldViewProjectionMatrix = Multiply(worldMatrix, Multiply(viewMatrix, projectionMatrix));
-		Matrix4x4 uvTransformMatrix = MakeAffineMatrix(
-			uvTransform.scale, uvTransform.rotate, uvTransform.translate);
-		spriteTransformationMatrixData->WVP = spriteWorldViewProjectionMatrix;
-		spriteTransformationMatrixData->World = spriteWorldMatrix;
-		sphereTransformationMatrixData->WVP = worldViewProjectionMatrix;
-		sphereTransformationMatrixData->World = worldMatrix;
-		spriteMaterialData->uvTransform = uvTransformMatrix;
-		sphereMaterialData->uvTransform = uvTransformMatrix;
-		//------------------------------
-		// インスタンス行列更新
-		//------------------------------
-		for (auto it = particle.begin(); it != particle.end();) {
-			Particle* p = *it;
-
-			p->currentTime += kDeltaTime;
-
-			if (p->currentTime >= p->lifeTime) {
-				delete p;
-				it = particle.erase(it);
-			}
-			else {
-				++it;
-			}
-		}
-		//------------------------------
-		// インスタンス行列更新
-		//------------------------------
-
-		Matrix4x4 viewProjectionMatrix =
-			Multiply(viewMatrix, projectionMatrix);
-
-		for (uint32_t index = 0;
-		     index < particle.size();
-		     ++index) {
-			Particle* currentParticle = particle[index];
-
-			//------------------------------
-			// 位置更新
-
-
-			if (IsCollision(accelerationField.area, currentParticle->transform.translate)) {
-				currentParticle->velocity += accelerationField.acceleration * kDeltaTime;
-			}
-
-			currentParticle->transform.translate += currentParticle->velocity * kDeltaTime;
-			//------------------------------
-			// 行列更新
-			//------------------------------
-
-			currentParticle->color.w = 1.0f - (currentParticle->currentTime / currentParticle->lifeTime);
-			Matrix4x4 scaleMatrix = MakeAffineMatrix(
-				currentParticle->transform.scale,
-				{0.0f, 0.0f, 0.0f},
-				{0.0f, 0.0f, 0.0f}
-			);
-
-			Matrix4x4 translateMatrix = MakeAffineMatrix(
-				{1.0f, 1.0f, 1.0f},
-				{0.0f, 0.0f, 0.0f},
-				currentParticle->transform.translate
-			);
-
-			Matrix4x4 instanceWorldMatrix = Multiply(
-				Multiply(scaleMatrix, billboardMatrix),
-				translateMatrix
-			);
-
-			instancingData[index].WVP =
-				Multiply(instanceWorldMatrix, viewProjectionMatrix);
-
-			instancingData[index].World =
-				instanceWorldMatrix;
-			instancingData[index].color = currentParticle->color;
-		}
+		const Matrix4x4 viewProjectionMatrix = Multiply(viewMatrix, projectionMatrix);
+		gameScene.Update(cameraMatrix, viewProjectionMatrix);
+#ifdef USE_IMGUI
+		ImGui::Render();
+#endif
 		//========================================
 		// 描画処理
 		//========================================
@@ -1540,74 +1076,17 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 		commandList->IASetPrimitiveTopology(
 			D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		commandList->SetGraphicsRootConstantBufferView(
-			0,
-			spriteMaterialResource->GetGPUVirtualAddress());
-
-		commandList->SetGraphicsRootDescriptorTable(
-			1,
-			spriteInstancingSrvHandleGPU);
-
-		commandList->SetGraphicsRootConstantBufferView(
-			2,
-			directionalLightResource->GetGPUVirtualAddress());
-
-		commandList->SetGraphicsRootDescriptorTable(
-			3,
-			textureSrvHandlesGPU[0]);
-
-		commandList->IASetVertexBuffers(
-			0,
-			1,
-			&spriteVertexBufferView);
-
-		commandList->IASetIndexBuffer(
-			&spriteIndexBufferView);
-
-		commandList->DrawIndexedInstanced(
-			_countof(spriteIndices),
-			1,
-			0,
-			0,
-			0);
-
-
-		//------------------------------
-		// 3Dモデル描画
-		//------------------------------
-
-		uint32_t sphereTextureIndex =
-			isMonsterBallTexture ? 1u : 0u;
-
-		commandList->SetGraphicsRootConstantBufferView(
-			0,
-			sphereMaterialResource->GetGPUVirtualAddress());
-
-		commandList->SetGraphicsRootDescriptorTable(
-			1,
-			instancingSrvHandleGPU);
-
-		commandList->SetGraphicsRootConstantBufferView(
-			2,
-			directionalLightResource->GetGPUVirtualAddress());
-
-		commandList->SetGraphicsRootDescriptorTable(
-			3,
-			textureSrvHandlesGPU[sphereTextureIndex]);
-
-		commandList->IASetVertexBuffers(
-			0,
-			1,
-			&modelVertexBufferView);
-
-		commandList->DrawInstanced(
-			static_cast<UINT>(modelData.vertices.size()),
-			static_cast<UINT>(particle.size()),
-			0,
-			0);
+		gameScene.Draw(commandList, particleDrawContext);
 #ifdef USE_IMGUI
-		ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList);
-
+		ImDrawData* drawData = ImGui::GetDrawData();
+		if (drawData->DisplaySize.x > 0.0f && drawData->DisplaySize.y > 0.0f) {
+			// ウィンドウを拡縮しても、UI と3Dプレビューを同じバックバッファに合わせる。
+			drawData->FramebufferScale = {
+				WinApp::kClientWidth / drawData->DisplaySize.x,
+				WinApp::kClientHeight / drawData->DisplaySize.y
+			};
+			ImGui_ImplDX12_RenderDrawData(drawData, commandList);
+		}
 #endif
 
 		directXCommon->PostDraw();
@@ -1615,12 +1094,13 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	//========================================
 	// 終了処理
 	//========================================
-	if (sourceVoice != nullptr) {
-		sourceVoice->Stop(0);
-		sourceVoice->FlushSourceBuffers();
-		sourceVoice->DestroyVoice();
-	}
-	SoundUnload(&soundData);
+	gameScene.Finalize();
+	//if (sourceVoice != nullptr) {
+	//	sourceVoice->Stop(0);
+	//	sourceVoice->FlushSourceBuffers();
+	//	sourceVoice->DestroyVoice();
+	//}
+	//SoundUnload(&soundData);
 
 	if (masterVoice != nullptr) {
 		masterVoice->DestroyVoice();

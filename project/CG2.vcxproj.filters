@@ -104,11 +104,23 @@
     <Filter Include="ソース ファイル\application">
       <UniqueIdentifier>{1424568a-4545-434a-9ebe-e129b6933a5f}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ソース ファイル\application\fireworks">
+      <UniqueIdentifier>{428650b2-4035-4b69-a908-c724a71e4044}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\application">
+      <UniqueIdentifier>{70b3c7d4-e0b9-4ddc-907e-37a056bd2bc7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\application\fireworks">
+      <UniqueIdentifier>{35f7c472-92e1-4173-b922-77f48d6e7766}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include=".editorconfig" />
     <None Include="resources\shaders\Particle.hlsli">
       <Filter>シェーダー ファイル</Filter>
+    </None>
+    <None Include="resources\fireworks\example.fwshow">
+      <Filter>リソース ファイル</Filter>
     </None>
     <None Include="resources\shaders\Objec3d.hlsli">
       <Filter>シェーダー ファイル</Filter>
@@ -152,6 +164,27 @@
     </ClCompile>
     <ClCompile Include="main.cpp">
       <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Engine\src\3d\ParticleEffect.cpp">
+      <Filter>ソース ファイル\engine\3d</Filter>
+    </ClCompile>
+    <ClCompile Include="Application\GameScene.cpp">
+      <Filter>ソース ファイル\application</Filter>
+    </ClCompile>
+    <ClCompile Include="Application\Fireworks\FireworkShow.cpp">
+      <Filter>ソース ファイル\application\fireworks</Filter>
+    </ClCompile>
+    <ClCompile Include="Application\Fireworks\FireworkPresets.cpp">
+      <Filter>ソース ファイル\application\fireworks</Filter>
+    </ClCompile>
+    <ClCompile Include="Application\Fireworks\FireworkPlayer.cpp">
+      <Filter>ソース ファイル\application\fireworks</Filter>
+    </ClCompile>
+    <ClCompile Include="Application\Fireworks\FireworkAudio.cpp">
+      <Filter>ソース ファイル\application\fireworks</Filter>
+    </ClCompile>
+    <ClCompile Include="Application\Fireworks\FireworkEditor.cpp">
+      <Filter>ソース ファイル\application\fireworks</Filter>
     </ClCompile>
     <ClCompile Include="Engine\src\base\CrashHandler.cpp">
       <Filter>ソース ファイル\engine\base</Filter>
@@ -238,6 +271,27 @@
     </ClInclude>
     <ClInclude Include="Engine\include\3d\Model.h">
       <Filter>ヘッダー ファイル\3d</Filter>
+    </ClInclude>
+    <ClInclude Include="Engine\include\3d\ParticleEffect.h">
+      <Filter>ヘッダー ファイル\3d</Filter>
+    </ClInclude>
+    <ClInclude Include="Application\GameScene.h">
+      <Filter>ヘッダー ファイル\application</Filter>
+    </ClInclude>
+    <ClInclude Include="Application\Fireworks\FireworkShow.h">
+      <Filter>ヘッダー ファイル\application\fireworks</Filter>
+    </ClInclude>
+    <ClInclude Include="Application\Fireworks\FireworkPresets.h">
+      <Filter>ヘッダー ファイル\application\fireworks</Filter>
+    </ClInclude>
+    <ClInclude Include="Application\Fireworks\FireworkPlayer.h">
+      <Filter>ヘッダー ファイル\application\fireworks</Filter>
+    </ClInclude>
+    <ClInclude Include="Application\Fireworks\FireworkAudio.h">
+      <Filter>ヘッダー ファイル\application\fireworks</Filter>
+    </ClInclude>
+    <ClInclude Include="Application\Fireworks\FireworkEditor.h">
+      <Filter>ヘッダー ファイル\application\fireworks</Filter>
     </ClInclude>
     <ClInclude Include="Engine\include\motion\StringUtility.h">
       <Filter>ヘッダー ファイル\motion</Filter>

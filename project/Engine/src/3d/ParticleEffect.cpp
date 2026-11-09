@@ -1,13 +1,15 @@
 ﻿#include "3d/ParticleEffect.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <numbers>
 
 #include "math/Vector&Matrix.h"
 
-ParticleEffect::ParticleEffect() : randomEngine_(std::random_device{}()) {}
+ParticleEffect::ParticleEffect() : randomEngine_(std::random_device{}()) {
+}
 
 ParticleEffect::~ParticleEffect() {
 	if (instanceResource_ != nullptr && instanceData_ != nullptr) {
@@ -72,8 +74,13 @@ bool ParticleEffect::Initialize(
 }
 
 bool ParticleEffect::Spawn(const ParticleParameters& parameters) {
+	return Spawn(parameters, 0, 0.0f);
+}
+
+bool ParticleEffect::Spawn(const ParticleParameters& parameters, int elapsedSteps, float stepSeconds) {
+	const double age = static_cast<double>(stepSeconds) * elapsedSteps;
 	if (instanceData_ == nullptr || particles_.size() >= settings_.maxParticles ||
-		parameters.lifeTime <= 0.0f) {
+		elapsedSteps < 0 || !(age >= 0.0 && age < parameters.lifeTime)) {
 		return false;
 	}
 
@@ -83,19 +90,47 @@ bool ParticleEffect::Spawn(const ParticleParameters& parameters) {
 	particle.acceleration = parameters.acceleration;
 	particle.scale = parameters.scale;
 	particle.color = parameters.color;
-	particle.startAlpha = parameters.color.w;
 	particle.lifeTime = parameters.lifeTime;
+	particle.currentTime = parameters.horizontalDrag > 0.0f ? 0.0 : age;
+	particle.trailSeconds = parameters.trailSeconds;
+	particle.fadeStartSeconds = parameters.fadeStartSeconds;
+	particle.horizontalDrag = parameters.horizontalDrag;
+	particle.dragStartSeconds = parameters.dragStartSeconds;
+	particle.lineDirection = parameters.lineDirection;
+	particle.lineLength = parameters.lineLength;
+
+	if (elapsedSteps > 0) {
+		if (particle.horizontalDrag > 0.0f) {
+			// 冠菊の減速は毎フレーム非線形に変わる。再生時と同じ順に進めてシーク位置を揃える。
+			for (int step = 0; step < elapsedSteps; ++step) {
+				particle.currentTime += stepSeconds;
+				AdvanceOneParticle(particle, stepSeconds);
+			}
+		} else {
+			// 通常の等加速度運動はフレーム数から直接復元する。
+			const float elapsed = static_cast<float>(age);
+			particle.position += parameters.velocity * elapsed
+				+ parameters.acceleration * (0.5f * elapsed * (elapsed + stepSeconds));
+			particle.velocity += parameters.acceleration * elapsed;
+		}
+	}
+
 	particles_.push_back(particle);
 	return true;
 }
 
 std::size_t ParticleEffect::Emit(const EmitParameters& parameters) {
+	return Emit(parameters, randomEngine_, 0, 0.0f);
+}
+
+std::size_t ParticleEffect::Emit(const EmitParameters& parameters, std::mt19937& randomEngine,
+                                int elapsedSteps, float stepSeconds) {
 	std::uniform_real_distribution<float> signedRandom(-1.0f, 1.0f);
-	auto vary = [this, &signedRandom](float value, float jitter) {
+	auto vary = [&randomEngine, &signedRandom](float value, float jitter) {
 		if (jitter == 0.0f) {
 			return value;
 		}
-		return value + signedRandom(randomEngine_) * jitter;
+		return value + signedRandom(randomEngine) * jitter;
 	};
 
 	std::size_t emitted = 0;
@@ -104,21 +139,25 @@ std::size_t ParticleEffect::Emit(const EmitParameters& parameters) {
 		particle.position = {
 			vary(particle.position.x, parameters.positionJitter.x),
 			vary(particle.position.y, parameters.positionJitter.y),
-			vary(particle.position.z, parameters.positionJitter.z)};
+			vary(particle.position.z, parameters.positionJitter.z)
+		};
 		particle.velocity = {
 			vary(particle.velocity.x, parameters.velocityJitter.x),
 			vary(particle.velocity.y, parameters.velocityJitter.y),
-			vary(particle.velocity.z, parameters.velocityJitter.z)};
+			vary(particle.velocity.z, parameters.velocityJitter.z)
+		};
 		particle.scale = {
 			vary(particle.scale.x, parameters.scaleJitter.x),
 			vary(particle.scale.y, parameters.scaleJitter.y),
-			vary(particle.scale.z, parameters.scaleJitter.z)};
+			vary(particle.scale.z, parameters.scaleJitter.z)
+		};
 		particle.color = {
 			vary(particle.color.x, parameters.colorJitter.x),
 			vary(particle.color.y, parameters.colorJitter.y),
 			vary(particle.color.z, parameters.colorJitter.z),
-			vary(particle.color.w, parameters.colorJitter.w)};
-		if (!Spawn(particle)) {
+			vary(particle.color.w, parameters.colorJitter.w)
+		};
+		if (!Spawn(particle, elapsedSteps, stepSeconds)) {
 			break;
 		}
 		++emitted;
@@ -126,9 +165,42 @@ std::size_t ParticleEffect::Emit(const EmitParameters& parameters) {
 	return emitted;
 }
 
-void ParticleEffect::Update(float deltaTime, const Matrix4x4& cameraMatrix,
-	const Matrix4x4& viewProjectionMatrix, bool useBillboard) {
-	if (instanceData_ == nullptr || deltaTime <= 0.0f) {
+void ParticleEffect::Clear() {
+	particles_.clear();
+	preparedCount_ = 0;
+}
+
+void ParticleEffect::AdvanceOneParticle(Particle& particle, float deltaTime) {
+	if (particle.horizontalDrag > 0.0f
+		&& particle.currentTime >= particle.dragStartSeconds) {
+		// 球状に開いた後、横の勢いだけを失わせて重力で垂らす。
+		const float damping = std::exp(-particle.horizontalDrag * deltaTime);
+		particle.velocity.x *= damping;
+		particle.velocity.z *= damping;
+	}
+	particle.velocity += particle.acceleration * deltaTime;
+	particle.position += particle.velocity * deltaTime;
+}
+
+void ParticleEffect::Advance(float deltaTime) {
+	if (!(deltaTime > 0.0f)) {
+		return;
+	}
+
+	// 消えた粒子を先に詰め、以降の配列順を GPU のインスタンス番号と一致させる。
+	std::erase_if(particles_, [deltaTime](Particle& particle) {
+		particle.currentTime += deltaTime;
+		return particle.currentTime >= particle.lifeTime;
+	});
+	for (Particle& particle : particles_) {
+		AdvanceOneParticle(particle, deltaTime);
+	}
+}
+
+void ParticleEffect::PrepareDraw(const Matrix4x4& cameraMatrix,
+                                 const Matrix4x4& viewProjectionMatrix, bool useBillboard) {
+	preparedCount_ = 0;
+	if (instanceData_ == nullptr || particles_.empty()) {
 		return;
 	}
 
@@ -142,36 +214,77 @@ void ParticleEffect::Update(float deltaTime, const Matrix4x4& cameraMatrix,
 		billboardMatrix.matrix[3][2] = 0.0f;
 	}
 
-	// 消えた粒子を先に詰め、以降の配列順を GPU のインスタンス番号と一致させる。
-	std::erase_if(particles_, [deltaTime](Particle& particle) {
-		particle.currentTime += deltaTime;
-		return particle.currentTime >= particle.lifeTime;
-	});
+	// カメラから見た板ポリの横・上方向は全粒子で共通。
+	const Vector3 right{
+		billboardMatrix.matrix[0][0],
+		billboardMatrix.matrix[0][1],
+		billboardMatrix.matrix[0][2]
+	};
+	const Vector3 up{
+		billboardMatrix.matrix[1][0],
+		billboardMatrix.matrix[1][1],
+		billboardMatrix.matrix[1][2]
+	};
 
 	for (std::size_t index = 0; index < particles_.size(); ++index) {
-		Particle& particle = particles_[index];
+		const Particle& particle = particles_[index];
+		const float fadeStart = std::clamp(particle.fadeStartSeconds, 0.0f, particle.lifeTime);
+		const float fadeDuration = particle.lifeTime - fadeStart;
+		const float fade = fadeDuration > 0.0f
+			? std::clamp(static_cast<float>((particle.lifeTime - particle.currentTime) / fadeDuration),
+				0.0f, 1.0f)
+			: 1.0f;
 
-		particle.velocity += particle.acceleration * deltaTime;
-		particle.position += particle.velocity * deltaTime;
-		particle.color.w = particle.startAlpha *
-			(1.0f - particle.currentTime / particle.lifeTime);
+		// 固定の光の筋は移動と描画方向を分ける。通常の火花は速度に沿って描く。
+		const bool fixedLine = particle.lineLength > 0.0f;
+		const Vector3 direction = fixedLine ? particle.lineDirection : particle.velocity;
+		float vx = Dot(direction, right);
+		float vy = Dot(direction, up);
+		float speedOnScreen = std::sqrt(vx * vx + vy * vy);
+		float angle = speedOnScreen > 0.001f ? std::atan2(-vx, vy) : 0.0f;
 
-		Matrix4x4 scaleMatrix = MakeAffineMatrix(
-			particle.scale, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f});
-		Matrix4x4 translateMatrix = MakeAffineMatrix(
-			{1.0f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.0f}, particle.position);
+		float width = particle.scale.x * fade;
+		float trailTime = particle.trailSeconds * fade;
+		// 固定線もカメラの奥行き方向へ傾いた分だけ短く見せる。
+		const float worldDirectionLength = fixedLine ? Length(direction) : 0.0f;
+		float length = fixedLine && worldDirectionLength > 0.0f
+			? particle.lineLength * speedOnScreen / worldDirectionLength
+			: speedOnScreen * trailTime;
+		if (length < width) {
+			length = width;
+		}
+
+		// 固定の筋は指定した中点に置き、通常の火花は移動方向の後ろへずらす。
+		Vector3 center = fixedLine ? particle.position
+			: particle.position - particle.velocity * (trailTime * 0.5f);
+
+		// plane.obj は縦横 -1～1 の板なので、全幅・全長の半分を指定
 		Matrix4x4 worldMatrix = Multiply(
-			Multiply(scaleMatrix, billboardMatrix), translateMatrix);
+			Multiply(
+				Multiply(
+					MakeScaleMatrix({width * 0.5f, length * 0.5f, 1.0f}),
+					MakeRotateZMatrix(angle)),
+				billboardMatrix),
+			MakeTranslationMatrix(center));
 		instanceData_[index].WVP = Multiply(worldMatrix, viewProjectionMatrix);
 		instanceData_[index].World = worldMatrix;
-		instanceData_[index].color = particle.color;
+		instanceData_[index].color = {
+			particle.color.x, particle.color.y, particle.color.z, particle.color.w * fade
+		};
 	}
+	preparedCount_ = particles_.size();
+}
+
+void ParticleEffect::Update(float deltaTime, const Matrix4x4& cameraMatrix,
+                            const Matrix4x4& viewProjectionMatrix, bool useBillboard) {
+	Advance(deltaTime);
+	PrepareDraw(cameraMatrix, viewProjectionMatrix, useBillboard);
 }
 
 void ParticleEffect::Draw(
 	ID3D12GraphicsCommandList* commandList, const DrawContext& context) const {
 	if (commandList == nullptr || context.material == nullptr ||
-		context.light == nullptr || particles_.empty()) {
+		context.light == nullptr || preparedCount_ == 0) {
 		return;
 	}
 
@@ -184,7 +297,7 @@ void ParticleEffect::Draw(
 	commandList->SetGraphicsRootDescriptorTable(3, context.texture);
 	commandList->IASetVertexBuffers(0, 1, &context.vertexBuffer);
 	commandList->DrawInstanced(context.vertexCount,
-		static_cast<UINT>(particles_.size()), 0, 0);
+	                           static_cast<UINT>(preparedCount_), 0, 0);
 }
 
 std::size_t ParticleEffect::GetParticleCount() const {

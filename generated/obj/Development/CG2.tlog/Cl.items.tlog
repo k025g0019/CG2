@@ -2,6 +2,12 @@ C:\kogakuin\LE1\CG2\project\Engine\src\base\DirectXCommon.cpp;C:\kogakuin\LE1\CG
 C:\kogakuin\LE1\CG2\project\Engine\src\debug\Logger.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\Logger.obj
 C:\kogakuin\LE1\CG2\project\Engine\src\base\WinApp.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\WinApp.obj
 C:\kogakuin\LE1\CG2\project\Engine\src\base\CrashHandler.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\CrashHandler.obj
+C:\kogakuin\LE1\CG2\project\externals\imgui\imgui.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\imgui.obj
+C:\kogakuin\LE1\CG2\project\externals\imgui\imgui_draw.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\imgui_draw.obj
+C:\kogakuin\LE1\CG2\project\externals\imgui\imgui_impl_dx12.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\imgui_impl_dx12.obj
+C:\kogakuin\LE1\CG2\project\externals\imgui\imgui_impl_win32.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\imgui_impl_win32.obj
+C:\kogakuin\LE1\CG2\project\externals\imgui\imgui_tables.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\imgui_tables.obj
+C:\kogakuin\LE1\CG2\project\externals\imgui\imgui_widgets.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\imgui_widgets.obj
 C:\kogakuin\LE1\CG2\project\Engine\src\debug\Imgui.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\imgui_helper.obj
 C:\kogakuin\LE1\CG2\project\Engine\src\input\Input.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\Input.obj
 C:\kogakuin\LE1\CG2\project\Engine\src\debug\Log.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\Log.obj
@@ -9,6 +15,12 @@ C:\kogakuin\LE1\CG2\project\main.cpp;C:\kogakuin\LE1\CG2\generated\obj\Developme
 C:\kogakuin\LE1\CG2\project\Engine\src\math\Matrix.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\Matrix.obj
 C:\kogakuin\LE1\CG2\project\Engine\src\3d\Model.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\Model.obj
 C:\kogakuin\LE1\CG2\project\Engine\src\3d\ParticleEffect.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\ParticleEffect.obj
+C:\kogakuin\LE1\CG2\project\Application\GameScene.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\GameScene.obj
+C:\kogakuin\LE1\CG2\project\Application\Fireworks\FireworkShow.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\FireworkShow.obj
+C:\kogakuin\LE1\CG2\project\Application\Fireworks\FireworkPresets.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\FireworkPresets.obj
+C:\kogakuin\LE1\CG2\project\Application\Fireworks\FireworkPlayer.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\FireworkPlayer.obj
+C:\kogakuin\LE1\CG2\project\Application\Fireworks\FireworkAudio.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\FireworkAudio.obj
+C:\kogakuin\LE1\CG2\project\Application\Fireworks\FireworkEditor.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\FireworkEditor.obj
 C:\kogakuin\LE1\CG2\project\Engine\src\motion\StringUtility.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\StringUtility.obj
 C:\kogakuin\LE1\CG2\project\Engine\src\math\Vector&Matrix.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\Vector&Matrix.obj
 C:\kogakuin\LE1\CG2\project\Engine\src\math\Vector.cpp;C:\kogakuin\LE1\CG2\generated\obj\Development\Vector.obj

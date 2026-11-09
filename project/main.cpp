@@ -1,4 +1,4 @@
-#pragma warning(push, 0)
+﻿#pragma warning(push, 0)
 #include <Windows.h>
 #include <array>
 #include <cassert>
@@ -22,7 +22,6 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
-#include <numbers>
 #include <sdkddkver.h>
 #include <sstream>
 #include <string>
@@ -34,6 +33,7 @@
 #include <execution>
 
 #include "3d/ParticleEffect.h"
+#include "Application/GameScene.h"
 #include "base/CrashHandler.h"
 #include "base/DirectXCommon.h"
 #include "base/WinApp.h"
@@ -101,11 +101,6 @@ namespace {
 		Vector4 color;
 		Vector3 direction;
 		float intensity;
-	};
-
-	struct Sprite {
-		Vector2 position;
-		Vector2 size;
 	};
 
 	//------------------------------
@@ -563,12 +558,6 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	std::tm localTime{};
 	localtime_s(&localTime, &now);
 
-	// デルタタイムを固定することで、処理速度に依存せずに一定の速度で動作するようにする。
-	constexpr float kDeltaTime = 1.0f / 60.0f;
-	constexpr float kFountainEmissionInterval = 0.0005f;
-	float fountainEmissionTime = 0.0f;
-	std::string black = "resources/black.png";
-	std::string white = "resources/white.png";
 	std::string dateString = std::format(
 		"{:04}{:02}{:02}_{:02}{:02}{:02}",
 		localTime.tm_year + 1900,
@@ -767,27 +756,16 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	//------------------------------
 	// マテリアル・ライト初期化
 	//------------------------------
-	ComPtr<ID3D12Resource> spriteMaterialResource;
-	spriteMaterialResource.Attach(CreateBufferResource(device, sizeof(Material)));
-	Material* spriteMaterialData = nullptr;
-	spriteMaterialResource->Map(0, nullptr, reinterpret_cast<void**>(&spriteMaterialData));
-	spriteMaterialData->color = {1.0f, 1.0f, 1.0f, 1.0f};
-	spriteMaterialData->enableLighting = FALSE;
-	spriteMaterialData->padding[0] = 0.0f;
-	spriteMaterialData->padding[1] = 0.0f;
-	spriteMaterialData->padding[2] = 0.0f;
-	spriteMaterialData->uvTransform = MakeIdentity4x4();
-
-	ComPtr<ID3D12Resource> sphereMaterialResource;
-	sphereMaterialResource.Attach(CreateBufferResource(device, sizeof(Material)));
-	Material* sphereMaterialData = nullptr;
-	sphereMaterialResource->Map(0, nullptr, reinterpret_cast<void**>(&sphereMaterialData));
-	sphereMaterialData->color = {1.0f, 1.0f, 1.0f, 1.0f};
-	sphereMaterialData->enableLighting = TRUE;
-	sphereMaterialData->padding[0] = 0.0f;
-	sphereMaterialData->padding[1] = 0.0f;
-	sphereMaterialData->padding[2] = 0.0f;
-	sphereMaterialData->uvTransform = MakeIdentity4x4();
+	ComPtr<ID3D12Resource> particleMaterialResource;
+	particleMaterialResource.Attach(CreateBufferResource(device, sizeof(Material)));
+	Material* particleMaterialData = nullptr;
+	particleMaterialResource->Map(0, nullptr, reinterpret_cast<void**>(&particleMaterialData));
+	*particleMaterialData = {
+		.color = {1.0f, 1.0f, 1.0f, 1.0f},
+		.enableLighting = TRUE,
+		.padding = {0.0f, 0.0f, 0.0f},
+		.uvTransform = MakeIdentity4x4()
+	};
 
 	ComPtr<ID3D12Resource> directionalLightResource;
 	directionalLightResource.Attach(CreateBufferResource(device, sizeof(DirectionalLight)));
@@ -797,83 +775,11 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	directionalLightData->direction = {0.0f, -1.0f, 0.0f};
 	directionalLightData->intensity = 1.0f;
 
-	// スプライト用のインスタンス行列バッファ。
-	ComPtr<ID3D12Resource> spriteTransformationMatrixResource;
-	spriteTransformationMatrixResource.Attach(
-		CreateBufferResource(device, sizeof(ParticleInstanceData)));
-	ParticleInstanceData* spriteTransformationMatrixData = nullptr;
-	spriteTransformationMatrixResource->Map(
-		0, nullptr, reinterpret_cast<void**>(&spriteTransformationMatrixData));
-	spriteTransformationMatrixData->WVP = MakeIdentity4x4();
-	spriteTransformationMatrixData->World = MakeIdentity4x4();
-	spriteTransformationMatrixData->color = {1.0f, 1.0f, 1.0f, 1.0f};
-	ComPtr<ID3D12Resource> sphereTransformationMatrixResource;
-	sphereTransformationMatrixResource.Attach(
-		CreateBufferResource(device, sizeof(ParticleInstanceData)));
-	ParticleInstanceData* sphereTransformationMatrixData = nullptr;
-	sphereTransformationMatrixResource->Map(
-		0, nullptr, reinterpret_cast<void**>(&sphereTransformationMatrixData));
-	sphereTransformationMatrixData->WVP = MakeIdentity4x4();
-	sphereTransformationMatrixData->World = MakeIdentity4x4();
-	sphereTransformationMatrixData->color = {1.0f, 1.0f, 1.0f, 1.0f};
-
-	//------------------------------
-	// インスタンシングSRV初期化
-	//------------------------------
-
-	constexpr UINT kModelInstancingSrvIndex = 4;
-	constexpr UINT kSpriteInstancingSrvIndex = 5;
-
-	ParticleEffect particleEffect;
-	ParticleEffect::Settings particleSettings{};
-	if (!particleEffect.Initialize(
-		device, srvDescriptorHeap, srvDescriptorSize,
-		kModelInstancingSrvIndex, particleSettings)) {
+	constexpr UINT kParticleSrvIndex = 4;
+	GameScene gameScene;
+	if (!gameScene.Initialize(device, srvDescriptorHeap, srvDescriptorSize, kParticleSrvIndex, xAudio2)) {
 		return 1;
 	}
-	ParticleEffect::EmitParameters fountainParameters{};
-	fountainParameters.particle.position = {0.0f, 0.0f, 0.0f};
-	fountainParameters.positionJitter = {0.1f, 0.1f, 0.1f};
-	fountainParameters.particle.velocity = {0.0f, 12.5f, 0.0f};
-	fountainParameters.velocityJitter = {1.0f, 7.5f, 1.0f};
-	fountainParameters.particle.acceleration = {0.0f, -9.8f, 0.0f};
-	fountainParameters.particle.scale = {0.5f, 0.5f, 0.5f};
-	fountainParameters.scaleJitter = {0.5f, 0.5f, 0.5f};
-	fountainParameters.particle.color = {0.7f, 0.0f, 0.0f, 1.0f};
-	fountainParameters.colorJitter = {0.3f, 0.0f, 0.0f, 0.0f};
-	fountainParameters.particle.lifeTime = 1.0f;
-
-
-	//------------------------------
-	// Sprite用SRV作成
-	//------------------------------
-
-	D3D12_SHADER_RESOURCE_VIEW_DESC spriteInstancingSrvDesc{};
-	spriteInstancingSrvDesc.Format = DXGI_FORMAT_UNKNOWN;
-	spriteInstancingSrvDesc.Shader4ComponentMapping =
-		D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-	spriteInstancingSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-	spriteInstancingSrvDesc.Buffer.FirstElement = 0;
-	spriteInstancingSrvDesc.Buffer.NumElements = 1;
-	spriteInstancingSrvDesc.Buffer.StructureByteStride = sizeof(ParticleInstanceData);
-	spriteInstancingSrvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
-
-	D3D12_CPU_DESCRIPTOR_HANDLE spriteInstancingSrvHandleCPU =
-		GetCPUDescriptorHandle(
-			srvDescriptorHeap,
-			srvDescriptorSize,
-			kSpriteInstancingSrvIndex);
-
-	D3D12_GPU_DESCRIPTOR_HANDLE spriteInstancingSrvHandleGPU =
-		GetGPUDescriptorHandle(
-			srvDescriptorHeap,
-			srvDescriptorSize,
-			kSpriteInstancingSrvIndex);
-
-	device->CreateShaderResourceView(
-		spriteTransformationMatrixResource.Get(),
-		&spriteInstancingSrvDesc,
-		spriteInstancingSrvHandleCPU);
 
 	//------------------------------
 	// ルートシグネチャ生成
@@ -920,10 +826,10 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
 	blendDesc.RenderTarget[0].BlendEnable = TRUE;
 	blendDesc.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
-	blendDesc.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+	blendDesc.RenderTarget[0].DestBlend = D3D12_BLEND_ONE;
 	blendDesc.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
 	blendDesc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
-	blendDesc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
+	blendDesc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ONE;
 	blendDesc.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
 
 	D3D12_RASTERIZER_DESC rasterizerDesc{};
@@ -971,120 +877,13 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	//------------------------------
 	ModelData modelData = LoadObjFile("resources", "plane.obj");
 
-	//------------------------------
-	// 球頂点生成
-	//------------------------------
-	constexpr uint32_t kSubdivision = 64;
-	constexpr float kLonEvery = 2.0f * std::numbers::pi_v<float> / static_cast<float>(kSubdivision);
-	constexpr float kLatEvery = std::numbers::pi_v<float> / static_cast<float>(kSubdivision);
-
-	std::vector<VertexData> vertices;
-	vertices.reserve(kSubdivision * kSubdivision * 6);
-	for (uint32_t latIndex = 0; latIndex < kSubdivision; ++latIndex) {
-		float lat = -std::numbers::pi_v<float> / 2.0f + kLatEvery * static_cast<float>(latIndex);
-		float latNext = lat + kLatEvery;
-
-		for (uint32_t lonIndex = 0; lonIndex < kSubdivision; ++lonIndex) {
-			float lon = kLonEvery * static_cast<float>(lonIndex) + std::numbers::pi_v<float>;
-			float lonNext = lon + kLonEvery;
-
-			float u0 = static_cast<float>(lonIndex) / static_cast<float>(kSubdivision);
-			float u1 = static_cast<float>(lonIndex + 1) / static_cast<float>(kSubdivision);
-			float v0 = 1.0f - static_cast<float>(latIndex) / static_cast<float>(kSubdivision);
-			float v1 = 1.0f - static_cast<float>(latIndex + 1) / static_cast<float>(kSubdivision);
-
-			VertexData a{
-				{std::cos(lat) * std::cos(lon), std::sin(lat), std::cos(lat) * std::sin(lon), 1.0f},
-				{u0, v0},
-				Normalize({std::cos(lat) * std::cos(lon), std::sin(lat), std::cos(lat) * std::sin(lon)})
-			};
-			VertexData b{
-				{std::cos(latNext) * std::cos(lon), std::sin(latNext), std::cos(latNext) * std::sin(lon), 1.0f},
-				{u0, v1},
-				Normalize({std::cos(latNext) * std::cos(lon), std::sin(latNext), std::cos(latNext) * std::sin(lon)})
-			};
-			VertexData c{
-				{std::cos(lat) * std::cos(lonNext), std::sin(lat), std::cos(lat) * std::sin(lonNext), 1.0f},
-				{u1, v0},
-				Normalize({std::cos(lat) * std::cos(lonNext), std::sin(lat), std::cos(lat) * std::sin(lonNext)})
-			};
-			VertexData d{
-				{std::cos(latNext) * std::cos(lonNext), std::sin(latNext), std::cos(latNext) * std::sin(lonNext), 1.0f},
-				{u1, v1},
-				Normalize(
-					{std::cos(latNext) * std::cos(lonNext), std::sin(latNext), std::cos(latNext) * std::sin(lonNext)})
-			};
-
-			vertices.push_back(a);
-			vertices.push_back(b);
-			vertices.push_back(c);
-			vertices.push_back(c);
-			vertices.push_back(b);
-			vertices.push_back(d);
-		}
-	}
-
-	//------------------------------
-	// Sprite頂点・インデックス定義
-	//------------------------------
-	Sprite sprite{
-		.position = {128.0f, 128.0f},
-		.size = {256.0f, 256.0f}
-	};
-	VertexData spriteVertices[] = {
-		{{-0.5f, -0.5f, 0.0f, 1.0f}, {0.0f, 1.0f}, {0.0f, 0.0f, -1.0f}},
-		{{-0.5f, 0.5f, 0.0f, 1.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, -1.0f}},
-		{{0.5f, -0.5f, 0.0f, 1.0f}, {1.0f, 1.0f}, {0.0f, 0.0f, -1.0f}},
-		{{0.5f, 0.5f, 0.0f, 1.0f}, {1.0f, 0.0f}, {0.0f, 0.0f, -1.0f}},
-	};
-	uint32_t spriteIndices[] = {
-		0, 1, 2,
-		2, 1, 3,
-	};
-
-
-	//------------------------------
-	// Transform初期化
-	//------------------------------
-	Transforms transform{
-		.scale = {0.55f, 0.55f, 0.55f},
-		.rotate = {0.0f, 0.0f, 0.0f},
-		.translate = {0.0f, 0.0f, 0.0f}
-	};
-	Transforms spriteTransform{
-		.scale = {sprite.size.x, sprite.size.y, 1.0f},
-		.rotate = {0.0f, 0.0f, 0.0f},
-		.translate = {sprite.position.x, sprite.position.y, 0.0f}
-	};
+	// 発射位置と開花位置を同時に見られるショー用の初期視点。
+	constexpr Vector3 kShowCameraPosition{1.5f, 9.0f, -80.0f};
 	Transforms cameraTransform{
 		.scale = {1.0f, 1.0f, 1.0f},
 		.rotate = {0.0f, 0.0f, 0.0f},
-		.translate = {0.0f, 0.0f, -10.0f}
+		.translate = kShowCameraPosition
 	};
-	Transforms uvTransform{
-		.scale = {1.0f, 1.0f, 1.0f},
-		.rotate = {0.0f, 0.0f, 0.0f},
-		.translate = {0.0f, 0.0f, 0.0f}
-	};
-	bool isMonsterBallTexture = true;
-	bool useBillboard = true;
-	//------------------------------
-	// 頂点・インデックスバッファ初期化
-	//------------------------------
-
-
-	ComPtr<ID3D12Resource> vertexResource;
-	vertexResource.Attach(CreateBufferResource(device, sizeof(VertexData) * vertices.size()));
-
-	VertexData* mappedVertexData = nullptr;
-	hr = vertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedVertexData));
-	assert(SUCCEEDED(hr));
-	std::memcpy(mappedVertexData, vertices.data(), sizeof(VertexData) * vertices.size());
-
-	D3D12_VERTEX_BUFFER_VIEW vertexBufferView{};
-	vertexBufferView.BufferLocation = vertexResource->GetGPUVirtualAddress();
-	vertexBufferView.SizeInBytes = static_cast<UINT>(sizeof(VertexData) * vertices.size());
-	vertexBufferView.StrideInBytes = sizeof(VertexData);
 
 	ComPtr<ID3D12Resource> modelVertexResource;
 	modelVertexResource.Attach(CreateBufferResource(
@@ -1100,40 +899,10 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	modelVertexBufferView.SizeInBytes = static_cast<UINT>(sizeof(VertexData) * modelData.vertices.size());
 	modelVertexBufferView.StrideInBytes = sizeof(VertexData);
 
-	// Sprite 用の頂点バッファも別途作成しておく
-	ComPtr<ID3D12Resource> spriteVertexResource;
-	spriteVertexResource.Attach(CreateBufferResource(device, sizeof(spriteVertices)));
-	VertexData* mappedSpriteVertexData = nullptr;
-	hr = spriteVertexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedSpriteVertexData));
-	assert(SUCCEEDED(hr));
-	std::memcpy(mappedSpriteVertexData, spriteVertices, sizeof(spriteVertices));
-
-	D3D12_VERTEX_BUFFER_VIEW spriteVertexBufferView{};
-	spriteVertexBufferView.BufferLocation = spriteVertexResource->GetGPUVirtualAddress();
-	spriteVertexBufferView.SizeInBytes = sizeof(spriteVertices);
-	spriteVertexBufferView.StrideInBytes = sizeof(VertexData);
-
-	ComPtr<ID3D12Resource> spriteIndexResource;
-	spriteIndexResource.Attach(CreateBufferResource(device, sizeof(spriteIndices)));
-	uint32_t* mappedSpriteIndexData = nullptr;
-	hr = spriteIndexResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedSpriteIndexData));
-	assert(SUCCEEDED(hr));
-	std::memcpy(mappedSpriteIndexData, spriteIndices, sizeof(spriteIndices));
-
-	D3D12_INDEX_BUFFER_VIEW spriteIndexBufferView{};
-	spriteIndexBufferView.BufferLocation = spriteIndexResource->GetGPUVirtualAddress();
-	spriteIndexBufferView.SizeInBytes = sizeof(spriteIndices);
-	spriteIndexBufferView.Format = DXGI_FORMAT_R32_UINT;
-
-
 	//------------------------------
 	// テクスチャリソース初期化
 	//------------------------------
-	std::wstring textureFilePaths[] = {
-		L"resources/hosi.png",
-		L"resources/hosi.png",
-		StringUtility::ConvertString(modelData.material.textureFilePath),
-	};
+	std::wstring textureFilePaths[] = {L"resources/hosi.png"};
 	DirectX::ScratchImage mipImages[_countof(textureFilePaths)];
 	DirectX::TexMetadata textureMetadatas[_countof(textureFilePaths)];
 	std::array<ComPtr<ID3D12Resource>, _countof(textureFilePaths)> textureResources{};
@@ -1151,17 +920,10 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		cameraTransform.scale, cameraTransform.rotate, cameraTransform.translate);
 	Matrix4x4 viewMatrix = Inverse(cameraMatrix);
 	Matrix4x4 projectionMatrix = MakePerspectiveFovMatrix(
-		0.45f,
+		0.65f,
 		static_cast<float>(WinApp::kClientWidth) / static_cast<float>(WinApp::kClientHeight),
 		0.1f,
-		100.0f);
-	Matrix4x4 spriteProjectionMatrix = MakeOrthographicMatrix(
-		0.0f,
-		0.0f,
-		static_cast<float>(WinApp::kClientWidth),
-		static_cast<float>(WinApp::kClientHeight),
-		0.0f,
-		100.0f);
+		200.0f);
 	constexpr float cameraMoveSpeed = 0.1f;
 	constexpr float cameraRotateSpeed = 0.02f;
 
@@ -1198,6 +960,13 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 	directXCommon->ExecuteCommandListAndWait();
 
+	const ParticleEffect::DrawContext particleDrawContext{
+		.material = particleMaterialResource.Get(),
+		.light = directionalLightResource.Get(),
+		.texture = textureSrvHandlesGPU[0],
+		.vertexBuffer = modelVertexBufferView,
+		.vertexCount = static_cast<UINT>(modelData.vertices.size())
+	};
 
 	//========================================
 	// メインループ
@@ -1216,69 +985,63 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		//------------------------------
 		input->Update();
 
-		if (input->PushKey(DIK_ESCAPE)) {
-			PostQuitMessage(0);
-		}
-
-		if (input->PushKey(DIK_LEFT)) {
-			cameraTransform.rotate.y -= cameraRotateSpeed;
-		}
-		if (input->PushKey(DIK_RIGHT)) {
-			cameraTransform.rotate.y += cameraRotateSpeed;
-		}
-		if (input->PushKey(DIK_UP)) {
-			cameraTransform.rotate.x -= cameraRotateSpeed;
-		}
-		if (input->PushKey(DIK_DOWN)) {
-			cameraTransform.rotate.x += cameraRotateSpeed;
-		}
-
-		if (input->PushKey(DIK_A)) {
-			cameraTransform.translate.x -= cameraMoveSpeed;
-		}
-		if (input->PushKey(DIK_D)) {
-			cameraTransform.translate.x += cameraMoveSpeed;
-		}
-		if (input->PushKey(DIK_Q)) {
-			cameraTransform.translate.y += cameraMoveSpeed;
-		}
-		if (input->PushKey(DIK_E)) {
-			cameraTransform.translate.y -= cameraMoveSpeed;
-		}
-		if (input->PushKey(DIK_W)) {
-			cameraTransform.translate.z += cameraMoveSpeed;
-		}
-		if (input->PushKey(DIK_S)) {
-			cameraTransform.translate.z -= cameraMoveSpeed;
-		}
-
-		bool isReturnTrigger = input->TriggerKey(DIK_RETURN);
-		if (isReturnTrigger) {
-			uvTransform.translate = {0.0f, 0.0f, 0.0f};
-			cameraTransform.rotate = {0.0f, 0.0f, 0.0f};
-			cameraTransform.translate = {0.0f, 0.0f, -5.0f};
-		}
-
 #ifdef USE_IMGUI
 		ImGui_ImplDX12_NewFrame();
 		ImGui_ImplWin32_NewFrame();
 		ImGui::NewFrame();
-
-		ImGui::Begin("Settings");
-		ImGui::Checkbox("useBillboard", &useBillboard);
-		ImGui::End();
-
-		ImGui::Render();
+		if (input->TriggerKey(DIK_F1)) {
+			gameScene.ToggleEditor();
+		}
+		const bool editorCapturesKeyboard = ImGui::GetIO().WantCaptureKeyboard;
+#else
+		constexpr bool editorCapturesKeyboard = false;
 #endif
 
-		fountainEmissionTime += kDeltaTime;
-		std::size_t emitCount = 0;
-		while (fountainEmissionTime >= kFountainEmissionInterval) {
-			fountainEmissionTime -= kFountainEmissionInterval;
-			++emitCount;
+		if (!editorCapturesKeyboard) {
+			if (input->TriggerKey(DIK_ESCAPE)) {
+				PostQuitMessage(0);
+			}
+			if (input->TriggerKey(DIK_SPACE)) {
+				gameScene.TogglePlayback();
+			}
+
+			if (input->PushKey(DIK_LEFT)) {
+				cameraTransform.rotate.y -= cameraRotateSpeed;
+			}
+			if (input->PushKey(DIK_RIGHT)) {
+				cameraTransform.rotate.y += cameraRotateSpeed;
+			}
+			if (input->PushKey(DIK_UP)) {
+				cameraTransform.rotate.x -= cameraRotateSpeed;
+			}
+			if (input->PushKey(DIK_DOWN)) {
+				cameraTransform.rotate.x += cameraRotateSpeed;
+			}
+
+			if (input->PushKey(DIK_A)) {
+				cameraTransform.translate.x -= cameraMoveSpeed;
+			}
+			if (input->PushKey(DIK_D)) {
+				cameraTransform.translate.x += cameraMoveSpeed;
+			}
+			if (input->PushKey(DIK_Q)) {
+				cameraTransform.translate.y += cameraMoveSpeed;
+			}
+			if (input->PushKey(DIK_E)) {
+				cameraTransform.translate.y -= cameraMoveSpeed;
+			}
+			if (input->PushKey(DIK_W)) {
+				cameraTransform.translate.z += cameraMoveSpeed;
+			}
+			if (input->PushKey(DIK_S)) {
+				cameraTransform.translate.z -= cameraMoveSpeed;
+			}
+
+			if (input->TriggerKey(DIK_RETURN)) {
+				cameraTransform.rotate = {0.0f, 0.0f, 0.0f};
+				cameraTransform.translate = kShowCameraPosition;
+			}
 		}
-		fountainParameters.count = emitCount;
-		particleEffect.Emit(fountainParameters);
 
 		//------------------------------
 		// 座標・シェーダー入力更新
@@ -1291,23 +1054,11 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 		viewMatrix = Inverse(cameraMatrix);
 
-		Matrix4x4 spriteWorldMatrix = MakeAffineMatrix(
-			spriteTransform.scale, spriteTransform.rotate, spriteTransform.translate);
-		Matrix4x4 spriteWorldViewProjectionMatrix = Multiply(spriteWorldMatrix, spriteProjectionMatrix);
-		Matrix4x4 worldMatrix = MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
-
-		Matrix4x4 worldViewProjectionMatrix = Multiply(worldMatrix, Multiply(viewMatrix, projectionMatrix));
-		Matrix4x4 uvTransformMatrix = MakeAffineMatrix(
-			uvTransform.scale, uvTransform.rotate, uvTransform.translate);
-		spriteTransformationMatrixData->WVP = spriteWorldViewProjectionMatrix;
-		spriteTransformationMatrixData->World = spriteWorldMatrix;
-		sphereTransformationMatrixData->WVP = worldViewProjectionMatrix;
-		sphereTransformationMatrixData->World = worldMatrix;
-		spriteMaterialData->uvTransform = uvTransformMatrix;
-		sphereMaterialData->uvTransform = uvTransformMatrix;
-		Matrix4x4 viewProjectionMatrix =
-			Multiply(viewMatrix, projectionMatrix);
-		particleEffect.Update(kDeltaTime, cameraMatrix, viewProjectionMatrix, useBillboard);
+		const Matrix4x4 viewProjectionMatrix = Multiply(viewMatrix, projectionMatrix);
+		gameScene.Update(cameraMatrix, viewProjectionMatrix);
+#ifdef USE_IMGUI
+		ImGui::Render();
+#endif
 		//========================================
 		// 描画処理
 		//========================================
@@ -1325,55 +1076,17 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 		commandList->IASetPrimitiveTopology(
 			D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		commandList->SetGraphicsRootConstantBufferView(
-			0,
-			spriteMaterialResource->GetGPUVirtualAddress());
-
-		commandList->SetGraphicsRootDescriptorTable(
-			1,
-			spriteInstancingSrvHandleGPU);
-
-		commandList->SetGraphicsRootConstantBufferView(
-			2,
-			directionalLightResource->GetGPUVirtualAddress());
-
-		commandList->SetGraphicsRootDescriptorTable(
-			3,
-			textureSrvHandlesGPU[0]);
-
-		commandList->IASetVertexBuffers(
-			0,
-			1,
-			&spriteVertexBufferView);
-
-		commandList->IASetIndexBuffer(
-			&spriteIndexBufferView);
-
-		commandList->DrawIndexedInstanced(
-			_countof(spriteIndices),
-			1,
-			0,
-			0,
-			0);
-
-
-		//------------------------------
-		// パーティクル描画
-		//------------------------------
-
-		uint32_t sphereTextureIndex =
-			isMonsterBallTexture ? 1u : 0u;
-
-		ParticleEffect::DrawContext particleDrawContext{};
-		particleDrawContext.material = sphereMaterialResource.Get();
-		particleDrawContext.light = directionalLightResource.Get();
-		particleDrawContext.texture = textureSrvHandlesGPU[sphereTextureIndex];
-		particleDrawContext.vertexBuffer = modelVertexBufferView;
-		particleDrawContext.vertexCount = static_cast<UINT>(modelData.vertices.size());
-		particleEffect.Draw(commandList, particleDrawContext);
+		gameScene.Draw(commandList, particleDrawContext);
 #ifdef USE_IMGUI
-		ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList);
-
+		ImDrawData* drawData = ImGui::GetDrawData();
+		if (drawData->DisplaySize.x > 0.0f && drawData->DisplaySize.y > 0.0f) {
+			// ウィンドウを拡縮しても、UI と3Dプレビューを同じバックバッファに合わせる。
+			drawData->FramebufferScale = {
+				WinApp::kClientWidth / drawData->DisplaySize.x,
+				WinApp::kClientHeight / drawData->DisplaySize.y
+			};
+			ImGui_ImplDX12_RenderDrawData(drawData, commandList);
+		}
 #endif
 
 		directXCommon->PostDraw();
@@ -1381,6 +1094,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	//========================================
 	// 終了処理
 	//========================================
+	gameScene.Finalize();
 	//if (sourceVoice != nullptr) {
 	//	sourceVoice->Stop(0);
 	//	sourceVoice->FlushSourceBuffers();

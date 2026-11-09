@@ -1,4 +1,4 @@
-#include "base/DirectXCommon.h"
+﻿#include "base/DirectXCommon.h"
 
 #include "base/WinApp.h"
 #include "debug/Logger.h"
@@ -633,6 +633,17 @@ void DirectXCommon::InitializeImGui() {
 
 	ImGui::CreateContext();
 	ImGui::StyleColorsDark();
+	ImGuiStyle& style = ImGui::GetStyle();
+	// 編集画面の文字と操作領域を、1280x720 のプレビューでも読める大きさにする。
+	style.FontSizeBase = 18.0f;
+	style.WindowPadding = {12.0f, 10.0f};
+	style.FramePadding = {10.0f, 6.0f};
+	style.ItemSpacing = {9.0f, 8.0f};
+	style.Colors[ImGuiCol_Text] = {0.97f, 0.98f, 1.0f, 1.0f};
+	style.Colors[ImGuiCol_TextDisabled] = {0.76f, 0.81f, 0.89f, 1.0f};
+	style.Colors[ImGuiCol_WindowBg] = {0.055f, 0.075f, 0.11f, 0.97f};
+	style.Colors[ImGuiCol_PopupBg] = {0.08f, 0.10f, 0.15f, 1.0f};
+	style.Colors[ImGuiCol_FrameBg] = {0.16f, 0.20f, 0.27f, 1.0f};
 
 	const bool win32Result =
 		ImGui_ImplWin32_Init(winApp_->GetHwnd());
@@ -651,6 +662,28 @@ void DirectXCommon::InitializeImGui() {
 	assert(dx12Result);
 
 	ImGuiIO& io = ImGui::GetIO();
+	// 日本語を表示できる Windows 標準フォントを使う。見つからない環境では英数字の標準フォントに戻す。
+	ImFontConfig fontConfig{};
+	fontConfig.SizePixels = style.FontSizeBase;
+	ImFont* editorFont = nullptr;
+	char windowsDirectory[MAX_PATH]{};
+	const UINT directoryLength = GetWindowsDirectoryA(windowsDirectory, MAX_PATH);
+	if (directoryLength > 0 && directoryLength < MAX_PATH) {
+		const char* fontNames[] = {"meiryo.ttc", "YuGothM.ttc", "msgothic.ttc"};
+		for (const char* fontName : fontNames) {
+			const std::string fontPath = std::string(windowsDirectory) + "\\Fonts\\" + fontName;
+			if (GetFileAttributesA(fontPath.c_str()) != INVALID_FILE_ATTRIBUTES) {
+				editorFont = io.Fonts->AddFontFromFileTTF(fontPath.c_str(),
+					style.FontSizeBase, &fontConfig, io.Fonts->GetGlyphRangesJapanese());
+				if (editorFont != nullptr) {
+					break;
+				}
+			}
+		}
+	}
+	if (editorFont == nullptr) {
+		io.Fonts->AddFontDefaultVector(&fontConfig);
+	}
 	io.Fonts->Build();
 
 	isImGuiInitialized_ = true;

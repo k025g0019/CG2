@@ -1,8 +1,11 @@
 ﻿#include "Application/GameScene.h"
 #include "Application/Fireworks/FireworkPresets.h"
+#include "2d/SpriteCommon.h"
+#include "base/TextureManager.h"
 #include "motion/StringUtility.h"
 
 #include <cstring>
+#include <stdexcept>
 #include <utility>
 
 bool GameScene::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* srvHeap,
@@ -40,7 +43,40 @@ bool GameScene::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* srvHeap,
 	return true;
 }
 
+void GameScene::InitializeSprites(SpriteCommon* spriteCommon, TextureManager* textureManager) {
+	if (spriteCommon == nullptr || textureManager == nullptr || spriteCommon_ != nullptr) {
+		throw std::logic_error("GameScene::InitializeSprites: invalid initialization");
+	}
+	spriteCommon_ = spriteCommon;
+	// 同じパスで2枚作っても、TextureManagerは画像の読込・GPU転送を繰り返さない。
+	sprites_[0].Initialize(spriteCommon, textureManager, "resources/uvChecker.png");
+	sprites_[0].SetPosition({32.0f, 32.0f});
+	sprites_[0].SetSize({256.0f, 256.0f});
+
+	sprites_[1].Initialize(spriteCommon, textureManager, "resources/uvChecker.png");
+	sprites_[1].SetTextureRect({256.0f, 0.0f}, {256.0f, 256.0f});
+	sprites_[1].SetSize({192.0f, 192.0f});
+	sprites_[1].SetAnchorPoint({0.5f, 0.5f});
+	sprites_[1].SetPosition({420.0f, 160.0f});
+	sprites_[1].SetRotation(0.25f);
+	sprites_[1].SetIsFlipX(true);
+	sprites_[1].SetIsFlipY(true);
+	sprites_[1].SetColor({0.75f, 1.0f, 1.0f, 0.8f});
+
+	sprites_[2].Initialize(spriteCommon, textureManager, "resources/monsterBall.png");
+	sprites_[2].SetPosition({568.0f, 32.0f});
+	sprites_[2].SetSize({240.0f, 120.0f});
+	for (Sprite& sprite : sprites_) {
+		sprite.Update();
+	}
+}
+
 void GameScene::Update(const Matrix4x4& cameraMatrix, const Matrix4x4& viewProjection) {
+	if (spritesVisible_ && spriteCommon_ != nullptr) {
+		for (Sprite& sprite : sprites_) {
+			sprite.Update();
+		}
+	}
 	const auto now = Clock::now();
 	const double deltaSeconds = previousTime_ == Clock::time_point{}
 		? 0.0 : std::chrono::duration<double>(now - previousTime_).count();
@@ -78,14 +114,30 @@ void GameScene::Update(const Matrix4x4& cameraMatrix, const Matrix4x4& viewProje
 void GameScene::Draw(ID3D12GraphicsCommandList* commandList,
                      const ParticleEffect::DrawContext& context) const {
 	particles_.Draw(commandList, context);
+	if (spritesVisible_ && spriteCommon_ != nullptr) {
+		// 花火の3Dパイプラインから、2D専用のルートシグネチャとPSOへ切り替える。
+		spriteCommon_->CommonSetting();
+		for (const Sprite& sprite : sprites_) {
+			sprite.Draw();
+		}
+	}
 }
 
 void GameScene::Finalize() {
 	audio_.StopAll();
+	for (Sprite& sprite : sprites_) {
+		sprite.Finalize();
+	}
+	spriteCommon_ = nullptr;
+	spritesVisible_ = false;
 }
 
 void GameScene::TogglePlayback() {
 	player_.TogglePlayback(show_);
+}
+
+void GameScene::ToggleSprites() {
+	spritesVisible_ = !spritesVisible_;
 }
 
 #ifdef USE_IMGUI

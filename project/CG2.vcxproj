@@ -58,15 +58,15 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IntDir>$(SolutionDir)..\generated\obj\$(PorjectName)\$(Configuration)\</IntDir>
+    <IntDir>$(SolutionDir)..\generated\obj\$(ProjectName)\$(Configuration)\</IntDir>
     <OutDir>$(SolutionDir)..\generated\outputs\$(Configuration)\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Development|x64'">
-    <IntDir>$(SolutionDir)..\generated\obj\$(PorjectName)\$(Configuration)\</IntDir>
+    <IntDir>$(SolutionDir)..\generated\obj\$(ProjectName)\$(Configuration)\</IntDir>
     <OutDir>$(SolutionDir)..\generated\outputs\$(Configuration)\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IntDir>$(SolutionDir)..\generated\obj\$(PorjectName)\$(Configuration)\</IntDir>
+    <IntDir>$(SolutionDir)..\generated\obj\$(ProjectName)\$(Configuration)\</IntDir>
     <OutDir>$(SolutionDir)..\generated\outputs\$(Configuration)\</OutDir>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -198,6 +198,17 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </None>
     <None Include="resources\fireworks\example.fwshow" />
+    <None Include="resources\shaders\Sprite.hlsli" />
+    <FxCompile Include="resources\shaders\Sprite.VS.hlsl">
+      <ShaderType>Vertex</ShaderType>
+      <ShaderModel>6.0</ShaderModel>
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </FxCompile>
+    <FxCompile Include="resources\shaders\Sprite.PS.hlsl">
+      <ShaderType>Pixel</ShaderType>
+      <ShaderModel>6.0</ShaderModel>
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </FxCompile>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Engine\src\base\DirectXCommon.cpp">
@@ -260,6 +271,9 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClCompile Include="Engine\src\motion\StringUtility.cpp" />
     <ClCompile Include="Engine\src\math\Vector&amp;Matrix.cpp" />
     <ClCompile Include="Engine\src\math\Vector.cpp" />
+    <ClCompile Include="Engine\src\2d\Sprite.cpp" />
+    <ClCompile Include="Engine\src\2d\SpriteCommon.cpp" />
+    <ClCompile Include="Engine\src\base\TextureManager.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Engine\include\base\DirectXCommon.h">
@@ -291,6 +305,9 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClInclude Include="Engine\include\motion\StringUtility.h" />
     <ClInclude Include="Engine\include\math\Vector&amp;Matrix.h" />
     <ClInclude Include="Engine\include\math\Vector.h" />
+    <ClInclude Include="Engine\include\2d\Sprite.h" />
+    <ClInclude Include="Engine\include\2d\SpriteCommon.h" />
+    <ClInclude Include="Engine\include\base\TextureManager.h" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="externals\imgui\LICENSE.txt" />

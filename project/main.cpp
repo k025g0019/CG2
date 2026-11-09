@@ -1,6 +1,5 @@
 ﻿#pragma warning(push, 0)
 #include <Windows.h>
-#include <array>
 #include <cassert>
 #include <chrono>
 #include <cstdint>
@@ -13,11 +12,6 @@
 #include <dxgi1_6.h>
 #include <dxgidebug.h>
 #include <xaudio2.h>
-#include "externals/DirectXTex/DirectXTex.h"
-#pragma warning(push)
-#pragma warning(disable : 5045)
-#include "externals/DirectXTex/d3dx12.h"
-#pragma warning(pop)
 #pragma warning(disable : 4820)
 #include <filesystem>
 #include <format>
@@ -32,10 +26,12 @@
 
 #include <execution>
 
+#include "2d/SpriteCommon.h"
 #include "3d/ParticleEffect.h"
 #include "Application/GameScene.h"
 #include "base/CrashHandler.h"
 #include "base/DirectXCommon.h"
+#include "base/TextureManager.h"
 #include "base/WinApp.h"
 #include "debug/Imgui.h"
 #include "debug/Log.h"
@@ -44,7 +40,6 @@
 #include "math/Vector&Matrix.h"
 #include "math/Vector.h"
 #include "motion/StringUtility.h"
-
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "dxguid.lib")
@@ -166,121 +161,6 @@ namespace {
 	//------------------------------
 	SoundData SoundLoadWave(const char* filePath);
 	void SoundUnload(SoundData* soundData);
-
-	//========================================
-	// ディスクリプタハンドル取得処理
-	//========================================
-	D3D12_CPU_DESCRIPTOR_HANDLE GetCPUDescriptorHandle(
-		ID3D12DescriptorHeap* descriptorHeap, UINT descriptorSize, UINT index) {
-		D3D12_CPU_DESCRIPTOR_HANDLE handle = descriptorHeap->GetCPUDescriptorHandleForHeapStart();
-		handle.ptr += descriptorSize * index;
-		return handle;
-	}
-
-	D3D12_GPU_DESCRIPTOR_HANDLE GetGPUDescriptorHandle(
-		ID3D12DescriptorHeap* descriptorHeap, UINT descriptorSize, UINT index) {
-		D3D12_GPU_DESCRIPTOR_HANDLE handle = descriptorHeap->GetGPUDescriptorHandleForHeapStart();
-		handle.ptr += descriptorSize * index;
-		return handle;
-	}
-
-
-	//========================================
-	// テクスチャ・GPUリソース生成処理
-	//========================================
-
-	//------------------------------
-	// テクスチャ読み込み
-	//------------------------------
-	DirectX::ScratchImage LoadTexture(const std::wstring& filePath) {
-		DirectX::TexMetadata metadata{};
-		DirectX::ScratchImage image{};
-		HRESULT hr = DirectX::LoadFromWICFile(filePath.c_str(), DirectX::WIC_FLAGS_FORCE_SRGB, &metadata, image);
-		assert(SUCCEEDED(hr));
-
-		DirectX::ScratchImage mipImages{};
-		hr = DirectX::GenerateMipMaps(
-			image.GetImages(),
-			image.GetImageCount(),
-			image.GetMetadata(),
-			DirectX::TEX_FILTER_SRGB,
-			0,
-			mipImages);
-		assert(SUCCEEDED(hr));
-
-		return mipImages;
-	}
-
-	//------------------------------
-	// テクスチャリソース生成
-	//------------------------------
-	ID3D12Resource* CreateTextureResource(ID3D12Device* device, const DirectX::TexMetadata& metadata) {
-		D3D12_RESOURCE_DESC resourceDesc{};
-		resourceDesc.Width = static_cast<UINT>(metadata.width);
-		resourceDesc.Height = static_cast<UINT>(metadata.height);
-		resourceDesc.MipLevels = static_cast<UINT16>(metadata.mipLevels);
-		resourceDesc.DepthOrArraySize = static_cast<UINT16>(metadata.arraySize);
-		resourceDesc.Format = metadata.format;
-		resourceDesc.SampleDesc.Count = 1;
-		resourceDesc.Dimension = static_cast<D3D12_RESOURCE_DIMENSION>(metadata.dimension);
-
-		D3D12_HEAP_PROPERTIES heapProperties{};
-		heapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
-
-		ID3D12Resource* resource = nullptr;
-		HRESULT hr = device->CreateCommittedResource(
-			&heapProperties,
-			D3D12_HEAP_FLAG_NONE,
-			&resourceDesc,
-			D3D12_RESOURCE_STATE_COPY_DEST,
-			nullptr,
-			IID_PPV_ARGS(&resource));
-		assert(SUCCEEDED(hr));
-
-		return resource;
-	}
-
-	//------------------------------
-	// テクスチャ転送
-	//------------------------------
-	ID3D12Resource* UploadTextureData(
-		ID3D12Device* device,
-		ID3D12GraphicsCommandList* commandList,
-		ID3D12Resource* texture,
-		const DirectX::ScratchImage& mipImages) {
-		std::vector<D3D12_SUBRESOURCE_DATA> subresources;
-		subresources.reserve(mipImages.GetImageCount());
-		const DirectX::Image* images = mipImages.GetImages();
-		for (size_t index = 0; index < mipImages.GetImageCount(); ++index) {
-			D3D12_SUBRESOURCE_DATA subresource{};
-			subresource.pData = images[index].pixels;
-			subresource.RowPitch = static_cast<LONG_PTR>(images[index].rowPitch);
-			subresource.SlicePitch = static_cast<LONG_PTR>(images[index].slicePitch);
-			subresources.push_back(subresource);
-		}
-
-		UINT64 intermediateSize = GetRequiredIntermediateSize(texture, 0, static_cast<UINT>(subresources.size()));
-		ID3D12Resource* intermediateResource = CreateBufferResource(device, intermediateSize);
-
-		UpdateSubresources(
-			commandList,
-			texture,
-			intermediateResource,
-			0,
-			0,
-			static_cast<UINT>(subresources.size()),
-			subresources.data());
-
-		D3D12_RESOURCE_BARRIER barrier{};
-		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		barrier.Transition.pResource = texture;
-		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_GENERIC_READ;
-		commandList->ResourceBarrier(1, &barrier);
-
-		return intermediateResource;
-	}
 
 	//------------------------------
 	// 汎用バッファ生成
@@ -572,6 +452,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		return 1;
 	}
 	WinApp* winApp = nullptr;
+
 	winApp = new WinApp();
 	winApp->Initialize();
 	HWND hwnd = winApp->GetHwnd();
@@ -775,11 +656,20 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	directionalLightData->direction = {0.0f, -1.0f, 0.0f};
 	directionalLightData->intensity = 1.0f;
 
+	// 0はImGui、4はパーティクル用。テクスチャ管理には5以降を明示的に予約する。
 	constexpr UINT kParticleSrvIndex = 4;
+	constexpr UINT kFirstTextureSrvIndex = kParticleSrvIndex + 1;
+	TextureManager textureManager;
+	textureManager.Initialize(directXCommon, kFirstTextureSrvIndex,
+		DirectXCommon::kMaxSRVCount - kFirstTextureSrvIndex);
+	SpriteCommon spriteCommon;
+	spriteCommon.Initialize(directXCommon);
+
 	GameScene gameScene;
 	if (!gameScene.Initialize(device, srvDescriptorHeap, srvDescriptorSize, kParticleSrvIndex, xAudio2)) {
 		return 1;
 	}
+	gameScene.InitializeSprites(&spriteCommon, &textureManager);
 
 	//------------------------------
 	// ルートシグネチャ生成
@@ -902,16 +792,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	//------------------------------
 	// テクスチャリソース初期化
 	//------------------------------
-	std::wstring textureFilePaths[] = {L"resources/hosi.png"};
-	DirectX::ScratchImage mipImages[_countof(textureFilePaths)];
-	DirectX::TexMetadata textureMetadatas[_countof(textureFilePaths)];
-	std::array<ComPtr<ID3D12Resource>, _countof(textureFilePaths)> textureResources{};
-	for (uint32_t textureIndex = 0; textureIndex < _countof(textureFilePaths); ++textureIndex) {
-		mipImages[textureIndex] = LoadTexture(textureFilePaths[textureIndex]);
-		textureMetadatas[textureIndex] = mipImages[textureIndex].GetMetadata();
-		textureResources[textureIndex].Attach(
-			CreateTextureResource(device, textureMetadatas[textureIndex]));
-	}
+	const uint32_t particleTextureHandle = textureManager.LoadTexture("resources/hosi.png");
 
 	//------------------------------
 	// カメラ・GPU同期初期化
@@ -928,42 +809,10 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	constexpr float cameraRotateSpeed = 0.02f;
 
 
-	//------------------------------
-	// テクスチャ転送・SRV初期化
-	//------------------------------
-	directXCommon->ResetCommandList();
-
-	std::array<ComPtr<ID3D12Resource>, _countof(textureFilePaths)> intermediateResources{};
-	for (uint32_t textureIndex = 0; textureIndex < _countof(textureFilePaths); ++textureIndex) {
-		intermediateResources[textureIndex].Attach(UploadTextureData(
-			device, commandList, textureResources[textureIndex].Get(), mipImages[textureIndex]));
-	}
-
-
-	D3D12_CPU_DESCRIPTOR_HANDLE textureSrvHandlesCPU[_countof(textureFilePaths)];
-	D3D12_GPU_DESCRIPTOR_HANDLE textureSrvHandlesGPU[_countof(textureFilePaths)];
-	for (uint32_t textureIndex = 0; textureIndex < _countof(textureFilePaths); ++textureIndex) {
-		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-		srvDesc.Format = textureMetadatas[textureIndex].format;
-		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-		srvDesc.Texture2D.MipLevels = static_cast<UINT>(textureMetadatas[textureIndex].mipLevels);
-
-		textureSrvHandlesCPU[textureIndex] = GetCPUDescriptorHandle(srvDescriptorHeap, srvDescriptorSize,
-		                                                            textureIndex + 1);
-		textureSrvHandlesGPU[textureIndex] = GetGPUDescriptorHandle(srvDescriptorHeap, srvDescriptorSize,
-		                                                            textureIndex + 1);
-		device->CreateShaderResourceView(
-			textureResources[textureIndex].Get(), &srvDesc, textureSrvHandlesCPU[textureIndex]);
-	}
-
-
-	directXCommon->ExecuteCommandListAndWait();
-
 	const ParticleEffect::DrawContext particleDrawContext{
 		.material = particleMaterialResource.Get(),
 		.light = directionalLightResource.Get(),
-		.texture = textureSrvHandlesGPU[0],
+		.texture = textureManager.GetSRVGPUDescriptorHandle(particleTextureHandle),
 		.vertexBuffer = modelVertexBufferView,
 		.vertexCount = static_cast<UINT>(modelData.vertices.size())
 	};
@@ -1003,6 +852,9 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 			}
 			if (input->TriggerKey(DIK_SPACE)) {
 				gameScene.TogglePlayback();
+			}
+			if (input->TriggerKey(DIK_F2)) {
+				gameScene.ToggleSprites();
 			}
 
 			if (input->PushKey(DIK_LEFT)) {
@@ -1067,7 +919,6 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		// 描画コマンド初期化
 		//------------------------------
 		directXCommon->PreDraw();
-
 		commandList->SetGraphicsRootSignature(
 			rootSignature.Get());
 
@@ -1095,6 +946,8 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	// 終了処理
 	//========================================
 	gameScene.Finalize();
+	spriteCommon.Finalize();
+	textureManager.Finalize();
 	//if (sourceVoice != nullptr) {
 	//	sourceVoice->Stop(0);
 	//	sourceVoice->FlushSourceBuffers();
@@ -1123,6 +976,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	winApp->Finalize();
 	delete winApp;
 	winApp = nullptr;
+
 	return 0;
 }
 #pragma warning(pop)

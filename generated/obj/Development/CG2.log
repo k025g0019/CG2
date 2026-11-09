@@ -4,7 +4,8 @@
   FireworkPresets.cpp
   FireworkShow.cpp
   GameScene.cpp
-  main.cpp
+  ParticleEffect.cpp
+  imgui_impl_dx12.cpp
   main.obj : MSIL .netmodule または /GL を伴ってコンパイルされたモジュールが見つかりました。/LTCG を使用して再開始してください。リンカーのパフォーマンスを向上させるためには、コマンドラインに /LTCG を追加してください。
   コード生成しています。
   コード生成が終了しました。

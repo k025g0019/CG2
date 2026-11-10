@@ -24,6 +24,8 @@ bool ParticleEffect::Initialize(
 	UINT srvIndex,
 	const Settings& settings) {
 	if (device == nullptr || srvHeap == nullptr || settings.maxParticles == 0 ||
+		!std::isfinite(settings.minVisibleAlpha) ||
+		settings.minVisibleAlpha < 0.0f || settings.minVisibleAlpha > 1.0f ||
 		settings.maxParticles > (std::numeric_limits<UINT>::max)()) {
 		return false;
 	}
@@ -91,17 +93,24 @@ bool ParticleEffect::Spawn(const ParticleParameters& parameters, int elapsedStep
 	particle.scale = parameters.scale;
 	particle.color = parameters.color;
 	particle.lifeTime = parameters.lifeTime;
-	particle.currentTime = parameters.horizontalDrag > 0.0f ? 0.0 : age;
+	particle.currentTime = age;
 	particle.trailSeconds = parameters.trailSeconds;
 	particle.fadeStartSeconds = parameters.fadeStartSeconds;
 	particle.horizontalDrag = parameters.horizontalDrag;
 	particle.dragStartSeconds = parameters.dragStartSeconds;
 	particle.lineDirection = parameters.lineDirection;
 	particle.lineLength = parameters.lineLength;
+	particle.baseTime = age;
+	particle.stepSeconds = stepSeconds > 0.0f ? stepSeconds : 1.0f / 60.0f;
+	// シーク時も再生時と同じ基準で、すでに見えない粒子を生成しない。
+	if (IsInvisible(particle)) {
+		return false;
+	}
 
 	if (elapsedSteps > 0) {
 		if (particle.horizontalDrag > 0.0f) {
 			// 冠菊の減速は毎フレーム非線形に変わる。再生時と同じ順に進めてシーク位置を揃える。
+			particle.currentTime = 0.0;
 			for (int step = 0; step < elapsedSteps; ++step) {
 				particle.currentTime += stepSeconds;
 				AdvanceOneParticle(particle, stepSeconds);
@@ -182,18 +191,34 @@ void ParticleEffect::AdvanceOneParticle(Particle& particle, float deltaTime) {
 	particle.position += particle.velocity * deltaTime;
 }
 
+float ParticleEffect::CalculateFade(const Particle& particle) {
+	const float fadeStart = std::clamp(particle.fadeStartSeconds, 0.0f, particle.lifeTime);
+	const float fadeDuration = particle.lifeTime - fadeStart;
+	return fadeDuration > 0.0f
+		? std::clamp(static_cast<float>((particle.lifeTime - particle.currentTime) / fadeDuration),
+			0.0f, 1.0f)
+		: 1.0f;
+}
+
+bool ParticleEffect::IsInvisible(const Particle& particle) const {
+	return particle.currentTime >= particle.lifeTime
+		|| particle.color.w * CalculateFade(particle) <= settings_.minVisibleAlpha;
+}
+
 void ParticleEffect::Advance(float deltaTime) {
 	if (!(deltaTime > 0.0f)) {
 		return;
 	}
 
 	// 消えた粒子を先に詰め、以降の配列順を GPU のインスタンス番号と一致させる。
-	std::erase_if(particles_, [deltaTime](Particle& particle) {
+	std::erase_if(particles_, [this, deltaTime](Particle& particle) {
 		particle.currentTime += deltaTime;
-		return particle.currentTime >= particle.lifeTime;
+		return IsInvisible(particle);
 	});
 	for (Particle& particle : particles_) {
-		AdvanceOneParticle(particle, deltaTime);
+		// CPUは年齢だけ進める。位置と速度は頂点シェーダーで復元する。
+		particle.stepSeconds = deltaTime;
+		++particle.stepsSinceBase;
 	}
 }
 
@@ -214,63 +239,31 @@ void ParticleEffect::PrepareDraw(const Matrix4x4& cameraMatrix,
 		billboardMatrix.matrix[3][2] = 0.0f;
 	}
 
-	// カメラから見た板ポリの横・上方向は全粒子で共通。
-	const Vector3 right{
-		billboardMatrix.matrix[0][0],
-		billboardMatrix.matrix[0][1],
-		billboardMatrix.matrix[0][2]
-	};
-	const Vector3 up{
-		billboardMatrix.matrix[1][0],
-		billboardMatrix.matrix[1][1],
-		billboardMatrix.matrix[1][2]
-	};
+	// カメラと投影は全粒子で共有し、ルート定数として一度だけ渡す。
+	cameraData_.viewProjection = viewProjectionMatrix;
+	cameraData_.right = {billboardMatrix.matrix[0][0], billboardMatrix.matrix[0][1],
+		billboardMatrix.matrix[0][2], 0.0f};
+	cameraData_.up = {billboardMatrix.matrix[1][0], billboardMatrix.matrix[1][1],
+		billboardMatrix.matrix[1][2], 0.0f};
+	cameraData_.forward = {billboardMatrix.matrix[2][0], billboardMatrix.matrix[2][1],
+		billboardMatrix.matrix[2][2], 0.0f};
 
 	for (std::size_t index = 0; index < particles_.size(); ++index) {
 		const Particle& particle = particles_[index];
-		const float fadeStart = std::clamp(particle.fadeStartSeconds, 0.0f, particle.lifeTime);
-		const float fadeDuration = particle.lifeTime - fadeStart;
-		const float fade = fadeDuration > 0.0f
-			? std::clamp(static_cast<float>((particle.lifeTime - particle.currentTime) / fadeDuration),
-				0.0f, 1.0f)
-			: 1.0f;
-
-		// 固定の光の筋は移動と描画方向を分ける。通常の火花は速度に沿って描く。
-		const bool fixedLine = particle.lineLength > 0.0f;
-		const Vector3 direction = fixedLine ? particle.lineDirection : particle.velocity;
-		float vx = Dot(direction, right);
-		float vy = Dot(direction, up);
-		float speedOnScreen = std::sqrt(vx * vx + vy * vy);
-		float angle = speedOnScreen > 0.001f ? std::atan2(-vx, vy) : 0.0f;
-
-		float width = particle.scale.x * fade;
-		float trailTime = particle.trailSeconds * fade;
-		// 固定線もカメラの奥行き方向へ傾いた分だけ短く見せる。
-		const float worldDirectionLength = fixedLine ? Length(direction) : 0.0f;
-		float length = fixedLine && worldDirectionLength > 0.0f
-			? particle.lineLength * speedOnScreen / worldDirectionLength
-			: speedOnScreen * trailTime;
-		if (length < width) {
-			length = width;
-		}
-
-		// 固定の筋は指定した中点に置き、通常の火花は移動方向の後ろへずらす。
-		Vector3 center = fixedLine ? particle.position
-			: particle.position - particle.velocity * (trailTime * 0.5f);
-
-		// plane.obj は縦横 -1～1 の板なので、全幅・全長の半分を指定
-		Matrix4x4 worldMatrix = Multiply(
-			Multiply(
-				Multiply(
-					MakeScaleMatrix({width * 0.5f, length * 0.5f, 1.0f}),
-					MakeRotateZMatrix(angle)),
-				billboardMatrix),
-			MakeTranslationMatrix(center));
-		instanceData_[index].WVP = Multiply(worldMatrix, viewProjectionMatrix);
-		instanceData_[index].World = worldMatrix;
-		instanceData_[index].color = {
-			particle.color.x, particle.color.y, particle.color.z, particle.color.w * fade
-		};
+		ParticleInstanceData& data = instanceData_[index];
+		data.positionAge = {particle.position.x, particle.position.y, particle.position.z,
+			static_cast<float>(particle.currentTime)};
+		data.velocityLife = {particle.velocity.x, particle.velocity.y, particle.velocity.z,
+			particle.lifeTime};
+		data.accelerationTrail = {particle.acceleration.x, particle.acceleration.y,
+			particle.acceleration.z, particle.trailSeconds};
+		data.scaleFade = {particle.scale.x, particle.fadeStartSeconds,
+			particle.lineLength, static_cast<float>(particle.baseTime)};
+		data.lineDirectionDrag = {particle.lineDirection.x, particle.lineDirection.y,
+			particle.lineDirection.z, particle.dragStartSeconds};
+		data.motion = {particle.horizontalDrag, particle.stepSeconds,
+			static_cast<float>(particle.stepsSinceBase), 0.0f};
+		data.color = particle.color;
 	}
 	preparedCount_ = particles_.size();
 }
@@ -295,6 +288,8 @@ void ParticleEffect::Draw(
 	commandList->SetGraphicsRootConstantBufferView(
 		2, context.light->GetGPUVirtualAddress());
 	commandList->SetGraphicsRootDescriptorTable(3, context.texture);
+	commandList->SetGraphicsRoot32BitConstants(4, sizeof(cameraData_) / sizeof(UINT),
+		&cameraData_, 0);
 	commandList->IASetVertexBuffers(0, 1, &context.vertexBuffer);
 	commandList->DrawInstanced(context.vertexCount,
 	                           static_cast<UINT>(preparedCount_), 0, 0);

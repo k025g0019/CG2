@@ -572,7 +572,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	// ルートパラメータ設定
 	//------------------------------
 
-	D3D12_ROOT_PARAMETER rootParameters[4]{};
+	D3D12_ROOT_PARAMETER rootParameters[5]{};
 
 	rootParameters[0].ParameterType =
 		D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -605,6 +605,13 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		descriptorRangeForTexture;
 	rootParameters[3].DescriptorTable.NumDescriptorRanges =
 		_countof(descriptorRangeForTexture);
+
+	// 花火の全粒子で共有するカメラ軸と投影行列。
+	rootParameters[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+	rootParameters[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+	rootParameters[4].Constants.ShaderRegister = 2;
+	rootParameters[4].Constants.RegisterSpace = 0;
+	rootParameters[4].Constants.Num32BitValues = sizeof(ParticleCameraData) / sizeof(UINT);
 
 
 	//------------------------------

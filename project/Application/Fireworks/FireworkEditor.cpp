@@ -13,6 +13,7 @@
 #include <commdlg.h>
 #include <cstdio>
 #include <filesystem>
+#include <iterator>
 #include <numeric>
 #include <string_view>
 #include <utility>
@@ -27,7 +28,7 @@ namespace {
 constexpr float kPanelMargin = 10.0f;
 constexpr float kTimelineHeight = 276.0f;
 constexpr float kInspectorWidth = 360.0f;
-constexpr int kLaneCount = 3;
+constexpr int kMinimumLaneCount = 3;
 constexpr float kRulerHeight = 27.0f;
 constexpr float kLaneHeight = 30.0f;
 constexpr ImGuiWindowFlags kPanelFlags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize
@@ -129,15 +130,15 @@ std::uint32_t NextSeed(const FireworkShow& show) {
 	return largestSeed + 1;
 }
 
-std::vector<CueClip> MakeClips(const FireworkShow& show, const ImVec2& start, float width) {
+std::vector<CueClip> MakeClips(const FireworkShow& show, const ImVec2& start,
+	float width, int& laneCount) {
 	std::vector<int> order(show.cues.size());
 	std::iota(order.begin(), order.end(), 0);
 	std::stable_sort(order.begin(), order.end(), [&show](int left, int right) {
 		return show.cues[left].startFrame < show.cues[right].startFrame;
 	});
 
-	std::array<float, kLaneCount> laneEnd{};
-	laneEnd.fill(start.x);
+	std::vector<float> laneEnd;
 	std::vector<CueClip> clips;
 	clips.reserve(order.size());
 	const float scale = width / show.durationFrames;
@@ -160,11 +161,19 @@ std::vector<CueClip> MakeClips(const FireworkShow& show, const ImVec2& start, fl
 			cue.startFrame + ToFrames(cue.effect.stageSeconds + lifeSeconds));
 		const float left = (std::min)(start.x + cue.startFrame * scale, right - 8.0f);
 		const float endX = std::clamp(start.x + endFrame * scale, left + 8.0f, right);
-		auto lane = std::min_element(laneEnd.begin(), laneEnd.end());
+		// 同時刻の花火は空いている段を使い、足りなければ段を増やす。
+		auto lane = std::find_if(laneEnd.begin(), laneEnd.end(),
+			[left](float end) { return end <= left; });
+		if (lane == laneEnd.end()) {
+			laneEnd.push_back(endX + 3.0f);
+			lane = std::prev(laneEnd.end());
+		} else {
+			*lane = endX + 3.0f;
+		}
 		const float top = start.y + kRulerHeight + (lane - laneEnd.begin()) * kLaneHeight;
-		*lane = endX + 3.0f;
 		clips.push_back({index, {left, top + 2.0f}, {endX, top + kLaneHeight - 2.0f}});
 	}
+	laneCount = (std::max)(kMinimumLaneCount, static_cast<int>(laneEnd.size()));
 	return clips;
 }
 
@@ -497,7 +506,13 @@ void FireworkEditor::DrawTimelineWindow(std::size_t particleCount) {
 		}
 		ImGui::EndDisabled();
 
-		DrawTimelineCanvas();
+		// 段数が増えても操作欄を残し、クリップ部分だけを縦にスクロールする。
+		const float canvasHeight = (std::max)(60.0f,
+			ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing());
+		if (ImGui::BeginChild("##TimelineRows", {0.0f, canvasHeight}, ImGuiChildFlags_Borders)) {
+			DrawTimelineCanvas();
+		}
+		ImGui::EndChild();
 		ImGui::Text("粒子 %zu", particleCount);
 		if (dirty_) {
 			ImGui::SameLine();
@@ -519,12 +534,13 @@ void FireworkEditor::DrawTimelineCanvas() {
 	if (width < 32.0f) {
 		return;
 	}
-	const float height = kRulerHeight + kLaneCount * kLaneHeight;
+	int laneCount = kMinimumLaneCount;
+	const auto clips = MakeClips(show_, ImGui::GetCursorScreenPos(), width, laneCount);
+	const float height = kRulerHeight + laneCount * kLaneHeight;
 	ImGui::InvisibleButton("##TimelineCanvas", {width, height});
 	const ImVec2 start = ImGui::GetItemRectMin();
 	const ImVec2 end = ImGui::GetItemRectMax();
 	const ImVec2 mouse = ImGui::GetIO().MousePos;
-	const auto clips = MakeClips(show_, start, width);
 	const auto frameAt = [&](float x) {
 		const float fraction = std::clamp((x - start.x) / width, -1.0f, 2.0f);
 		return static_cast<int>(std::lround(fraction * show_.durationFrames));

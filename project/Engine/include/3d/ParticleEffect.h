@@ -10,17 +10,33 @@
 #include "math/Matrix.h"
 #include "math/Vector.h"
 
-// 既存の Particle.VS.hlsl の StructuredBuffer と同じ並びにする。
+// 発生時にCPUで決めた値と現在の年齢を渡し、移動と板の頂点計算はVSで行う。
 struct ParticleInstanceData {
-	Matrix4x4 WVP;
-	Matrix4x4 World;
+	Vector4 positionAge;
+	Vector4 velocityLife;
+	Vector4 accelerationTrail;
+	Vector4 scaleFade;
+	Vector4 lineDirectionDrag;
+	Vector4 motion;
 	Vector4 color;
 };
+
+struct ParticleCameraData {
+	Matrix4x4 viewProjection;
+	Vector4 right;
+	Vector4 up;
+	Vector4 forward;
+};
+
+static_assert(sizeof(ParticleInstanceData) == sizeof(Vector4) * 7);
+static_assert(sizeof(ParticleCameraData) == sizeof(float) * 28);
 
 class ParticleEffect {
 public:
 	struct Settings {
 		std::size_t maxParticles = 5000000;
+		// 描画時の実効アルファがこの値以下なら粒子を保持しない。0 では完全に透明な粒子だけ除く。
+		float minVisibleAlpha = 0.0f;
 	};
 
 	// 1粒の初期状態。打ち上げ・開花などの軌道は呼び出し側が値を決める。
@@ -101,14 +117,21 @@ private:
 		float dragStartSeconds = 0.0f;
 		Vector3 lineDirection{};
 		float lineLength = 0.0f;
+		// シークで復元した状態を基点に、GPUが移動を計算するための時間情報。
+		double baseTime = 0.0;
+		float stepSeconds = 1.0f / 60.0f;
+		int stepsSinceBase = 0;
 	};
 	static void AdvanceOneParticle(Particle& particle, float deltaTime);
+	static float CalculateFade(const Particle& particle);
+	bool IsInvisible(const Particle& particle) const;
 
 	Settings settings_{};
 	std::vector<Particle> particles_;
 	std::mt19937 randomEngine_;
 	Microsoft::WRL::ComPtr<ID3D12Resource> instanceResource_;
 	ParticleInstanceData* instanceData_ = nullptr;
+	ParticleCameraData cameraData_{};
 	std::size_t preparedCount_ = 0;
 	D3D12_GPU_DESCRIPTOR_HANDLE instanceSrvHandle_{};
 };

@@ -40,11 +40,13 @@ PixelShaderOutput main(PixelShaderInput input) {
         float halfLambert = pow(saturate(cosine * 0.5f + 0.5f), 2.0f);
 
         output.color.rgb *= gDirectionalLight.color.rgb * halfLambert * gDirectionalLight.intensity;
+       
     }
 
     if (textureColor.a < 0.5f) {
         discard;
     }
+
     return output;
 }
 

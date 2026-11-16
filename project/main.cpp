@@ -1,5 +1,6 @@
 #pragma warning(push, 0)
 #include <Windows.h>
+#include <array>
 #include <cassert>
 #include <chrono>
 #include <cstdint>
@@ -27,6 +28,8 @@
 #include <execution>
 
 #include "2d/SpriteCommon.h"
+#include "3d/Object3d.h"
+#include "3d/Object3dCommon.h"
 #include "3d/ParticleEffect.h"
 #include "Application/GameScene.h"
 #include "base/CrashHandler.h"
@@ -669,6 +672,31 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	if (!gameScene.Initialize(device, srvDescriptorHeap, srvDescriptorSize, kParticleSrvIndex, xAudio2)) {
 		return 1;
 	}
+	Object3dCommon objectCommon;
+	if (!objectCommon.Initialize(device, &textureManager,
+	                             directXCommon->GetDXCUtils(), directXCommon->GetDXCCompiler(),
+	                             directXCommon->GetIncludeHandler())) {
+		return 1;
+	}
+	const auto planeModel = objectCommon.LoadModel("resources/obj/axis.obj");
+	const auto fenceModel = objectCommon.LoadModel("resources/obj/multiMesh.obj");
+	if (!planeModel || !fenceModel) {
+		return 1;
+	}
+	std::array<Object3d, 3> objects;
+	if (!objects[0].Initialize(device, planeModel) ||
+		!objects[1].Initialize(device, fenceModel) ||
+		!objects[2].Initialize(device, planeModel)) {
+		return 1;
+	}
+	// モデルデータは共有し、位置とワールド行列は各オブジェクトで分ける。
+	objects[0].SetPosition({-5.0f, 0.0f, 0.0f});
+	objects[1].SetPosition({0.0f, 0.0f, 0.0f});
+	objects[2].SetPosition({5.0f, 0.0f, 0.0f});
+	for (Object3d& object : objects) {
+		object.SetScale({1.0f, 1.0f, 1.0f});
+	}
+	bool useFenceForFirstObject = false;
 	//gameScene.InitializeSprites(&spriteCommon, &textureManager);
 
 	//------------------------------
@@ -768,7 +796,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	ModelData modelData = LoadObjFile("resources", "plane.obj");
 
 	// 発射位置と開花位置を同時に見られるショー用の初期視点。
-	constexpr Vector3 kShowCameraPosition{1.5f, 9.0f, -80.0f};
+	constexpr Vector3 kShowCameraPosition{0.0f, 0.0f, -10.0f};
 	Transforms cameraTransform{
 		.scale = {1.0f, 1.0f, 1.0f},
 		.rotate = {0.0f, 0.0f, 0.0f},
@@ -856,6 +884,10 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 			if (input->TriggerKey(DIK_F2)) {
 				//gameScene.ToggleSprites();
 			}
+			if (input->TriggerKey(DIK_F3)) {
+				useFenceForFirstObject = !useFenceForFirstObject;
+				objects[0].SetModel(useFenceForFirstObject ? fenceModel : planeModel);
+			}
 
 			if (input->PushKey(DIK_LEFT)) {
 				cameraTransform.rotate.y -= cameraRotateSpeed;
@@ -907,7 +939,9 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		viewMatrix = Inverse(cameraMatrix);
 
 		const Matrix4x4 viewProjectionMatrix = Multiply(viewMatrix, projectionMatrix);
-		//gameScene.Update(cameraMatrix, viewProjectionMatrix);
+		for (Object3d& object : objects) {
+			object.Update(viewProjectionMatrix);
+		}
 #ifdef USE_IMGUI
 		ImGui::Render();
 #endif
@@ -919,20 +953,12 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		// 描画コマンド初期化
 		//------------------------------
 		directXCommon->PreDraw();
-		commandList->SetGraphicsRootSignature(
-			rootSignature.Get());
 
-		commandList->SetPipelineState(
-			graphicsPipelineState.Get());
 
-		commandList->IASetPrimitiveTopology(
-			D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		commandList->IASetVertexBuffers(
-			0, 1, &particleDrawContext.vertexBuffer);
-
-		commandList->DrawIndexedInstanced(6, 1, 0, 0, 0);
-
-		//gameScene.Draw(commandList, particleDrawContext);
+		objectCommon.ApplyDrawSettings(commandList);
+		for (const Object3d& object : objects) {
+			object.Draw(commandList);
+		}
 #ifdef USE_IMGUI
 		ImDrawData* drawData = ImGui::GetDrawData();
 		if (drawData->DisplaySize.x > 0.0f && drawData->DisplaySize.y > 0.0f) {
@@ -950,6 +976,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	//========================================
 	// 終了処理
 	//========================================
+	objectCommon.Finalize();
 	//gameScene.Finalize();
 	//spriteCommon.Finalize();
 	textureManager.Finalize();

@@ -211,6 +211,8 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     </FxCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Engine\src\3d\Object3d.cpp" />
+    <ClCompile Include="Engine\src\3d\Object3dCommon.cpp" />
     <ClCompile Include="Engine\src\base\DirectXCommon.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Development|x64'">false</ExcludedFromBuild>
     </ClCompile>
@@ -308,6 +310,8 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClInclude Include="Engine\include\2d\Sprite.h" />
     <ClInclude Include="Engine\include\2d\SpriteCommon.h" />
     <ClInclude Include="Engine\include\base\TextureManager.h" />
+    <ClInclude Include="Engine\include\3d\Object3d.h" />
+    <ClInclude Include="Engine\include\3d\Object3dCommon.h" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="externals\imgui\LICENSE.txt" />

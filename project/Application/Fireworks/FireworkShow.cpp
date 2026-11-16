@@ -436,8 +436,6 @@ bool SaveEffectPreset(const std::filesystem::path& path, const FireworkCue& cue,
 	settings.startFrame = 0;
 	settings.position = {};
 	settings.seed = 1;
-	settings.launchSound = {};
-	settings.burstSound = {};
 	single.cues.push_back(std::move(settings));
 	return SaveShow(path, single, error);
 }
@@ -454,6 +452,8 @@ bool LoadEffectPreset(const std::filesystem::path& path, FireworkCue& cue, std::
 	cue.presetId = single.cues.front().presetId;
 	cue.effect = single.cues.front().effect;
 	cue.child = single.cues.front().child;
+	cue.launchSound = single.cues.front().launchSound;
+	cue.burstSound = single.cues.front().burstSound;
 	error.clear();
 	return true;
 }

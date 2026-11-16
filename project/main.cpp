@@ -575,7 +575,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	// ルートパラメータ設定
 	//------------------------------
 
-	D3D12_ROOT_PARAMETER rootParameters[4]{};
+	D3D12_ROOT_PARAMETER rootParameters[5]{};
 
 	rootParameters[0].ParameterType =
 		D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -608,6 +608,13 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		descriptorRangeForTexture;
 	rootParameters[3].DescriptorTable.NumDescriptorRanges =
 		_countof(descriptorRangeForTexture);
+
+	// 花火の全粒子で共有するカメラ軸と投影行列。
+	rootParameters[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+	rootParameters[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+	rootParameters[4].Constants.ShaderRegister = 2;
+	rootParameters[4].Constants.RegisterSpace = 0;
+	rootParameters[4].Constants.Num32BitValues = sizeof(ParticleCameraData) / sizeof(UINT);
 
 
 	//------------------------------
@@ -668,10 +675,11 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	SpriteCommon spriteCommon;
 	//spriteCommon.Initialize(directXCommon);
 
-	GameScene gameScene;
-	if (!gameScene.Initialize(device, srvDescriptorHeap, srvDescriptorSize, kParticleSrvIndex, xAudio2)) {
-		return 1;
-	}
+
+	//GameScene gameScene;
+	//if (!gameScene.Initialize(device, srvDescriptorHeap, srvDescriptorSize, kParticleSrvIndex, xAudio2)) {
+		//return 1;
+	//}
 	Object3dCommon objectCommon;
 	if (!objectCommon.Initialize(device, &textureManager,
 	                             directXCommon->GetDXCUtils(), directXCommon->GetDXCCompiler(),
@@ -697,6 +705,12 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		object.SetScale({1.0f, 1.0f, 1.0f});
 	}
 	bool useFenceForFirstObject = false;
+
+	//GameScene gameScene;
+	//if (!gameScene.Initialize(device, srvDescriptorHeap, srvDescriptorSize, kParticleSrvIndex, xAudio2)) {
+	//	return 1;
+	//}
+
 	//gameScene.InitializeSprites(&spriteCommon, &textureManager);
 
 	//------------------------------
@@ -793,7 +807,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	//------------------------------
 	// OBJモデル読み込み
 	//------------------------------
-	ModelData modelData = LoadObjFile("resources", "plane.obj");
+	ModelData modelData = LoadObjFile("resources/obj", "multiMesh.obj");
 
 	// 発射位置と開花位置を同時に見られるショー用の初期視点。
 	constexpr Vector3 kShowCameraPosition{0.0f, 0.0f, -10.0f};

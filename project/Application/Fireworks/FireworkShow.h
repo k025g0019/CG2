@@ -142,7 +142,7 @@ constexpr float ToSeconds(int frames) {
 int ToFrames(float seconds);
 bool LoadShow(const std::filesystem::path& path, FireworkShow& show, std::string& error);
 bool SaveShow(const std::filesystem::path& path, const FireworkShow& show, std::string& error);
-// 1件の花火から見た目の種類と設定だけを保存・適用する。位置と開始時刻は保持する。
+// 1件の花火から種類・演出設定・効果音を保存・適用する。位置・開始時刻・乱数種は保持する。
 bool SaveEffectPreset(const std::filesystem::path& path, const FireworkCue& cue, std::string& error);
 bool LoadEffectPreset(const std::filesystem::path& path, FireworkCue& cue, std::string& error);
 

@@ -7,7 +7,7 @@
 class WinApp {
 public:
 	static constexpr wchar_t kWindowClassName[] = L"CG2WindowClass";
-	static constexpr wchar_t kWindowTitle[] = L"CG2";
+	static constexpr wchar_t kWindowTitle[] = L"LE2C_27_マノ_ショウタ";
 
 	static constexpr int32_t kClientWidth = 1280;
 	static constexpr int32_t kClientHeight = 720;

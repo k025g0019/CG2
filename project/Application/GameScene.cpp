@@ -12,6 +12,7 @@ bool GameScene::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* srvHeap,
                            UINT descriptorSize, UINT particleSrvIndex, IXAudio2* audioEngine) {
 	ParticleEffect::Settings settings{};
 	settings.maxParticles = fireworks::kMaxLiveParticles;
+	settings.minVisibleAlpha = 0.1f;
 	if (!particles_.Initialize(device, srvHeap, descriptorSize, particleSrvIndex, settings)) {
 		return false;
 	}

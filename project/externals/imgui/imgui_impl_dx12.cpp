@@ -1,4 +1,4 @@
-// dear imgui: Renderer Backend for DirectX12
+﻿// dear imgui: Renderer Backend for DirectX12
 // This needs to be used along with a Platform Backend (e.g. Win32)
 
 // Implemented features:
@@ -773,7 +773,7 @@ bool    ImGui_ImplDX12_CreateDeviceObjects()
         desc.AlphaToCoverageEnable = false;
         desc.RenderTarget[0].BlendEnable = true;
         desc.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
-        desc.RenderTarget[0].DestBlend = D3D12_BLEND_ONE;
+        desc.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
         desc.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
 
         desc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;

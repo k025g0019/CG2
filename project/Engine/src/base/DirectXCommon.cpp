@@ -1,4 +1,4 @@
-﻿#include "base/DirectXCommon.h"
+#include "base/DirectXCommon.h"
 
 #include "base/WinApp.h"
 #include "debug/Logger.h"
@@ -641,7 +641,8 @@ void DirectXCommon::InitializeImGui() {
 	style.ItemSpacing = {9.0f, 8.0f};
 	style.Colors[ImGuiCol_Text] = {0.97f, 0.98f, 1.0f, 1.0f};
 	style.Colors[ImGuiCol_TextDisabled] = {0.76f, 0.81f, 0.89f, 1.0f};
-	style.Colors[ImGuiCol_WindowBg] = {0.055f, 0.075f, 0.11f, 0.97f};
+	// 通常の編集画面だけ背景のエフェクトを透かし、プルダウンは透かさない。
+	style.Colors[ImGuiCol_WindowBg] = {0.055f, 0.075f, 0.11f, 0.85f};
 	style.Colors[ImGuiCol_PopupBg] = {0.08f, 0.10f, 0.15f, 1.0f};
 	style.Colors[ImGuiCol_FrameBg] = {0.16f, 0.20f, 0.27f, 1.0f};
 
@@ -653,7 +654,7 @@ void DirectXCommon::InitializeImGui() {
 	const bool dx12Result =
 		ImGui_ImplDX12_Init(
 			device_.Get(),
-			static_cast<int>(kSwapChainBufferCount),
+			kSwapChainBufferCount,
 			DXGI_FORMAT_R8G8B8A8_UNORM,
 			srvDescriptorHeap_.Get(),
 			GetSRVCPUDescriptorHandle(0),
@@ -674,7 +675,8 @@ void DirectXCommon::InitializeImGui() {
 			const std::string fontPath = std::string(windowsDirectory) + "\\Fonts\\" + fontName;
 			if (GetFileAttributesA(fontPath.c_str()) != INVALID_FILE_ATTRIBUTES) {
 				editorFont = io.Fonts->AddFontFromFileTTF(fontPath.c_str(),
-					style.FontSizeBase, &fontConfig, io.Fonts->GetGlyphRangesJapanese());
+				                                          style.FontSizeBase, &fontConfig,
+				                                          io.Fonts->GetGlyphRangesJapanese());
 				if (editorFont != nullptr) {
 					break;
 				}
@@ -786,9 +788,9 @@ void DirectXCommon::PreDraw() {
 	//------------------------------
 
 	constexpr float clearColor[] = {
-		0.0f,
-		0.0f,
-		0.0f,
+		0.1f,
+		0.25f,
+		0.5f,
 		1.0f,
 	};
 

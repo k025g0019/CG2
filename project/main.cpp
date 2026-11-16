@@ -1,4 +1,4 @@
-﻿#pragma warning(push, 0)
+#pragma warning(push, 0)
 #include <Windows.h>
 #include <cassert>
 #include <chrono>
@@ -668,15 +668,15 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	constexpr UINT kFirstTextureSrvIndex = kParticleSrvIndex + 1;
 	TextureManager textureManager;
 	textureManager.Initialize(directXCommon, kFirstTextureSrvIndex,
-		DirectXCommon::kMaxSRVCount - kFirstTextureSrvIndex);
+	                          DirectXCommon::kMaxSRVCount - kFirstTextureSrvIndex);
 	SpriteCommon spriteCommon;
 	spriteCommon.Initialize(directXCommon);
 
-	GameScene gameScene;
-	if (!gameScene.Initialize(device, srvDescriptorHeap, srvDescriptorSize, kParticleSrvIndex, xAudio2)) {
-		return 1;
-	}
-	gameScene.InitializeSprites(&spriteCommon, &textureManager);
+	//GameScene gameScene;
+	//if (!gameScene.Initialize(device, srvDescriptorHeap, srvDescriptorSize, kParticleSrvIndex, xAudio2)) {
+	//	return 1;
+	//}
+	//gameScene.InitializeSprites(&spriteCommon, &textureManager);
 
 	//------------------------------
 	// ルートシグネチャ生成
@@ -772,7 +772,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	//------------------------------
 	// OBJモデル読み込み
 	//------------------------------
-	ModelData modelData = LoadObjFile("resources", "plane.obj");
+	ModelData modelData = LoadObjFile("resources/obj", "multiMesh.obj");
 
 	// 発射位置と開花位置を同時に見られるショー用の初期視点。
 	constexpr Vector3 kShowCameraPosition{1.5f, 9.0f, -80.0f};
@@ -845,9 +845,9 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		ImGui_ImplDX12_NewFrame();
 		ImGui_ImplWin32_NewFrame();
 		ImGui::NewFrame();
-		if (input->TriggerKey(DIK_F1)) {
-			gameScene.ToggleEditor();
-		}
+		//if (input->TriggerKey(DIK_F1)) {
+		//	gameScene.ToggleEditor();
+		//}
 		const bool editorCapturesKeyboard = ImGui::GetIO().WantCaptureKeyboard;
 #else
 		constexpr bool editorCapturesKeyboard = false;
@@ -858,10 +858,10 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 				PostQuitMessage(0);
 			}
 			if (input->TriggerKey(DIK_SPACE)) {
-				gameScene.TogglePlayback();
+				//gameScene.TogglePlayback();
 			}
 			if (input->TriggerKey(DIK_F2)) {
-				gameScene.ToggleSprites();
+				//gameScene.ToggleSprites();
 			}
 
 			if (input->PushKey(DIK_LEFT)) {
@@ -914,7 +914,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		viewMatrix = Inverse(cameraMatrix);
 
 		const Matrix4x4 viewProjectionMatrix = Multiply(viewMatrix, projectionMatrix);
-		gameScene.Update(cameraMatrix, viewProjectionMatrix);
+		//gameScene.Update(cameraMatrix, viewProjectionMatrix);
 #ifdef USE_IMGUI
 		ImGui::Render();
 #endif
@@ -934,7 +934,9 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 		commandList->IASetPrimitiveTopology(
 			D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		gameScene.Draw(commandList, particleDrawContext);
+		//gameScene.Draw(commandList, particleDrawContext);
+
+
 #ifdef USE_IMGUI
 		ImDrawData* drawData = ImGui::GetDrawData();
 		if (drawData->DisplaySize.x > 0.0f && drawData->DisplaySize.y > 0.0f) {
@@ -952,9 +954,9 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	//========================================
 	// 終了処理
 	//========================================
-	gameScene.Finalize();
-	spriteCommon.Finalize();
-	textureManager.Finalize();
+	//gameScene.Finalize();
+	//spriteCommon.Finalize();
+	//textureManager.Finalize();
 	//if (sourceVoice != nullptr) {
 	//	sourceVoice->Stop(0);
 	//	sourceVoice->FlushSourceBuffers();

@@ -15,7 +15,9 @@
 #include <filesystem>
 #include <iterator>
 #include <numeric>
+#include <random>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 
 #include "externals/imgui/imgui.h"
@@ -26,7 +28,7 @@ namespace fireworks {
 namespace {
 
 constexpr float kPanelMargin = 10.0f;
-constexpr float kTimelineHeight = 276.0f;
+constexpr float kMinimumTimelineHeight = 240.0f;
 constexpr float kInspectorWidth = 360.0f;
 constexpr int kMinimumLaneCount = 3;
 constexpr float kRulerHeight = 27.0f;
@@ -46,6 +48,273 @@ struct CueClip {
 			&& point.y >= topLeft.y && point.y <= bottomRight.y;
 	}
 };
+
+template <class Owner> struct FloatRangeField {
+	const char* label;
+	float Owner::* value;
+	float minimum;
+	float maximum;
+};
+
+template <class Owner> struct IntRangeField {
+	const char* label;
+	int Owner::* value;
+	int minimum;
+	int maximum;
+};
+
+constexpr FloatRangeField<EffectParameters> kEffectFloatRanges[] = {
+	{"発生時間 / 開花まで", &EffectParameters::stageSeconds, kMinStageSeconds, kMaxFountainSeconds},
+	{"打上速度", &EffectParameters::launchSpeed, 0.0f, kMaxSpeed},
+	{"左右角度", &EffectParameters::launchSideAngleDegrees, -kMaxLaunchTiltDegrees, kMaxLaunchTiltDegrees},
+	{"前後角度", &EffectParameters::launchDepthAngleDegrees, -kMaxLaunchTiltDegrees, kMaxLaunchTiltDegrees},
+	{"広がる速度", &EffectParameters::spreadSpeed, 0.0f, kMaxSpeed},
+	{"速度のばらつき", &EffectParameters::speedJitter, 0.0f, kMaxSpeed},
+	{"重力", &EffectParameters::gravity, 0.0f, kMaxGravity},
+	{"火花の寿命", &EffectParameters::sparkLife, kMinSparkLife, kMaxSparkLife},
+	{"火花の幅", &EffectParameters::sparkWidth, kMinWidth, kMaxWidth},
+	{"幅のばらつき", &EffectParameters::widthJitter, 0.0f, kMaxWidth - kMinWidth},
+	{"火花の尾の長さ", &EffectParameters::trailSeconds, 0.0f, kMaxTrailSeconds},
+	{"打上軌跡の寿命", &EffectParameters::launchTrailLifeSeconds, 0.0f, kMaxLaunchTrailLifeSeconds},
+	{"打上軌跡の幅", &EffectParameters::launchTrailWidth, 0.0f, kMaxLaunchTrailWidth},
+	{"打上軌跡の重なり", &EffectParameters::launchTrailOverlap, 0.0f, kMaxLaunchTrailOverlap},
+	{"椰子の枝の寿命", &EffectParameters::palmBranchLifeSeconds, 0.0f, kMaxPalmBranchLifeSeconds},
+	{"椰子の枝の広がり", &EffectParameters::palmBranchSpread, 0.0f, kMaxPalmBranchSpread},
+	{"柳の枝の寿命", &EffectParameters::willowTrailLifeSeconds, 0.0f, kMaxWillowTrailLifeSeconds},
+	{"柳の枝の広がり", &EffectParameters::willowGroupSpread, 0.0f, kMaxWillowGroupSpread},
+	{"柳の方向", &EffectParameters::willowDirectionDegrees, kMinWillowDirectionDegrees, kMaxWillowDirectionDegrees},
+	{"柳の発光維持", &EffectParameters::willowGlowHoldSeconds, 0.0f, kMaxSparkLife},
+	{"冠菊の垂れ始め", &EffectParameters::crownDroopStartSeconds, 0.0f, kMaxCrownDroopStartSeconds},
+	{"冠菊の水平減速", &EffectParameters::crownHorizontalDrag, 0.0f, kMaxCrownHorizontalDrag}
+};
+
+constexpr IntRangeField<EffectParameters> kEffectIntRanges[] = {
+	{"粒子数", &EffectParameters::particleCount, 1, kMaxFountainRate},
+	{"打上軌跡の発生数", &EffectParameters::launchTrailRate, 0, kMaxLaunchTrailRate},
+	{"椰子の腕の数", &EffectParameters::palmArmCount, kMinPalmArms, kMaxPalmArms},
+	{"柳の束の数", &EffectParameters::willowGroupCount, 1, kMaxWillowGroups}
+};
+
+constexpr FloatRangeField<ChildFireworkSettings> kChildFloatRanges[] = {
+	{"小玉の移動速度", &ChildFireworkSettings::travelSpeed, 0.0f, kMaxSpeed},
+	{"小玉の導火時間", &ChildFireworkSettings::fuseSeconds, 0.1f, kMaxChildFuseSeconds},
+	{"導火時間の幅", &ChildFireworkSettings::fuseSpreadSeconds, 0.0f, kMaxChildFuseSpreadSeconds},
+	{"小玉の幅", &ChildFireworkSettings::shellWidth, kMinWidth, kMaxWidth},
+	{"小玉の尾", &ChildFireworkSettings::shellTrailSeconds, 0.0f, kMaxTrailSeconds},
+	{"小花火の広がり", &ChildFireworkSettings::burstSpeed, 0.0f, kMaxSpeed},
+	{"小花火の寿命", &ChildFireworkSettings::sparkLife, kMinSparkLife, kMaxSparkLife},
+	{"小花火の幅", &ChildFireworkSettings::sparkWidth, kMinWidth, kMaxWidth},
+	{"小花火の尾", &ChildFireworkSettings::trailSeconds, 0.0f, kMaxTrailSeconds},
+	{"小花火の重力", &ChildFireworkSettings::gravity, 0.0f, kMaxGravity},
+	{"小花火の色変化", &ChildFireworkSettings::colorVariation, 0.0f, 1.0f}
+};
+
+constexpr IntRangeField<ChildFireworkSettings> kChildIntRanges[] = {
+	{"小玉の数", &ChildFireworkSettings::count, 1, kMaxChildFireworks},
+	{"小花火の粒子数", &ChildFireworkSettings::particleCount, 1, kMaxChildSparkCount}
+};
+
+constexpr float Vector4::* kColorComponents[] = {
+	&Vector4::x, &Vector4::y, &Vector4::z, &Vector4::w
+};
+constexpr const char* kColorNames[] = {"R", "G", "B", "A"};
+
+bool DrawFloatRange(const char* label, float& lower, float& upper,
+	float baseline, float minimum, float maximum) {
+	float values[] = {lower, upper};
+	const bool edited = ImGui::DragFloat2(label, values, 0.01f, minimum, maximum,
+		"%.3f", kClampDrag);
+	if (edited) {
+		lower = std::clamp((std::min)(values[0], values[1]), minimum, maximum);
+		upper = std::clamp((std::max)(values[0], values[1]), minimum, maximum);
+	}
+	if (ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("基準 %.3f / 下限 %.3f / 上限 %.3f", baseline, lower, upper);
+	}
+	return edited;
+}
+
+bool DrawIntRange(const char* label, int& lower, int& upper,
+	int baseline, int minimum, int maximum) {
+	int values[] = {lower, upper};
+	const bool edited = ImGui::DragInt2(label, values, 1.0f, minimum, maximum,
+		"%d", kClampDrag);
+	if (edited) {
+		lower = std::clamp((std::min)(values[0], values[1]), minimum, maximum);
+		upper = std::clamp((std::max)(values[0], values[1]), minimum, maximum);
+	}
+	if (ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("基準 %d / 下限 %d / 上限 %d", baseline, lower, upper);
+	}
+	return edited;
+}
+
+std::vector<std::filesystem::path> ListEffectPresets(std::error_code& error) {
+	std::vector<std::filesystem::path> files;
+	const std::filesystem::path directory(kEffectPresetDirectory);
+	for (std::filesystem::directory_iterator it(directory, error), end;
+		!error && it != end; it.increment(error)) {
+		std::error_code entryError;
+		if (it->is_regular_file(entryError) && it->path().extension() == L".fwpreset") {
+			files.push_back(it->path());
+		}
+	}
+	std::sort(files.begin(), files.end());
+	return files;
+}
+
+template <class Owner, std::size_t N>
+void DrawFloatRanges(const FloatRangeField<Owner> (&fields)[N],
+	const Owner& baseline, Owner& lower, Owner& upper,
+	float stageMaximum = kMaxFountainSeconds) {
+	for (const auto& field : fields) {
+		float maximum = field.maximum;
+		if constexpr (std::is_same_v<Owner, EffectParameters>) {
+			if (field.value == &EffectParameters::stageSeconds) {
+				maximum = stageMaximum;
+			}
+		}
+		DrawFloatRange(field.label, lower.*(field.value), upper.*(field.value),
+			baseline.*(field.value), field.minimum, maximum);
+	}
+}
+
+template <class Owner, std::size_t N>
+void DrawIntRanges(const IntRangeField<Owner> (&fields)[N],
+	const Owner& baseline, Owner& lower, Owner& upper,
+	int countMaximum = kMaxFountainRate) {
+	for (const auto& field : fields) {
+		int maximum = field.maximum;
+		if constexpr (std::is_same_v<Owner, EffectParameters>) {
+			if (field.value == &EffectParameters::particleCount) {
+				maximum = countMaximum;
+			}
+		}
+		DrawIntRange(field.label, lower.*(field.value), upper.*(field.value),
+			baseline.*(field.value), field.minimum, maximum);
+	}
+}
+
+void DrawColorRanges(const char* label, const Vector4& baseline,
+	Vector4& lower, Vector4& upper) {
+	ImGui::SeparatorText(label);
+	ImGui::PushID(label);
+	for (std::size_t component = 0; component < std::size(kColorComponents); ++component) {
+		float Vector4::* member = kColorComponents[component];
+		DrawFloatRange(kColorNames[component], lower.*member, upper.*member,
+			baseline.*member, 0.0f, 1.0f);
+	}
+	ImGui::PopID();
+}
+
+float RandomFloat(float baseline, float lower, float upper, float randomness,
+	std::mt19937& random) {
+	if (randomness <= 0.0f) {
+		return baseline;
+	}
+	std::uniform_real_distribution<float> distribution(lower, upper);
+	return std::lerp(baseline, distribution(random), randomness);
+}
+
+int RandomInt(int baseline, int lower, int upper, float randomness,
+	std::mt19937& random) {
+	if (randomness <= 0.0f) {
+		return baseline;
+	}
+	std::uniform_int_distribution<int> distribution(lower, upper);
+	return static_cast<int>(std::lround(std::lerp(static_cast<float>(baseline),
+		static_cast<float>(distribution(random)), randomness)));
+}
+
+template <class Owner, std::size_t N>
+void RandomizeFloatRanges(const FloatRangeField<Owner> (&fields)[N],
+	const Owner& baseline, const Owner& lower, const Owner& upper,
+	Owner& result, float randomness, std::mt19937& random) {
+	for (const auto& field : fields) {
+		result.*(field.value) = std::clamp(RandomFloat(baseline.*(field.value),
+			lower.*(field.value), upper.*(field.value), randomness, random),
+			field.minimum, field.maximum);
+	}
+}
+
+template <class Owner, std::size_t N>
+void RandomizeIntRanges(const IntRangeField<Owner> (&fields)[N],
+	const Owner& baseline, const Owner& lower, const Owner& upper,
+	Owner& result, float randomness, std::mt19937& random) {
+	for (const auto& field : fields) {
+		result.*(field.value) = std::clamp(RandomInt(baseline.*(field.value),
+			lower.*(field.value), upper.*(field.value), randomness, random),
+			field.minimum, field.maximum);
+	}
+}
+
+void RandomizeColor(const Vector4& baseline, const Vector4& lower,
+	const Vector4& upper, Vector4& result, float randomness, std::mt19937& random) {
+	for (float Vector4::* member : kColorComponents) {
+		result.*member = std::clamp(RandomFloat(baseline.*member,
+			lower.*member, upper.*member, randomness, random), 0.0f, 1.0f);
+	}
+}
+
+FireworkCue GenerateCue(const FireworkCue& baseline, const FireworkCue& lower,
+	const FireworkCue& upper, float randomness, int durationFrames,
+	std::mt19937& random) {
+	FireworkCue result = baseline;
+	if (randomness <= 0.0f) {
+		result.startFrame = std::clamp(result.startFrame, 0, durationFrames - 1);
+		return result;
+	}
+	result.startFrame = std::clamp(RandomInt(baseline.startFrame, lower.startFrame,
+		upper.startFrame, randomness, random), 0, durationFrames - 1);
+	result.position.x = RandomFloat(baseline.position.x, lower.position.x,
+		upper.position.x, randomness, random);
+	result.position.y = RandomFloat(baseline.position.y, lower.position.y,
+		upper.position.y, randomness, random);
+	result.position.z = RandomFloat(baseline.position.z, lower.position.z,
+		upper.position.z, randomness, random);
+	RandomizeFloatRanges(kEffectFloatRanges, baseline.effect, lower.effect,
+		upper.effect, result.effect, randomness, random);
+	RandomizeIntRanges(kEffectIntRanges, baseline.effect, lower.effect,
+		upper.effect, result.effect, randomness, random);
+	RandomizeColor(baseline.effect.color, lower.effect.color, upper.effect.color,
+		result.effect.color, randomness, random);
+	RandomizeColor(baseline.effect.launchTrailColor, lower.effect.launchTrailColor,
+		upper.effect.launchTrailColor, result.effect.launchTrailColor, randomness, random);
+	RandomizeFloatRanges(kChildFloatRanges, baseline.child, lower.child,
+		upper.child, result.child, randomness, random);
+	RandomizeIntRanges(kChildIntRanges, baseline.child, lower.child,
+		upper.child, result.child, randomness, random);
+	RandomizeColor(baseline.child.color, lower.child.color, upper.child.color,
+		result.child.color, randomness, random);
+	result.launchSound.delaySeconds = RandomFloat(baseline.launchSound.delaySeconds,
+		lower.launchSound.delaySeconds, upper.launchSound.delaySeconds, randomness, random);
+	result.launchSound.volume = RandomFloat(baseline.launchSound.volume,
+		lower.launchSound.volume, upper.launchSound.volume, randomness, random);
+	result.burstSound.delaySeconds = RandomFloat(baseline.burstSound.delaySeconds,
+		lower.burstSound.delaySeconds, upper.burstSound.delaySeconds, randomness, random);
+	result.burstSound.volume = RandomFloat(baseline.burstSound.volume,
+		lower.burstSound.volume, upper.burstSound.volume, randomness, random);
+
+	// 独立に選んだ値同士の制約を、保存形式と同じ範囲へ収める。
+	const FireworkPreset* preset = FindPreset(result.presetId);
+	if (preset != nullptr) {
+		result.effect.stageSeconds = (std::min)(result.effect.stageSeconds,
+			preset->IsAerial() ? kMaxRiseSeconds : kMaxFountainSeconds);
+		result.effect.particleCount = (std::min)(result.effect.particleCount,
+			preset->IsAerial() ? kMaxBurstCount : kMaxFountainRate);
+	}
+	result.effect.widthJitter = (std::min)(result.effect.widthJitter,
+		result.effect.sparkWidth - kMinWidth);
+	result.effect.willowGlowHoldSeconds = (std::min)(result.effect.willowGlowHoldSeconds,
+		(std::max)(0.0f, result.effect.sparkLife - kMinSparkLife));
+	if (preset != nullptr && preset->pattern == FireworkPattern::CrownChrysanthemum) {
+		result.effect.crownDroopStartSeconds = (std::min)(result.effect.crownDroopStartSeconds,
+			(std::max)(0.0f, std::nextafter(result.effect.sparkLife, 0.0f)));
+	}
+	result.child.fuseSpreadSeconds = (std::min)(result.child.fuseSpreadSeconds,
+		result.child.fuseSeconds - 0.05f);
+	return result;
+}
 
 const char* PresetLabel(const FireworkCue& cue) {
 	const FireworkPreset* preset = FindPreset(cue.presetId);
@@ -443,6 +712,7 @@ void FireworkEditor::Draw(const Matrix4x4& viewProjection, bool& useBillboard, s
 	}
 	DrawTimelineWindow(particleCount);
 	DrawInspector(useBillboard);
+	DrawGenerationWindow();
 	DrawPreviewPlacement(viewProjection);
 }
 
@@ -459,10 +729,28 @@ void FireworkEditor::SetStatus(std::string status) {
 
 void FireworkEditor::DrawTimelineWindow(std::size_t particleCount) {
 	const ImGuiViewport* viewport = ImGui::GetMainViewport();
+	const float maximumHeight = (std::max)(kMinimumTimelineHeight,
+		viewport->WorkSize.y - 180.0f);
+	timelineHeight_ = std::clamp(timelineHeight_, kMinimumTimelineHeight, maximumHeight);
 	ImGui::SetNextWindowPos({viewport->WorkPos.x + kPanelMargin,
-		viewport->WorkPos.y + viewport->WorkSize.y - kTimelineHeight - kPanelMargin});
-	ImGui::SetNextWindowSize({viewport->WorkSize.x - 2.0f * kPanelMargin, kTimelineHeight});
+		viewport->WorkPos.y + viewport->WorkSize.y - timelineHeight_ - kPanelMargin});
+	ImGui::SetNextWindowSize({viewport->WorkSize.x - 2.0f * kPanelMargin, timelineHeight_});
 	if (ImGui::Begin("花火のタイムライン", nullptr, kPanelFlags)) {
+		ImGui::InvisibleButton("##TimelineResize", {ImGui::GetContentRegionAvail().x, 8.0f});
+		const ImVec2 handleStart = ImGui::GetItemRectMin();
+		const ImVec2 handleEnd = ImGui::GetItemRectMax();
+		ImGui::GetWindowDrawList()->AddLine(
+			{handleStart.x + 12.0f, (handleStart.y + handleEnd.y) * 0.5f},
+			{handleEnd.x - 12.0f, (handleStart.y + handleEnd.y) * 0.5f},
+			IM_COL32(130, 150, 175, 255), 2.0f);
+		if (ImGui::IsItemHovered() || ImGui::IsItemActive()) {
+			ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+			ImGui::SetTooltip("ドラッグしてタイムラインの高さを変更");
+		}
+		if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+			timelineHeight_ = std::clamp(timelineHeight_ - ImGui::GetIO().MouseDelta.y,
+				kMinimumTimelineHeight, maximumHeight);
+		}
 		if (ImGui::Button(player_.IsPlaying() ? "一時停止" : "再生", {90.0f, 0.0f})) {
 			player_.TogglePlayback(show_);
 		}
@@ -495,16 +783,27 @@ void FireworkEditor::DrawTimelineWindow(std::size_t particleCount) {
 			if (index > 0) {
 				ImGui::SameLine();
 			}
-			if (PresetButton(presets[index].label, index == addPresetIndex_, 110.0f)) {
+			if (PresetButton(presets[index].label,
+				generationTemplatePath_.empty() && index == addPresetIndex_, 110.0f)) {
 				addPresetIndex_ = index;
+				generationTemplatePath_.clear();
+				generationBoundsReady_ = false;
 			}
 		}
-		ImGui::SameLine();
 		ImGui::BeginDisabled(show_.cues.size() >= kMaxCues);
 		if (ImGui::Button("この時刻に追加")) {
 			AddCue();
 		}
 		ImGui::EndDisabled();
+		ImGui::SameLine();
+		if (ImGui::Button(generationWindowVisible_ ? "生成設定を閉じる" : "生成設定")) {
+			generationWindowVisible_ = !generationWindowVisible_;
+		}
+		if (!generationTemplatePath_.empty()) {
+			ImGui::SameLine();
+			const std::string label = StringUtility::ConvertString(generationTemplatePath_.stem().wstring());
+			ImGui::Text("選択中: %s", label.c_str());
+		}
 
 		// 段数が増えても操作欄を残し、クリップ部分だけを縦にスクロールする。
 		const float canvasHeight = (std::max)(60.0f,
@@ -625,7 +924,7 @@ void FireworkEditor::DrawInspector(bool& useBillboard) {
 	ImGui::SetNextWindowPos({viewport->WorkPos.x + viewport->WorkSize.x - kInspectorWidth - kPanelMargin,
 		viewport->WorkPos.y + kPanelMargin});
 	ImGui::SetNextWindowSize({kInspectorWidth,
-		viewport->WorkSize.y - kTimelineHeight - 3.0f * kPanelMargin});
+		viewport->WorkSize.y - timelineHeight_ - 3.0f * kPanelMargin});
 
 	if (!ImGui::Begin("花火の設定", nullptr, kPanelFlags)) {
 		ImGui::End();
@@ -764,17 +1063,8 @@ bool FireworkEditor::DrawEffectPresetLibrary(FireworkCue& cue) {
 		}
 	}
 
-	std::vector<std::filesystem::path> files;
 	std::error_code fileError;
-	const std::filesystem::path directory(kEffectPresetDirectory);
-	for (std::filesystem::directory_iterator it(directory, fileError), end;
-		!fileError && it != end; it.increment(fileError)) {
-		std::error_code entryError;
-		if (it->is_regular_file(entryError) && it->path().extension() == L".fwpreset") {
-			files.push_back(it->path());
-		}
-	}
-	std::sort(files.begin(), files.end());
+	const auto files = ListEffectPresets(fileError);
 	if (fileError && fileError != std::errc::no_such_file_or_directory) {
 		status_ = "設定プリセットの一覧を読めませんでした";
 	}
@@ -794,6 +1084,142 @@ bool FireworkEditor::DrawEffectPresetLibrary(FireworkCue& cue) {
 	}
 	ImGui::EndChild();
 	return applied;
+}
+
+void FireworkEditor::ResetGenerationBounds() {
+	const int frame = (std::min)(player_.CurrentFrame(), show_.durationFrames - 1);
+	FireworkCue baseline = MakeCue(GetPresets()[addPresetIndex_], frame, 1);
+	if (!generationTemplatePath_.empty()) {
+		std::string error;
+		if (!LoadEffectPreset(generationTemplatePath_, baseline, error)) {
+			status_ = "テンプレートを読めませんでした: " + error;
+			generationBoundsReady_ = false;
+			return;
+		}
+	}
+	baseline.startFrame = frame;
+	generationBase_ = baseline;
+	generationLower_ = baseline;
+	generationUpper_ = baseline;
+	generationBoundsReady_ = true;
+}
+
+void FireworkEditor::DrawGenerationWindow() {
+	if (!generationWindowVisible_) {
+		return;
+	}
+	if (!generationBoundsReady_) {
+		ResetGenerationBounds();
+	}
+	const ImGuiViewport* viewport = ImGui::GetMainViewport();
+	ImGui::SetNextWindowPos({viewport->WorkPos.x + kPanelMargin,
+		viewport->WorkPos.y + kPanelMargin}, ImGuiCond_Once);
+	ImGui::SetNextWindowSize({500.0f, (std::max)(300.0f,
+		viewport->WorkSize.y - timelineHeight_ - 3.0f * kPanelMargin)}, ImGuiCond_Once);
+	if (!ImGui::Begin("花火の生成設定", &generationWindowVisible_,
+		ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
+		ImGui::End();
+		return;
+	}
+
+	std::error_code fileError;
+	const auto files = ListEffectPresets(fileError);
+	const auto presets = GetPresets();
+	const std::string selectedLabel = generationTemplatePath_.empty()
+		? std::string(presets[addPresetIndex_].label)
+		: StringUtility::ConvertString(generationTemplatePath_.stem().wstring());
+	// テンプレート一覧は背後の設定項目が透けないよう、不透明な背景で描く。
+	ImGui::SetNextWindowBgAlpha(1.0f);
+	if (ImGui::BeginCombo("テンプレート", selectedLabel.c_str())) {
+		for (std::size_t index = 0; index < presets.size(); ++index) {
+			if (ImGui::Selectable(presets[index].label,
+				generationTemplatePath_.empty() && addPresetIndex_ == index)) {
+				addPresetIndex_ = index;
+				generationTemplatePath_.clear();
+				ResetGenerationBounds();
+			}
+		}
+		for (const auto& path : files) {
+			const std::string label = StringUtility::ConvertString(path.stem().wstring());
+			ImGui::PushID(label.c_str());
+			if (ImGui::Selectable(label.c_str(), generationTemplatePath_ == path)) {
+				generationTemplatePath_ = path;
+				ResetGenerationBounds();
+			}
+			ImGui::PopID();
+		}
+		ImGui::EndCombo();
+	}
+	if (fileError && fileError != std::errc::no_such_file_or_directory) {
+		ImGui::TextUnformatted("テンプレート一覧を読めませんでした");
+	}
+	if (!generationBoundsReady_) {
+		ImGui::TextUnformatted(status_.c_str());
+		ImGui::End();
+		return;
+	}
+	ImGui::TextWrapped("下限・上限は生成時に使う実際の設定値です。ランダム性0なら基準値のままです。");
+	if (ImGui::Button("下限・上限をテンプレート値に戻す")) {
+		ResetGenerationBounds();
+	}
+	ImGui::SliderInt("追加する数", &generationCount_, 1, static_cast<int>(kMaxCues));
+	ImGui::SliderFloat("ランダム性", &generationRandomness_, 0.0f, 1.0f, "%.2f");
+	if (ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("0: テンプレート値のまま / 1: 下限から上限まで全幅で抽選");
+	}
+	ImGui::SeparatorText("時刻・発射位置");
+	ImGui::Text("開始時刻の基準: %.2f 秒", ToSeconds(player_.CurrentFrame()));
+	float timeBounds[] = {ToSeconds(generationLower_.startFrame),
+		ToSeconds(generationUpper_.startFrame)};
+	if (ImGui::DragFloat2("開始時刻 下限/上限 (秒)", timeBounds, 0.02f,
+		0.0f, ToSeconds(show_.durationFrames - 1), "%.2f", kClampDrag)) {
+		generationLower_.startFrame = std::clamp(ToFrames((std::min)(timeBounds[0], timeBounds[1])),
+			0, show_.durationFrames - 1);
+		generationUpper_.startFrame = std::clamp(ToFrames((std::max)(timeBounds[0], timeBounds[1])),
+			0, show_.durationFrames - 1);
+	}
+	DrawFloatRange("位置 X", generationLower_.position.x, generationUpper_.position.x,
+		generationBase_.position.x, -kPositionLimit, kPositionLimit);
+	DrawFloatRange("位置 Y", generationLower_.position.y, generationUpper_.position.y,
+		generationBase_.position.y, -kPositionLimit, kPositionLimit);
+	DrawFloatRange("位置 Z", generationLower_.position.z, generationUpper_.position.z,
+		generationBase_.position.z, -kPositionLimit, kPositionLimit);
+
+	if (ImGui::CollapsingHeader("花火の数値設定")) {
+		const FireworkPreset* preset = FindPreset(generationBase_.presetId);
+		const bool aerial = preset != nullptr && preset->IsAerial();
+		DrawFloatRanges(kEffectFloatRanges, generationBase_.effect,
+			generationLower_.effect, generationUpper_.effect,
+			aerial ? kMaxRiseSeconds : kMaxFountainSeconds);
+		DrawIntRanges(kEffectIntRanges, generationBase_.effect,
+			generationLower_.effect, generationUpper_.effect,
+			aerial ? kMaxBurstCount : kMaxFountainRate);
+		DrawColorRanges("開花色", generationBase_.effect.color,
+			generationLower_.effect.color, generationUpper_.effect.color);
+		DrawColorRanges("打上軌跡の色", generationBase_.effect.launchTrailColor,
+			generationLower_.effect.launchTrailColor, generationUpper_.effect.launchTrailColor);
+	}
+	if (ImGui::CollapsingHeader("小花火の数値設定")) {
+		DrawFloatRanges(kChildFloatRanges, generationBase_.child,
+			generationLower_.child, generationUpper_.child);
+		DrawIntRanges(kChildIntRanges, generationBase_.child,
+			generationLower_.child, generationUpper_.child);
+		DrawColorRanges("小花火の色", generationBase_.child.color,
+			generationLower_.child.color, generationUpper_.child.color);
+	}
+	if (ImGui::CollapsingHeader("効果音の数値設定")) {
+		DrawFloatRange("開始音 遅延", generationLower_.launchSound.delaySeconds,
+			generationUpper_.launchSound.delaySeconds,
+			generationBase_.launchSound.delaySeconds, 0.0f, kMaxSoundDelaySeconds);
+		DrawFloatRange("開始音 音量", generationLower_.launchSound.volume,
+			generationUpper_.launchSound.volume, generationBase_.launchSound.volume, 0.0f, 1.0f);
+		DrawFloatRange("開花音 遅延", generationLower_.burstSound.delaySeconds,
+			generationUpper_.burstSound.delaySeconds,
+			generationBase_.burstSound.delaySeconds, 0.0f, kMaxSoundDelaySeconds);
+		DrawFloatRange("開花音 音量", generationLower_.burstSound.volume,
+			generationUpper_.burstSound.volume, generationBase_.burstSound.volume, 0.0f, 1.0f);
+	}
+	ImGui::End();
 }
 
 void FireworkEditor::DrawPreviewPlacement(const Matrix4x4& viewProjection) {
@@ -894,14 +1320,27 @@ void FireworkEditor::AddCue() {
 	if (show_.cues.size() >= kMaxCues) {
 		return;
 	}
-	const int frame = (std::min)(player_.CurrentFrame(), show_.durationFrames - 1);
-	FireworkCue cue = MakeCue(GetPresets()[addPresetIndex_], frame, NextSeed(show_));
-	cue.startFrame = frame;
-	show_.cues.push_back(std::move(cue));
+	if (!generationBoundsReady_) {
+		ResetGenerationBounds();
+		if (!generationBoundsReady_) {
+			return;
+		}
+	}
+	// ランダム性0では現在の再生位置をそのまま使う。
+	generationBase_.startFrame = (std::min)(player_.CurrentFrame(), show_.durationFrames - 1);
+	const int count = (std::min)(generationCount_, static_cast<int>(kMaxCues - show_.cues.size()));
+	std::uint32_t seed = NextSeed(show_);
+	for (int index = 0; index < count; ++index) {
+		FireworkCue cue = GenerateCue(generationBase_, generationLower_, generationUpper_,
+			generationRandomness_, show_.durationFrames, generationRandom_);
+		cue.seed = seed++;
+		show_.cues.push_back(std::move(cue));
+	}
 	selectedCue_ = static_cast<int>(show_.cues.size()) - 1;
 	placing_ = false;
-	player_.Seek(frame);
+	player_.Seek(show_.cues[selectedCue_].startFrame);
 	MarkEdited();
+	status_ = std::to_string(count) + " 件の花火を追加しました";
 }
 
 void FireworkEditor::MarkEdited() {

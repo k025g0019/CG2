@@ -128,6 +128,9 @@
     <None Include="resources\shaders\Objec3d.hlsli">
       <Filter>シェーダー ファイル</Filter>
     </None>
+    <None Include="resources\shaders\Lihting.hlsli">
+      <Filter>シェーダー ファイル</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="resources\shaders\Object3d.VS.hlsl">
@@ -246,6 +249,9 @@
     <ClCompile Include="Engine\src\3d\Object3dCommon.cpp">
       <Filter>ソース ファイル\engine\3d</Filter>
     </ClCompile>
+    <ClCompile Include="Engine\src\3d\LightGroup.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="externals\imgui\imconfig.h">
@@ -343,6 +349,15 @@
     </ClInclude>
     <ClInclude Include="Engine\include\3d\Object3d.h">
       <Filter>ヘッダー ファイル\3d</Filter>
+    </ClInclude>
+    <ClInclude Include="Engine\include\3d\LightTypes.h">
+      <Filter>ヘッダー ファイル\3d</Filter>
+    </ClInclude>
+    <ClInclude Include="Engine\include\math\MathUtil.h">
+      <Filter>ヘッダー ファイル\math</Filter>
+    </ClInclude>
+    <ClInclude Include="Engine\include\3d\LightGroup.h">
+      <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

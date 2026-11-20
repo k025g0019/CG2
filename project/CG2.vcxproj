@@ -191,6 +191,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">6.8</ShaderModel>
     </FxCompile>
+    <None Include="resources\shaders\Lihting.hlsli" />
     <None Include="resources\shaders\Objec3d.hlsli">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </None>
@@ -211,6 +212,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     </FxCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Engine\src\3d\LightGroup.cpp" />
     <ClCompile Include="Engine\src\3d\Object3d.cpp" />
     <ClCompile Include="Engine\src\3d\Object3dCommon.cpp" />
     <ClCompile Include="Engine\src\base\DirectXCommon.cpp">
@@ -278,6 +280,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClCompile Include="Engine\src\base\TextureManager.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Engine\include\3d\LightGroup.h" />
     <ClInclude Include="Engine\include\base\DirectXCommon.h">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Development|x64'">false</ExcludedFromBuild>
     </ClInclude>
@@ -312,6 +315,8 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClInclude Include="Engine\include\base\TextureManager.h" />
     <ClInclude Include="Engine\include\3d\Object3d.h" />
     <ClInclude Include="Engine\include\3d\Object3dCommon.h" />
+    <ClInclude Include="Engine\include\3d\LightTypes.h" />
+    <ClInclude Include="Engine\include\math\MathUtil.h" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="externals\imgui\LICENSE.txt" />

@@ -196,8 +196,8 @@ void DirectXCommon::InitializeDevice() {
 	};
 
 	for (uint32_t index = 0;
-	     index < _countof(featureLevels);
-	     ++index) {
+		 index < _countof(featureLevels);
+		 ++index) {
 		hr = D3D12CreateDevice(
 			useAdapter.Get(),
 			featureLevels[index],
@@ -423,8 +423,8 @@ void DirectXCommon::InitializeRenderTargetViews() {
 		D3D12_RTV_DIMENSION_TEXTURE2D;
 
 	for (uint32_t index = 0;
-	     index < kSwapChainBufferCount;
-	     ++index) {
+		 index < kSwapChainBufferCount;
+		 ++index) {
 		HRESULT hr = swapChain_->GetBuffer(
 			index,
 			IID_PPV_ARGS(
@@ -675,8 +675,8 @@ void DirectXCommon::InitializeImGui() {
 			const std::string fontPath = std::string(windowsDirectory) + "\\Fonts\\" + fontName;
 			if (GetFileAttributesA(fontPath.c_str()) != INVALID_FILE_ATTRIBUTES) {
 				editorFont = io.Fonts->AddFontFromFileTTF(fontPath.c_str(),
-				                                          style.FontSizeBase, &fontConfig,
-				                                          io.Fonts->GetGlyphRangesJapanese());
+														  style.FontSizeBase, &fontConfig,
+														  io.Fonts->GetGlyphRangesJapanese());
 				if (editorFont != nullptr) {
 					break;
 				}
